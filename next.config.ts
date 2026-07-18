@@ -4,6 +4,7 @@ const nextConfig: NextConfig = {
   serverExternalPackages: [
     "@electric-sql/pglite",
     "@neondatabase/serverless",
+    "@google/genai",
     "drizzle-orm",
   ],
 };

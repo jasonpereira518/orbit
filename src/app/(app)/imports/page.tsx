@@ -11,7 +11,8 @@ export default async function ImportsPage() {
           Imports
         </h1>
         <p className="mt-1 text-muted-foreground">
-          Bring in LinkedIn connections. Duplicates are detected before and during import.
+          Bring in LinkedIn connections, message history, and calendar meetings.
+          Duplicates are detected before and during import.
         </p>
       </div>
       <ImportForm history={history} />

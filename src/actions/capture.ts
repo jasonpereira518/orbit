@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { contacts, reminders } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { parseNotesWithAI, type ParsedNote } from "@/lib/ai";
+import { parseNotesWithAI, parseMultiPersonNotesWithAI, type ParsedNote } from "@/lib/ai";
 import { findDuplicateCandidates } from "@/lib/duplicates";
 import { createContact, logInteraction, updateContact } from "@/actions/contacts";
 
@@ -37,6 +37,101 @@ export async function parseCaptureNotes(notes: string) {
       confidence: d.confidence,
     })),
   };
+}
+
+export type BulkNoteDuplicate = {
+  id: string;
+  fullName: string;
+  company: string | null;
+  title: string | null;
+  reason: string;
+  confidence: number;
+};
+
+export type BulkNotePersonPreview = {
+  key: string;
+  notes: string;
+  parsed: ParsedNote;
+  duplicates: BulkNoteDuplicate[];
+  suggestedMergeId: string | null;
+};
+
+export async function parseBulkCaptureNotes(notes: string) {
+  const userId = await requireUserId();
+  if (!notes.trim()) throw new Error("Notes are required");
+
+  const { people } = await parseMultiPersonNotesWithAI(userId, notes);
+  if (!people.length) {
+    throw new Error("No people found in those notes");
+  }
+
+  const db = await getDb();
+  const existing = await db.query.contacts.findMany({
+    where: eq(contacts.userId, userId),
+  });
+
+  const items: BulkNotePersonPreview[] = people.map((person, index) => {
+    const { source_excerpt, ...parsed } = person;
+    const duplicates = findDuplicateCandidates(existing, {
+      fullName: parsed.name,
+      email: parsed.email,
+      linkedinUrl: parsed.linkedin_url,
+      company: parsed.company,
+      title: parsed.role,
+    }).slice(0, 5);
+
+    const top = duplicates[0];
+    const suggestedMergeId =
+      top && top.confidence >= 0.85 ? top.contact.id : null;
+
+    return {
+      key: `${index}-${parsed.name || "person"}`,
+      notes: source_excerpt?.trim() || notes,
+      parsed,
+      duplicates: duplicates.map((d) => ({
+        id: d.contact.id,
+        fullName: d.contact.fullName,
+        company: d.contact.company,
+        title: d.contact.title,
+        reason: d.reason,
+        confidence: d.confidence,
+      })),
+      suggestedMergeId,
+    };
+  });
+
+  return { items };
+}
+
+export async function confirmBulkCapture(
+  items: Array<{
+    notes: string;
+    parsed: ParsedNote;
+    mergeContactId?: string | null;
+    createReminder: boolean;
+    relationshipScore: number;
+    tagNames: string[];
+    followUpDays?: number | null;
+  }>
+) {
+  await requireUserId();
+  if (!items.length) throw new Error("Nothing to save");
+
+  let created = 0;
+  let updated = 0;
+  const contactIds: string[] = [];
+
+  for (const item of items) {
+    const res = await confirmCapture(item);
+    contactIds.push(res.contactId);
+    if (item.mergeContactId) updated += 1;
+    else created += 1;
+  }
+
+  revalidatePath("/chat");
+  revalidatePath("/contacts");
+
+  return { created, updated, contactIds };
 }
 
 export async function confirmCapture(input: {

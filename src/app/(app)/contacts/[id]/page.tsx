@@ -18,6 +18,39 @@ export default async function ContactDetailPage({
   const contact = await getContact(id);
   if (!contact) notFound();
 
+  const profileFields: { label: string; value: string | null | undefined; href?: string }[] = [
+    { label: "Full name", value: contact.fullName },
+    { label: "Preferred name", value: contact.preferredName },
+    { label: "Company", value: contact.company },
+    { label: "Role", value: contact.title },
+    { label: "Location", value: contact.location },
+    { label: "Where you met", value: contact.howMet },
+    {
+      label: "Email",
+      value: contact.email,
+      href: contact.email ? `mailto:${contact.email}` : undefined,
+    },
+    {
+      label: "Phone",
+      value: contact.phone,
+      href: contact.phone ? `tel:${contact.phone}` : undefined,
+    },
+    {
+      label: "LinkedIn URL",
+      value: contact.linkedinUrl,
+      href: contact.linkedinUrl || undefined,
+    },
+    {
+      label: "Website",
+      value: contact.website,
+      href: contact.website || undefined,
+    },
+  ];
+
+  const linkedInMessages = contact.interactions.filter(
+    (i) => i.interactionType === "linkedin_message"
+  );
+
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -26,8 +59,11 @@ export default async function ContactDetailPage({
             ← Contacts
           </Link>
           <h1 className="mt-2 font-[family-name:var(--font-display)] text-3xl text-[#0f3d3e]">
-            {contact.fullName}
+            {contact.preferredName || contact.fullName}
           </h1>
+          {contact.preferredName && contact.preferredName !== contact.fullName && (
+            <p className="mt-0.5 text-sm text-muted-foreground">{contact.fullName}</p>
+          )}
           <p className="mt-1 text-muted-foreground">
             {[contact.title, contact.company].filter(Boolean).join(" · ") ||
               "No role yet"}
@@ -48,9 +84,48 @@ export default async function ContactDetailPage({
           >
             Log interaction
           </Link>
-          <DeleteContactButton id={contact.id} />
+          <DeleteContactButton id={contact.id} name={contact.fullName} />
         </div>
       </div>
+
+      <Card className="border-border/70 shadow-none">
+        <CardHeader>
+          <CardTitle className="text-base">Profile</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <dl className="grid gap-4 sm:grid-cols-2">
+            {profileFields.map((field) => (
+              <div key={field.label} className="min-w-0">
+                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {field.label}
+                </dt>
+                <dd className="mt-1 truncate text-sm text-[#0f3d3e]">
+                  {field.value ? (
+                    field.href ? (
+                      <a
+                        href={field.href}
+                        target={field.href.startsWith("http") ? "_blank" : undefined}
+                        rel={
+                          field.href.startsWith("http")
+                            ? "noopener noreferrer"
+                            : undefined
+                        }
+                        className="underline-offset-2 hover:underline"
+                      >
+                        {field.value}
+                      </a>
+                    ) : (
+                      field.value
+                    )
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </CardContent>
+      </Card>
 
       {contact.aiSummary && (
         <Card className="border-border/70 shadow-none">
@@ -58,9 +133,39 @@ export default async function ContactDetailPage({
             <CardTitle className="text-base">AI summary</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm leading-relaxed text-muted-foreground">
+            <p className="text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">
               {contact.aiSummary}
             </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {linkedInMessages.length > 0 && (
+        <Card className="border-border/70 shadow-none">
+          <CardHeader>
+            <CardTitle className="text-base">
+              LinkedIn messages ({linkedInMessages.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {linkedInMessages.slice(0, 12).map((i) => (
+              <div
+                key={i.id}
+                className="rounded-lg border border-border/50 bg-muted/20 px-3 py-2"
+              >
+                <p className="text-xs text-muted-foreground">
+                  {format(new Date(i.interactionDate), "MMM d, yyyy")}
+                </p>
+                <p className="mt-1 line-clamp-3 text-sm whitespace-pre-wrap">
+                  {i.rawNotes || i.aiSummary || "Message"}
+                </p>
+              </div>
+            ))}
+            {linkedInMessages.length > 12 && (
+              <p className="text-xs text-muted-foreground">
+                +{linkedInMessages.length - 12} older messages in timeline
+              </p>
+            )}
           </CardContent>
         </Card>
       )}
@@ -138,12 +243,15 @@ export default async function ContactDetailPage({
           contactId={contact.id}
           initial={{
             fullName: contact.fullName,
+            preferredName: contact.preferredName || "",
             title: contact.title || "",
             company: contact.company || "",
-            email: contact.email || "",
-            linkedinUrl: contact.linkedinUrl || "",
             location: contact.location || "",
             howMet: contact.howMet || "",
+            email: contact.email || "",
+            phone: contact.phone || "",
+            linkedinUrl: contact.linkedinUrl || "",
+            website: contact.website || "",
             notes: contact.notes || "",
             relationshipScore: contact.relationshipScore,
             priorityLevel: contact.priorityLevel,

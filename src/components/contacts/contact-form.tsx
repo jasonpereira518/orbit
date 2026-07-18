@@ -20,12 +20,15 @@ export function ContactForm({
   const [pending, start] = useTransition();
   const [form, setForm] = useState({
     fullName: initial?.fullName || "",
+    preferredName: initial?.preferredName || "",
     title: initial?.title || "",
     company: initial?.company || "",
-    email: initial?.email || "",
-    linkedinUrl: initial?.linkedinUrl || "",
     location: initial?.location || "",
     howMet: initial?.howMet || "",
+    email: initial?.email || "",
+    phone: initial?.phone || "",
+    linkedinUrl: initial?.linkedinUrl || "",
+    website: initial?.website || "",
     notes: initial?.notes || "",
     relationshipScore: initial?.relationshipScore ?? 2,
     priorityLevel: initial?.priorityLevel ?? 0,
@@ -44,14 +47,17 @@ export function ContactForm({
         start(async () => {
           try {
             const payload: ContactInput = {
-              fullName: form.fullName,
-              title: form.title || undefined,
-              company: form.company || undefined,
-              email: form.email || undefined,
-              linkedinUrl: form.linkedinUrl || undefined,
-              location: form.location || undefined,
-              howMet: form.howMet || undefined,
-              notes: form.notes || undefined,
+              fullName: form.fullName.trim(),
+              preferredName: form.preferredName.trim(),
+              title: form.title.trim(),
+              company: form.company.trim(),
+              location: form.location.trim(),
+              howMet: form.howMet.trim(),
+              email: form.email.trim(),
+              phone: form.phone.trim(),
+              linkedinUrl: form.linkedinUrl.trim(),
+              website: form.website.trim(),
+              notes: form.notes.trim(),
               relationshipScore: Number(form.relationshipScore),
               priorityLevel: Number(form.priorityLevel),
               tagNames: form.tagNames
@@ -75,21 +81,52 @@ export function ContactForm({
         });
       }}
     >
-      <Field label="Full name" required>
-        <Input
-          required
-          value={form.fullName}
-          onChange={(e) => set("fullName", e.target.value)}
-        />
-      </Field>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Title">
-          <Input value={form.title} onChange={(e) => set("title", e.target.value)} />
+        <Field label="Full name" required>
+          <Input
+            required
+            value={form.fullName}
+            onChange={(e) => set("fullName", e.target.value)}
+            placeholder="Arvind Rao"
+          />
         </Field>
+        <Field label="Preferred name">
+          <Input
+            value={form.preferredName}
+            onChange={(e) => set("preferredName", e.target.value)}
+            placeholder="Arvind"
+          />
+        </Field>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Company">
           <Input
             value={form.company}
             onChange={(e) => set("company", e.target.value)}
+            placeholder="AWS"
+          />
+        </Field>
+        <Field label="Role">
+          <Input
+            value={form.title}
+            onChange={(e) => set("title", e.target.value)}
+            placeholder="Solutions Architect"
+          />
+        </Field>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Location">
+          <Input
+            value={form.location}
+            onChange={(e) => set("location", e.target.value)}
+            placeholder="New York, NY"
+          />
+        </Field>
+        <Field label="Where you met">
+          <Input
+            value={form.howMet}
+            onChange={(e) => set("howMet", e.target.value)}
+            placeholder="Google NYC event"
           />
         </Field>
       </div>
@@ -99,24 +136,34 @@ export function ContactForm({
             type="email"
             value={form.email}
             onChange={(e) => set("email", e.target.value)}
+            placeholder="arvind@example.com"
           />
         </Field>
-        <Field label="LinkedIn URL">
+        <Field label="Phone">
           <Input
-            value={form.linkedinUrl}
-            onChange={(e) => set("linkedinUrl", e.target.value)}
+            type="tel"
+            value={form.phone}
+            onChange={(e) => set("phone", e.target.value)}
+            placeholder="+1 555 123 4567"
           />
         </Field>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Location">
+        <Field label="LinkedIn URL">
           <Input
-            value={form.location}
-            onChange={(e) => set("location", e.target.value)}
+            type="url"
+            value={form.linkedinUrl}
+            onChange={(e) => set("linkedinUrl", e.target.value)}
+            placeholder="https://linkedin.com/in/..."
           />
         </Field>
-        <Field label="How you met">
-          <Input value={form.howMet} onChange={(e) => set("howMet", e.target.value)} />
+        <Field label="Website">
+          <Input
+            type="url"
+            value={form.website}
+            onChange={(e) => set("website", e.target.value)}
+            placeholder="https://..."
+          />
         </Field>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">

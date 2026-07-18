@@ -1,14 +1,27 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import {
   ReactFlow,
   Background,
   Controls,
   MiniMap,
+  useReactFlow,
+  ReactFlowProvider,
+  applyNodeChanges,
   type Node,
   type Edge,
+  type NodeMouseHandler,
+  type OnNodeDrag,
+  type OnNodesChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { getGraphData } from "@/actions/graph";
@@ -20,86 +33,800 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import {
+  ClusterLabelNode,
+  ContactNode,
+  OrbitRingsNode,
+  SunNode,
+} from "@/components/graph/graph-nodes";
+import {
+  ContactInspectPanel,
+  type InspectSelection,
+} from "@/components/graph/contact-inspect-panel";
+import {
+  buildHybridGraphLayout,
+  type GraphNodeData,
+  type GroupingMode,
+  type OrbitRingsData,
+} from "@/lib/graph-layout";
+import { cn } from "@/lib/utils";
 
 type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
+type LabelMode = "always" | "hover" | "never";
+type LinksMode = "on" | "auto" | "off";
+type PositionMap = Record<string, { x: number; y: number }>;
 
-function ContactNode({ data }: { data: { label: string; company?: string | null; score?: number; dormant?: boolean; kind: string } }) {
-  if (data.kind === "user") {
-    return (
-      <div className="rounded-full bg-[#0f3d3e] px-4 py-3 text-center text-sm font-semibold text-white shadow-lg">
-        {data.label}
-      </div>
-    );
+const nodeTypes = {
+  contact: ContactNode,
+  user: SunNode,
+  orbitRings: OrbitRingsNode,
+  clusterLabel: ClusterLabelNode,
+};
+
+const HIGH_NODE_THRESHOLD = 80;
+const ORBIT_DEG_PER_SEC = 2.2;
+
+function positionsStorageKey(userId: string) {
+  return `orbit-graph-positions:${userId}`;
+}
+
+function loadPositions(userId: string): PositionMap {
+  try {
+    const raw = localStorage.getItem(positionsStorageKey(userId));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as PositionMap;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
   }
+}
+
+function savePositions(userId: string, positions: PositionMap) {
+  try {
+    localStorage.setItem(positionsStorageKey(userId), JSON.stringify(positions));
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+function contactMatchesSearch(
+  d: GraphNodeData,
+  q: string
+): boolean {
+  if (!q) return true;
+  const hay = [
+    d.label,
+    d.fullName,
+    d.preferredName,
+    d.company,
+    d.title,
+    ...(d.tags || []),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return hay.includes(q);
+}
+
+function Starfield() {
+  const stars = useMemo(
+    () =>
+      Array.from({ length: 220 }, (_, i) => ({
+        id: i,
+        left: `${((i * 47 + 13) * 7) % 1000 / 10}%`,
+        top: `${((i * 83 + 29) * 11) % 1000 / 10}%`,
+        size: i % 17 === 0 ? 2.2 : i % 5 === 0 ? 1.4 : 0.8,
+        delay: `${(i % 11) * 0.35}s`,
+        dur: `${2.8 + (i % 6) * 0.7}s`,
+        opacity: 0.25 + (i % 8) * 0.08,
+      })),
+    []
+  );
 
   return (
     <div
-      className="min-w-[120px] rounded-xl border bg-white px-3 py-2 text-center shadow-sm"
-      style={{
-        borderColor: data.dormant ? "#d4d4d4" : "#0f3d3e",
-        opacity: data.dormant ? 0.45 : 1,
-      }}
+      className="constellation-starfield pointer-events-none absolute inset-0 overflow-hidden"
+      aria-hidden
     >
-      <p className="text-sm font-medium text-[#0f3d3e]">{data.label}</p>
-      {data.company && (
-        <p className="text-[10px] text-muted-foreground">{data.company}</p>
-      )}
-      <p className="mt-1 text-[10px] text-[#3d7a6c]">● {data.score}/5</p>
+      <div className="constellation-milky-way absolute inset-0" />
+      {stars.map((s) => (
+        <span
+          key={s.id}
+          className="absolute rounded-full bg-white"
+          style={
+            {
+              left: s.left,
+              top: s.top,
+              width: s.size,
+              height: s.size,
+              opacity: s.opacity,
+              "--twinkle-delay": s.delay,
+              "--twinkle-dur": s.dur,
+            } as CSSProperties
+          }
+        />
+      ))}
     </div>
   );
 }
 
-const nodeTypes = { contact: ContactNode, user: ContactNode };
+function buildStructuralNodes(
+  layoutNodes: ReturnType<typeof buildHybridGraphLayout>["nodes"],
+  positionOverrides: PositionMap,
+  motionEnabled: boolean,
+  prefersReducedMotion: boolean
+): Node[] {
+  return layoutNodes.map((n) => {
+    if (n.type === "orbitRings") {
+      const rings = n.data as OrbitRingsData;
+      return {
+        ...n,
+        data: {
+          ...rings,
+          showLabels: true,
+          motionEnabled: motionEnabled && !prefersReducedMotion,
+        },
+      } as Node;
+    }
+    if (n.type === "user" || n.type === "clusterLabel") {
+      return {
+        ...n,
+        draggable: false,
+      } as Node;
+    }
+
+    const d = n.data as GraphNodeData;
+    const override = positionOverrides[n.id];
+    return {
+      ...n,
+      position: override || n.position,
+      draggable: true,
+      data: {
+        ...d,
+        motionEnabled,
+        motionPaused: Boolean(override),
+      },
+    } as Node;
+  });
+}
+
+function GraphCanvas(props: {
+  data: GraphPayload;
+  company: string;
+  tag: string;
+  minScore: string;
+  search: string;
+  grouping: GroupingMode;
+  labelMode: LabelMode;
+  linksMode: LinksMode;
+  motionEnabled: boolean;
+  positionOverrides: PositionMap;
+  onPositionOverridesChange: (next: PositionMap) => void;
+  selection: InspectSelection;
+  hoveredId: string | null;
+  onSelect: (selection: InspectSelection) => void;
+  onHover: (id: string | null) => void;
+  resetToken: number;
+}) {
+  const filteredContacts = useMemo(() => {
+    return props.data.contacts.filter((c) => {
+      if (props.company !== "all" && c.company !== props.company) return false;
+      if (props.tag !== "all" && !c.tags.includes(props.tag)) return false;
+      if ((c.relationshipScore || 0) < Number(props.minScore)) return false;
+      return true;
+    });
+  }, [props.data.contacts, props.company, props.tag, props.minScore]);
+
+  const layout = useMemo(() => {
+    return buildHybridGraphLayout(filteredContacts, props.data.summary.userName, {
+      grouping: props.grouping,
+    });
+  }, [filteredContacts, props.data.summary.userName, props.grouping]);
+
+  const layoutKey = useMemo(() => {
+    const ids = filteredContacts.map((c) => c.id).join(",");
+    return [
+      props.grouping,
+      props.company,
+      props.tag,
+      props.minScore,
+      props.resetToken,
+      ids,
+    ].join("|");
+  }, [
+    filteredContacts,
+    props.grouping,
+    props.company,
+    props.tag,
+    props.minScore,
+    props.resetToken,
+  ]);
+
+  return (
+    <GraphCanvasInner
+      key={layoutKey}
+      {...props}
+      filteredContacts={filteredContacts}
+      layout={layout}
+    />
+  );
+}
+
+function GraphCanvasInner({
+  company,
+  tag,
+  minScore,
+  search,
+  grouping,
+  labelMode,
+  linksMode,
+  motionEnabled,
+  positionOverrides,
+  onPositionOverridesChange,
+  selection,
+  hoveredId,
+  onSelect,
+  onHover,
+  filteredContacts,
+  layout,
+}: {
+  company: string;
+  tag: string;
+  minScore: string;
+  search: string;
+  grouping: GroupingMode;
+  labelMode: LabelMode;
+  linksMode: LinksMode;
+  motionEnabled: boolean;
+  positionOverrides: PositionMap;
+  onPositionOverridesChange: (next: PositionMap) => void;
+  selection: InspectSelection;
+  hoveredId: string | null;
+  onSelect: (selection: InspectSelection) => void;
+  onHover: (id: string | null) => void;
+  filteredContacts: GraphPayload["contacts"];
+  layout: ReturnType<typeof buildHybridGraphLayout>;
+}) {
+  const { fitView } = useReactFlow();
+  const draggingId = useRef<string | null>(null);
+  const orbitAngles = useRef<Map<string, number>>(new Map());
+  const [prefersReducedMotion] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  });
+
+  const [orbitNodes, setOrbitNodes] = useState<Node[]>(() =>
+    buildStructuralNodes(
+      layout.nodes,
+      positionOverrides,
+      motionEnabled,
+      typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    )
+  );
+
+  const focusCompany = useMemo(() => {
+    if (company !== "all") return company;
+    if (hoveredId && hoveredId !== "me") {
+      const node = layout.nodes.find((n) => n.id === hoveredId);
+      const d = node?.data as GraphNodeData | undefined;
+      return d?.company || null;
+    }
+    if (selection?.type === "contact") {
+      return selection.data.company || null;
+    }
+    return null;
+  }, [company, hoveredId, selection, layout.nodes]);
+
+  const searchQuery = search.trim().toLowerCase();
+
+  const nodes = useMemo(() => {
+    return orbitNodes.map((n) => {
+      if (n.type === "orbitRings") {
+        const rings = n.data as OrbitRingsData;
+        return {
+          ...n,
+          data: {
+            ...rings,
+            showLabels: true,
+            motionEnabled: motionEnabled && !prefersReducedMotion,
+          },
+        } as Node;
+      }
+      if (n.type === "user") {
+        return {
+          ...n,
+          selected: selection?.type === "user",
+        } as Node;
+      }
+      if (n.type === "clusterLabel") {
+        return n as Node;
+      }
+
+      const d = n.data as GraphNodeData;
+      const isHovered = hoveredId === n.id;
+      const isSelected = selection?.type === "contact" && selection.id === n.id;
+      const matchesSearch = contactMatchesSearch(d, searchQuery);
+      const spotlight = Boolean(searchQuery && matchesSearch);
+      const dimFromSearch = Boolean(searchQuery && !matchesSearch);
+      const dimFromFocus =
+        Boolean(hoveredId || selection?.type === "contact") &&
+        !isHovered &&
+        !isSelected;
+      const dim = dimFromSearch || dimFromFocus;
+      const hasOverride = Boolean(positionOverrides[n.id]);
+
+      return {
+        ...n,
+        selected: isSelected,
+        data: {
+          ...d,
+          labelMode,
+          motionEnabled,
+          motionPaused: isHovered || isSelected || hasOverride,
+          spotlight,
+        },
+        style: {
+          opacity: dim ? 0.18 : 1,
+          transition: "opacity 200ms ease",
+        },
+      } as Node;
+    });
+  }, [
+    orbitNodes,
+    hoveredId,
+    selection,
+    searchQuery,
+    labelMode,
+    motionEnabled,
+    prefersReducedMotion,
+    positionOverrides,
+  ]);
+
+  const edges = useMemo(() => {
+    const contactCount = filteredContacts.length;
+    const showPeerLinks =
+      linksMode === "on" ||
+      (linksMode === "auto" &&
+        (contactCount < HIGH_NODE_THRESHOLD || Boolean(focusCompany)));
+
+    return layout.edges
+      .filter((e) => {
+        const kind = e.data?.kind;
+        if (kind === "solar") return true;
+        if (kind !== "constellation" && kind !== "knows") return true;
+        if (linksMode === "off") return false;
+        if (!showPeerLinks) return false;
+        if (
+          linksMode === "auto" &&
+          contactCount >= HIGH_NODE_THRESHOLD &&
+          focusCompany
+        ) {
+          if (kind === "constellation") {
+            return e.data?.company === focusCompany;
+          }
+          // Keep knows edges that touch the focused company cluster
+          const sourceCo = (
+            layout.nodes.find((n) => n.id === e.source)?.data as GraphNodeData
+          )?.company;
+          const targetCo = (
+            layout.nodes.find((n) => n.id === e.target)?.data as GraphNodeData
+          )?.company;
+          return sourceCo === focusCompany || targetCo === focusCompany;
+        }
+        if (linksMode === "auto" && contactCount >= HIGH_NODE_THRESHOLD) {
+          return false;
+        }
+        return true;
+      })
+      .map((e) => {
+        const isSolar = e.data?.kind === "solar";
+        const relatedToHover =
+          hoveredId &&
+          (e.source === hoveredId ||
+            e.target === hoveredId ||
+            (isSolar && e.target === hoveredId));
+
+        const relatedToSelection =
+          selection?.type === "contact" &&
+          (e.source === selection.id || e.target === selection.id);
+
+        const dimOthers = Boolean(hoveredId || selection?.type === "contact");
+        const emphasized = relatedToHover || relatedToSelection;
+
+        let opacity = Number(e.style?.opacity ?? 0.5);
+        if (searchQuery) {
+          const targetData = layout.nodes.find((n) => n.id === e.target)
+            ?.data as GraphNodeData | undefined;
+          const sourceData = layout.nodes.find((n) => n.id === e.source)
+            ?.data as GraphNodeData | undefined;
+          const targetOk =
+            e.target === "me" ||
+            (targetData && contactMatchesSearch(targetData, searchQuery));
+          const sourceOk =
+            e.source === "me" ||
+            (sourceData && contactMatchesSearch(sourceData, searchQuery));
+          if (isSolar && !targetOk) opacity = 0.05;
+          if (!isSolar && !(sourceOk && targetOk)) opacity = 0.05;
+        }
+        if (dimOthers && !emphasized) {
+          opacity = Math.min(opacity, 0.08);
+        } else if (emphasized) {
+          opacity = Math.min(1, opacity + 0.35);
+        }
+
+        return {
+          ...e,
+          type: "straight" as const,
+          animated: false,
+          style: {
+            ...e.style,
+            opacity,
+            strokeWidth: emphasized
+              ? Number(e.style?.strokeWidth ?? 1) + 0.6
+              : e.style?.strokeWidth,
+          },
+        } as Edge;
+      });
+  }, [
+    layout.edges,
+    layout.nodes,
+    filteredContacts.length,
+    linksMode,
+    focusCompany,
+    hoveredId,
+    selection,
+    searchQuery,
+  ]);
+
+  // Orbital drift
+  useEffect(() => {
+    if (!motionEnabled || prefersReducedMotion) return;
+
+    let frame = 0;
+    let last = performance.now();
+
+    const tick = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const delta = ((ORBIT_DEG_PER_SEC * Math.PI) / 180) * dt;
+
+      setOrbitNodes((prev) => {
+        let changed = false;
+        const next = prev.map((n) => {
+          if (n.type !== "contact") return n;
+          if (positionOverrides[n.id]) return n;
+          if (draggingId.current === n.id) return n;
+          if (hoveredId === n.id) return n;
+          if (selection?.type === "contact" && selection.id === n.id) return n;
+
+          const d = n.data as GraphNodeData;
+          const radius = d.orbitRadius ?? Math.hypot(n.position.x, n.position.y);
+          let angle = orbitAngles.current.get(n.id);
+          if (angle === undefined) {
+            angle = Math.atan2(n.position.y, n.position.x);
+            orbitAngles.current.set(n.id, angle);
+          }
+          angle += delta;
+          orbitAngles.current.set(n.id, angle);
+          changed = true;
+          return {
+            ...n,
+            position: {
+              x: Math.cos(angle) * radius,
+              y: Math.sin(angle) * radius,
+            },
+            data: { ...d, orbitAngle: angle, orbitRadius: radius },
+          };
+        });
+        return changed ? next : prev;
+      });
+
+      frame = requestAnimationFrame(tick);
+    };
+
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [
+    motionEnabled,
+    prefersReducedMotion,
+    positionOverrides,
+    hoveredId,
+    selection,
+  ]);
+
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      if (searchQuery) {
+        const matchIds = nodes
+          .filter((n) => {
+            if (n.type !== "contact") return false;
+            return contactMatchesSearch(n.data as GraphNodeData, searchQuery);
+          })
+          .map((n) => n.id);
+        if (matchIds.length > 0) {
+          fitView({
+            nodes: matchIds.map((nid) => ({ id: nid })),
+            padding: 0.35,
+            duration: 400,
+          });
+          return;
+        }
+      }
+      fitView({ padding: 0.22, duration: 320 });
+    });
+    return () => cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fit on filter/search, not every orbit tick
+  }, [fitView, company, tag, minScore, searchQuery, grouping, filteredContacts.length]);
+
+  const onNodeClick: NodeMouseHandler = useCallback(
+    (_, node) => {
+      if (node.id === "rings" || node.type === "clusterLabel") return;
+      if (node.id === "me" || node.type === "user") {
+        const d = node.data as GraphNodeData;
+        const scoreCounts: Record<number, number> = {
+          1: 0,
+          2: 0,
+          3: 0,
+          4: 0,
+          5: 0,
+        };
+        const companySet = new Set<string>();
+        for (const c of filteredContacts) {
+          const s = Math.min(5, Math.max(1, c.relationshipScore || 2));
+          scoreCounts[s] = (scoreCounts[s] || 0) + 1;
+          if (c.company) companySet.add(c.company);
+        }
+        onSelect({
+          type: "user",
+          data: d,
+          summary: {
+            total: filteredContacts.length,
+            companyCount: companySet.size,
+            scoreCounts,
+          },
+        });
+        return;
+      }
+      onSelect({
+        type: "contact",
+        id: node.id,
+        data: node.data as GraphNodeData,
+      });
+    },
+    [onSelect, filteredContacts]
+  );
+
+  const onNodeMouseEnter: NodeMouseHandler = useCallback(
+    (_, node) => {
+      if (node.id === "rings" || node.id === "me") {
+        onHover(null);
+        return;
+      }
+      onHover(node.id);
+    },
+    [onHover]
+  );
+
+  const onNodeMouseLeave = useCallback(() => {
+    onHover(null);
+  }, [onHover]);
+
+  const onNodesChange: OnNodesChange = useCallback((changes) => {
+    setOrbitNodes((nds) => applyNodeChanges(changes, nds));
+  }, []);
+
+  const onNodeDragStart: OnNodeDrag = useCallback((_, node) => {
+    if (node.type === "contact") draggingId.current = node.id;
+  }, []);
+
+  const onNodeDragStop: OnNodeDrag = useCallback(
+    (_, node) => {
+      draggingId.current = null;
+      if (node.type !== "contact") return;
+      const next = {
+        ...positionOverrides,
+        [node.id]: { x: node.position.x, y: node.position.y },
+      };
+      onPositionOverridesChange(next);
+      const angle = Math.atan2(node.position.y, node.position.x);
+      const radius = Math.hypot(node.position.x, node.position.y);
+      orbitAngles.current.set(node.id, angle);
+      setOrbitNodes((prev) =>
+        prev.map((n) =>
+          n.id === node.id
+            ? {
+                ...n,
+                position: node.position,
+                data: {
+                  ...(n.data as GraphNodeData),
+                  orbitAngle: angle,
+                  orbitRadius: radius,
+                  motionPaused: true,
+                },
+              }
+            : n
+        )
+      );
+    },
+    [positionOverrides, onPositionOverridesChange]
+  );
+
+  const isEmpty = filteredContacts.length === 0;
+
+  return (
+    <>
+      <ReactFlow
+        nodes={nodes}
+        edges={isEmpty ? [] : edges}
+        onNodesChange={onNodesChange}
+        nodeTypes={nodeTypes}
+        fitView
+        nodeOrigin={[0.5, 0.5]}
+        minZoom={0.2}
+        maxZoom={2.2}
+        onNodeClick={onNodeClick}
+        onNodeMouseEnter={onNodeMouseEnter}
+        onNodeMouseLeave={onNodeMouseLeave}
+        onNodeDragStart={onNodeDragStart}
+        onNodeDragStop={onNodeDragStop}
+        onPaneClick={() => onSelect(null)}
+        proOptions={{ hideAttribution: true }}
+        defaultEdgeOptions={{
+          type: "straight",
+          selectable: false,
+          focusable: false,
+        }}
+        nodesDraggable
+        className="constellation-stage"
+      >
+        <Background
+          gap={48}
+          color="rgba(255, 255, 255, 0.03)"
+          size={1}
+          style={{ background: "transparent" }}
+        />
+        <Controls showInteractive={false} />
+        <MiniMap
+          pannable
+          zoomable
+          nodeColor={(n) => {
+            if (n.id === "me") return "#fff6d6";
+            if (n.type === "orbitRings" || n.type === "clusterLabel") {
+              return "transparent";
+            }
+            const score = (n.data as GraphNodeData)?.score || 2;
+            if (score >= 4) return "#ffffff";
+            return "#9aa8b8";
+          }}
+          maskColor="rgba(0, 0, 0, 0.72)"
+          className="!border !border-white/10 !bg-[#05070c]/90"
+        />
+      </ReactFlow>
+
+      {isEmpty && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="pointer-events-auto max-w-sm rounded-2xl border border-white/10 bg-[#080b12]/90 px-6 py-5 text-center shadow-xl backdrop-blur-md">
+            <p className="font-[family-name:var(--font-display)] text-lg text-white">
+              Your sky is empty
+            </p>
+            <p className="mt-1 text-sm text-white/55">
+              Add contacts and they will appear as stars in your constellation.
+            </p>
+            <Link
+              href="/contacts/new"
+              className="mt-4 inline-flex h-8 items-center rounded-lg bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/15"
+            >
+              Add a contact
+            </Link>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 export function NetworkGraph() {
-  const router = useRouter();
   const [data, setData] = useState<GraphPayload | null>(null);
   const [company, setCompany] = useState("all");
   const [tag, setTag] = useState("all");
   const [minScore, setMinScore] = useState("1");
+  const [search, setSearch] = useState("");
+  const [grouping, setGrouping] = useState<GroupingMode>("score");
+  const [labelMode, setLabelMode] = useState<LabelMode>("hover");
+  const [linksMode, setLinksMode] = useState<LinksMode>("auto");
+  const [motionEnabled, setMotionEnabled] = useState(false);
+  const [positionOverrides, setPositionOverrides] = useState<PositionMap>({});
+  const [resetToken, setResetToken] = useState(0);
+  const [selection, setSelection] = useState<InspectSelection>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
 
-  useEffect(() => {
-    getGraphData().then(setData).catch(console.error);
+  const loadData = useCallback(() => {
+    getGraphData()
+      .then((payload) => {
+        setData(payload);
+        const ids = new Set(payload.contacts.map((c) => c.id));
+        const loaded = loadPositions(payload.userId);
+        const cleaned: PositionMap = {};
+        for (const [id, pos] of Object.entries(loaded)) {
+          if (ids.has(id)) cleaned[id] = pos;
+        }
+        setPositionOverrides(cleaned);
+        if (Object.keys(cleaned).length !== Object.keys(loaded).length) {
+          savePositions(payload.userId, cleaned);
+        }
+      })
+      .catch(console.error);
   }, []);
 
-  const { nodes, edges } = useMemo(() => {
-    if (!data) return { nodes: [] as Node[], edges: [] as Edge[] };
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
-    const filtered = data.nodes.filter((n) => {
-      if (n.id === "me") return true;
-      const d = n.data as {
-        company?: string | null;
-        score?: number;
-        tags?: string[];
-      };
-      if (company !== "all" && d.company !== company) return false;
-      if (tag !== "all" && !(d.tags || []).includes(tag)) return false;
-      if ((d.score || 0) < Number(minScore)) return false;
-      return true;
-    });
-
-    const ids = new Set(filtered.map((n) => n.id));
-    return {
-      nodes: filtered as Node[],
-      edges: data.edges.filter((e) => ids.has(e.source) && ids.has(e.target)) as Edge[],
+  useEffect(() => {
+    const onFocus = () => loadData();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") loadData();
     };
-  }, [data, company, tag, minScore]);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [loadData]);
+
+  const userId = data?.userId;
+
+  const handlePositionOverridesChange = useCallback(
+    (next: PositionMap) => {
+      setPositionOverrides(next);
+      if (userId) savePositions(userId, next);
+    },
+    [userId]
+  );
+
+  const resetPositions = useCallback(() => {
+    setPositionOverrides({});
+    if (userId) {
+      try {
+        localStorage.removeItem(positionsStorageKey(userId));
+      } catch {
+        // ignore
+      }
+    }
+    setResetToken((t) => t + 1);
+  }, [userId]);
 
   if (!data) {
     return (
-      <div className="flex h-[560px] items-center justify-center rounded-2xl border border-border/70 bg-white text-muted-foreground">
-        Loading graph…
+      <div className="flex h-[min(78vh,720px)] items-center justify-center rounded-2xl border border-white/10 bg-[#05070c] text-white/50">
+        Loading constellation…
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
-      <div className="grid gap-3 rounded-2xl border border-border/70 bg-white p-4 sm:grid-cols-3">
+    <div className="space-y-3">
+      <div className="grid gap-3 rounded-2xl border border-[#0f3d3e]/15 bg-[#0f3d3e]/[0.04] p-4 backdrop-blur-sm sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+        <div className="space-y-1.5 sm:col-span-2 lg:col-span-2">
+          <Label htmlFor="graph-search" className="text-[#0f3d3e]">
+            Search spotlight
+          </Label>
+          <Input
+            id="graph-search"
+            placeholder="Name, company, tag…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="bg-white/90"
+          />
+        </div>
         <div className="space-y-1.5">
-          <Label>Company</Label>
+          <Label className="text-[#0f3d3e]">Company</Label>
           <Select value={company} onValueChange={(v) => setCompany(v || "all")}>
-            <SelectTrigger className="w-full">
+            <SelectTrigger className="w-full bg-white/90">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -113,9 +840,9 @@ export function NetworkGraph() {
           </Select>
         </div>
         <div className="space-y-1.5">
-          <Label>Tag</Label>
+          <Label className="text-[#0f3d3e]">Tag</Label>
           <Select value={tag} onValueChange={(v) => setTag(v || "all")}>
-            <SelectTrigger className="w-full">
+            <SelectTrigger className="w-full bg-white/90">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -129,9 +856,9 @@ export function NetworkGraph() {
           </Select>
         </div>
         <div className="space-y-1.5">
-          <Label>Min closeness</Label>
+          <Label className="text-[#0f3d3e]">Min closeness</Label>
           <Select value={minScore} onValueChange={(v) => setMinScore(v || "1")}>
-            <SelectTrigger className="w-full">
+            <SelectTrigger className="w-full bg-white/90">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -142,24 +869,103 @@ export function NetworkGraph() {
             </SelectContent>
           </Select>
         </div>
+        <div className="space-y-1.5">
+          <Label className="text-[#0f3d3e]">Orbit grouping</Label>
+          <Select
+            value={grouping}
+            onValueChange={(v) => setGrouping((v as GroupingMode) || "score")}
+          >
+            <SelectTrigger className="w-full bg-white/90">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="score">Score rings</SelectItem>
+              <SelectItem value="company">Company clusters</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-[#0f3d3e]">Labels</Label>
+          <Select
+            value={labelMode}
+            onValueChange={(v) => setLabelMode((v as LabelMode) || "hover")}
+          >
+            <SelectTrigger className="w-full bg-white/90">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="hover">Dim until hover</SelectItem>
+              <SelectItem value="always">Always bright</SelectItem>
+              <SelectItem value="never">Never</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-[#0f3d3e]">Connection lines</Label>
+          <Select
+            value={linksMode}
+            onValueChange={(v) => setLinksMode((v as LinksMode) || "auto")}
+          >
+            <SelectTrigger className="w-full bg-white/90">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Auto</SelectItem>
+              <SelectItem value="on">Always on</SelectItem>
+              <SelectItem value="off">Off</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
-      <div className="h-[560px] overflow-hidden rounded-2xl border border-border/70 bg-[#f7f8f6]">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={nodeTypes}
-          fitView
-          onNodeClick={(_, node) => {
-            if (node.id !== "me") router.push(`/contacts/${node.id}`);
-          }}
-          proOptions={{ hideAttribution: true }}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          variant={motionEnabled ? "default" : "outline"}
+          size="sm"
+          className={cn(
+            motionEnabled && "bg-[#0f3d3e] text-white hover:bg-[#0c3233]"
+          )}
+          onClick={() => setMotionEnabled((m) => !m)}
         >
-          <Background gap={20} color="#e4e7e1" />
-          <Controls />
-          <MiniMap pannable zoomable />
-        </ReactFlow>
+          Orbit motion {motionEnabled ? "on" : "off"}
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={resetPositions}>
+          Reset positions
+        </Button>
+        <p className="text-xs text-muted-foreground">
+          Drag planets to rearrange · positions save locally
+        </p>
       </div>
+
+      <div className="relative h-[min(78vh,720px)] overflow-hidden rounded-2xl border border-white/10 bg-[#03050a] shadow-[inset_0_0_120px_rgba(0,0,0,0.65)]">
+        <Starfield />
+        <ReactFlowProvider>
+          <GraphCanvas
+            data={data}
+            company={company}
+            tag={tag}
+            minScore={minScore}
+            search={search}
+            grouping={grouping}
+            labelMode={labelMode}
+            linksMode={linksMode}
+            motionEnabled={motionEnabled}
+            positionOverrides={positionOverrides}
+            onPositionOverridesChange={handlePositionOverridesChange}
+            selection={selection}
+            hoveredId={hoveredId}
+            onSelect={setSelection}
+            onHover={setHoveredId}
+            resetToken={resetToken}
+          />
+        </ReactFlowProvider>
+      </div>
+
+      <ContactInspectPanel
+        selection={selection}
+        onClose={() => setSelection(null)}
+      />
     </div>
   );
 }

@@ -1,7 +1,14 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
-import { aiSuggestions, contacts, reminders } from "@/db/schema";
+import { aiSuggestions, contacts, interactions, reminders } from "@/db/schema";
 import { daysAgo } from "@/lib/duplicates";
+
+const AUTO_SUGGESTION_TYPES = [
+  "overdue_follow_up",
+  "dormant_high_value",
+  "post_event",
+  "linkedin_thread_quiet",
+] as const;
 
 export async function refreshOutreachSuggestions(userId: string) {
   const db = await getDb();
@@ -10,10 +17,15 @@ export async function refreshOutreachSuggestions(userId: string) {
   });
 
   // Clear pending auto suggestions so we regenerate fresh ones
+  // (preserve user-facing AI suggestions like score_bump from enrichment)
   await db
     .delete(aiSuggestions)
     .where(
-      and(eq(aiSuggestions.userId, userId), eq(aiSuggestions.status, "pending"))
+      and(
+        eq(aiSuggestions.userId, userId),
+        eq(aiSuggestions.status, "pending"),
+        inArray(aiSuggestions.suggestionType, [...AUTO_SUGGESTION_TYPES])
+      )
     );
 
   const suggestions: Array<{
@@ -52,6 +64,47 @@ export async function refreshOutreachSuggestions(userId: string) {
       description: "High-priority or close contacts with no recent interaction.",
       relatedContactIds: dormantHighValue.map((c) => c.id),
       confidenceScore: 80,
+    });
+  }
+
+  // Active LinkedIn threads that went quiet (had message activity, then silence)
+  const withMessageHistory = await db.query.interactions.findMany({
+    where: and(
+      eq(interactions.userId, userId),
+      eq(interactions.interactionType, "linkedin_message")
+    ),
+  });
+  const messageStats = new Map<
+    string,
+    { count: number; last: Date; first: Date }
+  >();
+  for (const m of withMessageHistory) {
+    const d = m.interactionDate || m.createdAt;
+    const prev = messageStats.get(m.contactId);
+    if (!prev) {
+      messageStats.set(m.contactId, { count: 1, last: d, first: d });
+    } else {
+      prev.count += 1;
+      if (d > prev.last) prev.last = d;
+      if (d < prev.first) prev.first = d;
+    }
+  }
+
+  const quietThreads = all.filter((c) => {
+    const stats = messageStats.get(c.id);
+    if (!stats || stats.count < 2) return false;
+    const daysSinceLast = daysAgo(stats.last);
+    // Had a real back-and-forth, last message 14–90 days ago
+    return daysSinceLast >= 14 && daysSinceLast <= 90;
+  });
+  if (quietThreads.length) {
+    suggestions.push({
+      suggestionType: "linkedin_thread_quiet",
+      title: `${quietThreads.length} LinkedIn thread${quietThreads.length > 1 ? "s" : ""} gone quiet`,
+      description:
+        "People you messaged with who haven't had activity in a couple weeks.",
+      relatedContactIds: quietThreads.map((c) => c.id),
+      confidenceScore: 78,
     });
   }
 

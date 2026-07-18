@@ -4,7 +4,7 @@ function normalize(s: string | null | undefined) {
   return (s || "").trim().toLowerCase();
 }
 
-function linkedinSlug(url: string | null | undefined) {
+export function linkedinSlug(url: string | null | undefined) {
   if (!url) return "";
   const match = url.match(/linkedin\.com\/in\/([^/?#]+)/i);
   return match ? match[1].toLowerCase() : normalize(url);

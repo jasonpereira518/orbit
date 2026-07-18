@@ -11,18 +11,18 @@ type Db =
   | ReturnType<typeof drizzlePglite<typeof schema>>;
 
 const globalForDb = globalThis as unknown as {
-  orbitDb?: Db;
   orbitPglite?: PGlite;
+  orbitNeonSql?: ReturnType<typeof neon>;
   orbitMigrated?: boolean;
-  orbitInit?: Promise<Db>;
+  orbitReady?: Promise<void>;
 };
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS user_settings (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL UNIQUE,
-  openai_api_key_encrypted text,
-  ai_model text DEFAULT 'gpt-4o-mini',
+  gemini_api_key_encrypted text,
+  ai_model text DEFAULT 'gemini-3.5-flash',
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -32,12 +32,14 @@ CREATE TABLE IF NOT EXISTS contacts (
   full_name text NOT NULL,
   first_name text,
   last_name text,
+  preferred_name text,
   company text,
   title text,
   location text,
   email text,
   phone text,
   linkedin_url text,
+  website text,
   profile_image_url text,
   relationship_score integer NOT NULL DEFAULT 2,
   priority_level integer NOT NULL DEFAULT 0,
@@ -129,18 +131,59 @@ CREATE TABLE IF NOT EXISTS contact_embeddings (
 );
 `;
 
-async function initDb(): Promise<Db> {
+async function columnExists(client: PGlite, table: string, column: string) {
+  const result = await client.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = $1
+         AND column_name = $2
+     ) AS exists`,
+    [table, column]
+  );
+  return Boolean(result.rows[0]?.exists);
+}
+
+async function ensureColumn(
+  client: PGlite,
+  table: string,
+  column: string,
+  definition: string
+) {
+  if (await columnExists(client, table, column)) return;
+  await client.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+async function migratePglite(client: PGlite) {
+  await client.exec(DDL);
+
+  // Older local DBs used an OpenAI key column name
+  if (await columnExists(client, "user_settings", "openai_api_key_encrypted")) {
+    if (!(await columnExists(client, "user_settings", "gemini_api_key_encrypted"))) {
+      await client.exec(
+        `ALTER TABLE user_settings RENAME COLUMN openai_api_key_encrypted TO gemini_api_key_encrypted`
+      );
+    }
+  }
+
+  // Columns added after the first local DB was created
+  await ensureColumn(client, "contacts", "preferred_name", "text");
+  await ensureColumn(client, "contacts", "website", "text");
+}
+
+async function ensureReady(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
 
   if (databaseUrl) {
-    const sql = neon(databaseUrl);
-    return drizzleNeon(sql, { schema });
+    if (!globalForDb.orbitNeonSql) {
+      globalForDb.orbitNeonSql = neon(databaseUrl);
+    }
+    return;
   }
 
-  const dataDir = path.join(process.cwd(), ".data", "pglite");
-  fs.mkdirSync(dataDir, { recursive: true });
-
   if (!globalForDb.orbitPglite) {
+    const dataDir = path.join(process.cwd(), ".data", "pglite");
+    fs.mkdirSync(dataDir, { recursive: true });
     // Absolute string path — requires serverExternalPackages for @electric-sql/pglite
     globalForDb.orbitPglite = await PGlite.create({ dataDir });
   }
@@ -148,30 +191,25 @@ async function initDb(): Promise<Db> {
   const client = globalForDb.orbitPglite;
   await client.waitReady;
 
-  if (!globalForDb.orbitMigrated) {
-    await client.exec(DDL);
-    globalForDb.orbitMigrated = true;
-  }
-
-  return drizzlePglite(client, { schema });
+  // Always reconcile schema so HMR / older .data dirs pick up new columns
+  await migratePglite(client);
+  globalForDb.orbitMigrated = true;
 }
 
-export async function getDb() {
-  if (globalForDb.orbitDb) return globalForDb.orbitDb;
-
-  if (!globalForDb.orbitInit) {
-    globalForDb.orbitInit = initDb()
-      .then((db) => {
-        globalForDb.orbitDb = db;
-        return db;
-      })
-      .catch((err) => {
-        globalForDb.orbitInit = undefined;
-        throw err;
-      });
+export async function getDb(): Promise<Db> {
+  if (!globalForDb.orbitReady) {
+    globalForDb.orbitReady = ensureReady().catch((err) => {
+      globalForDb.orbitReady = undefined;
+      throw err;
+    });
   }
+  await globalForDb.orbitReady;
 
-  return globalForDb.orbitInit;
+  // Rebuild the drizzle wrapper each call so schema HMR picks up new relations.
+  if (globalForDb.orbitNeonSql) {
+    return drizzleNeon(globalForDb.orbitNeonSql, { schema });
+  }
+  return drizzlePglite(globalForDb.orbitPglite!, { schema });
 }
 
 export { schema };

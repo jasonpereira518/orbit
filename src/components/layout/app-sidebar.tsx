@@ -21,7 +21,7 @@ const nav = [
   { href: "/capture", label: "Capture", icon: Sparkles },
   { href: "/imports", label: "Imports", icon: Upload },
   { href: "/chat", label: "Chat", icon: MessageSquare },
-  { href: "/graph", label: "Graph", icon: Network },
+  { href: "/graph", label: "Constellation", icon: Network },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

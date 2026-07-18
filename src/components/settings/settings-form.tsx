@@ -18,7 +18,7 @@ export function SettingsForm() {
     null
   );
   const [apiKey, setApiKey] = useState("");
-  const [model, setModel] = useState("gpt-4o-mini");
+  const [model, setModel] = useState("gemini-3.5-flash");
   const [pending, start] = useTransition();
 
   useEffect(() => {
@@ -34,8 +34,8 @@ export function SettingsForm() {
         <div>
           <h2 className="text-lg font-medium text-[#0f3d3e]">AI provider</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Bring your own OpenAI key (encrypted at rest). Or set{" "}
-            <code className="text-xs">OPENAI_API_KEY</code> on the server for demos.
+            Bring your own Gemini key (encrypted at rest). Or set{" "}
+            <code className="text-xs">GEMINI_API_KEY</code> on the server for demos.
           </p>
         </div>
         {settings && (
@@ -49,11 +49,11 @@ export function SettingsForm() {
           </p>
         )}
         <div className="space-y-1.5">
-          <Label htmlFor="key">OpenAI API key</Label>
+          <Label htmlFor="key">Gemini API key</Label>
           <Input
             id="key"
             type="password"
-            placeholder="sk-..."
+            placeholder="AIza..."
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
           />

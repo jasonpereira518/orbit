@@ -70,8 +70,13 @@ export async function semanticSearchContacts(
       let score = scoreByContact.get(c.id) ?? 0;
       const haystack = [
         c.fullName,
+        c.preferredName,
         c.company,
         c.title,
+        c.location,
+        c.email,
+        c.phone,
+        c.website,
         c.aiSummary,
         c.notes,
         c.industry,
@@ -113,8 +118,14 @@ export async function rebuildContactEmbedding(userId: string, contactId: string)
 
   const content = [
     contact.fullName,
+    contact.preferredName,
     contact.title,
     contact.company,
+    contact.location,
+    contact.email,
+    contact.phone,
+    contact.linkedinUrl,
+    contact.website,
     contact.aiSummary,
     contact.notes,
     contact.howMet,

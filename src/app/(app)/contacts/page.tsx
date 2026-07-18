@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { listContacts } from "@/actions/contacts";
-import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { ContactsFilters } from "@/components/contacts/contacts-filters";
+import { ContactsList } from "@/components/contacts/contacts-list";
 import { cn } from "@/lib/utils";
 
 export default async function ContactsPage({
@@ -56,55 +56,19 @@ export default async function ContactsPage({
       />
 
       <div className="overflow-hidden rounded-2xl border border-border/70 bg-white">
-        {contacts.length === 0 ? (
-          <div className="p-10 text-center text-muted-foreground">
-            No contacts yet.{" "}
-            <Link href="/capture" className="text-[#0f3d3e] underline">
-              Capture notes
-            </Link>{" "}
-            or{" "}
-            <Link href="/imports" className="text-[#0f3d3e] underline">
-              import LinkedIn
-            </Link>
-            .
-          </div>
-        ) : (
-          <ul className="divide-y divide-border/60">
-            {contacts.map((c) => (
-              <li key={c.id}>
-                <Link
-                  href={`/contacts/${c.id}`}
-                  className="flex items-center justify-between gap-4 px-5 py-4 transition-colors hover:bg-muted/40"
-                >
-                  <div className="min-w-0">
-                    <p className="font-medium text-[#0f3d3e]">{c.fullName}</p>
-                    <p className="truncate text-sm text-muted-foreground">
-                      {[c.title, c.company].filter(Boolean).join(" · ") ||
-                        "No role yet"}
-                    </p>
-                    {c.tags.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {c.tags.slice(0, 4).map((t) => (
-                          <Badge key={t} variant="secondary" className="text-[10px]">
-                            {t}
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 flex-col items-end gap-1">
-                    <Badge variant="outline">Score {c.relationshipScore}</Badge>
-                    {c.priorityLevel > 0 && (
-                      <span className="text-[10px] uppercase tracking-wide text-[#c4a35a]">
-                        Priority {c.priorityLevel}
-                      </span>
-                    )}
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
+        <ContactsList
+          key={[params.q, params.company, params.minScore].join("|")}
+          initialContacts={contacts.map((c) => ({
+            id: c.id,
+            fullName: c.fullName,
+            preferredName: c.preferredName,
+            title: c.title,
+            company: c.company,
+            relationshipScore: c.relationshipScore,
+            priorityLevel: c.priorityLevel,
+            tags: c.tags,
+          }))}
+        />
       </div>
     </div>
   );

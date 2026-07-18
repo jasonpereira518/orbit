@@ -8,7 +8,7 @@ export default function ChatPage() {
           Chat with your network
         </h1>
         <p className="mt-1 text-muted-foreground">
-          Ask who can help — answers cite real contacts only, never invented people.
+          Ask who can help, or upload notes to create and update many contacts at once.
         </p>
       </div>
       <ChatPanel />

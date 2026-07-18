@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import { GoogleGenAI } from "@google/genai";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
@@ -29,17 +29,43 @@ export const noteParseSchema = z.object({
 
 export type ParsedNote = z.infer<typeof noteParseSchema>;
 
-export async function getOpenAIClient(userId: string) {
+export const multiPersonNoteParseSchema = z.object({
+  people: z.array(
+    noteParseSchema.extend({
+      source_excerpt: z.string(),
+    })
+  ),
+});
+
+export type ParsedMultiPersonNotes = z.infer<typeof multiPersonNoteParseSchema>;
+export type ParsedPersonNote = ParsedMultiPersonNotes["people"][number];
+
+const DEFAULT_MODEL = "gemini-3.5-flash";
+const EMBEDDING_MODEL = "gemini-embedding-001";
+
+/** Models retired for new API keys — remap to current Flash. */
+const LEGACY_MODEL_MAP: Record<string, string> = {
+  "gemini-2.5-flash": DEFAULT_MODEL,
+  "gemini-2.5-flash-lite": "gemini-3.1-flash-lite",
+  "gpt-4o-mini": DEFAULT_MODEL,
+};
+
+export function resolveGeminiModel(model?: string | null) {
+  const requested = model?.trim() || DEFAULT_MODEL;
+  return LEGACY_MODEL_MAP[requested] || requested;
+}
+
+export async function getGeminiClient(userId: string) {
   const db = await getDb();
   const settings = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
   });
 
-  let apiKey = process.env.OPENAI_API_KEY;
+  let apiKey = process.env.GEMINI_API_KEY;
 
-  if (settings?.openaiApiKeyEncrypted) {
+  if (settings?.geminiApiKeyEncrypted) {
     try {
-      apiKey = decrypt(settings.openaiApiKeyEncrypted);
+      apiKey = decrypt(settings.geminiApiKeyEncrypted);
     } catch {
       // fall back to env
     }
@@ -47,13 +73,13 @@ export async function getOpenAIClient(userId: string) {
 
   if (!apiKey) {
     throw new Error(
-      "No OpenAI API key configured. Add one in Settings or set OPENAI_API_KEY."
+      "No Gemini API key configured. Add one in Settings or set GEMINI_API_KEY."
     );
   }
 
   return {
-    client: new OpenAI({ apiKey }),
-    model: settings?.aiModel || "gpt-4o-mini",
+    client: new GoogleGenAI({ apiKey }),
+    model: resolveGeminiModel(settings?.aiModel),
   };
 }
 
@@ -61,16 +87,15 @@ export async function parseNotesWithAI(
   userId: string,
   notes: string
 ): Promise<ParsedNote> {
-  const { client, model } = await getOpenAIClient(userId);
+  const { client, model } = await getGeminiClient(userId);
 
-  const response = await client.chat.completions.create({
+  const response = await client.models.generateContent({
     model,
-    temperature: 0.2,
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content: `You extract structured contact data from networking notes.
+    contents: notes,
+    config: {
+      temperature: 0.2,
+      responseMimeType: "application/json",
+      systemInstruction: `You extract structured contact data from networking notes.
 Return strict JSON matching this shape:
 {
   "name": string|null,
@@ -98,25 +123,84 @@ Rules:
 - Use null when unknown. Do not invent facts.
 - Separate facts from guesses; suggestions go in recommendation fields.
 - relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.`,
-      },
-      { role: "user", content: notes },
-    ],
+    },
   });
 
-  const content = response.choices[0]?.message?.content;
+  const content = response.text;
   if (!content) throw new Error("Empty AI response");
 
   const parsed = noteParseSchema.parse(JSON.parse(content));
   return parsed;
 }
 
-export async function createEmbedding(userId: string, text: string) {
-  const { client } = await getOpenAIClient(userId);
-  const res = await client.embeddings.create({
-    model: "text-embedding-3-small",
-    input: text.slice(0, 8000),
+export async function parseMultiPersonNotesWithAI(
+  userId: string,
+  notes: string
+): Promise<ParsedMultiPersonNotes> {
+  const { client, model } = await getGeminiClient(userId);
+
+  const response = await client.models.generateContent({
+    model,
+    contents: notes.slice(0, 100_000),
+    config: {
+      temperature: 0.2,
+      responseMimeType: "application/json",
+      systemInstruction: `You extract structured contact data from networking notes that may mention many people.
+Return strict JSON matching this shape:
+{
+  "people": [
+    {
+      "name": string|null,
+      "company": string|null,
+      "role": string|null,
+      "location": string|null,
+      "email": string|null,
+      "linkedin_url": string|null,
+      "met_at": string|null,
+      "topics": string[],
+      "action_items": string[],
+      "follow_up_recommendation": string|null,
+      "follow_up_days": number|null,
+      "relationship_score_suggestion": 1-5|null,
+      "tags": string[],
+      "summary": string|null,
+      "key_facts": string[],
+      "opportunities": string[],
+      "shared_interests": string[],
+      "suggested_next_message": string|null,
+      "confidence": 0-1|null,
+      "source_excerpt": string
+    }
+  ]
+}
+Rules:
+- Create one object per distinct person clearly mentioned in the notes.
+- Skip vague groups ("a few engineers") with no identifiable person.
+- Extract only information supported by the notes. Use null when unknown. Do not invent people or facts.
+- source_excerpt must be the relevant slice of the original notes for that person (not the whole dump).
+- relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.
+- If the notes only cover one person, return a single-item people array.`,
+    },
   });
-  return res.data[0].embedding;
+
+  const content = response.text;
+  if (!content) throw new Error("Empty AI response");
+
+  const parsed = multiPersonNoteParseSchema.parse(JSON.parse(content));
+  return {
+    people: parsed.people.filter((p) => p.name?.trim()),
+  };
+}
+
+export async function createEmbedding(userId: string, text: string) {
+  const { client } = await getGeminiClient(userId);
+  const res = await client.models.embedContent({
+    model: EMBEDDING_MODEL,
+    contents: text.slice(0, 8000),
+  });
+  const values = res.embeddings?.[0]?.values;
+  if (!values?.length) throw new Error("Empty embedding response");
+  return values;
 }
 
 export function cosineSimilarity(a: number[], b: number[]) {
@@ -148,7 +232,7 @@ export async function chatWithNetwork(
     relevance: number;
   }>
 ) {
-  const { client, model } = await getOpenAIClient(userId);
+  const { client, model } = await getGeminiClient(userId);
 
   const contextBlock = contactsContext
     .map(
@@ -157,14 +241,13 @@ export async function chatWithNetwork(
     )
     .join("\n\n");
 
-  const response = await client.chat.completions.create({
+  const response = await client.models.generateContent({
     model,
-    temperature: 0.3,
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content: `You are Orbit, a personal networking assistant.
+    contents: `Question: ${question}\n\nContacts:\n${contextBlock || "(no contacts found)"}`,
+    config: {
+      temperature: 0.3,
+      responseMimeType: "application/json",
+      systemInstruction: `You are Orbit, a personal networking assistant.
 Answer ONLY using the provided contacts. Never invent people.
 Return JSON:
 {
@@ -180,15 +263,10 @@ Return JSON:
   ]
 }
 Only use contact_ids from the provided list.`,
-      },
-      {
-        role: "user",
-        content: `Question: ${question}\n\nContacts:\n${contextBlock || "(no contacts found)"}`,
-      },
-    ],
+    },
   });
 
-  const content = response.choices[0]?.message?.content;
+  const content = response.text;
   if (!content) throw new Error("Empty AI response");
   return JSON.parse(content) as {
     answer: string;

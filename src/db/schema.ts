@@ -12,8 +12,8 @@ import { relations } from "drizzle-orm";
 export const userSettings = pgTable("user_settings", {
   id: uuid("id").defaultRandom().primaryKey(),
   userId: text("user_id").notNull().unique(),
-  openaiApiKeyEncrypted: text("openai_api_key_encrypted"),
-  aiModel: text("ai_model").default("gpt-4o-mini"),
+  geminiApiKeyEncrypted: text("gemini_api_key_encrypted"),
+  aiModel: text("ai_model").default("gemini-3.5-flash"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -26,12 +26,14 @@ export const contacts = pgTable(
     fullName: text("full_name").notNull(),
     firstName: text("first_name"),
     lastName: text("last_name"),
+    preferredName: text("preferred_name"),
     company: text("company"),
     title: text("title"),
     location: text("location"),
     email: text("email"),
     phone: text("phone"),
     linkedinUrl: text("linkedin_url"),
+    website: text("website"),
     profileImageUrl: text("profile_image_url"),
     relationshipScore: integer("relationship_score").default(2).notNull(),
     priorityLevel: integer("priority_level").default(0).notNull(),
@@ -207,6 +209,23 @@ export const interactionsRelations = relations(interactions, ({ one }) => ({
     references: [contacts.id],
   }),
 }));
+
+export const remindersRelations = relations(reminders, ({ one }) => ({
+  contact: one(contacts, {
+    fields: [reminders.contactId],
+    references: [contacts.id],
+  }),
+}));
+
+export const contactEmbeddingsRelations = relations(
+  contactEmbeddings,
+  ({ one }) => ({
+    contact: one(contacts, {
+      fields: [contactEmbeddings.contactId],
+      references: [contacts.id],
+    }),
+  })
+);
 
 export type Contact = typeof contacts.$inferSelect;
 export type NewContact = typeof contacts.$inferInsert;

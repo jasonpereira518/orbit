@@ -15,7 +15,10 @@ import {
   userSettings,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { encrypt, decrypt } from "@/lib/crypto";
+import { encrypt } from "@/lib/crypto";
+import { resolveGeminiModel } from "@/lib/ai";
+
+const DEFAULT_MODEL = "gemini-3.5-flash";
 
 export async function getSettings() {
   const userId = await requireUserId();
@@ -25,9 +28,10 @@ export async function getSettings() {
   });
 
   return {
-    hasApiKey: Boolean(settings?.openaiApiKeyEncrypted),
-    aiModel: settings?.aiModel || "gpt-4o-mini",
-    usingEnvKey: Boolean(process.env.OPENAI_API_KEY) && !settings?.openaiApiKeyEncrypted,
+    hasApiKey: Boolean(settings?.geminiApiKeyEncrypted),
+    aiModel: resolveGeminiModel(settings?.aiModel),
+    usingEnvKey:
+      Boolean(process.env.GEMINI_API_KEY) && !settings?.geminiApiKeyEncrypted,
   };
 }
 
@@ -44,16 +48,16 @@ export async function saveApiKey(apiKey: string, aiModel?: string) {
     await db
       .update(userSettings)
       .set({
-        openaiApiKeyEncrypted: encrypted ?? existing.openaiApiKeyEncrypted,
-        aiModel: aiModel || existing.aiModel,
+        geminiApiKeyEncrypted: encrypted ?? existing.geminiApiKeyEncrypted,
+        aiModel: resolveGeminiModel(aiModel || existing.aiModel),
         updatedAt: new Date(),
       })
       .where(eq(userSettings.userId, userId));
   } else {
     await db.insert(userSettings).values({
       userId,
-      openaiApiKeyEncrypted: encrypted,
-      aiModel: aiModel || "gpt-4o-mini",
+      geminiApiKeyEncrypted: encrypted,
+      aiModel: resolveGeminiModel(aiModel || DEFAULT_MODEL),
     });
   }
 
@@ -66,7 +70,7 @@ export async function clearApiKey() {
   const db = await getDb();
   await db
     .update(userSettings)
-    .set({ openaiApiKeyEncrypted: null, updatedAt: new Date() })
+    .set({ geminiApiKeyEncrypted: null, updatedAt: new Date() })
     .where(eq(userSettings.userId, userId));
   revalidatePath("/settings");
 }
@@ -131,6 +135,3 @@ export async function deleteAllData() {
   revalidatePath("/contacts");
   revalidatePath("/settings");
 }
-
-// silence unused import warning for decrypt in case we add verify later
-void decrypt;

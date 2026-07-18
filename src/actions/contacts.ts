@@ -17,12 +17,14 @@ export type ContactInput = {
   fullName: string;
   firstName?: string;
   lastName?: string;
+  preferredName?: string;
   company?: string;
   title?: string;
   location?: string;
   email?: string;
   phone?: string;
   linkedinUrl?: string;
+  website?: string;
   relationshipScore?: number;
   priorityLevel?: number;
   source?: string;
@@ -82,7 +84,19 @@ export async function listContacts(filters?: {
   if (filters?.q) {
     const q = filters.q.toLowerCase();
     rows = rows.filter((c) =>
-      [c.fullName, c.company, c.title, c.email, c.aiSummary, c.notes]
+      [
+        c.fullName,
+        c.preferredName,
+        c.company,
+        c.title,
+        c.email,
+        c.phone,
+        c.location,
+        c.howMet,
+        c.website,
+        c.aiSummary,
+        c.notes,
+      ]
         .filter(Boolean)
         .some((v) => v!.toLowerCase().includes(q))
     );
@@ -135,12 +149,14 @@ export async function createContact(input: ContactInput) {
       fullName: input.fullName,
       firstName: input.firstName,
       lastName: input.lastName,
+      preferredName: input.preferredName,
       company: input.company,
       title: input.title,
       location: input.location,
       email: input.email,
       phone: input.phone,
       linkedinUrl: input.linkedinUrl,
+      website: input.website,
       relationshipScore: input.relationshipScore ?? 2,
       priorityLevel: input.priorityLevel ?? 0,
       source: input.source ?? "manual",
@@ -179,6 +195,9 @@ export async function updateContact(id: string, input: Partial<ContactInput>) {
       ...(input.fullName !== undefined ? { fullName: input.fullName } : {}),
       ...(input.firstName !== undefined ? { firstName: input.firstName } : {}),
       ...(input.lastName !== undefined ? { lastName: input.lastName } : {}),
+      ...(input.preferredName !== undefined
+        ? { preferredName: input.preferredName }
+        : {}),
       ...(input.company !== undefined ? { company: input.company } : {}),
       ...(input.title !== undefined ? { title: input.title } : {}),
       ...(input.location !== undefined ? { location: input.location } : {}),
@@ -187,6 +206,7 @@ export async function updateContact(id: string, input: Partial<ContactInput>) {
       ...(input.linkedinUrl !== undefined
         ? { linkedinUrl: input.linkedinUrl }
         : {}),
+      ...(input.website !== undefined ? { website: input.website } : {}),
       ...(input.relationshipScore !== undefined
         ? { relationshipScore: input.relationshipScore }
         : {}),

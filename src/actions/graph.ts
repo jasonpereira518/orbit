@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { requireUserId, getCurrentUserProfile } from "@/lib/auth";
-import { daysAgo } from "@/lib/duplicates";
+import { buildHybridGraphLayout } from "@/lib/graph-layout";
 
 export async function getGraphData() {
   const userId = await requireUserId();
@@ -16,51 +16,54 @@ export async function getGraphData() {
     with: { contactTags: { with: { tag: true } } },
   });
 
-  const nodes = [
-    {
-      id: "me",
-      type: "user",
-      data: {
-        label: profile.name,
-        kind: "user" as const,
-      },
-      position: { x: 0, y: 0 },
-    },
-    ...rows.map((c, i) => {
-      const angle = (i / Math.max(rows.length, 1)) * Math.PI * 2;
-      const radius = 180 + (6 - (c.relationshipScore || 2)) * 40;
-      const dormant = daysAgo(c.lastInteractionAt) > 45;
-      return {
-        id: c.id,
-        type: "contact",
-        data: {
-          label: c.fullName,
-          company: c.company,
-          score: c.relationshipScore,
-          dormant,
-          kind: "contact" as const,
-          tags: c.contactTags.map((ct) => ct.tag.name),
-        },
-        position: {
-          x: Math.cos(angle) * radius,
-          y: Math.sin(angle) * radius,
-        },
-      };
-    }),
-  ];
-
-  const edges = rows.map((c) => ({
-    id: `me-${c.id}`,
-    source: "me",
-    target: c.id,
-    animated: (c.relationshipScore || 0) >= 4,
-    style: {
-      strokeWidth: Math.max(1, (c.relationshipScore || 1) / 2),
-      opacity: daysAgo(c.lastInteractionAt) > 45 ? 0.25 : 0.7,
-    },
+  const graphContacts = rows.map((c) => ({
+    id: c.id,
+    fullName: c.fullName,
+    preferredName: c.preferredName,
+    company: c.company,
+    title: c.title,
+    relationshipScore: c.relationshipScore,
+    lastInteractionAt: c.lastInteractionAt,
+    nextFollowUpAt: c.nextFollowUpAt,
+    tags: c.contactTags.map((ct) => ct.tag.name),
+    aiSummary: c.aiSummary,
+    keyFacts: c.keyFacts,
+    howMet: c.howMet,
+    notes: c.notes,
+    sharedInterests: c.sharedInterests,
   }));
 
-  const companies = [...new Set(rows.map((c) => c.company).filter(Boolean))] as string[];
+  const { nodes, edges } = buildHybridGraphLayout(
+    graphContacts,
+    profile.name || "You"
+  );
 
-  return { nodes, edges, companies, tags: [...new Set(rows.flatMap((c) => c.contactTags.map((ct) => ct.tag.name)))] };
+  const companies = [
+    ...new Set(rows.map((c) => c.company).filter(Boolean)),
+  ] as string[];
+
+  const tags = [
+    ...new Set(rows.flatMap((c) => c.contactTags.map((ct) => ct.tag.name))),
+  ];
+
+  const scoreCounts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  for (const c of rows) {
+    const s = Math.min(5, Math.max(1, c.relationshipScore || 2));
+    scoreCounts[s] = (scoreCounts[s] || 0) + 1;
+  }
+
+  return {
+    nodes,
+    edges,
+    contacts: graphContacts,
+    companies,
+    tags,
+    userId,
+    summary: {
+      total: rows.length,
+      companyCount: companies.length,
+      scoreCounts,
+      userName: profile.name || "You",
+    },
+  };
 }

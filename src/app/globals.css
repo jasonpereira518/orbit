@@ -92,3 +92,210 @@
     background-attachment: fixed;
   }
 }
+
+@keyframes trash-wiggle {
+  0%,
+  100% {
+    transform: translateY(-2px) rotate(0deg) scale(1.1);
+  }
+  25% {
+    transform: translateY(-2px) rotate(-12deg) scale(1.1);
+  }
+  50% {
+    transform: translateY(-2px) rotate(10deg) scale(1.1);
+  }
+  75% {
+    transform: translateY(-2px) rotate(-6deg) scale(1.1);
+  }
+}
+
+@keyframes delete-ripple {
+  0% {
+    transform: scale(0.4);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+@keyframes delete-confirm-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--destructive) 35%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in oklch, var(--destructive) 0%, transparent);
+  }
+}
+
+.delete-confirm-btn {
+  animation: delete-confirm-pulse 1.6s ease-in-out infinite;
+}
+
+/* ── Constellation / solar system ── */
+
+@keyframes constellation-corona {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.45;
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 0.75;
+  }
+}
+
+@keyframes constellation-corona-outer {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.2;
+  }
+  50% {
+    transform: scale(1.28);
+    opacity: 0.4;
+  }
+}
+
+@keyframes constellation-ring-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes constellation-spotlight {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 0 rgba(255, 246, 214, 0.55),
+      0 0 16px 2px rgba(255, 255, 255, 0.35);
+  }
+  50% {
+    box-shadow:
+      0 0 0 8px rgba(255, 246, 214, 0),
+      0 0 28px 6px rgba(255, 255, 255, 0.55);
+  }
+}
+
+@keyframes constellation-planet-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes constellation-twinkle {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+.constellation-corona {
+  animation: constellation-corona 3.2s ease-in-out infinite;
+}
+
+.constellation-corona-outer {
+  animation: constellation-corona-outer 4.8s ease-in-out infinite;
+}
+
+.constellation-rings-spin {
+  animation: constellation-ring-spin 180s linear infinite;
+  transform-origin: center;
+}
+
+.constellation-spotlight-ring {
+  animation: constellation-spotlight 1.8s ease-in-out infinite;
+}
+
+.constellation-planet-enter {
+  animation: constellation-planet-enter 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.constellation-starfield span {
+  animation: constellation-twinkle var(--twinkle-dur, 4s) ease-in-out infinite;
+  animation-delay: var(--twinkle-delay, 0s);
+}
+
+.constellation-milky-way {
+  background:
+    radial-gradient(
+      ellipse 55% 35% at 22% 42%,
+      rgba(160, 180, 220, 0.18) 0%,
+      rgba(180, 140, 100, 0.1) 35%,
+      transparent 70%
+    ),
+    radial-gradient(
+      ellipse 40% 28% at 18% 58%,
+      rgba(120, 150, 200, 0.12) 0%,
+      transparent 65%
+    ),
+    radial-gradient(
+      ellipse 70% 50% at 70% 30%,
+      rgba(40, 50, 80, 0.25) 0%,
+      transparent 60%
+    );
+  filter: blur(0.5px);
+}
+
+.constellation-stage .react-flow__controls {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  background: rgba(8, 12, 20, 0.85);
+}
+
+.constellation-stage .react-flow__controls-button {
+  background: transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  fill: #f5f7fa;
+  color: #f5f7fa;
+}
+
+.constellation-stage .react-flow__controls-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.constellation-stage .react-flow__edge-path {
+  stroke-linecap: round;
+  stroke-linejoin: miter;
+}
+
+.constellation-stage .react-flow__connection-path {
+  stroke: rgba(255, 255, 255, 0.6);
+}
+
+.constellation-stage .react-flow__edge.animated path {
+  stroke-dasharray: none;
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .delete-confirm-btn,
+  .delete-contact-btn,
+  .contact-row,
+  .constellation-corona,
+  .constellation-corona-outer,
+  .constellation-rings-spin,
+  .constellation-spotlight-ring,
+  .constellation-planet-enter,
+  .constellation-starfield span,
+  .constellation-stage .react-flow__edge.animated path {
+    animation: none !important;
+    transition: none !important;
+  }
+}
