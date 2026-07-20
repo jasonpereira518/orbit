@@ -219,15 +219,13 @@ export function GraphPageSkeleton() {
 
 export function ImportsPageSkeleton() {
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="mx-auto max-w-3xl space-y-8">
       <PageHeaderSkeleton />
+      <Skeleton className="h-44 w-full rounded-2xl" />
+      <Skeleton className="h-44 w-full rounded-2xl" />
+      <Skeleton className="h-52 w-full rounded-2xl" />
+      <Skeleton className="h-40 w-full rounded-2xl" />
       <Skeleton className="h-48 w-full rounded-2xl" />
-      <Skeleton className="h-36 w-full rounded-2xl" />
-      <div className="space-y-2">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <Skeleton key={i} className="h-14 w-full rounded-xl" />
-        ))}
-      </div>
     </div>
   );
 }
