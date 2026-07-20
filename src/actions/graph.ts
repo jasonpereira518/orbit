@@ -3,7 +3,9 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
+import { listActiveGoalTexts } from "@/actions/goals";
 import { requireUserId, getCurrentUserProfile } from "@/lib/auth";
+import { computeCloseness } from "@/lib/closeness";
 import { buildHybridGraphLayout } from "@/lib/graph-layout";
 
 export async function getGraphData() {
@@ -11,27 +13,37 @@ export async function getGraphData() {
   const profile = await getCurrentUserProfile();
   const db = await getDb();
 
-  const rows = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    with: { contactTags: { with: { tag: true } } },
-  });
+  const [rows, goalTexts] = await Promise.all([
+    db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+      with: { contactTags: { with: { tag: true } } },
+    }),
+    listActiveGoalTexts(userId),
+  ]);
 
-  const graphContacts = rows.map((c) => ({
-    id: c.id,
-    fullName: c.fullName,
-    preferredName: c.preferredName,
-    company: c.company,
-    title: c.title,
-    relationshipScore: c.relationshipScore,
-    lastInteractionAt: c.lastInteractionAt,
-    nextFollowUpAt: c.nextFollowUpAt,
-    tags: c.contactTags.map((ct) => ct.tag.name),
-    aiSummary: c.aiSummary,
-    keyFacts: c.keyFacts,
-    howMet: c.howMet,
-    notes: c.notes,
-    sharedInterests: c.sharedInterests,
-  }));
+  const graphContacts = rows.map((c) => {
+    const tags = c.contactTags.map((ct) => ct.tag.name);
+    const breakdown = computeCloseness({ ...c, tags }, goalTexts);
+    return {
+      id: c.id,
+      fullName: c.fullName,
+      preferredName: c.preferredName,
+      company: c.company,
+      title: c.title,
+      relationshipScore: c.relationshipScore,
+      closeness: breakdown.closeness,
+      closenessTier: breakdown.tier,
+      orbitScore: breakdown.orbitScore,
+      lastInteractionAt: c.lastInteractionAt,
+      nextFollowUpAt: c.nextFollowUpAt,
+      tags,
+      aiSummary: c.aiSummary,
+      keyFacts: c.keyFacts,
+      howMet: c.howMet,
+      notes: c.notes,
+      sharedInterests: c.sharedInterests,
+    };
+  });
 
   const { nodes, edges } = buildHybridGraphLayout(
     graphContacts,
@@ -47,8 +59,8 @@ export async function getGraphData() {
   ];
 
   const scoreCounts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-  for (const c of rows) {
-    const s = Math.min(5, Math.max(1, c.relationshipScore || 2));
+  for (const c of graphContacts) {
+    const s = Math.min(5, Math.max(1, (c.orbitScore ?? c.relationshipScore) || 2));
     scoreCounts[s] = (scoreCounts[s] || 0) + 1;
   }
 

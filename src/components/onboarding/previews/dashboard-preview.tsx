@@ -4,9 +4,10 @@ import { motion } from "motion/react";
 import type { PreviewProps } from "@/components/onboarding/tour-config";
 
 const cards = [
-  { label: "Due soon", value: "3", hint: "Follow-ups this week", hotspot: "due" },
-  { label: "Dormant", value: "5", hint: "No touch in 60+ days" },
-  { label: "Suggestions", value: "2", hint: "AI outreach ideas" },
+  { label: "Contacts", value: "12", hint: "People in your network", hotspot: "due" },
+  { label: "Due follow-ups", value: "3", hint: "Needs attention" },
+  { label: "Strong ties", value: "5", hint: "Inner + mid orbit" },
+  { label: "Reminders", value: "2", hint: "Pending tasks" },
 ];
 
 export function DashboardPreview({ reducedMotion }: PreviewProps) {
@@ -15,7 +16,7 @@ export function DashboardPreview({ reducedMotion }: PreviewProps) {
       <p className="font-[family-name:var(--font-display)] text-lg text-primary">
         Dashboard
       </p>
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {cards.map((c, i) => (
           <motion.div
             key={c.label}

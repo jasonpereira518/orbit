@@ -1,18 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
+import { usePrefersReducedMotion } from "@/components/onboarding/use-prefers-reduced-motion";
 
 type PlanetDef = {
   id: string;
-  /** Orbit radius in SVG units */
   orbit: number;
   size: number;
   startAngle: number;
   duration: string;
-  gradientId: string;
-  atmosphereId: string;
-  /** Saturn only */
+  spinDuration: string;
+  glow: string;
   hasRings?: boolean;
 };
 
@@ -24,332 +23,350 @@ const PLANETS: PlanetDef[] = [
   {
     id: "mercury",
     orbit: 58,
-    size: 5,
+    size: 6,
     startAngle: 40,
     duration: "24s",
-    gradientId: "hero-p-mercury",
-    atmosphereId: "hero-atmo-mercury",
+    spinDuration: "7s",
+    glow: "rgba(170, 160, 150, 0.45)",
   },
   {
     id: "venus",
     orbit: 78,
-    size: 8,
+    size: 9,
     startAngle: 130,
     duration: "36s",
-    gradientId: "hero-p-venus",
-    atmosphereId: "hero-atmo-venus",
+    spinDuration: "16s",
+    glow: "rgba(220, 190, 120, 0.5)",
   },
   {
     id: "earth",
     orbit: 100,
-    size: 9,
+    size: 10,
     startAngle: 220,
     duration: "48s",
-    gradientId: "hero-p-earth",
-    atmosphereId: "hero-atmo-earth",
+    spinDuration: "10s",
+    glow: "rgba(80, 160, 220, 0.55)",
   },
   {
     id: "mars",
     orbit: 122,
-    size: 6.5,
+    size: 7.5,
     startAngle: 310,
     duration: "62s",
-    gradientId: "hero-p-mars",
-    atmosphereId: "hero-atmo-mars",
+    spinDuration: "11s",
+    glow: "rgba(200, 100, 70, 0.5)",
   },
   {
     id: "jupiter",
     orbit: 148,
-    size: 18,
+    size: 20,
     startAngle: 75,
     duration: "88s",
-    gradientId: "hero-p-jupiter",
-    atmosphereId: "hero-atmo-jupiter",
+    spinDuration: "5.5s",
+    glow: "rgba(200, 160, 100, 0.45)",
   },
   {
     id: "saturn",
     orbit: 176,
-    size: 15,
+    size: 16,
     startAngle: 185,
     duration: "112s",
-    gradientId: "hero-p-saturn",
-    atmosphereId: "hero-atmo-saturn",
+    spinDuration: "6.5s",
+    glow: "rgba(210, 190, 140, 0.45)",
     hasRings: true,
   },
   {
     id: "uranus",
     orbit: 200,
-    size: 11,
+    size: 12,
     startAngle: 265,
     duration: "140s",
-    gradientId: "hero-p-uranus",
-    atmosphereId: "hero-atmo-uranus",
+    spinDuration: "9s",
+    glow: "rgba(140, 210, 210, 0.5)",
   },
   {
     id: "neptune",
     orbit: 222,
-    size: 10.5,
+    size: 11.5,
     startAngle: 20,
     duration: "168s",
-    gradientId: "hero-p-neptune",
-    atmosphereId: "hero-atmo-neptune",
+    spinDuration: "9.5s",
+    glow: "rgba(70, 120, 220, 0.55)",
   },
 ];
 
 const ORBIT_RADII = PLANETS.map((p) => p.orbit);
 const CX = 220;
 const CY = 220;
+const VIEW = 440;
 
-function PlanetBody({ p }: { p: PlanetDef }) {
-  const isBanded = p.id === "jupiter" || p.id === "saturn";
+/** Resting camera angle — slight top-down view of the ecliptic. */
+const BASE_TILT_X = 28;
+const BASE_TILT_Y = -12;
+const MAX_POINTER_TILT = 18;
+
+function parseSeconds(duration: string) {
+  return Number.parseFloat(duration) || 1;
+}
+
+function planetPosition(p: PlanetDef, elapsedMs: number, motionOk: boolean) {
+  const periodMs = parseSeconds(p.duration) * 1000;
+  const angleDeg = motionOk
+    ? p.startAngle + (elapsedMs / periodMs) * 360
+    : p.startAngle;
+  const rad = (angleDeg * Math.PI) / 180;
+  const x = CX + p.orbit * Math.cos(rad);
+  const y = CY + p.orbit * Math.sin(rad);
+  const z = p.orbit * Math.sin(rad) * 0.35;
+  return { x, y, z };
+}
+
+function applyPlanetTransform(
+  el: HTMLElement,
+  p: PlanetDef,
+  elapsedMs: number,
+  motionOk: boolean
+) {
+  const { x, y, z } = planetPosition(p, elapsedMs, motionOk);
+  el.style.left = `${(x / VIEW) * 100}%`;
+  el.style.top = `${(y / VIEW) * 100}%`;
+  el.style.transform = `translate3d(-50%, -50%, ${z}px)`;
+  el.style.zIndex = String(Math.round(100 + z));
+}
+
+function PlanetSphere({ p, spin }: { p: PlanetDef; spin: boolean }) {
+  const diameter = (p.size * 2) / VIEW;
+  const initial = planetPosition(p, 0, false);
+
   return (
-    <g filter={`url(#hero-planet-${p.id})`}>
-      <circle r={p.size * 2.1} fill={`url(#${p.atmosphereId})`} />
+    <div
+      className={cn("hero-planet-3d", `hero-planet-3d--${p.id}`)}
+      data-planet={p.id}
+      style={{
+        left: `${(initial.x / VIEW) * 100}%`,
+        top: `${(initial.y / VIEW) * 100}%`,
+        width: `${diameter * 100}%`,
+        height: `${diameter * 100}%`,
+        transform: `translate3d(-50%, -50%, ${initial.z}px)`,
+        ["--planet-glow" as string]: p.glow,
+        ["--planet-spin" as string]: spin ? p.spinDuration : "0s",
+      }}
+    >
       {p.hasRings && (
-        <ellipse
-          cx={0}
-          cy={0}
-          rx={p.size * 2.15}
-          ry={p.size * 0.55}
-          fill="none"
-          stroke="rgba(210, 190, 140, 0.55)"
-          strokeWidth={1.6}
-          opacity={0.85}
-        />
+        <div className="hero-planet-rings" aria-hidden>
+          <span className="hero-planet-ring hero-planet-ring--back" />
+          <span className="hero-planet-ring hero-planet-ring--mid" />
+          <span className="hero-planet-ring hero-planet-ring--front" />
+        </div>
       )}
-      <circle r={p.size} fill={`url(#${p.gradientId})`} />
-      {isBanded && <circle r={p.size} fill="url(#hero-p-band-shade)" />}
-      <circle r={p.size} fill="url(#hero-p-specular)" opacity={0.65} />
-      <circle
-        r={p.size}
-        fill="none"
-        stroke="rgba(255,255,255,0.1)"
-        strokeWidth={0.35}
-      />
-    </g>
+      <div className="hero-planet-sphere">
+        <div
+          className={cn(
+            "hero-planet-texture",
+            spin && "hero-planet-texture--spin"
+          )}
+        />
+        <div className="hero-planet-shade" />
+        <div className="hero-planet-specular" />
+        <div className="hero-planet-rim" />
+      </div>
+      <div className="hero-planet-atmosphere" />
+    </div>
   );
 }
 
 export function HeroSolarSystem({ className }: { className?: string }) {
-  const [motionOk] = useState(() => {
-    if (typeof window === "undefined") return true;
-    return !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  });
+  const reducedMotion = usePrefersReducedMotion();
+  const stageRef = useRef<HTMLDivElement>(null);
+  const tiltNodeRef = useRef<HTMLDivElement>(null);
+  const planetsRef = useRef<HTMLDivElement>(null);
+  const targetTilt = useRef({ x: BASE_TILT_X, y: BASE_TILT_Y });
+  const currentTilt = useRef({ x: BASE_TILT_X, y: BASE_TILT_Y });
+  const startTime = useRef(0);
+  const motionOk = !reducedMotion;
+
+  useEffect(() => {
+    startTime.current = performance.now();
+
+    const planetEls = new Map<string, HTMLElement>();
+    const root = planetsRef.current;
+    if (root) {
+      for (const p of PLANETS) {
+        const el = root.querySelector<HTMLElement>(`[data-planet="${p.id}"]`);
+        if (el) planetEls.set(p.id, el);
+      }
+    }
+
+    if (!motionOk) {
+      currentTilt.current = { x: BASE_TILT_X, y: BASE_TILT_Y };
+      if (tiltNodeRef.current) {
+        tiltNodeRef.current.style.transform = `rotateX(${BASE_TILT_X}deg) rotateY(${BASE_TILT_Y}deg)`;
+      }
+      for (const p of PLANETS) {
+        const el = planetEls.get(p.id);
+        if (el) applyPlanetTransform(el, p, 0, false);
+      }
+      return;
+    }
+
+    const onPointerMove = (event: PointerEvent) => {
+      const stage = stageRef.current;
+      if (!stage) return;
+
+      const rect = stage.getBoundingClientRect();
+      const midX = rect.left + rect.width / 2;
+      const midY = rect.top + rect.height / 2;
+      const nx = (event.clientX - midX) / Math.max(window.innerWidth * 0.45, 1);
+      const ny =
+        (event.clientY - midY) / Math.max(window.innerHeight * 0.45, 1);
+      const clampedX = Math.max(-1, Math.min(1, nx));
+      const clampedY = Math.max(-1, Math.min(1, ny));
+
+      targetTilt.current = {
+        x: BASE_TILT_X - clampedY * MAX_POINTER_TILT,
+        y: BASE_TILT_Y + clampedX * MAX_POINTER_TILT,
+      };
+    };
+
+    const onPointerLeave = () => {
+      targetTilt.current = { x: BASE_TILT_X, y: BASE_TILT_Y };
+    };
+
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    window.addEventListener("blur", onPointerLeave);
+
+    let raf = 0;
+    const tick = (now: number) => {
+      const cur = currentTilt.current;
+      const next = targetTilt.current;
+      const ease = 0.08;
+      const x = cur.x + (next.x - cur.x) * ease;
+      const y = cur.y + (next.y - cur.y) * ease;
+      currentTilt.current = { x, y };
+
+      if (tiltNodeRef.current) {
+        tiltNodeRef.current.style.transform = `rotateX(${x}deg) rotateY(${y}deg)`;
+      }
+
+      const elapsed = now - startTime.current;
+      for (const p of PLANETS) {
+        const el = planetEls.get(p.id);
+        if (el) applyPlanetTransform(el, p, elapsed, true);
+      }
+
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("blur", onPointerLeave);
+      cancelAnimationFrame(raf);
+    };
+  }, [motionOk]);
 
   return (
     <div
+      ref={stageRef}
       className={cn(
         "hero-solar relative mx-auto aspect-square w-full max-w-[560px]",
         "landing-solar-enter",
         className
       )}
+      style={{ perspective: "1100px", perspectiveOrigin: "50% 45%" }}
       aria-hidden
     >
-      <svg
-        viewBox="0 0 440 440"
-        className="h-full w-full overflow-visible"
-        role="presentation"
+      <div
+        ref={tiltNodeRef}
+        className="hero-solar-stage relative h-full w-full will-change-transform"
+        style={{
+          transform: `rotateX(${BASE_TILT_X}deg) rotateY(${BASE_TILT_Y}deg)`,
+          transformStyle: "preserve-3d",
+        }}
       >
-        <defs>
-          {PLANETS.map((p) => (
+        <svg
+          viewBox={`0 0 ${VIEW} ${VIEW}`}
+          className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
+          role="presentation"
+        >
+          <defs>
             <filter
-              key={p.id}
-              id={`hero-planet-${p.id}`}
+              id="hero-sun-bloom"
               x="-120%"
               y="-120%"
               width="340%"
               height="340%"
             >
-              <feGaussianBlur in="SourceGraphic" stdDeviation="1" result="blur" />
+              <feGaussianBlur stdDeviation="5" result="blur" />
               <feMerge>
                 <feMergeNode in="blur" />
                 <feMergeNode in="SourceGraphic" />
               </feMerge>
             </filter>
-          ))}
 
-          <filter
-            id="hero-sun-bloom"
-            x="-120%"
-            y="-120%"
-            width="340%"
-            height="340%"
-          >
-            <feGaussianBlur stdDeviation="5" result="blur" />
-            <feMerge>
-              <feMergeNode in="blur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
+            <radialGradient id="hero-sun-halo-outer" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="rgba(255, 200, 80, 0.12)" />
+              <stop offset="40%" stopColor="rgba(94, 234, 212, 0.1)" />
+              <stop offset="100%" stopColor="rgba(15, 61, 62, 0)" />
+            </radialGradient>
+            <radialGradient id="hero-sun-halo-mid" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="rgba(255, 210, 100, 0.35)" />
+              <stop offset="45%" stopColor="rgba(94, 234, 212, 0.2)" />
+              <stop offset="100%" stopColor="rgba(15, 61, 62, 0)" />
+            </radialGradient>
+            <radialGradient id="hero-sun-core" cx="38%" cy="34%" r="62%">
+              <stop offset="0%" stopColor="#fff8e8" />
+              <stop offset="25%" stopColor="#ffe08a" />
+              <stop offset="55%" stopColor="#e8a030" />
+              <stop offset="85%" stopColor="#c46818" />
+              <stop offset="100%" stopColor="#6b3010" />
+            </radialGradient>
+          </defs>
 
-          <radialGradient id="hero-sun-halo-outer" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="rgba(255, 200, 80, 0.12)" />
-            <stop offset="40%" stopColor="rgba(94, 234, 212, 0.1)" />
-            <stop offset="100%" stopColor="rgba(15, 61, 62, 0)" />
-          </radialGradient>
-          <radialGradient id="hero-sun-halo-mid" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="rgba(255, 210, 100, 0.35)" />
-            <stop offset="45%" stopColor="rgba(94, 234, 212, 0.2)" />
-            <stop offset="100%" stopColor="rgba(15, 61, 62, 0)" />
-          </radialGradient>
-          <radialGradient id="hero-sun-core" cx="38%" cy="34%" r="62%">
-            <stop offset="0%" stopColor="#fff8e8" />
-            <stop offset="25%" stopColor="#ffe08a" />
-            <stop offset="55%" stopColor="#e8a030" />
-            <stop offset="85%" stopColor="#c46818" />
-            <stop offset="100%" stopColor="#6b3010" />
-          </radialGradient>
-
-          {/* Atmospheres */}
-          <radialGradient id="hero-atmo-mercury" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="rgba(170, 160, 150, 0.22)" />
-            <stop offset="55%" stopColor="rgba(170, 160, 150, 0)" />
-          </radialGradient>
-          <radialGradient id="hero-atmo-venus" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="rgba(220, 190, 120, 0.28)" />
-            <stop offset="55%" stopColor="rgba(220, 190, 120, 0)" />
-          </radialGradient>
-          <radialGradient id="hero-atmo-earth" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="rgba(80, 160, 220, 0.28)" />
-            <stop offset="55%" stopColor="rgba(80, 160, 220, 0)" />
-          </radialGradient>
-          <radialGradient id="hero-atmo-mars" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="rgba(200, 100, 70, 0.26)" />
-            <stop offset="55%" stopColor="rgba(200, 100, 70, 0)" />
-          </radialGradient>
-          <radialGradient id="hero-atmo-jupiter" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="rgba(200, 160, 100, 0.24)" />
-            <stop offset="55%" stopColor="rgba(200, 160, 100, 0)" />
-          </radialGradient>
-          <radialGradient id="hero-atmo-saturn" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="rgba(210, 190, 140, 0.22)" />
-            <stop offset="55%" stopColor="rgba(210, 190, 140, 0)" />
-          </radialGradient>
-          <radialGradient id="hero-atmo-uranus" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="rgba(140, 210, 210, 0.24)" />
-            <stop offset="55%" stopColor="rgba(140, 210, 210, 0)" />
-          </radialGradient>
-          <radialGradient id="hero-atmo-neptune" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="rgba(70, 120, 220, 0.28)" />
-            <stop offset="55%" stopColor="rgba(70, 120, 220, 0)" />
-          </radialGradient>
-
-          {/* Surfaces — approximate real-world look */}
-          <radialGradient id="hero-p-mercury" cx="36%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#d0c8c0" />
-            <stop offset="50%" stopColor="#8a8278" />
-            <stop offset="100%" stopColor="#2a2824" />
-          </radialGradient>
-          <radialGradient id="hero-p-venus" cx="34%" cy="28%" r="72%">
-            <stop offset="0%" stopColor="#fff0c8" />
-            <stop offset="40%" stopColor="#e0b860" />
-            <stop offset="100%" stopColor="#6a4820" />
-          </radialGradient>
-          <radialGradient id="hero-p-earth" cx="36%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#c8e8ff" />
-            <stop offset="28%" stopColor="#3a8fd0" />
-            <stop offset="55%" stopColor="#2a7850" />
-            <stop offset="100%" stopColor="#0a2030" />
-          </radialGradient>
-          <radialGradient id="hero-p-mars" cx="36%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#f0b090" />
-            <stop offset="40%" stopColor="#c05030" />
-            <stop offset="100%" stopColor="#3a1008" />
-          </radialGradient>
-          <linearGradient id="hero-p-jupiter" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="#e8d0a0" />
-            <stop offset="14%" stopColor="#c89858" />
-            <stop offset="28%" stopColor="#8a6038" />
-            <stop offset="42%" stopColor="#d8b878" />
-            <stop offset="56%" stopColor="#a07040" />
-            <stop offset="70%" stopColor="#6a4828" />
-            <stop offset="85%" stopColor="#c09058" />
-            <stop offset="100%" stopColor="#3a2810" />
-          </linearGradient>
-          <linearGradient id="hero-p-saturn" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="#f0e4c0" />
-            <stop offset="25%" stopColor="#d8c090" />
-            <stop offset="50%" stopColor="#b8a068" />
-            <stop offset="75%" stopColor="#908050" />
-            <stop offset="100%" stopColor="#4a4028" />
-          </linearGradient>
-          <radialGradient id="hero-p-band-shade" cx="34%" cy="28%" r="75%">
-            <stop offset="0%" stopColor="rgba(255,255,255,0.25)" />
-            <stop offset="45%" stopColor="rgba(255,255,255,0)" />
-            <stop offset="100%" stopColor="rgba(0,0,0,0.35)" />
-          </radialGradient>
-          <radialGradient id="hero-p-uranus" cx="36%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#d8f8f8" />
-            <stop offset="40%" stopColor="#70c8c8" />
-            <stop offset="100%" stopColor="#184848" />
-          </radialGradient>
-          <radialGradient id="hero-p-neptune" cx="36%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#b0d0ff" />
-            <stop offset="35%" stopColor="#3868d0" />
-            <stop offset="100%" stopColor="#081838" />
-          </radialGradient>
-          <radialGradient id="hero-p-specular" cx="32%" cy="26%" r="38%">
-            <stop offset="0%" stopColor="rgba(255,255,255,0.45)" />
-            <stop offset="100%" stopColor="rgba(255,255,255,0)" />
-          </radialGradient>
-        </defs>
-
-        {/* Sun */}
-        <g className="hero-solar-sun" transform={`translate(${CX} ${CY})`}>
-          <circle
-            className="hero-solar-corona-outer"
-            r={56}
-            fill="url(#hero-sun-halo-outer)"
-          />
-          <circle
-            className="hero-solar-corona"
-            r={38}
-            fill="url(#hero-sun-halo-mid)"
-          />
-          <circle
-            r={22}
-            fill="url(#hero-sun-core)"
-            filter="url(#hero-sun-bloom)"
-          />
-          <circle cx={-4} cy={-5} r={5} fill="rgba(255,255,255,0.4)" />
-        </g>
-
-        {/* One ring per planet */}
-        <g className="hero-solar-rings">
-          {ORBIT_RADII.map((r) => (
+          <g className="hero-solar-sun" transform={`translate(${CX} ${CY})`}>
             <circle
-              key={r}
-              cx={CX}
-              cy={CY}
-              r={r}
-              fill="none"
-              stroke="rgba(122, 168, 150, 0.12)"
-              strokeWidth={0.5}
+              className="hero-solar-corona-outer"
+              r={56}
+              fill="url(#hero-sun-halo-outer)"
             />
-          ))}
-        </g>
-
-        {/* Eight planets, one per orbit */}
-        {PLANETS.map((p) => (
-          <g key={p.id} transform={`translate(${CX} ${CY})`}>
-            <g transform={motionOk ? undefined : `rotate(${p.startAngle})`}>
-              {motionOk && (
-                <animateTransform
-                  attributeName="transform"
-                  type="rotate"
-                  from={`${p.startAngle} 0 0`}
-                  to={`${p.startAngle + 360} 0 0`}
-                  dur={p.duration}
-                  repeatCount="indefinite"
-                />
-              )}
-              <g transform={`translate(${p.orbit} 0)`}>
-                <PlanetBody p={p} />
-              </g>
-            </g>
+            <circle
+              className="hero-solar-corona"
+              r={38}
+              fill="url(#hero-sun-halo-mid)"
+            />
+            <circle
+              r={22}
+              fill="url(#hero-sun-core)"
+              filter="url(#hero-sun-bloom)"
+            />
+            <circle cx={-4} cy={-5} r={5} fill="rgba(255,255,255,0.4)" />
           </g>
-        ))}
-      </svg>
+
+          <g className="hero-solar-rings">
+            {ORBIT_RADII.map((r) => (
+              <circle
+                key={r}
+                cx={CX}
+                cy={CY}
+                r={r}
+                fill="none"
+                stroke="rgba(122, 168, 150, 0.18)"
+                strokeWidth={0.5}
+              />
+            ))}
+          </g>
+        </svg>
+
+        <div
+          ref={planetsRef}
+          className="pointer-events-none absolute inset-0"
+          style={{ transformStyle: "preserve-3d" }}
+        >
+          {PLANETS.map((p) => (
+            <PlanetSphere key={p.id} p={p} spin={motionOk} />
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { reminders } from "@/db/schema";
-import { requireUserId } from "@/lib/auth";
+import { requireUserId, getCurrentUserProfile } from "@/lib/auth";
 import {
   completeReminder,
   generateDueFollowUps,
@@ -15,6 +15,7 @@ import {
 
 export async function fetchDashboard() {
   const userId = await requireUserId();
+  const profile = await getCurrentUserProfile();
   // Calendar sync can be slow; don't block the dashboard paint.
   after(() => {
     void import("@/lib/calendar-sync")
@@ -23,7 +24,7 @@ export async function fetchDashboard() {
       )
       .catch(() => {});
   });
-  return getDashboardData(userId);
+  return getDashboardData(userId, { userName: profile?.name || "You" });
 }
 
 export async function createReminder(input: {
@@ -321,6 +322,64 @@ export async function dismissSuggestion(id: string) {
     .where(and(eq(aiSuggestions.id, id), eq(aiSuggestions.userId, userId)));
   revalidatePath("/");
   revalidatePath("/dashboard");
+}
+
+export async function scheduleFromSuggestion(suggestionId: string, days = 7) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const { aiSuggestions } = await import("@/db/schema");
+
+  const suggestion = await db.query.aiSuggestions.findFirst({
+    where: and(
+      eq(aiSuggestions.id, suggestionId),
+      eq(aiSuggestions.userId, userId)
+    ),
+  });
+  if (!suggestion) throw new Error("Suggestion not found");
+
+  const contactId = suggestion.relatedContactIds?.[0];
+  if (!contactId) throw new Error("No contact linked to this suggestion");
+
+  const result = await scheduleContactFollowUp(contactId, days);
+  await dismissSuggestion(suggestionId);
+  return result;
+}
+
+export async function acceptScoreBump(suggestionId: string) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const { aiSuggestions, contacts } = await import("@/db/schema");
+
+  const suggestion = await db.query.aiSuggestions.findFirst({
+    where: and(
+      eq(aiSuggestions.id, suggestionId),
+      eq(aiSuggestions.userId, userId)
+    ),
+  });
+  if (!suggestion || suggestion.suggestionType !== "score_bump") {
+    throw new Error("Invalid score suggestion");
+  }
+
+  const contactId = suggestion.relatedContactIds?.[0];
+  if (!contactId) throw new Error("No contact linked to this suggestion");
+
+  const match = suggestion.description?.match(/relationship score (\d+)/i);
+  const newScore = match ? Number(match[1]) : NaN;
+  if (!Number.isFinite(newScore) || newScore < 1 || newScore > 5) {
+    throw new Error("Could not parse suggested score");
+  }
+
+  await db
+    .update(contacts)
+    .set({ relationshipScore: newScore, updatedAt: new Date() })
+    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+
+  await dismissSuggestion(suggestionId);
+
+  revalidatePath("/contacts");
+  revalidatePath(`/contacts/${contactId}`);
+  revalidatePath("/graph");
+  return { contactId, newScore };
 }
 
 /** Generate more due follow-ups from dormant / high-value contacts. */

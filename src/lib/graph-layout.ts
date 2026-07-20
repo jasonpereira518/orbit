@@ -1,4 +1,5 @@
 import { daysAgo } from "@/lib/duplicates";
+import { buildPeerEdges, peerEdgeToLayoutEdge } from "@/lib/network-metrics";
 
 /** Score 5 nearest → 1 farthest. Wider spacing for star-chart readability. */
 export const RING_RADII = [160, 260, 360, 470, 580] as const;
@@ -146,10 +147,6 @@ function companyKey(company: string | null | undefined) {
   return trimmed || "__none__";
 }
 
-function normalizePhrase(value: string | null | undefined) {
-  return (value || "").trim().toLowerCase().replace(/\s+/g, " ");
-}
-
 function toIso(value: Date | string | null | undefined) {
   if (!value) return null;
   if (typeof value === "string") return value;
@@ -163,76 +160,6 @@ function isOverdue(nextFollowUpAt: Date | string | null | undefined) {
       ? new Date(nextFollowUpAt)
       : nextFollowUpAt;
   return d.getTime() < Date.now();
-}
-
-function pairKey(a: string, b: string) {
-  return a < b ? `${a}::${b}` : `${b}::${a}`;
-}
-
-function contactCorpus(c: GraphContactInput) {
-  return [
-    c.aiSummary || "",
-    ...(c.keyFacts || []),
-    c.notes || "",
-    ...(c.sharedInterests || []),
-  ]
-    .join(" ")
-    .toLowerCase();
-}
-
-function nameAliases(c: GraphContactInput) {
-  const names = new Set<string>();
-  const full = c.fullName.trim();
-  const preferred = (c.preferredName || "").trim();
-  if (full.length >= 3) names.add(full.toLowerCase());
-  if (preferred.length >= 3) names.add(preferred.toLowerCase());
-  const parts = full.split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) {
-    const last = parts[parts.length - 1];
-    if (last.length >= 4) names.add(last.toLowerCase());
-  }
-  return [...names];
-}
-
-function mentionsOther(a: GraphContactInput, b: GraphContactInput) {
-  const text = contactCorpus(a);
-  if (!text) return false;
-  return nameAliases(b).some((alias) => {
-    if (alias.length < 3) return false;
-    return text.includes(alias);
-  });
-}
-
-function sharedCount(a: string[], b: string[]) {
-  const setB = new Set(b.map((t) => t.toLowerCase()));
-  let n = 0;
-  for (const t of a) {
-    if (setB.has(t.toLowerCase())) n += 1;
-  }
-  return n;
-}
-
-function addStraightEdge(
-  edges: LayoutEdge[],
-  seen: Set<string>,
-  source: string,
-  target: string,
-  data: NonNullable<LayoutEdge["data"]>,
-  style: Record<string, string | number>
-) {
-  if (source === target) return;
-  const key = pairKey(source, target);
-  if (seen.has(key)) return;
-  seen.add(key);
-  edges.push({
-    id: `${data.kind}-${key}`,
-    source,
-    target,
-    type: "straight",
-    animated: false,
-    data,
-    style,
-  });
 }
 
 /**
@@ -422,7 +349,6 @@ export function buildHybridGraphLayout(
     }),
   ];
 
-  const seenPairs = new Set<string>();
   const edges: LayoutEdge[] = [];
 
   // Solar rays — faint straight spokes (background hierarchy)
@@ -444,142 +370,12 @@ export function buildHybridGraphLayout(
     });
   }
 
-  // Company constellations — angular chain + close small polygons
-  const byCompany = new Map<string, GraphContactInput[]>();
-  for (const c of contacts) {
-    const key = companyKey(c.company);
-    if (key === "__none__") continue;
-    const list = byCompany.get(key) || [];
-    list.push(c);
-    byCompany.set(key, list);
+  const anglePositions = new Map<string, { angle: number }>();
+  for (const [id, pos] of positions) {
+    anglePositions.set(id, { angle: pos.angle });
   }
-
-  for (const [key, group] of byCompany) {
-    if (group.length < 2) continue;
-    const ordered = [...group].sort((a, b) => {
-      const aa = positions.get(a.id)?.angle ?? 0;
-      const bb = positions.get(b.id)?.angle ?? 0;
-      return aa - bb;
-    });
-
-    for (let i = 0; i < ordered.length - 1; i++) {
-      addStraightEdge(
-        edges,
-        seenPairs,
-        ordered[i].id,
-        ordered[i + 1].id,
-        { kind: "constellation", company: key, reason: "company" },
-        {
-          stroke: "rgba(255, 255, 255, 0.85)",
-          strokeWidth: 1.05,
-          opacity: 0.7,
-        }
-      );
-    }
-
-    if (ordered.length >= 3 && ordered.length <= 8) {
-      addStraightEdge(
-        edges,
-        seenPairs,
-        ordered[ordered.length - 1].id,
-        ordered[0].id,
-        { kind: "constellation", company: key, reason: "company" },
-        {
-          stroke: "rgba(255, 255, 255, 0.75)",
-          strokeWidth: 1,
-          opacity: 0.55,
-        }
-      );
-    }
-  }
-
-  // Same howMet / event
-  const byHowMet = new Map<string, GraphContactInput[]>();
-  for (const c of contacts) {
-    const key = normalizePhrase(c.howMet);
-    if (!key || key.length < 3) continue;
-    const list = byHowMet.get(key) || [];
-    list.push(c);
-    byHowMet.set(key, list);
-  }
-  for (const group of byHowMet.values()) {
-    if (group.length < 2) continue;
-    const ordered = [...group].sort((a, b) =>
-      displayName(a).localeCompare(displayName(b))
-    );
-    for (let i = 0; i < ordered.length - 1; i++) {
-      addStraightEdge(
-        edges,
-        seenPairs,
-        ordered[i].id,
-        ordered[i + 1].id,
-        { kind: "knows", reason: "howMet" },
-        {
-          stroke: "rgba(255, 236, 200, 0.9)",
-          strokeWidth: 0.95,
-          opacity: 0.65,
-        }
-      );
-    }
-  }
-
-  // Mentions + shared tags/interests
-  for (let i = 0; i < contacts.length; i++) {
-    for (let j = i + 1; j < contacts.length; j++) {
-      const a = contacts[i];
-      const b = contacts[j];
-      if (mentionsOther(a, b) || mentionsOther(b, a)) {
-        addStraightEdge(
-          edges,
-          seenPairs,
-          a.id,
-          b.id,
-          { kind: "knows", reason: "mention" },
-          {
-            stroke: "rgba(255, 255, 255, 0.8)",
-            strokeWidth: 0.9,
-            opacity: 0.6,
-          }
-        );
-        continue;
-      }
-
-      const tagOverlap = sharedCount(a.tags || [], b.tags || []);
-      if (tagOverlap >= 2) {
-        addStraightEdge(
-          edges,
-          seenPairs,
-          a.id,
-          b.id,
-          { kind: "knows", reason: "sharedTags" },
-          {
-            stroke: "rgba(220, 230, 255, 0.75)",
-            strokeWidth: 0.85,
-            opacity: 0.4,
-          }
-        );
-        continue;
-      }
-
-      const interestOverlap = sharedCount(
-        a.sharedInterests || [],
-        b.sharedInterests || []
-      );
-      if (interestOverlap >= 2) {
-        addStraightEdge(
-          edges,
-          seenPairs,
-          a.id,
-          b.id,
-          { kind: "knows", reason: "sharedInterests" },
-          {
-            stroke: "rgba(220, 230, 255, 0.7)",
-            strokeWidth: 0.8,
-            opacity: 0.35,
-          }
-        );
-      }
-    }
+  for (const peer of buildPeerEdges(contacts, { positions: anglePositions })) {
+    edges.push(peerEdgeToLayoutEdge(peer));
   }
 
   return { nodes, edges };

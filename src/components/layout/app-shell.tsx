@@ -41,7 +41,7 @@ export function AppShell({
       </div>
       <main className="relative flex min-h-screen flex-1 flex-col overflow-auto">
         <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border/70 bg-background/95 px-4 py-3 backdrop-blur md:hidden">
-          <Link href="/dashboard" className="flex items-center gap-2.5">
+          <Link href="/" className="flex items-center gap-2.5" title="Back to landing page">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
               O
             </div>
