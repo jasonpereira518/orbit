@@ -88,6 +88,7 @@ export async function listContacts(filters?: {
   q?: string;
   company?: string;
   minScore?: number;
+  followUp?: "due";
 }) {
   const userId = await requireUserId();
   const db = await getDb();
@@ -126,6 +127,12 @@ export async function listContacts(filters?: {
   }
   if (filters?.minScore) {
     rows = rows.filter((c) => c.relationshipScore >= filters.minScore!);
+  }
+  if (filters?.followUp === "due") {
+    const now = new Date();
+    rows = rows.filter(
+      (c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now
+    );
   }
 
   const goals = await listActiveGoalTexts(userId);

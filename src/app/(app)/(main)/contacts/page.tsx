@@ -9,13 +9,19 @@ import { cn } from "@/lib/utils";
 export default async function ContactsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; company?: string; minScore?: string }>;
+  searchParams: Promise<{
+    q?: string;
+    company?: string;
+    minScore?: string;
+    followUp?: string;
+  }>;
 }) {
   const params = await searchParams;
   const contacts = await listContacts({
     q: params.q,
     company: params.company,
     minScore: params.minScore ? Number(params.minScore) : undefined,
+    followUp: params.followUp === "due" ? "due" : undefined,
   });
 
   return (
@@ -57,7 +63,7 @@ export default async function ContactsPage({
 
       <div className="overflow-hidden rounded-2xl border border-border/70 bg-card">
         <ContactsList
-          key={[params.q, params.company, params.minScore].join("|")}
+          key={[params.q, params.company, params.minScore, params.followUp].join("|")}
           initialContacts={contacts.map((c) => ({
             id: c.id,
             fullName: c.fullName,

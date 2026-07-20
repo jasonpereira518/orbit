@@ -378,6 +378,270 @@
   animation: landing-solar-enter 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.15s both;
 }
 
+.hero-solar-stage {
+  transform-style: preserve-3d;
+}
+
+/* ── 3D planet spheres ── */
+
+.hero-planet-3d {
+  position: absolute;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.hero-planet-sphere {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 50%;
+  background: #1a1a1a;
+  box-shadow:
+    0 0 0.35em color-mix(in oklab, var(--planet-glow) 70%, transparent),
+    0 0.08em 0.2em rgba(0, 0, 0, 0.45);
+  transform: translateZ(0.5px);
+}
+
+.hero-planet-texture {
+  position: absolute;
+  inset: -5% -40%;
+  width: 180%;
+  height: 110%;
+  background-size: 50% 100%;
+  background-repeat: repeat-x;
+  transform-origin: center;
+}
+
+.hero-planet-texture--spin {
+  animation: hero-planet-spin var(--planet-spin, 10s) linear infinite;
+}
+
+.hero-planet-shade {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background:
+    radial-gradient(
+      circle at 30% 28%,
+      rgba(255, 255, 255, 0.28) 0%,
+      rgba(255, 255, 255, 0.06) 28%,
+      transparent 48%
+    ),
+    radial-gradient(
+      circle at 72% 68%,
+      transparent 35%,
+      rgba(0, 0, 0, 0.28) 62%,
+      rgba(0, 0, 0, 0.72) 100%
+    );
+  mix-blend-mode: soft-light;
+  pointer-events: none;
+}
+
+.hero-planet-specular {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 28% 24%,
+    rgba(255, 255, 255, 0.55) 0%,
+    rgba(255, 255, 255, 0.12) 18%,
+    transparent 42%
+  );
+  pointer-events: none;
+}
+
+.hero-planet-rim {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow:
+    inset -0.12em -0.08em 0.22em rgba(0, 0, 0, 0.55),
+    inset 0.1em 0.08em 0.18em rgba(255, 255, 255, 0.2);
+  pointer-events: none;
+}
+
+.hero-planet-atmosphere {
+  position: absolute;
+  inset: -28%;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    var(--planet-glow) 0%,
+    transparent 62%
+  );
+  opacity: 0.55;
+  filter: blur(0.15em);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.hero-planet-rings {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 240%;
+  height: 240%;
+  transform: translate(-50%, -50%) rotateX(72deg);
+  transform-style: preserve-3d;
+  pointer-events: none;
+}
+
+.hero-planet-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 50%;
+  border-style: solid;
+  border-color: rgba(210, 190, 140, 0.55);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0.15em rgba(210, 190, 140, 0.25);
+}
+
+.hero-planet-ring--back {
+  width: 92%;
+  height: 92%;
+  border-width: 0.22em 0.55em;
+  opacity: 0.4;
+  z-index: 0;
+}
+
+.hero-planet-ring--mid {
+  width: 78%;
+  height: 78%;
+  border-width: 0.35em 0.7em;
+  border-color: rgba(230, 210, 160, 0.65);
+  opacity: 0.7;
+  z-index: 1;
+}
+
+.hero-planet-ring--front {
+  width: 64%;
+  height: 64%;
+  border-width: 0.18em 0.4em;
+  opacity: 0.5;
+  z-index: 2;
+}
+
+.hero-planet-3d--saturn .hero-planet-sphere {
+  z-index: 1;
+}
+
+.hero-planet-3d--mercury .hero-planet-texture {
+  background-image: linear-gradient(
+    90deg,
+    #6a645c 0%,
+    #b0a89e 18%,
+    #8a8278 36%,
+    #d0c8c0 52%,
+    #7a7268 70%,
+    #4a443c 88%,
+    #6a645c 100%
+  );
+}
+
+.hero-planet-3d--venus .hero-planet-texture {
+  background-image: linear-gradient(
+    90deg,
+    #a87830 0%,
+    #f0d890 16%,
+    #e0b860 34%,
+    #fff0c8 50%,
+    #c89848 68%,
+    #6a4820 86%,
+    #a87830 100%
+  );
+}
+
+.hero-planet-3d--earth .hero-planet-texture {
+  background-image: linear-gradient(
+    90deg,
+    #0a3048 0%,
+    #1a6890 10%,
+    #2a7850 22%,
+    #3a8fd0 34%,
+    #c8e8ff 42%,
+    #2a7850 54%,
+    #1a5080 66%,
+    #3a9a60 78%,
+    #0a2030 90%,
+    #0a3048 100%
+  );
+}
+
+.hero-planet-3d--mars .hero-planet-texture {
+  background-image: linear-gradient(
+    90deg,
+    #5a1808 0%,
+    #c05030 18%,
+    #f0b090 36%,
+    #a03820 54%,
+    #e08060 72%,
+    #3a1008 90%,
+    #5a1808 100%
+  );
+}
+
+.hero-planet-3d--jupiter .hero-planet-texture {
+  background-image: repeating-linear-gradient(
+    180deg,
+    #e8d0a0 0%,
+    #c89858 8%,
+    #8a6038 16%,
+    #d8b878 24%,
+    #a07040 32%,
+    #6a4828 40%,
+    #c09058 48%,
+    #e8d0a0 56%
+  );
+  background-size: 40% 100%;
+}
+
+.hero-planet-3d--saturn .hero-planet-texture {
+  background-image: repeating-linear-gradient(
+    180deg,
+    #f0e4c0 0%,
+    #d8c090 14%,
+    #b8a068 28%,
+    #908050 42%,
+    #d8c090 56%,
+    #f0e4c0 70%
+  );
+  background-size: 40% 100%;
+}
+
+.hero-planet-3d--uranus .hero-planet-texture {
+  background-image: linear-gradient(
+    90deg,
+    #184848 0%,
+    #70c8c8 22%,
+    #d8f8f8 40%,
+    #58b0b0 60%,
+    #286868 82%,
+    #184848 100%
+  );
+}
+
+.hero-planet-3d--neptune .hero-planet-texture {
+  background-image: linear-gradient(
+    90deg,
+    #081838 0%,
+    #2860b0 20%,
+    #b0d0ff 38%,
+    #3868d0 58%,
+    #1a3878 78%,
+    #081838 100%
+  );
+}
+
+@keyframes hero-planet-spin {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
 .hero-solar-corona {
   animation: hero-solar-corona-pulse 3.4s ease-in-out infinite;
 }
@@ -418,6 +682,7 @@
   .landing-solar-enter,
   .hero-solar-corona,
   .hero-solar-corona-outer,
+  .hero-planet-texture--spin,
   .page-transition {
     animation: none !important;
     transition: none !important;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition, type ReactNode } from "react";
+import { useEffect, useState, useTransition, type ReactElement, type ReactNode } from "react";
 import { Pencil } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -94,12 +94,14 @@ export function CampaignEditor({
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger
         render={
-          trigger ?? (
-            <Button variant="outline" size="sm">
-              <Pencil className="mr-1 h-3.5 w-3.5" />
-              Edit campaign
-            </Button>
-          )
+          trigger
+            ? () => trigger as ReactElement
+            : () => (
+                <Button variant="outline" size="sm">
+                  <Pencil className="mr-1 h-3.5 w-3.5" />
+                  Edit campaign
+                </Button>
+              )
         }
       />
       <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-lg">

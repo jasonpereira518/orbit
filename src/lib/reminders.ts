@@ -1,14 +1,42 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
-import { aiSuggestions, contacts, interactions, reminders } from "@/db/schema";
+import {
+  aiSuggestions,
+  contacts,
+  interactions,
+  reminders,
+  userGoals,
+} from "@/db/schema";
+import { listActiveGoalTexts } from "@/actions/goals";
 import { daysAgo } from "@/lib/duplicates";
+import { buildHybridGraphLayout } from "@/lib/graph-layout";
+import { computeNetworkMetrics } from "@/lib/network-metrics";
 
 const AUTO_SUGGESTION_TYPES = [
-  "overdue_follow_up",
   "dormant_high_value",
   "post_event",
   "linkedin_thread_quiet",
 ] as const;
+
+const MAX_AUTO_SUGGESTIONS = 12;
+
+const AUTO_TYPE_PRIORITY: Record<(typeof AUTO_SUGGESTION_TYPES)[number], number> = {
+  post_event: 3,
+  linkedin_thread_quiet: 2,
+  dormant_high_value: 1,
+};
+
+function contactDisplayName(c: {
+  fullName: string;
+  preferredName?: string | null;
+}) {
+  return (c.preferredName || "").trim() || c.fullName;
+}
+
+/** Contacts without a scheduled follow-up are eligible for discovery suggestions. */
+function isDiscoveryEligible(c: { nextFollowUpAt: Date | string | null }) {
+  return !c.nextFollowUpAt;
+}
 
 export async function refreshOutreachSuggestions(userId: string) {
   const db = await getDb();
@@ -28,46 +56,52 @@ export async function refreshOutreachSuggestions(userId: string) {
       )
     );
 
-  const suggestions: Array<{
-    suggestionType: string;
+  type Candidate = {
+    suggestionType: (typeof AUTO_SUGGESTION_TYPES)[number];
     title: string;
     description: string;
     relatedContactIds: string[];
     confidenceScore: number;
-  }> = [];
+  };
 
-  const overdue = all.filter(
-    (c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= new Date()
-  );
-  if (overdue.length) {
-    suggestions.push({
-      suggestionType: "overdue_follow_up",
-      title: `${overdue.length} follow-up${overdue.length > 1 ? "s" : ""} overdue`,
-      description: overdue
-        .slice(0, 5)
-        .map((c) => c.fullName)
-        .join(", "),
-      relatedContactIds: overdue.map((c) => c.id),
-      confidenceScore: 90,
-    });
+  const candidateByContact = new Map<string, Candidate>();
+
+  function upsertCandidate(contactId: string, candidate: Candidate) {
+    const existing = candidateByContact.get(contactId);
+    if (!existing) {
+      candidateByContact.set(contactId, candidate);
+      return;
+    }
+    const existingPri =
+      AUTO_TYPE_PRIORITY[existing.suggestionType as keyof typeof AUTO_TYPE_PRIORITY] ?? 0;
+    const nextPri =
+      AUTO_TYPE_PRIORITY[candidate.suggestionType] ?? 0;
+    if (
+      nextPri > existingPri ||
+      (nextPri === existingPri &&
+        candidate.confidenceScore > existing.confidenceScore)
+    ) {
+      candidateByContact.set(contactId, candidate);
+    }
   }
 
   const dormantHighValue = all.filter(
     (c) =>
+      isDiscoveryEligible(c) &&
       (c.priorityLevel >= 2 || c.relationshipScore >= 4) &&
       daysAgo(c.lastInteractionAt) >= 30
   );
-  if (dormantHighValue.length) {
-    suggestions.push({
+  for (const c of dormantHighValue) {
+    const idle = daysAgo(c.lastInteractionAt);
+    upsertCandidate(c.id, {
       suggestionType: "dormant_high_value",
-      title: `${dormantHighValue.length} strong connection${dormantHighValue.length > 1 ? "s" : ""} gone quiet`,
-      description: "High-priority or close contacts with no recent interaction.",
-      relatedContactIds: dormantHighValue.map((c) => c.id),
+      title: `Reach out to ${contactDisplayName(c)}`,
+      description: `Gone quiet — last touch ${idle} day${idle === 1 ? "" : "s"} ago`,
+      relatedContactIds: [c.id],
       confidenceScore: 80,
     });
   }
 
-  // Active LinkedIn threads that went quiet (had message activity, then silence)
   const withMessageHistory = await db.query.interactions.findMany({
     where: and(
       eq(interactions.userId, userId),
@@ -90,44 +124,44 @@ export async function refreshOutreachSuggestions(userId: string) {
     }
   }
 
-  const quietThreads = all.filter((c) => {
+  for (const c of all) {
+    if (!isDiscoveryEligible(c)) continue;
     const stats = messageStats.get(c.id);
-    if (!stats || stats.count < 2) return false;
+    if (!stats || stats.count < 2) continue;
     const daysSinceLast = daysAgo(stats.last);
-    // Had a real back-and-forth, last message 14–90 days ago
-    return daysSinceLast >= 14 && daysSinceLast <= 90;
-  });
-  if (quietThreads.length) {
-    suggestions.push({
+    if (daysSinceLast < 14 || daysSinceLast > 90) continue;
+    upsertCandidate(c.id, {
       suggestionType: "linkedin_thread_quiet",
-      title: `${quietThreads.length} LinkedIn thread${quietThreads.length > 1 ? "s" : ""} gone quiet`,
-      description:
-        "People you messaged with who haven't had activity in a couple weeks.",
-      relatedContactIds: quietThreads.map((c) => c.id),
+      title: `Reach out to ${contactDisplayName(c)}`,
+      description: `LinkedIn thread went quiet — last activity ${daysSinceLast} days ago`,
+      relatedContactIds: [c.id],
       confidenceScore: 78,
     });
   }
 
-  const recentNoFollowUp = all.filter((c) => {
-    if (!c.firstInteractionAt) return false;
+  for (const c of all) {
+    if (!isDiscoveryEligible(c)) continue;
+    if (!c.firstInteractionAt) continue;
     const days = daysAgo(c.firstInteractionAt);
-    return (
-      days >= 7 &&
-      days <= 21 &&
-      (!c.lastInteractionAt ||
-        c.lastInteractionAt.getTime() === c.firstInteractionAt.getTime()) &&
-      !c.nextFollowUpAt
-    );
-  });
-  if (recentNoFollowUp.length) {
-    suggestions.push({
+    if (days < 7 || days > 21) continue;
+    if (
+      c.lastInteractionAt &&
+      c.lastInteractionAt.getTime() !== c.firstInteractionAt.getTime()
+    ) {
+      continue;
+    }
+    upsertCandidate(c.id, {
       suggestionType: "post_event",
-      title: `${recentNoFollowUp.length} recent intro${recentNoFollowUp.length > 1 ? "s" : ""} need a follow-up`,
-      description: "People you met recently without a logged follow-up.",
-      relatedContactIds: recentNoFollowUp.map((c) => c.id),
-      confidenceScore: 75,
+      title: `Reach out to ${contactDisplayName(c)}`,
+      description: `Recent intro ${days} day${days === 1 ? "" : "s"} ago — no follow-up logged yet`,
+      relatedContactIds: [c.id],
+      confidenceScore: 85,
     });
   }
+
+  const suggestions = [...candidateByContact.values()]
+    .sort((a, b) => b.confidenceScore - a.confidenceScore)
+    .slice(0, MAX_AUTO_SUGGESTIONS);
 
   if (suggestions.length) {
     await db.insert(aiSuggestions).values(
@@ -269,31 +303,133 @@ async function maybeRefreshOutreachSuggestions(userId: string) {
   await refreshOutreachSuggestions(userId);
 }
 
-export async function getDashboardData(userId: string) {
+export async function getDashboardData(
+  userId: string,
+  options?: { userName?: string }
+) {
   const db = await getDb();
   await maybeRefreshOutreachSuggestions(userId);
 
-  const [allContacts, pendingReminders, suggestions] = await Promise.all([
-    db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
-      orderBy: (c, { desc }) => [desc(c.updatedAt)],
-    }),
-    db.query.reminders.findMany({
-      where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
-      orderBy: (r, { asc }) => [asc(r.dueDate)],
-    }),
-    db.query.aiSuggestions.findMany({
-      where: and(
-        eq(aiSuggestions.userId, userId),
-        eq(aiSuggestions.status, "pending")
-      ),
-      orderBy: (s, { desc }) => [desc(s.confidenceScore)],
-    }),
-  ]);
+  const [allContactRows, pendingReminders, suggestions, goals, goalTexts] =
+    await Promise.all([
+      db.query.contacts.findMany({
+        where: eq(contacts.userId, userId),
+        orderBy: (c, { desc }) => [desc(c.updatedAt)],
+        with: { contactTags: { with: { tag: true } } },
+      }),
+      db.query.reminders.findMany({
+        where: and(
+          eq(reminders.userId, userId),
+          eq(reminders.status, "pending")
+        ),
+        orderBy: (r, { asc }) => [asc(r.dueDate)],
+      }),
+      db.query.aiSuggestions.findMany({
+        where: and(
+          eq(aiSuggestions.userId, userId),
+          eq(aiSuggestions.status, "pending")
+        ),
+        orderBy: (s, { desc }) => [desc(s.confidenceScore)],
+      }),
+      db.query.userGoals.findMany({
+        where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
+        orderBy: (g, { desc }) => [desc(g.createdAt)],
+      }),
+      listActiveGoalTexts(userId),
+    ]);
+
+  const enrichedContacts = allContactRows.map((c) => {
+    const tags = c.contactTags.map((ct) => ct.tag.name);
+    return { ...c, tags };
+  });
+
+  const { metrics: networkMetrics, contactsWithNetwork } =
+    computeNetworkMetrics(enrichedContacts, goalTexts);
+
+  const closenessById = new Map(
+    contactsWithNetwork.map((c) => [c.id, c])
+  );
+
+  const graphContacts = enrichedContacts.map((c) => {
+    const closeness = closenessById.get(c.id);
+    return {
+      id: c.id,
+      fullName: c.fullName,
+      preferredName: c.preferredName ?? null,
+      company: c.company ?? null,
+      title: c.title ?? null,
+      relationshipScore: c.relationshipScore ?? 2,
+      closeness: closeness?.closeness ?? 0,
+      closenessTier: closeness?.tier ?? "outer",
+      orbitScore: closeness?.orbitScore ?? 2,
+      lastInteractionAt: c.lastInteractionAt
+        ? c.lastInteractionAt instanceof Date
+          ? c.lastInteractionAt
+          : new Date(c.lastInteractionAt)
+        : null,
+      nextFollowUpAt: c.nextFollowUpAt
+        ? c.nextFollowUpAt instanceof Date
+          ? c.nextFollowUpAt
+          : new Date(c.nextFollowUpAt)
+        : null,
+      tags: c.tags ?? [],
+      aiSummary: c.aiSummary ?? null,
+      keyFacts: c.keyFacts ?? null,
+      howMet: c.howMet ?? null,
+      notes: c.notes ?? null,
+      sharedInterests: c.sharedInterests ?? null,
+    };
+  });
+
+  const userName = options?.userName || "You";
+  const { nodes, edges } = buildHybridGraphLayout(graphContacts, userName);
+
+  const companies = [
+    ...new Set(
+      allContactRows.map((c) => c.company).filter(Boolean)
+    ),
+  ] as string[];
+
+  const tags = [
+    ...new Set(
+      allContactRows.flatMap((c) =>
+        c.contactTags.map((ct) => ct.tag.name)
+      )
+    ),
+  ];
+
+  const scoreCounts: Record<number, number> = {
+    1: 0,
+    2: 0,
+    3: 0,
+    4: 0,
+    5: 0,
+  };
+  for (const c of graphContacts) {
+    const s = Math.min(5, Math.max(1, (c.orbitScore ?? c.relationshipScore) || 2));
+    scoreCounts[s] = (scoreCounts[s] || 0) + 1;
+  }
+
+  const goalAlignedContacts = [...contactsWithNetwork]
+    .filter((c) => c.goalRelevance > 0)
+    .sort((a, b) => b.goalRelevance - a.goalRelevance)
+    .slice(0, 5);
+
+  const contactNameById = new Map(
+    allContactRows.map((c) => [c.id, c.preferredName || c.fullName])
+  );
 
   const now = new Date();
-  const dueFollowUps = allContacts
-    .filter((c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now)
+  const dueFollowUpIds = new Set(
+    allContactRows
+      .filter((c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now)
+      .map((c) => c.id)
+  );
+
+  const tierRank = { inner: 0, mid: 1, outer: 2 } as const;
+
+  const dueFollowUps = allContactRows
+    .filter((c) => dueFollowUpIds.has(c.id))
     .sort((a, b) => {
       const aTime = a.nextFollowUpAt
         ? new Date(a.nextFollowUpAt).getTime()
@@ -301,28 +437,64 @@ export async function getDashboardData(userId: string) {
       const bTime = b.nextFollowUpAt
         ? new Date(b.nextFollowUpAt).getTime()
         : 0;
-      return aTime - bTime;
+      if (aTime !== bTime) return aTime - bTime;
+      const aTier = closenessById.get(a.id)?.tier ?? "outer";
+      const bTier = closenessById.get(b.id)?.tier ?? "outer";
+      const tierDiff = tierRank[aTier] - tierRank[bTier];
+      if (tierDiff !== 0) return tierDiff;
+      return (b.priorityLevel || 0) - (a.priorityLevel || 0);
     });
 
-  const strongAi = allContacts.filter((c) => (c.relationshipScore || 0) >= 4);
-  const companies = new Map<string, number>();
-  for (const c of allContacts) {
-    if (c.company) companies.set(c.company, (companies.get(c.company) || 0) + 1);
-  }
-  const topCompany = [...companies.entries()].sort((a, b) => b[1] - a[1])[0];
+  const filteredReminders = pendingReminders.filter((r) => {
+    if (r.reminderType !== "generated") return true;
+    if (!r.contactId) return true;
+    return !dueFollowUpIds.has(r.contactId);
+  });
+
+  const contactById = new Map(allContactRows.map((c) => [c.id, c]));
+
+  const filteredSuggestions = suggestions.filter((s) => {
+    const contactId = s.relatedContactIds?.[0];
+    if (!contactId) return true;
+    return !dueFollowUpIds.has(contactId);
+  });
+
+  const strongTies =
+    networkMetrics.tierCounts.inner + networkMetrics.tierCounts.mid;
 
   return {
     stats: {
-      totalContacts: allContacts.length,
+      totalContacts: allContactRows.length,
       dueFollowUps: dueFollowUps.length,
-      strongConnections: strongAi.length,
-      pendingReminders: pendingReminders.length,
-      topCompany: topCompany ? { name: topCompany[0], count: topCompany[1] } : null,
+      strongConnections: strongTies,
+      pendingReminders: filteredReminders.length,
+      topCompany: null as { name: string; count: number } | null,
     },
-    recentContacts: allContacts.slice(0, 6),
+    recentContacts: allContactRows.slice(0, 6),
     dueFollowUps: dueFollowUps.slice(0, 12),
-    reminders: pendingReminders.slice(0, 8),
-    suggestions,
+    reminders: filteredReminders.slice(0, 8),
+    suggestions: filteredSuggestions.slice(0, 8),
+    totalSuggestions: filteredSuggestions.length,
+    goals,
+    networkMetrics,
+    goalAlignedContacts,
+    closenessById,
+    contactNameById,
+    contactById,
+    graphPreview: {
+      nodes,
+      edges,
+      contacts: graphContacts,
+      companies,
+      tags,
+      userId,
+      summary: {
+        total: allContactRows.length,
+        companyCount: companies.length,
+        scoreCounts,
+        userName,
+      },
+    },
   };
 }
 

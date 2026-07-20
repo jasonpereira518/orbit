@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { Check, Clock } from "lucide-react";
 import { toast } from "sonner";
@@ -7,6 +8,7 @@ import { markReminderDone, snoozeReminderAction } from "@/actions/reminders";
 import { Button } from "@/components/ui/button";
 
 export function ReminderActions({ id }: { id: string }) {
+  const router = useRouter();
   const [pending, start] = useTransition();
 
   return (
@@ -19,6 +21,7 @@ export function ReminderActions({ id }: { id: string }) {
           start(async () => {
             await markReminderDone(id);
             toast.success("Marked done");
+            router.refresh();
           })
         }
       >
@@ -32,6 +35,7 @@ export function ReminderActions({ id }: { id: string }) {
           start(async () => {
             await snoozeReminderAction(id, 7);
             toast.success("Snoozed 7 days");
+            router.refresh();
           })
         }
       >

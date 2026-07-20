@@ -56,7 +56,7 @@ export async function upsertContactEmbedding(
         embedding,
         content,
       })
-      .returning({ id: contactEmbeddings.id });
+      .returning();
 
     if (inserted?.id) {
       await persistEmbeddingVector(inserted.id, embedding);

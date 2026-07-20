@@ -21,7 +21,11 @@ export function AppSidebar({
   return (
     <aside className="flex h-full w-[4.5rem] flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground lg:w-60">
       <div className="flex items-center justify-between gap-2 px-3 py-5 lg:px-5 lg:py-6">
-        <div className="flex min-w-0 flex-1 items-center justify-center gap-2.5 lg:justify-start">
+        <Link
+          href="/"
+          className="flex min-w-0 flex-1 items-center justify-center gap-2.5 lg:justify-start"
+          title="Back to landing page"
+        >
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sidebar-primary text-sm font-semibold text-sidebar-primary-foreground">
             O
           </div>
@@ -33,7 +37,7 @@ export function AppSidebar({
               Network tracker
             </p>
           </div>
-        </div>
+        </Link>
         <ThemeToggle className="hidden h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground lg:inline-flex" />
       </div>
 

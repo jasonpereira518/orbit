@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -179,7 +180,8 @@ function buildStructuralNodes(
   layoutNodes: ReturnType<typeof buildHybridGraphLayout>["nodes"],
   positionOverrides: PositionMap,
   motionEnabled: boolean,
-  prefersReducedMotion: boolean
+  prefersReducedMotion: boolean,
+  compact?: boolean
 ): Node[] {
   return layoutNodes.map((n) => {
     if (n.type === "orbitRings") {
@@ -205,7 +207,7 @@ function buildStructuralNodes(
     return {
       ...n,
       position: override || n.position,
-      draggable: true,
+      draggable: !compact,
       data: {
         ...d,
         motionEnabled,
@@ -232,6 +234,7 @@ function GraphCanvas(props: {
   onSelect: (selection: InspectSelection) => void;
   onHover: (id: string | null) => void;
   resetToken: number;
+  compact?: boolean;
 }) {
   const filteredContacts = useMemo(() => {
     return props.data.contacts.filter((c) => {
@@ -294,6 +297,7 @@ function GraphCanvasInner({
   onHover,
   filteredContacts,
   layout,
+  compact,
 }: {
   company: string;
   tag: string;
@@ -311,7 +315,9 @@ function GraphCanvasInner({
   onHover: (id: string | null) => void;
   filteredContacts: GraphPayload["contacts"];
   layout: ReturnType<typeof buildHybridGraphLayout>;
+  compact?: boolean;
 }) {
+  const router = useRouter();
   const { fitView } = useReactFlow();
   const draggingId = useRef<string | null>(null);
   const orbitAngles = useRef<Map<string, number>>(new Map());
@@ -326,7 +332,8 @@ function GraphCanvasInner({
       positionOverrides,
       motionEnabled,
       typeof window !== "undefined" &&
-        window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+      compact
     )
   );
 
@@ -585,6 +592,10 @@ function GraphCanvasInner({
   const onNodeClick: NodeMouseHandler = useCallback(
     (_, node) => {
       if (node.id === "rings" || node.type === "clusterLabel") return;
+      if (compact && node.type === "contact") {
+        router.push(`/contacts/${node.id}`);
+        return;
+      }
       if (node.id === "me" || node.type === "user") {
         const d = node.data as GraphNodeData;
         const scoreCounts: Record<number, number> = {
@@ -617,7 +628,7 @@ function GraphCanvasInner({
         data: node.data as GraphNodeData,
       });
     },
-    [onSelect, filteredContacts]
+    [onSelect, filteredContacts, compact, router]
   );
 
   const onNodeMouseEnter: NodeMouseHandler = useCallback(
@@ -704,7 +715,7 @@ function GraphCanvasInner({
           selectable: false,
           focusable: false,
         }}
-        nodesDraggable
+        nodesDraggable={!compact}
         className="constellation-stage"
       >
         <Background
@@ -713,7 +724,8 @@ function GraphCanvasInner({
           size={1}
           style={{ background: "transparent" }}
         />
-        <Controls showInteractive={false} />
+        {!compact && <Controls showInteractive={false} />}
+        {!compact && (
         <MiniMap
           pannable
           zoomable
@@ -729,9 +741,10 @@ function GraphCanvasInner({
           maskColor="rgba(0, 0, 0, 0.72)"
           className="!border !border-white/10 !bg-[#05070c]/90"
         />
+        )}
       </ReactFlow>
 
-      <GraphLegend />
+      {!compact && <GraphLegend />}
 
       {isEmpty && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -777,8 +790,10 @@ function applyGraphPayload(
 
 export function NetworkGraph({
   initialData = null,
+  compact = false,
 }: {
   initialData?: GraphPayload | null;
+  compact?: boolean;
 }) {
   const [data, setData] = useState<GraphPayload | null>(initialData);
   const [company, setCompany] = useState("all");
@@ -820,6 +835,7 @@ export function NetworkGraph({
   }, [initialData, data, loadData]);
 
   useEffect(() => {
+    if (compact) return;
     const onFocus = () => loadData(false);
     const onVisibility = () => {
       if (document.visibilityState === "visible") loadData(false);
@@ -830,16 +846,16 @@ export function NetworkGraph({
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [loadData]);
+  }, [loadData, compact]);
 
   const userId = data?.userId;
 
   const handlePositionOverridesChange = useCallback(
     (next: PositionMap) => {
       setPositionOverrides(next);
-      if (userId) savePositions(userId, next);
+      if (userId && !compact) savePositions(userId, next);
     },
-    [userId]
+    [userId, compact]
   );
 
   const resetPositions = useCallback(() => {
@@ -861,14 +877,23 @@ export function NetworkGraph({
 
   if (!data) {
     return (
-      <div className="flex h-[min(78vh,720px)] items-center justify-center rounded-2xl border border-white/10 bg-[#05070c] text-white/50">
+      <div
+        className={cn(
+          "flex items-center justify-center rounded-2xl border border-white/10 bg-[#05070c] text-white/50",
+          compact ? "h-[300px]" : "h-[min(78vh,720px)]"
+        )}
+      >
         Loading constellation…
       </div>
     );
   }
 
+  const canvasHeight = compact ? "h-[300px]" : "h-[min(78vh,720px)]";
+
   return (
-    <div className="space-y-3">
+    <div className={compact ? "space-y-0" : "space-y-3"}>
+      {!compact && (
+        <>
       <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-primary/15 bg-primary/[0.04] p-4 backdrop-blur-sm">
         <div className="min-w-[200px] flex-1 space-y-1.5">
           <Label htmlFor="graph-search" className="text-primary">
@@ -1047,8 +1072,15 @@ export function NetworkGraph({
           </div>
         </div>
       )}
+        </>
+      )}
 
-      <div className="relative h-[min(78vh,720px)] overflow-hidden rounded-2xl border border-white/10 bg-[#03050a] shadow-[inset_0_0_120px_rgba(0,0,0,0.65)]">
+      <div
+        className={cn(
+          "relative overflow-hidden rounded-2xl border border-white/10 bg-[#03050a] shadow-[inset_0_0_120px_rgba(0,0,0,0.65)]",
+          canvasHeight
+        )}
+      >
         <Starfield />
         <ReactFlowProvider>
           <GraphCanvas
@@ -1068,14 +1100,17 @@ export function NetworkGraph({
             onSelect={setSelection}
             onHover={setHoveredId}
             resetToken={resetToken}
+            compact={compact}
           />
         </ReactFlowProvider>
       </div>
 
+      {!compact && (
       <ContactInspectPanel
         selection={selection}
         onClose={() => setSelection(null)}
       />
+      )}
     </div>
   );
 }

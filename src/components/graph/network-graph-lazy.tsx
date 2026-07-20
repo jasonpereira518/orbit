@@ -14,15 +14,17 @@ const NetworkGraph = dynamic(
   {
     ssr: false,
     loading: () => (
-      <Skeleton className="h-[min(78vh,720px)] w-full rounded-2xl bg-[#05070c]" />
+      <Skeleton className="h-[300px] w-full rounded-2xl bg-[#05070c]" />
     ),
   }
 );
 
 export function NetworkGraphLazy({
   initialData = null,
+  compact = false,
 }: {
   initialData?: GraphPayload | null;
+  compact?: boolean;
 }) {
-  return <NetworkGraph initialData={initialData} />;
+  return <NetworkGraph initialData={initialData} compact={compact} />;
 }

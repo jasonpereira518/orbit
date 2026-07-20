@@ -42,13 +42,16 @@ export function CalendarSubscribePanel({
   const [pending, start] = useTransition();
 
   return (
-    <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
+    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div>
-        <p className="text-sm font-medium">Subscribe to a calendar feed</p>
+        <h2 className="text-lg font-medium text-primary">
+          Calendar subscription
+        </h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Paste a private ICS URL (Google: Settings → Integrate calendar → Secret
-          address in iCal format). Orbit polls it and keeps 1:1 / networking
-          events in sync — team standups and focus blocks are ignored.
+          address in iCal format). Orbit polls it, keeps 1:1 / networking events
+          in sync, and can create contacts for people it recognizes — team
+          standups and focus blocks are ignored.
         </p>
       </div>
 
@@ -105,7 +108,12 @@ export function CalendarSubscribePanel({
         </Button>
       </div>
 
-      {subs.length > 0 && (
+      {subs.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No calendar feeds yet. Paste a private ICS URL above to keep meetings
+          in sync.
+        </p>
+      ) : (
         <ul className="space-y-3 border-t border-border/50 pt-4">
           {subs.map((s) => (
             <li
@@ -222,6 +230,6 @@ export function CalendarSubscribePanel({
           ))}
         </ul>
       )}
-    </div>
+    </section>
   );
 }
