@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Plus, Settings } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { addGoal } from "@/actions/goals";
 import type { UserGoal } from "@/db/schema";
 import { Button, buttonVariants } from "@/components/ui/button";

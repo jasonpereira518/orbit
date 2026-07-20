@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   company_id uuid REFERENCES companies(id) ON DELETE SET NULL,
   title text,
   location text,
+  school text,
   email text,
   phone text,
   linkedin_url text,
@@ -183,6 +184,7 @@ CREATE INDEX IF NOT EXISTS tags_user_id_idx ON tags(user_id);
 CREATE INDEX IF NOT EXISTS contact_tags_contact_idx ON contact_tags(contact_id);
 CREATE INDEX IF NOT EXISTS interactions_contact_idx ON interactions(contact_id);
 CREATE INDEX IF NOT EXISTS interactions_user_idx ON interactions(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS interactions_user_external_uidx ON interactions(user_id, external_id) WHERE external_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS reminders_user_status_idx ON reminders(user_id, status);
 CREATE INDEX IF NOT EXISTS reminders_due_idx ON reminders(user_id, due_date);
 CREATE INDEX IF NOT EXISTS ai_suggestions_user_idx ON ai_suggestions(user_id, status);
@@ -310,6 +312,18 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "twilio_auth_token_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_from_number", "text");
   await ensureColumn(client, "user_settings", "theme", "text");
+  await ensureColumn(client, "contacts", "school", "text");
+  await ensureColumn(client, "contacts", "profile_image_url", "text");
+
+  try {
+    await client.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS interactions_user_external_uidx
+       ON interactions(user_id, external_id)
+       WHERE external_id IS NOT NULL`
+    );
+  } catch {
+    // Existing duplicate external_ids — app-level dedupe still applies
+  }
 }
 
 export function isPgvectorAvailable() {
@@ -390,6 +404,8 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_auth_token_encrypted text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_from_number text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS theme text`,
+    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
+    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
     `CREATE INDEX IF NOT EXISTS companies_user_idx ON companies(user_id)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS companies_user_name_uidx ON companies(user_id, name_normalized)`,
     `CREATE INDEX IF NOT EXISTS user_goals_user_idx ON user_goals(user_id)`,
@@ -399,6 +415,7 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `CREATE INDEX IF NOT EXISTS contact_tags_contact_idx ON contact_tags(contact_id)`,
     `CREATE INDEX IF NOT EXISTS interactions_contact_idx ON interactions(contact_id)`,
     `CREATE INDEX IF NOT EXISTS interactions_user_idx ON interactions(user_id)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS interactions_user_external_uidx ON interactions(user_id, external_id) WHERE external_id IS NOT NULL`,
     `CREATE INDEX IF NOT EXISTS reminders_user_status_idx ON reminders(user_id, status)`,
     `CREATE INDEX IF NOT EXISTS reminders_due_idx ON reminders(user_id, due_date)`,
     `CREATE INDEX IF NOT EXISTS ai_suggestions_user_idx ON ai_suggestions(user_id, status)`,

@@ -90,6 +90,25 @@ export function closenessTier(closeness: number): ClosenessBreakdown["tier"] {
   return "outer";
 }
 
+/** Tailwind text + chip classes for closeness % — distinct from name (primary). */
+export function closenessPercentColorClass(closeness: number) {
+  const tier = closenessTier(closeness);
+  if (tier === "inner") return "text-amber-700 dark:text-amber-300";
+  if (tier === "mid") return "text-teal-600 dark:text-teal-400";
+  return "text-muted-foreground";
+}
+
+export function closenessPercentChipClass(closeness: number) {
+  const tier = closenessTier(closeness);
+  if (tier === "inner") {
+    return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  }
+  if (tier === "mid") {
+    return "bg-teal-500/10 text-teal-600 dark:text-teal-400";
+  }
+  return "bg-muted text-muted-foreground";
+}
+
 /** Map continuous closeness onto the five constellation rings. */
 export function closenessToOrbitScore(closeness: number) {
   if (closeness >= 0.7) return 5;

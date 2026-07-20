@@ -8,7 +8,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { DashboardGraphPreview } from "@/components/dashboard/dashboard-graph-preview";
 import { DueFollowUpRow } from "@/components/dashboard/due-follow-up-row";
-import { DashboardCommandSearch } from "@/components/dashboard/command-search";
 import { GenerateFollowUpsButton } from "@/components/dashboard/generate-follow-ups-button";
 import { GoalsSummary } from "@/components/dashboard/goals-summary";
 import { NetworkDepthChart } from "@/components/dashboard/network-depth-chart";
@@ -45,17 +44,19 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-8">
-      <header className="space-y-4">
-        <div className="space-y-2">
-          <p className="text-sm font-medium text-primary">Your network</p>
-          <h1 className="font-[family-name:var(--font-display)] text-4xl tracking-tight text-primary">
-            Stay in orbit
-          </h1>
-          <p className="max-w-xl text-muted-foreground">
-            Follow-ups, dormant connections, and people worth reaching out to — in one place.
-          </p>
-        </div>
-        <DashboardCommandSearch />
+      <header className="space-y-2">
+        <p className="text-sm font-medium text-primary">Your network</p>
+        <h1 className="font-[family-name:var(--font-display)] text-4xl tracking-tight text-primary">
+          Stay in orbit
+        </h1>
+        <p className="max-w-xl text-muted-foreground">
+          Follow-ups, dormant connections, and people worth reaching out to — in one place.
+          Press{" "}
+          <kbd className="rounded-md border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[11px]">
+            ⌘K
+          </kbd>{" "}
+          to ask your network.
+        </p>
       </header>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -170,25 +171,30 @@ export default async function DashboardPage() {
         </Card>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid items-start gap-6 lg:grid-cols-2">
         <Card id="due-follow-ups" className="border-border/70 shadow-none scroll-mt-8">
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
             <CardTitle className="text-base">Due follow-ups</CardTitle>
-            <div className="flex items-center gap-1.5">
-              <GenerateFollowUpsButton limit={8} />
-              <Link
-                href="/contacts?followUp=due"
-                className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
-              >
-                View all
-              </Link>
-            </div>
+            {data.dueFollowUps.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <GenerateFollowUpsButton limit={8} />
+                <Link
+                  href="/contacts?followUp=due"
+                  className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+                >
+                  View all
+                </Link>
+              </div>
+            )}
           </CardHeader>
           <CardContent className="space-y-2">
             {data.dueFollowUps.length === 0 ? (
               <div className="space-y-3">
-                <Empty hint="You're caught up — or generate follow-ups from dormant / high-value contacts." />
-                <GenerateFollowUpsButton limit={8} />
+                <Empty hint="You're caught up." />
+                <GenerateFollowUpsButton
+                  limit={8}
+                  label="Generate follow-ups"
+                />
               </div>
             ) : (
               data.dueFollowUps.map((c) => (

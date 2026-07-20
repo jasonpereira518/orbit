@@ -62,6 +62,7 @@ export const contacts = pgTable(
     }),
     title: text("title"),
     location: text("location"),
+    school: text("school"),
     email: text("email"),
     phone: text("phone"),
     linkedinUrl: text("linkedin_url"),
@@ -154,6 +155,8 @@ export const interactions = pgTable(
   (t) => [
     index("interactions_contact_idx").on(t.contactId),
     index("interactions_user_idx").on(t.userId),
+    // Soft unique for import dedupe; NULLs allowed (manual notes have no externalId).
+    uniqueIndex("interactions_user_external_uidx").on(t.userId, t.externalId),
   ]
 );
 

@@ -5,7 +5,9 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { reminders } from "@/db/schema";
+import { listActiveGoalTexts } from "@/actions/goals";
 import { requireUserId, getCurrentUserProfile } from "@/lib/auth";
+import { generateFollowUpDraft } from "@/lib/follow-up-drafts";
 import {
   completeReminder,
   generateDueFollowUps,
@@ -171,6 +173,13 @@ export async function markReminderDone(id: string) {
   await completeReminder(userId, id);
   revalidatePath("/");
   revalidatePath("/dashboard");
+}
+
+/** Draft a follow-up message grounded in the reminder contact's conversation history. */
+export async function draftFollowUpResponse(reminderId: string) {
+  const userId = await requireUserId();
+  const goals = await listActiveGoalTexts(userId);
+  return generateFollowUpDraft(userId, reminderId, goals);
 }
 
 export async function snoozeReminderAction(id: string, days = 7) {

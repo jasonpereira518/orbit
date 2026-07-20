@@ -32,6 +32,7 @@ function toSearchable(
     aiSummary: c.aiSummary,
     notes: c.notes,
     industry: c.industry,
+    keyFacts: c.keyFacts,
     relationshipScore: c.relationshipScore,
     priorityLevel: c.priorityLevel,
     tags: c.contactTags.map((ct) => ct.tag.name),

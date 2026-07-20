@@ -7,6 +7,7 @@ import {
   Send,
   MessageSquare,
   Network,
+  BookOpen,
   Settings,
   MoreHorizontal,
 } from "lucide-react";
@@ -22,6 +23,7 @@ export const APP_NAV: AppNavItem[] = [
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/capture", label: "Capture", icon: Sparkles },
   { href: "/imports", label: "Imports", icon: Upload },
+  { href: "/knowledge", label: "Knowledge", icon: BookOpen },
   { href: "/outreach", label: "Outreach", icon: Send },
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/graph", label: "Constellation", icon: Network },
@@ -38,7 +40,7 @@ export const MOBILE_BOTTOM_NAV: Array<
   { id: "more", label: "More", icon: MoreHorizontal },
 ];
 
-export const MOBILE_MORE_NAV = [APP_NAV[3], APP_NAV[5], APP_NAV[6]];
+export const MOBILE_MORE_NAV = [APP_NAV[3], APP_NAV[5], APP_NAV[6], APP_NAV[7]];
 
 export function isNavActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);

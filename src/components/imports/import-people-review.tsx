@@ -53,7 +53,7 @@ export function ImportPeopleReview({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">
           {selectedCount} of {people.length} selected
-          {repeatCount > 0 ? ` · ${repeatCount} repeat connection${repeatCount === 1 ? "" : "s"}` : ""}
+          {repeatCount > 0 ? ` · ${repeatCount} already in your network` : ""}
         </p>
         <div className="flex gap-2">
           <Button
@@ -121,7 +121,7 @@ export function ImportPeopleReview({
                 <div className="w-36 shrink-0 text-right sm:w-44">
                   {person.isRepeat ? (
                     <div className="flex flex-col items-end gap-0.5">
-                      <Badge variant="secondary">Repeat connection</Badge>
+                      <Badge variant="secondary">Already in orbit</Badge>
                       {person.repeatReason ? (
                         <span className="text-[10px] text-muted-foreground">
                           {person.repeatReason}

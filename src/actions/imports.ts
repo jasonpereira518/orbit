@@ -351,6 +351,8 @@ export async function confirmLinkedInImport(
       revalidatePath("/contacts");
       revalidatePath("/imports");
       revalidatePath("/graph");
+      revalidatePath("/knowledge");
+      revalidatePath("/chat");
     }
 
     return {
@@ -460,6 +462,7 @@ export async function confirmLinkedInMessagesImport(
 
     let created = 0;
     let updated = 0;
+    let duplicates = 0;
     let messagesImported = 0;
     let skipped = 0;
     const touchedContactIds = new Set<string>();
@@ -495,6 +498,7 @@ export async function confirmLinkedInMessagesImport(
         existing = [...existing, contact as (typeof existing)[number]];
         created++;
       } else {
+        duplicates++;
         const identity = participantIdentity(conv);
         await updateContact(
           contactId,
@@ -553,17 +557,23 @@ export async function confirmLinkedInMessagesImport(
         }
 
         const fromLabel = msg.from || "LinkedIn";
-        await db.insert(interactions).values({
-          userId,
-          contactId,
-          interactionType: "linkedin_message",
-          interactionDate: date,
-          source: "linkedin_messages_import",
-          externalId,
-          rawNotes: msg.content,
-          aiSummary: `${fromLabel}: ${msg.content.slice(0, 240)}`,
-          topics: msg.subject ? [msg.subject] : [],
-        });
+        try {
+          await db.insert(interactions).values({
+            userId,
+            contactId,
+            interactionType: "linkedin_message",
+            interactionDate: date,
+            source: "linkedin_messages_import",
+            externalId,
+            rawNotes: msg.content,
+            aiSummary: `${fromLabel}: ${msg.content.slice(0, 240)}`,
+            topics: msg.subject ? [msg.subject] : [],
+          });
+        } catch {
+          // Unique (user_id, external_id) race / re-import
+          skipped++;
+          continue;
+        }
         messagesImported++;
         existingExternalIds.add(externalId);
         existingLegacyKeys.add(legacyKey);
@@ -597,6 +607,7 @@ export async function confirmLinkedInMessagesImport(
 
     const contactsCreated = (importRow.contactsCreated ?? 0) + created;
     const contactsUpdated = (importRow.contactsUpdated ?? 0) + updated;
+    const duplicatesFound = (importRow.duplicatesFound ?? 0) + duplicates;
     const rowsProcessed = (importRow.rowsProcessed ?? 0) + messagesImported;
     const touchedAll = new Set([
       ...(importRow.stats?.touchedContactIds ?? []),
@@ -643,7 +654,7 @@ export async function confirmLinkedInMessagesImport(
         rowsProcessed,
         contactsCreated,
         contactsUpdated,
-        duplicatesFound: importRow.duplicatesFound ?? 0,
+        duplicatesFound,
         stats,
         errorMessage: null,
         updatedAt: new Date(),
@@ -656,6 +667,7 @@ export async function confirmLinkedInMessagesImport(
       revalidatePath("/imports");
       revalidatePath("/graph");
       revalidatePath("/chat");
+      revalidatePath("/knowledge");
     }
 
     return {
@@ -664,6 +676,7 @@ export async function confirmLinkedInMessagesImport(
       messagesImported,
       contactsCreated,
       contactsUpdated,
+      duplicatesFound,
       skipped,
       enrichment,
       chunkMessagesImported: messagesImported,

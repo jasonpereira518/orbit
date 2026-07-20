@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { parseCaptureNotes, confirmCapture } from "@/actions/capture";
 import { listContacts, logInteraction } from "@/actions/contacts";
 import { scheduleContactFollowUp } from "@/actions/reminders";

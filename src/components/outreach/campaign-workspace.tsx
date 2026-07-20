@@ -15,7 +15,7 @@ import {
   searchProspects,
 } from "@/actions/outreach";
 import { useTransition } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import type { OutreachChannel } from "@/lib/outreach-types";
 
 export function CampaignWorkspace({

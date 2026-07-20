@@ -8,7 +8,7 @@ const TIER_LABELS = {
 
 const TIER_STYLES = {
   inner: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  mid: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+  mid: "bg-primary/15 text-primary",
   outer: "bg-muted text-muted-foreground",
 } as const;
 
@@ -27,7 +27,7 @@ export function ClosenessTierBadge({
         className={cn(
           "inline-block h-2 w-2 shrink-0 rounded-full",
           tier === "inner" && "bg-amber-500",
-          tier === "mid" && "bg-sky-500",
+          tier === "mid" && "bg-primary",
           tier === "outer" && "bg-muted-foreground/40",
           className
         )}

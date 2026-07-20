@@ -39,6 +39,8 @@ const Toaster = ({ ...props }: ToasterProps) => {
       toastOptions={{
         classNames: {
           toast: "cn-toast",
+          title: "whitespace-pre-wrap break-words",
+          description: "whitespace-pre-wrap break-words",
         },
       }}
       {...props}

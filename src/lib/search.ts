@@ -142,6 +142,7 @@ export async function semanticSearchContacts(
     // fall through to keyword search
   }
 
+  const q = query.toLowerCase();
   const scoreByContact = new Map<string, number>();
 
   if (queryEmbedding) {
@@ -159,9 +160,31 @@ export async function semanticSearchContacts(
         scoreByContact.set(contactId, sim);
       }
     }
-  }
 
-  const q = query.toLowerCase();
+    // Also boost contacts whose stored embedding text mentions the query
+    // (covers LinkedIn message chunks even when vector score is middling).
+    const contentRows = await db.query.contactEmbeddings.findMany({
+      where: eq(contactEmbeddings.userId, userId),
+      columns: { contactId: true, content: true },
+    });
+    for (const row of contentRows) {
+      const hay = (row.content || "").toLowerCase();
+      if (!hay) continue;
+      let bump = 0;
+      if (hay.includes(q)) bump = 0.35;
+      else {
+        for (const token of q.split(/\s+/).filter((t) => t.length > 2)) {
+          if (hay.includes(token)) bump += 0.08;
+        }
+      }
+      if (bump > 0) {
+        scoreByContact.set(
+          row.contactId,
+          Math.max(scoreByContact.get(row.contactId) ?? 0, bump)
+        );
+      }
+    }
+  }
   const results = allContacts
     .map((c) => {
       let score = scoreByContact.get(c.id) ?? 0;
@@ -179,6 +202,9 @@ export async function semanticSearchContacts(
         c.industry,
         c.metContext,
         c.howMet,
+        ...(c.keyFacts || []),
+        ...(c.opportunities || []),
+        ...(c.sharedInterests || []),
         ...(c.contactTags?.map((ct) => ct.tag.name) || []),
       ]
         .filter(Boolean)

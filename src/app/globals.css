@@ -135,6 +135,91 @@
   }
 }
 
+/* ── Liquid glass (iOS-inspired floating panels) ── */
+
+.liquid-glass {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: 1.5rem;
+  background:
+    linear-gradient(
+      165deg,
+      rgba(255, 255, 255, 0.72) 0%,
+      rgba(255, 255, 255, 0.42) 42%,
+      rgba(247, 248, 246, 0.38) 100%
+    );
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.65) inset,
+    0 -1px 0 0 rgba(15, 61, 62, 0.04) inset,
+    0 8px 32px -8px rgba(26, 28, 26, 0.18),
+    0 2px 8px -2px rgba(26, 28, 26, 0.08);
+  backdrop-filter: blur(28px) saturate(1.65);
+  -webkit-backdrop-filter: blur(28px) saturate(1.65);
+}
+
+.liquid-glass::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(
+      120% 80% at 12% -10%,
+      rgba(255, 255, 255, 0.75) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      90% 60% at 100% 100%,
+      rgba(15, 61, 62, 0.06) 0%,
+      transparent 50%
+    );
+}
+
+.liquid-glass > * {
+  position: relative;
+  z-index: 1;
+}
+
+.dark .liquid-glass {
+  background:
+    linear-gradient(
+      165deg,
+      rgba(55, 55, 55, 0.72) 0%,
+      rgba(39, 39, 39, 0.55) 45%,
+      rgba(32, 32, 32, 0.48) 100%
+    );
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.14) inset,
+    0 -1px 0 0 rgba(0, 0, 0, 0.25) inset,
+    0 12px 40px -10px rgba(0, 0, 0, 0.55),
+    0 2px 10px -2px rgba(0, 0, 0, 0.35);
+}
+
+.dark .liquid-glass::before {
+  background:
+    radial-gradient(
+      120% 80% at 12% -10%,
+      rgba(255, 255, 255, 0.12) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      90% 60% at 100% 100%,
+      rgba(89, 157, 231, 0.1) 0%,
+      transparent 50%
+    );
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .liquid-glass {
+    background: color-mix(in oklab, var(--sidebar) 92%, transparent);
+  }
+}
+
 @keyframes trash-wiggle {
   0%,
   100% {
@@ -395,11 +480,8 @@
   inset: 0;
   overflow: hidden;
   border-radius: 50%;
-  background: #1a1a1a;
-  box-shadow:
-    0 0 0.35em color-mix(in oklab, var(--planet-glow) 70%, transparent),
-    0 0.08em 0.2em rgba(0, 0, 0, 0.45);
-  transform: translateZ(0.5px);
+  background: var(--planet-base, #8a8278);
+  box-shadow: 0 0 0.35em color-mix(in oklab, var(--planet-glow) 70%, transparent);
 }
 
 .hero-planet-texture {
@@ -416,50 +498,6 @@
   animation: hero-planet-spin var(--planet-spin, 10s) linear infinite;
 }
 
-.hero-planet-shade {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background:
-    radial-gradient(
-      circle at 30% 28%,
-      rgba(255, 255, 255, 0.28) 0%,
-      rgba(255, 255, 255, 0.06) 28%,
-      transparent 48%
-    ),
-    radial-gradient(
-      circle at 72% 68%,
-      transparent 35%,
-      rgba(0, 0, 0, 0.28) 62%,
-      rgba(0, 0, 0, 0.72) 100%
-    );
-  mix-blend-mode: soft-light;
-  pointer-events: none;
-}
-
-.hero-planet-specular {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle at 28% 24%,
-    rgba(255, 255, 255, 0.55) 0%,
-    rgba(255, 255, 255, 0.12) 18%,
-    transparent 42%
-  );
-  pointer-events: none;
-}
-
-.hero-planet-rim {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  box-shadow:
-    inset -0.12em -0.08em 0.22em rgba(0, 0, 0, 0.55),
-    inset 0.1em 0.08em 0.18em rgba(255, 255, 255, 0.2);
-  pointer-events: none;
-}
-
 .hero-planet-atmosphere {
   position: absolute;
   inset: -28%;
@@ -469,7 +507,7 @@
     var(--planet-glow) 0%,
     transparent 62%
   );
-  opacity: 0.55;
+  opacity: 0.45;
   filter: blur(0.15em);
   pointer-events: none;
   z-index: -1;
@@ -526,110 +564,122 @@
   z-index: 1;
 }
 
+.hero-planet-3d--mercury {
+  --planet-base: #9a9288;
+}
 .hero-planet-3d--mercury .hero-planet-texture {
   background-image: linear-gradient(
     90deg,
-    #6a645c 0%,
-    #b0a89e 18%,
-    #8a8278 36%,
-    #d0c8c0 52%,
-    #7a7268 70%,
-    #4a443c 88%,
-    #6a645c 100%
+    #8a8278 0%,
+    #c0b8b0 25%,
+    #a09890 50%,
+    #d0c8c0 75%,
+    #8a8278 100%
   );
 }
 
+.hero-planet-3d--venus {
+  --planet-base: #e0b860;
+}
 .hero-planet-3d--venus .hero-planet-texture {
   background-image: linear-gradient(
     90deg,
-    #a87830 0%,
-    #f0d890 16%,
-    #e0b860 34%,
-    #fff0c8 50%,
-    #c89848 68%,
-    #6a4820 86%,
-    #a87830 100%
+    #c89848 0%,
+    #f0d890 25%,
+    #e0b860 50%,
+    #fff0c8 75%,
+    #c89848 100%
   );
 }
 
+.hero-planet-3d--earth {
+  --planet-base: #3a8fd0;
+}
 .hero-planet-3d--earth .hero-planet-texture {
   background-image: linear-gradient(
     90deg,
-    #0a3048 0%,
-    #1a6890 10%,
-    #2a7850 22%,
-    #3a8fd0 34%,
-    #c8e8ff 42%,
-    #2a7850 54%,
-    #1a5080 66%,
-    #3a9a60 78%,
-    #0a2030 90%,
-    #0a3048 100%
+    #2a7850 0%,
+    #3a8fd0 18%,
+    #5aa8e0 32%,
+    #2a7850 48%,
+    #3a8fd0 64%,
+    #4a9a68 80%,
+    #2a7850 100%
   );
 }
 
+.hero-planet-3d--mars {
+  --planet-base: #c05030;
+}
 .hero-planet-3d--mars .hero-planet-texture {
   background-image: linear-gradient(
     90deg,
-    #5a1808 0%,
-    #c05030 18%,
-    #f0b090 36%,
-    #a03820 54%,
-    #e08060 72%,
-    #3a1008 90%,
-    #5a1808 100%
+    #a03820 0%,
+    #e08060 25%,
+    #c05030 50%,
+    #f0b090 75%,
+    #a03820 100%
   );
 }
 
+.hero-planet-3d--jupiter {
+  --planet-base: #c89858;
+}
 .hero-planet-3d--jupiter .hero-planet-texture {
   background-image: repeating-linear-gradient(
     180deg,
     #e8d0a0 0%,
-    #c89858 8%,
-    #8a6038 16%,
-    #d8b878 24%,
-    #a07040 32%,
-    #6a4828 40%,
-    #c09058 48%,
-    #e8d0a0 56%
+    #d0b070 10%,
+    #c89858 20%,
+    #e0c488 30%,
+    #b88850 40%,
+    #d8b878 50%,
+    #e8d0a0 60%
   );
   background-size: 40% 100%;
 }
 
+.hero-planet-3d--saturn {
+  --planet-base: #d8c090;
+}
 .hero-planet-3d--saturn .hero-planet-texture {
   background-image: repeating-linear-gradient(
     180deg,
     #f0e4c0 0%,
-    #d8c090 14%,
-    #b8a068 28%,
-    #908050 42%,
-    #d8c090 56%,
-    #f0e4c0 70%
+    #d8c090 16%,
+    #c8b078 32%,
+    #e0d0a0 48%,
+    #d8c090 64%,
+    #f0e4c0 80%
   );
   background-size: 40% 100%;
 }
 
+.hero-planet-3d--uranus {
+  --planet-base: #70c8c8;
+}
 .hero-planet-3d--uranus .hero-planet-texture {
   background-image: linear-gradient(
     90deg,
-    #184848 0%,
-    #70c8c8 22%,
-    #d8f8f8 40%,
-    #58b0b0 60%,
-    #286868 82%,
-    #184848 100%
+    #58b0b0 0%,
+    #a0e0e0 25%,
+    #70c8c8 50%,
+    #d8f8f8 75%,
+    #58b0b0 100%
   );
 }
 
+.hero-planet-3d--neptune {
+  --planet-base: #3868d0;
+}
 .hero-planet-3d--neptune .hero-planet-texture {
   background-image: linear-gradient(
     90deg,
-    #081838 0%,
-    #2860b0 20%,
-    #b0d0ff 38%,
-    #3868d0 58%,
-    #1a3878 78%,
-    #081838 100%
+    #2860b0 0%,
+    #6090e0 25%,
+    #3868d0 50%,
+    #90b8f0 75%,
+    #2860b0 100%
   );
 }
 

@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, desc } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import {
@@ -17,6 +17,12 @@ import { companyFieldsForWrite } from "@/lib/companies";
 import { isMetContext } from "@/lib/met-context";
 import { generateAndStorePersonSummary } from "@/lib/person-summary";
 import { rebuildContactEmbedding } from "@/lib/search";
+import {
+  enrichPeopleFromLinkedIn,
+  getApolloApiKey,
+} from "@/lib/apollo";
+import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
+import { linkedinAvatarUrl } from "@/lib/contact-avatar";
 
 export type ContactWriteOptions = {
   /** Skip path revalidation during bulk imports. */
@@ -31,10 +37,12 @@ export type ContactInput = {
   company?: string;
   title?: string;
   location?: string;
+  school?: string;
   email?: string;
   phone?: string;
   linkedinUrl?: string;
   website?: string;
+  profileImageUrl?: string | null;
   relationshipScore?: number;
   priorityLevel?: number;
   source?: string;
@@ -107,6 +115,8 @@ export async function listContacts(filters?: {
         c.preferredName,
         c.company,
         c.title,
+        c.location,
+        c.school,
         c.email,
         c.phone,
         c.location,
@@ -195,10 +205,12 @@ export async function createContact(
       companyId: companyFields.companyId,
       title: input.title,
       location: input.location,
+      school: input.school,
       email: input.email,
       phone: input.phone,
       linkedinUrl: input.linkedinUrl,
       website: input.website,
+      profileImageUrl: input.profileImageUrl ?? null,
       relationshipScore: input.relationshipScore ?? 2,
       priorityLevel: input.priorityLevel ?? 0,
       source: input.source ?? "manual",
@@ -258,12 +270,16 @@ export async function updateContact(
         : {}),
       ...(input.title !== undefined ? { title: input.title } : {}),
       ...(input.location !== undefined ? { location: input.location } : {}),
+      ...(input.school !== undefined ? { school: input.school } : {}),
       ...(input.email !== undefined ? { email: input.email } : {}),
       ...(input.phone !== undefined ? { phone: input.phone } : {}),
       ...(input.linkedinUrl !== undefined
         ? { linkedinUrl: input.linkedinUrl }
         : {}),
       ...(input.website !== undefined ? { website: input.website } : {}),
+      ...(input.profileImageUrl !== undefined
+        ? { profileImageUrl: input.profileImageUrl }
+        : {}),
       ...(input.relationshipScore !== undefined
         ? { relationshipScore: input.relationshipScore }
         : {}),
@@ -388,4 +404,173 @@ export async function regenerateContactSummary(contactId: string) {
   revalidatePath("/graph");
   revalidatePath("/dashboard");
   return { summary };
+}
+
+export type LinkedInRefreshTarget = {
+  id: string;
+  fullName: string;
+  email: string | null;
+  linkedinUrl: string;
+};
+
+/** Contacts that have a LinkedIn URL and can be refreshed. */
+export async function listLinkedInRefreshTargets(): Promise<{
+  targets: LinkedInRefreshTarget[];
+  hasApollo: boolean;
+}> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const apiKey = await getApolloApiKey(userId);
+
+  const rows = await db.query.contacts.findMany({
+    where: eq(contacts.userId, userId),
+    columns: {
+      id: true,
+      fullName: true,
+      email: true,
+      linkedinUrl: true,
+    },
+  });
+
+  const targets = rows
+    .filter((r): r is typeof r & { linkedinUrl: string } =>
+      Boolean(r.linkedinUrl?.trim())
+    )
+    .map((r) => ({
+      id: r.id,
+      fullName: r.fullName,
+      email: r.email,
+      linkedinUrl: r.linkedinUrl.trim(),
+    }));
+
+  return { targets, hasApollo: Boolean(apiKey) };
+}
+
+/**
+ * Refresh a batch of contacts from LinkedIn via Apollo people/match.
+ * Updates role, company, location, school, and profile picture when found.
+ */
+export async function refreshContactsFromLinkedIn(contactIds: string[]) {
+  const userId = await requireUserId();
+  if (contactIds.length === 0) {
+    return { refreshed: 0, unmatched: 0, failed: 0, avatarOnly: false };
+  }
+  if (contactIds.length > LINKEDIN_REFRESH_BATCH_SIZE) {
+    throw new Error(
+      `Refresh at most ${LINKEDIN_REFRESH_BATCH_SIZE} contacts at a time`
+    );
+  }
+
+  const db = await getDb();
+  const rows = await db.query.contacts.findMany({
+    where: and(eq(contacts.userId, userId), inArray(contacts.id, contactIds)),
+    columns: {
+      id: true,
+      fullName: true,
+      email: true,
+      linkedinUrl: true,
+      title: true,
+      company: true,
+      location: true,
+      school: true,
+      profileImageUrl: true,
+      firstName: true,
+      lastName: true,
+    },
+  });
+
+  // Preserve caller order for stable batch progress.
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const ordered = contactIds
+    .map((id) => byId.get(id))
+    .filter((r): r is NonNullable<typeof r> => Boolean(r?.linkedinUrl?.trim()));
+
+  if (ordered.length === 0) {
+    return { refreshed: 0, unmatched: 0, failed: 0, avatarOnly: false };
+  }
+
+  let enriched: Awaited<ReturnType<typeof enrichPeopleFromLinkedIn>>;
+  let avatarOnly = false;
+
+  try {
+    enriched = await enrichPeopleFromLinkedIn(
+      userId,
+      ordered.map((r) => ({
+        linkedinUrl: r.linkedinUrl!,
+        fullName: r.fullName,
+        email: r.email,
+      }))
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "";
+    // Free Apollo plans often block people enrichment — still refresh photos.
+    if (/not available on your current plan|403/i.test(message)) {
+      avatarOnly = true;
+      enriched = ordered.map(() => null);
+    } else {
+      throw err;
+    }
+  }
+
+  let refreshed = 0;
+  let unmatched = 0;
+  let failed = 0;
+  const bust = Date.now();
+
+  for (let i = 0; i < ordered.length; i++) {
+    const contact = ordered[i];
+    const profile = enriched[i];
+
+    try {
+      if (!profile) {
+        // Still refresh avatar via unavatar cache-bust when Apollo has no match.
+        const avatar = linkedinAvatarUrl(contact.linkedinUrl);
+        if (avatar) {
+          await updateContact(
+            contact.id,
+            { profileImageUrl: `${avatar}&t=${bust}` },
+            { skipRevalidate: true }
+          );
+          refreshed += 1;
+        } else {
+          unmatched += 1;
+        }
+        continue;
+      }
+
+      const avatarFallback = linkedinAvatarUrl(
+        profile.linkedinUrl || contact.linkedinUrl
+      );
+      const profileImageUrl =
+        profile.profileImageUrl ||
+        (avatarFallback ? `${avatarFallback}&t=${bust}` : null);
+
+      await updateContact(
+        contact.id,
+        {
+          ...(profile.title ? { title: profile.title } : {}),
+          ...(profile.company ? { company: profile.company } : {}),
+          ...(profile.location ? { location: profile.location } : {}),
+          ...(profile.school ? { school: profile.school } : {}),
+          ...(profile.email ? { email: profile.email } : {}),
+          ...(profile.firstName ? { firstName: profile.firstName } : {}),
+          ...(profile.lastName ? { lastName: profile.lastName } : {}),
+          ...(profile.linkedinUrl
+            ? { linkedinUrl: profile.linkedinUrl }
+            : {}),
+          ...(profileImageUrl ? { profileImageUrl } : {}),
+        },
+        { skipRevalidate: true }
+      );
+      refreshed += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+
+  revalidatePath("/contacts");
+  revalidatePath("/");
+  revalidatePath("/graph");
+
+  return { refreshed, unmatched, failed, avatarOnly };
 }

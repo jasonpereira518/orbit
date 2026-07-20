@@ -55,6 +55,7 @@ export default async function ContactDetailPage({
     { label: "Company", value: contact.company },
     { label: "Role", value: contact.title },
     { label: "Location", value: contact.location },
+    { label: "School", value: contact.school },
     { label: "How you met", value: howMetSummary },
     {
       label: "Email",
@@ -272,6 +273,7 @@ export default async function ContactDetailPage({
             title: contact.title || "",
             company: contact.company || "",
             location: contact.location || "",
+            school: contact.school || "",
             metContext: contact.metContext || "",
             dateMet: contact.dateMet
               ? new Date(contact.dateMet).toISOString().slice(0, 10)

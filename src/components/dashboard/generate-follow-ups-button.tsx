@@ -3,14 +3,16 @@
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { Sparkles } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { generateDueFollowUpsAction } from "@/actions/reminders";
 import { Button } from "@/components/ui/button";
 
 export function GenerateFollowUpsButton({
   limit = 8,
+  label = "Generate more",
 }: {
   limit?: number;
+  label?: string;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -46,7 +48,7 @@ export function GenerateFollowUpsButton({
       }
     >
       <Sparkles className="h-3.5 w-3.5" />
-      {pending ? "Generating…" : "Generate more"}
+      {pending ? "Generating…" : label}
     </Button>
   );
 }

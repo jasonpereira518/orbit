@@ -2,10 +2,31 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { decrypt } from "@/lib/crypto";
-import type { AudienceFilters, NormalizedProspect } from "@/lib/outreach-types";
+import {
+  LINKEDIN_REFRESH_BATCH_SIZE,
+  type AudienceFilters,
+  type NormalizedProspect,
+} from "@/lib/outreach-types";
 
 const APOLLO_SEARCH_URL = "https://api.apollo.io/api/v1/mixed_people/search";
 const APOLLO_MATCH_URL = "https://api.apollo.io/api/v1/people/match";
+
+type ApolloEmployment = {
+  organization_name?: string | null;
+  title?: string | null;
+  degree?: string | null;
+  kind?: string | null;
+  major?: string | null;
+  current?: boolean | null;
+  end_date?: string | null;
+  start_date?: string | null;
+};
+
+type ApolloEducation = {
+  school_name?: string | null;
+  organization_name?: string | null;
+  name?: string | null;
+};
 
 type ApolloPerson = {
   id?: string;
@@ -16,10 +37,25 @@ type ApolloPerson = {
   email?: string;
   phone_numbers?: Array<{ raw_number?: string; sanitized_number?: string }>;
   linkedin_url?: string;
+  photo_url?: string | null;
   city?: string;
   state?: string;
   country?: string;
   organization?: { name?: string };
+  employment_history?: ApolloEmployment[];
+  education?: ApolloEducation[];
+};
+
+export type LinkedInProfileEnrichment = {
+  firstName: string | null;
+  lastName: string | null;
+  title: string | null;
+  company: string | null;
+  email: string | null;
+  location: string | null;
+  school: string | null;
+  profileImageUrl: string | null;
+  linkedinUrl: string | null;
 };
 
 function decryptKey(encrypted?: string | null) {
@@ -43,6 +79,58 @@ export function hasApolloKey(userId: string, settings?: { apolloApiKeyEncrypted?
   return Boolean(decryptKey(settings?.apolloApiKeyEncrypted) || process.env.APOLLO_API_KEY);
 }
 
+function personLocation(person: ApolloPerson) {
+  return [person.city, person.state, person.country].filter(Boolean).join(", ");
+}
+
+function extractSchool(person: ApolloPerson): string | null {
+  const education = person.education ?? [];
+  for (const entry of education) {
+    const name =
+      entry.school_name?.trim() ||
+      entry.organization_name?.trim() ||
+      entry.name?.trim();
+    if (name) return name;
+  }
+
+  const history = person.employment_history ?? [];
+  const eduJobs = history.filter(
+    (job) =>
+      Boolean(job.degree?.trim()) ||
+      Boolean(job.major?.trim()) ||
+      job.kind?.toLowerCase() === "education"
+  );
+  // Prefer the most recent education (no end_date / latest start).
+  eduJobs.sort((a, b) => {
+    const aStart = a.start_date || "";
+    const bStart = b.start_date || "";
+    return bStart.localeCompare(aStart);
+  });
+  for (const job of eduJobs) {
+    const name = job.organization_name?.trim();
+    if (name) return name;
+  }
+
+  return null;
+}
+
+function normalizeLinkedInProfile(
+  person: ApolloPerson
+): LinkedInProfileEnrichment {
+  const photo = person.photo_url?.trim() || null;
+  return {
+    firstName: person.first_name?.trim() || null,
+    lastName: person.last_name?.trim() || null,
+    title: person.title?.trim() || null,
+    company: person.organization?.name?.trim() || null,
+    email: person.email?.trim() || null,
+    location: personLocation(person) || null,
+    school: extractSchool(person),
+    profileImageUrl: photo && !photo.includes("static.licdn.com/aero") ? photo : null,
+    linkedinUrl: person.linkedin_url?.trim() || null,
+  };
+}
+
 function normalizePerson(person: ApolloPerson): NormalizedProspect | null {
   const externalId = person.id;
   if (!externalId) return null;
@@ -57,10 +145,6 @@ function normalizePerson(person: ApolloPerson): NormalizedProspect | null {
     person.phone_numbers?.[0]?.raw_number ||
     null;
 
-  const location = [person.city, person.state, person.country]
-    .filter(Boolean)
-    .join(", ");
-
   return {
     externalId,
     fullName,
@@ -69,7 +153,7 @@ function normalizePerson(person: ApolloPerson): NormalizedProspect | null {
     email: person.email?.trim() || null,
     phone: phone?.trim() || null,
     linkedinUrl: person.linkedin_url?.trim() || null,
-    location: location || null,
+    location: personLocation(person) || null,
     enrichment: person as Record<string, unknown>,
   };
 }
@@ -194,6 +278,73 @@ export async function enrichPerson(
   const data = (await response.json()) as { person?: ApolloPerson };
   if (!data.person) return null;
   return normalizePerson(data.person);
+}
+
+/**
+ * Enrich people by LinkedIn URL via Apollo people/match (one request each).
+ * Free Apollo plans do not include bulk_match — single match works with credits.
+ * Returns one result per input, in order — null when no match.
+ */
+export async function enrichPeopleFromLinkedIn(
+  userId: string,
+  people: Array<{
+    linkedinUrl: string;
+    fullName?: string | null;
+    email?: string | null;
+  }>
+): Promise<(LinkedInProfileEnrichment | null)[]> {
+  if (people.length === 0) return [];
+  if (people.length > LINKEDIN_REFRESH_BATCH_SIZE) {
+    throw new Error(
+      `Refresh at most ${LINKEDIN_REFRESH_BATCH_SIZE} contacts at a time`
+    );
+  }
+
+  const apiKey = await getApolloApiKey(userId);
+  if (!apiKey) {
+    throw new Error(
+      "Add an Apollo API key in Settings → Outreach to refresh LinkedIn profiles."
+    );
+  }
+
+  const results: (LinkedInProfileEnrichment | null)[] = [];
+
+  for (const person of people) {
+    const body: Record<string, string> = {
+      linkedin_url: person.linkedinUrl,
+    };
+    if (person.fullName?.trim()) body.name = person.fullName.trim();
+    if (person.email?.trim()) body.email = person.email.trim();
+
+    const response = await fetch(APOLLO_MATCH_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
+        "X-Api-Key": apiKey,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      if (response.status === 403) {
+        throw new Error(
+          "Apollo people enrichment is not available on your current plan. Upgrade at apollo.io or use a paid API key."
+        );
+      }
+      throw new Error(
+        `LinkedIn refresh failed (${response.status}): ${text.slice(0, 200)}`
+      );
+    }
+
+    const data = (await response.json()) as { person?: ApolloPerson | null };
+    results.push(
+      data.person ? normalizeLinkedInProfile(data.person) : null
+    );
+  }
+
+  return results;
 }
 
 export async function parseAudienceToFilters(

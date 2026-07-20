@@ -103,7 +103,6 @@ const VIEW = 440;
 /** Resting camera angle — slight top-down view of the ecliptic. */
 const BASE_TILT_X = 28;
 const BASE_TILT_Y = -12;
-const MAX_POINTER_TILT = 18;
 
 function parseSeconds(duration: string) {
   return Number.parseFloat(duration) || 1;
@@ -117,8 +116,7 @@ function planetPosition(p: PlanetDef, elapsedMs: number, motionOk: boolean) {
   const rad = (angleDeg * Math.PI) / 180;
   const x = CX + p.orbit * Math.cos(rad);
   const y = CY + p.orbit * Math.sin(rad);
-  const z = p.orbit * Math.sin(rad) * 0.35;
-  return { x, y, z };
+  return { x, y };
 }
 
 function applyPlanetTransform(
@@ -127,11 +125,11 @@ function applyPlanetTransform(
   elapsedMs: number,
   motionOk: boolean
 ) {
-  const { x, y, z } = planetPosition(p, elapsedMs, motionOk);
+  const { x, y } = planetPosition(p, elapsedMs, motionOk);
   el.style.left = `${(x / VIEW) * 100}%`;
   el.style.top = `${(y / VIEW) * 100}%`;
-  el.style.transform = `translate3d(-50%, -50%, ${z}px)`;
-  el.style.zIndex = String(Math.round(100 + z));
+  el.style.transform = "translate(-50%, -50%)";
+  el.style.zIndex = String(Math.round(y));
 }
 
 function PlanetSphere({ p, spin }: { p: PlanetDef; spin: boolean }) {
@@ -147,7 +145,7 @@ function PlanetSphere({ p, spin }: { p: PlanetDef; spin: boolean }) {
         top: `${(initial.y / VIEW) * 100}%`,
         width: `${diameter * 100}%`,
         height: `${diameter * 100}%`,
-        transform: `translate3d(-50%, -50%, ${initial.z}px)`,
+        transform: "translate(-50%, -50%)",
         ["--planet-glow" as string]: p.glow,
         ["--planet-spin" as string]: spin ? p.spinDuration : "0s",
       }}
@@ -166,9 +164,6 @@ function PlanetSphere({ p, spin }: { p: PlanetDef; spin: boolean }) {
             spin && "hero-planet-texture--spin"
           )}
         />
-        <div className="hero-planet-shade" />
-        <div className="hero-planet-specular" />
-        <div className="hero-planet-rim" />
       </div>
       <div className="hero-planet-atmosphere" />
     </div>
@@ -177,11 +172,7 @@ function PlanetSphere({ p, spin }: { p: PlanetDef; spin: boolean }) {
 
 export function HeroSolarSystem({ className }: { className?: string }) {
   const reducedMotion = usePrefersReducedMotion();
-  const stageRef = useRef<HTMLDivElement>(null);
-  const tiltNodeRef = useRef<HTMLDivElement>(null);
   const planetsRef = useRef<HTMLDivElement>(null);
-  const targetTilt = useRef({ x: BASE_TILT_X, y: BASE_TILT_Y });
-  const currentTilt = useRef({ x: BASE_TILT_X, y: BASE_TILT_Y });
   const startTime = useRef(0);
   const motionOk = !reducedMotion;
 
@@ -198,10 +189,6 @@ export function HeroSolarSystem({ className }: { className?: string }) {
     }
 
     if (!motionOk) {
-      currentTilt.current = { x: BASE_TILT_X, y: BASE_TILT_Y };
-      if (tiltNodeRef.current) {
-        tiltNodeRef.current.style.transform = `rotateX(${BASE_TILT_X}deg) rotateY(${BASE_TILT_Y}deg)`;
-      }
       for (const p of PLANETS) {
         const el = planetEls.get(p.id);
         if (el) applyPlanetTransform(el, p, 0, false);
@@ -209,65 +196,22 @@ export function HeroSolarSystem({ className }: { className?: string }) {
       return;
     }
 
-    const onPointerMove = (event: PointerEvent) => {
-      const stage = stageRef.current;
-      if (!stage) return;
-
-      const rect = stage.getBoundingClientRect();
-      const midX = rect.left + rect.width / 2;
-      const midY = rect.top + rect.height / 2;
-      const nx = (event.clientX - midX) / Math.max(window.innerWidth * 0.45, 1);
-      const ny =
-        (event.clientY - midY) / Math.max(window.innerHeight * 0.45, 1);
-      const clampedX = Math.max(-1, Math.min(1, nx));
-      const clampedY = Math.max(-1, Math.min(1, ny));
-
-      targetTilt.current = {
-        x: BASE_TILT_X - clampedY * MAX_POINTER_TILT,
-        y: BASE_TILT_Y + clampedX * MAX_POINTER_TILT,
-      };
-    };
-
-    const onPointerLeave = () => {
-      targetTilt.current = { x: BASE_TILT_X, y: BASE_TILT_Y };
-    };
-
-    window.addEventListener("pointermove", onPointerMove, { passive: true });
-    window.addEventListener("blur", onPointerLeave);
-
     let raf = 0;
     const tick = (now: number) => {
-      const cur = currentTilt.current;
-      const next = targetTilt.current;
-      const ease = 0.08;
-      const x = cur.x + (next.x - cur.x) * ease;
-      const y = cur.y + (next.y - cur.y) * ease;
-      currentTilt.current = { x, y };
-
-      if (tiltNodeRef.current) {
-        tiltNodeRef.current.style.transform = `rotateX(${x}deg) rotateY(${y}deg)`;
-      }
-
       const elapsed = now - startTime.current;
       for (const p of PLANETS) {
         const el = planetEls.get(p.id);
         if (el) applyPlanetTransform(el, p, elapsed, true);
       }
-
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
 
-    return () => {
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("blur", onPointerLeave);
-      cancelAnimationFrame(raf);
-    };
+    return () => cancelAnimationFrame(raf);
   }, [motionOk]);
 
   return (
     <div
-      ref={stageRef}
       className={cn(
         "hero-solar relative mx-auto aspect-square w-full max-w-[560px]",
         "landing-solar-enter",
@@ -277,8 +221,7 @@ export function HeroSolarSystem({ className }: { className?: string }) {
       aria-hidden
     >
       <div
-        ref={tiltNodeRef}
-        className="hero-solar-stage relative h-full w-full will-change-transform"
+        className="hero-solar-stage relative h-full w-full"
         style={{
           transform: `rotateX(${BASE_TILT_X}deg) rotateY(${BASE_TILT_Y}deg)`,
           transformStyle: "preserve-3d",

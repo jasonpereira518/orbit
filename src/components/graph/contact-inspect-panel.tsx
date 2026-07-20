@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { format, formatDistanceToNow } from "date-fns";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { regenerateContactSummary } from "@/actions/contacts";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
 import {

@@ -1,4 +1,5 @@
 import { after } from "next/server";
+import Link from "next/link";
 import { listImports } from "@/actions/imports";
 import {
   listCalendarSubscriptions,
@@ -24,7 +25,12 @@ export default async function ImportsPage() {
           Imports
         </h1>
         <p className="mt-1 text-muted-foreground">
-          Upload LinkedIn data, sync calendars, and review past imports.
+          Upload LinkedIn data, sync calendars, and review past imports. After
+          import, browse everything in{" "}
+          <Link href="/knowledge" className="underline-offset-2 hover:underline">
+            Knowledge
+          </Link>
+          .
         </p>
       </div>
 

@@ -14,6 +14,7 @@ export type SearchableContact = {
   aiSummary?: string | null;
   notes?: string | null;
   industry?: string | null;
+  keyFacts?: string[] | null;
   relationshipScore?: number | null;
   priorityLevel?: number | null;
   tags?: string[];
@@ -32,7 +33,8 @@ export type MatchedField =
   | "tags"
   | "summary"
   | "notes"
-  | "industry";
+  | "industry"
+  | "keyFacts";
 
 export type SearchHitSource = "keyword" | "semantic" | "hybrid";
 
@@ -60,6 +62,7 @@ const FIELD_WEIGHTS: Record<MatchedField, number> = {
   location: 4,
   howMet: 4,
   summary: 3.5,
+  keyFacts: 3.5,
   notes: 3,
   industry: 3,
   phone: 2.5,
@@ -81,6 +84,7 @@ const FIELD_LABELS: Record<MatchedField, string> = {
   summary: "summary",
   notes: "notes",
   industry: "industry",
+  keyFacts: "key facts",
 };
 
 function normalize(value: string) {
@@ -111,6 +115,7 @@ function fieldValues(contact: SearchableContact): Record<MatchedField, string> {
     summary: contact.aiSummary || "",
     notes: contact.notes || "",
     industry: contact.industry || "",
+    keyFacts: (contact.keyFacts || []).join(" "),
   };
 }
 

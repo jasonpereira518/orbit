@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { X } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { dismissSuggestion } from "@/actions/reminders";
 import { Button } from "@/components/ui/button";
 

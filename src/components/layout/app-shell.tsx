@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AppSidebar } from "@/components/layout/app-sidebar";
+import { FloatingAskBar } from "@/components/layout/floating-ask-bar";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
 import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
@@ -22,6 +23,7 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const isOnboarding = pathname === "/onboarding";
+  const showAskBar = !isOnboarding && pathname !== "/chat";
 
   if (isOnboarding) {
     return (
@@ -36,7 +38,7 @@ export function AppShell({
     <div className="flex min-h-screen bg-background">
       <ThemeSync theme={theme} />
       <DueNotificationsWatcher />
-      <div className="sticky top-0 hidden h-screen md:block">
+      <div className="sticky top-0 z-40 hidden h-screen shrink-0 p-3 md:block lg:p-4">
         <AppSidebar pathname={pathname} clerkOn={clerkOn} demoMode={demoMode} />
       </div>
       <main className="relative flex min-h-screen flex-1 flex-col overflow-auto">
@@ -56,10 +58,11 @@ export function AppShell({
           <NotificationsPanelButton />
         </div>
 
-        <div className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:px-10 md:py-8 md:pb-8">
+        <div className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 pb-[calc(9.5rem+env(safe-area-inset-bottom))] md:px-10 md:py-8 md:pb-24">
           {children}
         </div>
 
+        {showAskBar && <FloatingAskBar />}
         <MobileNav clerkOn={clerkOn} demoMode={demoMode} />
       </main>
     </div>

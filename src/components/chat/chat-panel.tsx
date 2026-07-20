@@ -10,7 +10,7 @@ import {
 } from "react";
 import Link from "next/link";
 import { ArrowUp, Loader2, RotateCcw } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { askNetwork } from "@/actions/chat";
 import { createReminder } from "@/actions/reminders";
 import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";

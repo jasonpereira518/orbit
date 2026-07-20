@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { createContact, updateContact, type ContactInput } from "@/actions/contacts";
 import { MET_CONTEXTS, MET_CONTEXT_LABELS, type MetContext } from "@/lib/met-context";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ export function ContactForm({
     title: initial?.title || "",
     company: initial?.company || "",
     location: initial?.location || "",
+    school: initial?.school || "",
     metContext: (initial?.metContext as MetContext | "") || "",
     dateMet: initial?.dateMet
       ? String(initial.dateMet).slice(0, 10)
@@ -57,6 +58,7 @@ export function ContactForm({
               title: form.title.trim(),
               company: form.company.trim(),
               location: form.location.trim(),
+              school: form.school.trim(),
               metContext: form.metContext || undefined,
               dateMet: form.dateMet || null,
               howMet: form.howMet.trim(),
@@ -94,14 +96,14 @@ export function ContactForm({
             required
             value={form.fullName}
             onChange={(e) => set("fullName", e.target.value)}
-            placeholder="Arvind Rao"
+            placeholder="Jason Pereira"
           />
         </Field>
         <Field label="Preferred name">
           <Input
             value={form.preferredName}
             onChange={(e) => set("preferredName", e.target.value)}
-            placeholder="Arvind"
+            placeholder="Jason"
           />
         </Field>
       </div>
@@ -110,24 +112,33 @@ export function ContactForm({
           <Input
             value={form.company}
             onChange={(e) => set("company", e.target.value)}
-            placeholder="AWS"
+            placeholder="Amazon Web Services (AWS)"
           />
         </Field>
         <Field label="Role">
           <Input
             value={form.title}
             onChange={(e) => set("title", e.target.value)}
-            placeholder="Solutions Architect"
+            placeholder="Solutions Architect intern"
           />
         </Field>
       </div>
-      <Field label="Location">
-        <Input
-          value={form.location}
-          onChange={(e) => set("location", e.target.value)}
-          placeholder="New York, NY"
-        />
-      </Field>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Location">
+          <Input
+            value={form.location}
+            onChange={(e) => set("location", e.target.value)}
+            placeholder="New York, NY"
+          />
+        </Field>
+        <Field label="School">
+          <Input
+            value={form.school}
+            onChange={(e) => set("school", e.target.value)}
+            placeholder="Columbia University"
+          />
+        </Field>
+      </div>
       <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
         <div>
           <p className="text-sm font-medium text-primary">How you met</p>
@@ -175,7 +186,7 @@ export function ContactForm({
             type="email"
             value={form.email}
             onChange={(e) => set("email", e.target.value)}
-            placeholder="arvind@example.com"
+            placeholder="jason@orbit.com"
           />
         </Field>
         <Field label="Phone">
@@ -201,7 +212,7 @@ export function ContactForm({
             type="url"
             value={form.website}
             onChange={(e) => set("website", e.target.value)}
-            placeholder="https://..."
+            placeholder="https://jasonpereira.live"
           />
         </Field>
       </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { clearApiKey, getSettings, saveAiSettings } from "@/actions/settings";
 import {
   AI_PROVIDERS,

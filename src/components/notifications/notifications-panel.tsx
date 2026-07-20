@@ -11,7 +11,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   completeContactFollowUp,
   dismissSuggestion,
@@ -20,6 +20,7 @@ import {
   snoozeReminderAction,
 } from "@/actions/reminders";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { ExpandableText } from "@/components/ui/expandable-text";
 import {
   Sheet,
   SheetContent,
@@ -305,9 +306,7 @@ function NotificationRow({
             {item.title}
           </Link>
           {item.body && (
-            <p className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">
-              {item.body}
-            </p>
+            <ExpandableText text={item.body} lines={2} className="mt-0.5" />
           )}
           <p className="mt-1 text-xs text-muted-foreground">
             {item.dueAt

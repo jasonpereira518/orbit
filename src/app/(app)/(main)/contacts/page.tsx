@@ -4,6 +4,7 @@ import { listContacts } from "@/actions/contacts";
 import { buttonVariants } from "@/components/ui/button";
 import { ContactsFilters } from "@/components/contacts/contacts-filters";
 import { ContactsList } from "@/components/contacts/contacts-list";
+import { RefreshContactsButton } from "@/components/contacts/refresh-contacts-button";
 import { cn } from "@/lib/utils";
 
 export default async function ContactsPage({
@@ -36,6 +37,7 @@ export default async function ContactsPage({
           </p>
         </div>
         <div className="flex gap-2">
+          <RefreshContactsButton />
           <Link
             href="/capture"
             className={cn(buttonVariants({ variant: "outline" }))}
@@ -67,9 +69,14 @@ export default async function ContactsPage({
           initialContacts={contacts.map((c) => ({
             id: c.id,
             fullName: c.fullName,
+            firstName: c.firstName,
             preferredName: c.preferredName,
             title: c.title,
             company: c.company,
+            school: c.school,
+            location: c.location,
+            linkedinUrl: c.linkedinUrl,
+            profileImageUrl: c.profileImageUrl,
             relationshipScore: c.relationshipScore,
             closeness: c.closeness,
             closenessTier: c.closenessTier,

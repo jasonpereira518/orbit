@@ -447,22 +447,34 @@ export async function chatWithNetwork(
     relationshipScore: number;
     aiSummary: string | null;
     notes: string | null;
+    keyFacts?: string[];
+    recentMessages?: string[];
     tags: string[];
     relevance: number;
   }>
 ) {
   const contextBlock = contactsContext
-    .map(
-      (c, i) =>
-        `${i + 1}. [id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | score=${c.relationshipScore} | tags=${c.tags.join(", ")} | relevance=${c.relevance.toFixed(2)}\nSummary: ${c.aiSummary || "n/a"}\nNotes: ${(c.notes || "").slice(0, 400)}`
-    )
+    .map((c, i) => {
+      const facts =
+        c.keyFacts && c.keyFacts.length
+          ? `Key facts: ${c.keyFacts.slice(0, 8).join("; ")}`
+          : "";
+      const messages =
+        c.recentMessages && c.recentMessages.length
+          ? `Recent LinkedIn messages:\n${c.recentMessages
+              .slice(0, 6)
+              .map((m) => `- ${m}`)
+              .join("\n")}`
+          : "";
+      return `${i + 1}. [id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | score=${c.relationshipScore} | tags=${c.tags.join(", ")} | relevance=${c.relevance.toFixed(2)}\nSummary: ${c.aiSummary || "n/a"}\nNotes: ${(c.notes || "").slice(0, 400)}${facts ? `\n${facts}` : ""}${messages ? `\n${messages}` : ""}`;
+    })
     .join("\n\n");
 
   const content = await completeJson(userId, {
     temperature: 0.3,
     user: `Question: ${question}\n\nContacts:\n${contextBlock || "(no contacts found)"}`,
     system: `You are Orbit, a personal networking assistant.
-Answer ONLY using the provided contacts. Never invent people.
+Answer ONLY using the provided contacts (including summaries, notes, key facts, and LinkedIn messages). Never invent people or message content.
 Return JSON:
 {
   "answer": string,

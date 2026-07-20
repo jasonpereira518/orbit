@@ -2,6 +2,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { NetworkMetrics } from "@/lib/network-metrics";
 import { cn } from "@/lib/utils";
 
+const INNER_SLIVER_PCT = 5;
+
 const TIER_META = [
   {
     key: "inner" as const,
@@ -12,8 +14,8 @@ const TIER_META = [
   {
     key: "mid" as const,
     label: "Mid",
-    color: "bg-sky-500",
-    text: "text-sky-700 dark:text-sky-300",
+    color: "bg-primary",
+    text: "text-primary",
   },
   {
     key: "outer" as const,
@@ -25,13 +27,35 @@ const TIER_META = [
 
 const DEGREE_BUCKETS = [
   { key: "none" as const, label: "0 links", color: "bg-muted-foreground/25" },
-  { key: "oneToTwo" as const, label: "1–2 links", color: "bg-sky-500/70" },
+  { key: "oneToTwo" as const, label: "1–2 links", color: "bg-primary/70" },
   { key: "threePlus" as const, label: "3+ links", color: "bg-amber-500/80" },
 ];
 
 function pct(count: number, total: number) {
   if (total === 0) return 0;
   return Math.round((count / total) * 100);
+}
+
+/** Bar widths with a permanent Inner amber sliver when inner share is 0. */
+function tierBarWidths(tierCounts: NetworkMetrics["tierCounts"], total: number) {
+  const innerRaw = pct(tierCounts.inner, total);
+  const midRaw = pct(tierCounts.mid, total);
+  const outerRaw = pct(tierCounts.outer, total);
+
+  const innerWidth = Math.max(innerRaw, INNER_SLIVER_PCT);
+  const remaining = 100 - innerWidth;
+  const midOuterSum = midRaw + outerRaw;
+
+  if (midOuterSum <= 0) {
+    return { inner: innerWidth, mid: 0, outer: Math.max(0, remaining) };
+  }
+
+  const scale = remaining / midOuterSum;
+  return {
+    inner: innerWidth,
+    mid: Math.round(midRaw * scale),
+    outer: Math.max(0, 100 - innerWidth - Math.round(midRaw * scale)),
+  };
 }
 
 export function NetworkDepthChart({
@@ -45,42 +69,45 @@ export function NetworkDepthChart({
     tierCounts.inner + tierCounts.mid + tierCounts.outer || 1;
   const bucketTotal =
     degreeBuckets.none + degreeBuckets.oneToTwo + degreeBuckets.threePlus || 1;
+  const barWidths = tierBarWidths(tierCounts, tierTotal);
 
   return (
     <Card className="border-border/70 shadow-none">
-      <CardHeader>
+      <CardHeader className="pb-4">
         <CardTitle className="text-base">Network depth</CardTitle>
         <p className="text-sm text-muted-foreground">
           How close your network feels and how people connect to each other
         </p>
       </CardHeader>
-      <CardContent className="space-y-6">
-        <div className="space-y-3">
+      <CardContent className="space-y-5">
+        <div className="space-y-2.5">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Closeness tiers
           </p>
-          <div className="flex h-3 overflow-hidden rounded-full bg-muted/40">
+          <div className="flex h-3.5 overflow-hidden rounded-full bg-muted/40">
             {TIER_META.map((t) => {
-              const count = tierCounts[t.key];
-              const width = pct(count, tierTotal);
-              if (width === 0) return null;
+              const width = barWidths[t.key];
+              if (width <= 0) return null;
               return (
                 <div
                   key={t.key}
                   className={cn(t.color, "transition-all")}
                   style={{ width: `${width}%` }}
-                  title={`${t.label}: ${count}`}
+                  title={`${t.label}: ${tierCounts[t.key]}`}
                 />
               );
             })}
           </div>
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid gap-1.5 sm:grid-cols-3 sm:gap-3">
             {TIER_META.map((t) => {
               const count = tierCounts[t.key];
               return (
-                <div key={t.key} className="flex items-center justify-between gap-2 text-sm">
+                <div
+                  key={t.key}
+                  className="flex items-baseline justify-between gap-2 text-sm"
+                >
                   <span className="flex items-center gap-2">
-                    <span className={cn("h-2 w-2 rounded-full", t.color)} />
+                    <span className={cn("h-2 w-2 shrink-0 rounded-full", t.color)} />
                     <span className={t.text}>{t.label}</span>
                   </span>
                   <span className="tabular-nums text-muted-foreground">
@@ -96,31 +123,35 @@ export function NetworkDepthChart({
           </p>
         </div>
 
-        <div className="space-y-3 border-t border-border/60 pt-5">
+        <div className="space-y-2.5 border-t border-border/60 pt-4">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Peer connections
           </p>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-3 gap-4">
             <StatMini label="Contacts" value={totalContacts} />
             <StatMini label="Peer links" value={totalPeerEdges} />
             <StatMini label="Avg links" value={avgPeerDegree} />
           </div>
-          <div className="space-y-2">
+          <div className="space-y-2 pt-1">
             {DEGREE_BUCKETS.map((b) => {
               const count = degreeBuckets[b.key];
               const width = pct(count, bucketTotal);
               return (
-                <div key={b.key} className="space-y-1">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">{b.label}</span>
-                    <span className="tabular-nums font-medium">{count}</span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-muted/40">
+                <div key={b.key} className="flex items-center gap-3 text-xs">
+                  <span className="w-16 shrink-0 text-muted-foreground">
+                    {b.label}
+                  </span>
+                  <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-muted/40">
                     <div
                       className={cn("h-full rounded-full", b.color)}
-                      style={{ width: `${Math.max(width, count > 0 ? 4 : 0)}%` }}
+                      style={{
+                        width: `${Math.max(width, count > 0 ? 4 : 0)}%`,
+                      }}
                     />
                   </div>
+                  <span className="w-6 shrink-0 text-right tabular-nums font-medium">
+                    {count}
+                  </span>
                 </div>
               );
             })}
@@ -136,7 +167,7 @@ export function NetworkDepthChart({
 
 function StatMini({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl border border-border/60 bg-card/50 px-3 py-2">
+    <div>
       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
         {label}
       </p>

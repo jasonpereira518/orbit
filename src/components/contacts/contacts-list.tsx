@@ -2,12 +2,21 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, useTransition, type MouseEvent } from "react";
-import { Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useTransition,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
+import { CalendarClock, Trash2 } from "lucide-react";
+import { toast } from "@/lib/toast";
 import { deleteContact } from "@/actions/contacts";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
+import { ContactAvatarPreview } from "@/components/contacts/contact-preview-card";
+import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
 import {
   Dialog,
@@ -17,20 +26,76 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  closenessPercentChipClass,
+} from "@/lib/closeness";
+import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { cn } from "@/lib/utils";
 
 export type ContactListItem = {
   id: string;
   fullName: string;
+  firstName: string | null;
   preferredName: string | null;
   title: string | null;
   company: string | null;
+  school: string | null;
+  location: string | null;
+  linkedinUrl: string | null;
+  profileImageUrl?: string | null;
   relationshipScore: number;
   closeness?: number;
   closenessTier?: "inner" | "mid" | "outer";
   priorityLevel: number;
   nextFollowUpAt?: string | Date | null;
   tags: string[];
+};
+
+function roleLine(title: string | null, company: string | null) {
+  if (title && company) return `${title} at ${company}`;
+  if (title) return title;
+  if (company) return company;
+  return "No role yet";
+}
+
+function detailLine(school: string | null, location: string | null) {
+  return [school, location].filter(Boolean).join(" · ");
+}
+
+function isOverdue(nextFollowUpAt?: string | Date | null) {
+  if (!nextFollowUpAt) return false;
+  const due = new Date(nextFollowUpAt);
+  if (Number.isNaN(due.getTime())) return false;
+  return due <= new Date();
+}
+
+function dueLabel(nextFollowUpAt?: string | Date | null) {
+  if (!nextFollowUpAt) return null;
+  try {
+    return new Date(nextFollowUpAt).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return null;
+  }
+}
+
+const TIER_TOOLTIP: Record<"inner" | "mid" | "outer", string> = {
+  inner: "Inner orbit",
+  mid: "Mid orbit",
+  outer: "Outer orbit",
 };
 
 export function ContactsList({
@@ -49,8 +114,7 @@ export function ContactsList({
   useEffect(() => {
     setContacts(initialContacts);
     setExitingId(null);
-    // Sync when the server-side contact id set changes (filters / refresh after delete).
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- initialContacts identity changes every RSC render
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync on id set change
   }, [serverSignature]);
 
   useEffect(() => {
@@ -111,15 +175,36 @@ export function ContactsList({
   }
 
   return (
-    <>
+    <TooltipProvider>
       <ul className="divide-y divide-border/60">
         {contacts.map((c) => {
           const exiting = exitingId === c.id;
+          const overdue = isOverdue(c.nextFollowUpAt);
+          const scheduledLabel = dueLabel(c.nextFollowUpAt);
+          const details = detailLine(c.school, c.location);
+
+          function openContact() {
+            if (exiting) return;
+            router.push(`/contacts/${c.id}`);
+          }
+
+          function onRowKeyDown(e: KeyboardEvent<HTMLLIElement>) {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              openContact();
+            }
+          }
+
           return (
             <li
               key={c.id}
+              role="link"
+              tabIndex={0}
+              onClick={openContact}
+              onKeyDown={onRowKeyDown}
               className={cn(
-                "contact-row grid transition-[grid-template-rows,opacity] duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+                "contact-row grid cursor-pointer transition-[grid-template-rows,opacity] duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+                "outline-none focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset",
                 exiting
                   ? "grid-rows-[0fr] opacity-0"
                   : "grid-rows-[1fr] opacity-100"
@@ -128,73 +213,82 @@ export function ContactsList({
               <div className="overflow-hidden">
                 <div
                   className={cn(
+                    "flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-muted/40 sm:px-5",
                     "transition-transform duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
                     exiting && "-translate-x-8"
                   )}
                 >
-                  <div className="flex items-center gap-2 pr-2">
-                    <Link
-                      href={`/contacts/${c.id}`}
-                      className="flex min-w-0 flex-1 items-center justify-between gap-4 px-5 py-4 transition-colors hover:bg-muted/40"
-                    >
-                      <div className="min-w-0">
-                        <p className="font-medium text-primary">
-                          {c.preferredName || c.fullName}
-                        </p>
-                        {c.preferredName &&
-                          c.preferredName !== c.fullName && (
-                            <p className="truncate text-xs text-muted-foreground">
-                              {c.fullName}
-                            </p>
-                          )}
-                        <p className="truncate text-sm text-muted-foreground">
-                          {[c.title, c.company].filter(Boolean).join(" · ") ||
-                            "No role yet"}
-                        </p>
-                        {c.tags.length > 0 && (
-                          <div className="mt-2 flex flex-wrap gap-1">
-                            {c.tags.slice(0, 4).map((t) => (
-                              <Badge
-                                key={t}
-                                variant="secondary"
-                                className="text-[10px]"
-                              >
-                                {t}
-                              </Badge>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex shrink-0 flex-col items-end gap-1">
-                        <Badge variant="outline">
-                          {typeof c.closeness === "number"
-                            ? `${Math.round(c.closeness * 100)}% close`
-                            : `Score ${c.relationshipScore}`}
-                        </Badge>
-                        {c.closenessTier && (
-                          <span className="text-[10px] capitalize text-muted-foreground">
-                            {c.closenessTier}
-                          </span>
-                        )}
-                        {c.priorityLevel > 0 && (
-                          <span className="text-[10px] uppercase tracking-wide text-chart-4">
-                            Priority {c.priorityLevel}
-                          </span>
-                        )}
-                      </div>
-                    </Link>
+                  <ContactAvatarPreview contact={c}>
+                    <ContactAvatar
+                      firstName={c.firstName}
+                      fullName={c.fullName}
+                      linkedinUrl={c.linkedinUrl}
+                      profileImageUrl={c.profileImageUrl}
+                      size="lg"
+                    />
+                  </ContactAvatarPreview>
+
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-primary">
+                      {c.preferredName || c.fullName}
+                    </p>
+                    <div className="mt-0.5 flex min-w-0 items-center gap-2">
+                      <p className="min-w-0 truncate text-sm text-muted-foreground">
+                        {roleLine(c.title, c.company)}
+                      </p>
+                      {c.closenessTier && (
+                        <ClosenessTierBadge
+                          tier={c.closenessTier}
+                          className="shrink-0"
+                        />
+                      )}
+                    </div>
+                    {details && (
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground/80">
+                        {details}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-1">
+                    <ClosenessChip
+                      closeness={c.closeness}
+                      relationshipScore={c.relationshipScore}
+                      closenessTier={c.closenessTier}
+                    />
+
+                    {c.linkedinUrl ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`Open ${c.fullName} on LinkedIn`}
+                        className="shrink-0 text-muted-foreground"
+                        onClick={(e: MouseEvent<HTMLButtonElement>) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          window.open(
+                            buildLinkedInUrl(c.linkedinUrl!),
+                            "_blank",
+                            "noopener,noreferrer"
+                          );
+                        }}
+                      >
+                        <LinkedInIcon className="size-4" />
+                      </Button>
+                    ) : null}
+
+                    <FollowUpRowButton
+                      contactId={c.id}
+                      nextFollowUpAt={c.nextFollowUpAt}
+                      overdue={overdue}
+                      scheduledLabel={scheduledLabel}
+                    />
 
                     <DeleteRowButton
                       name={c.fullName}
                       disabled={pending || exiting}
                       onClick={() => requestDelete(c.id)}
-                    />
-                  </div>
-                  <div className="border-t border-border/40 px-5 py-2">
-                    <EasyFollowUp
-                      contactId={c.id}
-                      nextFollowUpAt={c.nextFollowUpAt}
-                      compact
                     />
                   </div>
                 </div>
@@ -238,7 +332,121 @@ export function ContactsList({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </>
+    </TooltipProvider>
+  );
+}
+
+function ClosenessChip({
+  closeness,
+  relationshipScore,
+  closenessTier,
+}: {
+  closeness?: number;
+  relationshipScore: number;
+  closenessTier?: "inner" | "mid" | "outer";
+}) {
+  const label =
+    typeof closeness === "number"
+      ? `${Math.round(closeness * 100)}%`
+      : `Score ${relationshipScore}`;
+
+  const chipClass =
+    typeof closeness === "number"
+      ? closenessPercentChipClass(closeness)
+      : "bg-muted text-muted-foreground";
+
+  const tierHint = closenessTier ? ` (${TIER_TOOLTIP[closenessTier]})` : "";
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        type="button"
+        className={cn(
+          "rounded-md px-1.5 py-0.5 text-sm font-medium tabular-nums outline-none",
+          "focus-visible:ring-2 focus-visible:ring-ring/50",
+          chipClass
+        )}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+      >
+        {label}
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-[240px] text-left leading-snug">
+        Closeness combines relationship strength, how recently you’ve
+        interacted, and fit with your goals. Higher means a stronger orbit
+        {tierHint}.
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function FollowUpRowButton({
+  contactId,
+  nextFollowUpAt,
+  overdue,
+  scheduledLabel,
+}: {
+  contactId: string;
+  nextFollowUpAt?: string | Date | null;
+  overdue: boolean;
+  scheduledLabel: string | null;
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger
+        type="button"
+        aria-label={
+          overdue
+            ? `Follow-up overdue${scheduledLabel ? ` since ${scheduledLabel}` : ""}`
+            : scheduledLabel
+              ? `Follow-up due ${scheduledLabel}`
+              : "Set follow-up"
+        }
+        className={cn(
+          buttonVariants({ variant: "ghost", size: "icon-sm" }),
+          "relative shrink-0 text-muted-foreground",
+          overdue && "text-chart-4 hover:text-chart-4"
+        )}
+        onClick={(e) => {
+          e.stopPropagation();
+        }}
+      >
+        <CalendarClock className="size-4" />
+        {overdue && (
+          <span
+            aria-hidden
+            className="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-chart-4 ring-2 ring-card"
+          />
+        )}
+      </PopoverTrigger>
+      <PopoverContent
+        className="space-y-2"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Easy follow-up
+          </p>
+          {scheduledLabel && (
+            <p
+              className={cn(
+                "text-xs",
+                overdue ? "font-medium text-chart-4" : "text-muted-foreground"
+              )}
+            >
+              {overdue ? "Overdue" : "Due"} {scheduledLabel}
+            </p>
+          )}
+        </div>
+        <EasyFollowUp
+          contactId={contactId}
+          nextFollowUpAt={nextFollowUpAt}
+          compact
+        />
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -264,30 +472,25 @@ function DeleteRowButton({
         onClick();
       }}
       className={cn(
-        "delete-contact-btn group/trash mr-3 shrink-0 text-muted-foreground",
+        "shrink-0 text-muted-foreground",
         "hover:bg-destructive/10 hover:text-destructive",
         "focus-visible:bg-destructive/10 focus-visible:text-destructive"
       )}
     >
-      <span className="relative flex size-4 items-center justify-center">
-        <Trash2
-          className={cn(
-            "size-4 transition-transform duration-300 ease-out",
-            "group-hover/trash:-translate-y-0.5 group-hover/trash:scale-110",
-            "group-hover/trash:animate-[trash-wiggle_0.45s_ease-in-out]",
-            "group-active/trash:scale-95"
-          )}
-        />
-        <span
-          aria-hidden
-          className={cn(
-            "pointer-events-none absolute inset-0 rounded-full bg-destructive/20",
-            "scale-0 opacity-0 transition-all duration-300",
-            "group-hover/trash:scale-150 group-hover/trash:opacity-100",
-            "group-hover/trash:animate-[delete-ripple_0.6s_ease-out]"
-          )}
-        />
-      </span>
+      <Trash2 className="size-4" />
     </Button>
+  );
+}
+
+function LinkedInIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden
+      className={className}
+    >
+      <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+    </svg>
   );
 }
