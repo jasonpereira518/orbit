@@ -179,55 +179,136 @@ export async function snoozeReminderAction(id: string, days = 7) {
   revalidatePath("/dashboard");
 }
 
-/** Lightweight payload for browser/desktop notification polling. */
-export async function listDueNotificationItems() {
+/** Full inbox for the in-app notifications panel. */
+export async function listNotificationPanel() {
   const userId = await requireUserId();
   const db = await getDb();
-  const { contacts } = await import("@/db/schema");
+  const { contacts, aiSuggestions } = await import("@/db/schema");
   const now = new Date();
 
-  const dueReminders = await db.query.reminders.findMany({
-    where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
-    limit: 40,
-  });
+  const [pendingReminders, contactRows, suggestions] = await Promise.all([
+    db.query.reminders.findMany({
+      where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
+      orderBy: (r, { asc }) => [asc(r.dueDate)],
+      limit: 80,
+    }),
+    db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+      columns: {
+        id: true,
+        fullName: true,
+        preferredName: true,
+        nextFollowUpAt: true,
+        company: true,
+        title: true,
+      },
+      limit: 300,
+    }),
+    db.query.aiSuggestions.findMany({
+      where: and(
+        eq(aiSuggestions.userId, userId),
+        eq(aiSuggestions.status, "pending")
+      ),
+      orderBy: (s, { desc }) => [desc(s.confidenceScore)],
+      limit: 30,
+    }),
+  ]);
 
-  const items: { id: string; title: string; body?: string; url: string }[] = [];
+  type PanelItem = {
+    id: string;
+    kind: "reminder" | "follow_up" | "suggestion";
+    title: string;
+    body: string | null;
+    url: string;
+    dueAt: string | null;
+    urgency: "due" | "upcoming" | "info";
+    reminderId?: string;
+    suggestionId?: string;
+    contactId?: string | null;
+  };
 
-  for (const r of dueReminders) {
-    if (r.dueDate && new Date(r.dueDate) > now) continue;
+  const items: PanelItem[] = [];
+
+  for (const r of pendingReminders) {
+    const dueAt = r.dueDate ? new Date(r.dueDate) : null;
+    const isDue = !dueAt || dueAt <= now;
     items.push({
       id: `reminder:${r.id}`,
+      kind: "reminder",
       title: r.title,
-      body: r.description || "Follow-up is due in Orbit",
+      body: r.description,
       url: r.contactId ? `/contacts/${r.contactId}` : "/dashboard",
+      dueAt: dueAt?.toISOString() ?? null,
+      urgency: isDue ? "due" : "upcoming",
+      reminderId: r.id,
+      contactId: r.contactId,
     });
   }
 
-  const dueContacts = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    columns: {
-      id: true,
-      fullName: true,
-      preferredName: true,
-      nextFollowUpAt: true,
-      company: true,
-      title: true,
-    },
-    limit: 200,
-  });
-
-  for (const c of dueContacts) {
-    if (!c.nextFollowUpAt || new Date(c.nextFollowUpAt) > now) continue;
+  for (const c of contactRows) {
+    if (!c.nextFollowUpAt) continue;
+    const dueAt = new Date(c.nextFollowUpAt);
+    const isDue = dueAt <= now;
+    const daysAhead =
+      (dueAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+    // Keep due items always; upcoming only within ~2 months to avoid noise.
+    if (!isDue && daysAhead > 60) continue;
     const name = c.preferredName || c.fullName;
     items.push({
-      id: `followup:${c.id}:${new Date(c.nextFollowUpAt).toISOString().slice(0, 10)}`,
+      id: `followup:${c.id}:${dueAt.toISOString().slice(0, 10)}`,
+      kind: "follow_up",
       title: `Follow up with ${name}`,
-      body: [c.title, c.company].filter(Boolean).join(" · ") || "Due follow-up",
+      body: [c.title, c.company].filter(Boolean).join(" · ") || null,
       url: `/contacts/${c.id}`,
+      dueAt: dueAt.toISOString(),
+      urgency: isDue ? "due" : "upcoming",
+      contactId: c.id,
     });
   }
 
-  return items.slice(0, 12);
+  for (const s of suggestions) {
+    const related = Array.isArray(s.relatedContactIds)
+      ? (s.relatedContactIds as string[])
+      : [];
+    items.push({
+      id: `suggestion:${s.id}`,
+      kind: "suggestion",
+      title: s.title,
+      body: s.description,
+      url: related[0] ? `/contacts/${related[0]}` : "/dashboard",
+      dueAt: null,
+      urgency: "info",
+      suggestionId: s.id,
+      contactId: related[0] ?? null,
+    });
+  }
+
+  const urgencyRank = { due: 0, upcoming: 1, info: 2 } as const;
+  items.sort((a, b) => {
+    const ur = urgencyRank[a.urgency] - urgencyRank[b.urgency];
+    if (ur !== 0) return ur;
+    const aTime = a.dueAt ? new Date(a.dueAt).getTime() : Number.POSITIVE_INFINITY;
+    const bTime = b.dueAt ? new Date(b.dueAt).getTime() : Number.POSITIVE_INFINITY;
+    return aTime - bTime;
+  });
+
+  const dueCount = items.filter((i) => i.urgency === "due").length;
+
+  return { items, dueCount, totalCount: items.length };
+}
+
+/** Lightweight payload for browser/desktop notification polling. */
+export async function listDueNotificationItems() {
+  const panel = await listNotificationPanel();
+  return panel.items
+    .filter((i) => i.urgency === "due")
+    .slice(0, 12)
+    .map((i) => ({
+      id: i.id,
+      title: i.title,
+      body: i.body || undefined,
+      url: i.url,
+    }));
 }
 
 export async function dismissSuggestion(id: string) {

@@ -17,6 +17,10 @@ import { requireUserId } from "@/lib/auth";
 import { encrypt } from "@/lib/crypto";
 import { purgeUserData } from "@/lib/user-data";
 import {
+  resolveThemePreference,
+  type ThemePreference,
+} from "@/lib/theme";
+import {
   AI_PROVIDERS,
   resolveAiModel,
   resolveAiProvider,
@@ -36,6 +40,7 @@ export async function getSettings() {
   return {
     aiProvider: provider,
     aiModel: resolveAiModel(provider, settings?.aiModel),
+    theme: resolveThemePreference(settings?.theme),
     keys: {
       gemini: Boolean(settings?.geminiApiKeyEncrypted),
       openai: Boolean(settings?.openaiApiKeyEncrypted),
@@ -71,7 +76,31 @@ export async function getSettings() {
             : Boolean(process.env.ANTHROPIC_API_KEY) &&
               !settings?.anthropicApiKeyEncrypted,
     })),
+    outreach: {
+      apollo: Boolean(settings?.apolloApiKeyEncrypted) || Boolean(process.env.APOLLO_API_KEY),
+      resend: Boolean(settings?.resendApiKeyEncrypted) || Boolean(process.env.RESEND_API_KEY),
+      twilio:
+        (Boolean(settings?.twilioAccountSidEncrypted) ||
+          Boolean(process.env.TWILIO_ACCOUNT_SID)) &&
+        (Boolean(settings?.twilioAuthTokenEncrypted) ||
+          Boolean(process.env.TWILIO_AUTH_TOKEN)) &&
+        Boolean(settings?.twilioFromNumber || process.env.TWILIO_FROM_NUMBER),
+      twilioFromNumber: settings?.twilioFromNumber || process.env.TWILIO_FROM_NUMBER || null,
+    },
   };
+}
+
+export async function saveThemePreference(theme: ThemePreference) {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  await db
+    .insert(userSettings)
+    .values({ userId, theme })
+    .onConflictDoUpdate({
+      target: userSettings.userId,
+      set: { theme, updatedAt: new Date() },
+    });
 }
 
 async function embeddingBackendFor(
@@ -206,6 +235,52 @@ export async function clearApiKey(provider?: AiProvider) {
   revalidatePath("/settings");
 }
 
+export async function saveOutreachSettings(input: {
+  apolloApiKey?: string;
+  resendApiKey?: string;
+  twilioAccountSid?: string;
+  twilioAuthToken?: string;
+  twilioFromNumber?: string;
+}) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const existing = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+  });
+
+  const patch = {
+    apolloApiKeyEncrypted: input.apolloApiKey?.trim()
+      ? encrypt(input.apolloApiKey.trim())
+      : (existing?.apolloApiKeyEncrypted ?? null),
+    resendApiKeyEncrypted: input.resendApiKey?.trim()
+      ? encrypt(input.resendApiKey.trim())
+      : (existing?.resendApiKeyEncrypted ?? null),
+    twilioAccountSidEncrypted: input.twilioAccountSid?.trim()
+      ? encrypt(input.twilioAccountSid.trim())
+      : (existing?.twilioAccountSidEncrypted ?? null),
+    twilioAuthTokenEncrypted: input.twilioAuthToken?.trim()
+      ? encrypt(input.twilioAuthToken.trim())
+      : (existing?.twilioAuthTokenEncrypted ?? null),
+    twilioFromNumber: input.twilioFromNumber?.trim()
+      ? input.twilioFromNumber.trim()
+      : (existing?.twilioFromNumber ?? null),
+    updatedAt: new Date(),
+  };
+
+  if (existing) {
+    await db
+      .update(userSettings)
+      .set(patch)
+      .where(eq(userSettings.userId, userId));
+  } else {
+    await db.insert(userSettings).values({ userId, ...patch });
+  }
+
+  revalidatePath("/settings");
+  revalidatePath("/outreach");
+  return { ok: true };
+}
+
 export async function exportAllData() {
   const userId = await requireUserId();
   const db = await getDb();
@@ -249,4 +324,5 @@ export async function deleteAllData() {
   revalidatePath("/");
   revalidatePath("/contacts");
   revalidatePath("/settings");
+  revalidatePath("/outreach");
 }

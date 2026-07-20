@@ -6,6 +6,8 @@ import {
   isClerkConfigured,
   isDemoMode,
 } from "@/lib/auth";
+import { ensureUserSettings } from "@/lib/user-settings";
+import { resolveThemePreference } from "@/lib/theme";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +33,12 @@ export default async function AppLayout({
   }
 
   await bootstrapAuthenticatedUser(userId);
+  const settings = await ensureUserSettings(userId);
+  const theme = resolveThemePreference(settings.theme);
 
-  return <AppShell clerkOn={clerkOn} demoMode={demoMode}>{children}</AppShell>;
+  return (
+    <AppShell clerkOn={clerkOn} demoMode={demoMode} theme={theme}>
+      {children}
+    </AppShell>
+  );
 }

@@ -192,6 +192,62 @@ function extractJsonText(raw: string) {
   return fenced?.[1]?.trim() || trimmed;
 }
 
+function findJsonEnd(text: string, start: number) {
+  const open = text[start];
+  const close = open === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === open) depth++;
+    else if (ch === close) {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+
+  return -1;
+}
+
+export function parseAiJson<T = unknown>(raw: string): T {
+  const text = extractJsonText(raw);
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    const start = text.search(/[\[{]/);
+    if (start === -1) {
+      throw new Error(`Failed to parse AI JSON: ${text.slice(0, 200)}`);
+    }
+    const end = findJsonEnd(text, start);
+    if (end === -1) {
+      throw new Error(`Failed to parse AI JSON: ${text.slice(0, 200)}`);
+    }
+    return JSON.parse(text.slice(start, end + 1)) as T;
+  }
+}
+
+function normalizeJsonResponse(raw: string) {
+  return JSON.stringify(parseAiJson(raw));
+}
+
 export async function completeJson(
   userId: string,
   input: {
@@ -217,7 +273,7 @@ export async function completeJson(
     });
     const content = response.text;
     if (!content) throw new Error("Empty AI response");
-    return extractJsonText(content);
+    return normalizeJsonResponse(content);
   }
 
   if (provider === "openai") {
@@ -233,7 +289,7 @@ export async function completeJson(
     });
     const content = response.choices[0]?.message?.content;
     if (!content) throw new Error("Empty AI response");
-    return extractJsonText(content);
+    return normalizeJsonResponse(content);
   }
 
   const client = new Anthropic({ apiKey });
@@ -248,7 +304,7 @@ export async function completeJson(
   if (!block || block.type !== "text" || !block.text) {
     throw new Error("Empty AI response");
   }
-  return extractJsonText(block.text);
+  return normalizeJsonResponse(block.text);
 }
 
 export async function parseNotesWithAI(

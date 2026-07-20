@@ -21,6 +21,12 @@ export const userSettings = pgTable("user_settings", {
   onboardingCompletedAt: timestamp("onboarding_completed_at", {
     withTimezone: true,
   }),
+  theme: text("theme").$type<"light" | "dark" | "system">(),
+  apolloApiKeyEncrypted: text("apollo_api_key_encrypted"),
+  resendApiKeyEncrypted: text("resend_api_key_encrypted"),
+  twilioAccountSidEncrypted: text("twilio_account_sid_encrypted"),
+  twilioAuthTokenEncrypted: text("twilio_auth_token_encrypted"),
+  twilioFromNumber: text("twilio_from_number"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -242,6 +248,88 @@ export const aiSuggestions = pgTable(
   (t) => [index("ai_suggestions_user_idx").on(t.userId, t.status)]
 );
 
+export type AudienceFilters = {
+  titles?: string[];
+  locations?: string[];
+  industries?: string[];
+  keywords?: string;
+  seniorities?: string[];
+};
+
+export const outreachCampaigns = pgTable(
+  "outreach_campaigns",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    name: text("name").notNull(),
+    status: text("status").default("draft").notNull(),
+    audienceQuery: text("audience_query"),
+    audienceFilters: jsonb("audience_filters").$type<AudienceFilters>().default({}),
+    messageIntent: text("message_intent"),
+    tone: text("tone").default("professional"),
+    defaultChannel: text("default_channel").default("email"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("outreach_campaigns_user_idx").on(t.userId, t.status)]
+);
+
+export const outreachProspects = pgTable(
+  "outreach_prospects",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => outreachCampaigns.id, { onDelete: "cascade" }),
+    externalId: text("external_id").notNull(),
+    contactId: uuid("contact_id").references(() => contacts.id, {
+      onDelete: "set null",
+    }),
+    fullName: text("full_name").notNull(),
+    title: text("title"),
+    company: text("company"),
+    email: text("email"),
+    phone: text("phone"),
+    linkedinUrl: text("linkedin_url"),
+    location: text("location"),
+    enrichment: jsonb("enrichment").$type<Record<string, unknown>>().default({}),
+    status: text("status").default("suggested").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("outreach_prospects_campaign_idx").on(t.campaignId),
+    uniqueIndex("outreach_prospects_campaign_external_uidx").on(
+      t.campaignId,
+      t.externalId
+    ),
+  ]
+);
+
+export const outreachMessages = pgTable(
+  "outreach_messages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    prospectId: uuid("prospect_id")
+      .notNull()
+      .references(() => outreachProspects.id, { onDelete: "cascade" }),
+    channel: text("channel").notNull(),
+    subject: text("subject"),
+    body: text("body").notNull().default(""),
+    status: text("status").default("draft").notNull(),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    lastActionAt: timestamp("last_action_at", { withTimezone: true }),
+    errorMessage: text("error_message"),
+    deliveryId: text("delivery_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("outreach_messages_prospect_idx").on(t.prospectId),
+    index("outreach_messages_status_idx").on(t.status),
+  ]
+);
+
 export const contactEmbeddings = pgTable(
   "contact_embeddings",
   {
@@ -308,6 +396,38 @@ export const contactEmbeddingsRelations = relations(
   })
 );
 
+export const outreachCampaignsRelations = relations(
+  outreachCampaigns,
+  ({ many }) => ({
+    prospects: many(outreachProspects),
+  })
+);
+
+export const outreachProspectsRelations = relations(
+  outreachProspects,
+  ({ one, many }) => ({
+    campaign: one(outreachCampaigns, {
+      fields: [outreachProspects.campaignId],
+      references: [outreachCampaigns.id],
+    }),
+    contact: one(contacts, {
+      fields: [outreachProspects.contactId],
+      references: [contacts.id],
+    }),
+    messages: many(outreachMessages),
+  })
+);
+
+export const outreachMessagesRelations = relations(
+  outreachMessages,
+  ({ one }) => ({
+    prospect: one(outreachProspects, {
+      fields: [outreachMessages.prospectId],
+      references: [outreachProspects.id],
+    }),
+  })
+);
+
 export type Contact = typeof contacts.$inferSelect;
 export type NewContact = typeof contacts.$inferInsert;
 export type Interaction = typeof interactions.$inferSelect;
@@ -318,3 +438,6 @@ export type ImportRecord = typeof imports.$inferSelect;
 export type CalendarSubscription = typeof calendarSubscriptions.$inferSelect;
 export type Company = typeof companies.$inferSelect;
 export type UserGoal = typeof userGoals.$inferSelect;
+export type OutreachCampaign = typeof outreachCampaigns.$inferSelect;
+export type OutreachProspect = typeof outreachProspects.$inferSelect;
+export type OutreachMessage = typeof outreachMessages.$inferSelect;

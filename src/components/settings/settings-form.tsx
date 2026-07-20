@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { NotificationSettings } from "@/components/settings/notification-settings";
+import { OutreachSettings } from "@/components/settings/outreach-settings";
 import { useRouter } from "next/navigation";
 
 type Settings = Awaited<ReturnType<typeof getSettings>>;
@@ -53,8 +54,8 @@ export function SettingsForm({
           <div>
             <h2 className="text-lg font-medium text-primary">Appearance</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Switch between light and dark. Dark mode uses gray surfaces with
-              blue accents.
+              Switch between light and dark. Your choice is saved to your account
+              and syncs across devices.
             </p>
           </div>
           <ThemeToggle className="h-9 w-9 border border-border" />
@@ -260,6 +261,8 @@ export function SettingsForm({
             </ul>
           </div>
       </section>
+
+      <OutreachSettings initial={settings.outreach} />
 
       <NotificationSettings />
 

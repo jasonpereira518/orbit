@@ -1,8 +1,18 @@
-import { eq, and } from "drizzle-orm";
-import { getDb } from "@/db";
+import { eq, and, sql } from "drizzle-orm";
+import { getDb, isPgvectorAvailable } from "@/db";
 import { contactEmbeddings, contacts } from "@/db/schema";
 import { metContextLabel } from "@/lib/met-context";
 import { createEmbedding, cosineSimilarity } from "@/lib/ai";
+import { formatVectorLiteral } from "@/lib/pgvector";
+
+async function persistEmbeddingVector(rowId: string, embedding: number[]) {
+  if (!isPgvectorAvailable()) return;
+  const db = await getDb();
+  const literal = formatVectorLiteral(embedding);
+  await db.execute(
+    sql`UPDATE contact_embeddings SET embedding_vector = ${literal}::vector WHERE id = ${rowId}`
+  );
+}
 
 export async function upsertContactEmbedding(
   userId: string,
@@ -31,21 +41,85 @@ export async function upsertContactEmbedding(
           .update(contactEmbeddings)
           .set({ embedding, content })
           .where(eq(contactEmbeddings.id, existing.id));
+        await persistEmbeddingVector(existing.id, embedding);
         return;
       }
     }
 
-    await db.insert(contactEmbeddings).values({
-      userId,
-      contactId,
-      sourceType,
-      sourceId,
-      embedding,
-      content,
-    });
+    const [inserted] = await db
+      .insert(contactEmbeddings)
+      .values({
+        userId,
+        contactId,
+        sourceType,
+        sourceId,
+        embedding,
+        content,
+      })
+      .returning({ id: contactEmbeddings.id });
+
+    if (inserted?.id) {
+      await persistEmbeddingVector(inserted.id, embedding);
+    }
   } catch {
     // AI key may be missing; skip embeddings silently
   }
+}
+
+export type SemanticSearchRow = {
+  contactId: string;
+  similarity: number;
+};
+
+/** DB cosine similarity via pgvector; returns empty when unavailable. */
+export async function pgvectorSearchContacts(
+  userId: string,
+  queryEmbedding: number[],
+  limit = 12
+): Promise<SemanticSearchRow[]> {
+  if (!isPgvectorAvailable()) return [];
+
+  const db = await getDb();
+  const literal = formatVectorLiteral(queryEmbedding);
+
+  const result = await db.execute<{
+    contact_id: string;
+    similarity: number;
+  }>(sql`
+    SELECT
+      contact_id,
+      MAX(1 - (embedding_vector <=> ${literal}::vector))::float8 AS similarity
+    FROM contact_embeddings
+    WHERE user_id = ${userId}
+      AND embedding_vector IS NOT NULL
+    GROUP BY contact_id
+    HAVING MAX(1 - (embedding_vector <=> ${literal}::vector)) > 0.25
+    ORDER BY similarity DESC
+    LIMIT ${limit}
+  `);
+
+  const rows = Array.isArray(result)
+    ? result
+    : ((result as { rows?: { contact_id: string; similarity: number }[] }).rows ??
+      []);
+
+  return rows.map((row) => ({
+    contactId: row.contact_id,
+    similarity: Number(row.similarity) || 0,
+  }));
+}
+
+function inMemorySemanticScores(
+  queryEmbedding: number[],
+  embeddings: Array<{ contactId: string; embedding: number[] }>
+) {
+  const scoreByContact = new Map<string, number>();
+  for (const row of embeddings) {
+    const sim = cosineSimilarity(queryEmbedding, row.embedding);
+    const prev = scoreByContact.get(row.contactId) ?? 0;
+    if (sim > prev) scoreByContact.set(row.contactId, sim);
+  }
+  return scoreByContact;
 }
 
 export async function semanticSearchContacts(
@@ -68,19 +142,22 @@ export async function semanticSearchContacts(
     // fall through to keyword search
   }
 
-  const embeddings = queryEmbedding
-    ? await db.query.contactEmbeddings.findMany({
-        where: eq(contactEmbeddings.userId, userId),
-      })
-    : [];
-
   const scoreByContact = new Map<string, number>();
 
   if (queryEmbedding) {
-    for (const row of embeddings) {
-      const sim = cosineSimilarity(queryEmbedding, row.embedding);
-      const prev = scoreByContact.get(row.contactId) ?? 0;
-      if (sim > prev) scoreByContact.set(row.contactId, sim);
+    if (isPgvectorAvailable()) {
+      const pgHits = await pgvectorSearchContacts(userId, queryEmbedding, limit * 2);
+      for (const hit of pgHits) {
+        scoreByContact.set(hit.contactId, hit.similarity);
+      }
+    } else {
+      const embeddings = await db.query.contactEmbeddings.findMany({
+        where: eq(contactEmbeddings.userId, userId),
+      });
+      const inMemory = inMemorySemanticScores(queryEmbedding, embeddings);
+      for (const [contactId, sim] of inMemory) {
+        scoreByContact.set(contactId, sim);
+      }
     }
   }
 

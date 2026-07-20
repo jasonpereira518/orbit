@@ -328,10 +328,18 @@ export async function logInteraction(input: {
   actionItems?: string[];
   interactionType?: string;
   source?: string;
+  interactionDate?: string | Date;
 }) {
   const userId = await requireUserId();
   const db = await getDb();
-  const now = new Date();
+  const parsedDate =
+    input.interactionDate instanceof Date
+      ? input.interactionDate
+      : input.interactionDate
+        ? new Date(input.interactionDate)
+        : null;
+  const when =
+    parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : new Date();
 
   const [row] = await db
     .insert(interactions)
@@ -344,13 +352,13 @@ export async function logInteraction(input: {
       actionItems: input.actionItems ?? [],
       interactionType: input.interactionType ?? "note",
       source: input.source,
-      interactionDate: now,
+      interactionDate: when,
     })
     .returning();
 
   await db
     .update(contacts)
-    .set({ lastInteractionAt: now, updatedAt: now })
+    .set({ lastInteractionAt: when, updatedAt: new Date() })
     .where(and(eq(contacts.id, input.contactId), eq(contacts.userId, userId)));
 
   if (input.rawNotes || input.aiSummary) {
@@ -359,6 +367,8 @@ export async function logInteraction(input: {
 
   revalidatePath(`/contacts/${input.contactId}`);
   revalidatePath("/");
+  revalidatePath("/dashboard");
+  revalidatePath("/graph");
   return row;
 }
 
