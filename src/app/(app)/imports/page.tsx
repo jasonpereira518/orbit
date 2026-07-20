@@ -1,8 +1,22 @@
 import { listImports } from "@/actions/imports";
+import {
+  listCalendarSubscriptions,
+  syncStaleCalendarSubscriptions,
+} from "@/actions/calendar";
 import { ImportForm } from "@/components/imports/import-form";
 
 export default async function ImportsPage() {
-  const history = await listImports();
+  // Refresh subscribed calendars when stale (every ~30 min while using the app)
+  try {
+    await syncStaleCalendarSubscriptions();
+  } catch {
+    // non-fatal — feed may be unreachable
+  }
+
+  const [history, calendarSubscriptions] = await Promise.all([
+    listImports(),
+    listCalendarSubscriptions(),
+  ]);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -12,10 +26,13 @@ export default async function ImportsPage() {
         </h1>
         <p className="mt-1 text-muted-foreground">
           Bring in LinkedIn connections, message history, and calendar meetings.
-          Duplicates are detected before and during import.
+          Subscribe to an ICS feed to keep 1:1s and networking events in sync.
         </p>
       </div>
-      <ImportForm history={history} />
+      <ImportForm
+        history={history}
+        calendarSubscriptions={calendarSubscriptions}
+      />
     </div>
   );
 }

@@ -13,6 +13,13 @@ import {
 
 export async function fetchDashboard() {
   const userId = await requireUserId();
+  // Keep calendar subscriptions fresh while the app is in daily use
+  try {
+    const { syncDueCalendarSubscriptions } = await import("@/lib/calendar-sync");
+    await syncDueCalendarSubscriptions(userId);
+  } catch {
+    // non-fatal
+  }
   return getDashboardData(userId);
 }
 

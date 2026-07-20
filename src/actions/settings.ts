@@ -16,9 +16,13 @@ import {
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { encrypt } from "@/lib/crypto";
-import { resolveGeminiModel } from "@/lib/ai";
-
-const DEFAULT_MODEL = "gemini-3.5-flash";
+import {
+  AI_PROVIDERS,
+  resolveAiModel,
+  resolveAiProvider,
+  usingEnvKey,
+  type AiProvider,
+} from "@/lib/ai";
 
 export async function getSettings() {
   const userId = await requireUserId();
@@ -27,50 +31,177 @@ export async function getSettings() {
     where: eq(userSettings.userId, userId),
   });
 
+  const provider = resolveAiProvider(settings?.aiProvider);
+
   return {
-    hasApiKey: Boolean(settings?.geminiApiKeyEncrypted),
-    aiModel: resolveGeminiModel(settings?.aiModel),
-    usingEnvKey:
-      Boolean(process.env.GEMINI_API_KEY) && !settings?.geminiApiKeyEncrypted,
+    aiProvider: provider,
+    aiModel: resolveAiModel(provider, settings?.aiModel),
+    keys: {
+      gemini: Boolean(settings?.geminiApiKeyEncrypted),
+      openai: Boolean(settings?.openaiApiKeyEncrypted),
+      anthropic: Boolean(settings?.anthropicApiKeyEncrypted),
+    },
+    usingEnvKey: usingEnvKey(provider, settings),
+    hasApiKey:
+      provider === "gemini"
+        ? Boolean(settings?.geminiApiKeyEncrypted) ||
+          Boolean(process.env.GEMINI_API_KEY)
+        : provider === "openai"
+          ? Boolean(settings?.openaiApiKeyEncrypted) ||
+            Boolean(process.env.OPENAI_API_KEY)
+          : Boolean(settings?.anthropicApiKeyEncrypted) ||
+            Boolean(process.env.ANTHROPIC_API_KEY),
+    providers: AI_PROVIDERS.map((p) => ({
+      id: p.id,
+      label: p.label,
+      envVar: p.envVar,
+      hasPersonalKey:
+        p.id === "gemini"
+          ? Boolean(settings?.geminiApiKeyEncrypted)
+          : p.id === "openai"
+            ? Boolean(settings?.openaiApiKeyEncrypted)
+            : Boolean(settings?.anthropicApiKeyEncrypted),
+      usingEnv:
+        p.id === "gemini"
+          ? Boolean(process.env.GEMINI_API_KEY) &&
+            !settings?.geminiApiKeyEncrypted
+          : p.id === "openai"
+            ? Boolean(process.env.OPENAI_API_KEY) &&
+              !settings?.openaiApiKeyEncrypted
+            : Boolean(process.env.ANTHROPIC_API_KEY) &&
+              !settings?.anthropicApiKeyEncrypted,
+    })),
   };
 }
 
-export async function saveApiKey(apiKey: string, aiModel?: string) {
+async function embeddingBackendFor(
+  provider: AiProvider,
+  settings: {
+    geminiApiKeyEncrypted: string | null;
+    openaiApiKeyEncrypted: string | null;
+    anthropicApiKeyEncrypted: string | null;
+  } | null
+) {
+  if (provider === "openai") {
+    if (settings?.openaiApiKeyEncrypted || process.env.OPENAI_API_KEY) {
+      return "openai";
+    }
+    return null;
+  }
+  if (provider === "gemini") {
+    if (settings?.geminiApiKeyEncrypted || process.env.GEMINI_API_KEY) {
+      return "gemini";
+    }
+    return null;
+  }
+  if (settings?.openaiApiKeyEncrypted || process.env.OPENAI_API_KEY) {
+    return "openai";
+  }
+  if (settings?.geminiApiKeyEncrypted || process.env.GEMINI_API_KEY) {
+    return "gemini";
+  }
+  return null;
+}
+
+export async function saveAiSettings(input: {
+  provider: AiProvider;
+  model?: string;
+  apiKey?: string;
+}) {
   const userId = await requireUserId();
   const db = await getDb();
   const existing = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
   });
 
-  const encrypted = apiKey.trim() ? encrypt(apiKey.trim()) : null;
+  const provider = resolveAiProvider(input.provider);
+  const aiModel = resolveAiModel(provider, input.model);
+  const encrypted = input.apiKey?.trim()
+    ? encrypt(input.apiKey.trim())
+    : null;
+
+  const previousBackend = existing
+    ? await embeddingBackendFor(resolveAiProvider(existing.aiProvider), existing)
+    : null;
+
+  const nextKeyState = {
+    geminiApiKeyEncrypted:
+      provider === "gemini" && encrypted
+        ? encrypted
+        : (existing?.geminiApiKeyEncrypted ?? null),
+    openaiApiKeyEncrypted:
+      provider === "openai" && encrypted
+        ? encrypted
+        : (existing?.openaiApiKeyEncrypted ?? null),
+    anthropicApiKeyEncrypted:
+      provider === "anthropic" && encrypted
+        ? encrypted
+        : (existing?.anthropicApiKeyEncrypted ?? null),
+  };
 
   if (existing) {
     await db
       .update(userSettings)
       .set({
-        geminiApiKeyEncrypted: encrypted ?? existing.geminiApiKeyEncrypted,
-        aiModel: resolveGeminiModel(aiModel || existing.aiModel),
+        aiProvider: provider,
+        aiModel,
+        ...nextKeyState,
         updatedAt: new Date(),
       })
       .where(eq(userSettings.userId, userId));
   } else {
     await db.insert(userSettings).values({
       userId,
-      geminiApiKeyEncrypted: encrypted,
-      aiModel: resolveGeminiModel(aiModel || DEFAULT_MODEL),
+      aiProvider: provider,
+      aiModel,
+      ...nextKeyState,
     });
   }
 
+  const nextBackend = await embeddingBackendFor(provider, nextKeyState);
+  if (
+    previousBackend &&
+    nextBackend &&
+    previousBackend !== nextBackend
+  ) {
+    // Different embedding spaces can't be compared — clear stale vectors.
+    await db
+      .delete(contactEmbeddings)
+      .where(eq(contactEmbeddings.userId, userId));
+  }
+
   revalidatePath("/settings");
-  return { ok: true };
+  revalidatePath("/chat");
+  return { ok: true, embeddingReset: Boolean(previousBackend && nextBackend && previousBackend !== nextBackend) };
 }
 
-export async function clearApiKey() {
+/** @deprecated Prefer saveAiSettings */
+export async function saveApiKey(apiKey: string, aiModel?: string) {
+  return saveAiSettings({
+    provider: "gemini",
+    apiKey,
+    model: aiModel,
+  });
+}
+
+export async function clearApiKey(provider?: AiProvider) {
   const userId = await requireUserId();
   const db = await getDb();
+  const existing = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+  });
+  const active = resolveAiProvider(provider || existing?.aiProvider);
+
+  const patch =
+    active === "gemini"
+      ? { geminiApiKeyEncrypted: null }
+      : active === "openai"
+        ? { openaiApiKeyEncrypted: null }
+        : { anthropicApiKeyEncrypted: null };
+
   await db
     .update(userSettings)
-    .set({ geminiApiKeyEncrypted: null, updatedAt: new Date() })
+    .set({ ...patch, updatedAt: new Date() })
     .where(eq(userSettings.userId, userId));
   revalidatePath("/settings");
 }

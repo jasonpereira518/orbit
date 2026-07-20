@@ -2,7 +2,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { aiSuggestions, contacts, interactions } from "@/db/schema";
-import { getGeminiClient } from "@/lib/ai";
+import { completeJson } from "@/lib/ai";
 import { upsertContactEmbedding } from "@/lib/search";
 
 const threadEnrichSchema = z.object({
@@ -25,14 +25,10 @@ async function summarizeThread(
   contactName: string,
   transcript: string
 ) {
-  const { client, model } = await getGeminiClient(userId);
-  const response = await client.models.generateContent({
-    model,
-    contents: `Contact: ${contactName}\n\nLinkedIn messages (oldest → newest):\n${transcript}`,
-    config: {
-      temperature: 0.2,
-      responseMimeType: "application/json",
-      systemInstruction: `You summarize LinkedIn DM history for a personal networking CRM.
+  const content = await completeJson(userId, {
+    temperature: 0.2,
+    user: `Contact: ${contactName}\n\nLinkedIn messages (oldest → newest):\n${transcript}`,
+    system: `You summarize LinkedIn DM history for a personal networking CRM.
 Return strict JSON:
 {
   "summary": string,
@@ -47,11 +43,8 @@ Rules:
 - key_facts: memorable details about the person or conversation.
 - open_loops: unanswered asks or promised follow-ups.
 - relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.`,
-    },
   });
 
-  const content = response.text;
-  if (!content) throw new Error("Empty enrichment response");
   return threadEnrichSchema.parse(JSON.parse(content));
 }
 

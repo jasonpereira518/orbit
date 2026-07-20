@@ -13,15 +13,20 @@ type Db =
 const globalForDb = globalThis as unknown as {
   orbitPglite?: PGlite;
   orbitNeonSql?: ReturnType<typeof neon>;
-  orbitMigrated?: boolean;
   orbitReady?: Promise<void>;
 };
+
+// Resets on HMR so new DDL/columns are applied after schema changes.
+let schemaReconciled = false;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS user_settings (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL UNIQUE,
+  ai_provider text NOT NULL DEFAULT 'gemini',
   gemini_api_key_encrypted text,
+  openai_api_key_encrypted text,
+  anthropic_api_key_encrypted text,
   ai_model text DEFAULT 'gemini-3.5-flash',
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -77,6 +82,7 @@ CREATE TABLE IF NOT EXISTS interactions (
   interaction_type text NOT NULL DEFAULT 'note',
   interaction_date timestamptz NOT NULL DEFAULT now(),
   source text,
+  external_id text,
   raw_notes text,
   ai_summary text,
   topics jsonb DEFAULT '[]',
@@ -129,6 +135,21 @@ CREATE TABLE IF NOT EXISTS contact_embeddings (
   content text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS calendar_subscriptions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  label text DEFAULT 'Calendar',
+  ics_url text NOT NULL,
+  self_email text,
+  enabled integer NOT NULL DEFAULT 1,
+  last_synced_at timestamptz,
+  last_sync_status text,
+  last_sync_error text,
+  last_sync_stats jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS calendar_subscriptions_user_idx ON calendar_subscriptions(user_id);
 `;
 
 async function columnExists(client: PGlite, table: string, column: string) {
@@ -169,6 +190,20 @@ async function migratePglite(client: PGlite) {
   // Columns added after the first local DB was created
   await ensureColumn(client, "contacts", "preferred_name", "text");
   await ensureColumn(client, "contacts", "website", "text");
+  await ensureColumn(client, "interactions", "external_id", "text");
+  await ensureColumn(
+    client,
+    "user_settings",
+    "ai_provider",
+    "text NOT NULL DEFAULT 'gemini'"
+  );
+  await ensureColumn(client, "user_settings", "openai_api_key_encrypted", "text");
+  await ensureColumn(
+    client,
+    "user_settings",
+    "anthropic_api_key_encrypted",
+    "text"
+  );
 }
 
 async function ensureReady(): Promise<void> {
@@ -188,12 +223,51 @@ async function ensureReady(): Promise<void> {
     globalForDb.orbitPglite = await PGlite.create({ dataDir });
   }
 
-  const client = globalForDb.orbitPglite;
-  await client.waitReady;
+  await globalForDb.orbitPglite.waitReady;
+}
 
-  // Always reconcile schema so HMR / older .data dirs pick up new columns
-  await migratePglite(client);
-  globalForDb.orbitMigrated = true;
+async function migrateNeon(sql: ReturnType<typeof neon>) {
+  await sql`
+    CREATE TABLE IF NOT EXISTS calendar_subscriptions (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id text NOT NULL,
+      label text DEFAULT 'Calendar',
+      ics_url text NOT NULL,
+      self_email text,
+      enabled integer NOT NULL DEFAULT 1,
+      last_synced_at timestamptz,
+      last_sync_status text,
+      last_sync_error text,
+      last_sync_stats jsonb,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+  `;
+  try {
+    await sql`ALTER TABLE interactions ADD COLUMN IF NOT EXISTS external_id text`;
+  } catch {
+    // Older Postgres without IF NOT EXISTS on ADD COLUMN — ignore
+  }
+  try {
+    await sql`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text NOT NULL DEFAULT 'gemini'`;
+  } catch {
+    // ignore
+  }
+  try {
+    await sql`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS openai_api_key_encrypted text`;
+  } catch {
+    // ignore
+  }
+  try {
+    await sql`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS anthropic_api_key_encrypted text`;
+  } catch {
+    // ignore
+  }
+  try {
+    await sql`CREATE INDEX IF NOT EXISTS calendar_subscriptions_user_idx ON calendar_subscriptions(user_id)`;
+  } catch {
+    // ignore
+  }
 }
 
 export async function getDb(): Promise<Db> {
@@ -204,6 +278,16 @@ export async function getDb(): Promise<Db> {
     });
   }
   await globalForDb.orbitReady;
+
+  // Module-level flag resets on HMR so new tables/columns are applied.
+  if (!schemaReconciled) {
+    if (globalForDb.orbitNeonSql) {
+      await migrateNeon(globalForDb.orbitNeonSql);
+    } else {
+      await migratePglite(globalForDb.orbitPglite!);
+    }
+    schemaReconciled = true;
+  }
 
   // Rebuild the drizzle wrapper each call so schema HMR picks up new relations.
   if (globalForDb.orbitNeonSql) {

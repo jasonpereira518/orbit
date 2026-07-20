@@ -12,7 +12,10 @@ import { relations } from "drizzle-orm";
 export const userSettings = pgTable("user_settings", {
   id: uuid("id").defaultRandom().primaryKey(),
   userId: text("user_id").notNull().unique(),
+  aiProvider: text("ai_provider").default("gemini").notNull(),
   geminiApiKeyEncrypted: text("gemini_api_key_encrypted"),
+  openaiApiKeyEncrypted: text("openai_api_key_encrypted"),
+  anthropicApiKeyEncrypted: text("anthropic_api_key_encrypted"),
   aiModel: text("ai_model").default("gemini-3.5-flash"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -97,6 +100,7 @@ export const interactions = pgTable(
       .defaultNow()
       .notNull(),
     source: text("source"),
+    externalId: text("external_id"),
     rawNotes: text("raw_notes"),
     aiSummary: text("ai_summary"),
     topics: jsonb("topics").$type<string[]>().default([]),
@@ -107,6 +111,7 @@ export const interactions = pgTable(
   (t) => [
     index("interactions_contact_idx").on(t.contactId),
     index("interactions_user_idx").on(t.userId),
+    index("interactions_external_idx").on(t.userId, t.externalId),
   ]
 );
 
@@ -144,6 +149,31 @@ export const imports = pgTable("imports", {
   duplicatesFound: integer("duplicates_found").default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+export const calendarSubscriptions = pgTable(
+  "calendar_subscriptions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    label: text("label").default("Calendar"),
+    icsUrl: text("ics_url").notNull(),
+    selfEmail: text("self_email"),
+    enabled: integer("enabled").default(1).notNull(),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    lastSyncStatus: text("last_sync_status"),
+    lastSyncError: text("last_sync_error"),
+    lastSyncStats: jsonb("last_sync_stats").$type<{
+      scanned?: number;
+      matched?: number;
+      created?: number;
+      updated?: number;
+      contactsCreated?: number;
+    }>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("calendar_subscriptions_user_idx").on(t.userId)]
+);
 
 export const aiSuggestions = pgTable(
   "ai_suggestions",
@@ -234,3 +264,4 @@ export type Reminder = typeof reminders.$inferSelect;
 export type Tag = typeof tags.$inferSelect;
 export type AiSuggestion = typeof aiSuggestions.$inferSelect;
 export type ImportRecord = typeof imports.$inferSelect;
+export type CalendarSubscription = typeof calendarSubscriptions.$inferSelect;

@@ -12,6 +12,7 @@ import {
   parseLinkedInMessagesCsv,
   participantIdentity,
   resolveConversations,
+  nameFromLinkedInSlug,
   type ParsedLinkedInMessage,
 } from "@/lib/linkedin-messages";
 import { enrichContactsFromMessages } from "@/lib/message-enrichment";
@@ -72,7 +73,7 @@ export async function previewLinkedInCsv(csvText: string) {
     where: eq(contacts.userId, userId),
   });
 
-  const preview = rows.slice(0, 50).map((row) => {
+  const people = rows.map((row, index) => {
     const fullName = `${row.firstName} ${row.lastName}`.trim();
     const dups = findDuplicateCandidates(existing, {
       fullName,
@@ -81,14 +82,19 @@ export async function previewLinkedInCsv(csvText: string) {
       company: row.company,
       title: row.position,
     });
+    const top = dups[0];
     return {
+      id: String(index),
+      index,
       ...row,
       fullName,
-      duplicate: dups[0]
+      isRepeat: Boolean(top && top.confidence >= 0.6),
+      duplicate: top
         ? {
-            id: dups[0].contact.id,
-            fullName: dups[0].contact.fullName,
-            reason: dups[0].reason,
+            id: top.contact.id,
+            fullName: top.contact.fullName,
+            reason: top.reason,
+            confidence: top.confidence,
           }
         : null,
     };
@@ -96,13 +102,19 @@ export async function previewLinkedInCsv(csvText: string) {
 
   return {
     columns: parsed.meta.fields || [],
-    totalRows: rows.length,
-    preview,
-    duplicateCount: preview.filter((p) => p.duplicate).length,
+    totalRows: people.length,
+    people,
+    duplicateCount: people.filter((p) => p.isRepeat).length,
+    // keep legacy key for any callers
+    preview: people,
   };
 }
 
-export async function confirmLinkedInImport(csvText: string, fileName: string) {
+export async function confirmLinkedInImport(
+  csvText: string,
+  fileName: string,
+  selectedIds?: string[]
+) {
   const userId = await requireUserId();
   const db = await getDb();
 
@@ -122,15 +134,27 @@ export async function confirmLinkedInImport(csvText: string, fileName: string) {
   });
 
   const rows = parsed.data.map(mapLinkedInRow).filter((r) => r.firstName || r.lastName);
+  const selected =
+    selectedIds === undefined
+      ? new Set(rows.map((_, i) => String(i)))
+      : new Set(selectedIds);
+
   let created = 0;
   let updated = 0;
   let duplicates = 0;
+  let skipped = 0;
 
   const existing = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
   });
 
-  for (const row of rows) {
+  for (let index = 0; index < rows.length; index++) {
+    if (!selected.has(String(index))) {
+      skipped++;
+      continue;
+    }
+
+    const row = rows[index];
     const fullName = `${row.firstName} ${row.lastName}`.trim();
     if (!fullName) continue;
 
@@ -176,7 +200,7 @@ export async function confirmLinkedInImport(csvText: string, fileName: string) {
     .update(imports)
     .set({
       status: "completed",
-      rowsProcessed: rows.length,
+      rowsProcessed: selected.size,
       contactsCreated: created,
       contactsUpdated: updated,
       duplicatesFound: duplicates,
@@ -190,10 +214,11 @@ export async function confirmLinkedInImport(csvText: string, fileName: string) {
 
   return {
     importId: importRow.id,
-    rowsProcessed: rows.length,
+    rowsProcessed: selected.size,
     contactsCreated: created,
     contactsUpdated: updated,
     duplicatesFound: duplicates,
+    skipped,
   };
 }
 
@@ -210,30 +235,42 @@ export async function previewLinkedInMessagesCsv(csvText: string) {
   });
 
   const conversations = resolveConversations(messages, existing);
-  const matched = conversations.filter((c) => c.match);
-  const unmatched = conversations.filter((c) => !c.match);
+  const people = conversations.map((c) => ({
+    id: c.conversationId,
+    conversationId: c.conversationId,
+    title: c.conversationTitle,
+    messageCount: c.messageCount,
+    latestDate: c.latestDate?.toISOString() ?? null,
+    sampleContent: c.sampleContent,
+    match: c.match,
+    willCreate: !c.match && !!c.primaryUrl,
+    isRepeat: Boolean(c.match),
+    displayName:
+      c.match?.fullName ||
+      c.primaryName ||
+      (c.primaryUrl ? nameFromLinkedInSlug(c.primaryUrl) : "Unknown"),
+    linkedinUrl: c.primaryUrl,
+  }));
+
+  const matched = people.filter((c) => c.isRepeat);
+  const unmatched = people.filter((c) => !c.isRepeat);
 
   return {
     columns,
     totalMessages: messages.length,
-    totalConversations: conversations.length,
+    totalConversations: people.length,
     matchedCount: matched.length,
     unmatchedCount: unmatched.length,
-    preview: conversations.slice(0, 40).map((c) => ({
-      conversationId: c.conversationId,
-      title: c.conversationTitle,
-      messageCount: c.messageCount,
-      latestDate: c.latestDate?.toISOString() ?? null,
-      sampleContent: c.sampleContent,
-      match: c.match,
-      willCreate: !c.match && !!(c.participantNames[0] || c.participantUrls[0]),
-    })),
+    people,
+    // keep legacy key
+    preview: people,
   };
 }
 
 export async function confirmLinkedInMessagesImport(
   csvText: string,
-  fileName: string
+  fileName: string,
+  selectedConversationIds?: string[]
 ) {
   const userId = await requireUserId();
   const db = await getDb();
@@ -254,6 +291,11 @@ export async function confirmLinkedInMessagesImport(
   });
 
   const conversations = resolveConversations(messages, existing);
+  const selected =
+    selectedConversationIds === undefined
+      ? null
+      : new Set(selectedConversationIds);
+
   const byConv = new Map<string, ParsedLinkedInMessage[]>();
   for (const m of messages) {
     const list = byConv.get(m.conversationId) || [];
@@ -268,16 +310,19 @@ export async function confirmLinkedInMessagesImport(
   const touchedContactIds = new Set<string>();
 
   for (const conv of conversations) {
+    if (selected && !selected.has(conv.conversationId)) {
+      skipped += (byConv.get(conv.conversationId) || []).length;
+      continue;
+    }
+
     const msgs = byConv.get(conv.conversationId) || [];
     let contactId = conv.match?.contactId;
 
     if (!contactId) {
       const identity = participantIdentity(conv);
-      if (!identity.fullName || identity.fullName === "LinkedIn contact") {
-        if (!identity.linkedinUrl) {
-          skipped += msgs.length;
-          continue;
-        }
+      if (!identity?.linkedinUrl) {
+        skipped += msgs.length;
+        continue;
       }
 
       const contact = await createContact({
@@ -298,7 +343,7 @@ export async function confirmLinkedInMessagesImport(
     } else {
       const identity = participantIdentity(conv);
       await updateContact(contactId, {
-        linkedinUrl: identity.linkedinUrl || undefined,
+        linkedinUrl: identity?.linkedinUrl || undefined,
         source: "linkedin_messages",
       });
       updated++;

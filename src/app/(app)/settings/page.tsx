@@ -8,7 +8,7 @@ export default function SettingsPage() {
           Settings
         </h1>
         <p className="mt-1 text-muted-foreground">
-          AI keys, privacy, and data controls.
+          Choose your AI provider, paste an API key, and manage your data.
         </p>
       </div>
       <SettingsForm />

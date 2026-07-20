@@ -46,7 +46,7 @@ Then restart `npm run dev` if the server was already running, so it reloads the 
 | `/` | Dashboard — follow-ups, suggestions, recent contacts |
 | `/contacts` | Searchable contact list + profiles |
 | `/capture` | Paste notes → AI extract → review → save |
-| `/imports` | LinkedIn connections + messages, calendar ICS/CSV |
+| `/imports` | LinkedIn connections + messages, calendar ICS subscribe/upload |
 | `/chat` | Ask who in your network can help |
 | `/graph` | Interactive network map |
 | `/settings` | BYOK, export, delete data |

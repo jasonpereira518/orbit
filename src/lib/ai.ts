@@ -1,9 +1,27 @@
+import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI } from "@google/genai";
+import OpenAI from "openai";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { decrypt } from "@/lib/crypto";
 import { z } from "zod";
+import {
+  AI_PROVIDERS,
+  resolveAiModel,
+  resolveAiProvider,
+  type AiProvider,
+  type EmbeddingBackend,
+} from "@/lib/ai-providers";
+
+export type { AiProvider, EmbeddingBackend };
+export {
+  AI_PROVIDERS,
+  DEFAULT_MODELS,
+  PROVIDER_MODELS,
+  resolveAiModel,
+  resolveAiProvider,
+} from "@/lib/ai-providers";
 
 export const noteParseSchema = z.object({
   name: z.string().nullable(),
@@ -40,62 +58,207 @@ export const multiPersonNoteParseSchema = z.object({
 export type ParsedMultiPersonNotes = z.infer<typeof multiPersonNoteParseSchema>;
 export type ParsedPersonNote = ParsedMultiPersonNotes["people"][number];
 
-const DEFAULT_MODEL = "gemini-3.5-flash";
-const EMBEDDING_MODEL = "gemini-embedding-001";
+const GEMINI_EMBEDDING_MODEL = "gemini-embedding-001";
+const OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
 
-/** Models retired for new API keys — remap to current Flash. */
-const LEGACY_MODEL_MAP: Record<string, string> = {
-  "gemini-2.5-flash": DEFAULT_MODEL,
-  "gemini-2.5-flash-lite": "gemini-3.1-flash-lite",
-  "gpt-4o-mini": DEFAULT_MODEL,
-};
-
+/** @deprecated Use resolveAiModel */
 export function resolveGeminiModel(model?: string | null) {
-  const requested = model?.trim() || DEFAULT_MODEL;
-  return LEGACY_MODEL_MAP[requested] || requested;
+  return resolveAiModel("gemini", model);
 }
 
-export async function getGeminiClient(userId: string) {
+type StoredSettings = {
+  aiProvider: string | null;
+  aiModel: string | null;
+  geminiApiKeyEncrypted: string | null;
+  openaiApiKeyEncrypted: string | null;
+  anthropicApiKeyEncrypted: string | null;
+};
+
+async function loadSettings(userId: string) {
   const db = await getDb();
-  const settings = await db.query.userSettings.findFirst({
+  return db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
   });
+}
 
-  let apiKey = process.env.GEMINI_API_KEY;
-
-  if (settings?.geminiApiKeyEncrypted) {
-    try {
-      apiKey = decrypt(settings.geminiApiKeyEncrypted);
-    } catch {
-      // fall back to env
-    }
+function decryptKey(encrypted?: string | null) {
+  if (!encrypted) return null;
+  try {
+    return decrypt(encrypted);
+  } catch {
+    return null;
   }
+}
+
+export function getProviderApiKey(
+  provider: AiProvider,
+  settings?: StoredSettings | null
+): string | null {
+  const personal =
+    provider === "gemini"
+      ? decryptKey(settings?.geminiApiKeyEncrypted)
+      : provider === "openai"
+        ? decryptKey(settings?.openaiApiKeyEncrypted)
+        : decryptKey(settings?.anthropicApiKeyEncrypted);
+
+  if (personal) return personal;
+
+  if (provider === "gemini") return process.env.GEMINI_API_KEY || null;
+  if (provider === "openai") return process.env.OPENAI_API_KEY || null;
+  return process.env.ANTHROPIC_API_KEY || null;
+}
+
+export function hasProviderKey(
+  provider: AiProvider,
+  settings?: StoredSettings | null
+) {
+  return Boolean(getProviderApiKey(provider, settings));
+}
+
+export function usingEnvKey(
+  provider: AiProvider,
+  settings?: StoredSettings | null
+) {
+  const hasPersonal =
+    provider === "gemini"
+      ? Boolean(settings?.geminiApiKeyEncrypted)
+      : provider === "openai"
+        ? Boolean(settings?.openaiApiKeyEncrypted)
+        : Boolean(settings?.anthropicApiKeyEncrypted);
+  if (hasPersonal) return false;
+  if (provider === "gemini") return Boolean(process.env.GEMINI_API_KEY);
+  if (provider === "openai") return Boolean(process.env.OPENAI_API_KEY);
+  return Boolean(process.env.ANTHROPIC_API_KEY);
+}
+
+export async function getAiConfig(userId: string) {
+  const settings = await loadSettings(userId);
+  const provider = resolveAiProvider(settings?.aiProvider);
+  const model = resolveAiModel(provider, settings?.aiModel);
+  const apiKey = getProviderApiKey(provider, settings);
 
   if (!apiKey) {
+    const meta = AI_PROVIDERS.find((p) => p.id === provider)!;
     throw new Error(
-      "No Gemini API key configured. Add one in Settings or set GEMINI_API_KEY."
+      `No ${meta.label} API key configured. Add one in Settings or set ${meta.envVar}.`
     );
   }
 
-  return {
-    client: new GoogleGenAI({ apiKey }),
-    model: resolveGeminiModel(settings?.aiModel),
-  };
+  return { provider, model, apiKey, settings };
+}
+
+/** Resolve which embedding API to use for semantic search. */
+export async function resolveEmbeddingBackend(
+  userId: string
+): Promise<{ backend: EmbeddingBackend; apiKey: string }> {
+  const settings = await loadSettings(userId);
+  const provider = resolveAiProvider(settings?.aiProvider);
+
+  if (provider === "openai") {
+    const apiKey = getProviderApiKey("openai", settings);
+    if (!apiKey) {
+      throw new Error(
+        "No OpenAI API key configured for embeddings. Add one in Settings or set OPENAI_API_KEY."
+      );
+    }
+    return { backend: "openai", apiKey };
+  }
+
+  if (provider === "gemini") {
+    const apiKey = getProviderApiKey("gemini", settings);
+    if (!apiKey) {
+      throw new Error(
+        "No Gemini API key configured for embeddings. Add one in Settings or set GEMINI_API_KEY."
+      );
+    }
+    return { backend: "gemini", apiKey };
+  }
+
+  // Anthropic has no embeddings API — prefer OpenAI, then Gemini.
+  const openaiKey = getProviderApiKey("openai", settings);
+  if (openaiKey) return { backend: "openai", apiKey: openaiKey };
+
+  const geminiKey = getProviderApiKey("gemini", settings);
+  if (geminiKey) return { backend: "gemini", apiKey: geminiKey };
+
+  throw new Error(
+    "Anthropic has no embeddings API. Add an OpenAI or Gemini key in Settings for search embeddings."
+  );
+}
+
+function extractJsonText(raw: string) {
+  const trimmed = raw.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  return fenced?.[1]?.trim() || trimmed;
+}
+
+export async function completeJson(
+  userId: string,
+  input: {
+    system: string;
+    user: string;
+    temperature?: number;
+  }
+): Promise<string> {
+  const { provider, model, apiKey } = await getAiConfig(userId);
+  const temperature = input.temperature ?? 0.2;
+  const system = `${input.system}\n\nRespond with valid JSON only. No markdown fences.`;
+
+  if (provider === "gemini") {
+    const client = new GoogleGenAI({ apiKey });
+    const response = await client.models.generateContent({
+      model,
+      contents: input.user,
+      config: {
+        temperature,
+        responseMimeType: "application/json",
+        systemInstruction: system,
+      },
+    });
+    const content = response.text;
+    if (!content) throw new Error("Empty AI response");
+    return extractJsonText(content);
+  }
+
+  if (provider === "openai") {
+    const client = new OpenAI({ apiKey });
+    const response = await client.chat.completions.create({
+      model,
+      temperature,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: input.user },
+      ],
+    });
+    const content = response.choices[0]?.message?.content;
+    if (!content) throw new Error("Empty AI response");
+    return extractJsonText(content);
+  }
+
+  const client = new Anthropic({ apiKey });
+  const response = await client.messages.create({
+    model,
+    max_tokens: 4096,
+    temperature,
+    system,
+    messages: [{ role: "user", content: input.user }],
+  });
+  const block = response.content.find((b) => b.type === "text");
+  if (!block || block.type !== "text" || !block.text) {
+    throw new Error("Empty AI response");
+  }
+  return extractJsonText(block.text);
 }
 
 export async function parseNotesWithAI(
   userId: string,
   notes: string
 ): Promise<ParsedNote> {
-  const { client, model } = await getGeminiClient(userId);
-
-  const response = await client.models.generateContent({
-    model,
-    contents: notes,
-    config: {
-      temperature: 0.2,
-      responseMimeType: "application/json",
-      systemInstruction: `You extract structured contact data from networking notes.
+  const content = await completeJson(userId, {
+    temperature: 0.2,
+    user: notes,
+    system: `You extract structured contact data from networking notes.
 Return strict JSON matching this shape:
 {
   "name": string|null,
@@ -123,29 +286,19 @@ Rules:
 - Use null when unknown. Do not invent facts.
 - Separate facts from guesses; suggestions go in recommendation fields.
 - relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.`,
-    },
   });
 
-  const content = response.text;
-  if (!content) throw new Error("Empty AI response");
-
-  const parsed = noteParseSchema.parse(JSON.parse(content));
-  return parsed;
+  return noteParseSchema.parse(JSON.parse(content));
 }
 
 export async function parseMultiPersonNotesWithAI(
   userId: string,
   notes: string
 ): Promise<ParsedMultiPersonNotes> {
-  const { client, model } = await getGeminiClient(userId);
-
-  const response = await client.models.generateContent({
-    model,
-    contents: notes.slice(0, 100_000),
-    config: {
-      temperature: 0.2,
-      responseMimeType: "application/json",
-      systemInstruction: `You extract structured contact data from networking notes that may mention many people.
+  const content = await completeJson(userId, {
+    temperature: 0.2,
+    user: notes.slice(0, 100_000),
+    system: `You extract structured contact data from networking notes that may mention many people.
 Return strict JSON matching this shape:
 {
   "people": [
@@ -180,11 +333,7 @@ Rules:
 - source_excerpt must be the relevant slice of the original notes for that person (not the whole dump).
 - relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.
 - If the notes only cover one person, return a single-item people array.`,
-    },
   });
-
-  const content = response.text;
-  if (!content) throw new Error("Empty AI response");
 
   const parsed = multiPersonNoteParseSchema.parse(JSON.parse(content));
   return {
@@ -193,10 +342,24 @@ Rules:
 }
 
 export async function createEmbedding(userId: string, text: string) {
-  const { client } = await getGeminiClient(userId);
+  const { backend, apiKey } = await resolveEmbeddingBackend(userId);
+  const input = text.slice(0, 8000);
+
+  if (backend === "openai") {
+    const client = new OpenAI({ apiKey });
+    const res = await client.embeddings.create({
+      model: OPENAI_EMBEDDING_MODEL,
+      input,
+    });
+    const values = res.data[0]?.embedding;
+    if (!values?.length) throw new Error("Empty embedding response");
+    return values;
+  }
+
+  const client = new GoogleGenAI({ apiKey });
   const res = await client.models.embedContent({
-    model: EMBEDDING_MODEL,
-    contents: text.slice(0, 8000),
+    model: GEMINI_EMBEDDING_MODEL,
+    contents: input,
   });
   const values = res.embeddings?.[0]?.values;
   if (!values?.length) throw new Error("Empty embedding response");
@@ -232,8 +395,6 @@ export async function chatWithNetwork(
     relevance: number;
   }>
 ) {
-  const { client, model } = await getGeminiClient(userId);
-
   const contextBlock = contactsContext
     .map(
       (c, i) =>
@@ -241,13 +402,10 @@ export async function chatWithNetwork(
     )
     .join("\n\n");
 
-  const response = await client.models.generateContent({
-    model,
-    contents: `Question: ${question}\n\nContacts:\n${contextBlock || "(no contacts found)"}`,
-    config: {
-      temperature: 0.3,
-      responseMimeType: "application/json",
-      systemInstruction: `You are Orbit, a personal networking assistant.
+  const content = await completeJson(userId, {
+    temperature: 0.3,
+    user: `Question: ${question}\n\nContacts:\n${contextBlock || "(no contacts found)"}`,
+    system: `You are Orbit, a personal networking assistant.
 Answer ONLY using the provided contacts. Never invent people.
 Return JSON:
 {
@@ -263,11 +421,8 @@ Return JSON:
   ]
 }
 Only use contact_ids from the provided list.`,
-    },
   });
 
-  const content = response.text;
-  if (!content) throw new Error("Empty AI response");
   return JSON.parse(content) as {
     answer: string;
     recommendations: Array<{
