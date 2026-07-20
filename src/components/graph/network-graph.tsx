@@ -52,6 +52,7 @@ import {
   type OrbitRingsData,
 } from "@/lib/graph-layout";
 import { cn } from "@/lib/utils";
+import { ChevronDown, SlidersHorizontal } from "lucide-react";
 
 type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
 type LabelMode = "always" | "hover" | "never";
@@ -91,10 +92,7 @@ function savePositions(userId: string, positions: PositionMap) {
   }
 }
 
-function contactMatchesSearch(
-  d: GraphNodeData,
-  q: string
-): boolean {
+function contactMatchesSearch(d: GraphNodeData, q: string): boolean {
   if (!q) return true;
   const hay = [
     d.label,
@@ -115,8 +113,8 @@ function Starfield() {
     () =>
       Array.from({ length: 220 }, (_, i) => ({
         id: i,
-        left: `${((i * 47 + 13) * 7) % 1000 / 10}%`,
-        top: `${((i * 83 + 29) * 11) % 1000 / 10}%`,
+        left: `${(((i * 47 + 13) * 7) % 1000) / 10}%`,
+        top: `${(((i * 83 + 29) * 11) % 1000) / 10}%`,
         size: i % 17 === 0 ? 2.2 : i % 5 === 0 ? 1.4 : 0.8,
         delay: `${(i % 11) * 0.35}s`,
         dur: `${2.8 + (i % 6) * 0.7}s`,
@@ -148,6 +146,31 @@ function Starfield() {
           }
         />
       ))}
+    </div>
+  );
+}
+
+function GraphLegend() {
+  return (
+    <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-xl border border-white/10 bg-[#080b12]/75 px-3 py-2.5 text-[10px] text-white/70 backdrop-blur-sm">
+      <ul className="space-y-1.5">
+        <li className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full bg-[#fff6d6] shadow-[0_0_6px_rgba(255,246,214,0.8)]" />
+          You
+        </li>
+        <li className="flex items-center gap-2">
+          <span className="h-px w-4 border-t border-dashed border-white/40" />
+          Closeness ring
+        </li>
+        <li className="flex items-center gap-2">
+          <span className="h-px w-4 bg-white/75" />
+          Company constellation
+        </li>
+        <li className="flex items-center gap-2">
+          <span className="h-px w-4 bg-[rgba(255,236,200,0.85)]" />
+          Knows (met / mentioned)
+        </li>
+      </ul>
     </div>
   );
 }
@@ -407,7 +430,6 @@ function GraphCanvasInner({
           if (kind === "constellation") {
             return e.data?.company === focusCompany;
           }
-          // Keep knows edges that touch the focused company cluster
           const sourceCo = (
             layout.nodes.find((n) => n.id === e.source)?.data as GraphNodeData
           )?.company;
@@ -481,7 +503,6 @@ function GraphCanvasInner({
     searchQuery,
   ]);
 
-  // Orbital drift
   useEffect(() => {
     if (!motionEnabled || prefersReducedMotion) return;
 
@@ -601,7 +622,11 @@ function GraphCanvasInner({
 
   const onNodeMouseEnter: NodeMouseHandler = useCallback(
     (_, node) => {
-      if (node.id === "rings" || node.id === "me") {
+      if (
+        node.id === "rings" ||
+        node.id === "me" ||
+        node.type === "clusterLabel"
+      ) {
         onHover(null);
         return;
       }
@@ -706,6 +731,8 @@ function GraphCanvasInner({
         />
       </ReactFlow>
 
+      <GraphLegend />
+
       {isEmpty && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="pointer-events-auto max-w-sm rounded-2xl border border-white/10 bg-[#080b12]/90 px-6 py-5 text-center shadow-xl backdrop-blur-md">
@@ -728,8 +755,32 @@ function GraphCanvasInner({
   );
 }
 
-export function NetworkGraph() {
-  const [data, setData] = useState<GraphPayload | null>(null);
+const GRAPH_REFETCH_MIN_MS = 60_000;
+
+function applyGraphPayload(
+  payload: GraphPayload,
+  setData: (payload: GraphPayload) => void,
+  setPositionOverrides: (next: PositionMap) => void
+) {
+  setData(payload);
+  const ids = new Set(payload.contacts.map((c) => c.id));
+  const loaded = loadPositions(payload.userId);
+  const cleaned: PositionMap = {};
+  for (const [id, pos] of Object.entries(loaded)) {
+    if (ids.has(id)) cleaned[id] = pos;
+  }
+  setPositionOverrides(cleaned);
+  if (Object.keys(cleaned).length !== Object.keys(loaded).length) {
+    savePositions(payload.userId, cleaned);
+  }
+}
+
+export function NetworkGraph({
+  initialData = null,
+}: {
+  initialData?: GraphPayload | null;
+}) {
+  const [data, setData] = useState<GraphPayload | null>(initialData);
   const [company, setCompany] = useState("all");
   const [tag, setTag] = useState("all");
   const [minScore, setMinScore] = useState("1");
@@ -742,33 +793,36 @@ export function NetworkGraph() {
   const [resetToken, setResetToken] = useState(0);
   const [selection, setSelection] = useState<InspectSelection>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const lastFetchAt = useRef(initialData ? Date.now() : 0);
+  const positionsHydrated = useRef(false);
 
-  const loadData = useCallback(() => {
+  const loadData = useCallback((force = false) => {
+    if (!force && Date.now() - lastFetchAt.current < GRAPH_REFETCH_MIN_MS) {
+      return;
+    }
     getGraphData()
       .then((payload) => {
-        setData(payload);
-        const ids = new Set(payload.contacts.map((c) => c.id));
-        const loaded = loadPositions(payload.userId);
-        const cleaned: PositionMap = {};
-        for (const [id, pos] of Object.entries(loaded)) {
-          if (ids.has(id)) cleaned[id] = pos;
-        }
-        setPositionOverrides(cleaned);
-        if (Object.keys(cleaned).length !== Object.keys(loaded).length) {
-          savePositions(payload.userId, cleaned);
-        }
+        lastFetchAt.current = Date.now();
+        applyGraphPayload(payload, setData, setPositionOverrides);
       })
       .catch(console.error);
   }, []);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    if (initialData && !positionsHydrated.current) {
+      positionsHydrated.current = true;
+      applyGraphPayload(initialData, setData, setPositionOverrides);
+      return;
+    }
+    if (!data) loadData(true);
+  }, [initialData, data, loadData]);
 
   useEffect(() => {
-    const onFocus = () => loadData();
+    const onFocus = () => loadData(false);
     const onVisibility = () => {
-      if (document.visibilityState === "visible") loadData();
+      if (document.visibilityState === "visible") loadData(false);
     };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);
@@ -800,6 +854,11 @@ export function NetworkGraph() {
     setResetToken((t) => t + 1);
   }, [userId]);
 
+  const activeFilterCount =
+    (company !== "all" ? 1 : 0) +
+    (tag !== "all" ? 1 : 0) +
+    (minScore !== "1" ? 1 : 0);
+
   if (!data) {
     return (
       <div className="flex h-[min(78vh,720px)] items-center justify-center rounded-2xl border border-white/10 bg-[#05070c] text-white/50">
@@ -810,9 +869,9 @@ export function NetworkGraph() {
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 rounded-2xl border border-[#0f3d3e]/15 bg-[#0f3d3e]/[0.04] p-4 backdrop-blur-sm sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
-        <div className="space-y-1.5 sm:col-span-2 lg:col-span-2">
-          <Label htmlFor="graph-search" className="text-[#0f3d3e]">
+      <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-primary/15 bg-primary/[0.04] p-4 backdrop-blur-sm">
+        <div className="min-w-[200px] flex-1 space-y-1.5">
+          <Label htmlFor="graph-search" className="text-primary">
             Search spotlight
           </Label>
           <Input
@@ -820,123 +879,174 @@ export function NetworkGraph() {
             placeholder="Name, company, tag…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="bg-white/90"
+            className="bg-card/90"
           />
         </div>
-        <div className="space-y-1.5">
-          <Label className="text-[#0f3d3e]">Company</Label>
-          <Select value={company} onValueChange={(v) => setCompany(v || "all")}>
-            <SelectTrigger className="w-full bg-white/90">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All companies</SelectItem>
-              {data.companies.map((c) => (
-                <SelectItem key={c} value={c}>
-                  {c}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-[#0f3d3e]">Tag</Label>
-          <Select value={tag} onValueChange={(v) => setTag(v || "all")}>
-            <SelectTrigger className="w-full bg-white/90">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All tags</SelectItem>
-              {data.tags.map((t) => (
-                <SelectItem key={t} value={t}>
-                  {t}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-[#0f3d3e]">Min closeness</Label>
-          <Select value={minScore} onValueChange={(v) => setMinScore(v || "1")}>
-            <SelectTrigger className="w-full bg-white/90">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="1">1+</SelectItem>
-              <SelectItem value="2">2+</SelectItem>
-              <SelectItem value="3">3+</SelectItem>
-              <SelectItem value="4">4+</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-[#0f3d3e]">Orbit grouping</Label>
-          <Select
-            value={grouping}
-            onValueChange={(v) => setGrouping((v as GroupingMode) || "score")}
-          >
-            <SelectTrigger className="w-full bg-white/90">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="score">Score rings</SelectItem>
-              <SelectItem value="company">Company clusters</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-[#0f3d3e]">Labels</Label>
-          <Select
-            value={labelMode}
-            onValueChange={(v) => setLabelMode((v as LabelMode) || "hover")}
-          >
-            <SelectTrigger className="w-full bg-white/90">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="hover">Dim until hover</SelectItem>
-              <SelectItem value="always">Always bright</SelectItem>
-              <SelectItem value="never">Never</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-[#0f3d3e]">Connection lines</Label>
-          <Select
-            value={linksMode}
-            onValueChange={(v) => setLinksMode((v as LinksMode) || "auto")}
-          >
-            <SelectTrigger className="w-full bg-white/90">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="auto">Auto</SelectItem>
-              <SelectItem value="on">Always on</SelectItem>
-              <SelectItem value="off">Off</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"
-          variant={motionEnabled ? "default" : "outline"}
+          variant="outline"
           size="sm"
-          className={cn(
-            motionEnabled && "bg-[#0f3d3e] text-white hover:bg-[#0c3233]"
-          )}
-          onClick={() => setMotionEnabled((m) => !m)}
+          className="gap-1.5"
+          onClick={() => setFiltersOpen((o) => !o)}
         >
-          Orbit motion {motionEnabled ? "on" : "off"}
+          <SlidersHorizontal className="h-3.5 w-3.5" />
+          Filters
+          {activeFilterCount > 0 && (
+            <span className="rounded-full bg-primary/15 px-1.5 text-[10px] font-medium text-primary">
+              {activeFilterCount}
+            </span>
+          )}
+          <ChevronDown
+            className={cn(
+              "h-3.5 w-3.5 transition-transform",
+              filtersOpen && "rotate-180"
+            )}
+          />
         </Button>
-        <Button type="button" variant="outline" size="sm" onClick={resetPositions}>
-          Reset positions
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="gap-1.5 text-muted-foreground"
+          onClick={() => setAdvancedOpen((o) => !o)}
+        >
+          Advanced
+          <ChevronDown
+            className={cn(
+              "h-3.5 w-3.5 transition-transform",
+              advancedOpen && "rotate-180"
+            )}
+          />
         </Button>
-        <p className="text-xs text-muted-foreground">
-          Drag planets to rearrange · positions save locally
-        </p>
       </div>
+
+      {filtersOpen && (
+        <div className="grid gap-3 rounded-2xl border border-border/70 bg-card/80 p-4 sm:grid-cols-3">
+          <div className="space-y-1.5">
+            <Label>Company</Label>
+            <Select value={company} onValueChange={(v) => setCompany(v || "all")}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All companies</SelectItem>
+                {data.companies.map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {c}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Tag</Label>
+            <Select value={tag} onValueChange={(v) => setTag(v || "all")}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All tags</SelectItem>
+                {data.tags.map((t) => (
+                  <SelectItem key={t} value={t}>
+                    {t}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Min closeness</Label>
+            <Select
+              value={minScore}
+              onValueChange={(v) => setMinScore(v || "1")}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1">1+</SelectItem>
+                <SelectItem value="2">2+</SelectItem>
+                <SelectItem value="3">3+</SelectItem>
+                <SelectItem value="4">4+</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      )}
+
+      {advancedOpen && (
+        <div className="grid gap-3 rounded-2xl border border-border/70 bg-card/80 p-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="space-y-1.5">
+            <Label>Orbit grouping</Label>
+            <Select
+              value={grouping}
+              onValueChange={(v) => setGrouping((v as GroupingMode) || "score")}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="score">Score rings</SelectItem>
+                <SelectItem value="company">Company clusters</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Labels</Label>
+            <Select
+              value={labelMode}
+              onValueChange={(v) => setLabelMode((v as LabelMode) || "hover")}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="hover">Dim until hover</SelectItem>
+                <SelectItem value="always">Always bright</SelectItem>
+                <SelectItem value="never">Never</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Connection lines</Label>
+            <Select
+              value={linksMode}
+              onValueChange={(v) => setLinksMode((v as LinksMode) || "auto")}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">Auto</SelectItem>
+                <SelectItem value="on">Always on</SelectItem>
+                <SelectItem value="off">Off</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <Button
+              type="button"
+              variant={motionEnabled ? "default" : "outline"}
+              size="sm"
+              className={cn(
+                motionEnabled &&
+                  "bg-primary text-primary-foreground hover:bg-primary/90"
+              )}
+              onClick={() => setMotionEnabled((m) => !m)}
+            >
+              Orbit motion {motionEnabled ? "on" : "off"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={resetPositions}
+            >
+              Reset positions
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="relative h-[min(78vh,720px)] overflow-hidden rounded-2xl border border-white/10 bg-[#03050a] shadow-[inset_0_0_120px_rgba(0,0,0,0.65)]">
         <Starfield />

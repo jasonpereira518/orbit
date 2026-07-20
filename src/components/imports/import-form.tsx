@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import { toast } from "sonner";
-import JSZip from "jszip";
+import { Loader2 } from "lucide-react";
 import {
   previewLinkedInCsv,
   confirmLinkedInImport,
@@ -44,12 +44,22 @@ type CalendarSub = {
 type ConnectionPerson = ConnectionsPreview["people"][number];
 type MessagePerson = MessagesPreview["people"][number];
 
+type ImportProgressState = {
+  done: number;
+  total: number;
+  label: string;
+};
+
+const IMPORT_BATCH_SIZE = 8;
+const CALENDAR_BATCH_SIZE = 12;
+
 async function readCsvOrZipMessages(file: File): Promise<{
   text: string;
   fileName: string;
 }> {
   const lower = file.name.toLowerCase();
   if (lower.endsWith(".zip")) {
+    const { default: JSZip } = await import("jszip");
     const zip = await JSZip.loadAsync(await file.arrayBuffer());
     const entry =
       zip.file(/messages\.csv$/i)[0] ||
@@ -65,6 +75,42 @@ async function readCsvOrZipMessages(file: File): Promise<{
   return { text: await file.text(), fileName: file.name };
 }
 
+function ImportProgress({ done, total, label }: ImportProgressState) {
+  const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  return (
+    <div
+      className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/40 px-4 py-3"
+      role="status"
+      aria-live="polite"
+    >
+      <Loader2 className="size-4 shrink-0 animate-spin text-primary" />
+      <div className="min-w-0 flex-1 space-y-2">
+        <p className="text-sm font-medium">
+          Importing… {done} of {total} {label}
+        </p>
+        <div className="h-1.5 overflow-hidden rounded-full bg-border/80">
+          <div
+            className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </div>
+      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+        {pct}%
+      </span>
+    </div>
+  );
+}
+
+function BusyHint({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+      <Loader2 className="size-3.5 shrink-0 animate-spin" />
+      <span>{children}</span>
+    </div>
+  );
+}
+
 export function ImportForm({
   history,
   calendarSubscriptions = [],
@@ -77,12 +123,24 @@ export function ImportForm({
     contactsCreated: number | null;
     contactsUpdated: number | null;
     duplicatesFound: number | null;
+    rowsProcessed?: number | null;
+    errorMessage?: string | null;
+    stats?: {
+      skipped?: number;
+      messagesImported?: number;
+      meetingsLogged?: number;
+      remindersCreated?: number;
+      contactsEnriched?: number;
+      eventsProcessed?: number;
+    } | null;
     createdAt: Date;
   }>;
   calendarSubscriptions?: CalendarSub[];
 }) {
   const [tab, setTab] = useState<Tab>("connections");
   const [pending, start] = useTransition();
+  const [importProgress, setImportProgress] =
+    useState<ImportProgressState | null>(null);
 
   const [csvText, setCsvText] = useState("");
   const [fileName, setFileName] = useState("linkedin.csv");
@@ -116,6 +174,8 @@ export function ImportForm({
     { id: "calendar", label: "Calendar" },
   ];
 
+  const busy = pending || importProgress !== null;
+
   function applyConnectionsPreview(res: ConnectionsPreview) {
     setConnectionPeople(res.people);
     setConnectionSelected(new Set(res.people.map((p) => p.id)));
@@ -127,6 +187,37 @@ export function ImportForm({
     setMessagesMeta({ totalMessages: res.totalMessages });
   }
 
+  async function runBatchedImport<T>(
+    ids: string[],
+    label: string,
+    runChunk: (
+      chunk: string[],
+      opts: { importId?: string; finalize: boolean }
+    ) => Promise<T & { importId: string }>
+  ) {
+    const total = ids.length;
+    setImportProgress({ done: 0, total, label });
+    let importId: string | undefined;
+    let last: (T & { importId: string }) | null = null;
+
+    try {
+      for (let i = 0; i < ids.length; i += IMPORT_BATCH_SIZE) {
+        const chunk = ids.slice(i, i + IMPORT_BATCH_SIZE);
+        const finalize = i + IMPORT_BATCH_SIZE >= ids.length;
+        last = await runChunk(chunk, { importId, finalize });
+        importId = last.importId;
+        setImportProgress({
+          done: Math.min(i + chunk.length, total),
+          total,
+          label,
+        });
+      }
+      return last!;
+    } finally {
+      setImportProgress(null);
+    }
+  }
+
   return (
     <div className="space-y-8">
       <div className="flex gap-1 rounded-xl border border-border/60 bg-muted/40 p-1">
@@ -135,10 +226,11 @@ export function ImportForm({
             key={t.id}
             type="button"
             onClick={() => setTab(t.id)}
+            disabled={busy}
             className={cn(
               "flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
               tab === t.id
-                ? "bg-white text-[#0f3d3e] shadow-sm"
+                ? "bg-card text-primary shadow-sm"
                 : "text-muted-foreground hover:text-foreground"
             )}
           >
@@ -148,7 +240,7 @@ export function ImportForm({
       </div>
 
       {tab === "connections" && (
-        <div className="space-y-4 rounded-2xl border border-border/70 bg-white p-6">
+        <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
           <div>
             <p className="text-sm font-medium">Upload LinkedIn connections CSV</p>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -159,6 +251,7 @@ export function ImportForm({
           <input
             type="file"
             accept=".csv,text/csv"
+            disabled={busy}
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (!file) return;
@@ -180,9 +273,13 @@ export function ImportForm({
               });
             }}
           />
+          {pending && !importProgress ? (
+            <BusyHint>Reading CSV…</BusyHint>
+          ) : null}
+          {importProgress ? <ImportProgress {...importProgress} /> : null}
           <div className="flex flex-wrap gap-2">
             <Button
-              disabled={!csvText || pending}
+              disabled={!csvText || busy}
               variant="outline"
               onClick={() =>
                 start(async () => {
@@ -201,32 +298,33 @@ export function ImportForm({
               Refresh list
             </Button>
             <Button
-              disabled={!csvText || pending || connectionSelected.size === 0}
-              className="bg-[#0f3d3e] hover:bg-[#0c3233]"
-              onClick={() =>
-                start(async () => {
-                  try {
-                    const res = await confirmLinkedInImport(
-                      csvText,
-                      fileName,
-                      [...connectionSelected]
-                    );
-                    toast.success(
-                      `Imported: ${res.contactsCreated} created, ${res.contactsUpdated} updated`
-                    );
-                    setConnectionPeople([]);
-                    setConnectionSelected(new Set());
-                    setCsvText("");
-                  } catch (err) {
-                    toast.error(
-                      err instanceof Error ? err.message : "Import failed"
-                    );
-                  }
-                })
-              }
+              disabled={!csvText || busy || connectionSelected.size === 0}
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+              onClick={async () => {
+                if (busy) return;
+                try {
+                  const ids = [...connectionSelected];
+                  const res = await runBatchedImport(
+                    ids,
+                    ids.length === 1 ? "person" : "people",
+                    (chunk, opts) =>
+                      confirmLinkedInImport(csvText, fileName, chunk, opts)
+                  );
+                  toast.success(
+                    `Imported: ${res.contactsCreated} created, ${res.contactsUpdated} updated`
+                  );
+                  setConnectionPeople([]);
+                  setConnectionSelected(new Set());
+                  setCsvText("");
+                } catch (err) {
+                  toast.error(
+                    err instanceof Error ? err.message : "Import failed"
+                  );
+                }
+              }}
             >
-              {pending
-                ? "Importing…"
+              {importProgress
+                ? `Importing… ${importProgress.done}/${importProgress.total}`
                 : `Import ${connectionSelected.size || 0} selected`}
             </Button>
           </div>
@@ -256,7 +354,7 @@ export function ImportForm({
       )}
 
       {tab === "messages" && (
-        <div className="space-y-4 rounded-2xl border border-border/70 bg-white p-6">
+        <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
           <div>
             <p className="text-sm font-medium">
               Upload LinkedIn messages CSV or ZIP
@@ -269,6 +367,7 @@ export function ImportForm({
           <input
             type="file"
             accept=".csv,.zip,text/csv,application/zip"
+            disabled={busy}
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (!file) return;
@@ -294,9 +393,13 @@ export function ImportForm({
               });
             }}
           />
+          {pending && !importProgress ? (
+            <BusyHint>Reading messages…</BusyHint>
+          ) : null}
+          {importProgress ? <ImportProgress {...importProgress} /> : null}
           <div className="flex flex-wrap gap-2">
             <Button
-              disabled={!messagesText || pending}
+              disabled={!messagesText || busy}
               variant="outline"
               onClick={() =>
                 start(async () => {
@@ -315,38 +418,51 @@ export function ImportForm({
               Refresh list
             </Button>
             <Button
-              disabled={!messagesText || pending || messageSelected.size === 0}
-              className="bg-[#0f3d3e] hover:bg-[#0c3233]"
-              onClick={() =>
-                start(async () => {
-                  try {
-                    const res = await confirmLinkedInMessagesImport(
-                      messagesText,
-                      messagesFileName,
-                      [...messageSelected]
-                    );
-                    toast.success(
-                      `Imported ${res.messagesImported} messages · ${res.contactsCreated} contacts created`
-                    );
-                    if (res.enrichment) {
-                      toast.message(
-                        `Enriched ${res.enrichment.contactsEnriched} contacts for chat & follow-ups`
+              disabled={!messagesText || busy || messageSelected.size === 0}
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+              onClick={async () => {
+                if (busy) return;
+                try {
+                  const ids = [...messageSelected];
+                  let messagesImported = 0;
+                  let enrichmentTotal = 0;
+                  const res = await runBatchedImport(
+                    ids,
+                    ids.length === 1 ? "person" : "people",
+                    async (chunk, opts) => {
+                      const chunkRes = await confirmLinkedInMessagesImport(
+                        messagesText,
+                        messagesFileName,
+                        chunk,
+                        opts
                       );
+                      messagesImported += chunkRes.chunkMessagesImported;
+                      enrichmentTotal +=
+                        chunkRes.enrichment?.contactsEnriched ?? 0;
+                      return chunkRes;
                     }
-                    setMessagePeople([]);
-                    setMessageSelected(new Set());
-                    setMessagesMeta(null);
-                    setMessagesText("");
-                  } catch (err) {
-                    toast.error(
-                      err instanceof Error ? err.message : "Import failed"
+                  );
+                  toast.success(
+                    `Imported ${messagesImported} messages · ${res.contactsCreated} contacts created`
+                  );
+                  if (enrichmentTotal > 0) {
+                    toast.message(
+                      `Enriched ${enrichmentTotal} contacts for chat & follow-ups`
                     );
                   }
-                })
-              }
+                  setMessagePeople([]);
+                  setMessageSelected(new Set());
+                  setMessagesMeta(null);
+                  setMessagesText("");
+                } catch (err) {
+                  toast.error(
+                    err instanceof Error ? err.message : "Import failed"
+                  );
+                }
+              }}
             >
-              {pending
-                ? "Importing…"
+              {importProgress
+                ? `Importing… ${importProgress.done}/${importProgress.total}`
                 : `Import ${messageSelected.size || 0} selected`}
             </Button>
           </div>
@@ -398,7 +514,7 @@ export function ImportForm({
             initialSubscriptions={calendarSubscriptions}
           />
 
-          <div className="space-y-4 rounded-2xl border border-border/70 bg-white p-6">
+          <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
             <div>
               <p className="text-sm font-medium">One-time upload (ICS or CSV)</p>
               <p className="mt-1 text-sm text-muted-foreground">
@@ -409,6 +525,7 @@ export function ImportForm({
             <input
               type="file"
               accept=".ics,.csv,text/calendar,text/csv"
+              disabled={busy}
               onChange={async (e) => {
                 const file = e.target.files?.[0];
                 if (!file) return;
@@ -424,12 +541,17 @@ export function ImportForm({
                 type="checkbox"
                 checked={createFollowUps}
                 onChange={(e) => setCreateFollowUps(e.target.checked)}
+                disabled={busy}
               />
               Create follow-up reminders for recent past meetings
             </label>
+            {pending && !importProgress ? (
+              <BusyHint>Working…</BusyHint>
+            ) : null}
+            {importProgress ? <ImportProgress {...importProgress} /> : null}
             <div className="flex gap-2">
               <Button
-                disabled={!calendarText || pending}
+                disabled={!calendarText || busy}
                 variant="outline"
                 onClick={() =>
                   start(async () => {
@@ -453,31 +575,75 @@ export function ImportForm({
                 Preview
               </Button>
               <Button
-                disabled={!calendarText || pending}
-                className="bg-[#0f3d3e] hover:bg-[#0c3233]"
-                onClick={() =>
-                  start(async () => {
-                    try {
+                disabled={!calendarText || busy}
+                className="bg-primary text-primary-foreground hover:bg-primary/90"
+                onClick={async () => {
+                  if (busy) return;
+                  try {
+                    let importId: string | undefined;
+                    let offset = 0;
+                    let total = 0;
+                    let meetingsLogged = 0;
+                    let contactsMatched = 0;
+
+                    setImportProgress({
+                      done: 0,
+                      total: 1,
+                      label: "events",
+                    });
+
+                    do {
                       const res = await confirmCalendarImport({
                         kind: calendarKind,
                         text: calendarText,
                         fileName: calendarFileName,
                         createFollowUps,
+                        importId,
+                        finalize: false,
+                        chunk: {
+                          offset,
+                          limit: CALENDAR_BATCH_SIZE,
+                        },
                       });
-                      toast.success(
-                        `Logged ${res.meetingsLogged} meetings across ${res.contactsMatched} contacts`
-                      );
-                      setCalendarPreview(null);
-                      setCalendarText("");
-                    } catch (err) {
-                      toast.error(
-                        err instanceof Error ? err.message : "Import failed"
-                      );
-                    }
-                  })
-                }
+                      importId = res.importId;
+                      total = res.totalWindowed;
+                      meetingsLogged += res.meetingsLogged;
+                      contactsMatched += res.contactsMatched;
+                      offset += res.eventsProcessed;
+                      setImportProgress({
+                        done: Math.min(offset, Math.max(total, 1)),
+                        total: Math.max(total, 1),
+                        label: total === 1 ? "event" : "events",
+                      });
+                    } while (offset < total);
+
+                    await confirmCalendarImport({
+                      kind: calendarKind,
+                      text: calendarText,
+                      fileName: calendarFileName,
+                      createFollowUps,
+                      importId,
+                      finalize: true,
+                      chunk: { offset: total, limit: 0 },
+                    });
+
+                    toast.success(
+                      `Logged ${meetingsLogged} meetings across ${contactsMatched} contacts`
+                    );
+                    setCalendarPreview(null);
+                    setCalendarText("");
+                  } catch (err) {
+                    toast.error(
+                      err instanceof Error ? err.message : "Import failed"
+                    );
+                  } finally {
+                    setImportProgress(null);
+                  }
+                }}
               >
-                {pending ? "Importing…" : "Confirm import"}
+                {importProgress
+                  ? `Importing… ${importProgress.done}/${importProgress.total}`
+                  : "Confirm import"}
               </Button>
             </div>
 
@@ -536,17 +702,42 @@ export function ImportForm({
             {history.map((h) => (
               <li
                 key={h.id}
-                className="flex items-center justify-between rounded-xl border border-border/60 bg-white px-4 py-3 text-sm"
+                className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-card px-4 py-3 text-sm"
               >
-                <div>
+                <div className="min-w-0">
                   <p className="font-medium">{h.fileName || "Import"}</p>
                   <p className="text-xs text-muted-foreground">
                     {h.importType ? `${h.importType} · ` : ""}
                     {h.contactsCreated ?? 0} created · {h.contactsUpdated ?? 0}{" "}
-                    updated · {h.duplicatesFound ?? 0} skipped/dupes
+                    updated
+                    {h.stats?.messagesImported
+                      ? ` · ${h.stats.messagesImported} messages`
+                      : ""}
+                    {h.stats?.meetingsLogged
+                      ? ` · ${h.stats.meetingsLogged} meetings`
+                      : ""}
+                    {h.duplicatesFound
+                      ? ` · ${h.duplicatesFound} duplicates`
+                      : ""}
+                    {h.stats?.skipped ? ` · ${h.stats.skipped} skipped` : ""}
                   </p>
+                  {h.errorMessage ? (
+                    <p className="mt-1 text-xs text-destructive">
+                      {h.errorMessage}
+                    </p>
+                  ) : null}
                 </div>
-                <Badge variant="outline">{h.status}</Badge>
+                <Badge
+                  variant={
+                    h.status === "failed"
+                      ? "destructive"
+                      : h.status === "processing"
+                        ? "secondary"
+                        : "outline"
+                  }
+                >
+                  {h.status}
+                </Badge>
               </li>
             ))}
           </ul>

@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { deleteContact } from "@/actions/contacts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
 import {
   Dialog,
   DialogContent,
@@ -25,7 +26,10 @@ export type ContactListItem = {
   title: string | null;
   company: string | null;
   relationshipScore: number;
+  closeness?: number;
+  closenessTier?: "inner" | "mid" | "outer";
   priorityLevel: number;
+  nextFollowUpAt?: string | Date | null;
   tags: string[];
 };
 
@@ -94,11 +98,11 @@ export function ContactsList({
     return (
       <div className="p-10 text-center text-muted-foreground">
         No contacts yet.{" "}
-        <Link href="/capture" className="text-[#0f3d3e] underline">
+        <Link href="/capture" className="text-primary underline">
           Capture notes
         </Link>{" "}
         or{" "}
-        <Link href="/imports" className="text-[#0f3d3e] underline">
+        <Link href="/imports" className="text-primary underline">
           import LinkedIn
         </Link>
         .
@@ -124,59 +128,75 @@ export function ContactsList({
               <div className="overflow-hidden">
                 <div
                   className={cn(
-                    "flex items-center gap-2 pr-2 transition-transform duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+                    "transition-transform duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
                     exiting && "-translate-x-8"
                   )}
                 >
-                  <Link
-                    href={`/contacts/${c.id}`}
-                    className="flex min-w-0 flex-1 items-center justify-between gap-4 px-5 py-4 transition-colors hover:bg-muted/40"
-                  >
-                    <div className="min-w-0">
-                      <p className="font-medium text-[#0f3d3e]">
-                        {c.preferredName || c.fullName}
-                      </p>
-                      {c.preferredName &&
-                        c.preferredName !== c.fullName && (
-                          <p className="truncate text-xs text-muted-foreground">
-                            {c.fullName}
-                          </p>
+                  <div className="flex items-center gap-2 pr-2">
+                    <Link
+                      href={`/contacts/${c.id}`}
+                      className="flex min-w-0 flex-1 items-center justify-between gap-4 px-5 py-4 transition-colors hover:bg-muted/40"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-medium text-primary">
+                          {c.preferredName || c.fullName}
+                        </p>
+                        {c.preferredName &&
+                          c.preferredName !== c.fullName && (
+                            <p className="truncate text-xs text-muted-foreground">
+                              {c.fullName}
+                            </p>
+                          )}
+                        <p className="truncate text-sm text-muted-foreground">
+                          {[c.title, c.company].filter(Boolean).join(" · ") ||
+                            "No role yet"}
+                        </p>
+                        {c.tags.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {c.tags.slice(0, 4).map((t) => (
+                              <Badge
+                                key={t}
+                                variant="secondary"
+                                className="text-[10px]"
+                              >
+                                {t}
+                              </Badge>
+                            ))}
+                          </div>
                         )}
-                      <p className="truncate text-sm text-muted-foreground">
-                        {[c.title, c.company].filter(Boolean).join(" · ") ||
-                          "No role yet"}
-                      </p>
-                      {c.tags.length > 0 && (
-                        <div className="mt-2 flex flex-wrap gap-1">
-                          {c.tags.slice(0, 4).map((t) => (
-                            <Badge
-                              key={t}
-                              variant="secondary"
-                              className="text-[10px]"
-                            >
-                              {t}
-                            </Badge>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex shrink-0 flex-col items-end gap-1">
-                      <Badge variant="outline">
-                        Score {c.relationshipScore}
-                      </Badge>
-                      {c.priorityLevel > 0 && (
-                        <span className="text-[10px] uppercase tracking-wide text-[#c4a35a]">
-                          Priority {c.priorityLevel}
-                        </span>
-                      )}
-                    </div>
-                  </Link>
+                      </div>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        <Badge variant="outline">
+                          {typeof c.closeness === "number"
+                            ? `${Math.round(c.closeness * 100)}% close`
+                            : `Score ${c.relationshipScore}`}
+                        </Badge>
+                        {c.closenessTier && (
+                          <span className="text-[10px] capitalize text-muted-foreground">
+                            {c.closenessTier}
+                          </span>
+                        )}
+                        {c.priorityLevel > 0 && (
+                          <span className="text-[10px] uppercase tracking-wide text-chart-4">
+                            Priority {c.priorityLevel}
+                          </span>
+                        )}
+                      </div>
+                    </Link>
 
-                  <DeleteRowButton
-                    name={c.fullName}
-                    disabled={pending || exiting}
-                    onClick={() => requestDelete(c.id)}
-                  />
+                    <DeleteRowButton
+                      name={c.fullName}
+                      disabled={pending || exiting}
+                      onClick={() => requestDelete(c.id)}
+                    />
+                  </div>
+                  <div className="border-t border-border/40 px-5 py-2">
+                    <EasyFollowUp
+                      contactId={c.id}
+                      nextFollowUpAt={c.nextFollowUpAt}
+                      compact
+                    />
+                  </div>
                 </div>
               </div>
             </li>

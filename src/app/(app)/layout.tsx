@@ -1,8 +1,13 @@
-import { headers } from "next/headers";
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
-import { isClerkConfigured } from "@/lib/auth";
+import {
+  bootstrapAuthenticatedUser,
+  isClerkConfigured,
+  isDemoMode,
+} from "@/lib/auth";
+
+export const dynamic = "force-dynamic";
 
 export default async function AppLayout({
   children,
@@ -10,15 +15,22 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const clerkOn = isClerkConfigured();
+  const demoMode = isDemoMode();
+  const userId = clerkOn
+    ? (await auth()).userId
+    : isDemoMode()
+      ? "demo-user"
+      : null;
 
-  if (clerkOn) {
-    const { userId } = await auth();
-    if (!userId) {
-      redirect("/sign-in");
-    }
+  if (clerkOn && !userId) {
+    redirect("/sign-in");
   }
 
-  await headers();
+  if (!userId) {
+    redirect("/");
+  }
 
-  return <AppShell clerkOn={clerkOn}>{children}</AppShell>;
+  await bootstrapAuthenticatedUser(userId);
+
+  return <AppShell clerkOn={clerkOn} demoMode={demoMode}>{children}</AppShell>;
 }

@@ -1,6 +1,7 @@
 import { eq, and } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactEmbeddings, contacts } from "@/db/schema";
+import { metContextLabel } from "@/lib/met-context";
 import { createEmbedding, cosineSimilarity } from "@/lib/ai";
 
 export async function upsertContactEmbedding(
@@ -15,6 +16,25 @@ export async function upsertContactEmbedding(
   try {
     const embedding = await createEmbedding(userId, content);
     const db = await getDb();
+
+    if (sourceId) {
+      const existing = await db.query.contactEmbeddings.findFirst({
+        where: and(
+          eq(contactEmbeddings.userId, userId),
+          eq(contactEmbeddings.contactId, contactId),
+          eq(contactEmbeddings.sourceType, sourceType),
+          eq(contactEmbeddings.sourceId, sourceId)
+        ),
+      });
+      if (existing) {
+        await db
+          .update(contactEmbeddings)
+          .set({ embedding, content })
+          .where(eq(contactEmbeddings.id, existing.id));
+        return;
+      }
+    }
+
     await db.insert(contactEmbeddings).values({
       userId,
       contactId,
@@ -80,6 +100,7 @@ export async function semanticSearchContacts(
         c.aiSummary,
         c.notes,
         c.industry,
+        c.metContext,
         c.howMet,
         ...(c.contactTags?.map((ct) => ct.tag.name) || []),
       ]
@@ -128,6 +149,10 @@ export async function rebuildContactEmbedding(userId: string, contactId: string)
     contact.website,
     contact.aiSummary,
     contact.notes,
+    metContextLabel(contact.metContext),
+    contact.dateMet
+      ? new Date(contact.dateMet).toLocaleDateString()
+      : null,
     contact.howMet,
     ...(contact.keyFacts || []),
     ...(contact.opportunities || []),

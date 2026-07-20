@@ -35,7 +35,7 @@ export async function getGraphData() {
 
   const { nodes, edges } = buildHybridGraphLayout(
     graphContacts,
-    profile.name || "You"
+    profile?.name || "You"
   );
 
   const companies = [
@@ -63,7 +63,7 @@ export async function getGraphData() {
       total: rows.length,
       companyCount: companies.length,
       scoreCounts,
-      userName: profile.name || "You",
+      userName: profile?.name || "You",
     },
   };
 }

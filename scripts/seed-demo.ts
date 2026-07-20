@@ -1,3 +1,7 @@
+import { config } from "dotenv";
+config({ path: ".env.local" });
+config();
+
 import { getDb } from "../src/db";
 import { contacts } from "../src/db/schema";
 import { eq } from "drizzle-orm";

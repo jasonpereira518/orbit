@@ -37,7 +37,7 @@ export function CaptureForm() {
   return (
     <div className="space-y-6">
       {step === "paste" && (
-        <div className="space-y-4 rounded-2xl border border-border/70 bg-white p-6">
+        <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
           <div>
             <Label htmlFor="notes">Paste rough notes</Label>
             <Textarea
@@ -50,7 +50,7 @@ export function CaptureForm() {
           </div>
           <Button
             disabled={pending || !notes.trim()}
-            className="bg-[#0f3d3e] hover:bg-[#0c3233]"
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={() =>
               start(async () => {
                 try {
@@ -77,9 +77,9 @@ export function CaptureForm() {
       )}
 
       {step === "review" && parsed && (
-        <div className="space-y-4 rounded-2xl border border-border/70 bg-white p-6">
+        <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-medium text-[#0f3d3e]">Review extraction</h2>
+            <h2 className="text-lg font-medium text-primary">Review extraction</h2>
             <Button variant="ghost" onClick={() => setStep("paste")}>
               Back
             </Button>
@@ -195,7 +195,7 @@ export function CaptureForm() {
 
           <Button
             disabled={pending}
-            className="bg-[#0f3d3e] hover:bg-[#0c3233]"
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={() =>
               start(async () => {
                 try {

@@ -1,20 +1,38 @@
 import { SignIn } from "@clerk/nextjs";
-import { isClerkConfigured } from "@/lib/auth";
 import Link from "next/link";
+import {
+  isClerkConfigured,
+  isDemoMode,
+  redirectIfAuthenticated,
+} from "@/lib/auth";
+import { clerkAppearance } from "@/lib/clerk-appearance";
 
-export default function SignInPage() {
+export default async function SignInPage() {
   if (!isClerkConfigured()) {
+    if (!isDemoMode()) {
+      return (
+        <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-6">
+          <h1 className="font-[family-name:var(--font-display)] text-3xl text-primary">
+            Orbit
+          </h1>
+          <p className="max-w-md text-center text-muted-foreground">
+            Authentication is not configured for this environment.
+          </p>
+        </div>
+      );
+    }
+
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[#fbfbf9] p-6">
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-[#0f3d3e]">
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-6">
+        <h1 className="font-[family-name:var(--font-display)] text-3xl text-primary">
           Orbit
         </h1>
         <p className="max-w-md text-center text-muted-foreground">
           Clerk is not configured. Running in demo mode — continue to the app.
         </p>
         <Link
-          href="/"
-          className="rounded-lg bg-[#0f3d3e] px-4 py-2 text-sm text-white"
+          href="/dashboard"
+          className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground"
         >
           Open dashboard
         </Link>
@@ -22,9 +40,15 @@ export default function SignInPage() {
     );
   }
 
+  await redirectIfAuthenticated();
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#fbfbf9]">
-      <SignIn />
+    <div className="flex min-h-screen items-center justify-center bg-background">
+      <SignIn
+        appearance={clerkAppearance}
+        forceRedirectUrl="/dashboard"
+        signUpForceRedirectUrl="/onboarding"
+      />
     </div>
   );
 }

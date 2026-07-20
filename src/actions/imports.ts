@@ -4,7 +4,13 @@ import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import Papa from "papaparse";
 import { getDb } from "@/db";
-import { contacts, imports, interactions, reminders } from "@/db/schema";
+import {
+  contacts,
+  imports,
+  interactions,
+  reminders,
+  type ImportStats,
+} from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { daysAgo, findDuplicateCandidates } from "@/lib/duplicates";
 import { createContact, updateContact } from "@/actions/contacts";
@@ -23,6 +29,9 @@ import {
   type ParsedCalendarEvent,
 } from "@/lib/calendar-import";
 import { upsertContactEmbedding } from "@/lib/search";
+
+/** Align preview badges with confirm merge behavior. */
+const DUPLICATE_MERGE_CONFIDENCE = 0.85;
 
 export type LinkedInRow = {
   firstName: string;
@@ -54,6 +63,53 @@ function mapLinkedInRow(row: Record<string, string>): LinkedInRow {
     connectedOn: get("Connected On", "connected on"),
     url: get("URL", "LinkedIn URL", "Profile URL", "url"),
   };
+}
+
+/** Parse LinkedIn "Connected On" values like "15 Jan 2024" or "01/15/2024". */
+function parseConnectedOn(raw: string): string | null {
+  const value = raw.trim();
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  return null;
+}
+
+function mergeStats(
+  prev: ImportStats | null | undefined,
+  next: ImportStats
+): ImportStats {
+  const base = prev ?? {};
+  return {
+    skipped: (base.skipped ?? 0) + (next.skipped ?? 0),
+    messagesImported:
+      (base.messagesImported ?? 0) + (next.messagesImported ?? 0),
+    meetingsLogged: (base.meetingsLogged ?? 0) + (next.meetingsLogged ?? 0),
+    remindersCreated:
+      (base.remindersCreated ?? 0) + (next.remindersCreated ?? 0),
+    contactsEnriched:
+      (base.contactsEnriched ?? 0) + (next.contactsEnriched ?? 0),
+    eventsProcessed: (base.eventsProcessed ?? 0) + (next.eventsProcessed ?? 0),
+  };
+}
+
+function simpleHash(input: string) {
+  let h = 0;
+  for (let i = 0; i < input.length; i++) {
+    h = (h * 31 + input.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h).toString(36);
+}
+
+function linkedInMessageExternalId(
+  conversationId: string,
+  date: Date,
+  content: string
+) {
+  return `li-msg:${conversationId}:${date.toISOString()}:${simpleHash(content.slice(0, 240))}`;
+}
+
+function calendarMeetingExternalId(eventUid: string, contactId: string) {
+  return `cal:${eventUid}:${contactId}`;
 }
 
 export async function previewLinkedInCsv(csvText: string) {
@@ -88,7 +144,7 @@ export async function previewLinkedInCsv(csvText: string) {
       index,
       ...row,
       fullName,
-      isRepeat: Boolean(top && top.confidence >= 0.6),
+      isRepeat: Boolean(top && top.confidence >= DUPLICATE_MERGE_CONFIDENCE),
       duplicate: top
         ? {
             id: top.contact.id,
@@ -110,116 +166,215 @@ export async function previewLinkedInCsv(csvText: string) {
   };
 }
 
-export async function confirmLinkedInImport(
-  csvText: string,
-  fileName: string,
-  selectedIds?: string[]
-) {
-  const userId = await requireUserId();
-  const db = await getDb();
+export type ImportChunkOptions = {
+  /** Continue an existing import session across client-side batches. */
+  importId?: string;
+  /** When false, leave status as processing so more chunks can run. Default true. */
+  finalize?: boolean;
+};
 
-  const [importRow] = await db
+async function resolveImportRow(
+  userId: string,
+  values: {
+    importType: string;
+    fileName: string;
+  },
+  importId?: string
+) {
+  const db = await getDb();
+  if (importId) {
+    const existing = await db.query.imports.findFirst({
+      where: and(eq(imports.id, importId), eq(imports.userId, userId)),
+    });
+    if (!existing) throw new Error("Import session not found");
+    if (existing.status === "failed" || existing.status === "completed") {
+      throw new Error(`Import session already ${existing.status}`);
+    }
+    return existing;
+  }
+  const [created] = await db
     .insert(imports)
     .values({
       userId,
-      importType: "linkedin_connections",
-      fileName,
+      importType: values.importType,
+      fileName: values.fileName,
       status: "processing",
+      stats: {},
     })
     .returning();
+  return created;
+}
 
-  const parsed = Papa.parse<Record<string, string>>(csvText, {
-    header: true,
-    skipEmptyLines: true,
-  });
-
-  const rows = parsed.data.map(mapLinkedInRow).filter((r) => r.firstName || r.lastName);
-  const selected =
-    selectedIds === undefined
-      ? new Set(rows.map((_, i) => String(i)))
-      : new Set(selectedIds);
-
-  let created = 0;
-  let updated = 0;
-  let duplicates = 0;
-  let skipped = 0;
-
-  const existing = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-  });
-
-  for (let index = 0; index < rows.length; index++) {
-    if (!selected.has(String(index))) {
-      skipped++;
-      continue;
-    }
-
-    const row = rows[index];
-    const fullName = `${row.firstName} ${row.lastName}`.trim();
-    if (!fullName) continue;
-
-    const dups = findDuplicateCandidates(existing, {
-      fullName,
-      email: row.email,
-      linkedinUrl: row.url,
-      company: row.company,
-      title: row.position,
-    });
-
-    if (dups[0] && dups[0].confidence >= 0.85) {
-      duplicates++;
-      await updateContact(dups[0].contact.id, {
-        company: row.company || undefined,
-        title: row.position || undefined,
-        email: row.email || undefined,
-        linkedinUrl: row.url || undefined,
-        firstName: row.firstName || undefined,
-        lastName: row.lastName || undefined,
-        source: "linkedin",
-      });
-      updated++;
-    } else {
-      const contact = await createContact({
-        fullName,
-        firstName: row.firstName,
-        lastName: row.lastName,
-        company: row.company || undefined,
-        title: row.position || undefined,
-        email: row.email || undefined,
-        linkedinUrl: row.url || undefined,
-        source: "linkedin",
-        relationshipScore: 2,
-        tagNames: ["linkedin"],
-      });
-      existing.push(contact as (typeof existing)[number]);
-      created++;
-    }
-  }
-
+export async function failImportSession(
+  importId: string,
+  errorMessage: string
+) {
+  const userId = await requireUserId();
+  const db = await getDb();
   await db
     .update(imports)
     .set({
-      status: "completed",
-      rowsProcessed: selected.size,
-      contactsCreated: created,
-      contactsUpdated: updated,
-      duplicatesFound: duplicates,
+      status: "failed",
+      errorMessage: errorMessage.slice(0, 500),
+      updatedAt: new Date(),
     })
-    .where(eq(imports.id, importRow.id));
-
-  revalidatePath("/");
-  revalidatePath("/contacts");
+    .where(and(eq(imports.id, importId), eq(imports.userId, userId)));
   revalidatePath("/imports");
-  revalidatePath("/graph");
+}
 
-  return {
-    importId: importRow.id,
-    rowsProcessed: selected.size,
-    contactsCreated: created,
-    contactsUpdated: updated,
-    duplicatesFound: duplicates,
-    skipped,
-  };
+export async function confirmLinkedInImport(
+  csvText: string,
+  fileName: string,
+  selectedIds?: string[],
+  options?: ImportChunkOptions
+) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const finalize = options?.finalize !== false;
+  const writeOpts = { skipRevalidate: true };
+
+  const importRow = await resolveImportRow(
+    userId,
+    { importType: "linkedin_connections", fileName },
+    options?.importId
+  );
+
+  try {
+    const parsed = Papa.parse<Record<string, string>>(csvText, {
+      header: true,
+      skipEmptyLines: true,
+    });
+
+    const rows = parsed.data
+      .map(mapLinkedInRow)
+      .filter((r) => r.firstName || r.lastName);
+    const selected =
+      selectedIds === undefined
+        ? new Set(rows.map((_, i) => String(i)))
+        : new Set(selectedIds);
+
+    let created = 0;
+    let updated = 0;
+    let duplicates = 0;
+    let skipped = 0;
+    let processed = 0;
+
+    const existing = await db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+    });
+
+    for (let index = 0; index < rows.length; index++) {
+      if (!selected.has(String(index))) continue;
+
+      const row = rows[index];
+      const fullName = `${row.firstName} ${row.lastName}`.trim();
+      if (!fullName) {
+        skipped++;
+        continue;
+      }
+
+      processed++;
+      const connectedOn = parseConnectedOn(row.connectedOn);
+      const dups = findDuplicateCandidates(existing, {
+        fullName,
+        email: row.email,
+        linkedinUrl: row.url,
+        company: row.company,
+        title: row.position,
+      });
+
+      if (dups[0] && dups[0].confidence >= DUPLICATE_MERGE_CONFIDENCE) {
+        duplicates++;
+        await updateContact(
+          dups[0].contact.id,
+          {
+            company: row.company || undefined,
+            title: row.position || undefined,
+            email: row.email || undefined,
+            linkedinUrl: row.url || undefined,
+            firstName: row.firstName || undefined,
+            lastName: row.lastName || undefined,
+            source: "linkedin",
+            dateMet: connectedOn || undefined,
+            howMet: "LinkedIn connection",
+            metContext: "online",
+          },
+          writeOpts
+        );
+        updated++;
+      } else {
+        const contact = await createContact(
+          {
+            fullName,
+            firstName: row.firstName,
+            lastName: row.lastName,
+            company: row.company || undefined,
+            title: row.position || undefined,
+            email: row.email || undefined,
+            linkedinUrl: row.url || undefined,
+            source: "linkedin",
+            relationshipScore: 2,
+            dateMet: connectedOn,
+            howMet: "LinkedIn connection",
+            metContext: "online",
+            tagNames: ["linkedin"],
+          },
+          writeOpts
+        );
+        existing.push(contact as (typeof existing)[number]);
+        created++;
+      }
+    }
+
+    const contactsCreated = (importRow.contactsCreated ?? 0) + created;
+    const contactsUpdated = (importRow.contactsUpdated ?? 0) + updated;
+    const duplicatesFound = (importRow.duplicatesFound ?? 0) + duplicates;
+    const rowsProcessed = (importRow.rowsProcessed ?? 0) + processed;
+    const stats = mergeStats(importRow.stats, { skipped });
+
+    await db
+      .update(imports)
+      .set({
+        status: finalize ? "completed" : "processing",
+        rowsProcessed,
+        contactsCreated,
+        contactsUpdated,
+        duplicatesFound,
+        stats,
+        errorMessage: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(imports.id, importRow.id));
+
+    if (finalize) {
+      revalidatePath("/");
+      revalidatePath("/contacts");
+      revalidatePath("/imports");
+      revalidatePath("/graph");
+    }
+
+    return {
+      importId: importRow.id,
+      rowsProcessed,
+      contactsCreated,
+      contactsUpdated,
+      duplicatesFound,
+      skipped,
+      chunkCreated: created,
+      chunkUpdated: updated,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Import failed";
+    await db
+      .update(imports)
+      .set({
+        status: "failed",
+        errorMessage: message.slice(0, 500),
+        updatedAt: new Date(),
+      })
+      .where(eq(imports.id, importRow.id));
+    throw err;
+  }
 }
 
 export async function previewLinkedInMessagesCsv(csvText: string) {
@@ -270,202 +425,263 @@ export async function previewLinkedInMessagesCsv(csvText: string) {
 export async function confirmLinkedInMessagesImport(
   csvText: string,
   fileName: string,
-  selectedConversationIds?: string[]
+  selectedConversationIds?: string[],
+  options?: ImportChunkOptions
 ) {
   const userId = await requireUserId();
   const db = await getDb();
+  const finalize = options?.finalize !== false;
+  const writeOpts = { skipRevalidate: true };
 
-  const [importRow] = await db
-    .insert(imports)
-    .values({
-      userId,
-      importType: "linkedin_messages",
-      fileName,
-      status: "processing",
-    })
-    .returning();
+  const importRow = await resolveImportRow(
+    userId,
+    { importType: "linkedin_messages", fileName },
+    options?.importId
+  );
 
-  const { messages } = parseLinkedInMessagesCsv(csvText);
-  let existing = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-  });
-
-  const conversations = resolveConversations(messages, existing);
-  const selected =
-    selectedConversationIds === undefined
-      ? null
-      : new Set(selectedConversationIds);
-
-  const byConv = new Map<string, ParsedLinkedInMessage[]>();
-  for (const m of messages) {
-    const list = byConv.get(m.conversationId) || [];
-    list.push(m);
-    byConv.set(m.conversationId, list);
-  }
-
-  let created = 0;
-  let updated = 0;
-  let messagesImported = 0;
-  let skipped = 0;
-  const touchedContactIds = new Set<string>();
-
-  for (const conv of conversations) {
-    if (selected && !selected.has(conv.conversationId)) {
-      skipped += (byConv.get(conv.conversationId) || []).length;
-      continue;
-    }
-
-    const msgs = byConv.get(conv.conversationId) || [];
-    let contactId = conv.match?.contactId;
-
-    if (!contactId) {
-      const identity = participantIdentity(conv);
-      if (!identity?.linkedinUrl) {
-        skipped += msgs.length;
-        continue;
-      }
-
-      const contact = await createContact({
-        fullName: identity.fullName,
-        firstName: identity.firstName,
-        lastName: identity.lastName,
-        linkedinUrl: identity.linkedinUrl,
-        source: "linkedin_messages",
-        relationshipScore: 2,
-        tagNames: ["linkedin", "messages"],
-      });
-      contactId = contact.id;
-      existing = [
-        ...existing,
-        contact as (typeof existing)[number],
-      ];
-      created++;
-    } else {
-      const identity = participantIdentity(conv);
-      await updateContact(contactId, {
-        linkedinUrl: identity?.linkedinUrl || undefined,
-        source: "linkedin_messages",
-      });
-      updated++;
-    }
-
-    touchedContactIds.add(contactId);
-
-    // Avoid re-importing identical message content+date for this contact
-    const existingInteractions = await db.query.interactions.findMany({
-      where: and(
-        eq(interactions.userId, userId),
-        eq(interactions.contactId, contactId),
-        eq(interactions.source, "linkedin_messages_import")
-      ),
+  try {
+    const { messages } = parseLinkedInMessagesCsv(csvText);
+    let existing = await db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
     });
-    const existingKeys = new Set(
-      existingInteractions.map(
-        (i) =>
-          `${i.interactionDate?.toISOString() || ""}|${(i.rawNotes || "").slice(0, 200)}`
-      )
-    );
 
-    let earliest: Date | null = null;
-    let latest: Date | null = null;
+    const conversations = resolveConversations(messages, existing);
+    const selected =
+      selectedConversationIds === undefined
+        ? null
+        : new Set(selectedConversationIds);
 
-    for (const msg of msgs) {
-      if (!msg.content.trim()) {
-        skipped++;
-        continue;
+    const byConv = new Map<string, ParsedLinkedInMessage[]>();
+    for (const m of messages) {
+      const list = byConv.get(m.conversationId) || [];
+      list.push(m);
+      byConv.set(m.conversationId, list);
+    }
+
+    let created = 0;
+    let updated = 0;
+    let messagesImported = 0;
+    let skipped = 0;
+    const touchedContactIds = new Set<string>();
+
+    for (const conv of conversations) {
+      if (selected && !selected.has(conv.conversationId)) continue;
+
+      const msgs = byConv.get(conv.conversationId) || [];
+      let contactId = conv.match?.contactId;
+
+      if (!contactId) {
+        const identity = participantIdentity(conv);
+        if (!identity?.linkedinUrl) {
+          skipped += msgs.length;
+          continue;
+        }
+
+        const contact = await createContact(
+          {
+            fullName: identity.fullName,
+            firstName: identity.firstName,
+            lastName: identity.lastName,
+            linkedinUrl: identity.linkedinUrl,
+            source: "linkedin_messages",
+            relationshipScore: 2,
+            howMet: "LinkedIn messages",
+            metContext: "online",
+            tagNames: ["linkedin", "messages"],
+          },
+          writeOpts
+        );
+        contactId = contact.id;
+        existing = [...existing, contact as (typeof existing)[number]];
+        created++;
+      } else {
+        const identity = participantIdentity(conv);
+        await updateContact(
+          contactId,
+          {
+            linkedinUrl: identity?.linkedinUrl || undefined,
+            source: "linkedin_messages",
+          },
+          writeOpts
+        );
+        updated++;
       }
-      const date = msg.parsedDate || new Date();
-      const key = `${date.toISOString()}|${msg.content.slice(0, 200)}`;
-      if (existingKeys.has(key)) {
-        skipped++;
-        continue;
-      }
 
-      const fromLabel = msg.from || "LinkedIn";
-      await db.insert(interactions).values({
-        userId,
-        contactId,
-        interactionType: "linkedin_message",
-        interactionDate: date,
-        source: "linkedin_messages_import",
-        rawNotes: msg.content,
-        aiSummary: `${fromLabel}: ${msg.content.slice(0, 240)}`,
-        topics: msg.subject ? [msg.subject] : [],
+      touchedContactIds.add(contactId);
+
+      const existingInteractions = await db.query.interactions.findMany({
+        where: and(
+          eq(interactions.userId, userId),
+          eq(interactions.contactId, contactId),
+          eq(interactions.source, "linkedin_messages_import")
+        ),
       });
-      messagesImported++;
-      existingKeys.add(key);
+      const existingExternalIds = new Set(
+        existingInteractions
+          .map((i) => i.externalId)
+          .filter((id): id is string => Boolean(id))
+      );
+      // Legacy dedupe for rows imported before externalId
+      const existingLegacyKeys = new Set(
+        existingInteractions.map(
+          (i) =>
+            `${i.interactionDate?.toISOString() || ""}|${(i.rawNotes || "").slice(0, 200)}`
+        )
+      );
 
-      if (!earliest || date < earliest) earliest = date;
-      if (!latest || date > latest) latest = date;
+      let earliest: Date | null = null;
+      let latest: Date | null = null;
+
+      for (const msg of msgs) {
+        if (!msg.content.trim()) {
+          skipped++;
+          continue;
+        }
+        const date = msg.parsedDate || new Date();
+        const externalId = linkedInMessageExternalId(
+          conv.conversationId,
+          date,
+          msg.content
+        );
+        const legacyKey = `${date.toISOString()}|${msg.content.slice(0, 200)}`;
+        if (
+          existingExternalIds.has(externalId) ||
+          existingLegacyKeys.has(legacyKey)
+        ) {
+          skipped++;
+          continue;
+        }
+
+        const fromLabel = msg.from || "LinkedIn";
+        await db.insert(interactions).values({
+          userId,
+          contactId,
+          interactionType: "linkedin_message",
+          interactionDate: date,
+          source: "linkedin_messages_import",
+          externalId,
+          rawNotes: msg.content,
+          aiSummary: `${fromLabel}: ${msg.content.slice(0, 240)}`,
+          topics: msg.subject ? [msg.subject] : [],
+        });
+        messagesImported++;
+        existingExternalIds.add(externalId);
+        existingLegacyKeys.add(legacyKey);
+
+        if (!earliest || date < earliest) earliest = date;
+        if (!latest || date > latest) latest = date;
+      }
+
+      if (earliest || latest) {
+        const contact = existing.find((c) => c.id === contactId);
+        await db
+          .update(contacts)
+          .set({
+            firstInteractionAt:
+              contact?.firstInteractionAt && earliest
+                ? contact.firstInteractionAt < earliest
+                  ? contact.firstInteractionAt
+                  : earliest
+                : earliest || contact?.firstInteractionAt || null,
+            lastInteractionAt:
+              contact?.lastInteractionAt && latest
+                ? contact.lastInteractionAt > latest
+                  ? contact.lastInteractionAt
+                  : latest
+                : latest || contact?.lastInteractionAt || null,
+            updatedAt: new Date(),
+          })
+          .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+      }
     }
 
-    if (earliest || latest) {
-      const contact = existing.find((c) => c.id === contactId);
-      await db
-        .update(contacts)
-        .set({
-          firstInteractionAt:
-            contact?.firstInteractionAt && earliest
-              ? contact.firstInteractionAt < earliest
-                ? contact.firstInteractionAt
-                : earliest
-              : earliest || contact?.firstInteractionAt || null,
-          lastInteractionAt:
-            contact?.lastInteractionAt && latest
-              ? contact.lastInteractionAt > latest
-                ? contact.lastInteractionAt
-                : latest
-              : latest || contact?.lastInteractionAt || null,
-          updatedAt: new Date(),
-        })
-        .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+    const contactsCreated = (importRow.contactsCreated ?? 0) + created;
+    const contactsUpdated = (importRow.contactsUpdated ?? 0) + updated;
+    const rowsProcessed = (importRow.rowsProcessed ?? 0) + messagesImported;
+    const touchedAll = new Set([
+      ...(importRow.stats?.touchedContactIds ?? []),
+      ...touchedContactIds,
+    ]);
+    let stats = mergeStats(importRow.stats, {
+      skipped,
+      messagesImported,
+    });
+    stats = {
+      ...stats,
+      touchedContactIds: [...touchedAll],
+    };
+
+    let enrichment: Awaited<
+      ReturnType<typeof enrichContactsFromMessages>
+    > | null = null;
+
+    if (finalize) {
+      try {
+        enrichment = await enrichContactsFromMessages(userId, [...touchedAll]);
+        if (enrichment?.contactsEnriched) {
+          stats = {
+            ...stats,
+            contactsEnriched:
+              (stats.contactsEnriched ?? 0) + enrichment.contactsEnriched,
+          };
+        }
+      } catch {
+        enrichment = null;
+      }
+
+      try {
+        await refreshOutreachSuggestions(userId);
+      } catch {
+        // non-fatal
+      }
     }
+
+    await db
+      .update(imports)
+      .set({
+        status: finalize ? "completed" : "processing",
+        rowsProcessed,
+        contactsCreated,
+        contactsUpdated,
+        duplicatesFound: importRow.duplicatesFound ?? 0,
+        stats,
+        errorMessage: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(imports.id, importRow.id));
+
+    if (finalize) {
+      revalidatePath("/");
+      revalidatePath("/contacts");
+      revalidatePath("/imports");
+      revalidatePath("/graph");
+      revalidatePath("/chat");
+    }
+
+    return {
+      importId: importRow.id,
+      rowsProcessed,
+      messagesImported,
+      contactsCreated,
+      contactsUpdated,
+      skipped,
+      enrichment,
+      chunkMessagesImported: messagesImported,
+      chunkCreated: created,
+      chunkUpdated: updated,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Import failed";
+    await db
+      .update(imports)
+      .set({
+        status: "failed",
+        errorMessage: message.slice(0, 500),
+        updatedAt: new Date(),
+      })
+      .where(eq(imports.id, importRow.id));
+    throw err;
   }
-
-  await db
-    .update(imports)
-    .set({
-      status: "completed",
-      rowsProcessed: messages.length,
-      contactsCreated: created,
-      contactsUpdated: updated,
-      duplicatesFound: skipped,
-    })
-    .where(eq(imports.id, importRow.id));
-
-  // Enrichment may fail without API key — still complete the import
-  let enrichment: Awaited<ReturnType<typeof enrichContactsFromMessages>> | null =
-    null;
-  try {
-    enrichment = await enrichContactsFromMessages(
-      userId,
-      [...touchedContactIds]
-    );
-  } catch {
-    enrichment = null;
-  }
-
-  try {
-    await refreshOutreachSuggestions(userId);
-  } catch {
-    // non-fatal
-  }
-
-  revalidatePath("/");
-  revalidatePath("/contacts");
-  revalidatePath("/imports");
-  revalidatePath("/graph");
-  revalidatePath("/chat");
-
-  return {
-    importId: importRow.id,
-    rowsProcessed: messages.length,
-    messagesImported,
-    contactsCreated: created,
-    contactsUpdated: updated,
-    skipped,
-    enrichment,
-  };
 }
 
 export async function listImports() {
@@ -577,209 +793,289 @@ export async function confirmCalendarImport(payload: {
   text: string;
   fileName: string;
   createFollowUps?: boolean;
+  importId?: string;
+  finalize?: boolean;
+  /** Process only a slice of windowed events (for progress UI). */
+  chunk?: { offset: number; limit: number };
 }) {
   const userId = await requireUserId();
   const db = await getDb();
   const createFollowUps = payload.createFollowUps !== false;
+  const finalize = payload.finalize !== false;
 
-  const [importRow] = await db
-    .insert(imports)
-    .values({
-      userId,
+  const importRow = await resolveImportRow(
+    userId,
+    {
       importType: payload.kind === "ics" ? "calendar_ics" : "calendar_csv",
       fileName: payload.fileName,
-      status: "processing",
-    })
-    .returning();
-
-  let events: ParsedCalendarEvent[] = [];
-  if (payload.kind === "ics") {
-    events = parseIcsEvents(payload.text);
-  } else {
-    const parsed = Papa.parse<Record<string, string>>(payload.text, {
-      header: true,
-      skipEmptyLines: true,
-    });
-    events = parsed.data.map((row, i) => {
-      const mapped = mapCalendarCsvRow(row);
-      const attendees = mapped.attendees
-        .split(/[,;]/)
-        .map((part) => {
-          const emailMatch = part.match(/([\w.+-]+@[\w.-]+)/);
-          return {
-            name: part.replace(/<[^>]+>/, "").trim(),
-            email: (emailMatch?.[1] || "").toLowerCase(),
-          };
-        })
-        .filter((p) => p.email || p.name);
-      return {
-        uid: `csv-${i}-${mapped.summary}`,
-        summary: mapped.summary,
-        description: mapped.description,
-        location: mapped.location,
-        start: mapped.start,
-        end: mapped.end,
-        attendees,
-        organizer: null,
-      } satisfies ParsedCalendarEvent;
-    });
-  }
-
-  const now = Date.now();
-  const windowed = events.filter((e) => {
-    if (!e.start) return true;
-    const t = e.start.getTime();
-    return t >= now - 180 * 86400000 && t <= now + 14 * 86400000;
-  });
-
-  const existing = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-  });
-
-  let meetingsLogged = 0;
-  let remindersCreated = 0;
-  let skipped = 0;
-  const touched = new Set<string>();
-
-  const priorMeetings = await db.query.interactions.findMany({
-    where: and(
-      eq(interactions.userId, userId),
-      eq(interactions.source, "calendar_import")
-    ),
-  });
-  const meetingKeys = new Set(
-    priorMeetings.map(
-      (i) =>
-        `${i.contactId}|${i.interactionDate?.toISOString().slice(0, 10) || ""}|${(i.aiSummary || "").slice(0, 120)}`
-    )
+    },
+    payload.importId
   );
 
-  for (const event of windowed) {
-    const people = peopleFromEvent(event);
-    if (!people.length) {
-      skipped++;
-      continue;
+  try {
+    let events: ParsedCalendarEvent[] = [];
+    if (payload.kind === "ics") {
+      events = parseIcsEvents(payload.text);
+    } else {
+      const parsed = Papa.parse<Record<string, string>>(payload.text, {
+        header: true,
+        skipEmptyLines: true,
+      });
+      events = parsed.data.map((row, i) => {
+        const mapped = mapCalendarCsvRow(row);
+        const attendees = mapped.attendees
+          .split(/[,;]/)
+          .map((part) => {
+            const emailMatch = part.match(/([\w.+-]+@[\w.-]+)/);
+            return {
+              name: part.replace(/<[^>]+>/, "").trim(),
+              email: (emailMatch?.[1] || "").toLowerCase(),
+            };
+          })
+          .filter((p) => p.email || p.name);
+        return {
+          uid: `csv-${i}-${mapped.summary}`,
+          summary: mapped.summary,
+          description: mapped.description,
+          location: mapped.location,
+          start: mapped.start,
+          end: mapped.end,
+          attendees,
+          organizer: null,
+        } satisfies ParsedCalendarEvent;
+      });
     }
 
-    const eventDate = event.start || new Date();
-    const isPast = eventDate.getTime() <= now;
+    const now = Date.now();
+    const windowed = events.filter((e) => {
+      if (!e.start) return true;
+      const t = e.start.getTime();
+      return t >= now - 180 * 86400000 && t <= now + 14 * 86400000;
+    });
 
-    for (const person of people) {
-      const dups = findDuplicateCandidates(existing, {
-        fullName: person.name || undefined,
-        email: person.email || undefined,
-      });
+    const chunkEvents = payload.chunk
+      ? windowed.slice(
+          payload.chunk.offset,
+          payload.chunk.offset + payload.chunk.limit
+        )
+      : windowed;
 
-      // Only log meetings for people already in the network
-      if (!dups[0] || dups[0].confidence < 0.6) {
-        continue;
-      }
+    const existing = await db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+    });
 
-      const contact = dups[0].contact;
-      touched.add(contact.id);
+    let meetingsLogged = 0;
+    let remindersCreated = 0;
+    let skipped = 0;
+    const touched = new Set<string>(
+      importRow.stats?.touchedContactIds ?? []
+    );
 
-      const note = [
-        event.summary ? `Meeting: ${event.summary}` : "Calendar meeting",
-        event.location ? `Location: ${event.location}` : "",
-        event.description ? event.description.slice(0, 500) : "",
-      ]
-        .filter(Boolean)
-        .join("\n");
-
-      const key = `${contact.id}|${eventDate.toISOString().slice(0, 10)}|${(event.summary || "Calendar meeting").slice(0, 120)}`;
-      if (meetingKeys.has(key)) {
+    for (const event of chunkEvents) {
+      const people = peopleFromEvent(event);
+      if (!people.length) {
         skipped++;
         continue;
       }
 
-      await db.insert(interactions).values({
-        userId,
-        contactId: contact.id,
-        interactionType: "meeting",
-        interactionDate: eventDate,
-        source: "calendar_import",
-        rawNotes: note,
-        aiSummary: event.summary || "Calendar meeting",
-        topics: event.summary ? [event.summary] : [],
-      });
-      meetingKeys.add(key);
-      meetingsLogged++;
+      const eventDate = event.start || new Date();
+      const isPast = eventDate.getTime() <= now;
 
-      await db
-        .update(contacts)
-        .set({
-          lastInteractionAt:
-            !contact.lastInteractionAt ||
-            eventDate > contact.lastInteractionAt
-              ? eventDate
-              : contact.lastInteractionAt,
-          firstInteractionAt:
-            !contact.firstInteractionAt ||
-            eventDate < contact.firstInteractionAt
-              ? eventDate
-              : contact.firstInteractionAt,
-          email: contact.email || person.email || undefined,
-          updatedAt: new Date(),
-        })
-        .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
+      for (const person of people) {
+        const dups = findDuplicateCandidates(existing, {
+          fullName: person.name || undefined,
+          email: person.email || undefined,
+        });
 
-      await upsertContactEmbedding(
-        userId,
-        contact.id,
-        "meeting",
-        `${contact.fullName}\n${note}`,
-        `cal:${event.uid}:${contact.id}`
-      );
-
-      if (createFollowUps && isPast && daysAgo(eventDate) <= 21) {
-        const due = new Date(eventDate);
-        due.setDate(due.getDate() + 2);
-        if (due.getTime() < now) {
-          due.setTime(now + 2 * 86400000);
+        // Only log meetings for people already in the network
+        if (!dups[0] || dups[0].confidence < 0.6) {
+          continue;
         }
-        await db.insert(reminders).values({
+
+        const contact = dups[0].contact;
+        touched.add(contact.id);
+
+        const note = [
+          event.summary ? `Meeting: ${event.summary}` : "Calendar meeting",
+          event.location ? `Location: ${event.location}` : "",
+          event.description ? event.description.slice(0, 500) : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
+
+        const externalId = calendarMeetingExternalId(event.uid, contact.id);
+        const prior = await db.query.interactions.findFirst({
+          where: and(
+            eq(interactions.userId, userId),
+            eq(interactions.externalId, externalId)
+          ),
+        });
+
+        if (prior) {
+          await db
+            .update(interactions)
+            .set({
+              interactionDate: eventDate,
+              rawNotes: note,
+              aiSummary: event.summary || "Calendar meeting",
+              topics: event.summary ? [event.summary] : [],
+              source: "calendar_import",
+            })
+            .where(eq(interactions.id, prior.id));
+          await db
+            .update(contacts)
+            .set({
+              lastInteractionAt:
+                !contact.lastInteractionAt ||
+                eventDate > contact.lastInteractionAt
+                  ? eventDate
+                  : contact.lastInteractionAt,
+              firstInteractionAt:
+                !contact.firstInteractionAt ||
+                eventDate < contact.firstInteractionAt
+                  ? eventDate
+                  : contact.firstInteractionAt,
+              email: contact.email || person.email || undefined,
+              updatedAt: new Date(),
+            })
+            .where(
+              and(eq(contacts.id, contact.id), eq(contacts.userId, userId))
+            );
+          skipped++;
+          continue;
+        }
+
+        await db.insert(interactions).values({
           userId,
           contactId: contact.id,
-          title: `Follow up after ${event.summary || "meeting"}`,
-          description: `You met with ${contact.fullName}. Send a quick thank-you or next step.`,
-          dueDate: due,
-          status: "pending",
-          reminderType: "post_meeting",
-          createdBy: "import",
+          interactionType: "meeting",
+          interactionDate: eventDate,
+          source: "calendar_import",
+          externalId,
+          rawNotes: note,
+          aiSummary: event.summary || "Calendar meeting",
+          topics: event.summary ? [event.summary] : [],
         });
-        remindersCreated++;
+        meetingsLogged++;
+
+        await db
+          .update(contacts)
+          .set({
+            lastInteractionAt:
+              !contact.lastInteractionAt ||
+              eventDate > contact.lastInteractionAt
+                ? eventDate
+                : contact.lastInteractionAt,
+            firstInteractionAt:
+              !contact.firstInteractionAt ||
+              eventDate < contact.firstInteractionAt
+                ? eventDate
+                : contact.firstInteractionAt,
+            email: contact.email || person.email || undefined,
+            updatedAt: new Date(),
+          })
+          .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
+
+        await upsertContactEmbedding(
+          userId,
+          contact.id,
+          "meeting",
+          `${contact.fullName}\n${note}`,
+          externalId
+        );
+
+        if (createFollowUps && isPast && daysAgo(eventDate) <= 21) {
+          const existingReminder = await db.query.reminders.findFirst({
+            where: and(
+              eq(reminders.userId, userId),
+              eq(reminders.contactId, contact.id),
+              eq(reminders.reminderType, "post_meeting")
+            ),
+          });
+          const alreadyForEvent =
+            existingReminder &&
+            (existingReminder.description || "").includes(event.uid);
+
+          if (!alreadyForEvent) {
+            const due = new Date(eventDate);
+            due.setDate(due.getDate() + 2);
+            if (due.getTime() < now) {
+              due.setTime(now + 2 * 86400000);
+            }
+            await db.insert(reminders).values({
+              userId,
+              contactId: contact.id,
+              title: `Follow up after ${event.summary || "meeting"}`,
+              description: `You met with ${contact.fullName}. Event ${event.uid}`,
+              dueDate: due,
+              status: "pending",
+              reminderType: "post_meeting",
+              createdBy: "import",
+            });
+            remindersCreated++;
+          }
+        }
       }
     }
+
+    const rowsProcessed =
+      (importRow.rowsProcessed ?? 0) + chunkEvents.length;
+    const stats = {
+      ...mergeStats(importRow.stats, {
+        skipped,
+        meetingsLogged,
+        remindersCreated,
+        eventsProcessed: chunkEvents.length,
+      }),
+      touchedContactIds: [...touched],
+    };
+
+    await db
+      .update(imports)
+      .set({
+        status: finalize ? "completed" : "processing",
+        rowsProcessed,
+        contactsCreated: 0,
+        contactsUpdated: touched.size,
+        duplicatesFound: stats.skipped ?? 0,
+        stats,
+        errorMessage: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(imports.id, importRow.id));
+
+    if (finalize) {
+      try {
+        await refreshOutreachSuggestions(userId);
+      } catch {
+        // non-fatal
+      }
+
+      revalidatePath("/");
+      revalidatePath("/contacts");
+      revalidatePath("/imports");
+      revalidatePath("/graph");
+    }
+
+    return {
+      importId: importRow.id,
+      eventsProcessed: chunkEvents.length,
+      totalWindowed: windowed.length,
+      meetingsLogged,
+      contactsMatched: touched.size,
+      remindersCreated,
+      skipped,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Import failed";
+    await db
+      .update(imports)
+      .set({
+        status: "failed",
+        errorMessage: message.slice(0, 500),
+        updatedAt: new Date(),
+      })
+      .where(eq(imports.id, importRow.id));
+    throw err;
   }
-
-  await db
-    .update(imports)
-    .set({
-      status: "completed",
-      rowsProcessed: windowed.length,
-      contactsCreated: 0,
-      contactsUpdated: touched.size,
-      duplicatesFound: skipped,
-    })
-    .where(eq(imports.id, importRow.id));
-
-  try {
-    await refreshOutreachSuggestions(userId);
-  } catch {
-    // non-fatal
-  }
-
-  revalidatePath("/");
-  revalidatePath("/contacts");
-  revalidatePath("/imports");
-  revalidatePath("/graph");
-
-  return {
-    importId: importRow.id,
-    eventsProcessed: windowed.length,
-    meetingsLogged,
-    contactsMatched: touched.size,
-    remindersCreated,
-    skipped,
-  };
 }

@@ -116,7 +116,11 @@ function starSize(score: number) {
   return 5 + score * 2.2;
 }
 
-function starColor(score: number, dormant: boolean | undefined, overdue?: boolean) {
+function starColor(
+  score: number,
+  dormant: boolean | undefined,
+  overdue?: boolean
+) {
   if (dormant) return "rgba(180, 190, 200, 0.55)";
   if (overdue) return "#f0d48a";
   if (score >= 5) return "#fff8e7";
@@ -133,6 +137,8 @@ function ContactNodeComponent({
   const size = starSize(score);
   const labelMode = data.labelMode ?? "hover";
   const glow = Math.max(4, score * 3);
+  const bright =
+    labelMode === "always" || selected || Boolean(data.spotlight);
 
   return (
     <div
@@ -158,7 +164,8 @@ function ContactNodeComponent({
         className={cn(
           "relative rounded-full transition-transform duration-200",
           selected && "scale-125",
-          data.spotlight && "constellation-spotlight-ring"
+          data.spotlight && "constellation-spotlight-ring",
+          data.overdue && !data.dormant && "ring-1 ring-[#c4a35a]/80"
         )}
         style={{
           width: size,
@@ -174,16 +181,23 @@ function ContactNodeComponent({
         <div
           className={cn(
             "pointer-events-none mt-2 max-w-[130px] text-center transition-opacity duration-200",
-            labelMode === "always" || selected
-              ? "opacity-100"
-              : "opacity-40 group-hover:opacity-100"
+            bright ? "opacity-100" : "opacity-40 group-hover:opacity-100"
           )}
         >
           <p className="truncate text-[11px] font-medium leading-tight text-white/95">
             {data.label}
           </p>
           {data.company && (
-            <p className="truncate text-[9px] text-white/45">{data.company}</p>
+            <p
+              className={cn(
+                "truncate text-[9px] text-white/45 transition-opacity duration-200",
+                bright
+                  ? "opacity-100"
+                  : "opacity-0 group-hover:opacity-100"
+              )}
+            >
+              {data.company}
+            </p>
           )}
         </div>
       )}
@@ -196,7 +210,7 @@ function ClusterLabelNodeComponent({
 }: NodeProps & { data: ClusterLabelData }) {
   return (
     <div className="pointer-events-none">
-      <p className="whitespace-nowrap text-center text-[11px] font-medium tracking-[0.08em] text-white/55">
+      <p className="whitespace-nowrap text-center text-[10px] font-medium uppercase tracking-[0.14em] text-white/45">
         {data.label}
       </p>
     </div>

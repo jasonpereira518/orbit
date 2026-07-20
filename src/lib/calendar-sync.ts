@@ -102,7 +102,8 @@ async function resolveOrCreateContact(
       email: person.email || undefined,
       source: "calendar_sync",
       relationshipScore: 2,
-      howMet: "Calendar",
+      metContext: "event",
+      howMet: "Calendar meeting",
       firstInteractionAt: new Date(),
       lastInteractionAt: new Date(),
     })

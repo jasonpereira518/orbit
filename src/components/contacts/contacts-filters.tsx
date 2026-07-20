@@ -38,7 +38,7 @@ export function ContactsFilters({
   }
 
   return (
-    <div className="grid gap-3 rounded-2xl border border-border/70 bg-white p-4 sm:grid-cols-3">
+    <div className="grid gap-3 rounded-2xl border border-border/70 bg-card p-4 sm:grid-cols-3">
       <div className="space-y-1.5">
         <Label htmlFor="q">Search</Label>
         <Input

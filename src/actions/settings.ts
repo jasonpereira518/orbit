@@ -6,7 +6,6 @@ import { getDb } from "@/db";
 import {
   aiSuggestions,
   contactEmbeddings,
-  contactTags,
   contacts,
   imports,
   interactions,
@@ -16,6 +15,7 @@ import {
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { encrypt } from "@/lib/crypto";
+import { purgeUserData } from "@/lib/user-data";
 import {
   AI_PROVIDERS,
   resolveAiModel,
@@ -244,23 +244,7 @@ export async function exportAllData() {
 
 export async function deleteAllData() {
   const userId = await requireUserId();
-  const db = await getDb();
-
-  await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
-  await db.delete(interactions).where(eq(interactions.userId, userId));
-  await db.delete(reminders).where(eq(reminders.userId, userId));
-  await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, userId));
-  await db.delete(imports).where(eq(imports.userId, userId));
-
-  const userContacts = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-  });
-  for (const c of userContacts) {
-    await db.delete(contactTags).where(eq(contactTags.contactId, c.id));
-  }
-  await db.delete(contacts).where(eq(contacts.userId, userId));
-  await db.delete(tags).where(eq(tags.userId, userId));
-  await db.delete(userSettings).where(eq(userSettings.userId, userId));
+  await purgeUserData(userId);
 
   revalidatePath("/");
   revalidatePath("/contacts");

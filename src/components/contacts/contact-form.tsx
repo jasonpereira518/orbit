@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { createContact, updateContact, type ContactInput } from "@/actions/contacts";
+import { MET_CONTEXTS, MET_CONTEXT_LABELS, type MetContext } from "@/lib/met-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,6 +25,10 @@ export function ContactForm({
     title: initial?.title || "",
     company: initial?.company || "",
     location: initial?.location || "",
+    metContext: (initial?.metContext as MetContext | "") || "",
+    dateMet: initial?.dateMet
+      ? String(initial.dateMet).slice(0, 10)
+      : "",
     howMet: initial?.howMet || "",
     email: initial?.email || "",
     phone: initial?.phone || "",
@@ -41,7 +46,7 @@ export function ContactForm({
 
   return (
     <form
-      className="space-y-4 rounded-2xl border border-border/70 bg-white p-6"
+      className="space-y-4 rounded-2xl border border-border/70 bg-card p-6"
       onSubmit={(e) => {
         e.preventDefault();
         start(async () => {
@@ -52,6 +57,8 @@ export function ContactForm({
               title: form.title.trim(),
               company: form.company.trim(),
               location: form.location.trim(),
+              metContext: form.metContext || undefined,
+              dateMet: form.dateMet || null,
               howMet: form.howMet.trim(),
               email: form.email.trim(),
               phone: form.phone.trim(),
@@ -114,19 +121,51 @@ export function ContactForm({
           />
         </Field>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Location">
-          <Input
-            value={form.location}
-            onChange={(e) => set("location", e.target.value)}
-            placeholder="New York, NY"
-          />
-        </Field>
-        <Field label="Where you met">
-          <Input
+      <Field label="Location">
+        <Input
+          value={form.location}
+          onChange={(e) => set("location", e.target.value)}
+          placeholder="New York, NY"
+        />
+      </Field>
+      <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
+        <div>
+          <p className="text-sm font-medium text-primary">How you met</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Context, when it happened, and any details you want to remember.
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Context">
+            <select
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              value={form.metContext}
+              onChange={(e) =>
+                set("metContext", e.target.value as MetContext | "")
+              }
+            >
+              <option value="">Select…</option>
+              {MET_CONTEXTS.map((value) => (
+                <option key={value} value={value}>
+                  {MET_CONTEXT_LABELS[value]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Date met">
+            <Input
+              type="date"
+              value={form.dateMet}
+              onChange={(e) => set("dateMet", e.target.value)}
+            />
+          </Field>
+        </div>
+        <Field label="Details">
+          <Textarea
+            rows={2}
             value={form.howMet}
             onChange={(e) => set("howMet", e.target.value)}
-            placeholder="Google NYC event"
+            placeholder="Google NYC event, introduced by Alex, coffee chat about internships…"
           />
         </Field>
       </div>
@@ -203,7 +242,7 @@ export function ContactForm({
       <Button
         type="submit"
         disabled={pending}
-        className="bg-[#0f3d3e] hover:bg-[#0c3233]"
+        className="bg-primary text-primary-foreground hover:bg-primary/90"
       >
         {pending ? "Saving…" : contactId ? "Save changes" : "Create contact"}
       </Button>

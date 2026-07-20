@@ -42,7 +42,7 @@ export function CalendarSubscribePanel({
   const [pending, start] = useTransition();
 
   return (
-    <div className="space-y-4 rounded-2xl border border-border/70 bg-white p-6">
+    <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div>
         <p className="text-sm font-medium">Subscribe to a calendar feed</p>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -73,7 +73,7 @@ export function CalendarSubscribePanel({
         </div>
         <Button
           disabled={!url.trim() || pending}
-          className="bg-[#0f3d3e] hover:bg-[#0c3233]"
+          className="bg-primary text-primary-foreground hover:bg-primary/90"
           onClick={() =>
             start(async () => {
               try {

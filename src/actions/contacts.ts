@@ -11,7 +11,17 @@ import {
   tags,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { computeCloseness } from "@/lib/closeness";
+import { listActiveGoalTexts } from "@/actions/goals";
+import { companyFieldsForWrite } from "@/lib/companies";
+import { isMetContext } from "@/lib/met-context";
+import { generateAndStorePersonSummary } from "@/lib/person-summary";
 import { rebuildContactEmbedding } from "@/lib/search";
+
+export type ContactWriteOptions = {
+  /** Skip path revalidation during bulk imports. */
+  skipRevalidate?: boolean;
+};
 
 export type ContactInput = {
   fullName: string;
@@ -29,6 +39,8 @@ export type ContactInput = {
   priorityLevel?: number;
   source?: string;
   industry?: string;
+  metContext?: string;
+  dateMet?: string | null;
   howMet?: string;
   notes?: string;
   aiSummary?: string;
@@ -38,6 +50,11 @@ export type ContactInput = {
   nextFollowUpAt?: string | null;
   tagNames?: string[];
 };
+
+function normalizeMetContext(value?: string | null) {
+  if (!value?.trim()) return null;
+  return isMetContext(value) ? value : null;
+}
 
 async function syncTags(
   userId: string,
@@ -92,6 +109,7 @@ export async function listContacts(filters?: {
         c.email,
         c.phone,
         c.location,
+        c.metContext,
         c.howMet,
         c.website,
         c.aiSummary,
@@ -110,10 +128,19 @@ export async function listContacts(filters?: {
     rows = rows.filter((c) => c.relationshipScore >= filters.minScore!);
   }
 
-  return rows.map((c) => ({
-    ...c,
-    tags: c.contactTags.map((ct) => ct.tag.name),
-  }));
+  const goals = await listActiveGoalTexts(userId);
+
+  return rows.map((c) => {
+    const tags = c.contactTags.map((ct) => ct.tag.name);
+    const closeness = computeCloseness({ ...c, tags }, goals);
+    return {
+      ...c,
+      tags,
+      closeness: closeness.closeness,
+      closenessTier: closeness.tier,
+      orbitScore: closeness.orbitScore,
+    };
+  });
 }
 
 export async function getContact(id: string) {
@@ -137,10 +164,17 @@ export async function getContact(id: string) {
   };
 }
 
-export async function createContact(input: ContactInput) {
+export async function createContact(
+  input: ContactInput,
+  options?: ContactWriteOptions
+) {
   const userId = await requireUserId();
   const db = await getDb();
   const now = new Date();
+  const companyFields = await companyFieldsForWrite(userId, input.company);
+  const dateMet = input.dateMet ? new Date(input.dateMet) : null;
+  const metAt =
+    dateMet && !Number.isNaN(dateMet.getTime()) ? dateMet : null;
 
   const [contact] = await db
     .insert(contacts)
@@ -150,7 +184,8 @@ export async function createContact(input: ContactInput) {
       firstName: input.firstName,
       lastName: input.lastName,
       preferredName: input.preferredName,
-      company: input.company,
+      company: companyFields.company,
+      companyId: companyFields.companyId,
       title: input.title,
       location: input.location,
       email: input.email,
@@ -161,14 +196,16 @@ export async function createContact(input: ContactInput) {
       priorityLevel: input.priorityLevel ?? 0,
       source: input.source ?? "manual",
       industry: input.industry,
+      metContext: normalizeMetContext(input.metContext),
+      dateMet: metAt,
       howMet: input.howMet,
       notes: input.notes,
       aiSummary: input.aiSummary,
       keyFacts: input.keyFacts ?? [],
       sharedInterests: input.sharedInterests ?? [],
       opportunities: input.opportunities ?? [],
-      firstInteractionAt: now,
-      lastInteractionAt: now,
+      firstInteractionAt: metAt ?? now,
+      lastInteractionAt: metAt ?? now,
       nextFollowUpAt: input.nextFollowUpAt
         ? new Date(input.nextFollowUpAt)
         : null,
@@ -178,16 +215,27 @@ export async function createContact(input: ContactInput) {
   await syncTags(userId, contact.id, input.tagNames);
   await rebuildContactEmbedding(userId, contact.id);
 
-  revalidatePath("/");
-  revalidatePath("/contacts");
-  revalidatePath("/graph");
+  if (!options?.skipRevalidate) {
+    revalidatePath("/");
+    revalidatePath("/contacts");
+    revalidatePath("/graph");
+  }
 
   return contact;
 }
 
-export async function updateContact(id: string, input: Partial<ContactInput>) {
+export async function updateContact(
+  id: string,
+  input: Partial<ContactInput>,
+  options?: ContactWriteOptions
+) {
   const userId = await requireUserId();
   const db = await getDb();
+
+  const companyPatch =
+    input.company !== undefined
+      ? await companyFieldsForWrite(userId, input.company)
+      : null;
 
   const [contact] = await db
     .update(contacts)
@@ -198,7 +246,9 @@ export async function updateContact(id: string, input: Partial<ContactInput>) {
       ...(input.preferredName !== undefined
         ? { preferredName: input.preferredName }
         : {}),
-      ...(input.company !== undefined ? { company: input.company } : {}),
+      ...(companyPatch
+        ? { company: companyPatch.company, companyId: companyPatch.companyId }
+        : {}),
       ...(input.title !== undefined ? { title: input.title } : {}),
       ...(input.location !== undefined ? { location: input.location } : {}),
       ...(input.email !== undefined ? { email: input.email } : {}),
@@ -213,7 +263,14 @@ export async function updateContact(id: string, input: Partial<ContactInput>) {
       ...(input.priorityLevel !== undefined
         ? { priorityLevel: input.priorityLevel }
         : {}),
+      ...(input.source !== undefined ? { source: input.source } : {}),
       ...(input.industry !== undefined ? { industry: input.industry } : {}),
+      ...(input.metContext !== undefined
+        ? { metContext: normalizeMetContext(input.metContext) }
+        : {}),
+      ...(input.dateMet !== undefined
+        ? { dateMet: input.dateMet ? new Date(input.dateMet) : null }
+        : {}),
       ...(input.howMet !== undefined ? { howMet: input.howMet } : {}),
       ...(input.notes !== undefined ? { notes: input.notes } : {}),
       ...(input.aiSummary !== undefined ? { aiSummary: input.aiSummary } : {}),
@@ -242,10 +299,12 @@ export async function updateContact(id: string, input: Partial<ContactInput>) {
 
   await rebuildContactEmbedding(userId, id);
 
-  revalidatePath("/");
-  revalidatePath("/contacts");
-  revalidatePath(`/contacts/${id}`);
-  revalidatePath("/graph");
+  if (!options?.skipRevalidate) {
+    revalidatePath("/");
+    revalidatePath("/contacts");
+    revalidatePath(`/contacts/${id}`);
+    revalidatePath("/graph");
+  }
 
   return contact;
 }
@@ -301,4 +360,15 @@ export async function logInteraction(input: {
   revalidatePath(`/contacts/${input.contactId}`);
   revalidatePath("/");
   return row;
+}
+
+export async function regenerateContactSummary(contactId: string) {
+  const userId = await requireUserId();
+  const summary = await generateAndStorePersonSummary(userId, contactId, {
+    force: true,
+  });
+  revalidatePath(`/contacts/${contactId}`);
+  revalidatePath("/graph");
+  revalidatePath("/dashboard");
+  return { summary };
 }

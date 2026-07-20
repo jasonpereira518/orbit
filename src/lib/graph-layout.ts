@@ -1,6 +1,7 @@
 import { daysAgo } from "@/lib/duplicates";
 
-export const RING_RADII = [140, 230, 320, 410, 500] as const;
+/** Score 5 nearest → 1 farthest. Wider spacing for star-chart readability. */
+export const RING_RADII = [160, 260, 360, 470, 580] as const;
 
 /** Score 5 = Intimate (nearest) … Score 1 = Distant (farthest) */
 export const RING_LABELS: Record<number, string> = {
@@ -18,12 +19,22 @@ export type GraphContactInput = {
   company: string | null;
   title: string | null;
   relationshipScore: number;
+  /** Derived closeness 0–1 when available */
+  closeness?: number;
+  closenessTier?: "inner" | "mid" | "outer";
+  /** Ring placement score (closeness-derived when present) */
+  orbitScore?: number;
   lastInteractionAt: Date | string | null;
   nextFollowUpAt: Date | string | null;
   tags: string[];
   aiSummary: string | null;
   keyFacts: string[] | null;
+  metContext?: string | null;
+  dateMet?: Date | string | null;
   howMet?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  linkedinUrl?: string | null;
   notes?: string | null;
   sharedInterests?: string[] | null;
 };
@@ -37,6 +48,9 @@ export type GraphNodeData = {
   company?: string | null;
   title?: string | null;
   score?: number;
+  relationshipScore?: number;
+  closeness?: number;
+  closenessTier?: "inner" | "mid" | "outer";
   dormant?: boolean;
   overdue?: boolean;
   tags?: string[];
@@ -44,7 +58,12 @@ export type GraphNodeData = {
   keyFacts?: string[];
   lastInteractionAt?: string | null;
   nextFollowUpAt?: string | null;
+  metContext?: string | null;
+  dateMet?: string | null;
   howMet?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  linkedinUrl?: string | null;
   orbitAngle?: number;
   orbitRadius?: number;
   spotlight?: boolean;
@@ -95,6 +114,10 @@ export type GroupingMode = "score" | "company";
 
 function clampScore(score: number | null | undefined) {
   return Math.min(5, Math.max(1, score || 2));
+}
+
+function placementScore(c: GraphContactInput) {
+  return clampScore(c.orbitScore ?? c.relationshipScore);
 }
 
 /** Score 5 nearest → radius index 0; score 1 farthest. */
@@ -216,7 +239,7 @@ function addStraightEdge(
  * Hybrid constellation layout:
  * - Global angular sectors by company (aligned across rings)
  * - Radius from relationship score
- * - Straight solar rays + company constellation polygons + derived "knows" links
+ * - Straight solar rays + polygon company constellations + derived knows links
  */
 export function buildHybridGraphLayout(
   contacts: GraphContactInput[],
@@ -240,7 +263,7 @@ export function buildHybridGraphLayout(
   });
 
   const total = Math.max(contacts.length, 1);
-  const gap = grouping === "company" ? 0.06 : 0.04;
+  const gap = grouping === "company" ? 0.08 : 0.055;
   const usable = Math.PI * 2 - gap * companies.length;
   const sectors = new Map<string, { start: number; end: number; mid: number }>();
   let cursor = -Math.PI / 2;
@@ -249,7 +272,7 @@ export function buildHybridGraphLayout(
     const share = (companyCounts.get(key) || 1) / total;
     const span = Math.max(
       usable * share,
-      grouping === "company" ? 0.12 : 0.08
+      grouping === "company" ? 0.14 : 0.1
     );
     const start = cursor;
     const end = cursor + span;
@@ -259,7 +282,7 @@ export function buildHybridGraphLayout(
 
   const ringBuckets = new Map<string, GraphContactInput[]>();
   for (const c of contacts) {
-    const key = `${companyKey(c.company)}::${clampScore(c.relationshipScore)}`;
+    const key = `${companyKey(c.company)}::${placementScore(c)}`;
     const list = ringBuckets.get(key) || [];
     list.push(c);
     ringBuckets.set(key, list);
@@ -285,14 +308,14 @@ export function buildHybridGraphLayout(
       displayName(a).localeCompare(displayName(b))
     );
     const n = sorted.length;
-    const pad = grouping === "company" ? 0.08 : 0.12;
+    const pad = grouping === "company" ? 0.1 : 0.16;
     const innerStart = sector.start + (sector.end - sector.start) * pad;
     const innerEnd = sector.end - (sector.end - sector.start) * pad;
     const span = Math.max(innerEnd - innerStart, 0.02);
 
     sorted.forEach((c, i) => {
       const t = n === 1 ? 0.5 : i / (n - 1);
-      const jitter = ((c.id.charCodeAt(0) % 7) - 3) * 0.008;
+      const jitter = ((c.id.charCodeAt(0) % 7) - 3) * 0.006;
       const angle = innerStart + span * t + jitter;
       const rJitter = ((c.id.charCodeAt(1) || 0) % 5) - 2;
       const r = radius + rJitter;
@@ -359,7 +382,7 @@ export function buildHybridGraphLayout(
         angle: 0,
         radius: RING_RADII[2],
       };
-      const score = clampScore(c.relationshipScore);
+      const score = placementScore(c);
       const dormant = daysAgo(c.lastInteractionAt) > 45;
       const name = displayName(c);
       return {
@@ -374,6 +397,9 @@ export function buildHybridGraphLayout(
           company: c.company,
           title: c.title,
           score,
+          relationshipScore: clampScore(c.relationshipScore),
+          closeness: c.closeness,
+          closenessTier: c.closenessTier,
           dormant,
           overdue: isOverdue(c.nextFollowUpAt),
           tags: c.tags,
@@ -381,7 +407,12 @@ export function buildHybridGraphLayout(
           keyFacts: c.keyFacts || [],
           lastInteractionAt: toIso(c.lastInteractionAt),
           nextFollowUpAt: toIso(c.nextFollowUpAt),
+          metContext: c.metContext ?? null,
+          dateMet: toIso(c.dateMet ?? null),
           howMet: c.howMet ?? null,
+          email: c.email ?? null,
+          phone: c.phone ?? null,
+          linkedinUrl: c.linkedinUrl ?? null,
           orbitAngle: pos.angle,
           orbitRadius: pos.radius,
         },
@@ -394,9 +425,9 @@ export function buildHybridGraphLayout(
   const seenPairs = new Set<string>();
   const edges: LayoutEdge[] = [];
 
-  // Solar rays — faint straight spokes to you
+  // Solar rays — faint straight spokes (background hierarchy)
   for (const c of contacts) {
-    const score = clampScore(c.relationshipScore);
+    const score = placementScore(c);
     const dormant = daysAgo(c.lastInteractionAt) > 45;
     edges.push({
       id: `solar-${c.id}`,
@@ -407,13 +438,13 @@ export function buildHybridGraphLayout(
       data: { kind: "solar" },
       style: {
         stroke: "rgba(255, 255, 255, 0.55)",
-        strokeWidth: Math.max(0.6, score * 0.22),
-        opacity: dormant ? 0.12 : 0.22 + score * 0.04,
+        strokeWidth: Math.max(0.5, 0.45 + score * 0.1),
+        opacity: dormant ? 0.08 : 0.12 + score * 0.025,
       },
     });
   }
 
-  // Company constellations — angular chain (+ close polygon for small groups)
+  // Company constellations — angular chain + close small polygons
   const byCompany = new Map<string, GraphContactInput[]>();
   for (const c of contacts) {
     const key = companyKey(c.company);
@@ -440,13 +471,12 @@ export function buildHybridGraphLayout(
         { kind: "constellation", company: key, reason: "company" },
         {
           stroke: "rgba(255, 255, 255, 0.85)",
-          strokeWidth: 1.1,
-          opacity: 0.75,
+          strokeWidth: 1.05,
+          opacity: 0.7,
         }
       );
     }
 
-    // Close the constellation for small geometric shapes (like the star map)
     if (ordered.length >= 3 && ordered.length <= 8) {
       addStraightEdge(
         edges,
@@ -455,7 +485,7 @@ export function buildHybridGraphLayout(
         ordered[0].id,
         { kind: "constellation", company: key, reason: "company" },
         {
-          stroke: "rgba(255, 255, 255, 0.7)",
+          stroke: "rgba(255, 255, 255, 0.75)",
           strokeWidth: 1,
           opacity: 0.55,
         }
@@ -463,7 +493,7 @@ export function buildHybridGraphLayout(
     }
   }
 
-  // Same howMet / event → people who met together
+  // Same howMet / event
   const byHowMet = new Map<string, GraphContactInput[]>();
   for (const c of contacts) {
     const key = normalizePhrase(c.howMet);
@@ -486,14 +516,14 @@ export function buildHybridGraphLayout(
         { kind: "knows", reason: "howMet" },
         {
           stroke: "rgba(255, 236, 200, 0.9)",
-          strokeWidth: 1,
-          opacity: 0.7,
+          strokeWidth: 0.95,
+          opacity: 0.65,
         }
       );
     }
   }
 
-  // Explicit / inferred acquaintance from notes & summaries
+  // Mentions + shared tags/interests
   for (let i = 0; i < contacts.length; i++) {
     for (let j = i + 1; j < contacts.length; j++) {
       const a = contacts[i];
@@ -507,8 +537,8 @@ export function buildHybridGraphLayout(
           { kind: "knows", reason: "mention" },
           {
             stroke: "rgba(255, 255, 255, 0.8)",
-            strokeWidth: 1,
-            opacity: 0.65,
+            strokeWidth: 0.9,
+            opacity: 0.6,
           }
         );
         continue;
@@ -524,8 +554,8 @@ export function buildHybridGraphLayout(
           { kind: "knows", reason: "sharedTags" },
           {
             stroke: "rgba(220, 230, 255, 0.75)",
-            strokeWidth: 0.9,
-            opacity: 0.45,
+            strokeWidth: 0.85,
+            opacity: 0.4,
           }
         );
         continue;
@@ -544,8 +574,8 @@ export function buildHybridGraphLayout(
           { kind: "knows", reason: "sharedInterests" },
           {
             stroke: "rgba(220, 230, 255, 0.7)",
-            strokeWidth: 0.85,
-            opacity: 0.4,
+            strokeWidth: 0.8,
+            opacity: 0.35,
           }
         );
       }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
   clearApiKey,
@@ -9,6 +9,7 @@ import {
   getSettings,
   saveAiSettings,
 } from "@/actions/settings";
+import { resetOnboarding } from "@/actions/onboarding";
 import {
   AI_PROVIDERS,
   DEFAULT_MODELS,
@@ -18,37 +19,74 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { NotificationSettings } from "@/components/settings/notification-settings";
+import { useRouter } from "next/navigation";
 
 type Settings = Awaited<ReturnType<typeof getSettings>>;
 
-export function SettingsForm() {
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [provider, setProvider] = useState<AiProvider>("gemini");
+export function SettingsForm({
+  initialSettings,
+}: {
+  initialSettings: Settings;
+}) {
+  const router = useRouter();
+  const [settings, setSettings] = useState<Settings>(initialSettings);
+  const [provider, setProvider] = useState<AiProvider>(initialSettings.aiProvider);
   const [apiKey, setApiKey] = useState("");
-  const [model, setModel] = useState(DEFAULT_MODELS.gemini);
-  const [customModel, setCustomModel] = useState(false);
+  const [model, setModel] = useState(initialSettings.aiModel);
+  const [customModel, setCustomModel] = useState(
+    !PROVIDER_MODELS[initialSettings.aiProvider].some(
+      (m) => m.value === initialSettings.aiModel
+    )
+  );
   const [pending, start] = useTransition();
-
-  useEffect(() => {
-    getSettings().then((s) => {
-      setSettings(s);
-      setProvider(s.aiProvider);
-      setModel(s.aiModel);
-      setCustomModel(
-        !PROVIDER_MODELS[s.aiProvider].some((m) => m.value === s.aiModel)
-      );
-    });
-  }, []);
 
   const providerMeta = AI_PROVIDERS.find((p) => p.id === provider)!;
   const models = PROVIDER_MODELS[provider];
-  const activeProviderStatus = settings?.providers.find((p) => p.id === provider);
+  const activeProviderStatus = settings.providers.find((p) => p.id === provider);
 
   return (
     <div className="space-y-8">
-      <section className="space-y-4 rounded-2xl border border-border/70 bg-white p-6">
+      <section className="space-y-3 rounded-2xl border border-border/70 bg-card p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-medium text-primary">Appearance</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Switch between light and dark. Dark mode uses gray surfaces with
+              blue accents.
+            </p>
+          </div>
+          <ThemeToggle className="h-9 w-9 border border-border" />
+        </div>
+      </section>
+
+      <section className="space-y-3 rounded-2xl border border-border/70 bg-card p-6">
         <div>
-          <h2 className="text-lg font-medium text-[#0f3d3e]">AI provider</h2>
+          <h2 className="text-lg font-medium text-primary">Tutorial</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Replay the first-run walkthrough for adding people to your orbit.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={pending}
+          onClick={() =>
+            start(async () => {
+              const res = await resetOnboarding();
+              router.replace(res.redirectTo);
+              router.refresh();
+            })
+          }
+        >
+          Start tutorial
+        </Button>
+      </section>
+
+      <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
+        <div>
+          <h2 className="text-lg font-medium text-primary">AI provider</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Choose Gemini, OpenAI, or Anthropic. Paste your own API key (encrypted
             at rest), or rely on a server env key for demos.
@@ -163,7 +201,7 @@ export function SettingsForm() {
                 !activeProviderStatus?.hasPersonalKey &&
                 !activeProviderStatus?.usingEnv)
             }
-            className="bg-[#0f3d3e] hover:bg-[#0c3233]"
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={() =>
               start(async () => {
                 try {
@@ -204,9 +242,8 @@ export function SettingsForm() {
           </Button>
         </div>
 
-        {settings && (
-          <div className="border-t border-border/60 pt-4">
-            <p className="mb-2 text-sm font-medium text-[#0f3d3e]">
+        <div className="border-t border-border/60 pt-4">
+            <p className="mb-2 text-sm font-medium text-primary">
               Saved keys
             </p>
             <ul className="space-y-1 text-sm text-muted-foreground">
@@ -222,12 +259,13 @@ export function SettingsForm() {
               ))}
             </ul>
           </div>
-        )}
       </section>
 
-      <section className="space-y-4 rounded-2xl border border-border/70 bg-white p-6">
+      <NotificationSettings />
+
+      <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
         <div>
-          <h2 className="text-lg font-medium text-[#0f3d3e]">Your data</h2>
+          <h2 className="text-lg font-medium text-primary">Your data</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Export everything as JSON, or permanently delete your Orbit data.
           </p>

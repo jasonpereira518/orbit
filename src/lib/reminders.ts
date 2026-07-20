@@ -142,32 +142,167 @@ export async function refreshOutreachSuggestions(userId: string) {
   return suggestions;
 }
 
-export async function getDashboardData(userId: string) {
+function followUpCandidateScore(contact: {
+  priorityLevel: number;
+  relationshipScore: number;
+  lastInteractionAt: Date | string | null;
+  nextFollowUpAt: Date | string | null;
+}) {
+  const idleDays = Math.min(daysAgo(contact.lastInteractionAt), 365);
+  const idleScore = Number.isFinite(idleDays) ? idleDays / 30 : 2;
+  return (
+    (contact.priorityLevel || 0) * 4 +
+    (contact.relationshipScore || 0) * 2 +
+    idleScore -
+    (contact.nextFollowUpAt ? 1 : 0)
+  );
+}
+
+/**
+ * Schedule additional due follow-ups from contacts that are not already due —
+ * prefers high priority / strong / dormant people.
+ */
+export async function generateDueFollowUps(userId: string, limit = 8) {
   const db = await getDb();
-  await refreshOutreachSuggestions(userId);
-
-  const allContacts = await db.query.contacts.findMany({
+  const now = new Date();
+  const all = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
-    orderBy: (c, { desc }) => [desc(c.updatedAt)],
   });
 
-  const pendingReminders = await db.query.reminders.findMany({
-    where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
-    orderBy: (r, { asc }) => [asc(r.dueDate)],
-  });
+  const alreadyDueIds = new Set(
+    all
+      .filter((c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now)
+      .map((c) => c.id)
+  );
 
-  const suggestions = await db.query.aiSuggestions.findMany({
+  const candidates = all
+    .filter((c) => !alreadyDueIds.has(c.id))
+    .filter((c) => {
+      // Skip people with a future follow-up still more than a day away
+      if (c.nextFollowUpAt && new Date(c.nextFollowUpAt) > now) {
+        const ms = new Date(c.nextFollowUpAt).getTime() - now.getTime();
+        if (ms > 24 * 60 * 60 * 1000) return false;
+      }
+      // Prefer people who have gone quiet or have no follow-up yet
+      const idle = daysAgo(c.lastInteractionAt);
+      return (
+        !c.nextFollowUpAt ||
+        idle >= 14 ||
+        (c.priorityLevel || 0) >= 2 ||
+        (c.relationshipScore || 0) >= 4
+      );
+    })
+    .sort((a, b) => followUpCandidateScore(b) - followUpCandidateScore(a))
+    .slice(0, Math.max(1, Math.min(24, limit)));
+
+  let created = 0;
+  for (const contact of candidates) {
+    const name = contact.preferredName || contact.fullName;
+    const title = `Follow up with ${name}`;
+
+    const existing = await db.query.reminders.findFirst({
+      where: and(
+        eq(reminders.userId, userId),
+        eq(reminders.contactId, contact.id),
+        eq(reminders.status, "pending")
+      ),
+    });
+
+    if (existing) {
+      await db
+        .update(reminders)
+        .set({
+          title,
+          dueDate: now,
+          reminderType: "generated",
+          createdBy: "system",
+        })
+        .where(eq(reminders.id, existing.id));
+    } else {
+      await db.insert(reminders).values({
+        userId,
+        contactId: contact.id,
+        title,
+        description: "Generated from dashboard outreach queue",
+        dueDate: now,
+        reminderType: "generated",
+        createdBy: "system",
+        status: "pending",
+      });
+    }
+
+    await db
+      .update(contacts)
+      .set({
+        nextFollowUpAt: now,
+        followUpStatus: "pending",
+        updatedAt: now,
+      })
+      .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
+
+    created += 1;
+  }
+
+  await refreshOutreachSuggestions(userId);
+  return { created, contactIds: candidates.map((c) => c.id) };
+}
+
+const SUGGESTION_REFRESH_TTL_MS = 30 * 60 * 1000;
+
+async function maybeRefreshOutreachSuggestions(userId: string) {
+  const db = await getDb();
+  const latest = await db.query.aiSuggestions.findFirst({
     where: and(
       eq(aiSuggestions.userId, userId),
-      eq(aiSuggestions.status, "pending")
+      inArray(aiSuggestions.suggestionType, [...AUTO_SUGGESTION_TYPES])
     ),
-    orderBy: (s, { desc }) => [desc(s.confidenceScore)],
+    orderBy: (s, { desc }) => [desc(s.createdAt)],
+    columns: { createdAt: true },
   });
 
+  const age = latest
+    ? Date.now() - new Date(latest.createdAt).getTime()
+    : Number.POSITIVE_INFINITY;
+
+  // Skip the expensive delete/rebuild on every dashboard hit.
+  if (age < SUGGESTION_REFRESH_TTL_MS) return;
+  await refreshOutreachSuggestions(userId);
+}
+
+export async function getDashboardData(userId: string) {
+  const db = await getDb();
+  await maybeRefreshOutreachSuggestions(userId);
+
+  const [allContacts, pendingReminders, suggestions] = await Promise.all([
+    db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+      orderBy: (c, { desc }) => [desc(c.updatedAt)],
+    }),
+    db.query.reminders.findMany({
+      where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
+      orderBy: (r, { asc }) => [asc(r.dueDate)],
+    }),
+    db.query.aiSuggestions.findMany({
+      where: and(
+        eq(aiSuggestions.userId, userId),
+        eq(aiSuggestions.status, "pending")
+      ),
+      orderBy: (s, { desc }) => [desc(s.confidenceScore)],
+    }),
+  ]);
+
   const now = new Date();
-  const dueFollowUps = allContacts.filter(
-    (c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now
-  );
+  const dueFollowUps = allContacts
+    .filter((c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now)
+    .sort((a, b) => {
+      const aTime = a.nextFollowUpAt
+        ? new Date(a.nextFollowUpAt).getTime()
+        : 0;
+      const bTime = b.nextFollowUpAt
+        ? new Date(b.nextFollowUpAt).getTime()
+        : 0;
+      return aTime - bTime;
+    });
 
   const strongAi = allContacts.filter((c) => (c.relationshipScore || 0) >= 4);
   const companies = new Map<string, number>();
@@ -185,7 +320,7 @@ export async function getDashboardData(userId: string) {
       topCompany: topCompany ? { name: topCompany[0], count: topCompany[1] } : null,
     },
     recentContacts: allContacts.slice(0, 6),
-    dueFollowUps: dueFollowUps.slice(0, 8),
+    dueFollowUps: dueFollowUps.slice(0, 12),
     reminders: pendingReminders.slice(0, 8),
     suggestions,
   };

@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "@clerk/ui/themes/shadcn.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -78,6 +79,42 @@
   --sidebar-accent-foreground: #0f3d3e;
   --sidebar-border: #e4e7e1;
   --sidebar-ring: #0f3d3e;
+  color-scheme: light;
+}
+
+.dark {
+  --background: #272727;
+  --foreground: #f0f0f0;
+  --card: #303030;
+  --card-foreground: #f0f0f0;
+  --popover: #303030;
+  --popover-foreground: #f0f0f0;
+  --primary: #599de7;
+  --primary-foreground: #0f1720;
+  --secondary: #353535;
+  --secondary-foreground: #f0f0f0;
+  --muted: #333333;
+  --muted-foreground: #a8a8a8;
+  --accent: #2d3a48;
+  --accent-foreground: #599de7;
+  --destructive: oklch(0.65 0.2 25);
+  --border: #3d3d3d;
+  --input: #3d3d3d;
+  --ring: #599de7;
+  --chart-1: #599de7;
+  --chart-2: #7bb0ec;
+  --chart-3: #9dc4f1;
+  --chart-4: #3d7fc7;
+  --chart-5: #b8d4f5;
+  --sidebar: #272727;
+  --sidebar-foreground: #f0f0f0;
+  --sidebar-primary: #599de7;
+  --sidebar-primary-foreground: #0f1720;
+  --sidebar-accent: #353535;
+  --sidebar-accent-foreground: #599de7;
+  --sidebar-border: #3d3d3d;
+  --sidebar-ring: #599de7;
+  color-scheme: dark;
 }
 
 @layer base {
@@ -90,6 +127,11 @@
       radial-gradient(ellipse 80% 50% at 100% -20%, rgba(15, 61, 62, 0.06), transparent),
       radial-gradient(ellipse 60% 40% at 0% 100%, rgba(196, 163, 90, 0.05), transparent);
     background-attachment: fixed;
+  }
+  .dark body {
+    background-image:
+      radial-gradient(ellipse 80% 50% at 100% -20%, rgba(89, 157, 231, 0.14), transparent),
+      radial-gradient(ellipse 60% 40% at 0% 100%, rgba(53, 53, 53, 0.55), transparent);
   }
 }
 
@@ -284,6 +326,83 @@
   animation: none;
 }
 
+/* ── Landing hero ── */
+
+@keyframes landing-fade {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes landing-solar-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes hero-solar-corona-pulse {
+  0%,
+  100% {
+    opacity: 0.75;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes hero-solar-corona-outer-pulse {
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+.landing-fade {
+  animation: landing-fade 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.landing-solar-enter {
+  animation: landing-solar-enter 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.15s both;
+}
+
+.hero-solar-corona {
+  animation: hero-solar-corona-pulse 3.4s ease-in-out infinite;
+}
+
+.hero-solar-corona-outer {
+  animation: hero-solar-corona-outer-pulse 4.6s ease-in-out infinite;
+}
+
+/* ── Page transitions ── */
+
+@keyframes page-transition-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.page-transition {
+  animation: page-transition-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .delete-confirm-btn,
   .delete-contact-btn,
@@ -294,8 +413,25 @@
   .constellation-spotlight-ring,
   .constellation-planet-enter,
   .constellation-starfield span,
-  .constellation-stage .react-flow__edge.animated path {
+  .constellation-stage .react-flow__edge.animated path,
+  .landing-fade,
+  .landing-solar-enter,
+  .hero-solar-corona,
+  .hero-solar-corona-outer,
+  .page-transition {
     animation: none !important;
     transition: none !important;
+  }
+
+  .landing-fade,
+  .landing-solar-enter,
+  .page-transition {
+    opacity: 1;
+    transform: none;
+  }
+
+  .hero-solar-corona,
+  .hero-solar-corona-outer {
+    opacity: 1;
   }
 }
