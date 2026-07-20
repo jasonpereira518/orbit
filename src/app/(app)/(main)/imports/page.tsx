@@ -4,10 +4,7 @@ import {
   listCalendarSubscriptions,
   syncStaleCalendarSubscriptions,
 } from "@/actions/calendar";
-import { CalendarImportSection } from "@/components/imports/calendar-import-section";
-import { ImportHistory } from "@/components/imports/import-history";
-import { LinkedInConnectionsImport } from "@/components/imports/linkedin-connections-import";
-import { LinkedInMessagesImport } from "@/components/imports/linkedin-messages-import";
+import { ImportHub } from "@/components/imports/import-hub";
 
 export default async function ImportsPage() {
   // Keep the history paint fast; refresh subscriptions after the response.
@@ -31,10 +28,10 @@ export default async function ImportsPage() {
         </p>
       </div>
 
-      <LinkedInConnectionsImport />
-      <LinkedInMessagesImport />
-      <CalendarImportSection calendarSubscriptions={calendarSubscriptions} />
-      <ImportHistory history={history} />
+      <ImportHub
+        history={history}
+        calendarSubscriptions={calendarSubscriptions}
+      />
     </div>
   );
 }
