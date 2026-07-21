@@ -8,6 +8,7 @@ import { MobileNav } from "@/components/layout/mobile-nav";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
 import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
 import { ThemeSync } from "@/components/theme-sync";
+import { cn } from "@/lib/utils";
 import type { ThemePreference } from "@/lib/theme";
 
 export function AppShell({
@@ -23,7 +24,8 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const isOnboarding = pathname === "/onboarding";
-  const showAskBar = !isOnboarding && pathname !== "/chat";
+  const isChat = pathname === "/chat";
+  const showAskBar = !isOnboarding && !isChat;
 
   if (isOnboarding) {
     return (
@@ -35,14 +37,19 @@ export function AppShell({
   }
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className={cn("flex bg-background", isChat ? "h-dvh overflow-hidden" : "min-h-screen")}>
       <ThemeSync theme={theme} />
       <DueNotificationsWatcher />
       <div className="sticky top-0 z-40 hidden h-screen shrink-0 p-3 md:block lg:p-4">
         <AppSidebar pathname={pathname} clerkOn={clerkOn} demoMode={demoMode} />
       </div>
-      <main className="relative flex min-h-screen flex-1 flex-col overflow-auto">
-        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border/70 bg-background/95 px-4 py-3 backdrop-blur md:hidden">
+      <main
+        className={cn(
+          "relative flex flex-1 flex-col",
+          isChat ? "min-h-0 overflow-hidden" : "min-h-screen overflow-auto"
+        )}
+      >
+        <header className="sticky top-0 z-30 flex shrink-0 items-center justify-between border-b border-border/70 bg-background/95 px-4 py-3 backdrop-blur md:hidden">
           <Link href="/" className="flex items-center gap-2.5" title="Back to landing page">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
               O
@@ -58,7 +65,14 @@ export function AppShell({
           <NotificationsPanelButton />
         </div>
 
-        <div className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 pb-[calc(9.5rem+env(safe-area-inset-bottom))] md:px-10 md:py-8 md:pb-24">
+        <div
+          className={cn(
+            "mx-auto w-full max-w-6xl flex-1 px-4 py-6 md:px-10 md:py-8",
+            isChat
+              ? "flex min-h-0 flex-col overflow-hidden pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-8"
+              : "pb-[calc(9.5rem+env(safe-area-inset-bottom))] md:pb-24"
+          )}
+        >
           {children}
         </div>
 

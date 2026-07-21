@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import {
   aiSuggestions,
   calendarSubscriptions,
+  chatThreads,
   companies,
   contactEmbeddings,
   contactTags,
@@ -27,6 +28,7 @@ export async function purgeUserData(userId: string) {
   await db.delete(imports).where(eq(imports.userId, userId));
   await db.delete(calendarSubscriptions).where(eq(calendarSubscriptions.userId, userId));
   await db.delete(userGoals).where(eq(userGoals.userId, userId));
+  await db.delete(chatThreads).where(eq(chatThreads.userId, userId));
 
   await db.delete(outreachCampaigns).where(eq(outreachCampaigns.userId, userId));
 

@@ -12,6 +12,7 @@ import {
   classifyCalendarEvent,
   counterpartsOf,
   nameFromNetworkingTitle,
+  peopleFromDescription,
 } from "@/lib/calendar-classify";
 import { findDuplicateCandidates, daysAgo } from "@/lib/duplicates";
 import { upsertContactEmbedding } from "@/lib/search";
@@ -52,15 +53,34 @@ async function fetchIcs(url: string) {
     },
     // Avoid Next fetch caching of private calendar feeds
     cache: "no-store",
+    redirect: "follow",
   });
   if (!res.ok) {
-    throw new Error(`Calendar feed returned ${res.status}`);
+    throw new Error(icsFetchErrorMessage(url, res.status));
   }
   const text = await res.text();
   if (!/BEGIN:VCALENDAR/i.test(text) && !/BEGIN:VEVENT/i.test(text)) {
     throw new Error("URL did not return a valid ICS calendar feed");
   }
   return text;
+}
+
+function icsFetchErrorMessage(url: string, status: number) {
+  const isGoogle =
+    /calendar\.google\.com/i.test(url) || /google\.com\/calendar/i.test(url);
+  const isPublicGoogle = isGoogle && /\/public\/basic\.ics/i.test(url);
+
+  if (status === 404 || status === 403) {
+    if (isPublicGoogle) {
+      return "Google returned an error for this public calendar link. Use the Secret address in iCal format from Calendar settings → Integrate calendar (…/private-…/basic.ics), not the public address.";
+    }
+    if (isGoogle) {
+      return `Google Calendar feed returned ${status}. Confirm you pasted the Secret address in iCal format, and that the calendar still exists. Public links only work if the calendar is shared publicly.`;
+    }
+    return `Calendar feed returned ${status}. Check that the ICS URL is still valid and accessible.`;
+  }
+
+  return `Calendar feed returned ${status}`;
 }
 
 async function resolveOrCreateContact(
@@ -157,11 +177,21 @@ export async function applyNetworkingEvents(
     let counterparts = counterpartsOf(event, selfEmails);
 
     if (counterparts.length === 0) {
+      counterparts = peopleFromDescription(event.description || "").filter(
+        (p) => {
+          const email = p.email.toLowerCase();
+          return !email || !selfEmails.some((s) => s.toLowerCase() === email);
+        }
+      );
+    }
+
+    if (counterparts.length === 0) {
       const inferred = nameFromNetworkingTitle(event.summary || "");
       if (inferred) {
         counterparts = [{ name: inferred, email: "" }];
       } else {
         stats.skipped++;
+        stats.matched--;
         continue;
       }
     }

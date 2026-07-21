@@ -37,30 +37,12 @@ function buildConversationTranscript(
     .slice(0, 12_000);
 }
 
-/**
- * Draft a warm follow-up message for a reminder, grounded in the contact's
- * interaction history (LinkedIn threads, notes, summaries).
- */
-export async function generateFollowUpDraft(
-  userId: string,
-  reminderId: string,
-  userGoals: string[] = []
-): Promise<FollowUpDraft> {
+type ContactRow = typeof contacts.$inferSelect;
+
+async function loadContactContext(userId: string, contactId: string) {
   const db = await getDb();
-
-  const reminder = await db.query.reminders.findFirst({
-    where: and(eq(reminders.id, reminderId), eq(reminders.userId, userId)),
-  });
-  if (!reminder) throw new Error("Reminder not found");
-  if (!reminder.contactId) {
-    throw new Error("This reminder is not linked to a contact");
-  }
-
   const contact = await db.query.contacts.findFirst({
-    where: and(
-      eq(contacts.id, reminder.contactId),
-      eq(contacts.userId, userId)
-    ),
+    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
   });
   if (!contact) throw new Error("Contact not found");
 
@@ -73,14 +55,17 @@ export async function generateFollowUpDraft(
     limit: 25,
   });
 
-  const contactName = contact.preferredName || contact.fullName;
+  return { contact, recent };
+}
+
+function buildProfileBlock(contact: ContactRow) {
   const howMet = formatHowMetSummary({
     metContext: contact.metContext,
     dateMet: contact.dateMet,
     howMet: contact.howMet,
   });
 
-  const profileBlock = [
+  return [
     `Name: ${contact.fullName}`,
     contact.preferredName ? `Preferred name: ${contact.preferredName}` : null,
     contact.title ? `Role: ${contact.title}` : null,
@@ -99,23 +84,29 @@ export async function generateFollowUpDraft(
   ]
     .filter(Boolean)
     .join("\n");
+}
 
-  const transcript = buildConversationTranscript(recent);
+async function draftFromContext(input: {
+  userId: string;
+  contact: ContactRow;
+  recent: Array<{
+    interactionType: string;
+    interactionDate: Date | null;
+    aiSummary: string | null;
+    rawNotes: string | null;
+  }>;
+  userGoals: string[];
+  reminderBlock?: string | null;
+}): Promise<FollowUpDraft> {
+  const contactName = input.contact.preferredName || input.contact.fullName;
+  const profileBlock = buildProfileBlock(input.contact);
+  const transcript = buildConversationTranscript(input.recent);
   const goalsBlock =
-    userGoals.length > 0
-      ? `Your active goals: ${userGoals.join("; ")}`
+    input.userGoals.length > 0
+      ? `Your active goals: ${input.userGoals.join("; ")}`
       : "Your active goals: (none specified)";
 
-  const reminderBlock = [
-    `Reminder: ${reminder.title}`,
-    reminder.description?.trim()
-      ? `Reminder notes: ${reminder.description.trim()}`
-      : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  const content = await completeJson(userId, {
+  const content = await completeJson(input.userId, {
     temperature: 0.5,
     system: `You draft warm, specific follow-up messages for a personal networking CRM called Orbit.
 The user is following up with someone they already know — not cold outreach.
@@ -135,7 +126,7 @@ Rules:
 Contact:
 ${profileBlock}
 
-${reminderBlock}
+${input.reminderBlock?.trim() || "Reminder: Warm follow-up from contact profile"}
 
 Conversation history (newest first):
 ${transcript || "(no interactions logged yet)"}`,
@@ -144,7 +135,65 @@ ${transcript || "(no interactions logged yet)"}`,
   const parsed = draftSchema.parse(JSON.parse(content));
   return {
     body: parsed.body.trim(),
-    contactId: contact.id,
+    contactId: input.contact.id,
     contactName,
   };
+}
+
+/**
+ * Draft a warm follow-up message for a reminder, grounded in the contact's
+ * interaction history (LinkedIn threads, notes, summaries).
+ */
+export async function generateFollowUpDraft(
+  userId: string,
+  reminderId: string,
+  userGoals: string[] = []
+): Promise<FollowUpDraft> {
+  const db = await getDb();
+
+  const reminder = await db.query.reminders.findFirst({
+    where: and(eq(reminders.id, reminderId), eq(reminders.userId, userId)),
+  });
+  if (!reminder) throw new Error("Reminder not found");
+  if (!reminder.contactId) {
+    throw new Error("This reminder is not linked to a contact");
+  }
+
+  const { contact, recent } = await loadContactContext(
+    userId,
+    reminder.contactId
+  );
+
+  const reminderBlock = [
+    `Reminder: ${reminder.title}`,
+    reminder.description?.trim()
+      ? `Reminder notes: ${reminder.description.trim()}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return draftFromContext({
+    userId,
+    contact,
+    recent,
+    userGoals,
+    reminderBlock,
+  });
+}
+
+/** Draft a warm follow-up from the contact profile (no reminder required). */
+export async function generateContactFollowUpDraft(
+  userId: string,
+  contactId: string,
+  userGoals: string[] = []
+): Promise<FollowUpDraft> {
+  const { contact, recent } = await loadContactContext(userId, contactId);
+  return draftFromContext({
+    userId,
+    contact,
+    recent,
+    userGoals,
+    reminderBlock: "Reminder: Warm follow-up from contact profile",
+  });
 }

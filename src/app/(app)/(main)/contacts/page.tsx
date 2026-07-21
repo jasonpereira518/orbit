@@ -63,13 +63,14 @@ export default async function ContactsPage({
         initialMinScore={params.minScore || ""}
       />
 
-      <div className="overflow-hidden rounded-2xl border border-border/70 bg-card">
+      <div className="rounded-2xl border border-border/70 bg-card">
         <ContactsList
           key={[params.q, params.company, params.minScore, params.followUp].join("|")}
           initialContacts={contacts.map((c) => ({
             id: c.id,
             fullName: c.fullName,
             firstName: c.firstName,
+            lastName: c.lastName,
             preferredName: c.preferredName,
             title: c.title,
             company: c.company,

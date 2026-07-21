@@ -48,16 +48,19 @@ export function CalendarSubscribePanel({
           Calendar subscription
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Paste a private ICS URL (Google: Settings → Integrate calendar → Secret
-          address in iCal format). Orbit polls it, keeps 1:1 / networking events
-          in sync, and can create contacts for people it recognizes — team
-          standups and focus blocks are ignored.
+          Paste a private ICS URL. For Google Calendar: Settings → Integrate
+          calendar → <span className="text-foreground">Secret address in iCal
+          format</span>{" "}
+          (it includes <code className="text-xs">/private-…/</code>, not{" "}
+          <code className="text-xs">/public/</code>). Orbit polls it, keeps 1:1 /
+          networking events in sync, and can create contacts for people it
+          recognizes — team standups and focus blocks are ignored.
         </p>
       </div>
 
       <div className="space-y-2">
         <Input
-          placeholder="https://calendar.google.com/calendar/ical/…/basic.ics"
+          placeholder="https://calendar.google.com/calendar/ical/…/private-…/basic.ics"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
         />
@@ -68,7 +71,7 @@ export function CalendarSubscribePanel({
             onChange={(e) => setLabel(e.target.value)}
           />
           <Input
-            placeholder="Your email on this calendar (optional)"
+            placeholder="Your email on this calendar (recommended)"
             type="email"
             value={selfEmail}
             onChange={(e) => setSelfEmail(e.target.value)}
@@ -91,7 +94,7 @@ export function CalendarSubscribePanel({
                   toast.error(`Saved, but sync failed: ${res.syncError}`);
                 } else if (res.stats) {
                   toast.success(
-                    `Synced: ${res.stats.created} added, ${res.stats.updated} updated, ${res.stats.contactsCreated} contacts created`
+                    `Synced: ${res.stats.scanned} events scanned · ${res.stats.matched} networking · ${res.stats.contactsCreated} contacts · ${res.stats.created} new meetings`
                   );
                 } else {
                   toast.success("Calendar subscribed");
@@ -145,7 +148,7 @@ export function CalendarSubscribePanel({
                       ? `Last sync ${new Date(s.lastSyncedAt).toLocaleString()}`
                       : "Not synced yet"}
                     {s.lastSyncStats
-                      ? ` · ${s.lastSyncStats.matched ?? 0} networking events · ${s.lastSyncStats.created ?? 0} new · ${s.lastSyncStats.updated ?? 0} updated`
+                      ? ` · ${s.lastSyncStats.scanned ?? 0} scanned · ${s.lastSyncStats.matched ?? 0} networking · ${s.lastSyncStats.contactsCreated ?? 0} contacts · ${s.lastSyncStats.created ?? 0} new meetings`
                       : ""}
                   </p>
                   {s.lastSyncError && (
@@ -176,9 +179,9 @@ export function CalendarSubscribePanel({
                                 : x
                             )
                           );
-                          toast.success(
-                            `Synced: ${stats.created} added, ${stats.updated} updated`
-                          );
+                  toast.success(
+                    `Synced: ${stats.scanned} events scanned · ${stats.matched} networking · ${stats.contactsCreated} contacts · ${stats.created} new meetings`
+                  );
                         } catch (err) {
                           toast.error(
                             err instanceof Error ? err.message : "Sync failed"

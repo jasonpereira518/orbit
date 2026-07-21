@@ -5,7 +5,10 @@ import {
   AvatarFallback,
   AvatarImage,
 } from "@/components/ui/avatar";
-import { linkedinAvatarUrl } from "@/lib/contact-avatar";
+import {
+  isUnusableAvatarUrl,
+  resolveContactPhotoUrl,
+} from "@/lib/contact-avatar";
 import {
   guessGenderFromFirstName,
   type GuessedGender,
@@ -13,6 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 
 export function ContactAvatar({
+  contactId,
   firstName,
   fullName,
   linkedinUrl,
@@ -20,6 +24,7 @@ export function ContactAvatar({
   size = "lg",
   className,
 }: {
+  contactId?: string | null;
   firstName?: string | null;
   fullName: string;
   linkedinUrl?: string | null;
@@ -27,8 +32,14 @@ export function ContactAvatar({
   size?: "default" | "sm" | "lg";
   className?: string;
 }) {
+  void linkedinUrl;
+  const hasStoredPhoto =
+    Boolean(profileImageUrl?.trim()) && !isUnusableAvatarUrl(profileImageUrl);
+  // Prefer same-origin avatar route so LinkedIn CDN / data URLs load reliably.
   const photoUrl =
-    profileImageUrl?.trim() || linkedinAvatarUrl(linkedinUrl) || null;
+    contactId && hasStoredPhoto
+      ? `/api/avatars/${contactId}`
+      : resolveContactPhotoUrl(profileImageUrl);
   const gender = guessGenderFromFirstName(firstName, fullName);
   const label = fullName.trim() || "Contact";
 
@@ -58,7 +69,6 @@ function GenderSilhouette({ gender }: { gender: GuessedGender }) {
           d="M8 36c0-7.5 5.4-13 12-13s12 5.5 12 13H8z"
           opacity="0.85"
         />
-        {/* Soft shoulder / hair cue */}
         <path
           fill="currentColor"
           d="M11 16c0-5 3.5-9.5 9-9.5S29 11 29 16c0 1.2-.3 2.3-.8 3.3-1.4-2.8-3.9-4.5-8.2-4.5s-6.8 1.7-8.2 4.5c-.5-1-.8-2.1-.8-3.3z"

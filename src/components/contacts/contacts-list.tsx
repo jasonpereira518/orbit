@@ -4,12 +4,15 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   useTransition,
   type KeyboardEvent,
   type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { CalendarClock, Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { deleteContact } from "@/actions/contacts";
@@ -47,6 +50,7 @@ export type ContactListItem = {
   id: string;
   fullName: string;
   firstName: string | null;
+  lastName?: string | null;
   preferredName: string | null;
   title: string | null;
   company: string | null;
@@ -61,6 +65,23 @@ export type ContactListItem = {
   nextFollowUpAt?: string | Date | null;
   tags: string[];
 };
+
+const ALPHABET = [
+  "#",
+  ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""),
+] as const;
+
+function lastNameOf(c: ContactListItem) {
+  const fromField = c.lastName?.trim();
+  if (fromField) return fromField;
+  const parts = c.fullName.trim().split(/\s+/).filter(Boolean);
+  return parts.length > 1 ? parts[parts.length - 1]! : parts[0] || "";
+}
+
+function letterOf(lastName: string) {
+  const ch = lastName.charAt(0).toLocaleUpperCase();
+  return /[A-Z]/.test(ch) ? ch : "#";
+}
 
 function roleLine(title: string | null, company: string | null) {
   if (title && company) return `${title} at ${company}`;
@@ -106,6 +127,7 @@ export function ContactsList({
   const [contacts, setContacts] = useState(initialContacts);
   const [exitingId, setExitingId] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [activeLetter, setActiveLetter] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const router = useRouter();
   const exitTimers = useRef<Map<string, number>>(new Map());
@@ -124,6 +146,43 @@ export function ContactsList({
       timers.clear();
     };
   }, []);
+
+  const sections = useMemo(() => {
+    const sorted = [...contacts].sort((a, b) => {
+      const byLast = lastNameOf(a).localeCompare(lastNameOf(b), undefined, {
+        sensitivity: "base",
+      });
+      if (byLast !== 0) return byLast;
+      return a.fullName.localeCompare(b.fullName, undefined, {
+        sensitivity: "base",
+      });
+    });
+
+    const groups = new Map<string, ContactListItem[]>();
+    for (const c of sorted) {
+      const letter = letterOf(lastNameOf(c));
+      const list = groups.get(letter) ?? [];
+      list.push(c);
+      groups.set(letter, list);
+    }
+    return ALPHABET.filter((letter) => groups.has(letter)).map((letter) => ({
+      letter,
+      contacts: groups.get(letter)!,
+    }));
+  }, [contacts]);
+
+  const availableLetters = useMemo(
+    () => new Set(sections.map((s) => s.letter)),
+    [sections]
+  );
+
+  function scrollToLetter(letter: string) {
+    const target =
+      document.getElementById(`contact-letter-${letter}`) ??
+      nearestSectionEl(letter, availableLetters);
+    target?.scrollIntoView({ behavior: "auto", block: "start" });
+    setActiveLetter(letter);
+  }
 
   const confirmContact = contacts.find((c) => c.id === confirmId);
 
@@ -176,163 +235,327 @@ export function ContactsList({
 
   return (
     <TooltipProvider>
-      <ul className="divide-y divide-border/60">
-        {contacts.map((c) => {
-          const exiting = exitingId === c.id;
-          const overdue = isOverdue(c.nextFollowUpAt);
-          const scheduledLabel = dueLabel(c.nextFollowUpAt);
-          const details = detailLine(c.school, c.location);
-
-          function openContact() {
-            if (exiting) return;
-            router.push(`/contacts/${c.id}`);
-          }
-
-          function onRowKeyDown(e: KeyboardEvent<HTMLLIElement>) {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              openContact();
-            }
-          }
-
-          return (
-            <li
-              key={c.id}
-              role="link"
-              tabIndex={0}
-              onClick={openContact}
-              onKeyDown={onRowKeyDown}
-              className={cn(
-                "contact-row grid cursor-pointer transition-[grid-template-rows,opacity] duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
-                "outline-none focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset",
-                exiting
-                  ? "grid-rows-[0fr] opacity-0"
-                  : "grid-rows-[1fr] opacity-100"
-              )}
-            >
-              <div className="overflow-hidden">
-                <div
-                  className={cn(
-                    "flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-muted/40 sm:px-5",
-                    "transition-transform duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
-                    exiting && "-translate-x-8"
-                  )}
-                >
-                  <ContactAvatarPreview contact={c}>
-                    <ContactAvatar
-                      firstName={c.firstName}
-                      fullName={c.fullName}
-                      linkedinUrl={c.linkedinUrl}
-                      profileImageUrl={c.profileImageUrl}
-                      size="lg"
-                    />
-                  </ContactAvatarPreview>
-
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium text-primary">
-                      {c.preferredName || c.fullName}
-                    </p>
-                    <div className="mt-0.5 flex min-w-0 items-center gap-2">
-                      <p className="min-w-0 truncate text-sm text-muted-foreground">
-                        {roleLine(c.title, c.company)}
-                      </p>
-                      {c.closenessTier && (
-                        <ClosenessTierBadge
-                          tier={c.closenessTier}
-                          className="shrink-0"
-                        />
-                      )}
-                    </div>
-                    {details && (
-                      <p className="mt-0.5 truncate text-xs text-muted-foreground/80">
-                        {details}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="flex shrink-0 items-center gap-1">
-                    <ClosenessChip
-                      closeness={c.closeness}
-                      relationshipScore={c.relationshipScore}
-                      closenessTier={c.closenessTier}
-                    />
-
-                    {c.linkedinUrl ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={`Open ${c.fullName} on LinkedIn`}
-                        className="shrink-0 text-muted-foreground"
-                        onClick={(e: MouseEvent<HTMLButtonElement>) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          window.open(
-                            buildLinkedInUrl(c.linkedinUrl!),
-                            "_blank",
-                            "noopener,noreferrer"
-                          );
-                        }}
-                      >
-                        <LinkedInIcon className="size-4" />
-                      </Button>
-                    ) : null}
-
-                    <FollowUpRowButton
-                      contactId={c.id}
-                      nextFollowUpAt={c.nextFollowUpAt}
-                      overdue={overdue}
-                      scheduledLabel={scheduledLabel}
-                    />
-
-                    <DeleteRowButton
-                      name={c.fullName}
-                      disabled={pending || exiting}
-                      onClick={() => requestDelete(c.id)}
-                    />
-                  </div>
-                </div>
+      <>
+        <ul className="divide-y divide-border/60 overflow-hidden rounded-2xl">
+          {sections.map((section) => (
+            <li key={section.letter} className="list-none">
+              <div
+                id={`contact-letter-${section.letter}`}
+                className="sticky top-0 z-10 border-b border-border/50 bg-card/95 px-4 py-1.5 backdrop-blur sm:px-5"
+              >
+                <p className="text-xs font-semibold tracking-wide text-muted-foreground">
+                  {section.letter}
+                </p>
               </div>
+              <ul className="divide-y divide-border/60">
+                {section.contacts.map((c) => {
+                  const exiting = exitingId === c.id;
+                  const overdue = isOverdue(c.nextFollowUpAt);
+                  const scheduledLabel = dueLabel(c.nextFollowUpAt);
+                  const details = detailLine(c.school, c.location);
+
+                  function openContact() {
+                    if (exiting) return;
+                    router.push(`/contacts/${c.id}`);
+                  }
+
+                  function onRowKeyDown(e: KeyboardEvent<HTMLLIElement>) {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openContact();
+                    }
+                  }
+
+                  return (
+                    <li
+                      key={c.id}
+                      role="link"
+                      tabIndex={0}
+                      onClick={openContact}
+                      onKeyDown={onRowKeyDown}
+                      className={cn(
+                        "contact-row grid cursor-pointer transition-[grid-template-rows,opacity] duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+                        "outline-none focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset",
+                        exiting
+                          ? "grid-rows-[0fr] opacity-0"
+                          : "grid-rows-[1fr] opacity-100"
+                      )}
+                    >
+                      <div className="overflow-hidden">
+                        <div
+                          className={cn(
+                            "flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-muted/40 sm:px-5",
+                            "transition-transform duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+                            exiting && "-translate-x-8"
+                          )}
+                        >
+                          <ContactAvatarPreview contact={c}>
+                            <ContactAvatar
+                              contactId={c.id}
+                              firstName={c.firstName}
+                              fullName={c.fullName}
+                              linkedinUrl={c.linkedinUrl}
+                              profileImageUrl={c.profileImageUrl}
+                              size="lg"
+                            />
+                          </ContactAvatarPreview>
+
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-medium text-primary">
+                              {c.preferredName || c.fullName}
+                            </p>
+                            <div className="mt-0.5 flex min-w-0 items-center gap-2">
+                              <p className="min-w-0 truncate text-sm text-muted-foreground">
+                                {roleLine(c.title, c.company)}
+                              </p>
+                              {c.closenessTier && (
+                                <ClosenessTierBadge
+                                  tier={c.closenessTier}
+                                  className="shrink-0"
+                                />
+                              )}
+                            </div>
+                            {details && (
+                              <p className="mt-0.5 truncate text-xs text-muted-foreground/80">
+                                {details}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex shrink-0 items-center gap-1">
+                            <ClosenessChip
+                              closeness={c.closeness}
+                              relationshipScore={c.relationshipScore}
+                              closenessTier={c.closenessTier}
+                            />
+
+                            {c.linkedinUrl ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-sm"
+                                aria-label={`Open ${c.fullName} on LinkedIn`}
+                                className="shrink-0 text-muted-foreground"
+                                onClick={(e: MouseEvent<HTMLButtonElement>) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  window.open(
+                                    buildLinkedInUrl(c.linkedinUrl!),
+                                    "_blank",
+                                    "noopener,noreferrer"
+                                  );
+                                }}
+                              >
+                                <LinkedInIcon className="size-4" />
+                              </Button>
+                            ) : null}
+
+                            <FollowUpRowButton
+                              contactId={c.id}
+                              nextFollowUpAt={c.nextFollowUpAt}
+                              overdue={overdue}
+                              scheduledLabel={scheduledLabel}
+                            />
+
+                            <DeleteRowButton
+                              name={c.fullName}
+                              disabled={pending || exiting}
+                              onClick={() => requestDelete(c.id)}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
             </li>
+          ))}
+        </ul>
+
+        <AlphabetScrubber
+          available={availableLetters}
+          activeLetter={activeLetter}
+          onSelect={scrollToLetter}
+          onScrubEnd={() => setActiveLetter(null)}
+        />
+
+        <Dialog
+          open={confirmId !== null}
+          onOpenChange={(open) => {
+            if (!open) setConfirmId(null);
+          }}
+        >
+          <DialogContent showCloseButton={false} className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Delete {confirmContact?.fullName}?</DialogTitle>
+              <DialogDescription>
+                This removes the contact and their interaction history. This
+                cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2 sm:gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setConfirmId(null)}
+                disabled={pending}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                className="delete-confirm-btn"
+                onClick={confirmDelete}
+                disabled={pending}
+              >
+                <Trash2 className="size-3.5" />
+                Delete contact
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </>
+    </TooltipProvider>
+  );
+}
+
+function nearestSectionEl(letter: string, available: Set<string>) {
+  const idx = ALPHABET.indexOf(letter as (typeof ALPHABET)[number]);
+  if (idx < 0) return null;
+
+  for (let i = idx; i < ALPHABET.length; i++) {
+    const next = ALPHABET[i]!;
+    if (available.has(next)) {
+      return document.getElementById(`contact-letter-${next}`);
+    }
+  }
+  for (let i = idx - 1; i >= 0; i--) {
+    const prev = ALPHABET[i]!;
+    if (available.has(prev)) {
+      return document.getElementById(`contact-letter-${prev}`);
+    }
+  }
+  return null;
+}
+
+function AlphabetScrubber({
+  available,
+  activeLetter,
+  onSelect,
+  onScrubEnd,
+}: {
+  available: Set<string>;
+  activeLetter: string | null;
+  onSelect: (letter: string) => void;
+  onScrubEnd: () => void;
+}) {
+  const railRef = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  function letterFromClientY(clientY: number) {
+    const el = railRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    if (rect.height <= 0) return null;
+    const t = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height));
+    const idx = Math.min(
+      ALPHABET.length - 1,
+      Math.max(0, Math.floor(t * ALPHABET.length))
+    );
+    return ALPHABET[idx]!;
+  }
+
+  function scrub(clientY: number) {
+    const letter = letterFromClientY(clientY);
+    if (letter) onSelect(letter);
+  }
+
+  function onPointerDown(e: ReactPointerEvent<HTMLDivElement>) {
+    dragging.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    scrub(e.clientY);
+  }
+
+  function onPointerMove(e: ReactPointerEvent<HTMLDivElement>) {
+    if (!dragging.current) return;
+    scrub(e.clientY);
+  }
+
+  function onPointerUp(e: ReactPointerEvent<HTMLDivElement>) {
+    dragging.current = false;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    onScrubEnd();
+  }
+
+  if (!mounted) return null;
+
+  return createPortal(
+    <div
+      className={cn(
+        "pointer-events-none fixed top-1/2 right-2 z-40 -translate-y-1/2 sm:right-4",
+        "pb-[env(safe-area-inset-bottom)]"
+      )}
+    >
+      <div
+        ref={railRef}
+        role="navigation"
+        aria-label="Jump to letter"
+        className={cn(
+          "pointer-events-auto relative flex h-[min(70vh,32rem)] w-9 cursor-ns-resize select-none flex-col items-center justify-between rounded-2xl border border-border/70 bg-card/95 py-2.5 shadow-md backdrop-blur",
+          "touch-none ring-1 ring-foreground/5"
+        )}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
+        {ALPHABET.map((letter) => {
+          const hasContacts = available.has(letter);
+          const isActive = activeLetter === letter;
+          return (
+            <button
+              key={letter}
+              type="button"
+              tabIndex={-1}
+              disabled={!hasContacts}
+              aria-label={
+                hasContacts ? `Jump to ${letter}` : `${letter} — no contacts`
+              }
+              className={cn(
+                "flex h-[1.1%] min-h-0 w-full items-center justify-center text-[9px] leading-none sm:text-[10px]",
+                hasContacts
+                  ? "font-medium text-muted-foreground hover:text-primary"
+                  : "text-muted-foreground/30",
+                isActive && hasContacts && "scale-125 font-semibold text-primary"
+              )}
+              onClick={(e) => {
+                e.preventDefault();
+                if (hasContacts) onSelect(letter);
+              }}
+            >
+              {letter}
+            </button>
           );
         })}
-      </ul>
 
-      <Dialog
-        open={confirmId !== null}
-        onOpenChange={(open) => {
-          if (!open) setConfirmId(null);
-        }}
-      >
-        <DialogContent showCloseButton={false} className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Delete {confirmContact?.fullName}?</DialogTitle>
-            <DialogDescription>
-              This removes the contact and their interaction history. This
-              cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setConfirmId(null)}
-              disabled={pending}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              className="delete-confirm-btn"
-              onClick={confirmDelete}
-              disabled={pending}
-            >
-              <Trash2 className="size-3.5" />
-              Delete contact
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </TooltipProvider>
+        {activeLetter && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute top-1/2 -left-14 flex size-11 -translate-y-1/2 items-center justify-center rounded-xl bg-primary text-lg font-semibold text-primary-foreground shadow-md"
+          >
+            {activeLetter}
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body
   );
 }
 

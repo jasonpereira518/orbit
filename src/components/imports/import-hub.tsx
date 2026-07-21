@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { CalendarImportSection } from "@/components/imports/calendar-import-section";
 import {
   ImportHistory,
@@ -36,6 +37,26 @@ const TABS: { id: ImportTab; label: string }[] = [
   { id: "calendar", label: "Calendar" },
 ];
 
+/** Refresh server-rendered data when the user returns to this browser tab. */
+function useRefreshOnVisible() {
+  const router = useRouter();
+
+  useEffect(() => {
+    function onVisible() {
+      if (document.visibilityState === "visible") {
+        router.refresh();
+      }
+    }
+
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [router]);
+}
+
 export function ImportHub({
   history,
   calendarSubscriptions = [],
@@ -44,6 +65,7 @@ export function ImportHub({
   calendarSubscriptions?: CalendarSub[];
 }) {
   const [tab, setTab] = useState<ImportTab>("connections");
+  useRefreshOnVisible();
 
   return (
     <div className="space-y-8">
@@ -58,6 +80,8 @@ export function ImportHub({
             type="button"
             role="tab"
             aria-selected={tab === t.id}
+            aria-controls={`import-panel-${t.id}`}
+            id={`import-tab-${t.id}`}
             onClick={() => setTab(t.id)}
             className={cn(
               "flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
@@ -71,11 +95,31 @@ export function ImportHub({
         ))}
       </div>
 
-      {tab === "connections" ? <LinkedInConnectionsImport /> : null}
-      {tab === "messages" ? <LinkedInMessagesImport /> : null}
-      {tab === "calendar" ? (
+      {/* Keep panels mounted so in-flight imports survive tab switches. */}
+      <div
+        id="import-panel-connections"
+        role="tabpanel"
+        aria-labelledby="import-tab-connections"
+        hidden={tab !== "connections"}
+      >
+        <LinkedInConnectionsImport />
+      </div>
+      <div
+        id="import-panel-messages"
+        role="tabpanel"
+        aria-labelledby="import-tab-messages"
+        hidden={tab !== "messages"}
+      >
+        <LinkedInMessagesImport />
+      </div>
+      <div
+        id="import-panel-calendar"
+        role="tabpanel"
+        aria-labelledby="import-tab-calendar"
+        hidden={tab !== "calendar"}
+      >
         <CalendarImportSection calendarSubscriptions={calendarSubscriptions} />
-      ) : null}
+      </div>
 
       <ImportHistory history={history} />
     </div>
