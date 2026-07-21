@@ -67,12 +67,15 @@ export function resolveGeminiModel(model?: string | null) {
   return resolveAiModel("gemini", model);
 }
 
-type StoredSettings = {
+type ProviderKeySettings = {
+  geminiApiKeyEncrypted?: string | null;
+  openaiApiKeyEncrypted?: string | null;
+  anthropicApiKeyEncrypted?: string | null;
+};
+
+type StoredSettings = ProviderKeySettings & {
   aiProvider: string | null;
   aiModel: string | null;
-  geminiApiKeyEncrypted: string | null;
-  openaiApiKeyEncrypted: string | null;
-  anthropicApiKeyEncrypted: string | null;
 };
 
 async function loadSettings(userId: string) {
@@ -105,7 +108,7 @@ function getEnvProviderKey(provider: AiProvider): string | null {
 
 function hasPersonalProviderKey(
   provider: AiProvider,
-  settings?: StoredSettings | null
+  settings?: ProviderKeySettings | null
 ) {
   if (provider === "gemini") return Boolean(settings?.geminiApiKeyEncrypted);
   if (provider === "openai") return Boolean(settings?.openaiApiKeyEncrypted);
@@ -114,7 +117,7 @@ function hasPersonalProviderKey(
 
 export function getProviderApiKey(
   provider: AiProvider,
-  settings?: StoredSettings | null
+  settings?: ProviderKeySettings | null
 ): string | null {
   const personal =
     provider === "gemini"
@@ -129,14 +132,14 @@ export function getProviderApiKey(
 
 export function hasProviderKey(
   provider: AiProvider,
-  settings?: StoredSettings | null
+  settings?: ProviderKeySettings | null
 ) {
   return Boolean(getProviderApiKey(provider, settings));
 }
 
 export function usingEnvKey(
   provider: AiProvider,
-  settings?: StoredSettings | null
+  settings?: ProviderKeySettings | null
 ) {
   if (hasPersonalProviderKey(provider, settings)) return false;
   return Boolean(getEnvProviderKey(provider));
