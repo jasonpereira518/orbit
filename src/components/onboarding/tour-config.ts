@@ -94,7 +94,7 @@ export const TOUR_STEPS: TourStep[] = [
     id: "chat",
     navKey: "chat",
     title: "Chat with your network",
-    body: "Ask who can help — or update many contacts from a dump of notes.",
+    body: "Ask who can help, who to follow up with, or who knows what.",
     hotspots: [
       { id: "question", label: "Ask natural questions like this." },
       { id: "answer", label: "Get concrete people & next steps." },

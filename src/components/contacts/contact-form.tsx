@@ -9,13 +9,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
 export function ContactForm({
   initial,
   contactId,
+  className,
+  onSuccess,
 }: {
   initial?: Partial<ContactInput> & { tags?: string[] };
   contactId?: string;
+  className?: string;
+  onSuccess?: () => void;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -47,7 +52,10 @@ export function ContactForm({
 
   return (
     <form
-      className="space-y-4 rounded-2xl border border-border/70 bg-card p-6"
+      className={cn(
+        "space-y-4 rounded-2xl border border-border/70 bg-card p-6",
+        className
+      )}
       onSubmit={(e) => {
         e.preventDefault();
         start(async () => {
@@ -77,10 +85,12 @@ export function ContactForm({
             if (contactId) {
               await updateContact(contactId, payload);
               toast.success("Contact updated");
+              onSuccess?.();
               router.push(`/contacts/${contactId}`);
             } else {
               const c = await createContact(payload);
               toast.success("Contact created");
+              onSuccess?.();
               router.push(`/contacts/${c.id}`);
             }
             router.refresh();

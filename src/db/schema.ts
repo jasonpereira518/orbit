@@ -353,6 +353,48 @@ export const contactEmbeddings = pgTable(
   ]
 );
 
+export type ChatRecommendation = {
+  contact_id: string;
+  name: string;
+  reason: string;
+  suggested_action: string;
+  draft_message: string | null;
+};
+
+export const chatThreads = pgTable(
+  "chat_threads",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    title: text("title"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("chat_threads_user_idx").on(t.userId),
+    index("chat_threads_user_updated_idx").on(t.userId, t.updatedAt),
+  ]
+);
+
+export const chatMessages = pgTable(
+  "chat_messages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => chatThreads.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
+    role: text("role").$type<"user" | "assistant">().notNull(),
+    content: text("content").notNull(),
+    recommendations: jsonb("recommendations").$type<ChatRecommendation[]>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("chat_messages_thread_idx").on(t.threadId),
+    index("chat_messages_user_idx").on(t.userId),
+  ]
+);
+
 export const contactsRelations = relations(contacts, ({ many }) => ({
   interactions: many(interactions),
   reminders: many(reminders),
@@ -431,6 +473,17 @@ export const outreachMessagesRelations = relations(
   })
 );
 
+export const chatThreadsRelations = relations(chatThreads, ({ many }) => ({
+  messages: many(chatMessages),
+}));
+
+export const chatMessagesRelations = relations(chatMessages, ({ one }) => ({
+  thread: one(chatThreads, {
+    fields: [chatMessages.threadId],
+    references: [chatThreads.id],
+  }),
+}));
+
 export type Contact = typeof contacts.$inferSelect;
 export type NewContact = typeof contacts.$inferInsert;
 export type Interaction = typeof interactions.$inferSelect;
@@ -444,3 +497,5 @@ export type UserGoal = typeof userGoals.$inferSelect;
 export type OutreachCampaign = typeof outreachCampaigns.$inferSelect;
 export type OutreachProspect = typeof outreachProspects.$inferSelect;
 export type OutreachMessage = typeof outreachMessages.$inferSelect;
+export type ChatThread = typeof chatThreads.$inferSelect;
+export type ChatMessage = typeof chatMessages.$inferSelect;

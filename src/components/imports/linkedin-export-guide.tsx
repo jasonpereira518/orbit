@@ -24,46 +24,33 @@ type GuideStep = {
   imageSrc?: string;
 };
 
-const CONNECTIONS_STEPS: GuideStep[] = [
+const SHARED_EXPORT_STEPS: GuideStep[] = [
   {
-    title: "Open LinkedIn settings",
-    body: "Click Me → Settings & Privacy on LinkedIn.",
-    imageSrc: "/guides/linkedin/connections-1.png",
+    title: "Open Settings & Privacy",
+    body: "On LinkedIn, click Me in the top nav, then Settings & Privacy.",
+    imageSrc: "/guides/linkedin/export-1.png",
   },
   {
-    title: "Request a copy of your data",
-    body: "Go to Data privacy → Get a copy of your data.",
-    imageSrc: "/guides/linkedin/connections-2.png",
+    title: "Open Download your data",
+    body: "In the sidebar choose Data privacy, then click Download your data.",
+    imageSrc: "/guides/linkedin/export-2.png",
   },
   {
-    title: "Select Connections only",
-    body: "Choose Connections (you can leave other options unchecked) → Request archive.",
-    imageSrc: "/guides/linkedin/connections-3.png",
+    title: "Request your archive",
+    body: "Select Download larger data archive (includes connections and more), then click Request archive. LinkedIn usually emails you within about 24 hours.",
+    imageSrc: "/guides/linkedin/export-3.png",
   },
   {
-    title: "Download and upload here",
-    body: "When LinkedIn emails you, download the archive and upload the Connections CSV on this page.",
-    imageSrc: "/guides/linkedin/connections-4.png",
+    title: "Download from email",
+    body: "When LinkedIn emails “Your full LinkedIn data archive is ready,” use the download link. Archives can arrive in multiple parts and expire after 72 hours.",
+    imageSrc: "/guides/linkedin/export-4.png",
   },
 ];
 
-const MESSAGES_STEPS: GuideStep[] = [
-  {
-    title: "Open data download",
-    body: "LinkedIn → Me → Settings & Privacy → Data privacy → Get a copy of your data.",
-    imageSrc: "/guides/linkedin/messages-1.png",
-  },
-  {
-    title: "Select Messages",
-    body: "Choose Messages → Request archive. LinkedIn may take a while to prepare the file.",
-    imageSrc: "/guides/linkedin/messages-2.png",
-  },
-  {
-    title: "Upload ZIP or CSV",
-    body: "Download the archive when ready. Upload the ZIP here (Orbit finds messages.csv), or extract and upload messages.csv yourself.",
-    imageSrc: "/guides/linkedin/messages-3.png",
-  },
-];
+const MESSAGES_FINAL: GuideStep = {
+  title: "Upload Messages here",
+  body: "Unzip the archive and upload messages.csv — or the whole ZIP — on this page. Orbit will find messages.csv inside the ZIP if needed.",
+};
 
 function GuideImage({ src, alt }: { src?: string; alt: string }) {
   const [failed, setFailed] = useState(false);
@@ -81,7 +68,7 @@ function GuideImage({ src, alt }: { src?: string; alt: string }) {
     <img
       src={src}
       alt={alt}
-      className="mt-2 w-full rounded-lg border border-border/60 bg-muted/30 object-cover"
+      className="mt-2 w-full rounded-lg border border-border/60 bg-muted/30 object-cover object-top"
       onError={() => setFailed(true)}
     />
   );
@@ -89,7 +76,10 @@ function GuideImage({ src, alt }: { src?: string; alt: string }) {
 
 export function LinkedInExportGuide({ variant }: { variant: GuideVariant }) {
   const [open, setOpen] = useState(false);
-  const steps = variant === "connections" ? CONNECTIONS_STEPS : MESSAGES_STEPS;
+  const steps =
+    variant === "connections"
+      ? SHARED_EXPORT_STEPS
+      : [...SHARED_EXPORT_STEPS, MESSAGES_FINAL];
   const title =
     variant === "connections"
       ? "Export LinkedIn connections"

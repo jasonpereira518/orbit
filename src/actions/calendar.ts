@@ -11,8 +11,14 @@ import {
 } from "@/lib/calendar-sync";
 
 function normalizeIcsUrl(raw: string) {
-  const url = raw.trim();
+  let url = raw.trim();
   if (!url) throw new Error("ICS URL is required");
+
+  // Apple / Outlook often copy webcal:// links
+  if (url.startsWith("webcal://")) {
+    url = `https://${url.slice("webcal://".length)}`;
+  }
+
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -22,6 +28,19 @@ function normalizeIcsUrl(raw: string) {
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new Error("Calendar URL must start with https://");
   }
+
+  const host = parsed.hostname.toLowerCase();
+  const path = parsed.pathname;
+  if (
+    host.includes("google.com") &&
+    /\/calendar\/ical\//i.test(path) &&
+    /\/public\/basic\.ics$/i.test(path)
+  ) {
+    throw new Error(
+      "That Google Calendar link is the public address. Use the Secret address in iCal format instead (Calendar settings → Integrate calendar → Secret address in iCal format). It looks like …/private-…/basic.ics."
+    );
+  }
+
   return parsed.toString();
 }
 

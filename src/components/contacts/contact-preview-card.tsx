@@ -16,6 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 
 export type ContactPreviewData = {
+  id?: string;
   fullName: string;
   firstName: string | null;
   preferredName: string | null;
@@ -107,6 +108,7 @@ export function ContactAvatarPreview({
           >
             <div className="flex items-start gap-3">
               <ContactAvatar
+                contactId={contact.id}
                 firstName={contact.firstName}
                 fullName={contact.fullName}
                 linkedinUrl={contact.linkedinUrl}

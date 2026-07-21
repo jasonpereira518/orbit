@@ -22,7 +22,19 @@ import {
   getApolloApiKey,
 } from "@/lib/apollo";
 import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
-import { linkedinAvatarUrl } from "@/lib/contact-avatar";
+import {
+  downloadImageAsDataUrl,
+  fetchLinkedInPhotoDataUrl,
+} from "@/lib/contact-avatar";
+import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
+import {
+  findRelatedContacts,
+  type RelatedContact,
+} from "@/lib/related-contacts";
+import {
+  getOutreachSendConfig,
+  sendOutreachMessage,
+} from "@/lib/outreach-send";
 
 export type ContactWriteOptions = {
   /** Skip path revalidation during bulk imports. */
@@ -147,7 +159,7 @@ export async function listContacts(filters?: {
 
   const goals = await listActiveGoalTexts(userId);
 
-  return rows.map((c) => {
+  const mapped = rows.map((c) => {
     const tags = c.contactTags.map((ct) => ct.tag.name);
     const closeness = computeCloseness({ ...c, tags }, goals);
     return {
@@ -158,6 +170,24 @@ export async function listContacts(filters?: {
       orbitScore: closeness.orbitScore,
     };
   });
+
+  mapped.sort((a, b) => {
+    const aLast = lastNameSortKey(a.lastName, a.fullName);
+    const bLast = lastNameSortKey(b.lastName, b.fullName);
+    const byLast = aLast.localeCompare(bLast, undefined, { sensitivity: "base" });
+    if (byLast !== 0) return byLast;
+    return a.fullName.localeCompare(b.fullName, undefined, { sensitivity: "base" });
+  });
+
+  return mapped;
+}
+
+function lastNameSortKey(lastName: string | null | undefined, fullName: string) {
+  const fromField = lastName?.trim();
+  if (fromField) return fromField.toLocaleLowerCase();
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  const inferred = parts.length > 1 ? parts[parts.length - 1]! : parts[0] || "";
+  return inferred.toLocaleLowerCase();
 }
 
 export async function getContact(id: string) {
@@ -492,43 +522,60 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
   let enriched: Awaited<ReturnType<typeof enrichPeopleFromLinkedIn>>;
   let avatarOnly = false;
 
-  try {
-    enriched = await enrichPeopleFromLinkedIn(
-      userId,
-      ordered.map((r) => ({
-        linkedinUrl: r.linkedinUrl!,
-        fullName: r.fullName,
-        email: r.email,
-      }))
-    );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "";
-    // Free Apollo plans often block people enrichment — still refresh photos.
-    if (/not available on your current plan|403/i.test(message)) {
-      avatarOnly = true;
-      enriched = ordered.map(() => null);
-    } else {
-      throw err;
+  const apiKey = await getApolloApiKey(userId);
+  if (!apiKey) {
+    // Photos still refresh via LinkedIn OG without Apollo.
+    avatarOnly = true;
+    enriched = ordered.map(() => null);
+  } else {
+    try {
+      enriched = await enrichPeopleFromLinkedIn(
+        userId,
+        ordered.map((r) => ({
+          linkedinUrl: r.linkedinUrl!,
+          fullName: r.fullName,
+          email: r.email,
+        }))
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "";
+      // Free Apollo plans often block people enrichment — still refresh photos.
+      if (
+        /not available on your current plan|403|Add an Apollo API key/i.test(
+          message
+        )
+      ) {
+        avatarOnly = true;
+        enriched = ordered.map(() => null);
+      } else {
+        throw err;
+      }
     }
   }
 
   let refreshed = 0;
   let unmatched = 0;
   let failed = 0;
-  const bust = Date.now();
 
   for (let i = 0; i < ordered.length; i++) {
     const contact = ordered[i];
     const profile = enriched[i];
 
     try {
+      // Prefer Apollo photo when present; otherwise resolve via LinkedIn OG image.
+      let profileImageUrl: string | null = null;
+      if (profile?.profileImageUrl) {
+        profileImageUrl = await downloadImageAsDataUrl(profile.profileImageUrl);
+      }
+      if (!profileImageUrl && contact.linkedinUrl) {
+        profileImageUrl = await fetchLinkedInPhotoDataUrl(contact.linkedinUrl);
+      }
+
       if (!profile) {
-        // Still refresh avatar via unavatar cache-bust when Apollo has no match.
-        const avatar = linkedinAvatarUrl(contact.linkedinUrl);
-        if (avatar) {
+        if (profileImageUrl) {
           await updateContact(
             contact.id,
-            { profileImageUrl: `${avatar}&t=${bust}` },
+            { profileImageUrl },
             { skipRevalidate: true }
           );
           refreshed += 1;
@@ -537,13 +584,6 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
         }
         continue;
       }
-
-      const avatarFallback = linkedinAvatarUrl(
-        profile.linkedinUrl || contact.linkedinUrl
-      );
-      const profileImageUrl =
-        profile.profileImageUrl ||
-        (avatarFallback ? `${avatarFallback}&t=${bust}` : null);
 
       await updateContact(
         contact.id,
@@ -573,4 +613,131 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
   revalidatePath("/graph");
 
   return { refreshed, unmatched, failed, avatarOnly };
+}
+
+/** Draft a warm follow-up message from the contact profile. */
+export async function draftContactFollowUp(contactId: string) {
+  const userId = await requireUserId();
+  const goals = await listActiveGoalTexts(userId);
+  return generateContactFollowUpDraft(userId, contactId, goals);
+}
+
+export type ContactFollowUpSendOptions = {
+  canSendEmail: boolean;
+  hasEmail: boolean;
+  hasLinkedIn: boolean;
+  email: string | null;
+  linkedinUrl: string | null;
+};
+
+/** Whether this contact can receive an automated email follow-up. */
+export async function getContactFollowUpSendOptions(
+  contactId: string
+): Promise<ContactFollowUpSendOptions> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const contact = await db.query.contacts.findFirst({
+    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+    columns: {
+      email: true,
+      linkedinUrl: true,
+    },
+  });
+  if (!contact) throw new Error("Contact not found");
+
+  const config = await getOutreachSendConfig(userId);
+  const email = contact.email?.trim() || null;
+  const linkedinUrl = contact.linkedinUrl?.trim() || null;
+
+  return {
+    hasEmail: Boolean(email),
+    hasLinkedIn: Boolean(linkedinUrl),
+    email,
+    linkedinUrl,
+    canSendEmail: Boolean(email && config.resendApiKey),
+  };
+}
+
+/** Send a follow-up email via Resend and log it as an interaction. */
+export async function sendContactFollowUpEmail(
+  contactId: string,
+  body: string,
+  subject?: string
+) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const contact = await db.query.contacts.findFirst({
+    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+    columns: {
+      id: true,
+      email: true,
+      fullName: true,
+      preferredName: true,
+    },
+  });
+  if (!contact) throw new Error("Contact not found");
+  if (!contact.email?.trim()) throw new Error("Contact has no email address.");
+
+  const trimmed = body.trim();
+  if (!trimmed) throw new Error("Message body is empty.");
+
+  const name = contact.preferredName || contact.fullName;
+  await sendOutreachMessage({
+    userId,
+    channel: "email",
+    toEmail: contact.email.trim(),
+    subject: subject?.trim() || `Following up · ${name}`,
+    body: trimmed,
+  });
+
+  await logInteraction({
+    contactId,
+    interactionType: "email",
+    source: "follow_up",
+    rawNotes: trimmed,
+    aiSummary: "Sent follow-up email from contact profile",
+  });
+
+  return { ok: true as const };
+}
+
+/** Contacts related by company, school, howMet, mentions, tags, or interests. */
+export async function listRelatedContacts(
+  contactId: string,
+  limit = 8
+): Promise<RelatedContact[]> {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const rows = await db.query.contacts.findMany({
+    where: eq(contacts.userId, userId),
+    with: { contactTags: { with: { tag: true } } },
+    columns: {
+      id: true,
+      fullName: true,
+      preferredName: true,
+      firstName: true,
+      title: true,
+      company: true,
+      companyId: true,
+      school: true,
+      howMet: true,
+      profileImageUrl: true,
+      linkedinUrl: true,
+      notes: true,
+      aiSummary: true,
+      keyFacts: true,
+      sharedInterests: true,
+      relationshipScore: true,
+    },
+  });
+
+  return findRelatedContacts(
+    contactId,
+    rows.map((r) => ({
+      ...r,
+      tags: r.contactTags.map((ct) => ct.tag.name),
+    })),
+    limit
+  );
 }

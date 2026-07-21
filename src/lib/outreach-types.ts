@@ -53,5 +53,5 @@ export const OUTREACH_TONES = [
 export const BULK_SEND_LIMIT = 25;
 export const DAILY_SEND_LIMIT = 50;
 
-/** Contacts refreshed per server action call (sequential people/match). */
-export const LINKEDIN_REFRESH_BATCH_SIZE = 5;
+/** Contacts refreshed per server action call (sequential people/match + photo fetch). */
+export const LINKEDIN_REFRESH_BATCH_SIZE = 3;

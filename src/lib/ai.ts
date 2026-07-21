@@ -451,7 +451,8 @@ export async function chatWithNetwork(
     recentMessages?: string[];
     tags: string[];
     relevance: number;
-  }>
+  }>,
+  priorTurns: Array<{ role: "user" | "assistant"; content: string }> = []
 ) {
   const contextBlock = contactsContext
     .map((c, i) => {
@@ -470,11 +471,19 @@ export async function chatWithNetwork(
     })
     .join("\n\n");
 
+  const historyBlock =
+    priorTurns.length > 0
+      ? priorTurns
+          .map((t) => `${t.role === "user" ? "User" : "Assistant"}: ${t.content}`)
+          .join("\n\n")
+      : "";
+
   const content = await completeJson(userId, {
     temperature: 0.3,
-    user: `Question: ${question}\n\nContacts:\n${contextBlock || "(no contacts found)"}`,
+    user: `${historyBlock ? `Prior conversation:\n${historyBlock}\n\n` : ""}Question: ${question}\n\nContacts:\n${contextBlock || "(no contacts found)"}`,
     system: `You are Orbit, a personal networking assistant.
 Answer ONLY using the provided contacts (including summaries, notes, key facts, and LinkedIn messages). Never invent people or message content.
+Use prior conversation for context when present, but ground every recommendation in the contacts list.
 Return JSON:
 {
   "answer": string,

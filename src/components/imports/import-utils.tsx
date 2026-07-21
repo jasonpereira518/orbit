@@ -100,6 +100,10 @@ export function useBatchedImport() {
           total,
           label,
         });
+        // Yield so React can paint progress (including after returning to a tab).
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, 0);
+        });
       }
       return last!;
     } finally {

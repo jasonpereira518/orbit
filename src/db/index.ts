@@ -239,6 +239,26 @@ CREATE TABLE IF NOT EXISTS outreach_messages (
 );
 CREATE INDEX IF NOT EXISTS outreach_messages_prospect_idx ON outreach_messages(prospect_id);
 CREATE INDEX IF NOT EXISTS outreach_messages_status_idx ON outreach_messages(status);
+CREATE TABLE IF NOT EXISTS chat_threads (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  title text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS chat_threads_user_idx ON chat_threads(user_id);
+CREATE INDEX IF NOT EXISTS chat_threads_user_updated_idx ON chat_threads(user_id, updated_at);
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  thread_id uuid NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  role text NOT NULL,
+  content text NOT NULL,
+  recommendations jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages(thread_id);
+CREATE INDEX IF NOT EXISTS chat_messages_user_idx ON chat_messages(user_id);
 `;
 
 async function columnExists(client: PGlite, table: string, column: string) {
@@ -421,6 +441,26 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `CREATE INDEX IF NOT EXISTS ai_suggestions_user_idx ON ai_suggestions(user_id, status)`,
     `CREATE INDEX IF NOT EXISTS embeddings_user_idx ON contact_embeddings(user_id)`,
     `CREATE INDEX IF NOT EXISTS embeddings_contact_idx ON contact_embeddings(contact_id)`,
+    `CREATE TABLE IF NOT EXISTS chat_threads (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id text NOT NULL,
+      title text,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS chat_threads_user_idx ON chat_threads(user_id)`,
+    `CREATE INDEX IF NOT EXISTS chat_threads_user_updated_idx ON chat_threads(user_id, updated_at)`,
+    `CREATE TABLE IF NOT EXISTS chat_messages (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      thread_id uuid NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+      user_id text NOT NULL,
+      role text NOT NULL,
+      content text NOT NULL,
+      recommendations jsonb,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages(thread_id)`,
+    `CREATE INDEX IF NOT EXISTS chat_messages_user_idx ON chat_messages(user_id)`,
   ];
 
   for (const statement of alters) {

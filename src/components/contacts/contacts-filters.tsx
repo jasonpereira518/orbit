@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -11,6 +11,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+
+const SEARCH_DEBOUNCE_MS = 250;
 
 export function ContactsFilters({
   initialQ,
@@ -25,6 +27,13 @@ export function ContactsFilters({
   const [q, setQ] = useState(initialQ);
   const [company, setCompany] = useState(initialCompany);
   const [minScore, setMinScore] = useState(initialMinScore || "any");
+  const debounceRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    };
+  }, []);
 
   function apply(next?: { q?: string; company?: string; minScore?: string }) {
     const params = new URLSearchParams();
@@ -34,7 +43,15 @@ export function ContactsFilters({
     if (qq) params.set("q", qq);
     if (cc) params.set("company", cc);
     if (ms && ms !== "any") params.set("minScore", ms);
-    router.push(`/contacts?${params.toString()}`);
+    const qs = params.toString();
+    router.push(qs ? `/contacts?${qs}` : "/contacts");
+  }
+
+  function scheduleApply(next: { q?: string; company?: string }) {
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    debounceRef.current = window.setTimeout(() => {
+      apply(next);
+    }, SEARCH_DEBOUNCE_MS);
   }
 
   return (
@@ -45,8 +62,11 @@ export function ContactsFilters({
           id="q"
           placeholder="Name, company, notes…"
           value={q}
-          onChange={(e) => setQ(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && apply()}
+          onChange={(e) => {
+            const value = e.target.value;
+            setQ(value);
+            scheduleApply({ q: value });
+          }}
         />
       </div>
       <div className="space-y-1.5">
@@ -55,8 +75,11 @@ export function ContactsFilters({
           id="company"
           placeholder="Exact company"
           value={company}
-          onChange={(e) => setCompany(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && apply()}
+          onChange={(e) => {
+            const value = e.target.value;
+            setCompany(value);
+            scheduleApply({ company: value });
+          }}
         />
       </div>
       <div className="space-y-1.5">
