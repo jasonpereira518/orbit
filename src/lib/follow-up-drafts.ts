@@ -2,12 +2,42 @@ import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { contacts, interactions, reminders } from "@/db/schema";
-import { completeJson } from "@/lib/ai";
+import { completeJson, parseAiJson } from "@/lib/ai";
 import { formatHowMetSummary } from "@/lib/met-context";
 
 const draftSchema = z.object({
   body: z.string().min(1),
 });
+
+function parseDraftBody(content: string): string {
+  try {
+    const parsed = draftSchema.parse(parseAiJson(content));
+    return parsed.body.trim();
+  } catch (err) {
+    // Last resort: pull a body string even from truncated model output.
+    const match = content.match(/"body"\s*:\s*"((?:\\.|[^"\\])*)/);
+    if (match?.[1]) {
+      try {
+        const body = JSON.parse(`"${match[1]}"`) as string;
+        if (body.trim()) return body.trim();
+      } catch {
+        const loose = match[1]
+          .replace(/\\n/g, "\n")
+          .replace(/\\"/g, '"')
+          .replace(/\\\\/g, "\\")
+          .trim();
+        if (loose) return loose;
+      }
+    }
+    throw err instanceof Error
+      ? new Error(
+          err.message.startsWith("Failed to parse AI JSON")
+            ? "Could not draft follow-up — try Regenerate."
+            : err.message
+        )
+      : err;
+  }
+}
 
 export type FollowUpDraft = {
   body: string;
@@ -97,6 +127,8 @@ async function draftFromContext(input: {
   }>;
   userGoals: string[];
   reminderBlock?: string | null;
+  channel?: "email" | "linkedin" | "sms";
+  intent?: string | null;
 }): Promise<FollowUpDraft> {
   const contactName = input.contact.preferredName || input.contact.fullName;
   const profileBlock = buildProfileBlock(input.contact);
@@ -106,6 +138,19 @@ async function draftFromContext(input: {
       ? `Your active goals: ${input.userGoals.join("; ")}`
       : "Your active goals: (none specified)";
 
+  const channelLabel =
+    input.channel === "email"
+      ? "email"
+      : input.channel === "sms"
+        ? "SMS / text message"
+        : input.channel === "linkedin"
+          ? "LinkedIn DM"
+          : "LinkedIn DM, text, or short email";
+
+  const intentBlock = input.intent?.trim()
+    ? `User intent for this message: ${input.intent.trim()}`
+    : null;
+
   const content = await completeJson(input.userId, {
     temperature: 0.5,
     system: `You draft warm, specific follow-up messages for a personal networking CRM called Orbit.
@@ -114,27 +159,29 @@ The user is following up with someone they already know — not cold outreach.
 Return strict JSON: { "body": string }
 
 Rules:
-- Write in first person as the user, ready to send (LinkedIn DM, text, or short email).
+- Write in first person as the user, ready to send as a ${channelLabel}.
 - Ground the message in the conversation history and reminder context. Reference a concrete detail when available.
-- Keep it natural and concise: roughly 40–120 words. No subject line.
+- Keep it natural and concise: roughly 40–90 words. No subject line.
+- Return a single complete JSON object; keep the body short enough to finish in one response.
 - Avoid spammy language, fake familiarity, exaggerated claims, and generic "just checking in".
 - Do not invent facts, meetings, or shared history that are not in the context.
 - If conversation history is thin, lean on the reminder title/notes and known profile details.
-- Prefer a soft, specific CTA (one ask) over a laundry list.`,
+- Prefer a soft, specific CTA (one ask) over a laundry list.
+${intentBlock ? "- Honor the user's stated intent when drafting." : ""}`,
     user: `${goalsBlock}
 
 Contact:
 ${profileBlock}
 
 ${input.reminderBlock?.trim() || "Reminder: Warm follow-up from contact profile"}
+${intentBlock ? `\n${intentBlock}` : ""}
 
 Conversation history (newest first):
 ${transcript || "(no interactions logged yet)"}`,
   });
 
-  const parsed = draftSchema.parse(JSON.parse(content));
   return {
-    body: parsed.body.trim(),
+    body: parseDraftBody(content),
     contactId: input.contact.id,
     contactName,
   };
@@ -186,7 +233,11 @@ export async function generateFollowUpDraft(
 export async function generateContactFollowUpDraft(
   userId: string,
   contactId: string,
-  userGoals: string[] = []
+  userGoals: string[] = [],
+  options?: {
+    channel?: "email" | "linkedin" | "sms";
+    intent?: string | null;
+  }
 ): Promise<FollowUpDraft> {
   const { contact, recent } = await loadContactContext(userId, contactId);
   return draftFromContext({
@@ -195,5 +246,7 @@ export async function generateContactFollowUpDraft(
     recent,
     userGoals,
     reminderBlock: "Reminder: Warm follow-up from contact profile",
+    channel: options?.channel,
+    intent: options?.intent,
   });
 }

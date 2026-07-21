@@ -9,6 +9,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
+import { CompanyRoleLine } from "@/components/contacts/company-role-line";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import {
   closenessPercentChipClass,
@@ -29,13 +30,6 @@ export type ContactPreviewData = {
   closeness?: number;
   closenessTier?: "inner" | "mid" | "outer";
 };
-
-function roleLine(title: string | null, company: string | null) {
-  if (title && company) return `${title} at ${company}`;
-  if (title) return title;
-  if (company) return company;
-  return null;
-}
 
 const OPEN_DELAY_MS = 200;
 const CURSOR_OFFSET = 14;
@@ -82,7 +76,6 @@ export function ContactAvatarPreview({
   }
 
   const displayName = contact.preferredName || contact.fullName;
-  const role = roleLine(contact.title, contact.company);
   const meta = [contact.school, contact.location].filter(Boolean).join(" · ");
 
   return (
@@ -117,9 +110,13 @@ export function ContactAvatarPreview({
               />
               <div className="min-w-0 flex-1">
                 <p className="truncate font-medium text-primary">{displayName}</p>
-                {role && (
-                  <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
-                    {role}
+                {(contact.title || contact.company) && (
+                  <p className="mt-0.5 line-clamp-2 text-xs">
+                    <CompanyRoleLine
+                      title={contact.title}
+                      company={contact.company}
+                      empty={null}
+                    />
                   </p>
                 )}
                 {meta && (

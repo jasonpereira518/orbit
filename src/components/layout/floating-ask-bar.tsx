@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -12,9 +13,12 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowUp, Loader2, RotateCcw, Search, Sparkles, X } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { toUserFacingError } from "@/lib/errors";
 import { askNetwork } from "@/actions/chat";
+import { getAskBarContact } from "@/actions/contacts";
 import { searchDashboardContacts } from "@/actions/search";
 import { createReminder } from "@/actions/reminders";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,7 +27,12 @@ import {
 } from "@/lib/keyword-search";
 import { cn } from "@/lib/utils";
 
-type ChatResult = Awaited<ReturnType<typeof askNetwork>>;
+type ChatResult = Extract<
+  Awaited<ReturnType<typeof askNetwork>>,
+  { ok: true }
+>;
+
+type AskBarContact = NonNullable<Awaited<ReturnType<typeof getAskBarContact>>>;
 
 type UserMessage = {
   id: string;
@@ -41,6 +50,9 @@ type AssistantMessage = {
 
 type ThreadMessage = UserMessage | AssistantMessage;
 
+const CONTACT_PATH_RE =
+  /^\/contacts\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
 const SUGGESTIONS = [
   "Who do I know at AWS?",
   "Who have I not followed up with recently?",
@@ -48,11 +60,26 @@ const SUGGESTIONS = [
   "Who should I reconnect with this week?",
 ];
 
+const PROFILE_SUGGESTIONS = [
+  "What should I know before we talk?",
+  "Summarize our relationship",
+  "What have we talked about recently?",
+  "Suggest a warm follow-up angle",
+];
+
 function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function contactIdFromPath(pathname: string): string | null {
+  const match = CONTACT_PATH_RE.exec(pathname);
+  return match?.[1] ?? null;
+}
+
 export function FloatingAskBar() {
+  const pathname = usePathname();
+  const pathContactId = contactIdFromPath(pathname);
+
   const inputId = useId();
   const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -67,6 +94,34 @@ export function FloatingAskBar() {
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [searchPending, startSearch] = useTransition();
   const [chatPending, startChat] = useTransition();
+
+  const [profileContact, setProfileContact] = useState<AskBarContact | null>(
+    null
+  );
+  const [chipDismissed, setChipDismissed] = useState(false);
+
+  const personContextActive =
+    Boolean(pathContactId) && Boolean(profileContact) && !chipDismissed;
+  const activeContactId = personContextActive ? profileContact!.id : null;
+  const activeContactName = personContextActive
+    ? profileContact!.displayName
+    : null;
+
+  useEffect(() => {
+    setChipDismissed(false);
+    setProfileContact(null);
+
+    if (!pathContactId) return;
+
+    let cancelled = false;
+    void getAskBarContact(pathContactId).then((contact) => {
+      if (!cancelled) setProfileContact(contact);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pathContactId]);
 
   const pinnedOpen = open || chatPending || messages.length > 0;
 
@@ -183,9 +238,19 @@ export function FloatingAskBar() {
       setHits([]);
       setOpen(true);
 
+      const contactId = activeContactId;
       startChat(async () => {
         try {
-          const res = await askNetwork(q);
+          const res = await askNetwork(
+            q,
+            contactId ? { contactId } : undefined
+          );
+          if (!res.ok) {
+            toast.error(res.error);
+            setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
+            setQuery(q);
+            return;
+          }
           const assistantMsg: AssistantMessage = {
             id: newId(),
             role: "assistant",
@@ -195,13 +260,18 @@ export function FloatingAskBar() {
           };
           setMessages((prev) => [...prev, assistantMsg]);
         } catch (err) {
-          toast.error(err instanceof Error ? err.message : "Search failed");
+          toast.error(
+            toUserFacingError(
+              err,
+              "Could not answer that. Add your AI API key in Settings."
+            ).message
+          );
           setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
           setQuery(q);
         }
       });
     },
-    [chatPending]
+    [activeContactId, chatPending]
   );
 
   function clearThread() {
@@ -212,6 +282,12 @@ export function FloatingAskBar() {
 
   const showPanel = open;
   const visible = !hidden || pinnedOpen;
+  const suggestionChips =
+    personContextActive && open ? PROFILE_SUGGESTIONS : SUGGESTIONS;
+  const placeholder =
+    personContextActive && open && activeContactName
+      ? `Ask about ${activeContactName}…`
+      : "Ask your network…";
 
   return (
     <motion.div
@@ -255,7 +331,9 @@ export function FloatingAskBar() {
                   <Sparkles className="size-3 text-primary" />
                   <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                     {messages.length > 0
-                      ? "Ask your network"
+                      ? personContextActive && activeContactName
+                        ? `Ask about ${activeContactName}`
+                        : "Ask your network"
                       : searchPending
                         ? "Searching…"
                         : hits.length > 0
@@ -301,11 +379,12 @@ export function FloatingAskBar() {
                     ) : (
                       <>
                         <p className="text-sm text-muted-foreground">
-                          Ask anything about people, companies, or follow-ups in
-                          your network.
+                          {personContextActive && activeContactName
+                            ? `Ask anything about ${activeContactName}—relationship history, talking points, or follow-ups.`
+                            : "Ask anything about people, companies, or follow-ups in your network."}
                         </p>
                         <div className="flex flex-wrap gap-1.5">
-                          {SUGGESTIONS.map((chip) => (
+                          {suggestionChips.map((chip) => (
                             <button
                               key={chip}
                               type="button"
@@ -432,11 +511,51 @@ export function FloatingAskBar() {
           )}
         </AnimatePresence>
 
+        <AnimatePresence>
+          {personContextActive && profileContact && (
+            <motion.div
+              key={`chip-${profileContact.id}`}
+              initial={{ opacity: 0, y: 8, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 6, scale: 0.98 }}
+              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              className="flex items-center gap-2 self-center rounded-full border border-border/70 bg-card/95 py-1 pl-1 pr-1.5 shadow-md backdrop-blur-md"
+            >
+              <ContactAvatar
+                contactId={profileContact.id}
+                firstName={profileContact.firstName}
+                fullName={profileContact.fullName}
+                linkedinUrl={profileContact.linkedinUrl}
+                profileImageUrl={profileContact.profileImageUrl}
+                size="sm"
+                className="size-6"
+              />
+              <p className="truncate text-xs text-muted-foreground">
+                Asking about{" "}
+                <span className="font-medium text-foreground">
+                  {profileContact.displayName}
+                </span>
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="shrink-0 rounded-full text-muted-foreground"
+                aria-label="Dismiss person context"
+                onClick={() => setChipDismissed(true)}
+              >
+                <X className="size-3.5" />
+              </Button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <motion.div
           layout
           className={cn(
             "flex h-12 items-center gap-2 rounded-full border border-border/70 bg-card/95 pl-4 pr-1.5 shadow-lg backdrop-blur-md",
             "focus-within:border-primary/40 focus-within:ring-[3px] focus-within:ring-primary/15",
+            personContextActive && "border-primary/25",
             open && "shadow-xl"
           )}
         >
@@ -446,7 +565,7 @@ export function FloatingAskBar() {
             ref={inputRef}
             type="text"
             value={query}
-            placeholder="Ask your network…"
+            placeholder={placeholder}
             disabled={chatPending}
             autoComplete="off"
             className={cn(

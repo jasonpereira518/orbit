@@ -1,5 +1,8 @@
 import { ChatPanelLazy } from "@/components/chat/chat-panel-lazy";
 
+/** Ask/chat server actions call AI providers — allow longer serverless runs. */
+export const maxDuration = 60;
+
 export default function ChatPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-5">

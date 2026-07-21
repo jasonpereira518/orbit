@@ -367,6 +367,7 @@ function ContactPanelBody({
       <SheetFooter className="gap-2 sm:flex-col">
         <EasyFollowUp
           contactId={id}
+          contactName={data.preferredName || data.fullName}
           nextFollowUpAt={data.nextFollowUpAt}
           className="w-full rounded-xl border border-border/50 bg-card/50 p-3"
           onScheduled={(dueDate) => {

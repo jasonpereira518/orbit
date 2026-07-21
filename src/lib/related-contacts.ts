@@ -17,6 +17,8 @@ export type RelatedContactCandidate = {
   howMet?: string | null;
   profileImageUrl?: string | null;
   linkedinUrl?: string | null;
+  email?: string | null;
+  phone?: string | null;
   tags?: string[] | null;
   sharedInterests?: string[] | null;
   notes?: string | null;
@@ -34,6 +36,8 @@ export type RelatedContact = {
   company: string | null;
   profileImageUrl: string | null;
   linkedinUrl: string | null;
+  email: string | null;
+  phone: string | null;
   reason: RelatedReason;
   reasonLabel: string;
 };
@@ -168,15 +172,25 @@ function bestReason(
 
 /**
  * Rank contacts related to `contactId` from shared company, school, howMet,
- * mentions, tags, and interests. Caps results for profile UI.
+ * mentions, tags, and interests. Mixes connection strength with intro usefulness.
  */
 export function findRelatedContacts(
   contactId: string,
   contacts: RelatedContactCandidate[],
-  limit = 8
+  limit = 6,
+  activeGoals: string[] = []
 ): RelatedContact[] {
   const source = contacts.find((c) => c.id === contactId);
   if (!source) return [];
+
+  const goalTokens = activeGoals
+    .flatMap((g) =>
+      g
+        .toLowerCase()
+        .split(/[^a-z0-9+#.]+/i)
+        .filter((t) => t.length > 2)
+    )
+    .slice(0, 40);
 
   const scored: Array<RelatedContact & { score: number }> = [];
 
@@ -186,7 +200,19 @@ export function findRelatedContacts(
     if (!reason) continue;
 
     const weight = REASON_WEIGHT[reason];
-    const closenessBoost = (other.relationshipScore ?? 2) * 2;
+    const strengthBoost = (other.relationshipScore ?? 2) * 4;
+
+    const otherCorpus = contactCorpus(other);
+    let introBoost = 0;
+    if (goalTokens.length > 0 && otherCorpus) {
+      const hits = goalTokens.filter((t) => otherCorpus.includes(t)).length;
+      introBoost = hits * 8;
+    }
+    // Mentions and shared company/school are especially useful intro paths
+    if (reason === "mention") introBoost += 25;
+    if (reason === "company" || reason === "companyId") introBoost += 12;
+    if (reason === "school") introBoost += 8;
+
     scored.push({
       id: other.id,
       fullName: other.fullName,
@@ -196,9 +222,11 @@ export function findRelatedContacts(
       company: other.company ?? null,
       profileImageUrl: other.profileImageUrl ?? null,
       linkedinUrl: other.linkedinUrl ?? null,
+      email: other.email ?? null,
+      phone: other.phone ?? null,
       reason,
       reasonLabel: reasonLabel(reason, source),
-      score: weight + closenessBoost,
+      score: weight + strengthBoost + introBoost,
     });
   }
 

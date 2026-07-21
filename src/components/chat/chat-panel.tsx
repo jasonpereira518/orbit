@@ -18,6 +18,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { toUserFacingError } from "@/lib/errors";
 import {
   askNetwork,
   createChatThread,
@@ -48,13 +49,16 @@ import {
 import { cn } from "@/lib/utils";
 import type { ChatRecommendation } from "@/db/schema";
 
-type ChatResult = Awaited<ReturnType<typeof askNetwork>>;
+type ChatResult = Extract<
+  Awaited<ReturnType<typeof askNetwork>>,
+  { ok: true }
+>;
 
 type ThreadSummary = {
   id: string;
   title: string | null;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: Date | string;
+  updatedAt: Date | string;
 };
 
 type UserMessage = {
@@ -226,6 +230,12 @@ export function ChatPanel() {
         try {
           const activeId = await ensureThread();
           const res = await askNetwork(q, { threadId: activeId });
+          if (!res.ok) {
+            toast.error(res.error);
+            setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
+            setQuestion(q);
+            return;
+          }
           const assistantMsg: AssistantMessage = {
             id: res.messageId || newId(),
             role: "assistant",
@@ -247,7 +257,12 @@ export function ChatPanel() {
             ];
           });
         } catch (err) {
-          toast.error(err instanceof Error ? err.message : "Chat failed");
+          toast.error(
+            toUserFacingError(
+              err,
+              "Could not answer that. Add your AI API key in Settings."
+            ).message
+          );
           setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
           setQuestion(q);
         }

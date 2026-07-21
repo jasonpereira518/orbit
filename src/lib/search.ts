@@ -147,11 +147,21 @@ export async function semanticSearchContacts(
 
   if (queryEmbedding) {
     if (isPgvectorAvailable()) {
-      const pgHits = await pgvectorSearchContacts(userId, queryEmbedding, limit * 2);
-      for (const hit of pgHits) {
-        scoreByContact.set(hit.contactId, hit.similarity);
+      try {
+        const pgHits = await pgvectorSearchContacts(
+          userId,
+          queryEmbedding,
+          limit * 2
+        );
+        for (const hit of pgHits) {
+          scoreByContact.set(hit.contactId, hit.similarity);
+        }
+      } catch {
+        // pgvector query can fail on Neon (extension/dim); fall back below
       }
-    } else {
+    }
+
+    if (scoreByContact.size === 0) {
       const embeddings = await db.query.contactEmbeddings.findMany({
         where: eq(contactEmbeddings.userId, userId),
       });

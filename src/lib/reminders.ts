@@ -473,7 +473,7 @@ export async function getDashboardData(
     recentContacts: allContactRows.slice(0, 6),
     dueFollowUps: dueFollowUps.slice(0, 12),
     reminders: filteredReminders.slice(0, 8),
-    suggestions: filteredSuggestions.slice(0, 8),
+    suggestions: filteredSuggestions.slice(0, 40),
     totalSuggestions: filteredSuggestions.length,
     goals,
     networkMetrics,
@@ -506,10 +506,31 @@ export async function snoozeReminder(
   const db = await getDb();
   const due = new Date();
   due.setDate(due.getDate() + days);
+
+  const reminder = await db.query.reminders.findFirst({
+    where: and(eq(reminders.id, reminderId), eq(reminders.userId, userId)),
+    columns: { id: true, contactId: true },
+  });
+  if (!reminder) return;
+
   await db
     .update(reminders)
     .set({ dueDate: due, status: "pending" })
     .where(and(eq(reminders.id, reminderId), eq(reminders.userId, userId)));
+
+  // Keep contact due clock aligned with reminder snooze.
+  if (reminder.contactId) {
+    await db
+      .update(contacts)
+      .set({
+        nextFollowUpAt: due,
+        followUpStatus: "pending",
+        updatedAt: new Date(),
+      })
+      .where(
+        and(eq(contacts.id, reminder.contactId), eq(contacts.userId, userId))
+      );
+  }
 }
 
 export async function completeReminder(userId: string, reminderId: string) {

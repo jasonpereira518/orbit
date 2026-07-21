@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Plus } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import { APP_NAV, isNavActive } from "@/components/layout/app-nav";
+import { OrbitLogo } from "@/components/orbit-logo";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -26,9 +27,7 @@ export function AppSidebar({
           className="flex min-w-0 flex-1 items-center justify-center gap-2.5 lg:justify-start"
           title="Back to landing page"
         >
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sidebar-primary text-sm font-semibold text-sidebar-primary-foreground shadow-sm">
-            O
-          </div>
+          <OrbitLogo size="md" />
           <div className="hidden min-w-0 lg:block">
             <p className="font-[family-name:var(--font-display)] text-lg leading-none tracking-tight text-sidebar-primary">
               Orbit

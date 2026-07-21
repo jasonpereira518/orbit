@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { FloatingAskBar } from "@/components/layout/floating-ask-bar";
 import { MobileNav } from "@/components/layout/mobile-nav";
+import { OrbitLogo } from "@/components/orbit-logo";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
 import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
 import { ThemeSync } from "@/components/theme-sync";
@@ -51,9 +52,7 @@ export function AppShell({
       >
         <header className="sticky top-0 z-30 flex shrink-0 items-center justify-between border-b border-border/70 bg-background/95 px-4 py-3 backdrop-blur md:hidden">
           <Link href="/" className="flex items-center gap-2.5" title="Back to landing page">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
-              O
-            </div>
+            <OrbitLogo size="md" />
             <span className="font-[family-name:var(--font-display)] text-lg leading-none text-primary">
               Orbit
             </span>

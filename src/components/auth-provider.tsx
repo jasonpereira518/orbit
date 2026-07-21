@@ -12,6 +12,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   return (
     <ClerkProvider
       appearance={{
+        // shadcn adapts to light/dark via Orbit CSS variables + `.dark`
         theme: shadcn,
         ...clerkAppearance,
       }}

@@ -9,7 +9,7 @@ config();
 import { getDb, schema } from "../src/db";
 import { sql } from "drizzle-orm";
 
-const EXPECTED_TABLES = [
+  const EXPECTED_TABLES = [
   "user_settings",
   "companies",
   "contacts",
@@ -25,6 +25,8 @@ const EXPECTED_TABLES = [
   "outreach_campaigns",
   "outreach_prospects",
   "outreach_messages",
+  "chat_threads",
+  "chat_messages",
 ] as const;
 
 async function main() {

@@ -12,6 +12,7 @@ import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { LinkedInExportGuide } from "@/components/imports/linkedin-export-guide";
 import {
   BusyHint,
+  ImportFilePicker,
   ImportProgress,
   useBatchedImport,
 } from "@/components/imports/import-utils";
@@ -25,7 +26,7 @@ export function LinkedInConnectionsImport() {
   const { importProgress, runBatchedImport } = useBatchedImport();
 
   const [csvText, setCsvText] = useState("");
-  const [fileName, setFileName] = useState("linkedin.csv");
+  const [fileName, setFileName] = useState<string | null>(null);
   const [people, setPeople] = useState<ConnectionPerson[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -51,13 +52,11 @@ export function LinkedInConnectionsImport() {
         <LinkedInExportGuide variant="connections" />
       </div>
 
-      <input
-        type="file"
+      <ImportFilePicker
         accept=".csv,text/csv"
         disabled={busy}
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (!file) return;
+        fileName={fileName}
+        onFile={(file) => {
           start(async () => {
             try {
               setFileName(file.name);
@@ -111,7 +110,12 @@ export function LinkedInConnectionsImport() {
                 ids,
                 ids.length === 1 ? "person" : "people",
                 (chunk, opts) =>
-                  confirmLinkedInImport(csvText, fileName, chunk, opts)
+                  confirmLinkedInImport(
+                    csvText,
+                    fileName || "linkedin.csv",
+                    chunk,
+                    opts
+                  )
               );
               toast.success(
                 `Imported: ${res.contactsCreated} created, ${res.contactsUpdated} updated`
@@ -119,6 +123,7 @@ export function LinkedInConnectionsImport() {
               setPeople([]);
               setSelected(new Set());
               setCsvText("");
+              setFileName(null);
               router.refresh();
             } catch (err) {
               toast.error(

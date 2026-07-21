@@ -582,6 +582,50 @@ export async function confirmLinkedInMessagesImport(
         if (!latest || date > latest) latest = date;
       }
 
+      // Derive scannable timeline events (reach-out, meetings, in-person)
+      try {
+        const { extractLinkedInTimelineEvents } = await import(
+          "@/lib/linkedin-timeline-events"
+        );
+        const timelineEvents = await extractLinkedInTimelineEvents(
+          userId,
+          conv.conversationId,
+          msgs.map((m) => ({
+            from: m.from,
+            content: m.content,
+            parsedDate: m.parsedDate,
+          }))
+        );
+        for (const ev of timelineEvents) {
+          if (existingExternalIds.has(ev.externalId)) continue;
+          try {
+            await db.insert(interactions).values({
+              userId,
+              contactId,
+              interactionType: ev.interactionType,
+              interactionDate: ev.interactionDate,
+              source: "linkedin_messages_import",
+              externalId: ev.externalId,
+              rawNotes: ev.rawNotes,
+              aiSummary: ev.summary,
+              topics: [],
+              sameDayOrder: 0,
+            });
+            existingExternalIds.add(ev.externalId);
+            if (!earliest || ev.interactionDate < earliest) {
+              earliest = ev.interactionDate;
+            }
+            if (!latest || ev.interactionDate > latest) {
+              latest = ev.interactionDate;
+            }
+          } catch {
+            // dedupe race
+          }
+        }
+      } catch {
+        // Enrichment is best-effort; raw messages already imported
+      }
+
       if (earliest || latest) {
         const contact = existing.find((c) => c.id === contactId);
         await db

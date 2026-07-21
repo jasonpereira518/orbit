@@ -1,6 +1,6 @@
-export type GuessedGender = "male" | "female";
+export type GuessedGender = "male" | "female" | "unknown";
 
-/** Common English first names → gender. Unknown names fall through to a stable hash. */
+/** Common English first names → gender. Unknown / ambiguous names stay unknown. */
 const MALE_NAMES = new Set(
   [
     "aaron",
@@ -392,26 +392,30 @@ function normalizeFirstName(name: string | null | undefined) {
   return name.trim().split(/\s+/)[0]?.replace(/[^a-zA-Z'-]/g, "").toLowerCase() ?? "";
 }
 
-function stableHashGender(seed: string): GuessedGender {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) {
-    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
-  }
-  return hash % 2 === 0 ? "male" : "female";
-}
-
 /**
  * Guess gender from a first name for avatar fallbacks.
- * Known names use a curated map; unknown names get a stable hash pick.
+ * Known unambiguous names map to male/female; unknown or ambiguous → unknown
+ * (use the default avatar).
  */
 export function guessGenderFromFirstName(
   firstName: string | null | undefined,
   fallbackSeed?: string | null
 ): GuessedGender {
-  const key = normalizeFirstName(firstName);
-  if (key && MALE_NAMES.has(key) && !FEMALE_NAMES.has(key)) return "male";
-  if (key && FEMALE_NAMES.has(key) && !MALE_NAMES.has(key)) return "female";
-  // Ambiguous (in both) or unknown → stable hash from available seed.
-  const seed = key || normalizeFirstName(fallbackSeed) || fallbackSeed?.trim().toLowerCase() || "contact";
-  return stableHashGender(seed);
+  const key =
+    normalizeFirstName(firstName) || normalizeFirstName(fallbackSeed);
+  if (!key) return "unknown";
+
+  const male = MALE_NAMES.has(key);
+  const female = FEMALE_NAMES.has(key);
+  if (male && !female) return "male";
+  if (female && !male) return "female";
+  // Ambiguous (in both lists) or not in either → low confidence
+  return "unknown";
+}
+
+/** Static fallback avatar paths under /public/avatars. */
+export function genderAvatarSrc(gender: GuessedGender): string {
+  if (gender === "female") return "/avatars/woman.png";
+  if (gender === "male") return "/avatars/man.png";
+  return "/avatars/default.png";
 }

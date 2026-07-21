@@ -143,6 +143,8 @@ export const interactions = pgTable(
     interactionDate: timestamp("interaction_date", { withTimezone: true })
       .defaultNow()
       .notNull(),
+    /** Manual order among interactions on the same calendar day (lower = earlier in list when date desc). */
+    sameDayOrder: integer("same_day_order").default(0).notNull(),
     source: text("source"),
     externalId: text("external_id"),
     rawNotes: text("raw_notes"),

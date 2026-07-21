@@ -36,8 +36,8 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
       <div>
         <h2 className="text-lg font-medium text-primary">AI provider</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Choose Gemini, OpenAI, or Anthropic. Paste your own API key (encrypted
-          at rest), or rely on a server env key for demos.
+          Choose Gemini, OpenAI, or Anthropic and paste your own API key. Keys
+          are encrypted at rest and only used for your account.
         </p>
       </div>
 
@@ -67,10 +67,10 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
         <p className="text-sm text-muted-foreground">
           Status:{" "}
           {activeProviderStatus.hasPersonalKey
-            ? "Personal key saved"
+            ? "Your key is saved"
             : activeProviderStatus.usingEnv
-              ? `Using server ${activeProviderStatus.envVar}`
-              : "No key configured"}
+              ? `Using local ${activeProviderStatus.envVar} (dev only)`
+              : "No key yet — paste one below to enable AI features"}
         </p>
       )}
 
@@ -195,7 +195,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
           {settings.providers.map((p) => (
             <li key={p.id}>
               {p.label}:{" "}
-              {p.hasPersonalKey ? "personal" : p.usingEnv ? "env" : "none"}
+              {p.hasPersonalKey ? "saved" : p.usingEnv ? "local env" : "none"}
             </li>
           ))}
         </ul>

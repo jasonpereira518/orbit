@@ -3,6 +3,7 @@
 import { motion } from "motion/react";
 import { cn } from "@/lib/utils";
 import { TOUR_NAV, type TourNavKey } from "@/components/onboarding/tour-config";
+import { OrbitLogo } from "@/components/orbit-logo";
 
 export function TourSidebar({
   activeKey,
@@ -16,11 +17,12 @@ export function TourSidebar({
       <div className="mb-4 flex items-center gap-2 px-2 py-1">
         <div
           className={cn(
-            "flex h-7 w-7 items-center justify-center rounded-full bg-sidebar-primary text-xs font-semibold text-sidebar-primary-foreground",
-            activeKey === "welcome" && "ring-2 ring-primary ring-offset-2 ring-offset-sidebar"
+            "rounded-full",
+            activeKey === "welcome" &&
+              "ring-2 ring-primary ring-offset-2 ring-offset-sidebar"
           )}
         >
-          O
+          <OrbitLogo size="sm" />
         </div>
         <div>
           <p className="font-[family-name:var(--font-display)] text-sm leading-none text-sidebar-primary">

@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
-  completeContactFollowUp,
+  clearContactFollowUp,
   dismissSuggestion,
   listNotificationPanel,
   markReminderDone,
@@ -150,7 +150,7 @@ export function NotificationsPanelButton() {
                           item.contactId
                         ) {
                           runAction("Follow-up cleared", () =>
-                            completeContactFollowUp(item.contactId!)
+                            clearContactFollowUp(item.contactId!)
                           );
                         }
                       }}
@@ -189,7 +189,7 @@ export function NotificationsPanelButton() {
                           item.contactId
                         ) {
                           runAction("Follow-up cleared", () =>
-                            completeContactFollowUp(item.contactId!)
+                            clearContactFollowUp(item.contactId!)
                           );
                         }
                       }}

@@ -2,6 +2,7 @@
 
 import { motion } from "motion/react";
 import type { PreviewProps } from "@/components/onboarding/tour-config";
+import { OrbitLogo } from "@/components/orbit-logo";
 
 export function WelcomePreview({ reducedMotion }: PreviewProps) {
   return (
@@ -15,9 +16,9 @@ export function WelcomePreview({ reducedMotion }: PreviewProps) {
             ? { duration: 0 }
             : { type: "spring", stiffness: 260, damping: 20 }
         }
-        className="flex h-16 w-16 items-center justify-center rounded-full bg-primary text-2xl font-semibold text-primary-foreground shadow-[0_0_40px_rgba(89,157,231,0.35)]"
+        className="shadow-[0_0_40px_rgba(89,157,231,0.35)]"
       >
-        O
+        <OrbitLogo size="xl" />
       </motion.div>
       <motion.div
         data-tour-hotspot="tagline"

@@ -12,6 +12,7 @@ import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { LinkedInExportGuide } from "@/components/imports/linkedin-export-guide";
 import {
   BusyHint,
+  ImportFilePicker,
   ImportProgress,
   readCsvOrZipMessages,
   useBatchedImport,
@@ -26,7 +27,7 @@ export function LinkedInMessagesImport() {
   const { importProgress, runBatchedImport } = useBatchedImport();
 
   const [messagesText, setMessagesText] = useState("");
-  const [fileName, setFileName] = useState("messages.csv");
+  const [fileName, setFileName] = useState<string | null>(null);
   const [people, setPeople] = useState<MessagePerson[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [meta, setMeta] = useState<{ totalMessages: number } | null>(null);
@@ -54,13 +55,11 @@ export function LinkedInMessagesImport() {
         <LinkedInExportGuide variant="messages" />
       </div>
 
-      <input
-        type="file"
+      <ImportFilePicker
         accept=".csv,.zip,text/csv,application/zip"
         disabled={busy}
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (!file) return;
+        fileName={fileName}
+        onFile={(file) => {
           start(async () => {
             try {
               const { text, fileName: name } = await readCsvOrZipMessages(file);
@@ -123,7 +122,7 @@ export function LinkedInMessagesImport() {
                 async (chunk, opts) => {
                   const chunkRes = await confirmLinkedInMessagesImport(
                     messagesText,
-                    fileName,
+                    fileName || "messages.csv",
                     chunk,
                     opts
                   );
@@ -145,6 +144,7 @@ export function LinkedInMessagesImport() {
               setSelected(new Set());
               setMeta(null);
               setMessagesText("");
+              setFileName(null);
               router.refresh();
             } catch (err) {
               toast.error(

@@ -13,7 +13,7 @@ import { GoalsSummary } from "@/components/dashboard/goals-summary";
 import { NetworkDepthChart } from "@/components/dashboard/network-depth-chart";
 import { NetworkStatsCard } from "@/components/dashboard/network-stats-card";
 import { ReminderRow } from "@/components/dashboard/reminder-row";
-import { SuggestionRow } from "@/components/dashboard/suggestion-row";
+import { SuggestedOutreachCard } from "@/components/dashboard/suggested-outreach-card";
 import { cn } from "@/lib/utils";
 
 export default async function DashboardPage() {
@@ -94,53 +94,22 @@ export default async function DashboardPage() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card className="border-border/70 shadow-none">
-          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-            <CardTitle className="text-base">Suggested outreach</CardTitle>
-            <div className="flex items-center gap-2">
-              {data.totalSuggestions > data.suggestions.length && (
-                <Link
-                  href="/dashboard#suggestions"
-                  className={cn(
-                    buttonVariants({ variant: "ghost", size: "sm" }),
-                    "text-xs"
-                  )}
-                >
-                  {data.totalSuggestions} total
-                </Link>
-              )}
-              <Link
-                href="/capture"
-                className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
-              >
-                Capture <ArrowRight className="ml-1 h-3.5 w-3.5" />
-              </Link>
-            </div>
-          </CardHeader>
-          <CardContent id="suggestions" className="space-y-2 scroll-mt-8">
-            {data.suggestions.length === 0 ? (
-              <Empty hint="No outreach opportunities — add contacts or log interactions." />
-            ) : (
-              data.suggestions.map((s) => {
-                const contactId = s.relatedContactIds?.[0] ?? null;
-                const meta = contactMeta(contactId);
-                return (
-                  <SuggestionRow
-                    key={s.id}
-                    id={s.id}
-                    suggestionType={s.suggestionType}
-                    description={s.description}
-                    contactId={contactId}
-                    contactName={meta.name}
-                    contactTitle={meta.title}
-                    contactCompany={meta.company}
-                    tier={contactId ? tierForContact(contactId) : undefined}
-                  />
-                );
-              })
-            )}
-          </CardContent>
-        </Card>
+        <SuggestedOutreachCard
+          items={data.suggestions.map((s) => {
+            const contactId = s.relatedContactIds?.[0] ?? null;
+            const meta = contactMeta(contactId);
+            return {
+              id: s.id,
+              suggestionType: s.suggestionType,
+              description: s.description,
+              contactId,
+              contactName: meta.name,
+              contactTitle: meta.title,
+              contactCompany: meta.company,
+              tier: contactId ? tierForContact(contactId) : undefined,
+            };
+          })}
+        />
 
         <Card id="reminders" className="border-border/70 shadow-none scroll-mt-8">
           <CardHeader>

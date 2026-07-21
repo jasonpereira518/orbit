@@ -1,9 +1,11 @@
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
 import {
   LandingSolarSystem,
   LandingStarfield,
 } from "@/components/landing/landing-visuals";
+import { OrbitLogo } from "@/components/orbit-logo";
 
 export function LandingHero({
   clerkOn,
@@ -17,9 +19,12 @@ export function LandingHero({
       <LandingStarfield />
 
       <header className="relative z-10 flex items-center justify-between px-6 py-5 md:px-10">
-        <p className="font-[family-name:var(--font-display)] text-xl tracking-tight text-[#e8f3f1]">
-          Orbit
-        </p>
+        <Link href="/" className="flex items-center gap-2.5" aria-label="Orbit home">
+          <OrbitLogo size="md" priority />
+          <span className="font-[family-name:var(--font-display)] text-xl tracking-tight text-[#e8f3f1]">
+            Orbit
+          </span>
+        </Link>
         <LandingAuthControls
           clerkOn={clerkOn}
           demoMode={demoMode}
@@ -56,6 +61,21 @@ export function LandingHero({
           <LandingSolarSystem className="w-full max-w-[min(100%,560px)] lg:max-w-[580px] lg:justify-self-end" />
         </div>
       </main>
+
+      <Link
+        href="/privacy"
+        className="absolute bottom-5 left-6 z-10 text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1] md:bottom-8 md:left-10"
+      >
+        Privacy
+      </Link>
+      <a
+        href="https://jasonpereira.live/"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="landing-credit-shimmer absolute bottom-5 right-6 z-10 text-sm md:bottom-8 md:right-10"
+      >
+        By Jason Pereira
+      </a>
     </div>
   );
 }

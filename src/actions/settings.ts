@@ -50,12 +50,12 @@ export async function getSettings() {
     hasApiKey:
       provider === "gemini"
         ? Boolean(settings?.geminiApiKeyEncrypted) ||
-          Boolean(process.env.GEMINI_API_KEY)
+          usingEnvKey("gemini", settings)
         : provider === "openai"
           ? Boolean(settings?.openaiApiKeyEncrypted) ||
-            Boolean(process.env.OPENAI_API_KEY)
+            usingEnvKey("openai", settings)
           : Boolean(settings?.anthropicApiKeyEncrypted) ||
-            Boolean(process.env.ANTHROPIC_API_KEY),
+            usingEnvKey("anthropic", settings),
     providers: AI_PROVIDERS.map((p) => ({
       id: p.id,
       label: p.label,
@@ -66,15 +66,7 @@ export async function getSettings() {
           : p.id === "openai"
             ? Boolean(settings?.openaiApiKeyEncrypted)
             : Boolean(settings?.anthropicApiKeyEncrypted),
-      usingEnv:
-        p.id === "gemini"
-          ? Boolean(process.env.GEMINI_API_KEY) &&
-            !settings?.geminiApiKeyEncrypted
-          : p.id === "openai"
-            ? Boolean(process.env.OPENAI_API_KEY) &&
-              !settings?.openaiApiKeyEncrypted
-            : Boolean(process.env.ANTHROPIC_API_KEY) &&
-              !settings?.anthropicApiKeyEncrypted,
+      usingEnv: usingEnvKey(p.id, settings),
     })),
     outreach: {
       apollo: Boolean(settings?.apolloApiKeyEncrypted) || Boolean(process.env.APOLLO_API_KEY),
@@ -112,21 +104,21 @@ async function embeddingBackendFor(
   } | null
 ) {
   if (provider === "openai") {
-    if (settings?.openaiApiKeyEncrypted || process.env.OPENAI_API_KEY) {
+    if (settings?.openaiApiKeyEncrypted || usingEnvKey("openai", settings)) {
       return "openai";
     }
     return null;
   }
   if (provider === "gemini") {
-    if (settings?.geminiApiKeyEncrypted || process.env.GEMINI_API_KEY) {
+    if (settings?.geminiApiKeyEncrypted || usingEnvKey("gemini", settings)) {
       return "gemini";
     }
     return null;
   }
-  if (settings?.openaiApiKeyEncrypted || process.env.OPENAI_API_KEY) {
+  if (settings?.openaiApiKeyEncrypted || usingEnvKey("openai", settings)) {
     return "openai";
   }
-  if (settings?.geminiApiKeyEncrypted || process.env.GEMINI_API_KEY) {
+  if (settings?.geminiApiKeyEncrypted || usingEnvKey("gemini", settings)) {
     return "gemini";
   }
   return null;

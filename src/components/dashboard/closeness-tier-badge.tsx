@@ -7,9 +7,15 @@ const TIER_LABELS = {
 } as const;
 
 const TIER_STYLES = {
-  inner: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  mid: "bg-primary/15 text-primary",
-  outer: "bg-muted text-muted-foreground",
+  inner: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+  mid: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+  outer: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+} as const;
+
+const TIER_DOT = {
+  inner: "bg-emerald-500",
+  mid: "bg-sky-500",
+  outer: "bg-amber-500",
 } as const;
 
 export function ClosenessTierBadge({
@@ -26,9 +32,7 @@ export function ClosenessTierBadge({
       <span
         className={cn(
           "inline-block h-2 w-2 shrink-0 rounded-full",
-          tier === "inner" && "bg-amber-500",
-          tier === "mid" && "bg-primary",
-          tier === "outer" && "bg-muted-foreground/40",
+          TIER_DOT[tier],
           className
         )}
         title={TIER_LABELS[tier]}

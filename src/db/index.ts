@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS interactions (
   contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
   interaction_type text NOT NULL DEFAULT 'note',
   interaction_date timestamptz NOT NULL DEFAULT now(),
+  same_day_order integer NOT NULL DEFAULT 0,
   source text,
   external_id text,
   raw_notes text,
@@ -306,6 +307,12 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "interactions", "external_id", "text");
   await ensureColumn(
     client,
+    "interactions",
+    "same_day_order",
+    "integer NOT NULL DEFAULT 0"
+  );
+  await ensureColumn(
+    client,
     "user_settings",
     "onboarding_completed_at",
     "timestamptz"
@@ -400,7 +407,11 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     .filter(Boolean);
 
   for (const statement of statements) {
-    await sql.query(statement);
+    try {
+      await sql.query(statement);
+    } catch {
+      // Older Postgres variants / race — continue so later alters can recover
+    }
   }
 
   // Incremental columns for older Neon DBs created before these existed.
@@ -415,6 +426,7 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS date_met timestamptz`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS company_id uuid`,
     `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS external_id text`,
+    `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS same_day_order integer NOT NULL DEFAULT 0`,
     `ALTER TABLE imports ADD COLUMN IF NOT EXISTS error_message text`,
     `ALTER TABLE imports ADD COLUMN IF NOT EXISTS stats jsonb DEFAULT '{}'`,
     `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,

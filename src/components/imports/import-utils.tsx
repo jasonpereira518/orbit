@@ -1,7 +1,9 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export type ImportProgressState = {
   done: number;
@@ -34,6 +36,59 @@ export async function readCsvOrZipMessages(file: File): Promise<{
     return { text, fileName: entry.name.split("/").pop() || "messages.csv" };
   }
   return { text: await file.text(), fileName: file.name };
+}
+
+/** Styled file picker that matches Orbit buttons (hides native Choose File UI). */
+export function ImportFilePicker({
+  accept,
+  disabled,
+  fileName,
+  onFile,
+  emptyLabel = "No file chosen",
+  buttonLabel = "Choose file",
+  className,
+}: {
+  accept: string;
+  disabled?: boolean;
+  fileName?: string | null;
+  onFile: (file: File) => void;
+  emptyLabel?: string;
+  buttonLabel?: string;
+  className?: string;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  return (
+    <div className={cn("flex flex-wrap items-center gap-3", className)}>
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept}
+        disabled={disabled}
+        className="sr-only"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          onFile(file);
+          e.target.value = "";
+        }}
+      />
+      <Button
+        type="button"
+        variant="outline"
+        disabled={disabled}
+        onClick={() => inputRef.current?.click()}
+      >
+        {buttonLabel}
+      </Button>
+      <span
+        className="min-w-0 truncate text-sm text-muted-foreground"
+        title={fileName || undefined}
+      >
+        {fileName || emptyLabel}
+      </span>
+    </div>
+  );
 }
 
 export function ImportProgress({ done, total, label }: ImportProgressState) {

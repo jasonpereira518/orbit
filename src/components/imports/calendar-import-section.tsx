@@ -13,6 +13,7 @@ import { CalendarSubscribePanel } from "@/components/imports/calendar-subscribe-
 import {
   BusyHint,
   CALENDAR_BATCH_SIZE,
+  ImportFilePicker,
   ImportProgress,
   type ImportProgressState,
 } from "@/components/imports/import-utils";
@@ -49,7 +50,7 @@ export function CalendarImportSection({
 
   const [calendarText, setCalendarText] = useState("");
   const [calendarKind, setCalendarKind] = useState<"ics" | "csv">("ics");
-  const [calendarFileName, setCalendarFileName] = useState("calendar.ics");
+  const [calendarFileName, setCalendarFileName] = useState<string | null>(null);
   const [calendarPreview, setCalendarPreview] =
     useState<CalendarPreview | null>(null);
   const [createFollowUps, setCreateFollowUps] = useState(true);
@@ -73,13 +74,11 @@ export function CalendarImportSection({
             contacts from 1:1s.
           </p>
         </div>
-        <input
-          type="file"
+        <ImportFilePicker
           accept=".ics,.csv,text/calendar,text/csv"
           disabled={busy}
-          onChange={async (e) => {
-            const file = e.target.files?.[0];
-            if (!file) return;
+          fileName={calendarFileName}
+          onFile={async (file) => {
             const lower = file.name.toLowerCase();
             setCalendarKind(lower.endsWith(".csv") ? "csv" : "ics");
             setCalendarFileName(file.name);
@@ -145,7 +144,7 @@ export function CalendarImportSection({
                   const res = await confirmCalendarImport({
                     kind: calendarKind,
                     text: calendarText,
-                    fileName: calendarFileName,
+                    fileName: calendarFileName || "calendar.ics",
                     createFollowUps,
                     importId,
                     finalize: false,
@@ -169,7 +168,7 @@ export function CalendarImportSection({
                 await confirmCalendarImport({
                   kind: calendarKind,
                   text: calendarText,
-                  fileName: calendarFileName,
+                  fileName: calendarFileName || "calendar.ics",
                   createFollowUps,
                   importId,
                   finalize: true,
@@ -181,6 +180,7 @@ export function CalendarImportSection({
                 );
                 setCalendarPreview(null);
                 setCalendarText("");
+                setCalendarFileName(null);
                 router.refresh();
               } catch (err) {
                 toast.error(

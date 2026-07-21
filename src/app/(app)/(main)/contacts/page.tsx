@@ -61,6 +61,7 @@ export default async function ContactsPage({
         initialQ={params.q || ""}
         initialCompany={params.company || ""}
         initialMinScore={params.minScore || ""}
+        initialFollowUp={params.followUp || ""}
       />
 
       <div className="rounded-2xl border border-border/70 bg-card">
@@ -83,6 +84,7 @@ export default async function ContactsPage({
             closenessTier: c.closenessTier,
             priorityLevel: c.priorityLevel,
             nextFollowUpAt: c.nextFollowUpAt,
+            lastInteractionAt: c.lastInteractionAt,
             tags: c.tags,
           }))}
         />

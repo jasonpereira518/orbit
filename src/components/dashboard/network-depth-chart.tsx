@@ -8,27 +8,27 @@ const TIER_META = [
   {
     key: "inner" as const,
     label: "Inner",
-    color: "bg-amber-500",
-    text: "text-amber-700 dark:text-amber-300",
+    color: "bg-emerald-500",
+    text: "text-emerald-700 dark:text-emerald-300",
   },
   {
     key: "mid" as const,
     label: "Mid",
-    color: "bg-primary",
-    text: "text-primary",
+    color: "bg-sky-500",
+    text: "text-sky-700 dark:text-sky-300",
   },
   {
     key: "outer" as const,
     label: "Outer",
-    color: "bg-muted-foreground/30",
-    text: "text-muted-foreground",
+    color: "bg-amber-500",
+    text: "text-amber-700 dark:text-amber-300",
   },
 ];
 
 const DEGREE_BUCKETS = [
   { key: "none" as const, label: "0 links", color: "bg-muted-foreground/25" },
-  { key: "oneToTwo" as const, label: "1–2 links", color: "bg-primary/70" },
-  { key: "threePlus" as const, label: "3+ links", color: "bg-amber-500/80" },
+  { key: "oneToTwo" as const, label: "1–2 links", color: "bg-sky-500/70" },
+  { key: "threePlus" as const, label: "3+ links", color: "bg-emerald-500/80" },
 ];
 
 function pct(count: number, total: number) {
@@ -36,7 +36,7 @@ function pct(count: number, total: number) {
   return Math.round((count / total) * 100);
 }
 
-/** Bar widths with a permanent Inner amber sliver when inner share is 0. */
+/** Bar widths with a permanent Inner green sliver when inner share is 0. */
 function tierBarWidths(tierCounts: NetworkMetrics["tierCounts"], total: number) {
   const innerRaw = pct(tierCounts.inner, total);
   const midRaw = pct(tierCounts.mid, total);

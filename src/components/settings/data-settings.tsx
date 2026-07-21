@@ -1,6 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
+import Link from "next/link";
 import { toast } from "@/lib/toast";
 import { deleteAllData, exportAllData } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,15 @@ export function DataSettings() {
       <div>
         <h2 className="text-lg font-medium text-primary">Data and privacy</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Export everything as JSON, or permanently delete your Orbit data.
+          Export everything as JSON, or permanently delete your Orbit data. Read
+          our{" "}
+          <Link
+            href="/privacy"
+            className="text-primary underline-offset-4 hover:underline"
+          >
+            Privacy Policy
+          </Link>
+          .
         </p>
       </div>
       <div className="flex flex-wrap gap-2">

@@ -64,11 +64,17 @@ async function semanticHitsForQuery(
   const scores = new Map<string, number>();
 
   if (isPgvectorAvailable()) {
-    const rows = await pgvectorSearchContacts(userId, queryEmbedding, 24);
-    for (const row of rows) {
-      scores.set(row.contactId, row.similarity);
+    try {
+      const rows = await pgvectorSearchContacts(userId, queryEmbedding, 24);
+      for (const row of rows) {
+        scores.set(row.contactId, row.similarity);
+      }
+    } catch {
+      // fall through to in-memory
     }
-  } else {
+  }
+
+  if (scores.size === 0) {
     const db = await getDb();
     const embeddings = await db.query.contactEmbeddings.findMany({
       where: eq(contactEmbeddings.userId, userId),

@@ -132,6 +132,79 @@ export async function scheduleContactFollowUp(
   return { reminder: row, dueDate: due.toISOString(), days };
 }
 
+/** Schedule a follow-up reminder for an absolute calendar date (local YYYY-MM-DD). */
+export async function scheduleContactFollowUpAt(
+  contactId: string,
+  dateIso: string
+) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const { contacts } = await import("@/db/schema");
+
+  const contact = await db.query.contacts.findFirst({
+    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+    columns: { id: true, fullName: true, preferredName: true },
+  });
+  if (!contact) throw new Error("Contact not found");
+
+  const due = new Date(`${dateIso}T12:00:00`);
+  if (Number.isNaN(due.getTime())) throw new Error("Invalid date");
+
+  const name = contact.preferredName || contact.fullName;
+  const title = `Follow up with ${name}`;
+
+  const existing = await db.query.reminders.findFirst({
+    where: and(
+      eq(reminders.userId, userId),
+      eq(reminders.contactId, contactId),
+      eq(reminders.status, "pending")
+    ),
+  });
+
+  let row;
+  if (existing) {
+    const [updated] = await db
+      .update(reminders)
+      .set({
+        title,
+        dueDate: due,
+        reminderType: "manual",
+      })
+      .where(eq(reminders.id, existing.id))
+      .returning();
+    row = updated;
+  } else {
+    const [created] = await db
+      .insert(reminders)
+      .values({
+        userId,
+        contactId,
+        title,
+        dueDate: due,
+        reminderType: "manual",
+        createdBy: "user",
+        status: "pending",
+      })
+      .returning();
+    row = created;
+  }
+
+  await db
+    .update(contacts)
+    .set({
+      nextFollowUpAt: due,
+      followUpStatus: "pending",
+      updatedAt: new Date(),
+    })
+    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+
+  revalidatePath("/dashboard");
+  revalidatePath("/contacts");
+  revalidatePath(`/contacts/${contactId}`);
+  revalidatePath("/graph");
+  return { reminder: row, dueDate: due.toISOString() };
+}
+
 export async function clearContactFollowUp(contactId: string) {
   const userId = await requireUserId();
   const db = await getDb();
@@ -164,7 +237,30 @@ export async function clearContactFollowUp(contactId: string) {
   return { ok: true };
 }
 
-export async function completeContactFollowUp(contactId: string) {
+export type FollowUpTouchChannel = "email" | "linkedin_message" | "note";
+
+/** Log a touch and clear the due follow-up (used after send / mark sent). */
+export async function completeFollowUpWithTouch(
+  contactId: string,
+  options?: {
+    channel?: FollowUpTouchChannel;
+    notes?: string;
+  }
+) {
+  const channel = options?.channel ?? "note";
+  const { logInteraction } = await import("@/actions/contacts");
+  await logInteraction({
+    contactId,
+    interactionType: channel,
+    source: "follow_up",
+    rawNotes: options?.notes,
+    aiSummary:
+      channel === "email"
+        ? "Sent follow-up email"
+        : channel === "linkedin_message"
+          ? "Sent LinkedIn follow-up"
+          : "Completed follow-up",
+  });
   return clearContactFollowUp(contactId);
 }
 
@@ -187,6 +283,8 @@ export async function snoozeReminderAction(id: string, days = 7) {
   await snoozeReminder(userId, id, days);
   revalidatePath("/");
   revalidatePath("/dashboard");
+  revalidatePath("/contacts");
+  revalidatePath("/graph");
 }
 
 /** Full inbox for the in-app notifications panel. */

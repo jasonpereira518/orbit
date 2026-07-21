@@ -1,12 +1,12 @@
-/** Orbit brand tokens — primary #0f3d3e, Outfit/Fraunces via CSS vars. */
+/**
+ * Orbit branding layered on Clerk's `shadcn` theme.
+ *
+ * Do not hardcode light-mode colors here — the shadcn theme maps Clerk
+ * variables to Orbit CSS tokens (`--card`, `--primary`, etc.) which already
+ * flip with the `.dark` class from next-themes.
+ */
 export const clerkAppearance = {
   variables: {
-    colorPrimary: "#0f3d3e",
-    colorBackground: "#ffffff",
-    colorText: "#1a1c1a",
-    colorTextSecondary: "#5f6760",
-    colorInputBackground: "#ffffff",
-    colorInputText: "#1a1c1a",
     borderRadius: "0.625rem",
     fontFamily:
       'var(--font-sans), "Outfit", ui-sans-serif, system-ui, sans-serif',
@@ -14,11 +14,11 @@ export const clerkAppearance = {
       'var(--font-sans), "Outfit", ui-sans-serif, system-ui, sans-serif',
   },
   elements: {
-    card: "shadow-none border border-[#e4e7e1]",
-    headerTitle: "font-[family-name:var(--font-display)] text-[#0f3d3e]",
-    headerSubtitle: "text-[#5f6760]",
+    card: "shadow-none border border-border",
+    headerTitle: "font-[family-name:var(--font-display)] text-primary",
+    headerSubtitle: "text-muted-foreground",
     formButtonPrimary:
-      "bg-[#0f3d3e] hover:bg-[#0c3233] text-sm font-medium",
-    footerActionLink: "text-[#0f3d3e] hover:text-[#0c3233]",
+      "bg-primary text-primary-foreground hover:bg-primary/90 text-sm font-medium",
+    footerActionLink: "text-primary hover:text-primary/80",
   },
 };
