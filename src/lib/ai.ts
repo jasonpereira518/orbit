@@ -543,7 +543,20 @@ export async function chatWithNetwork(
     tags: string[];
     relevance: number;
   }>,
-  priorTurns: Array<{ role: "user" | "assistant"; content: string }> = []
+  priorTurns: Array<{ role: "user" | "assistant"; content: string }> = [],
+  recruitersContext: Array<{
+    id: string;
+    fullName: string;
+    firm: string | null;
+    specialty: string[];
+    avgRating: number;
+    logCount: number;
+    personalRating: number | null;
+    status: string | null;
+    notes: string | null;
+    piiUnlocked: boolean;
+    relevance: number;
+  }> = []
 ) {
   const contextBlock = contactsContext
     .map((c, i) => {
@@ -562,6 +575,20 @@ export async function chatWithNetwork(
     })
     .join("\n\n");
 
+  const recruitersBlock = recruitersContext
+    .map((r, i) => {
+      const rating = r.avgRating ? (r.avgRating / 10).toFixed(1) : "n/a";
+      const personal = r.personalRating
+        ? `personal_rating=${r.personalRating}`
+        : "not_logged";
+      const notes =
+        r.piiUnlocked && r.notes
+          ? `\nYour notes: ${r.notes.slice(0, 300)}`
+          : "";
+      return `${i + 1}. [recruiter_id=${r.id}] ${r.fullName} | firm=${r.firm || "?"} | specialty=${(r.specialty || []).join(", ") || "?"} | community_rating=${rating} (logs=${r.logCount}) | ${personal} | status=${r.status || "none"} | relevance=${r.relevance.toFixed(2)}${notes}`;
+    })
+    .join("\n\n");
+
   const historyBlock =
     priorTurns.length > 0
       ? priorTurns
@@ -569,18 +596,22 @@ export async function chatWithNetwork(
           .join("\n\n")
       : "";
 
+  const hasRecruiters = recruitersContext.length > 0;
+
   const content = await completeJson(userId, {
     temperature: 0.3,
-    user: `${historyBlock ? `Prior conversation:\n${historyBlock}\n\n` : ""}Question: ${question}\n\nContacts:\n${contextBlock || "(no contacts found)"}`,
+    user: `${historyBlock ? `Prior conversation:\n${historyBlock}\n\n` : ""}Question: ${question}\n\nContacts:\n${contextBlock || "(no contacts found)"}${hasRecruiters ? `\n\nRecruiters:\n${recruitersBlock}` : ""}`,
     system: `You are Orbit, a personal networking assistant.
-Answer ONLY using the provided contacts (including summaries, notes, key facts, and LinkedIn messages). Never invent people or message content.
-Use prior conversation for context when present, but ground every recommendation in the contacts list.
+Answer using the provided contacts${hasRecruiters ? " and recruiters" : ""} (including summaries, notes, key facts, and LinkedIn messages). Never invent people or message content.
+Use prior conversation for context when present, but ground every recommendation in the provided lists.
+${hasRecruiters ? "When the question is about recruiters, prefer recruiters the user already logged (personal_rating / status present), then highly rated community recruiters. Do not invent email/phone — contact details may be locked." : ""}
 Return JSON:
 {
   "answer": string,
   "recommendations": [
     {
-      "contact_id": string,
+      "contact_id": string|null,
+      "recruiter_id": string|null,
       "name": string,
       "reason": string,
       "suggested_action": string,
@@ -588,13 +619,14 @@ Return JSON:
     }
   ]
 }
-Only use contact_ids from the provided list.`,
+Only use contact_ids and recruiter_ids from the provided lists. For recruiter recommendations set recruiter_id and leave contact_id null (unless recommending a contact who is also a recruiter).`,
   });
 
   return parseAiJson<{
     answer: string;
     recommendations: Array<{
-      contact_id: string;
+      contact_id?: string | null;
+      recruiter_id?: string | null;
       name: string;
       reason: string;
       suggested_action: string;
