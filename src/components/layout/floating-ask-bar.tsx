@@ -639,7 +639,7 @@ function MiniRecommendation({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <Link
-            href={`/contacts/${rec.contact_id}`}
+            href={rec.contact_id ? `/contacts/${rec.contact_id}` : (rec.recruiter_id ? `/recruiters/${rec.recruiter_id}` : "#")}
             className="text-sm font-medium text-primary hover:underline"
           >
             {rec.name}
@@ -658,7 +658,7 @@ function MiniRecommendation({
           onClick={() =>
             start(async () => {
               await createReminder({
-                contactId: rec.contact_id,
+                contactId: rec.contact_id ?? undefined,
                 title: `Reach out to ${rec.name}`,
                 description: rec.suggested_action,
                 dueDate: new Date(

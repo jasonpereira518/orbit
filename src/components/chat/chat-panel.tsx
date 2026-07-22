@@ -515,13 +515,19 @@ function RecommendationCard({
   rec: ChatResult["recommendations"][number];
 }) {
   const [pending, start] = useTransition();
+  const contactId = rec.contact_id ?? undefined;
+  const href = rec.recruiter_id
+    ? `/recruiters/${rec.recruiter_id}`
+    : contactId
+      ? `/contacts/${contactId}`
+      : "#";
 
   return (
     <div className="rounded-xl border border-border/70 bg-background p-3.5">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <Link
-            href={`/contacts/${rec.contact_id}`}
+            href={href}
             className="text-sm font-medium text-primary hover:underline"
           >
             {rec.name}
@@ -532,6 +538,7 @@ function RecommendationCard({
             {rec.suggested_action}
           </p>
         </div>
+        {contactId ? (
         <Button
           size="xs"
           variant="outline"
@@ -539,7 +546,7 @@ function RecommendationCard({
           onClick={() =>
             start(async () => {
               await createReminder({
-                contactId: rec.contact_id,
+                contactId,
                 title: `Reach out to ${rec.name}`,
                 description: rec.suggested_action,
                 dueDate: new Date(
@@ -552,6 +559,7 @@ function RecommendationCard({
         >
           Reminder
         </Button>
+        ) : null}
       </div>
       {rec.draft_message && (
         <div className="mt-2.5 rounded-lg bg-muted/50 p-2.5 text-xs">
