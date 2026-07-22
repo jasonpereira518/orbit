@@ -1,8 +1,15 @@
 "use client";
 
+import {
+  getDesktopNotifiedIds,
+  markDesktopNotificationsSent,
+  mergeDesktopNotifiedIds,
+} from "@/actions/notifications";
+
 const PREF_KEY = "orbit:desktop-notifications";
 const SENT_KEY = "orbit:notified-ids";
 const SW_PATH = "/orbit-sw.js";
+const MAX_NOTIFIED_IDS = 200;
 
 export type NotificationPermissionState =
   | "unsupported"
@@ -25,28 +32,84 @@ export function isDesktopNotificationsPreferred() {
 export function setDesktopNotificationsPreferred(enabled: boolean) {
   if (typeof window === "undefined") return;
   localStorage.setItem(PREF_KEY, enabled ? "1" : "0");
+  window.dispatchEvent(
+    new CustomEvent("orbit:desktop-notifications-change", {
+      detail: { enabled },
+    })
+  );
 }
 
-function readSentIds(): Set<string> {
+let sentIds = new Set<string>();
+let hydratePromise: Promise<void> | null = null;
+
+function readLocalSentIds(): string[] {
   try {
     const raw = localStorage.getItem(SENT_KEY);
-    if (!raw) return new Set();
-    return new Set(JSON.parse(raw) as string[]);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id): id is string => typeof id === "string");
   } catch {
-    return new Set();
+    return [];
   }
 }
 
+function writeLocalSentIds(ids: string[]) {
+  try {
+    localStorage.setItem(
+      SENT_KEY,
+      JSON.stringify(ids.slice(-MAX_NOTIFIED_IDS))
+    );
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+/**
+ * Load delivered notification ids from the account DB (and migrate any
+ * leftover localStorage ids once). Safe to call repeatedly.
+ */
+export function hydrateDesktopNotifiedIds(): Promise<void> {
+  if (typeof window === "undefined") return Promise.resolve();
+  if (hydratePromise) return hydratePromise;
+
+  hydratePromise = (async () => {
+    const local = readLocalSentIds();
+    try {
+      const fromDb = await getDesktopNotifiedIds();
+      const merged = [...new Set([...fromDb, ...local])].slice(
+        -MAX_NOTIFIED_IDS
+      );
+      sentIds = new Set(merged);
+
+      const needsMerge = local.some((id) => !fromDb.includes(id));
+      if (needsMerge) {
+        await mergeDesktopNotifiedIds(merged);
+      }
+      if (local.length > 0) {
+        localStorage.removeItem(SENT_KEY);
+      }
+    } catch {
+      sentIds = new Set(local);
+    }
+  })();
+
+  return hydratePromise;
+}
+
 function markSent(id: string) {
-  const set = readSentIds();
-  set.add(id);
-  // Keep the list bounded
-  const trimmed = [...set].slice(-200);
-  localStorage.setItem(SENT_KEY, JSON.stringify(trimmed));
+  sentIds.add(id);
+  const trimmed = [...sentIds].slice(-MAX_NOTIFIED_IDS);
+  sentIds = new Set(trimmed);
+  // Keep a short-lived local mirror while the DB write settles.
+  writeLocalSentIds(trimmed);
+  void markDesktopNotificationsSent([id]).catch(() => {
+    // local mirror retained for retry on next hydrate
+  });
 }
 
 export function wasNotificationSent(id: string) {
-  return readSentIds().has(id);
+  return sentIds.has(id) || readLocalSentIds().includes(id);
 }
 
 export async function ensureNotificationPermission(): Promise<
@@ -110,6 +173,8 @@ export async function showDesktopNotification(
 ): Promise<boolean> {
   const force = Boolean(opts?.force);
   if (!force && !isDesktopNotificationsPreferred()) return false;
+
+  await hydrateDesktopNotifiedIds();
   if (!force && wasNotificationSent(payload.id)) return false;
 
   const permission = await ensureNotificationPermission();

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   companies,
@@ -80,22 +80,25 @@ function pickHeadline(input: {
 export async function getNetworkStats(userId: string): Promise<NetworkStats> {
   const db = await getDb();
 
-  const [allContacts, allInteractions, allCompanies, allGoals] =
+  const [allContacts, interactionCountRows, companyCountRows, allGoals] =
     await Promise.all([
       db.query.contacts.findMany({
         where: eq(contacts.userId, userId),
         with: { contactTags: { with: { tag: true } } },
       }),
-      db.query.interactions.findMany({
-        where: eq(interactions.userId, userId),
-        columns: { id: true },
-      }),
-      db.query.companies.findMany({
-        where: eq(companies.userId, userId),
-        columns: { id: true },
-      }),
+      db
+        .select({ value: count() })
+        .from(interactions)
+        .where(eq(interactions.userId, userId)),
+      db
+        .select({ value: count() })
+        .from(companies)
+        .where(eq(companies.userId, userId)),
       db.query.userGoals.findMany({ where: eq(userGoals.userId, userId) }),
     ]);
+
+  const interactionCount = interactionCountRows[0]?.value ?? 0;
+  const companyCount = companyCountRows[0]?.value ?? 0;
 
   const now = new Date();
   const activeGoals = allGoals.filter((g) => g.active).map((g) => g.text);
@@ -155,7 +158,7 @@ export async function getNetworkStats(userId: string): Promise<NetworkStats> {
   const { headline, subheadline } = pickHeadline({
     contacts: allContacts.length,
     innerCircle,
-    interactions: allInteractions.length,
+    interactions: interactionCount,
     overdue: overdueFollowUps,
     networkAgeDays,
   });
@@ -166,7 +169,7 @@ export async function getNetworkStats(userId: string): Promise<NetworkStats> {
     items: [
       {
         label: "Interactions logged",
-        value: allInteractions.length,
+        value: interactionCount,
       },
       {
         label: "Inner orbit",
@@ -184,7 +187,7 @@ export async function getNetworkStats(userId: string): Promise<NetworkStats> {
       },
       {
         label: "Companies tracked",
-        value: allCompanies.length,
+        value: companyCount,
       },
       {
         label: "Network age",

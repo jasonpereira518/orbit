@@ -1,19 +1,45 @@
 "use server";
 
-import { and, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
-import { reminders } from "@/db/schema";
+import {
+  contacts,
+  reminderLists,
+  reminders,
+  type ReminderActionKind,
+} from "@/db/schema";
 import { listActiveGoalTexts } from "@/actions/goals";
 import { requireUserId, getCurrentUserProfile } from "@/lib/auth";
 import { generateFollowUpDraft } from "@/lib/follow-up-drafts";
+import {
+  inferReminderActionKind,
+  isReminderActionKind,
+} from "@/lib/reminder-action-kind";
+import {
+  displayListName,
+  ensureReminderLists,
+  findReminderListForUser,
+  getInboxListId,
+  normalizeListName,
+} from "@/lib/reminder-lists";
 import {
   completeReminder,
   generateDueFollowUps,
   getDashboardData,
   snoozeReminder,
 } from "@/lib/reminders";
+
+function revalidateReminderPaths(contactId?: string | null) {
+  revalidatePath("/");
+  revalidatePath("/dashboard");
+  revalidatePath("/reminders");
+  if (contactId) {
+    revalidatePath(`/contacts/${contactId}`);
+    revalidatePath("/graph");
+  }
+}
 
 export async function fetchDashboard() {
   const userId = await requireUserId();
@@ -29,36 +55,347 @@ export async function fetchDashboard() {
   return getDashboardData(userId, { userName: profile?.name || "You" });
 }
 
+export async function listRemindersPage(options?: {
+  listId?: string | null;
+  status?: "pending" | "done" | "all";
+}) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const status = options?.status ?? "pending";
+
+  const lists = await ensureReminderLists(userId);
+  const inboxId = lists.find((l) => l.isInbox === 1)?.id ?? lists[0]?.id;
+  const selectedListId = options?.listId || inboxId || null;
+
+  const allReminders = await db.query.reminders.findMany({
+    where: eq(reminders.userId, userId),
+    orderBy: [asc(reminders.dueDate), desc(reminders.createdAt)],
+    limit: 500,
+  });
+
+  const contactIds = [
+    ...new Set(
+      allReminders
+        .map((r) => r.contactId)
+        .filter((id): id is string => Boolean(id))
+    ),
+  ];
+
+  const contactRows =
+    contactIds.length > 0
+      ? await db.query.contacts.findMany({
+          where: and(
+            eq(contacts.userId, userId),
+            inArray(contacts.id, contactIds)
+          ),
+          columns: {
+            id: true,
+            fullName: true,
+            preferredName: true,
+            email: true,
+            phone: true,
+          },
+        })
+      : [];
+
+  const contactById = new Map(contactRows.map((c) => [c.id, c] as const));
+
+  const listCounts = new Map<string, { pending: number; done: number }>();
+  for (const list of lists) {
+    listCounts.set(list.id, { pending: 0, done: 0 });
+  }
+
+  for (const r of allReminders) {
+    const lid = r.listId || inboxId;
+    if (!lid) continue;
+    const bucket = listCounts.get(lid) ?? { pending: 0, done: 0 };
+    if (r.status === "pending") bucket.pending += 1;
+    else bucket.done += 1;
+    listCounts.set(lid, bucket);
+  }
+
+  const filtered = allReminders.filter((r) => {
+    const lid = r.listId || inboxId;
+    if (selectedListId && lid !== selectedListId) return false;
+    if (status === "pending") return r.status === "pending";
+    if (status === "done") {
+      return r.status === "done" || r.status === "completed";
+    }
+    return true;
+  });
+
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const endOfToday = new Date(startOfToday);
+  endOfToday.setDate(endOfToday.getDate() + 1);
+
+  filtered.sort((a, b) => {
+    const aDue = a.dueDate ? new Date(a.dueDate) : null;
+    const bDue = b.dueDate ? new Date(b.dueDate) : null;
+    const aOverdue = aDue && aDue.getTime() < startOfToday.getTime();
+    const bOverdue = bDue && bDue.getTime() < startOfToday.getTime();
+    if (aOverdue && !bOverdue) return -1;
+    if (!aOverdue && bOverdue) return 1;
+    const aToday =
+      aDue &&
+      aDue.getTime() >= startOfToday.getTime() &&
+      aDue.getTime() < endOfToday.getTime();
+    const bToday =
+      bDue &&
+      bDue.getTime() >= startOfToday.getTime() &&
+      bDue.getTime() < endOfToday.getTime();
+    if (aToday && !bToday && !bOverdue) return -1;
+    if (bToday && !aToday && !aOverdue) return 1;
+    if (!aDue && bDue) return 1;
+    if (aDue && !bDue) return -1;
+    if (aDue && bDue) return aDue.getTime() - bDue.getTime();
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
+
+  return {
+    lists: lists.map((l) => ({
+      id: l.id,
+      name: l.name,
+      isInbox: l.isInbox === 1,
+      position: l.position,
+      pendingCount: listCounts.get(l.id)?.pending ?? 0,
+      doneCount: listCounts.get(l.id)?.done ?? 0,
+    })),
+    selectedListId,
+    status,
+    reminders: filtered.map((r) => {
+      const c = r.contactId ? contactById.get(r.contactId) : null;
+      return {
+        id: r.id,
+        title: r.title,
+        description: r.description,
+        dueDate: r.dueDate,
+        status: r.status,
+        reminderType: r.reminderType,
+        actionKind: (r.actionKind || "task") as ReminderActionKind,
+        listId: r.listId || inboxId || null,
+        contactId: r.contactId,
+        contactName: c ? c.preferredName?.trim() || c.fullName : null,
+        contactEmail: c?.email ?? null,
+        contactPhone: c?.phone ?? null,
+        createdAt: r.createdAt,
+      };
+    }),
+  };
+}
+
 export async function createReminder(input: {
   contactId?: string;
   title: string;
   description?: string;
   dueDate?: string;
   reminderType?: string;
+  listId?: string;
+  actionKind?: ReminderActionKind;
 }) {
   const userId = await requireUserId();
   const db = await getDb();
+  const inboxId = await getInboxListId(userId);
+
+  let listId = input.listId || inboxId;
+  if (input.listId) {
+    const list = await findReminderListForUser(userId, input.listId);
+    if (!list) throw new Error("List not found");
+    listId = list.id;
+  }
+
+  const actionKind =
+    input.actionKind && isReminderActionKind(input.actionKind)
+      ? input.actionKind
+      : inferReminderActionKind({
+          title: input.title,
+          description: input.description,
+          reminderType: input.reminderType,
+          contactId: input.contactId,
+        });
+
   const [row] = await db
     .insert(reminders)
     .values({
       userId,
       contactId: input.contactId,
+      listId,
       title: input.title,
       description: input.description,
       dueDate: input.dueDate ? new Date(input.dueDate) : null,
       reminderType: input.reminderType || "manual",
+      actionKind,
       createdBy: "user",
       status: "pending",
     })
     .returning();
 
-  revalidatePath("/");
-  revalidatePath("/dashboard");
-  if (input.contactId) {
-    revalidatePath(`/contacts/${input.contactId}`);
-    revalidatePath("/graph");
-  }
+  revalidateReminderPaths(input.contactId);
   return row;
+}
+
+export async function updateReminder(
+  id: string,
+  input: {
+    title?: string;
+    description?: string | null;
+    dueDate?: string | null;
+    listId?: string | null;
+    actionKind?: ReminderActionKind;
+    contactId?: string | null;
+  }
+) {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const existing = await db.query.reminders.findFirst({
+    where: and(eq(reminders.id, id), eq(reminders.userId, userId)),
+  });
+  if (!existing) throw new Error("Reminder not found");
+
+  const patch: Partial<typeof reminders.$inferInsert> = {};
+
+  if (input.title !== undefined) patch.title = input.title.trim();
+  if (input.description !== undefined) patch.description = input.description;
+  if (input.dueDate !== undefined) {
+    patch.dueDate = input.dueDate ? new Date(input.dueDate) : null;
+  }
+  if (input.contactId !== undefined) patch.contactId = input.contactId;
+  if (input.listId !== undefined) {
+    if (input.listId) {
+      const list = await findReminderListForUser(userId, input.listId);
+      if (!list) throw new Error("List not found");
+      patch.listId = list.id;
+    } else {
+      patch.listId = await getInboxListId(userId);
+    }
+  }
+  if (input.actionKind !== undefined) {
+    if (!isReminderActionKind(input.actionKind)) {
+      throw new Error("Invalid action kind");
+    }
+    patch.actionKind = input.actionKind;
+  } else if (input.title !== undefined) {
+    patch.actionKind = inferReminderActionKind({
+      title: input.title,
+      description:
+        input.description !== undefined
+          ? input.description
+          : existing.description,
+      reminderType: existing.reminderType,
+      contactId:
+        input.contactId !== undefined ? input.contactId : existing.contactId,
+    });
+  }
+
+  const [row] = await db
+    .update(reminders)
+    .set(patch)
+    .where(and(eq(reminders.id, id), eq(reminders.userId, userId)))
+    .returning();
+
+  revalidateReminderPaths(row.contactId ?? existing.contactId);
+  return row;
+}
+
+export async function moveReminderToList(id: string, listId: string) {
+  return updateReminder(id, { listId });
+}
+
+export async function createReminderList(name: string) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  await ensureReminderLists(userId);
+
+  const display = displayListName(name);
+  if (!display) throw new Error("List name is required");
+  const normalized = normalizeListName(display);
+  if (normalized === "inbox") {
+    throw new Error("Inbox already exists");
+  }
+
+  const existing = await db.query.reminderLists.findFirst({
+    where: and(
+      eq(reminderLists.userId, userId),
+      eq(reminderLists.nameNormalized, normalized)
+    ),
+  });
+  if (existing) throw new Error("A list with that name already exists");
+
+  const maxPos = await db.query.reminderLists.findMany({
+    where: eq(reminderLists.userId, userId),
+    columns: { position: true },
+  });
+  const nextPos = maxPos.reduce((m, l) => Math.max(m, l.position), 0) + 1;
+
+  const [row] = await db
+    .insert(reminderLists)
+    .values({
+      userId,
+      name: display,
+      nameNormalized: normalized,
+      position: nextPos,
+      isInbox: 0,
+    })
+    .returning();
+
+  revalidatePath("/reminders");
+  return row;
+}
+
+export async function renameReminderList(id: string, name: string) {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const list = await findReminderListForUser(userId, id);
+  if (!list) throw new Error("List not found");
+  if (list.isInbox === 1) throw new Error("Cannot rename Inbox");
+
+  const display = displayListName(name);
+  if (!display) throw new Error("List name is required");
+  const normalized = normalizeListName(display);
+  if (normalized === "inbox") throw new Error("Cannot rename to Inbox");
+
+  const clash = await db.query.reminderLists.findFirst({
+    where: and(
+      eq(reminderLists.userId, userId),
+      eq(reminderLists.nameNormalized, normalized)
+    ),
+  });
+  if (clash && clash.id !== id) {
+    throw new Error("A list with that name already exists");
+  }
+
+  const [row] = await db
+    .update(reminderLists)
+    .set({ name: display, nameNormalized: normalized })
+    .where(and(eq(reminderLists.id, id), eq(reminderLists.userId, userId)))
+    .returning();
+
+  revalidatePath("/reminders");
+  return row;
+}
+
+export async function deleteReminderList(id: string) {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const list = await findReminderListForUser(userId, id);
+  if (!list) throw new Error("List not found");
+  if (list.isInbox === 1) throw new Error("Cannot delete Inbox");
+
+  const inboxId = await getInboxListId(userId);
+  await db
+    .update(reminders)
+    .set({ listId: inboxId })
+    .where(and(eq(reminders.userId, userId), eq(reminders.listId, id)));
+
+  await db
+    .delete(reminderLists)
+    .where(and(eq(reminderLists.id, id), eq(reminderLists.userId, userId)));
+
+  revalidatePath("/reminders");
+  return { ok: true, inboxId };
 }
 
 export async function scheduleContactFollowUp(
@@ -67,7 +404,7 @@ export async function scheduleContactFollowUp(
 ) {
   const userId = await requireUserId();
   const db = await getDb();
-  const { contacts } = await import("@/db/schema");
+  const inboxId = await getInboxListId(userId);
 
   const contact = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
@@ -79,6 +416,11 @@ export async function scheduleContactFollowUp(
   due.setDate(due.getDate() + Math.max(1, Math.min(90, days)));
   const name = contact.preferredName || contact.fullName;
   const title = `Follow up with ${name}`;
+  const actionKind = inferReminderActionKind({
+    title,
+    reminderType: "manual",
+    contactId,
+  });
 
   const existing = await db.query.reminders.findFirst({
     where: and(
@@ -96,6 +438,8 @@ export async function scheduleContactFollowUp(
         title,
         dueDate: due,
         reminderType: "manual",
+        actionKind,
+        listId: existing.listId || inboxId,
       })
       .where(eq(reminders.id, existing.id))
       .returning();
@@ -106,9 +450,11 @@ export async function scheduleContactFollowUp(
       .values({
         userId,
         contactId,
+        listId: inboxId,
         title,
         dueDate: due,
         reminderType: "manual",
+        actionKind,
         createdBy: "user",
         status: "pending",
       })
@@ -125,10 +471,8 @@ export async function scheduleContactFollowUp(
     })
     .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
 
-  revalidatePath("/dashboard");
+  revalidateReminderPaths(contactId);
   revalidatePath("/contacts");
-  revalidatePath(`/contacts/${contactId}`);
-  revalidatePath("/graph");
   return { reminder: row, dueDate: due.toISOString(), days };
 }
 
@@ -139,7 +483,7 @@ export async function scheduleContactFollowUpAt(
 ) {
   const userId = await requireUserId();
   const db = await getDb();
-  const { contacts } = await import("@/db/schema");
+  const inboxId = await getInboxListId(userId);
 
   const contact = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
@@ -152,6 +496,11 @@ export async function scheduleContactFollowUpAt(
 
   const name = contact.preferredName || contact.fullName;
   const title = `Follow up with ${name}`;
+  const actionKind = inferReminderActionKind({
+    title,
+    reminderType: "manual",
+    contactId,
+  });
 
   const existing = await db.query.reminders.findFirst({
     where: and(
@@ -169,6 +518,8 @@ export async function scheduleContactFollowUpAt(
         title,
         dueDate: due,
         reminderType: "manual",
+        actionKind,
+        listId: existing.listId || inboxId,
       })
       .where(eq(reminders.id, existing.id))
       .returning();
@@ -179,9 +530,11 @@ export async function scheduleContactFollowUpAt(
       .values({
         userId,
         contactId,
+        listId: inboxId,
         title,
         dueDate: due,
         reminderType: "manual",
+        actionKind,
         createdBy: "user",
         status: "pending",
       })
@@ -198,17 +551,14 @@ export async function scheduleContactFollowUpAt(
     })
     .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
 
-  revalidatePath("/dashboard");
+  revalidateReminderPaths(contactId);
   revalidatePath("/contacts");
-  revalidatePath(`/contacts/${contactId}`);
-  revalidatePath("/graph");
   return { reminder: row, dueDate: due.toISOString() };
 }
 
 export async function clearContactFollowUp(contactId: string) {
   const userId = await requireUserId();
   const db = await getDb();
-  const { contacts } = await import("@/db/schema");
 
   await db
     .update(contacts)
@@ -230,10 +580,8 @@ export async function clearContactFollowUp(contactId: string) {
     await completeReminder(userId, r.id);
   }
 
-  revalidatePath("/dashboard");
+  revalidateReminderPaths(contactId);
   revalidatePath("/contacts");
-  revalidatePath(`/contacts/${contactId}`);
-  revalidatePath("/graph");
   return { ok: true };
 }
 
@@ -267,8 +615,7 @@ export async function completeFollowUpWithTouch(
 export async function markReminderDone(id: string) {
   const userId = await requireUserId();
   await completeReminder(userId, id);
-  revalidatePath("/");
-  revalidatePath("/dashboard");
+  revalidateReminderPaths();
 }
 
 /** Draft a follow-up message grounded in the reminder contact's conversation history. */
@@ -281,8 +628,7 @@ export async function draftFollowUpResponse(reminderId: string) {
 export async function snoozeReminderAction(id: string, days = 7) {
   const userId = await requireUserId();
   await snoozeReminder(userId, id, days);
-  revalidatePath("/");
-  revalidatePath("/dashboard");
+  revalidateReminderPaths();
   revalidatePath("/contacts");
   revalidatePath("/graph");
 }
@@ -291,13 +637,13 @@ export async function snoozeReminderAction(id: string, days = 7) {
 export async function listNotificationPanel() {
   const userId = await requireUserId();
   const db = await getDb();
-  const { contacts, aiSuggestions } = await import("@/db/schema");
+  const { aiSuggestions } = await import("@/db/schema");
   const now = new Date();
 
   const [pendingReminders, contactRows, suggestions] = await Promise.all([
     db.query.reminders.findMany({
       where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
-      orderBy: (r, { asc }) => [asc(r.dueDate)],
+      orderBy: (r, { asc: ascOrder }) => [ascOrder(r.dueDate)],
       limit: 80,
     }),
     db.query.contacts.findMany({
@@ -317,7 +663,7 @@ export async function listNotificationPanel() {
         eq(aiSuggestions.userId, userId),
         eq(aiSuggestions.status, "pending")
       ),
-      orderBy: (s, { desc }) => [desc(s.confidenceScore)],
+      orderBy: (s, { desc: descOrder }) => [descOrder(s.confidenceScore)],
       limit: 30,
     }),
   ]);
@@ -345,7 +691,7 @@ export async function listNotificationPanel() {
       kind: "reminder",
       title: r.title,
       body: r.description,
-      url: r.contactId ? `/contacts/${r.contactId}` : "/dashboard",
+      url: r.contactId ? `/contacts/${r.contactId}` : "/reminders",
       dueAt: dueAt?.toISOString() ?? null,
       urgency: isDue ? "due" : "upcoming",
       reminderId: r.id,
@@ -407,9 +753,15 @@ export async function listNotificationPanel() {
 
 /** Lightweight payload for browser/desktop notification polling. */
 export async function listDueNotificationItems() {
-  const panel = await listNotificationPanel();
+  const { getDesktopNotifiedIds } = await import("@/actions/notifications");
+  const [notifiedIds, panel] = await Promise.all([
+    getDesktopNotifiedIds(),
+    listNotificationPanel(),
+  ]);
+  const notified = new Set(notifiedIds);
+
   return panel.items
-    .filter((i) => i.urgency === "due")
+    .filter((i) => i.urgency === "due" && !notified.has(i.id))
     .slice(0, 12)
     .map((i) => ({
       id: i.id,
@@ -455,7 +807,7 @@ export async function scheduleFromSuggestion(suggestionId: string, days = 7) {
 export async function acceptScoreBump(suggestionId: string) {
   const userId = await requireUserId();
   const db = await getDb();
-  const { aiSuggestions, contacts } = await import("@/db/schema");
+  const { aiSuggestions } = await import("@/db/schema");
 
   const suggestion = await db.query.aiSuggestions.findFirst({
     where: and(
@@ -493,8 +845,7 @@ export async function acceptScoreBump(suggestionId: string) {
 export async function generateDueFollowUpsAction(limit = 8) {
   const userId = await requireUserId();
   const result = await generateDueFollowUps(userId, limit);
-  revalidatePath("/");
-  revalidatePath("/dashboard");
+  revalidateReminderPaths();
   revalidatePath("/contacts");
   revalidatePath("/graph");
   return result;

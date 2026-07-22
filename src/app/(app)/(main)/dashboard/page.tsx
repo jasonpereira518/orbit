@@ -84,7 +84,7 @@ export default async function DashboardPage() {
           label="Reminders"
           value={data.stats.pendingReminders}
           icon={<Bell className="h-4 w-4" />}
-          href="#reminders"
+          href="/reminders"
         />
       </div>
 
@@ -112,8 +112,15 @@ export default async function DashboardPage() {
         />
 
         <Card id="reminders" className="border-border/70 shadow-none scroll-mt-8">
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between gap-2">
             <CardTitle className="text-base">Reminders</CardTitle>
+            <Link
+              href="/reminders"
+              className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+            >
+              View all
+              <ArrowRight className="ml-1 h-3.5 w-3.5" />
+            </Link>
           </CardHeader>
           <CardContent className="space-y-2">
             {data.reminders.length === 0 ? (
@@ -127,6 +134,7 @@ export default async function DashboardPage() {
                   description={r.description}
                   dueDate={r.dueDate}
                   reminderType={r.reminderType}
+                  actionKind={r.actionKind}
                   contactId={r.contactId}
                   contactName={
                     r.contactId

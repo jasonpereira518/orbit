@@ -9,7 +9,6 @@ import {
 } from "@/db/schema";
 import { listActiveGoalTexts } from "@/actions/goals";
 import { daysAgo } from "@/lib/duplicates";
-import { buildHybridGraphLayout } from "@/lib/graph-layout";
 import { computeNetworkMetrics } from "@/lib/network-metrics";
 
 const AUTO_SUGGESTION_TYPES = [
@@ -249,6 +248,7 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
           title,
           dueDate: now,
           reminderType: "generated",
+          actionKind: "follow_up",
           createdBy: "system",
         })
         .where(eq(reminders.id, existing.id));
@@ -260,6 +260,7 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
         description: "Generated from dashboard outreach queue",
         dueDate: now,
         reminderType: "generated",
+        actionKind: "follow_up",
         createdBy: "system",
         status: "pending",
       });
@@ -382,7 +383,6 @@ export async function getDashboardData(
   });
 
   const userName = options?.userName || "You";
-  const { nodes, edges } = buildHybridGraphLayout(graphContacts, userName);
 
   const companies = [
     ...new Set(
@@ -481,9 +481,8 @@ export async function getDashboardData(
     closenessById,
     contactNameById,
     contactById,
+    // Layout (nodes/edges) is computed client-side in NetworkGraph from contacts.
     graphPreview: {
-      nodes,
-      edges,
       contacts: graphContacts,
       companies,
       tags,

@@ -11,7 +11,7 @@ const ChatPanel = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-border/70">
+      <div className="flex h-[calc(100dvh-16.5rem)] w-full flex-col overflow-hidden rounded-2xl border border-border/70 md:h-[calc(100dvh-11rem)]">
         <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-4 py-3">
           <Skeleton className="h-8 w-20" />
           <div className="min-w-0 flex-1 space-y-1.5">
@@ -21,7 +21,7 @@ const ChatPanel = dynamic(
           <Skeleton className="h-8 w-24" />
           <Skeleton className="h-8 w-20" />
         </div>
-        <div className="min-h-0 flex-1 p-4">
+        <div className="min-h-0 flex-1 basis-0 overflow-hidden p-4">
           <div className="mx-auto w-full max-w-3xl space-y-4">
             <div className="flex justify-end">
               <Skeleton className="h-12 w-2/3 rounded-2xl" />
@@ -47,9 +47,5 @@ const ChatPanel = dynamic(
 );
 
 export function ChatPanelLazy() {
-  return (
-    <div className="h-full min-h-0">
-      <ChatPanel />
-    </div>
-  );
+  return <ChatPanel />;
 }

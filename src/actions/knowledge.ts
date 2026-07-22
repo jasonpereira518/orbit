@@ -184,34 +184,3 @@ export async function getKnowledgeBase(): Promise<KnowledgeBasePayload> {
     entries: entries.slice(0, 400),
   };
 }
-
-export async function searchKnowledgeBase(query: string): Promise<KnowledgeEntry[]> {
-  const { entries } = await getKnowledgeBase();
-  const q = query.trim().toLowerCase();
-  if (!q) return entries;
-
-  const tokens = q.split(/\s+/).filter((t) => t.length > 1);
-  return entries
-    .map((e) => {
-      const hay = [
-        e.contactName,
-        e.company,
-        e.title,
-        e.snippet,
-        e.kind,
-        e.source,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      let score = 0;
-      if (hay.includes(q)) score += 5;
-      for (const t of tokens) {
-        if (hay.includes(t)) score += 1;
-      }
-      return { e, score };
-    })
-    .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .map((x) => x.e);
-}

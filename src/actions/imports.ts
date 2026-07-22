@@ -1067,6 +1067,7 @@ export async function confirmCalendarImport(payload: {
               dueDate: due,
               status: "pending",
               reminderType: "post_meeting",
+              actionKind: "follow_up",
               createdBy: "import",
             });
             remindersCreated++;

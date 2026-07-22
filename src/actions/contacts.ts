@@ -86,24 +86,33 @@ async function syncTags(
   const db = await getDb();
   await db.delete(contactTags).where(eq(contactTags.contactId, contactId));
 
-  for (const raw of tagNames) {
-    const name = raw.trim();
-    if (!name) continue;
+  const names = [
+    ...new Set(tagNames.map((raw) => raw.trim()).filter(Boolean)),
+  ];
+  if (names.length === 0) return;
 
-    let tag = await db.query.tags.findFirst({
-      where: and(eq(tags.userId, userId), eq(tags.name, name)),
-    });
+  const existing = await db.query.tags.findMany({
+    where: and(eq(tags.userId, userId), inArray(tags.name, names)),
+  });
+  const byName = new Map(existing.map((tag) => [tag.name, tag]));
 
-    if (!tag) {
-      const [created] = await db
-        .insert(tags)
-        .values({ userId, name })
-        .returning();
-      tag = created;
+  const missing = names.filter((name) => !byName.has(name));
+  if (missing.length > 0) {
+    const created = await db
+      .insert(tags)
+      .values(missing.map((name) => ({ userId, name })))
+      .returning();
+    for (const tag of created) {
+      byName.set(tag.name, tag);
     }
-
-    await db.insert(contactTags).values({ contactId, tagId: tag.id });
   }
+
+  await db.insert(contactTags).values(
+    names.map((name) => ({
+      contactId,
+      tagId: byName.get(name)!.id,
+    }))
+  );
 }
 
 export async function listContacts(filters?: {
@@ -115,11 +124,16 @@ export async function listContacts(filters?: {
   const userId = await requireUserId();
   const db = await getDb();
 
-  let rows = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    with: { contactTags: { with: { tag: true } } },
-    orderBy: [desc(contacts.updatedAt)],
-  });
+  const [allRows, goals] = await Promise.all([
+    db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+      with: { contactTags: { with: { tag: true } } },
+      orderBy: [desc(contacts.updatedAt)],
+    }),
+    listActiveGoalTexts(userId),
+  ]);
+
+  let rows = allRows;
 
   if (filters?.q?.trim()) {
     const q = filters.q.trim().toLowerCase();
@@ -159,8 +173,6 @@ export async function listContacts(filters?: {
       (c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now
     );
   }
-
-  const goals = await listActiveGoalTexts(userId);
 
   const mapped = rows.map((c) => {
     const tags = c.contactTags.map((ct) => ct.tag.name);

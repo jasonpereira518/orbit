@@ -14,6 +14,10 @@ const OnboardingFlow = dynamic(
   }
 );
 
-export function OnboardingFlowLazy() {
-  return <OnboardingFlow />;
+export function OnboardingFlowLazy({
+  initialStepId = null,
+}: {
+  initialStepId?: string | null;
+}) {
+  return <OnboardingFlow initialStepId={initialStepId} />;
 }

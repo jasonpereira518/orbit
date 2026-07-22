@@ -10,6 +10,7 @@ import {
   BookOpen,
   Settings,
   MoreHorizontal,
+  Bell,
 } from "lucide-react";
 
 export type AppNavItem = {
@@ -20,6 +21,7 @@ export type AppNavItem = {
 
 export const APP_NAV: AppNavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/reminders", label: "Reminders", icon: Bell },
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/capture", label: "Capture", icon: Sparkles },
   { href: "/imports", label: "Imports", icon: Upload },
@@ -33,15 +35,29 @@ export const APP_NAV: AppNavItem[] = [
 export const MOBILE_BOTTOM_NAV: Array<
   AppNavItem | { id: "more"; label: string; icon: LucideIcon }
 > = [
-  APP_NAV[0],
-  APP_NAV[1],
-  APP_NAV[2],
-  APP_NAV[4],
+  APP_NAV[0], // Dashboard
+  APP_NAV[2], // Contacts
+  APP_NAV[3], // Capture
+  APP_NAV[5], // Knowledge
   { id: "more", label: "More", icon: MoreHorizontal },
 ];
 
-export const MOBILE_MORE_NAV = [APP_NAV[3], APP_NAV[5], APP_NAV[6], APP_NAV[7]];
+export const MOBILE_MORE_NAV = [
+  APP_NAV[1], // Reminders
+  APP_NAV[4], // Imports
+  APP_NAV[6], // Outreach
+  APP_NAV[7], // Chat
+  APP_NAV[8], // Constellation
+];
 
 export function isNavActive(pathname: string, href: string) {
+  if (href === "/contacts") {
+    return (
+      pathname === "/contacts" ||
+      pathname.startsWith("/contacts/") ||
+      pathname === "/recruiters" ||
+      pathname.startsWith("/recruiters/")
+    );
+  }
   return pathname === href || pathname.startsWith(`${href}/`);
 }

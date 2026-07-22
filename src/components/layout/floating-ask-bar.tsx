@@ -56,7 +56,7 @@ const CONTACT_PATH_RE =
 const SUGGESTIONS = [
   "Who do I know at AWS?",
   "Who have I not followed up with recently?",
-  "Who knows about AI agents?",
+  "Who are the best recruiters for my search?",
   "Who should I reconnect with this week?",
 ];
 
@@ -470,7 +470,10 @@ export function FloatingAskBar() {
                             {msg.answer}
                           </div>
                           {msg.recommendations.map((r) => (
-                            <MiniRecommendation key={r.contact_id} rec={r} />
+                            <MiniRecommendation
+                              key={r.recruiter_id || r.contact_id || r.name}
+                              rec={r}
+                            />
                           ))}
                           {msg.retrieved.length > 0 &&
                             msg.recommendations.length === 0 && (
@@ -633,44 +636,57 @@ function MiniRecommendation({
   rec: ChatResult["recommendations"][number];
 }) {
   const [pending, start] = useTransition();
+  const href = rec.recruiter_id
+    ? `/recruiters/${rec.recruiter_id}`
+    : rec.contact_id
+      ? `/contacts/${rec.contact_id}`
+      : "#";
+  const canRemind = Boolean(rec.contact_id);
 
   return (
     <div className="rounded-2xl border border-border/70 bg-background/80 p-2.5">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <Link
-            href={rec.contact_id ? `/contacts/${rec.contact_id}` : (rec.recruiter_id ? `/recruiters/${rec.recruiter_id}` : "#")}
+            href={href}
             className="text-sm font-medium text-primary hover:underline"
           >
             {rec.name}
           </Link>
+          {rec.recruiter_id && (
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Recruiter
+            </p>
+          )}
           <p className="mt-0.5 text-xs text-muted-foreground">{rec.reason}</p>
           <p className="mt-1 text-xs">
             <span className="font-medium">Next: </span>
             {rec.suggested_action}
           </p>
         </div>
-        <Button
-          size="xs"
-          variant="outline"
-          className="rounded-full"
-          disabled={pending}
-          onClick={() =>
-            start(async () => {
-              await createReminder({
-                contactId: rec.contact_id ?? undefined,
-                title: `Reach out to ${rec.name}`,
-                description: rec.suggested_action,
-                dueDate: new Date(
-                  Date.now() + 3 * 24 * 60 * 60 * 1000
-                ).toISOString(),
-              });
-              toast.success("Reminder created");
-            })
-          }
-        >
-          Reminder
-        </Button>
+        {canRemind && (
+          <Button
+            size="xs"
+            variant="outline"
+            className="rounded-full"
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                await createReminder({
+                  contactId: rec.contact_id!,
+                  title: `Reach out to ${rec.name}`,
+                  description: rec.suggested_action,
+                  dueDate: new Date(
+                    Date.now() + 3 * 24 * 60 * 60 * 1000
+                  ).toISOString(),
+                });
+                toast.success("Reminder created");
+              })
+            }
+          >
+            Reminder
+          </Button>
+        )}
       </div>
       {rec.draft_message && (
         <div className="mt-2 rounded-xl bg-muted/50 p-2 text-xs text-muted-foreground whitespace-pre-wrap">

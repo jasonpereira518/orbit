@@ -30,6 +30,12 @@ import {
   scheduleContactFollowUpAt,
 } from "@/actions/reminders";
 import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { promptNotificationsAfterFollowUpAction } from "@/lib/browser-notifications";
@@ -232,16 +238,16 @@ export function ContactFollowUpSection({
   ];
 
   return (
-    <section id="follow-up" className="scroll-mt-24 border-t border-border/50 pt-6">
-      <h2 className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
-        Follow up
-      </h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Schedule a reminder, or pick a channel to draft a message from your
-        history.
-      </p>
-
-      <div className="mt-4 space-y-4">
+    <Card id="follow-up" className="scroll-mt-24 border-border/70 shadow-none">
+      <CardHeader>
+        <CardTitle>Follow up</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Schedule a reminder, or pick a channel to draft a message from your
+          history.
+        </p>
+      </CardHeader>
+      <CardContent>
+      <div className="space-y-4">
         <div>
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <p className="text-xs font-medium text-muted-foreground">Remind</p>
@@ -393,6 +399,7 @@ export function ContactFollowUpSection({
           </div>
         ) : null}
       </div>
-    </section>
+      </CardContent>
+    </Card>
   );
 }

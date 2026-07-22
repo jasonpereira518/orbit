@@ -422,6 +422,10 @@ function GraphCanvasInner({
       (linksMode === "auto" &&
         (contactCount < HIGH_NODE_THRESHOLD || Boolean(focusCompany)));
 
+    const nodeById = new Map(
+      layout.nodes.map((n) => [n.id, n.data as GraphNodeData | undefined])
+    );
+
     return layout.edges
       .filter((e) => {
         const kind = e.data?.kind;
@@ -437,12 +441,8 @@ function GraphCanvasInner({
           if (kind === "constellation") {
             return e.data?.company === focusCompany;
           }
-          const sourceCo = (
-            layout.nodes.find((n) => n.id === e.source)?.data as GraphNodeData
-          )?.company;
-          const targetCo = (
-            layout.nodes.find((n) => n.id === e.target)?.data as GraphNodeData
-          )?.company;
+          const sourceCo = nodeById.get(e.source)?.company;
+          const targetCo = nodeById.get(e.target)?.company;
           return sourceCo === focusCompany || targetCo === focusCompany;
         }
         if (linksMode === "auto" && contactCount >= HIGH_NODE_THRESHOLD) {
@@ -467,10 +467,8 @@ function GraphCanvasInner({
 
         let opacity = Number(e.style?.opacity ?? 0.5);
         if (searchQuery) {
-          const targetData = layout.nodes.find((n) => n.id === e.target)
-            ?.data as GraphNodeData | undefined;
-          const sourceData = layout.nodes.find((n) => n.id === e.source)
-            ?.data as GraphNodeData | undefined;
+          const targetData = nodeById.get(e.target);
+          const sourceData = nodeById.get(e.source);
           const targetOk =
             e.target === "me" ||
             (targetData && contactMatchesSearch(targetData, searchQuery));
@@ -836,9 +834,16 @@ export function NetworkGraph({
 
   useEffect(() => {
     if (compact) return;
-    const onFocus = () => loadData(false);
+    let lastRefresh = 0;
+    function refresh() {
+      const now = Date.now();
+      if (now - lastRefresh < 500) return;
+      lastRefresh = now;
+      loadData(false);
+    }
+    const onFocus = () => refresh();
     const onVisibility = () => {
-      if (document.visibilityState === "visible") loadData(false);
+      if (document.visibilityState === "visible") refresh();
     };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);

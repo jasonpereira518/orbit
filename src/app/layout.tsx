@@ -39,7 +39,7 @@ export default function RootLayout({
       suppressHydrationWarning
       className={`${outfit.variable} ${fraunces.variable} h-full`}
     >
-      <body className="min-h-full font-sans antialiased">
+      <body className="h-full min-h-full font-sans antialiased">
         <ThemeProvider
           attribute="class"
           defaultTheme="system"

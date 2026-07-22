@@ -12,7 +12,7 @@ import {
   Upload,
   UserPlus,
 } from "lucide-react";
-import { completeOnboarding, skipOnboarding } from "@/actions/onboarding";
+import { completeOnboarding, saveOnboardingStep, skipOnboarding } from "@/actions/onboarding";
 import { TourSidebar } from "@/components/onboarding/tour-sidebar";
 import {
   TOUR_INTERVAL_MS,
@@ -66,11 +66,24 @@ const PREVIEWS: Record<
 
 const START_INDEX = TOUR_STEPS.length - 1;
 
-export function OnboardingFlow() {
+function indexForStep(stepId: string | null | undefined) {
+  if (!stepId) return 0;
+  const idx = TOUR_STEPS.findIndex((s) => s.id === stepId);
+  return idx >= 0 ? idx : 0;
+}
+
+export function OnboardingFlow({
+  initialStepId = null,
+}: {
+  initialStepId?: string | null;
+}) {
   const router = useRouter();
   const reducedMotion = usePrefersReducedMotion();
-  const [stepIndex, setStepIndex] = useState(0);
-  const [playing, setPlaying] = useState(true);
+  const [stepIndex, setStepIndex] = useState(() => indexForStep(initialStepId));
+  const [playing, setPlaying] = useState(() => {
+    const idx = indexForStep(initialStepId);
+    return idx !== START_INDEX;
+  });
   const [progress, setProgress] = useState(0);
   const [pending, start] = useTransition();
 
@@ -105,6 +118,10 @@ export function OnboardingFlow() {
     setProgress(0);
     if (next === START_INDEX) {
       setPlaying(false);
+    }
+    const nextStep = TOUR_STEPS[next];
+    if (nextStep) {
+      void saveOnboardingStep(nextStep.id);
     }
   }, []);
 

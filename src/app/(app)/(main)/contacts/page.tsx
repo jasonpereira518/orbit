@@ -4,6 +4,7 @@ import { listContacts } from "@/actions/contacts";
 import { buttonVariants } from "@/components/ui/button";
 import { ContactsFilters } from "@/components/contacts/contacts-filters";
 import { ContactsList } from "@/components/contacts/contacts-list";
+import { PeopleListShell } from "@/components/contacts/people-list-shell";
 import { RefreshContactsButton } from "@/components/contacts/refresh-contacts-button";
 import { cn } from "@/lib/utils";
 
@@ -26,17 +27,12 @@ export default async function ContactsPage({
   });
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="font-[family-name:var(--font-display)] text-3xl text-primary">
-            Contacts
-          </h1>
-          <p className="mt-1 text-muted-foreground">
-            {contacts.length} people in your network
-          </p>
-        </div>
-        <div className="flex gap-2">
+    <PeopleListShell
+      active="contacts"
+      title="Contacts"
+      subtitle={`${contacts.length} people in your network`}
+      actions={
+        <>
           <RefreshContactsButton />
           <Link
             href="/capture"
@@ -54,41 +50,45 @@ export default async function ContactsPage({
             <Plus className="mr-1 h-4 w-4" />
             Add contact
           </Link>
+        </>
+      }
+    >
+      <div className="space-y-6">
+        <ContactsFilters
+          initialQ={params.q || ""}
+          initialCompany={params.company || ""}
+          initialMinScore={params.minScore || ""}
+          initialFollowUp={params.followUp || ""}
+        />
+
+        <div className="rounded-2xl border border-border/70 bg-card">
+          <ContactsList
+            key={[params.q, params.company, params.minScore, params.followUp].join(
+              "|"
+            )}
+            initialContacts={contacts.map((c) => ({
+              id: c.id,
+              fullName: c.fullName,
+              firstName: c.firstName,
+              lastName: c.lastName,
+              preferredName: c.preferredName,
+              title: c.title,
+              company: c.company,
+              school: c.school,
+              location: c.location,
+              linkedinUrl: c.linkedinUrl,
+              profileImageUrl: c.profileImageUrl,
+              relationshipScore: c.relationshipScore,
+              closeness: c.closeness,
+              closenessTier: c.closenessTier,
+              priorityLevel: c.priorityLevel,
+              nextFollowUpAt: c.nextFollowUpAt,
+              lastInteractionAt: c.lastInteractionAt,
+              tags: c.tags,
+            }))}
+          />
         </div>
       </div>
-
-      <ContactsFilters
-        initialQ={params.q || ""}
-        initialCompany={params.company || ""}
-        initialMinScore={params.minScore || ""}
-        initialFollowUp={params.followUp || ""}
-      />
-
-      <div className="rounded-2xl border border-border/70 bg-card">
-        <ContactsList
-          key={[params.q, params.company, params.minScore, params.followUp].join("|")}
-          initialContacts={contacts.map((c) => ({
-            id: c.id,
-            fullName: c.fullName,
-            firstName: c.firstName,
-            lastName: c.lastName,
-            preferredName: c.preferredName,
-            title: c.title,
-            company: c.company,
-            school: c.school,
-            location: c.location,
-            linkedinUrl: c.linkedinUrl,
-            profileImageUrl: c.profileImageUrl,
-            relationshipScore: c.relationshipScore,
-            closeness: c.closeness,
-            closenessTier: c.closenessTier,
-            priorityLevel: c.priorityLevel,
-            nextFollowUpAt: c.nextFollowUpAt,
-            lastInteractionAt: c.lastInteractionAt,
-            tags: c.tags,
-          }))}
-        />
-      </div>
-    </div>
+    </PeopleListShell>
   );
 }

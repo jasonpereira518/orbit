@@ -12,6 +12,12 @@ import { ContactRelatedPeople } from "@/components/contacts/contact-related-peop
 import { ContactStatPills } from "@/components/contacts/contact-stat-pills";
 import { ContactTimeline } from "@/components/contacts/contact-timeline";
 import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
   computeCloseness,
   formatInteractionFrequency,
 } from "@/lib/closeness";
@@ -99,7 +105,7 @@ export default async function ContactDetailPage({
   };
 
   return (
-    <div className="space-y-8 pb-8">
+    <div className="space-y-6 pb-8">
       <ContactProfileHero
         contactId={contact.id}
         displayName={displayName}
@@ -151,16 +157,19 @@ export default async function ContactDetailPage({
         }))}
       />
 
-      <section className="border-t border-border/50 pt-6">
-        <h2 className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
-          Reminders
-        </h2>
-        <div className="mt-4 space-y-3">
+      <Card className="border-border/70 shadow-none">
+        <CardHeader>
+          <CardTitle>Reminders</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
           {contact.reminders.length === 0 ? (
             <p className="text-sm text-muted-foreground">No reminders.</p>
           ) : (
             contact.reminders.map((r) => (
-              <div key={r.id} className="border-l-2 border-border/60 pl-4 py-1">
+              <div
+                key={r.id}
+                className="rounded-xl border border-border/60 p-3"
+              >
                 <p className="text-sm font-medium text-primary">{r.title}</p>
                 {r.description?.trim() ? (
                   <p className="mt-1 text-sm text-muted-foreground">
@@ -176,8 +185,8 @@ export default async function ContactDetailPage({
               </div>
             ))
           )}
-        </div>
-      </section>
+        </CardContent>
+      </Card>
 
       <ContactRelatedPeople people={relatedPeople} subjectName={displayName} />
     </div>

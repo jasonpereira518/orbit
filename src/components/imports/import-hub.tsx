@@ -1,14 +1,13 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarImportSection } from "@/components/imports/calendar-import-section";
 import {
   ImportHistory,
   type ImportHistoryItem,
 } from "@/components/imports/import-history";
-import { LinkedInConnectionsImport } from "@/components/imports/linkedin-connections-import";
-import { LinkedInMessagesImport } from "@/components/imports/linkedin-messages-import";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 type ImportTab = "connections" | "messages" | "calendar";
@@ -37,15 +36,51 @@ const TABS: { id: ImportTab; label: string }[] = [
   { id: "calendar", label: "Calendar" },
 ];
 
+const PanelSkeleton = () => (
+  <div className="space-y-3 rounded-xl border border-border/60 p-4">
+    <Skeleton className="h-5 w-40" />
+    <Skeleton className="h-24 w-full" />
+    <Skeleton className="h-9 w-32" />
+  </div>
+);
+
+const LinkedInConnectionsImport = dynamic(
+  () =>
+    import("@/components/imports/linkedin-connections-import").then((m) => ({
+      default: m.LinkedInConnectionsImport,
+    })),
+  { loading: () => <PanelSkeleton /> }
+);
+
+const LinkedInMessagesImport = dynamic(
+  () =>
+    import("@/components/imports/linkedin-messages-import").then((m) => ({
+      default: m.LinkedInMessagesImport,
+    })),
+  { loading: () => <PanelSkeleton /> }
+);
+
+const CalendarImportSection = dynamic(
+  () =>
+    import("@/components/imports/calendar-import-section").then((m) => ({
+      default: m.CalendarImportSection,
+    })),
+  { loading: () => <PanelSkeleton /> }
+);
+
 /** Refresh server-rendered data when the user returns to this browser tab. */
 function useRefreshOnVisible() {
   const router = useRouter();
 
   useEffect(() => {
+    let lastRefresh = 0;
     function onVisible() {
-      if (document.visibilityState === "visible") {
-        router.refresh();
-      }
+      if (document.visibilityState !== "visible") return;
+      // visibilitychange + focus often fire together; coalesce into one refresh.
+      const now = Date.now();
+      if (now - lastRefresh < 500) return;
+      lastRefresh = now;
+      router.refresh();
     }
 
     document.addEventListener("visibilitychange", onVisible);
@@ -65,7 +100,18 @@ export function ImportHub({
   calendarSubscriptions?: CalendarSub[];
 }) {
   const [tab, setTab] = useState<ImportTab>("connections");
+  // Mount panels on first visit so inactive tabs don't load code upfront,
+  // but keep them mounted afterward so in-flight imports survive switches.
+  const [mounted, setMounted] = useState<Record<ImportTab, boolean>>({
+    connections: true,
+    messages: false,
+    calendar: false,
+  });
   useRefreshOnVisible();
+
+  useEffect(() => {
+    setMounted((prev) => (prev[tab] ? prev : { ...prev, [tab]: true }));
+  }, [tab]);
 
   return (
     <div className="space-y-8">
@@ -95,31 +141,36 @@ export function ImportHub({
         ))}
       </div>
 
-      {/* Keep panels mounted so in-flight imports survive tab switches. */}
-      <div
-        id="import-panel-connections"
-        role="tabpanel"
-        aria-labelledby="import-tab-connections"
-        hidden={tab !== "connections"}
-      >
-        <LinkedInConnectionsImport />
-      </div>
-      <div
-        id="import-panel-messages"
-        role="tabpanel"
-        aria-labelledby="import-tab-messages"
-        hidden={tab !== "messages"}
-      >
-        <LinkedInMessagesImport />
-      </div>
-      <div
-        id="import-panel-calendar"
-        role="tabpanel"
-        aria-labelledby="import-tab-calendar"
-        hidden={tab !== "calendar"}
-      >
-        <CalendarImportSection calendarSubscriptions={calendarSubscriptions} />
-      </div>
+      {mounted.connections && (
+        <div
+          id="import-panel-connections"
+          role="tabpanel"
+          aria-labelledby="import-tab-connections"
+          hidden={tab !== "connections"}
+        >
+          <LinkedInConnectionsImport />
+        </div>
+      )}
+      {mounted.messages && (
+        <div
+          id="import-panel-messages"
+          role="tabpanel"
+          aria-labelledby="import-tab-messages"
+          hidden={tab !== "messages"}
+        >
+          <LinkedInMessagesImport />
+        </div>
+      )}
+      {mounted.calendar && (
+        <div
+          id="import-panel-calendar"
+          role="tabpanel"
+          aria-labelledby="import-tab-calendar"
+          hidden={tab !== "calendar"}
+        >
+          <CalendarImportSection calendarSubscriptions={calendarSubscriptions} />
+        </div>
+      )}
 
       <ImportHistory history={history} />
     </div>

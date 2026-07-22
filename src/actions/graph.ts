@@ -6,7 +6,6 @@ import { contacts } from "@/db/schema";
 import { listActiveGoalTexts } from "@/actions/goals";
 import { requireUserId, getCurrentUserProfile } from "@/lib/auth";
 import { computeCloseness } from "@/lib/closeness";
-import { buildHybridGraphLayout } from "@/lib/graph-layout";
 
 export async function getGraphData() {
   const userId = await requireUserId();
@@ -45,11 +44,6 @@ export async function getGraphData() {
     };
   });
 
-  const { nodes, edges } = buildHybridGraphLayout(
-    graphContacts,
-    profile?.name || "You"
-  );
-
   const companies = [
     ...new Set(rows.map((c) => c.company).filter(Boolean)),
   ] as string[];
@@ -64,9 +58,8 @@ export async function getGraphData() {
     scoreCounts[s] = (scoreCounts[s] || 0) + 1;
   }
 
+  // Layout (nodes/edges) is computed client-side in NetworkGraph from contacts.
   return {
-    nodes,
-    edges,
     contacts: graphContacts,
     companies,
     tags,

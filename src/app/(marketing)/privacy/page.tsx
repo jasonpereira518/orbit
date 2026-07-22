@@ -162,9 +162,11 @@ export default function PrivacyPage() {
               <code className="rounded bg-muted px-1.5 py-0.5 text-sm">
                 localStorage
               </code>
-              , such as theme, graph layout positions, and notification preferences.
-              We do not use advertising pixels or third-party analytics trackers in
-              the product today.
+              , such as theme flash helpers, graph layout positions, and
+              notification opt-in on this device. Delivered-notification history
+              and account preferences are stored with your account. We do not use
+              advertising pixels or third-party analytics trackers in the product
+              today.
             </p>
           </Section>
 

@@ -1,9 +1,9 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AppSidebar } from "@/components/layout/app-sidebar";
-import { FloatingAskBar } from "@/components/layout/floating-ask-bar";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
@@ -11,6 +11,14 @@ import { NotificationsPanelButton } from "@/components/notifications/notificatio
 import { ThemeSync } from "@/components/theme-sync";
 import { cn } from "@/lib/utils";
 import type { ThemePreference } from "@/lib/theme";
+
+const FloatingAskBar = dynamic(
+  () =>
+    import("@/components/layout/floating-ask-bar").then((m) => ({
+      default: m.FloatingAskBar,
+    })),
+  { ssr: false }
+);
 
 export function AppShell({
   children,
@@ -38,19 +46,24 @@ export function AppShell({
   }
 
   return (
-    <div className={cn("flex bg-background", isChat ? "h-dvh overflow-hidden" : "min-h-screen")}>
+    <div
+      className={cn(
+        "flex bg-background",
+        isChat ? "h-dvh overflow-hidden" : "min-h-screen"
+      )}
+    >
       <ThemeSync theme={theme} />
       <DueNotificationsWatcher />
-      <div className="sticky top-0 z-40 hidden h-screen shrink-0 p-3 md:block lg:p-4">
+      <div className="sticky top-0 z-40 hidden h-dvh shrink-0 p-3 md:block lg:p-4">
         <AppSidebar pathname={pathname} clerkOn={clerkOn} demoMode={demoMode} />
       </div>
       <main
         className={cn(
-          "relative flex flex-1 flex-col",
-          isChat ? "min-h-0 overflow-hidden" : "min-h-screen overflow-auto"
+          "relative flex min-h-0 flex-1 flex-col",
+          isChat ? "h-dvh overflow-hidden" : "min-h-screen overflow-auto"
         )}
       >
-        <header className="sticky top-0 z-30 flex shrink-0 items-center justify-between border-b border-border/70 bg-background/95 px-4 py-3 backdrop-blur md:hidden">
+        <header className="z-30 flex shrink-0 items-center justify-between border-b border-border/70 bg-background/95 px-4 py-3 backdrop-blur md:hidden">
           <Link href="/" className="flex items-center gap-2.5" title="Back to landing page">
             <OrbitLogo size="md" />
             <span className="font-[family-name:var(--font-display)] text-lg leading-none text-primary">
@@ -66,10 +79,10 @@ export function AppShell({
 
         <div
           className={cn(
-            "mx-auto w-full max-w-6xl flex-1 px-4 py-6 md:px-10 md:py-8",
+            "mx-auto w-full max-w-6xl px-4 py-6 md:px-10 md:py-8",
             isChat
-              ? "flex min-h-0 flex-col overflow-hidden pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-8"
-              : "pb-[calc(9.5rem+env(safe-area-inset-bottom))] md:pb-24"
+              ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-8"
+              : "flex-1 pb-[calc(9.5rem+env(safe-area-inset-bottom))] md:pb-24"
           )}
         >
           {children}

@@ -26,7 +26,7 @@ export function isDemoMode() {
 
 /** Idempotent per-request bootstrap so layouts + pages don't repeat DB work. */
 export const bootstrapAuthenticatedUser = cache(async (userId: string) => {
-  await ensureUserSettings(userId);
+  return ensureUserSettings(userId);
 });
 
 export async function getPostAuthRedirectPath(userId: string) {
