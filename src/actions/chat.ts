@@ -11,6 +11,8 @@ import {
 import { requireUserId } from "@/lib/auth";
 import { chatWithNetwork } from "@/lib/ai";
 import { semanticSearchContacts } from "@/lib/search";
+import { isRecruiterIntent } from "@/lib/recruiters";
+import { loadRecruitersForChat } from "@/actions/recruiters";
 
 const TITLE_MAX = 72;
 const PRIOR_TURN_LIMIT = 8;
@@ -235,6 +237,16 @@ export async function askNetwork(
       ? `[Focus: answer primarily about the pinned contact id=${focusContactId}. You may use other contacts only for intros/context.]\n\n${q}`
       : q;
 
+    const recruiterIntent = isRecruiterIntent(q);
+    const recruitersForChat = recruiterIntent
+      ? await loadRecruitersForChat(userId, q, 8)
+      : [];
+
+    const maxScore = Math.max(
+      1,
+      ...recruitersForChat.map((r) => r.score)
+    );
+
     const result = await chatWithNetwork(
       userId,
       scopedQuestion,
@@ -251,13 +263,29 @@ export async function askNetwork(
         tags: c.tags,
         relevance: c.relevance,
       })),
-      priorTurns
+      priorTurns,
+      recruitersForChat.map((r) => ({
+        id: r.id,
+        fullName: r.fullName,
+        firm: r.firm,
+        specialty: r.specialty,
+        avgRating: r.avgRating,
+        logCount: r.logCount,
+        personalRating: r.personalRating,
+        status: r.status,
+        notes: r.notes,
+        piiUnlocked: r.piiUnlocked,
+        relevance: r.score / maxScore,
+      }))
     );
 
-    const allowed = new Set(retrieved.map((c) => c.id));
-    const recommendations = (result.recommendations || []).filter((r) =>
-      allowed.has(r.contact_id)
-    ) as ChatRecommendation[];
+    const allowedContacts = new Set(retrieved.map((c) => c.id));
+    const allowedRecruiters = new Set(recruitersForChat.map((r) => r.id));
+    const recommendations = (result.recommendations || []).filter((r) => {
+      if (r.recruiter_id) return allowedRecruiters.has(r.recruiter_id);
+      if (r.contact_id) return allowedContacts.has(r.contact_id);
+      return false;
+    }) as ChatRecommendation[];
 
     let messageId: string | undefined;
     let title: string | null | undefined = thread?.title;
