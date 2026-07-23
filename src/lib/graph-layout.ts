@@ -335,26 +335,10 @@ export function buildHybridGraphLayout(
     if (cluster.count < 2) continue;
     const origin = clusterOrigins.get(cluster.id)!;
     const color = clusterBrandColor(cluster.name, cluster.kind);
-    const nebulaRadius = 60 + Math.min(cluster.count, 14) * 13;
-
-    clusterNodes.push({
-      id: `nebula-${cluster.id}`,
-      type: "nebula",
-      data: {
-        kind: "nebula",
-        company: cluster.name,
-        color,
-        radius: nebulaRadius,
-        clusterKind: cluster.kind,
-      },
-      position: { x: origin.x, y: origin.y },
-      draggable: false,
-      selectable: false,
-      zIndex: 0,
-    });
+    const labelRadius = 60 + Math.min(cluster.count, 14) * 13;
 
     // Label on the outer edge of the cluster (away from sun)
-    const labelDist = nebulaRadius * 0.7 + 8;
+    const labelDist = labelRadius * 0.7 + 8;
     const outward = Math.atan2(origin.y, origin.x);
     clusterNodes.push({
       id: `cluster-${cluster.id}`,

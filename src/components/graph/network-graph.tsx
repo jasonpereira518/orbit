@@ -16,7 +16,6 @@ import {
   useReactFlow,
   ReactFlowProvider,
   applyNodeChanges,
-  useNodesInitialized,
   useStoreApi,
   type Node,
   type Edge,
@@ -82,62 +81,86 @@ type LabelMode = "always" | "hover" | "never";
 type LinksMode = "on" | "auto" | "off";
 type PositionMap = Record<string, { x: number; y: number }>;
 
-/** Zoom that fits the full constellation with the sun kept at world (0, 0). */
-function computeDefaultZoom(
+/**
+ * Half-extents from the sun at (0, 0). Zoom is derived from how far
+ * stars/labels/nebulae extend so everyone fits while you stay centered.
+ */
+function computeSunExtents(
   layoutNodes: ReturnType<typeof buildHybridGraphLayout>["nodes"],
   positionOverrides: PositionMap,
-  liveNodes: Node[],
-  width: number,
-  height: number
-): number {
-  let maxAbsX = 320;
-  let maxAbsY = 320;
+  liveNodes: Node[]
+): { maxAbsX: number; maxAbsY: number } {
+  let maxAbsX = 240;
+  let maxAbsY = 240;
+
+  const expand = (x: number, y: number, halfW: number, halfH: number) => {
+    maxAbsX = Math.max(maxAbsX, Math.abs(x) + halfW);
+    maxAbsY = Math.max(maxAbsY, Math.abs(y) + halfH);
+  };
 
   for (const n of layoutNodes) {
-    if (n.type === "contact" || n.type === "user") {
-      const padX = n.type === "contact" ? 140 : 100;
-      const padY = n.type === "contact" ? 110 : 80;
-      maxAbsX = Math.max(maxAbsX, Math.abs(n.position.x) + padX);
-      maxAbsY = Math.max(maxAbsY, Math.abs(n.position.y) + padY);
+    if (n.type === "contact") {
+      expand(n.position.x, n.position.y, 56, 64);
+      continue;
+    }
+    if (n.type === "user") {
+      expand(n.position.x, n.position.y, 64, 64);
       continue;
     }
     if (n.type === "clusterLabel") {
-      maxAbsX = Math.max(maxAbsX, Math.abs(n.position.x) + 160);
-      maxAbsY = Math.max(maxAbsY, Math.abs(n.position.y) + 48);
+      expand(n.position.x, n.position.y, 120, 32);
       continue;
     }
     if (n.type === "nebula") {
       const r = (n.data as NebulaData).radius || 80;
-      maxAbsX = Math.max(maxAbsX, Math.abs(n.position.x) + r);
-      maxAbsY = Math.max(maxAbsY, Math.abs(n.position.y) + r);
+      expand(n.position.x, n.position.y, r, r);
     }
   }
 
   for (const pos of Object.values(positionOverrides)) {
-    maxAbsX = Math.max(maxAbsX, Math.abs(pos.x) + 140);
-    maxAbsY = Math.max(maxAbsY, Math.abs(pos.y) + 110);
+    expand(pos.x, pos.y, 56, 64);
   }
 
   for (const n of liveNodes) {
-    if (n.type !== "contact" && n.type !== "user" && n.id !== "me") continue;
-    maxAbsX = Math.max(maxAbsX, Math.abs(n.position.x) + 140);
-    maxAbsY = Math.max(maxAbsY, Math.abs(n.position.y) + 110);
+    if (n.hidden) continue;
+    if (n.type === "orbitRings") continue;
+    const halfW = Math.max(24, (n.measured?.width ?? 48) / 2);
+    const halfH = Math.max(24, (n.measured?.height ?? 48) / 2);
+    if (n.type === "nebula") {
+      const r = (n.data as NebulaData).radius || Math.max(halfW, halfH);
+      expand(n.position.x, n.position.y, r, r);
+      continue;
+    }
+    if (
+      n.type === "contact" ||
+      n.type === "user" ||
+      n.type === "clusterLabel" ||
+      n.id === "me"
+    ) {
+      expand(n.position.x, n.position.y, halfW, halfH);
+    }
   }
 
-  const w = Math.max(width, 1);
-  const h = Math.max(height, 1);
-  // Extra margin so the map opens clearly zoomed out with breathing room
-  const margin = 1.55;
-  const zoomX = w / (2 * maxAbsX * margin);
-  const zoomY = h / (2 * maxAbsY * margin);
-  return Math.min(0.72, Math.max(0.05, Math.min(zoomX, zoomY)));
+  return { maxAbsX, maxAbsY };
+}
+
+function zoomToFitSunCentered(
+  maxAbsX: number,
+  maxAbsY: number,
+  width: number,
+  height: number
+): number {
+  // Padding factor so stars aren't flush against the pane edge
+  const pad = 1.18;
+  const zoomX = width / (2 * maxAbsX * pad);
+  const zoomY = height / (2 * maxAbsY * pad);
+  return Math.min(1.35, Math.max(0.05, Math.min(zoomX, zoomY)));
 }
 
 /**
- * Sole owner of the default wide view (sun centered, all stars visible).
- * Only marks a home request applied after setCenter succeeds — panZoom is
- * often not ready on the first paint, and marking early left the map stuck
- * at React Flow's default zoom-1 origin.
+ * Sole owner of the default view: sun locked to viewport center.
+ * Mount with key={homeToken} so every Home click gets a fresh apply
+ * (avoids cancelled effects / stale appliedToken races).
  */
 function DefaultViewFitter({
   homeToken,
@@ -150,8 +173,6 @@ function DefaultViewFitter({
 }) {
   const { setCenter, getNodes } = useReactFlow();
   const storeApi = useStoreApi();
-  const nodesInitialized = useNodesInitialized();
-  const appliedToken = useRef(0);
   const layoutRef = useRef(layoutNodes);
   const overridesRef = useRef(positionOverrides);
   layoutRef.current = layoutNodes;
@@ -159,59 +180,70 @@ function DefaultViewFitter({
 
   useEffect(() => {
     if (homeToken <= 0) return;
-    if (!nodesInitialized) return;
-    if (homeToken === appliedToken.current) return;
 
     let cancelled = false;
     let tries = 0;
     let timeoutId: number | undefined;
 
-    const schedule = (ms: number) => {
-      timeoutId = window.setTimeout(run, ms);
-    };
-
-    const run = () => {
+    const centerNow = () => {
       if (cancelled) return;
       const { width, height, panZoom } = storeApi.getState();
       if (!panZoom || width < 48 || height < 48) {
-        if (tries < 50) {
+        if (tries < 80) {
           tries += 1;
-          schedule(40);
+          timeoutId = window.setTimeout(centerNow, 32);
         }
         return;
       }
 
-      const zoom = computeDefaultZoom(
+      const { maxAbsX, maxAbsY } = computeSunExtents(
         layoutRef.current,
         overridesRef.current,
-        getNodes(),
-        width,
-        height
+        getNodes()
       );
+      const zoom = zoomToFitSunCentered(maxAbsX, maxAbsY, width, height);
+      const duration = homeToken <= 1 ? 0 : 450;
 
-      void setCenter(0, 0, {
-        zoom,
-        duration: homeToken <= 1 ? 0 : 550,
-      }).then((ok) => {
+      void setCenter(0, 0, { zoom, duration }).then((ok) => {
         if (cancelled) return;
         if (!ok) {
-          if (tries < 50) {
+          if (tries < 80) {
             tries += 1;
-            schedule(40);
+            timeoutId = window.setTimeout(centerNow, 32);
           }
           return;
         }
-        appliedToken.current = homeToken;
+        // One refine after layout settles (no animation)
+        timeoutId = window.setTimeout(() => {
+          if (cancelled) return;
+          const size = storeApi.getState();
+          if (size.width < 48 || size.height < 48) return;
+          const extents = computeSunExtents(
+            layoutRef.current,
+            overridesRef.current,
+            getNodes()
+          );
+          const z = zoomToFitSunCentered(
+            extents.maxAbsX,
+            extents.maxAbsY,
+            size.width,
+            size.height
+          );
+          void setCenter(0, 0, { zoom: z, duration: 0 });
+        }, 100);
       });
     };
 
-    schedule(30);
+    // Defer one frame so pane dimensions are current after filter resets
+    timeoutId = window.setTimeout(centerNow, homeToken <= 1 ? 0 : 40);
 
     return () => {
       cancelled = true;
       if (timeoutId !== undefined) window.clearTimeout(timeoutId);
     };
-  }, [homeToken, nodesInitialized, storeApi, setCenter, getNodes]);
+    // Only homeToken should retrigger — refs hold the rest
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [homeToken]);
 
   return null;
 }
@@ -474,7 +506,7 @@ function buildStructuralNodes(
         ...n,
         data: {
           ...rings,
-          showLabels: true,
+          showLabels: false,
           motionEnabled: motionEnabled && !prefersReducedMotion,
         },
       } as Node;
@@ -661,7 +693,6 @@ function GraphCanvasInner({
 }) {
   const router = useRouter();
   const { fitView, getNodes } = useReactFlow();
-  const nodesInitialized = useNodesInitialized();
   const draggingId = useRef<string | null>(null);
   const fitViewRef = useRef(fitView);
   const getNodesRef = useRef(getNodes);
@@ -716,7 +747,7 @@ function GraphCanvasInner({
           ...n,
           data: {
             ...rings,
-            showLabels: true,
+            showLabels: false,
             motionEnabled: motionEnabled && !prefersReducedMotion,
           },
         } as Node;
@@ -967,7 +998,6 @@ function GraphCanvasInner({
   // Cluster pill / search cluster focus — retry until nodes exist; stable deps
   useEffect(() => {
     if (!focusCluster) return;
-    if (!nodesInitialized) return;
     const key = `${focusCluster}::${zoomToken}`;
     if (key === prevClusterZoomKey.current) return;
 
@@ -1026,7 +1056,7 @@ function GraphCanvasInner({
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only focus/zoom should retrigger
-  }, [focusCluster, zoomToken, nodesInitialized, data.clusters]);
+  }, [focusCluster, zoomToken, data.clusters]);
 
   // Re-engage list hover — zoom in on that person
   useEffect(() => {
@@ -1213,6 +1243,22 @@ function GraphCanvasInner({
         nodeOrigin={[0.5, 0.5]}
         minZoom={0.05}
         maxZoom={2.4}
+        style={{ width: "100%", height: "100%" }}
+        onInit={(instance) => {
+          const pane = document.querySelector(
+            ".constellation-stage.react-flow"
+          ) as HTMLElement | null;
+          const w = pane?.clientWidth ?? 0;
+          const h = pane?.clientHeight ?? 0;
+          if (w < 48 || h < 48) return;
+          const { maxAbsX, maxAbsY } = computeSunExtents(
+            layout.nodes,
+            positionOverrides,
+            instance.getNodes()
+          );
+          const zoom = zoomToFitSunCentered(maxAbsX, maxAbsY, w, h);
+          void instance.setViewport({ x: w / 2, y: h / 2, zoom });
+        }}
         onNodeClick={onNodeClick}
         onNodeMouseEnter={onNodeMouseEnter}
         onNodeMouseLeave={onNodeMouseLeave}
@@ -1229,6 +1275,7 @@ function GraphCanvasInner({
         className="constellation-stage"
       >
         <DefaultViewFitter
+          key={homeToken}
           homeToken={homeToken}
           layoutNodes={layout.nodes}
           positionOverrides={positionOverrides}
@@ -1513,6 +1560,7 @@ export function NetworkGraph({
       setResetToken((t) => t + 1);
     }
 
+    // Always bump home after other state so the fitter runs on the settled map
     requestDefaultView();
   }, [userId, compact, search, positionOverrides, requestDefaultView]);
 
@@ -1966,8 +2014,10 @@ export function NetworkGraph({
                       Star — a person in your network
                     </li>
                     <li className="flex items-center gap-2">
-                      <span className="h-3 w-5 rounded-full bg-[radial-gradient(circle,rgba(120,90,180,0.5),transparent)]" />
-                      Cluster — associated by company
+                      <span className="text-[9px] font-semibold uppercase tracking-wider text-[#ff9900]">
+                        AWS
+                      </span>
+                      Cluster label — company or school group
                     </li>
                     <li className="flex items-center gap-2">
                       <span className="h-px w-4 bg-white/70" />

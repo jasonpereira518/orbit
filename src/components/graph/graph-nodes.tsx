@@ -48,7 +48,7 @@ function OrbitRingsNodeComponent({
   const labels = [5, 4, 3, 2, 1] as const;
 
   return (
-    <div className="pointer-events-none" style={{ width: 0, height: 0 }}>
+    <div className="pointer-events-none" style={{ width: 1, height: 1 }}>
       <div
         className={cn(
           "absolute",
@@ -275,7 +275,7 @@ function ContactNodeComponent({
 function NebulaNodeComponent({ data }: NodeProps & { data: NebulaData }) {
   const r = data.radius;
   return (
-    <div className="pointer-events-none" style={{ width: 0, height: 0 }}>
+    <div className="pointer-events-none" style={{ width: 1, height: 1 }}>
       <div
         className="constellation-nebula absolute rounded-full"
         style={{
