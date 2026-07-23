@@ -9,7 +9,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type RefObject,
 } from "react";
 import {
   ReactFlow,
@@ -91,20 +90,20 @@ function computeDefaultZoom(
   width: number,
   height: number
 ): number {
-  let maxAbsX = 280;
-  let maxAbsY = 280;
+  let maxAbsX = 320;
+  let maxAbsY = 320;
 
   for (const n of layoutNodes) {
     if (n.type === "contact" || n.type === "user") {
-      const padX = n.type === "contact" ? 100 : 70;
-      const padY = n.type === "contact" ? 80 : 50;
+      const padX = n.type === "contact" ? 140 : 100;
+      const padY = n.type === "contact" ? 110 : 80;
       maxAbsX = Math.max(maxAbsX, Math.abs(n.position.x) + padX);
       maxAbsY = Math.max(maxAbsY, Math.abs(n.position.y) + padY);
       continue;
     }
     if (n.type === "clusterLabel") {
-      maxAbsX = Math.max(maxAbsX, Math.abs(n.position.x) + 120);
-      maxAbsY = Math.max(maxAbsY, Math.abs(n.position.y) + 36);
+      maxAbsX = Math.max(maxAbsX, Math.abs(n.position.x) + 160);
+      maxAbsY = Math.max(maxAbsY, Math.abs(n.position.y) + 48);
       continue;
     }
     if (n.type === "nebula") {
@@ -115,162 +114,104 @@ function computeDefaultZoom(
   }
 
   for (const pos of Object.values(positionOverrides)) {
-    maxAbsX = Math.max(maxAbsX, Math.abs(pos.x) + 100);
-    maxAbsY = Math.max(maxAbsY, Math.abs(pos.y) + 80);
+    maxAbsX = Math.max(maxAbsX, Math.abs(pos.x) + 140);
+    maxAbsY = Math.max(maxAbsY, Math.abs(pos.y) + 110);
   }
 
   for (const n of liveNodes) {
     if (n.type !== "contact" && n.type !== "user" && n.id !== "me") continue;
-    const hw = (n.measured?.width ?? 28) / 2 + 24;
-    const hh = (n.measured?.height ?? 28) / 2 + 32;
-    maxAbsX = Math.max(maxAbsX, Math.abs(n.position.x) + hw);
-    maxAbsY = Math.max(maxAbsY, Math.abs(n.position.y) + hh);
+    maxAbsX = Math.max(maxAbsX, Math.abs(n.position.x) + 140);
+    maxAbsY = Math.max(maxAbsY, Math.abs(n.position.y) + 110);
   }
 
   const w = Math.max(width, 1);
   const h = Math.max(height, 1);
-  // Tighter framing — still fits everyone, less empty sky
-  const margin = 1.22;
+  // Extra margin so the map opens clearly zoomed out with breathing room
+  const margin = 1.55;
   const zoomX = w / (2 * maxAbsX * margin);
   const zoomY = h / (2 * maxAbsY * margin);
-  return Math.min(0.9, Math.max(0.04, Math.min(zoomX, zoomY)));
-}
-
-function layoutBoundsSignature(
-  layoutNodes: ReturnType<typeof buildHybridGraphLayout>["nodes"],
-  positionOverrides: PositionMap
-): string {
-  const parts: string[] = [];
-  for (const n of layoutNodes) {
-    if (n.type !== "contact" && n.type !== "user" && n.type !== "clusterLabel") {
-      continue;
-    }
-    const o = positionOverrides[n.id];
-    const x = Math.round(o?.x ?? n.position.x);
-    const y = Math.round(o?.y ?? n.position.y);
-    parts.push(`${n.id}:${x},${y}`);
-  }
-  return parts.join("|");
+  return Math.min(0.72, Math.max(0.05, Math.min(zoomX, zoomY)));
 }
 
 /**
- * Default wide view: sun at viewport center, every star visible.
- *
- * Uses the pane's DOM size (not React Flow's store width/height), which can
- * lag behind the real canvas and left the sun stranded lower-left.
+ * Sole owner of the default wide view (sun centered, all stars visible).
+ * Only marks a home request applied after setCenter succeeds — panZoom is
+ * often not ready on the first paint, and marking early left the map stuck
+ * at React Flow's default zoom-1 origin.
  */
 function DefaultViewFitter({
   homeToken,
-  active,
   layoutNodes,
   positionOverrides,
-  paneRef,
 }: {
   homeToken: number;
-  active: boolean;
   layoutNodes: ReturnType<typeof buildHybridGraphLayout>["nodes"];
   positionOverrides: PositionMap;
-  paneRef: RefObject<HTMLDivElement | null>;
 }) {
-  const { getNodes } = useReactFlow();
+  const { setCenter, getNodes } = useReactFlow();
   const storeApi = useStoreApi();
   const nodesInitialized = useNodesInitialized();
+  const appliedToken = useRef(0);
   const layoutRef = useRef(layoutNodes);
   const overridesRef = useRef(positionOverrides);
-  const lastApplied = useRef({ w: 0, h: 0, zoom: 0, token: -1 });
   layoutRef.current = layoutNodes;
   overridesRef.current = positionOverrides;
 
-  const boundsSig = useMemo(
-    () => layoutBoundsSignature(layoutNodes, positionOverrides),
-    [layoutNodes, positionOverrides]
-  );
-
-  const applyHomeView = useCallback(async () => {
-    const pane = paneRef.current;
-    if (!pane) return false;
-
-    const { width, height } = pane.getBoundingClientRect();
-    // Wait until the canvas is actually laid out — store size was often ~half
-    // the real pane, which "centered" the sun in the wrong box.
-    if (width < 280 || height < 240) return false;
-
-    const { panZoom } = storeApi.getState();
-    if (!panZoom) return false;
-
-    const zoom = computeDefaultZoom(
-      layoutRef.current,
-      overridesRef.current,
-      getNodes(),
-      width,
-      height
-    );
-
-    const samePane =
-      Math.abs(lastApplied.current.w - width) < 1 &&
-      Math.abs(lastApplied.current.h - height) < 1 &&
-      Math.abs(lastApplied.current.zoom - zoom) < 0.005 &&
-      lastApplied.current.token === homeToken;
-
-    if (samePane) {
-      // Still force-set so a drifted pan can't stick around
-    }
-
-    await panZoom.setViewport(
-      { x: width / 2, y: height / 2, zoom },
-      { duration: 0 }
-    );
-
-    lastApplied.current = { w: width, h: height, zoom, token: homeToken };
-    return true;
-  }, [getNodes, homeToken, paneRef, storeApi]);
-
   useEffect(() => {
-    if (!active || homeToken <= 0) return;
+    if (homeToken <= 0) return;
     if (!nodesInitialized) return;
+    if (homeToken === appliedToken.current) return;
 
     let cancelled = false;
-    let attempt = 0;
+    let tries = 0;
+    let timeoutId: number | undefined;
 
-    const loop = async () => {
-      while (!cancelled && attempt < 100) {
-        attempt += 1;
-        const ok = await applyHomeView();
-        if (ok) {
-          await new Promise((r) => window.setTimeout(r, 100));
-          if (cancelled) return;
-          // Second pass after layout/fonts settle
-          await applyHomeView();
+    const schedule = (ms: number) => {
+      timeoutId = window.setTimeout(run, ms);
+    };
+
+    const run = () => {
+      if (cancelled) return;
+      const { width, height, panZoom } = storeApi.getState();
+      if (!panZoom || width < 48 || height < 48) {
+        if (tries < 50) {
+          tries += 1;
+          schedule(40);
+        }
+        return;
+      }
+
+      const zoom = computeDefaultZoom(
+        layoutRef.current,
+        overridesRef.current,
+        getNodes(),
+        width,
+        height
+      );
+
+      void setCenter(0, 0, {
+        zoom,
+        duration: homeToken <= 1 ? 0 : 550,
+      }).then((ok) => {
+        if (cancelled) return;
+        if (!ok) {
+          if (tries < 50) {
+            tries += 1;
+            schedule(40);
+          }
           return;
         }
-        await new Promise((r) => window.setTimeout(r, 40));
-      }
+        appliedToken.current = homeToken;
+      });
     };
 
-    void loop();
+    schedule(30);
+
     return () => {
       cancelled = true;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
     };
-  }, [active, homeToken, nodesInitialized, boundsSig, applyHomeView]);
-
-  useEffect(() => {
-    if (!active) return;
-    const pane = paneRef.current;
-    if (!pane) return;
-
-    let timer: number | undefined;
-    const ro = new ResizeObserver(() => {
-      if (timer !== undefined) window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        void applyHomeView();
-      }, 50);
-    });
-    ro.observe(pane);
-    return () => {
-      ro.disconnect();
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [active, applyHomeView, paneRef]);
+  }, [homeToken, nodesInitialized, storeApi, setCenter, getNodes]);
 
   return null;
 }
@@ -654,13 +595,12 @@ function GraphCanvas(props: {
   ]);
 
   return (
-    <ReactFlowProvider key={layoutKey}>
-      <GraphCanvasInner
-        {...props}
-        filteredContacts={filteredContacts}
-        layout={layout}
-      />
-    </ReactFlowProvider>
+    <GraphCanvasInner
+      key={layoutKey}
+      {...props}
+      filteredContacts={filteredContacts}
+      layout={layout}
+    />
   );
 }
 
@@ -723,7 +663,6 @@ function GraphCanvasInner({
   const { fitView, getNodes } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
   const draggingId = useRef<string | null>(null);
-  const paneRef = useRef<HTMLDivElement | null>(null);
   const fitViewRef = useRef(fitView);
   const getNodesRef = useRef(getNodes);
   const prevClusterZoomKey = useRef("");
@@ -1265,46 +1204,42 @@ function GraphCanvasInner({
 
   return (
     <>
-      <div ref={paneRef} className="absolute inset-0">
-        <ReactFlow
-          nodes={nodes}
-          edges={isEmpty ? [] : edges}
-          onNodesChange={onNodesChange}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          nodeOrigin={[0.5, 0.5]}
-          minZoom={0.04}
-          maxZoom={2.4}
-          onNodeClick={onNodeClick}
-          onNodeMouseEnter={onNodeMouseEnter}
-          onNodeMouseLeave={onNodeMouseLeave}
-          onNodeDragStart={onNodeDragStart}
-          onNodeDragStop={onNodeDragStop}
-          onPaneClick={() => onSelect(null)}
-          proOptions={{ hideAttribution: true }}
-          defaultEdgeOptions={{
-            type: "straight",
-            selectable: false,
-            focusable: false,
-          }}
-          nodesDraggable={!compact}
-          className="constellation-stage h-full w-full"
-        >
-          <DefaultViewFitter
-            homeToken={homeToken}
-            active={!focusCluster && !peekPersonId && !search.trim()}
-            layoutNodes={layout.nodes}
-            positionOverrides={positionOverrides}
-            paneRef={paneRef}
-          />
-          <Background
-            gap={48}
-            color="rgba(255, 255, 255, 0.03)"
-            size={1}
-            style={{ background: "transparent" }}
-          />
-        </ReactFlow>
-      </div>
+      <ReactFlow
+        nodes={nodes}
+        edges={isEmpty ? [] : edges}
+        onNodesChange={onNodesChange}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        nodeOrigin={[0.5, 0.5]}
+        minZoom={0.05}
+        maxZoom={2.4}
+        onNodeClick={onNodeClick}
+        onNodeMouseEnter={onNodeMouseEnter}
+        onNodeMouseLeave={onNodeMouseLeave}
+        onNodeDragStart={onNodeDragStart}
+        onNodeDragStop={onNodeDragStop}
+        onPaneClick={() => onSelect(null)}
+        proOptions={{ hideAttribution: true }}
+        defaultEdgeOptions={{
+          type: "straight",
+          selectable: false,
+          focusable: false,
+        }}
+        nodesDraggable={!compact}
+        className="constellation-stage"
+      >
+        <DefaultViewFitter
+          homeToken={homeToken}
+          layoutNodes={layout.nodes}
+          positionOverrides={positionOverrides}
+        />
+        <Background
+          gap={48}
+          color="rgba(255, 255, 255, 0.03)"
+          size={1}
+          style={{ background: "transparent" }}
+        />
+      </ReactFlow>
 
       {isEmpty && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -2063,7 +1998,8 @@ export function NetworkGraph({
           </>
         )}
 
-        <GraphCanvas
+        <ReactFlowProvider>
+          <GraphCanvas
             data={data}
             company={company}
             school={school}
@@ -2090,6 +2026,7 @@ export function NetworkGraph({
             compact={compact}
             showEdgeLabels={false}
           />
+        </ReactFlowProvider>
       </div>
 
       {!compact && (
