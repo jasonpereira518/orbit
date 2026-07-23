@@ -41,11 +41,9 @@ export type ReminderFormValues = {
 
 function dueToInput(value: Date | string | null | undefined): string {
   if (!value) return "";
-  try {
-    return toLocalYmd(new Date(value));
-  } catch {
-    return "";
-  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return toLocalYmd(date);
 }
 
 export function ReminderFormFields({

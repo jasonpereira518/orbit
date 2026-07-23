@@ -50,12 +50,7 @@ function resolvePreviewSrc(input: {
 }
 
 function isDefaultAvatarSrc(src: string) {
-  return (
-    src.startsWith("/avatars/") ||
-    src.includes("/avatars/man.png") ||
-    src.includes("/avatars/woman.png") ||
-    src.includes("/avatars/default.png")
-  );
+  return src.startsWith("/avatars/");
 }
 
 function AvatarHoverPreview({

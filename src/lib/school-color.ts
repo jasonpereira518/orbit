@@ -238,5 +238,3 @@ export function withAlpha(hex: string, alpha: number): string {
   const b = parseInt(raw.slice(4, 6), 16);
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
-
-export const NEUTRAL_STAR_COLOR = NEUTRAL_STAR;

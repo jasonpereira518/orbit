@@ -1,4 +1,4 @@
-import { displayName, type EdgeKind, type GraphContactInput, type LayoutEdge } from "@/lib/graph-layout";
+import { orderConstellationMembers, type EdgeKind, type GraphContactInput, type LayoutEdge } from "@/lib/graph-layout";
 import { buildConstellationClusters } from "@/lib/constellation-clusters";
 import { resolveConstellationShape } from "@/lib/constellation-shapes";
 import { computeCloseness, type ClosenessContact } from "@/lib/closeness";
@@ -126,7 +126,6 @@ function addPeerEdge(
 export function buildPeerEdges(
   contacts: GraphContactInput[],
   options?: {
-    positions?: Map<string, { angle: number }>;
     constellationOnly?: boolean;
   }
 ): PeerEdge[] {
@@ -140,15 +139,10 @@ export function buildPeerEdges(
     if (cluster.count < 2 || cluster.kind === "other") continue;
     const group = cluster.contactIds
       .map((id) => contactsById.get(id))
-      .filter(Boolean) as GraphContactInput[];
+      .filter((c): c is GraphContactInput => Boolean(c));
     if (group.length < 2) continue;
 
-    const ordered = [...group].sort((a, b) => {
-      const scoreA = a.orbitScore ?? a.relationshipScore ?? 2;
-      const scoreB = b.orbitScore ?? b.relationshipScore ?? 2;
-      if (scoreB !== scoreA) return scoreB - scoreA;
-      return displayName(a).localeCompare(displayName(b));
-    });
+    const ordered = orderConstellationMembers(group);
 
     const reason: PeerEdgeReason =
       cluster.kind === "company"

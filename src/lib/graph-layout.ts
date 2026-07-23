@@ -466,11 +466,13 @@ export function buildHybridGraphLayout(
       ...layoutEdge,
       type: "labeled",
       label: undefined,
-      data: {
-        kind: layoutEdge.data!.kind,
-        company: layoutEdge.data?.company,
-        reason: layoutEdge.data?.reason,
-      },
+      data: layoutEdge.data
+        ? {
+            kind: layoutEdge.data.kind,
+            company: layoutEdge.data.company,
+            reason: layoutEdge.data.reason,
+          }
+        : undefined,
     });
   }
 

@@ -1859,7 +1859,6 @@ export function NetworkGraph({
                                   relationshipScore: c.relationshipScore,
                                   closeness: c.closeness,
                                   closenessTier: c.closenessTier,
-                                  dormant: true,
                                   comet: true,
                                   tags: c.tags,
                                   aiSummary: c.aiSummary,
