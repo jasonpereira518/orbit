@@ -14,6 +14,7 @@ export type RelatedContactCandidate = {
   company?: string | null;
   companyId?: string | null;
   school?: string | null;
+  location?: string | null;
   howMet?: string | null;
   profileImageUrl?: string | null;
   linkedinUrl?: string | null;
@@ -34,10 +35,14 @@ export type RelatedContact = {
   firstName: string | null;
   title: string | null;
   company: string | null;
+  school: string | null;
+  location: string | null;
   profileImageUrl: string | null;
   linkedinUrl: string | null;
   email: string | null;
   phone: string | null;
+  aiSummary: string | null;
+  relationshipScore: number | null;
   reason: RelatedReason;
   reasonLabel: string;
 };
@@ -46,6 +51,7 @@ const REASON_WEIGHT: Record<RelatedReason, number> = {
   mention: 100,
   companyId: 90,
   company: 80,
+  event: 75,
   howMet: 70,
   school: 60,
   sharedTags: 40,
@@ -116,6 +122,7 @@ function reasonLabel(
         ? `Same company · ${source.company.trim()}`
         : "Same company";
     case "howMet":
+    case "event":
       return source.howMet?.trim()
         ? `Met via · ${source.howMet.trim()}`
         : "Same intro context";
@@ -220,10 +227,14 @@ export function findRelatedContacts(
       firstName: other.firstName ?? null,
       title: other.title ?? null,
       company: other.company ?? null,
+      school: other.school ?? null,
+      location: other.location ?? null,
       profileImageUrl: other.profileImageUrl ?? null,
       linkedinUrl: other.linkedinUrl ?? null,
       email: other.email ?? null,
       phone: other.phone ?? null,
+      aiSummary: other.aiSummary ?? null,
+      relationshipScore: other.relationshipScore ?? null,
       reason,
       reasonLabel: reasonLabel(reason, source),
       score: weight + strengthBoost + introBoost,

@@ -21,12 +21,24 @@ export const userSettings = pgTable("user_settings", {
   onboardingCompletedAt: timestamp("onboarding_completed_at", {
     withTimezone: true,
   }),
+  onboardingStep: text("onboarding_step"),
   theme: text("theme").$type<"light" | "dark" | "system">(),
   apolloApiKeyEncrypted: text("apollo_api_key_encrypted"),
   resendApiKeyEncrypted: text("resend_api_key_encrypted"),
   twilioAccountSidEncrypted: text("twilio_account_sid_encrypted"),
   twilioAuthTokenEncrypted: text("twilio_auth_token_encrypted"),
   twilioFromNumber: text("twilio_from_number"),
+  desktopNotifiedIds: jsonb("desktop_notified_ids")
+    .$type<string[]>()
+    .default([]),
+  socialLinks: jsonb("social_links")
+    .$type<{
+      linkedin?: string;
+      twitter?: string;
+      github?: string;
+      website?: string;
+    }>()
+    .default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });

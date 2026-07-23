@@ -79,6 +79,12 @@ export async function getSettings() {
         Boolean(settings?.twilioFromNumber || process.env.TWILIO_FROM_NUMBER),
       twilioFromNumber: settings?.twilioFromNumber || process.env.TWILIO_FROM_NUMBER || null,
     },
+    socialLinks: {
+      linkedin: settings?.socialLinks?.linkedin || "",
+      twitter: settings?.socialLinks?.twitter || "",
+      github: settings?.socialLinks?.github || "",
+      website: settings?.socialLinks?.website || "",
+    },
   };
 }
 
@@ -270,6 +276,35 @@ export async function saveOutreachSettings(input: {
 
   revalidatePath("/settings");
   revalidatePath("/outreach");
+  return { ok: true };
+}
+
+export async function saveSocialLinks(input: {
+  linkedin?: string;
+  twitter?: string;
+  github?: string;
+  website?: string;
+}) {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const socialLinks = {
+    linkedin: input.linkedin?.trim() || undefined,
+    twitter: input.twitter?.trim() || undefined,
+    github: input.github?.trim() || undefined,
+    website: input.website?.trim() || undefined,
+  };
+
+  await db
+    .insert(userSettings)
+    .values({ userId, socialLinks })
+    .onConflictDoUpdate({
+      target: userSettings.userId,
+      set: { socialLinks, updatedAt: new Date() },
+    });
+
+  revalidatePath("/settings");
+  revalidatePath("/graph");
   return { ok: true };
 }
 

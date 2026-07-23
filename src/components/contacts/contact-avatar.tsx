@@ -8,7 +8,7 @@ import {
 import {
   isUnusableAvatarUrl,
   resolveContactPhotoUrl,
-} from "@/lib/contact-avatar";
+} from "@/lib/contact-avatar-url";
 import {
   genderAvatarSrc,
   guessGenderFromFirstName,
@@ -32,12 +32,13 @@ export function ContactAvatar({
   size?: "default" | "sm" | "lg";
   className?: string;
 }) {
-  void linkedinUrl;
   const hasStoredPhoto =
     Boolean(profileImageUrl?.trim()) && !isUnusableAvatarUrl(profileImageUrl);
+  const hasLinkedIn = Boolean(linkedinUrl?.trim());
   // Prefer same-origin avatar route so LinkedIn CDN / data URLs load reliably.
+  // Also hit the route when we only have a LinkedIn URL — it resolves + caches.
   const photoUrl =
-    contactId && hasStoredPhoto
+    contactId && (hasStoredPhoto || hasLinkedIn)
       ? `/api/avatars/${contactId}`
       : resolveContactPhotoUrl(profileImageUrl);
   const gender = guessGenderFromFirstName(firstName, fullName);

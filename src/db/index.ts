@@ -363,6 +363,7 @@ async function migratePglite(client: PGlite) {
 
   // Columns added after the first local DB was created
   await ensureColumn(client, "user_settings", "onboarding_completed_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "onboarding_step", "text");
   await ensureColumn(client, "user_settings", "ai_provider", "text DEFAULT 'gemini'");
   await ensureColumn(client, "user_settings", "openai_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "anthropic_api_key_encrypted", "text");
@@ -403,8 +404,20 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "twilio_auth_token_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_from_number", "text");
   await ensureColumn(client, "user_settings", "theme", "text");
+  await ensureColumn(
+    client,
+    "user_settings",
+    "desktop_notified_ids",
+    "jsonb DEFAULT '[]'"
+  );
   await ensureColumn(client, "contacts", "school", "text");
   await ensureColumn(client, "contacts", "profile_image_url", "text");
+  await ensureColumn(
+    client,
+    "user_settings",
+    "social_links",
+    "jsonb DEFAULT '{}'"
+  );
   await ensureColumn(
     client,
     "reminders",
@@ -501,6 +514,7 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
   // Incremental columns for older Neon DBs created before these existed.
   const alters = [
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed_at timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_step text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS openai_api_key_encrypted text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS anthropic_api_key_encrypted text`,
@@ -520,6 +534,8 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_auth_token_encrypted text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_from_number text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS theme text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS desktop_notified_ids jsonb DEFAULT '[]'`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS social_links jsonb DEFAULT '{}'`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
     `CREATE INDEX IF NOT EXISTS companies_user_idx ON companies(user_id)`,

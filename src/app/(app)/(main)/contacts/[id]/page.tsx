@@ -1,4 +1,3 @@
-import { format } from "date-fns";
 import {
   getContact,
   getContactFollowUpSendOptions,
@@ -9,14 +8,9 @@ import { ContactFollowUpSection } from "@/components/contacts/contact-follow-up-
 import { ContactProfileHero } from "@/components/contacts/contact-profile-hero";
 import { ContactProfileOverview } from "@/components/contacts/contact-profile-overview";
 import { ContactRelatedPeople } from "@/components/contacts/contact-related-people";
+import { ContactRemindersSection } from "@/components/contacts/contact-reminders-section";
 import { ContactStatPills } from "@/components/contacts/contact-stat-pills";
 import { ContactTimeline } from "@/components/contacts/contact-timeline";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import {
   computeCloseness,
   formatInteractionFrequency,
@@ -157,36 +151,7 @@ export default async function ContactDetailPage({
         }))}
       />
 
-      <Card className="border-border/70 shadow-none">
-        <CardHeader>
-          <CardTitle>Reminders</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {contact.reminders.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No reminders.</p>
-          ) : (
-            contact.reminders.map((r) => (
-              <div
-                key={r.id}
-                className="rounded-xl border border-border/60 p-3"
-              >
-                <p className="text-sm font-medium text-primary">{r.title}</p>
-                {r.description?.trim() ? (
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {r.description}
-                  </p>
-                ) : null}
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {r.status}
-                  {r.dueDate
-                    ? ` · due ${format(new Date(r.dueDate), "MMM d")}`
-                    : ""}
-                </p>
-              </div>
-            ))
-          )}
-        </CardContent>
-      </Card>
+      <ContactRemindersSection reminders={contact.reminders ?? []} />
 
       <ContactRelatedPeople people={relatedPeople} subjectName={displayName} />
     </div>

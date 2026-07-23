@@ -7,6 +7,7 @@ import { formatDistanceToNow } from "date-fns";
 import {
   Copy,
   Mail,
+  Pencil,
   Phone,
   Sparkles,
   UserRound,
@@ -21,6 +22,7 @@ import {
 import type { ReminderActionKind } from "@/db/schema";
 import { ACTION_KIND_LABELS } from "@/lib/reminder-action-kind";
 import { ReminderDoneSnooze } from "@/components/reminders/reminder-done-snooze";
+import { ReminderFormDialog } from "@/components/reminders/reminder-form-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ExpandableText } from "@/components/ui/expandable-text";
 import { cn } from "@/lib/utils";
@@ -101,6 +103,7 @@ export function ReminderCard({
   const [pending, start] = useTransition();
   const [draft, setDraft] = useState<string | null>(null);
   const [moving, startMove] = useTransition();
+  const [editing, setEditing] = useState(false);
 
   function generateDraft() {
     start(async () => {
@@ -264,8 +267,37 @@ export function ReminderCard({
             </div>
           )}
         </div>
-        <ReminderDoneSnooze id={id} />
+        <div className="flex shrink-0 items-start gap-1">
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            className="text-muted-foreground"
+            aria-label="Edit reminder"
+            onClick={() => setEditing(true)}
+          >
+            <Pencil className="size-3.5" />
+          </Button>
+          <ReminderDoneSnooze id={id} />
+        </div>
       </div>
+
+      <ReminderFormDialog
+        open={editing}
+        onOpenChange={setEditing}
+        mode="edit"
+        lists={lists ?? []}
+        defaultListId={listId}
+        initial={{
+          id,
+          title,
+          description,
+          dueDate,
+          listId,
+          contactId,
+          actionKind,
+        }}
+      />
 
       {draft && (
         <div className="mt-3 rounded-lg bg-muted/50 p-3">

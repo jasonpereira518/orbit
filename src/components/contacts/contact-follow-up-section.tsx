@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Calendar, Mail, MessageSquare, RefreshCw } from "lucide-react";
+import { Mail, MessageSquare, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 
 function LinkedInGlyph({ className }: { className?: string }) {
@@ -36,6 +36,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { DatePickerButton, toLocalYmd } from "@/components/ui/date-picker";
 import { Textarea } from "@/components/ui/textarea";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { promptNotificationsAfterFollowUpAction } from "@/lib/browser-notifications";
@@ -55,6 +56,15 @@ function smsHref(phone: string, body: string) {
   return `sms:${digits}${encoded ? `?&body=${encoded}` : ""}`;
 }
 
+function dueYmd(value: string | Date | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    return toLocalYmd(new Date(value));
+  } catch {
+    return null;
+  }
+}
+
 export function ContactFollowUpSection({
   contactId,
   contactName,
@@ -72,7 +82,6 @@ export function ContactFollowUpSection({
   initialIntent?: string | null;
 }) {
   const router = useRouter();
-  const dateRef = useRef<HTMLInputElement>(null);
   const [platform, setPlatform] = useState<Platform | null>(null);
   const [draft, setDraft] = useState("");
   const [intent, setIntent] = useState(initialIntent?.trim() || "");
@@ -81,6 +90,7 @@ export function ContactFollowUpSection({
   const [marking, startMark] = useTransition();
   const [scheduling, startSchedule] = useTransition();
 
+  const scheduledYmd = dueYmd(nextFollowUpAt);
   const dueLabel = nextFollowUpAt
     ? (() => {
         try {
@@ -269,24 +279,21 @@ export function ContactFollowUpSection({
                 {p.label}
               </Button>
             ))}
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
+            <DatePickerButton
+              value={scheduledYmd}
               disabled={scheduling}
-              className="h-8 gap-1.5 px-2.5"
-              onClick={() => dateRef.current?.showPicker?.() ?? dateRef.current?.click()}
-            >
-              <Calendar className="size-3.5" />
-              Calendar
-            </Button>
-            <input
-              ref={dateRef}
-              type="date"
-              className="sr-only"
-              onChange={(e) => {
-                if (e.target.value) scheduleDate(e.target.value);
-              }}
+              minDate={new Date()}
+              onSelect={scheduleDate}
+              onClear={
+                nextFollowUpAt
+                  ? () =>
+                      startSchedule(async () => {
+                        await clearContactFollowUp(contactId);
+                        toast.success("Reminder cleared");
+                        router.refresh();
+                      })
+                  : undefined
+              }
             />
             {nextFollowUpAt ? (
               <Button

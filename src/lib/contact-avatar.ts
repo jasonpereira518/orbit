@@ -1,41 +1,28 @@
 import { linkedinSlug } from "@/lib/duplicates";
+import { isUnusableAvatarUrl } from "@/lib/contact-avatar-url";
 
-/** Max bytes we'll persist as a data-URL thumbnail. */
-const MAX_IMAGE_BYTES = 180_000;
+export {
+  isUnusableAvatarUrl,
+  resolveContactPhotoUrl,
+} from "@/lib/contact-avatar-url";
 
-const BROKEN_AVATAR_HOSTS = [
-  "unavatar.io",
-  "static.licdn.com/aero",
-];
+/** Max raw download we'll attempt before giving up. */
+const MAX_DOWNLOAD_BYTES = 5_000_000;
+/** Target max for persisted data-URL thumbnails (after resize). */
+const MAX_PERSIST_BYTES = 220_000;
 
-/** True when a stored URL is known-bad in the browser (rate limits / placeholders). */
-export function isUnusableAvatarUrl(url: string | null | undefined): boolean {
-  if (!url?.trim()) return true;
-  const u = url.trim();
-  if (u.startsWith("data:image/")) return false;
-  return BROKEN_AVATAR_HOSTS.some((h) => u.includes(h));
-}
-
-/** Pick a browser-safe photo URL, or null to show the silhouette fallback. */
-export function resolveContactPhotoUrl(
-  profileImageUrl: string | null | undefined
-): string | null {
-  const stored = profileImageUrl?.trim();
-  if (stored && !isUnusableAvatarUrl(stored)) {
-    return stored;
-  }
-  // Do not hit unavatar.io from the browser — anonymous daily limits break the list.
-  return null;
-}
-
-/**
- * @deprecated Prefer fetchLinkedInPhotoDataUrl / resolveContactPhotoUrl.
- * Kept for any lingering call sites; returns null so callers fall back safely.
- */
-export function linkedinAvatarUrl(
-  _linkedinUrl: string | null | undefined
-): string | null {
-  return null;
+/** Parse a `data:image/...;base64,...` URL into bytes. */
+export function parseImageDataUrl(
+  dataUrl: string
+): { buf: Buffer; contentType: string } | null {
+  if (!dataUrl.startsWith("data:image/")) return null;
+  const comma = dataUrl.indexOf(",");
+  if (comma < 0) return null;
+  const meta = dataUrl.slice(5, comma);
+  const contentType = meta.split(";")[0] || "image/jpeg";
+  const b64 = dataUrl.slice(comma + 1);
+  if (!b64) return null;
+  return { buf: Buffer.from(b64, "base64"), contentType };
 }
 
 /**
@@ -57,11 +44,23 @@ export async function fetchLinkedInPhotoDataUrl(
   return downloadImageAsDataUrl(imageUrl);
 }
 
-/** Download an external image and return a data URL, or null on failure. */
+/** Download an external image and return a compact data URL, or null on failure. */
 export async function downloadImageAsDataUrl(
   imageUrl: string
 ): Promise<string | null> {
   if (imageUrl.startsWith("data:image/")) return imageUrl;
+  if (isUnusableAvatarUrl(imageUrl)) return null;
+
+  const downloaded = await downloadImageBytes(imageUrl);
+  if (!downloaded) return null;
+  return encodeAvatarDataUrl(downloaded.buf, downloaded.contentType);
+}
+
+export async function downloadImageBytes(
+  imageUrl: string
+): Promise<{ buf: Buffer; contentType: string } | null> {
+  const fromDataUrl = parseImageDataUrl(imageUrl);
+  if (fromDataUrl) return fromDataUrl;
   if (isUnusableAvatarUrl(imageUrl)) return null;
 
   try {
@@ -83,10 +82,39 @@ export async function downloadImageAsDataUrl(
     if (!contentType.startsWith("image/")) return null;
 
     const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.byteLength === 0 || buf.byteLength > MAX_IMAGE_BYTES) return null;
-
-    return `data:${contentType};base64,${buf.toString("base64")}`;
+    if (buf.byteLength === 0 || buf.byteLength > MAX_DOWNLOAD_BYTES) return null;
+    return { buf, contentType };
   } catch {
+    return null;
+  }
+}
+
+/**
+ * Resize/compress to a durable avatar data URL.
+ * LinkedIn CDN photos are often >180KB — we used to drop those entirely.
+ */
+export async function encodeAvatarDataUrl(
+  buf: Buffer,
+  contentType: string
+): Promise<string | null> {
+  try {
+    const sharp = (await import("sharp")).default;
+    const out = await sharp(buf)
+      .rotate()
+      .resize(256, 256, { fit: "cover", withoutEnlargement: true })
+      .jpeg({ quality: 82, mozjpeg: true })
+      .toBuffer();
+    if (out.byteLength === 0) return null;
+    return `data:image/jpeg;base64,${out.toString("base64")}`;
+  } catch {
+    // Fall back to raw bytes when sharp can't decode (rare formats).
+    if (
+      contentType.startsWith("image/") &&
+      buf.byteLength > 0 &&
+      buf.byteLength <= MAX_PERSIST_BYTES
+    ) {
+      return `data:${contentType};base64,${buf.toString("base64")}`;
+    }
     return null;
   }
 }
@@ -107,15 +135,21 @@ async function resolveLinkedInOgImage(
 
     const json = (await res.json()) as {
       status?: string;
-      data?: { image?: { url?: string } | string | null };
+      data?: {
+        image?: { url?: string } | string | null;
+        logo?: { url?: string } | string | null;
+      };
     };
     if (json.status !== "success") return null;
 
-    const image = json.data?.image;
-    const url = typeof image === "string" ? image : image?.url;
-    if (!url?.startsWith("http")) return null;
-    if (url.includes("static.licdn.com/aero")) return null;
-    return url;
+    const candidates = [json.data?.image, json.data?.logo];
+    for (const image of candidates) {
+      const url = typeof image === "string" ? image : image?.url;
+      if (!url?.startsWith("http")) continue;
+      if (url.includes("static.licdn.com/aero")) continue;
+      return url;
+    }
+    return null;
   } catch {
     return null;
   }

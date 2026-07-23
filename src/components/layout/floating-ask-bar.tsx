@@ -19,6 +19,7 @@ import { getAskBarContact } from "@/actions/contacts";
 import { searchDashboardContacts } from "@/actions/search";
 import { createReminder } from "@/actions/reminders";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
+import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -85,13 +86,13 @@ export function FloatingAskBar() {
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<number | null>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
-  const lastScrollY = useRef(0);
 
   const [open, setOpen] = useState(false);
   const [hidden, setHidden] = useState(false);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<KeywordSearchHit[]>([]);
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
+  const [lastUserQuery, setLastUserQuery] = useState("");
   const [searchPending, startSearch] = useTransition();
   const [chatPending, startChat] = useTransition();
 
@@ -123,7 +124,7 @@ export function FloatingAskBar() {
     };
   }, [pathContactId]);
 
-  const pinnedOpen = open || chatPending || messages.length > 0;
+  const stayVisibleWhileWaiting = chatPending;
 
   const focusBar = useCallback(() => {
     setHidden(false);
@@ -149,48 +150,64 @@ export function FloatingAskBar() {
     return () => window.removeEventListener("keydown", onKey);
   }, [focusBar, open]);
 
+  const chatPendingRef = useRef(chatPending);
+  chatPendingRef.current = chatPending;
+  const lastScrollMetaRef = useRef<{ target: EventTarget | null; y: number }>({
+    target: null,
+    y: 0,
+  });
+
   useEffect(() => {
-    function findScrollParent(el: HTMLElement | null): HTMLElement | Window {
-      let node = el?.parentElement ?? null;
-      while (node) {
-        const { overflowY } = getComputedStyle(node);
-        if (
-          (overflowY === "auto" || overflowY === "scroll") &&
-          node.scrollHeight > node.clientHeight
-        ) {
-          return node;
-        }
-        node = node.parentElement;
+    function scrollYFromEvent(e: Event): number | null {
+      const t = e.target;
+      if (
+        t === document ||
+        t === document.documentElement ||
+        t === document.body
+      ) {
+        return window.scrollY;
       }
-      return window;
+      if (t instanceof HTMLElement) {
+        // Ignore tiny nested scroll areas (e.g. the ask panel results list)
+        if (wrapRef.current?.contains(t)) return null;
+        return t.scrollTop;
+      }
+      return window.scrollY;
     }
 
-    const target = findScrollParent(wrapRef.current);
-    const getY = () =>
-      target instanceof Window ? window.scrollY : target.scrollTop;
+    function onScroll(e: Event) {
+      const y = scrollYFromEvent(e);
+      if (y === null) return;
 
-    lastScrollY.current = getY();
-
-    function onScroll() {
-      const y = getY();
-      const delta = y - lastScrollY.current;
-      lastScrollY.current = y;
+      const meta = lastScrollMetaRef.current;
+      const delta =
+        meta.target === e.target ? y - meta.y : 0;
+      lastScrollMetaRef.current = { target: e.target, y };
 
       if (Math.abs(delta) < 6) return;
 
-      // Keep visible while interacting or near the top
-      if (pinnedOpen || y < 24) {
+      // Stay visible near the top of the page, or while a reply is in flight
+      if (y < 24 || chatPendingRef.current) {
         setHidden(false);
         return;
       }
 
-      if (delta > 0) setHidden(true);
-      else setHidden(false);
+      if (delta > 0) {
+        setHidden(true);
+        setOpen(false);
+        inputRef.current?.blur();
+      } else {
+        setHidden(false);
+      }
     }
 
-    target.addEventListener("scroll", onScroll, { passive: true });
-    return () => target.removeEventListener("scroll", onScroll);
-  }, [pinnedOpen]);
+    document.addEventListener("scroll", onScroll, {
+      passive: true,
+      capture: true,
+    });
+    return () =>
+      document.removeEventListener("scroll", onScroll, { capture: true });
+  }, []);
 
   useEffect(() => {
     function onPointer(e: MouseEvent) {
@@ -223,11 +240,29 @@ export function FloatingAskBar() {
     }, 180);
   }
 
+  function fillMostRecentUserMessage() {
+    const fromThread = [...messages]
+      .reverse()
+      .find((m): m is UserMessage => m.role === "user");
+    const content = fromThread?.content || lastUserQuery;
+    if (!content) return false;
+    setQuery(content);
+    setOpen(true);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(content.length, content.length);
+    });
+    return true;
+  }
+
   const sendQuestion = useCallback(
     (raw: string) => {
       const q = raw.trim();
       if (!q || chatPending) return;
 
+      setLastUserQuery(q);
       const userMsg: UserMessage = {
         id: newId(),
         role: "user",
@@ -281,7 +316,7 @@ export function FloatingAskBar() {
   }
 
   const showPanel = open;
-  const visible = !hidden || pinnedOpen;
+  const visible = !hidden || stayVisibleWhileWaiting;
   const suggestionChips =
     personContextActive && open ? PROFILE_SUGGESTIONS : SUGGESTIONS;
   const placeholder =
@@ -467,7 +502,7 @@ export function FloatingAskBar() {
                       ) : (
                         <div key={msg.id} className="space-y-2">
                           <div className="rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
-                            {msg.answer}
+                            <ChatMarkdown>{msg.answer}</ChatMarkdown>
                           </div>
                           {msg.recommendations.map((r) => (
                             <MiniRecommendation
@@ -583,6 +618,12 @@ export function FloatingAskBar() {
               if (next.trim()) setOpen(true);
             }}
             onKeyDown={(e) => {
+              if (e.key === "ArrowUp" && !e.shiftKey && !query.trim()) {
+                if (fillMostRecentUserMessage()) {
+                  e.preventDefault();
+                }
+                return;
+              }
               if (e.key === "Enter") {
                 e.preventDefault();
                 sendQuestion(query);
@@ -613,10 +654,16 @@ export function FloatingAskBar() {
           <Button
             type="button"
             size="icon-sm"
-            disabled={chatPending || !query.trim()}
+            disabled={chatPending || (!query.trim() && !lastUserQuery)}
             className="size-9 shrink-0 rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
-            onClick={() => sendQuestion(query)}
-            aria-label="Ask"
+            onClick={() => {
+              if (!query.trim()) {
+                fillMostRecentUserMessage();
+                return;
+              }
+              sendQuestion(query);
+            }}
+            aria-label={query.trim() ? "Ask" : "Recall last message"}
           >
             {chatPending ? (
               <Loader2 className="size-3.5 animate-spin" />

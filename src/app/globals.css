@@ -417,12 +417,40 @@
   }
 }
 
+@keyframes constellation-comet-drift {
+  0%,
+  100% {
+    transform: translateX(0);
+    opacity: 0.85;
+  }
+  50% {
+    transform: translateX(3px);
+    opacity: 1;
+  }
+}
+
+@keyframes constellation-nebula-breathe {
+  0%,
+  100% {
+    opacity: 0.85;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+}
+
 .constellation-corona {
   animation: constellation-corona 3.2s ease-in-out infinite;
 }
 
 .constellation-corona-outer {
   animation: constellation-corona-outer 4.8s ease-in-out infinite;
+}
+
+.constellation-sun-core {
+  animation: constellation-corona 2.6s ease-in-out infinite;
 }
 
 .constellation-rings-spin {
@@ -441,6 +469,60 @@
 .constellation-starfield span {
   animation: constellation-twinkle var(--twinkle-dur, 4s) ease-in-out infinite;
   animation-delay: var(--twinkle-delay, 0s);
+}
+
+.constellation-nebula {
+  animation: constellation-nebula-breathe 7s ease-in-out infinite;
+  filter: blur(1px);
+}
+
+.constellation-comet {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 42px;
+  height: 14px;
+  animation: constellation-comet-drift 3.4s ease-in-out infinite;
+}
+
+.constellation-comet-head {
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle at 35% 30%,
+    #fff5f0 0%,
+    #ff6b4a 45%,
+    #c02020 100%
+  );
+  box-shadow:
+    0 0 10px 3px rgba(255, 90, 60, 0.7),
+    0 0 22px 6px rgba(200, 40, 20, 0.35);
+  flex-shrink: 0;
+}
+
+.constellation-comet-trail {
+  display: block;
+  width: 28px;
+  height: 3px;
+  margin-right: -2px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 100, 70, 0.15) 30%,
+    rgba(255, 80, 50, 0.55) 100%
+  );
+  box-shadow: 0 0 8px 1px rgba(255, 80, 50, 0.35);
+}
+
+.constellation-edge-label {
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.32);
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: 0 0 8px rgba(0, 0, 0, 0.85);
+  font-weight: 500;
 }
 
 .constellation-milky-way {
@@ -485,7 +567,7 @@
 
 .constellation-stage .react-flow__edge-path {
   stroke-linecap: round;
-  stroke-linejoin: miter;
+  stroke-linejoin: round;
 }
 
 .constellation-stage .react-flow__connection-path {
@@ -850,9 +932,12 @@
   .contact-row,
   .constellation-corona,
   .constellation-corona-outer,
+  .constellation-sun-core,
   .constellation-rings-spin,
   .constellation-spotlight-ring,
   .constellation-planet-enter,
+  .constellation-nebula,
+  .constellation-comet,
   .constellation-starfield span,
   .constellation-stage .react-flow__edge.animated path,
   .landing-fade,

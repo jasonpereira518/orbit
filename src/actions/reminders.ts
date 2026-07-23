@@ -66,6 +66,9 @@ export async function listRemindersPage(options?: {
   const lists = await ensureReminderLists(userId);
   const inboxId = lists.find((l) => l.isInbox === 1)?.id ?? lists[0]?.id;
   const selectedListId = options?.listId || inboxId || null;
+  const selectedIsInbox = Boolean(
+    selectedListId && lists.some((l) => l.id === selectedListId && l.isInbox === 1)
+  );
 
   const allReminders = await db.query.reminders.findMany({
     where: eq(reminders.userId, userId),
@@ -105,18 +108,26 @@ export async function listRemindersPage(options?: {
     listCounts.set(list.id, { pending: 0, done: 0 });
   }
 
+  const totals = { pending: 0, done: 0 };
   for (const r of allReminders) {
+    const isPending = r.status === "pending";
+    if (isPending) totals.pending += 1;
+    else totals.done += 1;
+
     const lid = r.listId || inboxId;
     if (!lid) continue;
     const bucket = listCounts.get(lid) ?? { pending: 0, done: 0 };
-    if (r.status === "pending") bucket.pending += 1;
+    if (isPending) bucket.pending += 1;
     else bucket.done += 1;
     listCounts.set(lid, bucket);
   }
 
+  // Inbox aggregates every list; other lists only show their own reminders.
   const filtered = allReminders.filter((r) => {
-    const lid = r.listId || inboxId;
-    if (selectedListId && lid !== selectedListId) return false;
+    if (!selectedIsInbox) {
+      const lid = r.listId || inboxId;
+      if (selectedListId && lid !== selectedListId) return false;
+    }
     if (status === "pending") return r.status === "pending";
     if (status === "done") {
       return r.status === "done" || r.status === "completed";
@@ -158,8 +169,11 @@ export async function listRemindersPage(options?: {
       name: l.name,
       isInbox: l.isInbox === 1,
       position: l.position,
-      pendingCount: listCounts.get(l.id)?.pending ?? 0,
-      doneCount: listCounts.get(l.id)?.done ?? 0,
+      // Inbox count = all reminders; other lists keep their own.
+      pendingCount:
+        l.isInbox === 1 ? totals.pending : listCounts.get(l.id)?.pending ?? 0,
+      doneCount:
+        l.isInbox === 1 ? totals.done : listCounts.get(l.id)?.done ?? 0,
     })),
     selectedListId,
     status,

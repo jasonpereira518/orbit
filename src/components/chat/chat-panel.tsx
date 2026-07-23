@@ -28,6 +28,7 @@ import {
 } from "@/actions/chat";
 import { createReminder } from "@/actions/reminders";
 import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";
+import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -100,6 +101,7 @@ export function ChatPanel() {
   const [notesOpen, setNotesOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
+  const [lastUserQuery, setLastUserQuery] = useState("");
   const [pending, start] = useTransition();
   const listRef = useRef<HTMLDivElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
@@ -184,6 +186,8 @@ export function ChatPanel() {
               }
         )
       );
+      const lastUser = [...rows].reverse().find((row) => row.role === "user");
+      setLastUserQuery(lastUser?.content ?? "");
       setQuestion("");
       requestAnimationFrame(() => scrollToBottom(false));
     } catch (err) {
@@ -201,6 +205,7 @@ export function ChatPanel() {
         setThreadTitle(created.title);
         setMessages([]);
         setQuestion("");
+        setLastUserQuery("");
         setThreads((prev) => [
           {
             id: created.id,
@@ -243,6 +248,7 @@ export function ChatPanel() {
       const q = raw.trim();
       if (!q || pending || loadingThread) return;
 
+      setLastUserQuery(q);
       const userMsg: UserMessage = {
         id: newId(),
         role: "user",
@@ -298,7 +304,30 @@ export function ChatPanel() {
     [pending, loadingThread, ensureThread, scrollToBottom]
   );
 
+  function fillMostRecentUserMessage() {
+    const fromThread = [...messages]
+      .reverse()
+      .find((m): m is UserMessage => m.role === "user");
+    const content = fromThread?.content || lastUserQuery;
+    if (!content) return false;
+    setQuestion(content);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      const len = content.length;
+      el.focus();
+      el.setSelectionRange(len, len);
+    });
+    return true;
+  }
+
   function onComposerKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "ArrowUp" && !e.shiftKey && !question.trim()) {
+      if (fillMostRecentUserMessage()) {
+        e.preventDefault();
+      }
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendQuestion(question);
@@ -447,7 +476,7 @@ export function ChatPanel() {
                       <div key={msg.id} className="flex justify-start">
                         <div className="max-w-[92%] space-y-3">
                           <div className="rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-4 py-3 text-sm leading-relaxed text-foreground">
-                            {msg.answer}
+                            <ChatMarkdown>{msg.answer}</ChatMarkdown>
                           </div>
                           {msg.recommendations.length > 0 && (
                             <div className="space-y-2">
@@ -495,11 +524,19 @@ export function ChatPanel() {
                   type="button"
                   size="icon"
                   disabled={
-                    pending || loadingThread || !question.trim()
+                    pending ||
+                    loadingThread ||
+                    (!question.trim() && !lastUserQuery)
                   }
                   className="h-11 w-11 shrink-0 bg-primary text-primary-foreground hover:bg-primary/90"
-                  onClick={() => sendQuestion(question)}
-                  aria-label="Send"
+                  onClick={() => {
+                    if (!question.trim()) {
+                      fillMostRecentUserMessage();
+                      return;
+                    }
+                    sendQuestion(question);
+                  }}
+                  aria-label={question.trim() ? "Send" : "Recall last message"}
                 >
                   {pending ? (
                     <Loader2 className="size-4 animate-spin" />

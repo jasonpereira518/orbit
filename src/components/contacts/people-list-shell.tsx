@@ -10,7 +10,9 @@ import {
 } from "motion/react";
 import { cn } from "@/lib/utils";
 import {
+  clearPeopleNavInBrowser,
   directionForPeopleNav,
+  markPeopleNavInBrowser,
   setPeopleNavDirection,
   takePeopleNavDirection,
 } from "@/lib/people-nav";
@@ -36,7 +38,7 @@ function PeopleViewToggle({
 
   return (
     <div
-      className="relative flex rounded-lg border border-border/70 bg-card p-0.5 text-sm"
+      className="relative flex w-[11.5rem] shrink-0 rounded-lg border border-border/70 bg-card p-0.5 text-sm"
       role="tablist"
       aria-label="People view"
     >
@@ -56,7 +58,7 @@ function PeopleViewToggle({
               onNavigate(opt.key, opt.href);
             }}
             className={cn(
-              "relative z-10 rounded-md px-3 py-1.5 transition-colors",
+              "relative z-10 flex-1 rounded-md px-2 py-1.5 text-center transition-colors",
               selected
                 ? "text-primary-foreground"
                 : "text-muted-foreground hover:text-foreground",
@@ -110,12 +112,14 @@ export function PeopleListShell({
   useEffect(() => {
     setVisual(active);
     setLeaving(false);
+    clearPeopleNavInBrowser();
   }, [active]);
 
   function navigateTo(key: "contacts" | "recruiters", href: string) {
     if (key === active || leaving) return;
     const dir = directionForPeopleNav(active, key);
     setPeopleNavDirection(dir);
+    markPeopleNavInBrowser();
     setVisual(key);
     setLeaving(true);
 
@@ -136,7 +140,7 @@ export function PeopleListShell({
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
+        <div className="min-w-0 flex-1">
           <motion.h1
             key={title}
             initial={reducedMotion ? false : { opacity: 0, y: 6 }}
@@ -161,12 +165,13 @@ export function PeopleListShell({
           </motion.p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
+          {actions}
+          {/* Always rightmost so it stays in the same screen position on both pages */}
           <PeopleViewToggle
             visual={visual}
             onNavigate={navigateTo}
             disabled={leaving}
           />
-          {actions}
         </div>
       </div>
 
@@ -188,9 +193,7 @@ export function PeopleListShell({
                 reducedMotion
                   ? { opacity: 0 }
                   : {
-                      x:
-                        // Leaving toward recruiters → slide left; toward contacts → slide right
-                        visual === "recruiters" ? -32 : 32,
+                      x: visual === "recruiters" ? -32 : 32,
                       opacity: 0,
                     }
               }

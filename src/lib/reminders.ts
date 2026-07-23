@@ -9,6 +9,8 @@ import {
 } from "@/db/schema";
 import { listActiveGoalTexts } from "@/actions/goals";
 import { daysAgo } from "@/lib/duplicates";
+import { isCometContact } from "@/lib/comet";
+import { buildConstellationClusters } from "@/lib/constellation-clusters";
 import { computeNetworkMetrics } from "@/lib/network-metrics";
 
 const AUTO_SUGGESTION_TYPES = [
@@ -353,21 +355,24 @@ export async function getDashboardData(
 
   const graphContacts = enrichedContacts.map((c) => {
     const closeness = closenessById.get(c.id);
+    const lastAt = c.lastInteractionAt
+      ? c.lastInteractionAt instanceof Date
+        ? c.lastInteractionAt
+        : new Date(c.lastInteractionAt)
+      : null;
+    const dormant = isCometContact(lastAt);
     return {
       id: c.id,
       fullName: c.fullName,
       preferredName: c.preferredName ?? null,
       company: c.company ?? null,
+      school: c.school ?? null,
       title: c.title ?? null,
       relationshipScore: c.relationshipScore ?? 2,
       closeness: closeness?.closeness ?? 0,
-      closenessTier: closeness?.tier ?? "outer",
+      closenessTier: closeness?.tier ?? ("outer" as const),
       orbitScore: closeness?.orbitScore ?? 2,
-      lastInteractionAt: c.lastInteractionAt
-        ? c.lastInteractionAt instanceof Date
-          ? c.lastInteractionAt
-          : new Date(c.lastInteractionAt)
-        : null,
+      lastInteractionAt: lastAt,
       nextFollowUpAt: c.nextFollowUpAt
         ? c.nextFollowUpAt instanceof Date
           ? c.nextFollowUpAt
@@ -377,18 +382,44 @@ export async function getDashboardData(
       aiSummary: c.aiSummary ?? null,
       keyFacts: c.keyFacts ?? null,
       howMet: c.howMet ?? null,
+      metContext: c.metContext ?? null,
+      dateMet: c.dateMet ?? null,
       notes: c.notes ?? null,
       sharedInterests: c.sharedInterests ?? null,
+      email: c.email ?? null,
+      phone: c.phone ?? null,
+      linkedinUrl: c.linkedinUrl ?? null,
+      website: c.website ?? null,
+      profileImageUrl: c.profileImageUrl ?? null,
+      dormant,
     };
   });
 
   const userName = options?.userName || "You";
 
+  const { clusters: builtClusters } = buildConstellationClusters(graphContacts);
+  const clusters = builtClusters
+    .filter((c) => c.kind === "company" || c.kind === "school")
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      company: c.name,
+      kind: c.kind,
+      count: c.count,
+      contactIds: c.contactIds,
+    }));
+
   const companies = [
     ...new Set(
-      allContactRows.map((c) => c.company).filter(Boolean)
+      graphContacts.map((c) => (c.company || "").trim()).filter(Boolean)
     ),
-  ] as string[];
+  ].sort((a, b) => a.localeCompare(b));
+
+  const schools = [
+    ...new Set(
+      graphContacts.map((c) => (c.school || "").trim()).filter(Boolean)
+    ),
+  ].sort((a, b) => a.localeCompare(b));
 
   const tags = [
     ...new Set(
@@ -405,9 +436,15 @@ export async function getDashboardData(
     4: 0,
     5: 0,
   };
+  let dormantCount = 0;
+  let overdueCount = 0;
   for (const c of graphContacts) {
     const s = Math.min(5, Math.max(1, (c.orbitScore ?? c.relationshipScore) || 2));
     scoreCounts[s] = (scoreCounts[s] || 0) + 1;
+    if (c.dormant) dormantCount += 1;
+    if (c.nextFollowUpAt && c.nextFollowUpAt.getTime() < Date.now()) {
+      overdueCount += 1;
+    }
   }
 
   const goalAlignedContacts = [...contactsWithNetwork]
@@ -472,7 +509,7 @@ export async function getDashboardData(
     },
     recentContacts: allContactRows.slice(0, 6),
     dueFollowUps: dueFollowUps.slice(0, 12),
-    reminders: filteredReminders.slice(0, 8),
+    reminders: filteredReminders.slice(0, 20),
     suggestions: filteredSuggestions.slice(0, 40),
     totalSuggestions: filteredSuggestions.length,
     goals,
@@ -485,13 +522,21 @@ export async function getDashboardData(
     graphPreview: {
       contacts: graphContacts,
       companies,
+      schools,
       tags,
+      clusters,
       userId,
       summary: {
         total: allContactRows.length,
         companyCount: companies.length,
         scoreCounts,
+        dormantCount,
+        overdueCount,
         userName,
+        userImageUrl: null,
+        userEmail: null,
+        socialLinks: {},
+        goals: [],
       },
     },
   };

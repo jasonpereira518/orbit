@@ -1,11 +1,9 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
 import { toast } from "@/lib/toast";
 import {
   previewLinkedInMessagesCsv,
-  confirmLinkedInMessagesImport,
 } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
@@ -13,18 +11,19 @@ import { LinkedInExportGuide } from "@/components/imports/linkedin-export-guide"
 import {
   BusyHint,
   ImportFilePicker,
-  ImportProgress,
   readCsvOrZipMessages,
-  useBatchedImport,
 } from "@/components/imports/import-utils";
+import {
+  startImportJob,
+  useImportJob,
+} from "@/lib/import-job-runner";
 
 type MessagesPreview = Awaited<ReturnType<typeof previewLinkedInMessagesCsv>>;
 type MessagePerson = MessagesPreview["people"][number];
 
 export function LinkedInMessagesImport() {
-  const router = useRouter();
+  const job = useImportJob();
   const [pending, start] = useTransition();
-  const { importProgress, runBatchedImport } = useBatchedImport();
 
   const [messagesText, setMessagesText] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
@@ -32,11 +31,26 @@ export function LinkedInMessagesImport() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [meta, setMeta] = useState<{ totalMessages: number } | null>(null);
 
-  const busy = pending || importProgress !== null;
+  const messagesJob =
+    job?.kind === "messages" && job.status === "running" ? job : null;
+  const importProgress = messagesJob?.progress ?? null;
+  const busy = pending || job?.status === "running";
+
+  useEffect(() => {
+    if (!job || job.kind !== "messages") return;
+    if (job.status !== "completed" && job.status !== "failed" && job.status !== "cancelled") return;
+    setPeople([]);
+    setSelected(new Set());
+    setMeta(null);
+    setMessagesText("");
+    setFileName(null);
+  }, [job]);
 
   function applyPreview(res: MessagesPreview) {
     setPeople(res.people);
-    setSelected(new Set(res.people.map((p) => p.id)));
+    setSelected(
+      new Set(res.people.filter((p) => !p.isRepeat).map((p) => p.id))
+    );
     setMeta({ totalMessages: res.totalMessages });
   }
 
@@ -49,7 +63,7 @@ export function LinkedInMessagesImport() {
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Upload a Messages CSV or ZIP, review conversation partners, then
-            import message history.
+            import message history. Imports keep running if you leave this page.
           </p>
         </div>
         <LinkedInExportGuide variant="messages" />
@@ -82,10 +96,7 @@ export function LinkedInMessagesImport() {
         }}
       />
 
-      {pending && !importProgress ? (
-        <BusyHint>Reading messages…</BusyHint>
-      ) : null}
-      {importProgress ? <ImportProgress {...importProgress} /> : null}
+      {pending ? <BusyHint>Reading messages…</BusyHint> : null}
 
       <div className="flex flex-wrap gap-2">
         <Button
@@ -110,42 +121,21 @@ export function LinkedInMessagesImport() {
         <Button
           disabled={!messagesText || busy || selected.size === 0}
           className="bg-primary text-primary-foreground hover:bg-primary/90"
-          onClick={async () => {
+          onClick={() => {
             if (busy) return;
             try {
               const ids = [...selected];
-              let messagesImported = 0;
-              let enrichmentTotal = 0;
-              const res = await runBatchedImport(
+              startImportJob({
+                kind: "messages",
+                csvText: messagesText,
+                fileName: fileName || "messages.csv",
                 ids,
-                ids.length === 1 ? "person" : "people",
-                async (chunk, opts) => {
-                  const chunkRes = await confirmLinkedInMessagesImport(
-                    messagesText,
-                    fileName || "messages.csv",
-                    chunk,
-                    opts
-                  );
-                  messagesImported += chunkRes.chunkMessagesImported;
-                  enrichmentTotal +=
-                    chunkRes.enrichment?.contactsEnriched ?? 0;
-                  return chunkRes;
-                }
-              );
-              toast.success(
-                `Imported ${messagesImported} messages · ${res.contactsCreated} contacts created`
-              );
-              if (enrichmentTotal > 0) {
-                toast.message(
-                  `Enriched ${enrichmentTotal} contacts for chat & follow-ups`
-                );
-              }
+              });
               setPeople([]);
               setSelected(new Set());
               setMeta(null);
               setMessagesText("");
               setFileName(null);
-              router.refresh();
             } catch (err) {
               toast.error(
                 err instanceof Error ? err.message : "Import failed"

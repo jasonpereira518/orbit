@@ -9,7 +9,7 @@ import { requireUserId } from "@/lib/auth";
 import { logRecruiter } from "@/actions/recruiters";
 import {
   buildGmailAuthUrl,
-  isGmailConfigured,
+  getGmailOAuthConfigSummary,
   scanGmailForRecruiters,
   type GmailRecruiterCandidate,
 } from "@/lib/gmail";
@@ -21,17 +21,20 @@ export type GmailConnectionStatus = {
   connected: boolean;
   emailAddress: string | null;
   lastSyncedAt: string | null;
+  /** Safe: configured redirect URI only (no secrets). */
+  redirectUri: string | null;
 };
 
 export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus> {
   const userId = await requireUserId();
-  const configured = isGmailConfigured();
-  if (!configured) {
+  const summary = getGmailOAuthConfigSummary();
+  if (!summary.configured) {
     return {
       configured: false,
       connected: false,
       emailAddress: null,
       lastSyncedAt: null,
+      redirectUri: summary.redirectUri,
     };
   }
 
@@ -45,16 +48,27 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
     connected: Boolean(conn && conn.status === "active"),
     emailAddress: conn?.emailAddress || null,
     lastSyncedAt: conn?.lastSyncedAt?.toISOString() || null,
+    redirectUri: summary.redirectUri,
   };
 }
 
 export async function startGmailOAuth(): Promise<{ url: string }> {
   const userId = await requireUserId();
-  if (!isGmailConfigured()) {
+  const summary = getGmailOAuthConfigSummary();
+  if (!summary.configured) {
+    const hint = summary.redirectUriError
+      ? ` (${summary.redirectUriError})`
+      : "";
     throw new Error(
-      "Gmail is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET."
+      `Gmail is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI.${hint}`
     );
   }
+
+  // Safe diagnostic — redirect URI only, never secret/tokens
+  console.info("[gmail-oauth] starting auth", {
+    redirectUri: summary.redirectUri,
+    hasClientId: summary.hasClientId,
+  });
 
   const state = `${userId}:${crypto.randomUUID()}`;
   const jar = await cookies();

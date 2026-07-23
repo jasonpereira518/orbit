@@ -15,6 +15,10 @@ import { requireUserId } from "@/lib/auth";
 import { daysAgo, findDuplicateCandidates } from "@/lib/duplicates";
 import { createContact, updateContact } from "@/actions/contacts";
 import {
+  parseLinkedInConnectionsCsv,
+  type LinkedInConnectionRow,
+} from "@/lib/linkedin-connections";
+import {
   parseLinkedInMessagesCsv,
   participantIdentity,
   resolveConversations,
@@ -33,37 +37,7 @@ import { upsertContactEmbedding } from "@/lib/search";
 /** Align preview badges with confirm merge behavior. */
 const DUPLICATE_MERGE_CONFIDENCE = 0.85;
 
-export type LinkedInRow = {
-  firstName: string;
-  lastName: string;
-  email: string;
-  company: string;
-  position: string;
-  connectedOn: string;
-  url: string;
-};
-
-function mapLinkedInRow(row: Record<string, string>): LinkedInRow {
-  const get = (...keys: string[]) => {
-    for (const k of keys) {
-      const found = Object.entries(row).find(
-        ([key]) => key.trim().toLowerCase() === k.toLowerCase()
-      );
-      if (found?.[1]) return found[1].trim();
-    }
-    return "";
-  };
-
-  return {
-    firstName: get("First Name", "first name", "FirstName"),
-    lastName: get("Last Name", "last name", "LastName"),
-    email: get("Email Address", "Email", "email"),
-    company: get("Company", "company"),
-    position: get("Position", "Title", "position"),
-    connectedOn: get("Connected On", "connected on"),
-    url: get("URL", "LinkedIn URL", "Profile URL", "url"),
-  };
-}
+export type LinkedInRow = LinkedInConnectionRow;
 
 /** Parse LinkedIn "Connected On" values like "15 Jan 2024" or "01/15/2024". */
 function parseConnectedOn(raw: string): string | null {
@@ -114,16 +88,7 @@ function calendarMeetingExternalId(eventUid: string, contactId: string) {
 
 export async function previewLinkedInCsv(csvText: string) {
   const userId = await requireUserId();
-  const parsed = Papa.parse<Record<string, string>>(csvText, {
-    header: true,
-    skipEmptyLines: true,
-  });
-
-  if (parsed.errors.length && !parsed.data.length) {
-    throw new Error(parsed.errors[0]?.message || "Failed to parse CSV");
-  }
-
-  const rows = parsed.data.map(mapLinkedInRow).filter((r) => r.firstName || r.lastName);
+  const { columns, rows } = parseLinkedInConnectionsCsv(csvText);
   const db = await getDb();
   const existing = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
@@ -157,7 +122,7 @@ export async function previewLinkedInCsv(csvText: string) {
   });
 
   return {
-    columns: parsed.meta.fields || [],
+    columns,
     totalRows: people.length,
     people,
     duplicateCount: people.filter((p) => p.isRepeat).length,
@@ -187,7 +152,11 @@ async function resolveImportRow(
       where: and(eq(imports.id, importId), eq(imports.userId, userId)),
     });
     if (!existing) throw new Error("Import session not found");
-    if (existing.status === "failed" || existing.status === "completed") {
+    if (
+      existing.status === "failed" ||
+      existing.status === "completed" ||
+      existing.status === "cancelled"
+    ) {
       throw new Error(`Import session already ${existing.status}`);
     }
     return existing;
@@ -222,6 +191,33 @@ export async function failImportSession(
   revalidatePath("/imports");
 }
 
+/** Stop a processing import; rows already written are kept. */
+export async function cancelImportSession(importId: string) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const existing = await db.query.imports.findFirst({
+    where: and(eq(imports.id, importId), eq(imports.userId, userId)),
+  });
+  if (!existing) throw new Error("Import session not found");
+  if (existing.status !== "processing") return existing;
+
+  const [updated] = await db
+    .update(imports)
+    .set({
+      status: "cancelled",
+      updatedAt: new Date(),
+    })
+    .where(and(eq(imports.id, importId), eq(imports.userId, userId)))
+    .returning();
+
+  revalidatePath("/");
+  revalidatePath("/contacts");
+  revalidatePath("/imports");
+  revalidatePath("/graph");
+  revalidatePath("/chat");
+  return updated;
+}
+
 export async function confirmLinkedInImport(
   csvText: string,
   fileName: string,
@@ -240,14 +236,7 @@ export async function confirmLinkedInImport(
   );
 
   try {
-    const parsed = Papa.parse<Record<string, string>>(csvText, {
-      header: true,
-      skipEmptyLines: true,
-    });
-
-    const rows = parsed.data
-      .map(mapLinkedInRow)
-      .filter((r) => r.firstName || r.lastName);
+    const { rows } = parseLinkedInConnectionsCsv(csvText);
     const selected =
       selectedIds === undefined
         ? new Set(rows.map((_, i) => String(i)))

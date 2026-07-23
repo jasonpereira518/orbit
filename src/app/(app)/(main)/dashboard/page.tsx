@@ -1,9 +1,8 @@
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
-import { ArrowRight, Bell, Sparkles, Users } from "lucide-react";
+import { Bell, Sparkles, Users } from "lucide-react";
 import { fetchDashboard } from "@/actions/reminders";
 import { fetchNetworkStats } from "@/actions/stats";
-import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { DashboardGraphPreview } from "@/components/dashboard/dashboard-graph-preview";
@@ -12,8 +11,9 @@ import { GenerateFollowUpsButton } from "@/components/dashboard/generate-follow-
 import { GoalsSummary } from "@/components/dashboard/goals-summary";
 import { NetworkDepthChart } from "@/components/dashboard/network-depth-chart";
 import { NetworkStatsCard } from "@/components/dashboard/network-stats-card";
-import { ReminderRow } from "@/components/dashboard/reminder-row";
+import { RemindersDashboardCard } from "@/components/dashboard/reminders-dashboard-card";
 import { SuggestedOutreachCard } from "@/components/dashboard/suggested-outreach-card";
+import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export default async function DashboardPage() {
@@ -93,7 +93,7 @@ export default async function DashboardPage() {
         <DashboardGraphPreview graphPreview={data.graphPreview} />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid items-stretch gap-6 lg:grid-cols-2">
         <SuggestedOutreachCard
           items={data.suggestions.map((s) => {
             const contactId = s.relatedContactIds?.[0] ?? null;
@@ -111,41 +111,20 @@ export default async function DashboardPage() {
           })}
         />
 
-        <Card id="reminders" className="border-border/70 shadow-none scroll-mt-8">
-          <CardHeader className="flex flex-row items-center justify-between gap-2">
-            <CardTitle className="text-base">Reminders</CardTitle>
-            <Link
-              href="/reminders"
-              className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
-            >
-              View all
-              <ArrowRight className="ml-1 h-3.5 w-3.5" />
-            </Link>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {data.reminders.length === 0 ? (
-              <Empty hint="No pending reminders. Capture notes to create follow-ups." />
-            ) : (
-              data.reminders.map((r) => (
-                <ReminderRow
-                  key={r.id}
-                  id={r.id}
-                  title={r.title}
-                  description={r.description}
-                  dueDate={r.dueDate}
-                  reminderType={r.reminderType}
-                  actionKind={r.actionKind}
-                  contactId={r.contactId}
-                  contactName={
-                    r.contactId
-                      ? data.contactNameById.get(r.contactId)
-                      : null
-                  }
-                />
-              ))
-            )}
-          </CardContent>
-        </Card>
+        <RemindersDashboardCard
+          items={data.reminders.map((r) => ({
+            id: r.id,
+            title: r.title,
+            description: r.description,
+            dueDate: r.dueDate,
+            reminderType: r.reminderType,
+            actionKind: r.actionKind,
+            contactId: r.contactId,
+            contactName: r.contactId
+              ? data.contactNameById.get(r.contactId) ?? null
+              : null,
+          }))}
+        />
       </div>
 
       <div className="grid items-start gap-6 lg:grid-cols-2">

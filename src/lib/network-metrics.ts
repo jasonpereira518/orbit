@@ -1,17 +1,26 @@
+import { displayName, type EdgeKind, type GraphContactInput, type LayoutEdge } from "@/lib/graph-layout";
+import { buildConstellationClusters } from "@/lib/constellation-clusters";
+import { resolveConstellationShape } from "@/lib/constellation-shapes";
 import { computeCloseness, type ClosenessContact } from "@/lib/closeness";
-import {
-  displayName,
-  type EdgeKind,
-  type GraphContactInput,
-  type LayoutEdge,
-} from "@/lib/graph-layout";
 
 export type PeerEdgeReason =
   | "company"
+  | "school"
+  | "event"
   | "howMet"
   | "mention"
   | "sharedTags"
   | "sharedInterests";
+
+export const PEER_REASON_LABELS: Record<PeerEdgeReason, string> = {
+  company: "Same company",
+  school: "Same school",
+  event: "Same event",
+  howMet: "Met together",
+  mention: "Mentioned",
+  sharedTags: "Shared tags",
+  sharedInterests: "Shared interests",
+};
 
 export type PeerEdge = {
   source: string;
@@ -47,15 +56,6 @@ export type ContactWithNetwork = ClosenessContact & {
   goalRelevance: number;
   peerDegree: number;
 };
-
-function companyKey(company: string | null | undefined) {
-  const trimmed = (company || "").trim();
-  return trimmed || "__none__";
-}
-
-function normalizePhrase(value: string | null | undefined) {
-  return (value || "").trim().toLowerCase().replace(/\s+/g, " ");
-}
 
 function pairKey(a: string, b: string) {
   return a < b ? `${a}::${b}` : `${b}::${a}`;
@@ -118,89 +118,72 @@ function addPeerEdge(
   edges.push({ source, target, ...edge });
 }
 
-function orderGroup(
-  group: GraphContactInput[],
-  positions?: Map<string, { angle: number }>
-) {
-  if (positions) {
-    return [...group].sort((a, b) => {
-      const aa = positions.get(a.id)?.angle ?? 0;
-      const bb = positions.get(b.id)?.angle ?? 0;
-      return aa - bb;
-    });
-  }
-  return [...group].sort((a, b) =>
-    displayName(a).localeCompare(displayName(b))
-  );
-}
-
 /**
- * Derive peer edges between contacts (company constellations + knows links).
- * Reused by graph layout and dashboard network metrics.
+ * Derive peer edges between contacts.
+ * Constellation edges are a single winding path (like a star figure) —
+ * not a closed polygon or mesh of diagonals.
  */
 export function buildPeerEdges(
   contacts: GraphContactInput[],
-  options?: { positions?: Map<string, { angle: number }> }
+  options?: {
+    positions?: Map<string, { angle: number }>;
+    constellationOnly?: boolean;
+  }
 ): PeerEdge[] {
   const edges: PeerEdge[] = [];
   const seenPairs = new Set<string>();
-  const positions = options?.positions;
 
-  const byCompany = new Map<string, GraphContactInput[]>();
-  for (const c of contacts) {
-    const key = companyKey(c.company);
-    if (key === "__none__") continue;
-    const list = byCompany.get(key) || [];
-    list.push(c);
-    byCompany.set(key, list);
-  }
+  const { clusters, byContactId } = buildConstellationClusters(contacts);
+  const contactsById = new Map(contacts.map((c) => [c.id, c]));
 
-  for (const [key, group] of byCompany) {
+  for (const cluster of clusters) {
+    if (cluster.count < 2 || cluster.kind === "other") continue;
+    const group = cluster.contactIds
+      .map((id) => contactsById.get(id))
+      .filter(Boolean) as GraphContactInput[];
     if (group.length < 2) continue;
-    const ordered = orderGroup(group, positions);
 
-    for (let i = 0; i < ordered.length - 1; i++) {
-      addPeerEdge(edges, seenPairs, ordered[i].id, ordered[i + 1].id, {
+    const ordered = [...group].sort((a, b) => {
+      const scoreA = a.orbitScore ?? a.relationshipScore ?? 2;
+      const scoreB = b.orbitScore ?? b.relationshipScore ?? 2;
+      if (scoreB !== scoreA) return scoreB - scoreA;
+      return displayName(a).localeCompare(displayName(b));
+    });
+
+    const reason: PeerEdgeReason =
+      cluster.kind === "company"
+        ? "company"
+        : cluster.kind === "school"
+          ? "school"
+          : "howMet";
+
+    // Edges follow the real constellation figure for this star count
+    const shape = resolveConstellationShape(ordered.length, cluster.id);
+    for (const [ai, bi] of shape.edges) {
+      const a = ordered[ai];
+      const b = ordered[bi];
+      if (!a || !b) continue;
+      addPeerEdge(edges, seenPairs, a.id, b.id, {
         kind: "constellation",
-        reason: "company",
-        company: key,
-      });
-    }
-
-    if (ordered.length >= 3 && ordered.length <= 8) {
-      addPeerEdge(
-        edges,
-        seenPairs,
-        ordered[ordered.length - 1].id,
-        ordered[0].id,
-        { kind: "constellation", reason: "company", company: key }
-      );
-    }
-  }
-
-  const byHowMet = new Map<string, GraphContactInput[]>();
-  for (const c of contacts) {
-    const key = normalizePhrase(c.howMet);
-    if (!key || key.length < 3) continue;
-    const list = byHowMet.get(key) || [];
-    list.push(c);
-    byHowMet.set(key, list);
-  }
-  for (const group of byHowMet.values()) {
-    if (group.length < 2) continue;
-    const ordered = orderGroup(group, positions);
-    for (let i = 0; i < ordered.length - 1; i++) {
-      addPeerEdge(edges, seenPairs, ordered[i].id, ordered[i + 1].id, {
-        kind: "knows",
-        reason: "howMet",
+        reason,
+        company: cluster.name,
       });
     }
   }
 
+  if (options?.constellationOnly) {
+    return edges;
+  }
+
+  // Soft knows links across clusters (metrics / other surfaces)
   for (let i = 0; i < contacts.length; i++) {
     for (let j = i + 1; j < contacts.length; j++) {
       const a = contacts[i];
       const b = contacts[j];
+      const ca = byContactId.get(a.id)?.id;
+      const cb = byContactId.get(b.id)?.id;
+      if (ca && cb && ca === cb) continue;
+
       if (mentionsOther(a, b) || mentionsOther(b, a)) {
         addPeerEdge(edges, seenPairs, a.id, b.id, {
           kind: "knows",
@@ -237,49 +220,27 @@ export function buildPeerEdges(
 /** Style presets for peer edges when rendering in the graph. */
 export function peerEdgeToLayoutEdge(edge: PeerEdge): LayoutEdge {
   const key = pairKey(edge.source, edge.target);
-  const styles: Record<
-    PeerEdgeReason,
-    { stroke: string; strokeWidth: number; opacity: number }
-  > = {
-    company: {
-      stroke: "rgba(255, 255, 255, 0.85)",
-      strokeWidth: 1.05,
-      opacity: 0.7,
-    },
-    howMet: {
-      stroke: "rgba(255, 236, 200, 0.9)",
-      strokeWidth: 0.95,
-      opacity: 0.65,
-    },
-    mention: {
-      stroke: "rgba(255, 255, 255, 0.8)",
-      strokeWidth: 0.9,
-      opacity: 0.6,
-    },
-    sharedTags: {
-      stroke: "rgba(220, 230, 255, 0.75)",
-      strokeWidth: 0.85,
-      opacity: 0.4,
-    },
-    sharedInterests: {
-      stroke: "rgba(220, 230, 255, 0.7)",
-      strokeWidth: 0.8,
-      opacity: 0.35,
-    },
-  };
-  const style = styles[edge.reason];
+  const isConstellation = edge.kind === "constellation";
   return {
     id: `${edge.kind}-${key}`,
     source: edge.source,
     target: edge.target,
     type: "straight",
     animated: false,
+    label: PEER_REASON_LABELS[edge.reason],
     data: {
       kind: edge.kind,
       company: edge.company,
       reason: edge.reason,
+      label: PEER_REASON_LABELS[edge.reason],
     },
-    style,
+    style: {
+      stroke: isConstellation
+        ? "rgba(255, 255, 255, 0.75)"
+        : "rgba(255, 255, 255, 0.35)",
+      strokeWidth: isConstellation ? 1.1 : 0.8,
+      opacity: isConstellation ? 0.85 : 0.4,
+    },
   };
 }
 

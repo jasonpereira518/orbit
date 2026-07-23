@@ -7,6 +7,7 @@ import { AppSidebar } from "@/components/layout/app-sidebar";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
+import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
 import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
 import { ThemeSync } from "@/components/theme-sync";
 import { cn } from "@/lib/utils";
@@ -34,7 +35,12 @@ export function AppShell({
   const pathname = usePathname();
   const isOnboarding = pathname === "/onboarding";
   const isChat = pathname === "/chat";
-  const showAskBar = !isOnboarding && !isChat;
+  const isSettings =
+    pathname === "/settings" || pathname.startsWith("/settings/");
+  const isConstellation =
+    pathname === "/graph" || pathname.startsWith("/graph/");
+  const showAskBar =
+    !isOnboarding && !isChat && !isSettings && !isConstellation;
 
   if (isOnboarding) {
     return (
@@ -54,6 +60,7 @@ export function AppShell({
     >
       <ThemeSync theme={theme} />
       <DueNotificationsWatcher />
+      <ImportJobWatcher />
       <div className="sticky top-0 z-40 hidden h-dvh shrink-0 p-3 md:block lg:p-4">
         <AppSidebar pathname={pathname} clerkOn={clerkOn} demoMode={demoMode} />
       </div>
@@ -82,7 +89,9 @@ export function AppShell({
             "mx-auto w-full max-w-6xl px-4 py-6 md:px-10 md:py-8",
             isChat
               ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-8"
-              : "flex-1 pb-[calc(9.5rem+env(safe-area-inset-bottom))] md:pb-24"
+              : isSettings || isConstellation
+                ? "flex-1 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-8"
+                : "flex-1 pb-[calc(9.5rem+env(safe-area-inset-bottom))] md:pb-24"
           )}
         >
           {children}

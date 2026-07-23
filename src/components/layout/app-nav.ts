@@ -7,7 +7,6 @@ import {
   Send,
   MessageSquare,
   Network,
-  BookOpen,
   Settings,
   MoreHorizontal,
   Bell,
@@ -19,35 +18,47 @@ export type AppNavItem = {
   icon: LucideIcon;
 };
 
-export const APP_NAV: AppNavItem[] = [
+export const APP_NAV_CORE: AppNavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/reminders", label: "Reminders", icon: Bell },
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/capture", label: "Capture", icon: Sparkles },
   { href: "/imports", label: "Imports", icon: Upload },
-  { href: "/knowledge", label: "Knowledge", icon: BookOpen },
-  { href: "/outreach", label: "Outreach", icon: Send },
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/graph", label: "Constellation", icon: Network },
-  { href: "/settings", label: "Settings", icon: Settings },
+];
+
+export const APP_NAV_EXTRAS: AppNavItem[] = [
+  { href: "/outreach", label: "Outreach", icon: Send },
+];
+
+export const APP_NAV_SETTINGS: AppNavItem = {
+  href: "/settings",
+  label: "Settings",
+  icon: Settings,
+};
+
+export const APP_NAV: AppNavItem[] = [
+  ...APP_NAV_CORE,
+  ...APP_NAV_EXTRAS,
+  APP_NAV_SETTINGS,
 ];
 
 export const MOBILE_BOTTOM_NAV: Array<
   AppNavItem | { id: "more"; label: string; icon: LucideIcon }
 > = [
-  APP_NAV[0], // Dashboard
-  APP_NAV[2], // Contacts
-  APP_NAV[3], // Capture
-  APP_NAV[5], // Knowledge
+  APP_NAV_CORE[0], // Dashboard
+  APP_NAV_CORE[2], // Contacts
+  APP_NAV_CORE[3], // Capture
+  APP_NAV_CORE[5], // Chat
   { id: "more", label: "More", icon: MoreHorizontal },
 ];
 
 export const MOBILE_MORE_NAV = [
-  APP_NAV[1], // Reminders
-  APP_NAV[4], // Imports
-  APP_NAV[6], // Outreach
-  APP_NAV[7], // Chat
-  APP_NAV[8], // Constellation
+  APP_NAV_CORE[1], // Reminders
+  APP_NAV_CORE[4], // Imports
+  APP_NAV_CORE[6], // Constellation
+  ...APP_NAV_EXTRAS,
 ];
 
 export function isNavActive(pathname: string, href: string) {

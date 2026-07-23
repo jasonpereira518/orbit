@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { RefreshCw } from "lucide-react";
+import { Handshake, Orbit, RefreshCw } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { regenerateContactSummary } from "@/actions/contacts";
 import { Button } from "@/components/ui/button";
@@ -77,7 +77,7 @@ export function ContactProfileOverview({
             </Button>
           </CardAction>
         </CardHeader>
-        <CardContent className="pt-4">
+        <CardContent>
           {aiSummary?.trim() ? (
             <p className="max-w-3xl text-[15px] leading-relaxed text-primary/90">
               {aiSummary}
@@ -132,43 +132,61 @@ export function ContactProfileOverview({
         </Card>
       ) : null}
 
-      <Card className="border-border/70 shadow-none">
-        <CardHeader>
-          <CardTitle>Closeness</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <p className="text-xs text-muted-foreground">Strength</p>
-              <p className="mt-0.5 text-lg font-medium text-primary">
-                {Math.round(closeness.strength * 100)}%
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Recency</p>
-              <p className="mt-0.5 text-sm text-primary">
-                Last interaction {recencyLabel}
-              </p>
-              <p className="mt-0.5 text-sm text-muted-foreground">
-                Frequency · {frequencyLabel}
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {howMetSummary ? (
-        <Card className="border-border/70 shadow-none lg:col-span-2">
+      <div className="grid gap-4 sm:grid-cols-2 lg:col-span-2">
+        <Card className="border-border/70 shadow-none">
           <CardHeader>
-            <CardTitle>How you met</CardTitle>
+            <CardTitle>Closeness</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="max-w-3xl text-sm leading-relaxed text-primary">
-              {howMetSummary}
-            </p>
+            <div className="flex items-start gap-4">
+              <div
+                className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-primary/8 text-primary"
+                aria-hidden
+              >
+                <Orbit className="size-8 stroke-[1.5]" />
+              </div>
+              <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <p className="text-xs text-muted-foreground">Strength</p>
+                  <p className="mt-0.5 text-lg font-medium text-primary">
+                    {Math.round(closeness.strength * 100)}%
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Recency</p>
+                  <p className="mt-0.5 text-sm text-primary">
+                    Last interaction {recencyLabel}
+                  </p>
+                  <p className="mt-0.5 text-sm text-muted-foreground">
+                    Frequency · {frequencyLabel}
+                  </p>
+                </div>
+              </div>
+            </div>
           </CardContent>
         </Card>
-      ) : null}
+
+        {howMetSummary ? (
+          <Card className="border-border/70 shadow-none">
+            <CardHeader>
+              <CardTitle>How you met</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-start gap-4">
+                <div
+                  className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-primary/8 text-primary"
+                  aria-hidden
+                >
+                  <Handshake className="size-8 stroke-[1.5]" />
+                </div>
+                <p className="min-w-0 flex-1 text-sm leading-relaxed text-primary">
+                  {howMetSummary}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
+      </div>
     </div>
   );
 }

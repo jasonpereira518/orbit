@@ -55,8 +55,16 @@ export function GmailImportPanel({
     return (
       <div className="rounded-2xl border border-dashed border-border/70 bg-card/50 px-5 py-4 text-sm text-muted-foreground">
         Connect Gmail to import recruiters from your inbox. Set{" "}
-        <code className="text-xs">GOOGLE_CLIENT_ID</code> and{" "}
-        <code className="text-xs">GOOGLE_CLIENT_SECRET</code> in the environment.
+        <code className="text-xs">GOOGLE_CLIENT_ID</code>,{" "}
+        <code className="text-xs">GOOGLE_CLIENT_SECRET</code>, and{" "}
+        <code className="text-xs">GOOGLE_REDIRECT_URI</code> in the environment
+        {connection.redirectUri ? (
+          <>
+            {" "}
+            (redirect: <code className="text-xs">{connection.redirectUri}</code>)
+          </>
+        ) : null}
+        .
       </div>
     );
   }

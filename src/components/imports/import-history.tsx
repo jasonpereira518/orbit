@@ -80,7 +80,7 @@ export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
                 variant={
                   h.status === "failed"
                     ? "destructive"
-                    : h.status === "processing"
+                    : h.status === "processing" || h.status === "cancelled"
                       ? "secondary"
                       : "outline"
                 }

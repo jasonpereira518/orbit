@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
     "@neondatabase/serverless",
     "@google/genai",
     "drizzle-orm",
+    "sharp",
   ],
   experimental: {
     // Tree-shake icon/date/motion/clerk imports across the app bundle.

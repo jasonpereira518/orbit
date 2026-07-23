@@ -14,7 +14,7 @@ import { ContactEditSheet } from "@/components/contacts/contact-edit-sheet";
 import {
   isUnusableAvatarUrl,
   resolveContactPhotoUrl,
-} from "@/lib/contact-avatar";
+} from "@/lib/contact-avatar-url";
 import {
   genderAvatarSrc,
   guessGenderFromFirstName,
@@ -34,15 +34,27 @@ function resolvePreviewSrc(input: {
   firstName?: string | null;
   fullName: string;
   profileImageUrl?: string | null;
+  linkedinUrl?: string | null;
 }) {
   const hasStored =
     Boolean(input.profileImageUrl?.trim()) &&
     !isUnusableAvatarUrl(input.profileImageUrl);
-  if (hasStored) return `/api/avatars/${input.contactId}`;
+  if (hasStored || input.linkedinUrl?.trim()) {
+    return `/api/avatars/${input.contactId}`;
+  }
   const resolved = resolveContactPhotoUrl(input.profileImageUrl);
   if (resolved) return resolved;
   return genderAvatarSrc(
     guessGenderFromFirstName(input.firstName, input.fullName)
+  );
+}
+
+function isDefaultAvatarSrc(src: string) {
+  return (
+    src.startsWith("/avatars/") ||
+    src.includes("/avatars/man.png") ||
+    src.includes("/avatars/woman.png") ||
+    src.includes("/avatars/default.png")
   );
 }
 
@@ -121,6 +133,7 @@ function collectScrollTargets(el: HTMLElement | null): Array<Element | Window> {
 function StickyMiniBar({
   contactId,
   displayName,
+  title,
   firstName,
   fullName,
   linkedinUrl,
@@ -133,6 +146,7 @@ function StickyMiniBar({
 }: {
   contactId: string;
   displayName: string;
+  title?: string | null;
   firstName?: string | null;
   fullName: string;
   linkedinUrl?: string | null;
@@ -144,6 +158,8 @@ function StickyMiniBar({
   frame: { left: number; width: number };
 }) {
   if (typeof document === "undefined") return null;
+
+  const role = title?.trim() || null;
 
   return createPortal(
     <div
@@ -172,6 +188,16 @@ function StickyMiniBar({
         />
         <p className="min-w-0 flex-1 truncate font-[family-name:var(--font-display)] text-lg text-primary">
           {displayName}
+          {role ? (
+            <>
+              <span className="mx-1.5 text-muted-foreground/70" aria-hidden>
+                ·
+              </span>
+              <span className="font-sans text-base font-normal text-muted-foreground">
+                {role}
+              </span>
+            </>
+          ) : null}
         </p>
         <div className="hidden sm:block">
           <ContactChannelIcons {...channels} className="justify-end" />
@@ -226,7 +252,10 @@ export function ContactProfileHero({
     firstName,
     fullName,
     profileImageUrl,
+    linkedinUrl,
   });
+  const hasRealPhoto =
+    Boolean(profileImageUrl?.trim()) && !isUnusableAvatarUrl(profileImageUrl);
 
   const roleLine =
     [title, company].filter(Boolean).join(" · ") || "No role yet";
@@ -308,6 +337,7 @@ export function ContactProfileHero({
         <StickyMiniBar
           contactId={contactId}
           displayName={displayName}
+          title={title}
           firstName={firstName}
           fullName={fullName}
           linkedinUrl={linkedinUrl}
@@ -327,12 +357,16 @@ export function ContactProfileHero({
         ← Contacts
       </Link>
 
-      <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
-        <div className="flex min-w-0 flex-1 gap-5">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-5">
+        <div className="flex min-w-0 flex-1 items-center gap-5 sm:gap-6">
           <AvatarHoverPreview
             src={previewSrc}
             alt={displayName}
-            enabled={!compact}
+            enabled={
+              !compact &&
+              hasRealPhoto &&
+              !isDefaultAvatarSrc(previewSrc)
+            }
           >
             <ContactAvatar
               contactId={contactId}
@@ -341,11 +375,11 @@ export function ContactProfileHero({
               linkedinUrl={linkedinUrl}
               profileImageUrl={profileImageUrl}
               size="lg"
-              className="size-24 sm:size-28"
+              className="size-28 sm:size-36"
             />
           </AvatarHoverPreview>
 
-          <div className="min-w-0 flex-1 pt-1">
+          <div className="min-w-0 flex-1">
             {/* Sentinel: when this leaves the viewport top, show the mini-bar */}
             <div ref={sentinelRef} className="h-px w-px" aria-hidden />
             <h1 className="font-[family-name:var(--font-display)] text-3xl text-primary sm:text-4xl">

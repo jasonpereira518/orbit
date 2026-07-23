@@ -134,10 +134,12 @@ export function CalendarImportSection({
                 let meetingsLogged = 0;
                 let contactsMatched = 0;
 
+                const startedAt = Date.now();
                 setImportProgress({
                   done: 0,
                   total: 1,
                   label: "events",
+                  startedAt,
                 });
 
                 do {
@@ -162,6 +164,7 @@ export function CalendarImportSection({
                     done: Math.min(offset, Math.max(total, 1)),
                     total: Math.max(total, 1),
                     label: total === 1 ? "event" : "events",
+                    startedAt,
                   });
                 } while (offset < total);
 

@@ -7,7 +7,9 @@ import {
   ImportHistory,
   type ImportHistoryItem,
 } from "@/components/imports/import-history";
+import { ImportProgress } from "@/components/imports/import-utils";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cancelImportJob, useImportJob } from "@/lib/import-job-runner";
 import { cn } from "@/lib/utils";
 
 type ImportTab = "connections" | "messages" | "calendar";
@@ -99,6 +101,7 @@ export function ImportHub({
   history: ImportHistoryItem[];
   calendarSubscriptions?: CalendarSub[];
 }) {
+  const job = useImportJob();
   const [tab, setTab] = useState<ImportTab>("connections");
   // Mount panels on first visit so inactive tabs don't load code upfront,
   // but keep them mounted afterward so in-flight imports survive switches.
@@ -113,8 +116,29 @@ export function ImportHub({
     setMounted((prev) => (prev[tab] ? prev : { ...prev, [tab]: true }));
   }, [tab]);
 
+  // When returning mid-import, open the relevant tab and show progress.
+  useEffect(() => {
+    if (job?.status !== "running") return;
+    if (job.kind !== "connections" && job.kind !== "messages") return;
+    setTab(job.kind);
+    setMounted((prev) =>
+      prev[job.kind] ? prev : { ...prev, [job.kind]: true }
+    );
+  }, [job]);
+
+  const runningProgress =
+    job?.status === "running" && job.progress ? job.progress : null;
+
   return (
     <div className="space-y-8">
+      {runningProgress ? (
+        <ImportProgress
+          {...runningProgress}
+          cancelling={Boolean(job?.cancelling)}
+          onCancel={cancelImportJob}
+        />
+      ) : null}
+
       <div
         className="flex gap-1 rounded-xl border border-border/60 bg-muted/40 p-1"
         role="tablist"
@@ -137,6 +161,7 @@ export function ImportHub({
             )}
           >
             {t.label}
+            {job?.status === "running" && job.kind === t.id ? " ·…" : ""}
           </button>
         ))}
       </div>

@@ -9,6 +9,9 @@ const GMAIL_SCOPES = [
   "openid",
 ].join(" ");
 
+/** Canonical Gmail OAuth callback path — must match Google Cloud authorized redirect URIs. */
+export const GMAIL_CALLBACK_PATH = "/api/gmail/callback";
+
 export type GmailRecruiterCandidate = {
   key: string;
   fullName: string;
@@ -19,27 +22,80 @@ export type GmailRecruiterCandidate = {
   messageCount: number;
 };
 
+/**
+ * Exact redirect URI for Google OAuth (auth URL + token exchange).
+ * Must be set per environment — never derived from request headers.
+ */
+export function getGoogleRedirectUri(): string {
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI?.trim();
+  if (!redirectUri) {
+    throw new Error("Missing GOOGLE_REDIRECT_URI");
+  }
+  if (redirectUri.includes(",")) {
+    throw new Error(
+      "GOOGLE_REDIRECT_URI must be a single URL (not comma-separated)"
+    );
+  }
+  try {
+    const parsed = new URL(redirectUri);
+    if (parsed.pathname.replace(/\/$/, "") !== GMAIL_CALLBACK_PATH) {
+      throw new Error(
+        `GOOGLE_REDIRECT_URI path must be ${GMAIL_CALLBACK_PATH} (got ${parsed.pathname})`
+      );
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("GOOGLE_REDIRECT_URI")) {
+      throw err;
+    }
+    throw new Error("GOOGLE_REDIRECT_URI must be a valid absolute URL");
+  }
+  return redirectUri;
+}
+
 export function isGmailConfigured() {
+  try {
+    getGoogleRedirectUri();
+  } catch {
+    return false;
+  }
   return Boolean(
     process.env.GOOGLE_CLIENT_ID?.trim() &&
       process.env.GOOGLE_CLIENT_SECRET?.trim()
   );
 }
 
-export function getGoogleRedirectUri() {
-  return (
-    process.env.GOOGLE_REDIRECT_URI?.trim() ||
-    `${process.env.NEXT_PUBLIC_APP_URL?.trim() || "http://localhost:3000"}/api/gmail/callback`
-  );
+/** Safe diagnostics — never includes client secret or tokens. */
+export function getGmailOAuthConfigSummary(): {
+  configured: boolean;
+  hasClientId: boolean;
+  hasClientSecret: boolean;
+  redirectUri: string | null;
+  redirectUriError: string | null;
+} {
+  let redirectUri: string | null = null;
+  let redirectUriError: string | null = null;
+  try {
+    redirectUri = getGoogleRedirectUri();
+  } catch (err) {
+    redirectUriError = err instanceof Error ? err.message : "invalid";
+  }
+  return {
+    configured: isGmailConfigured(),
+    hasClientId: Boolean(process.env.GOOGLE_CLIENT_ID?.trim()),
+    hasClientSecret: Boolean(process.env.GOOGLE_CLIENT_SECRET?.trim()),
+    redirectUri,
+    redirectUriError,
+  };
 }
 
 export function buildGmailAuthUrl(state: string) {
   const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
   if (!clientId) throw new Error("GOOGLE_CLIENT_ID is not configured");
+  const redirectUri = getGoogleRedirectUri();
 
   const params = new URLSearchParams({
     client_id: clientId,
-    redirect_uri: getGoogleRedirectUri(),
+    redirect_uri: redirectUri,
     response_type: "code",
     scope: GMAIL_SCOPES,
     access_type: "offline",
@@ -63,6 +119,7 @@ export async function exchangeCodeForTokens(code: string): Promise<TokenResponse
   if (!clientId || !clientSecret) {
     throw new Error("Google OAuth is not configured");
   }
+  const redirectUri = getGoogleRedirectUri();
 
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -71,7 +128,7 @@ export async function exchangeCodeForTokens(code: string): Promise<TokenResponse
       code,
       client_id: clientId,
       client_secret: clientSecret,
-      redirect_uri: getGoogleRedirectUri(),
+      redirect_uri: redirectUri,
       grant_type: "authorization_code",
     }),
   });

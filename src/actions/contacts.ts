@@ -1050,6 +1050,7 @@ export async function listRelatedContacts(
       company: true,
       companyId: true,
       school: true,
+      location: true,
       howMet: true,
       profileImageUrl: true,
       linkedinUrl: true,
