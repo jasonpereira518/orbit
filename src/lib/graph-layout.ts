@@ -64,7 +64,6 @@ export type GraphNodeData = {
   relationshipScore?: number;
   closeness?: number;
   closenessTier?: "inner" | "mid" | "outer";
-  dormant?: boolean;
   comet?: boolean;
   overdue?: boolean;
   tags?: string[];
@@ -160,6 +159,15 @@ function placementScore(c: GraphContactInput) {
   return clampScore(c.orbitScore ?? c.relationshipScore);
 }
 
+/** Stable order for constellation star placement and path edges. */
+export function orderConstellationMembers(members: GraphContactInput[]) {
+  return [...members].sort((a, b) => {
+    const scoreDiff = placementScore(b) - placementScore(a);
+    if (scoreDiff !== 0) return scoreDiff;
+    return displayName(a).localeCompare(displayName(b));
+  });
+}
+
 export function ringRadiusForScore(score: number) {
   const s = clampScore(score);
   return RING_RADII[5 - s];
@@ -212,12 +220,7 @@ function placeConstellationMembers(
   clusterSeed: string,
   positions: Map<string, { x: number; y: number; angle: number; radius: number }>
 ) {
-  const sorted = [...members].sort((a, b) => {
-    const scoreDiff = placementScore(b) - placementScore(a);
-    if (scoreDiff !== 0) return scoreDiff;
-    return displayName(a).localeCompare(displayName(b));
-  });
-
+  const sorted = orderConstellationMembers(members);
   const n = sorted.length;
   if (n === 0) return;
 
@@ -428,7 +431,6 @@ export function buildHybridGraphLayout(
           relationshipScore: clampScore(c.relationshipScore),
           closeness: c.closeness,
           closenessTier: c.closenessTier,
-          dormant,
           comet: dormant,
           overdue: isOverdue(c.nextFollowUpAt),
           tags: c.tags,

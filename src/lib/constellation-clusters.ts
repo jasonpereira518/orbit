@@ -104,7 +104,8 @@ export function buildConstellationClusters(
 
   const map = new Map<string, BuiltCluster>();
   for (const c of contacts) {
-    const ref = byContactId.get(c.id)!;
+    const ref = byContactId.get(c.id);
+    if (!ref) continue;
     const existing = map.get(ref.id);
     if (existing) {
       existing.contactIds.push(c.id);
@@ -137,12 +138,15 @@ export function buildConstellationClusters(
 /** Company/school clusters shaped for graph + dashboard payloads. */
 export function toNamedGraphClusters(clusters: BuiltCluster[]) {
   return clusters
-    .filter((c) => c.kind === "company" || c.kind === "school")
+    .filter(
+      (c): c is BuiltCluster & { kind: "company" | "school" } =>
+        c.kind === "company" || c.kind === "school"
+    )
     .map((c) => ({
       id: c.id,
       name: c.name,
       company: c.name,
-      kind: c.kind as "company" | "school",
+      kind: c.kind,
       count: c.count,
       contactIds: c.contactIds,
     }));
