@@ -102,17 +102,18 @@ function SunNodeComponent({
   data,
   selected,
 }: NodeProps & { data: GraphNodeData }) {
+  // Fixed 22×22 box so nodeOrigin [0.5,0.5] pins the disc (not the corona) at flow (0,0)
   return (
-    <div className="relative flex items-center justify-center">
+    <div className="relative" style={{ width: 22, height: 22 }}>
       <Handle
         type="source"
         position={Position.Top}
-        className="!opacity-0"
+        className="!opacity-0 !h-0 !w-0 !min-h-0 !min-w-0 !border-0"
         isConnectable={false}
       />
       <div
         className={cn(
-          "constellation-corona-outer absolute rounded-full",
+          "constellation-corona-outer pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full",
           selected ? "h-52 w-52" : "h-44 w-44"
         )}
         style={{
@@ -122,21 +123,20 @@ function SunNodeComponent({
       />
       <div
         className={cn(
-          "constellation-corona absolute rounded-full bg-white/50 blur-[3px]",
+          "constellation-corona pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/50 blur-[3px]",
           selected ? "h-20 w-20" : "h-16 w-16"
         )}
       />
       <div
         className={cn(
-          "constellation-sun-core relative z-10 rounded-full",
+          "constellation-sun-core absolute inset-0 z-10 rounded-full",
           "bg-[radial-gradient(circle_at_35%_30%,_#ffffff_0%,_#fff6d6_28%,_#f5c86a_65%,_#e09030_100%)]",
           "shadow-[0_0_32px_10px_rgba(255,240,200,0.65),0_0_72px_22px_rgba(255,170,60,0.35),0_0_100px_40px_rgba(255,140,40,0.15)]",
           selected && "ring-2 ring-white/80"
         )}
-        style={{ width: 22, height: 22 }}
         title={data.label}
       />
-      <p className="absolute top-8 whitespace-nowrap text-[11px] font-medium tracking-wide text-white/95 drop-shadow-[0_0_8px_rgba(0,0,0,0.8)]">
+      <p className="pointer-events-none absolute left-1/2 top-[28px] -translate-x-1/2 whitespace-nowrap text-[11px] font-medium tracking-wide text-white/95 drop-shadow-[0_0_8px_rgba(0,0,0,0.8)]">
         {data.label}
       </p>
     </div>
