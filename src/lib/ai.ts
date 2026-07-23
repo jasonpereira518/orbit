@@ -48,7 +48,23 @@ export const noteParseSchema = z.object({
 
 export type ParsedNote = z.infer<typeof noteParseSchema>;
 
+/** Group/event context that applies to more than one person in a note dump. */
+export const sharedNoteContextSchema = z.object({
+  text: z.string(),
+  met_at: z.string().nullable().optional(),
+  topics: z.array(z.string()).default([]),
+  /** Names of people this shared note applies to (must match people[].name). */
+  person_names: z.array(z.string()).default([]),
+});
+
+export type SharedNoteContext = z.infer<typeof sharedNoteContextSchema>;
+
 export const multiPersonNoteParseSchema = z.object({
+  shared_notes: z
+    .array(sharedNoteContextSchema)
+    .nullable()
+    .optional()
+    .transform((v) => v ?? []),
   people: z.array(
     noteParseSchema.extend({
       source_excerpt: z.string(),
@@ -448,6 +464,14 @@ export async function parseMultiPersonNotesWithAI(
     system: `You extract structured contact data from networking notes that may mention many people.
 Return strict JSON matching this shape:
 {
+  "shared_notes": [
+    {
+      "text": string,
+      "met_at": string|null,
+      "topics": string[],
+      "person_names": string[]
+    }
+  ],
   "people": [
     {
       "name": string|null,
@@ -477,15 +501,38 @@ Rules:
 - Create one object per distinct person clearly mentioned in the notes.
 - Skip vague groups ("a few engineers") with no identifiable person.
 - Extract only information supported by the notes. Use null when unknown. Do not invent people or facts.
-- source_excerpt must be the relevant slice of the original notes for that person (not the whole dump).
+- source_excerpt must be the person-specific slice of the original notes (not the whole dump, and not the shared group text alone).
+- shared_notes: capture context that applies to MULTIPLE people at once — e.g. "met everyone at AWS Summit afterparty", "group dinner after the panel", "all discussed fundraising". Put the shared text in shared_notes[].text, list the affected people in person_names (exact names matching people[].name; use [] to mean everyone), and set met_at/topics when relevant. Do NOT duplicate that shared text into every source_excerpt.
+- If a fact is only about one person, keep it in that person's fields/source_excerpt — not in shared_notes.
+- If several people share the same event/place, set each person's met_at (and include it on shared_notes too).
 - relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.
-- If the notes only cover one person, return a single-item people array.`,
+- If the notes only cover one person, return a single-item people array and an empty shared_notes array.`,
   });
 
   const parsed = multiPersonNoteParseSchema.parse(JSON.parse(content));
-  return {
-    people: parsed.people.filter((p) => p.name?.trim()),
-  };
+  const people = parsed.people.filter((p) => p.name?.trim());
+  const nameSet = new Set(people.map((p) => p.name!.trim().toLowerCase()));
+
+  const shared_notes = (parsed.shared_notes || [])
+    .filter((s) => s.text?.trim())
+    .map((s) => {
+      const rawNames = (s.person_names || [])
+        .map((n) => n.trim())
+        .filter(Boolean);
+      // Empty person_names means the shared note applies to everyone extracted.
+      const person_names =
+        rawNames.length === 0
+          ? people.map((p) => p.name!.trim())
+          : rawNames.filter((n) => nameSet.has(n.toLowerCase()));
+      return {
+        ...s,
+        text: s.text.trim(),
+        person_names,
+      };
+    })
+    .filter((s) => s.person_names.length >= 2);
+
+  return { shared_notes, people };
 }
 
 export async function createEmbedding(userId: string, text: string) {

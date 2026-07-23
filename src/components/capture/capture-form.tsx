@@ -3,26 +3,15 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/lib/toast";
-import { parseCaptureNotes, confirmCapture } from "@/actions/capture";
 import { listContacts, logInteraction } from "@/actions/contacts";
 import { scheduleContactFollowUp } from "@/actions/reminders";
-import type { ParsedNote } from "@/lib/ai";
+import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-
-type Dup = {
-  id: string;
-  fullName: string;
-  company: string | null;
-  title: string | null;
-  reason: string;
-  confidence: number;
-};
 
 type CaptureMode = "messy" | "structured";
 
@@ -53,22 +42,15 @@ export function CaptureForm({
   initialContactId = null,
   initialContactName = null,
   defaultMode = "messy",
+  hasApiKey = true,
 }: {
   initialContactId?: string | null;
   initialContactName?: string | null;
   defaultMode?: CaptureMode;
+  hasApiKey?: boolean;
 }) {
   const router = useRouter();
   const [mode, setMode] = useState<CaptureMode>(defaultMode);
-  const [notes, setNotes] = useState("");
-  const [step, setStep] = useState<"paste" | "review">("paste");
-  const [parsed, setParsed] = useState<ParsedNote | null>(null);
-  const [duplicates, setDuplicates] = useState<Dup[]>([]);
-  const [mergeId, setMergeId] = useState<string | null>(initialContactId);
-  const [createReminder, setCreateReminder] = useState(true);
-  const [score, setScore] = useState(2);
-  const [tags, setTags] = useState("");
-  const [followUpDays, setFollowUpDays] = useState(14);
   const [pending, start] = useTransition();
 
   const [contactOptions, setContactOptions] = useState<ContactOption[]>(() =>
@@ -132,10 +114,7 @@ export function CaptureForm({
         >
           <ModeTab
             active={mode === "messy"}
-            onClick={() => {
-              setMode("messy");
-              setStep("paste");
-            }}
+            onClick={() => setMode("messy")}
           >
             Messy Notes
           </ModeTab>
@@ -148,233 +127,25 @@ export function CaptureForm({
         </div>
         <p className="text-sm text-muted-foreground">
           {mode === "messy"
-            ? "Paste rough notes — AI extracts people, topics, and follow-ups for you to confirm."
+            ? "Paste notes about one person or many — AI extracts each profile, keeps shared event context, and you review before saving."
             : "Fill in the fields yourself for a clean interaction log on a contact."}
         </p>
       </div>
 
-      {mode === "messy" && step === "paste" && (
-        <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-          {initialContactId && initialContactName && (
-            <p className="rounded-xl bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
-              Logging against{" "}
-              <span className="font-medium text-foreground">
-                {initialContactName}
-              </span>
-              . After extraction you can merge into this contact.
-            </p>
-          )}
-          <div>
-            <Label htmlFor="notes">Paste rough notes</Label>
-            <Textarea
-              id="notes"
-              className="mt-2 min-h-[200px]"
-              placeholder="Met Sarah Chen at AWS Summit. She works at OpenAI on Codex partnerships..."
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-            />
-          </div>
-          <Button
-            disabled={pending || !notes.trim()}
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
-            onClick={() =>
-              start(async () => {
-                try {
-                  const res = await parseCaptureNotes(notes);
-                  setParsed(res.parsed);
-                  setDuplicates(res.duplicates);
-                  setScore(res.parsed.relationship_score_suggestion || 2);
-                  setTags((res.parsed.tags || []).join(", "));
-                  setFollowUpDays(res.parsed.follow_up_days || 14);
-                  setCreateReminder(Boolean(res.parsed.follow_up_recommendation));
-                  const preferredMerge =
-                    (initialContactId &&
-                      res.duplicates.some((d) => d.id === initialContactId) &&
-                      initialContactId) ||
-                    res.duplicates[0]?.id ||
-                    initialContactId ||
-                    null;
-                  setMergeId(preferredMerge);
-                  setStep("review");
-                } catch (err) {
-                  toast.error(
-                    err instanceof Error ? err.message : "Failed to parse notes"
-                  );
-                }
-              })
+      {mode === "messy" && (
+        <BulkNotesPanel
+          preferredContactId={initialContactId}
+          preferredContactName={initialContactName}
+          hasApiKey={hasApiKey}
+          onSaved={(res) => {
+            if (res.contactIds.length === 1) {
+              router.push(`/contacts/${res.contactIds[0]}`);
+            } else {
+              router.push("/contacts");
             }
-          >
-            {pending ? "Parsing…" : "Extract with AI"}
-          </Button>
-        </div>
-      )}
-
-      {mode === "messy" && step === "review" && parsed && (
-        <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-medium text-primary">Review extraction</h2>
-            <Button variant="ghost" onClick={() => setStep("paste")}>
-              Back
-            </Button>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Name">
-              <Input
-                value={parsed.name || ""}
-                onChange={(e) => setParsed({ ...parsed, name: e.target.value })}
-              />
-            </Field>
-            <Field label="Company">
-              <Input
-                value={parsed.company || ""}
-                onChange={(e) =>
-                  setParsed({ ...parsed, company: e.target.value })
-                }
-              />
-            </Field>
-            <Field label="Role">
-              <Input
-                value={parsed.role || ""}
-                onChange={(e) => setParsed({ ...parsed, role: e.target.value })}
-              />
-            </Field>
-            <Field label="Met at">
-              <Input
-                value={parsed.met_at || ""}
-                onChange={(e) =>
-                  setParsed({ ...parsed, met_at: e.target.value })
-                }
-              />
-            </Field>
-          </div>
-
-          <Field label="Summary">
-            <Textarea
-              value={parsed.summary || ""}
-              onChange={(e) =>
-                setParsed({ ...parsed, summary: e.target.value })
-              }
-            />
-          </Field>
-
-          <div className="flex flex-wrap gap-2">
-            {(parsed.topics || []).map((t) => (
-              <Badge key={t} variant="secondary">
-                {t}
-              </Badge>
-            ))}
-          </div>
-
-          {(duplicates.length > 0 || initialContactId) && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4 dark:border-amber-900/50 dark:bg-amber-950/20">
-              <p className="mb-2 text-sm font-medium">Save to contact</p>
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="radio"
-                    name="merge"
-                    checked={!mergeId}
-                    onChange={() => setMergeId(null)}
-                  />
-                  Create new contact
-                </label>
-                {initialContactId &&
-                  initialContactName &&
-                  !duplicates.some((d) => d.id === initialContactId) && (
-                    <label className="flex items-center gap-2 text-sm">
-                      <input
-                        type="radio"
-                        name="merge"
-                        checked={mergeId === initialContactId}
-                        onChange={() => setMergeId(initialContactId)}
-                      />
-                      Merge into {initialContactName}
-                    </label>
-                  )}
-                {duplicates.map((d) => (
-                  <label key={d.id} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="radio"
-                      name="merge"
-                      checked={mergeId === d.id}
-                      onChange={() => setMergeId(d.id)}
-                    />
-                    Merge into {d.fullName}
-                    {d.company ? ` (${d.company})` : ""} — {d.reason}
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="Closeness score">
-              <Input
-                type="number"
-                min={1}
-                max={5}
-                value={score}
-                onChange={(e) => setScore(Number(e.target.value))}
-              />
-            </Field>
-            <Field label="Follow-up days">
-              <Input
-                type="number"
-                min={1}
-                value={followUpDays}
-                onChange={(e) => setFollowUpDays(Number(e.target.value))}
-              />
-            </Field>
-            <Field label="Tags">
-              <Input value={tags} onChange={(e) => setTags(e.target.value)} />
-            </Field>
-          </div>
-
-          {parsed.follow_up_recommendation && (
-            <p className="text-sm text-muted-foreground">
-              Suggested: {parsed.follow_up_recommendation}
-            </p>
-          )}
-
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox
-              checked={createReminder}
-              onCheckedChange={(v) => setCreateReminder(Boolean(v))}
-            />
-            Create follow-up reminder (you confirm — AI only suggests)
-          </label>
-
-          <Button
-            disabled={pending}
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
-            onClick={() =>
-              start(async () => {
-                try {
-                  const res = await confirmCapture({
-                    notes,
-                    parsed,
-                    mergeContactId: mergeId,
-                    createReminder,
-                    relationshipScore: score,
-                    tagNames: tags
-                      .split(",")
-                      .map((t) => t.trim())
-                      .filter(Boolean),
-                    followUpDays,
-                  });
-                  toast.success("Saved to your network");
-                  router.push(`/contacts/${res.contactId}`);
-                  router.refresh();
-                } catch (err) {
-                  toast.error(err instanceof Error ? err.message : "Save failed");
-                }
-              })
-            }
-          >
-            {pending ? "Saving…" : "Confirm & save"}
-          </Button>
-        </div>
+            router.refresh();
+          }}
+        />
       )}
 
       {mode === "structured" && (

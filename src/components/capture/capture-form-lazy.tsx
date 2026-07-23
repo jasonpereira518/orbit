@@ -17,16 +17,19 @@ export function CaptureFormLazy({
   initialContactId = null,
   initialContactName = null,
   defaultMode = "messy",
+  hasApiKey = true,
 }: {
   initialContactId?: string | null;
   initialContactName?: string | null;
   defaultMode?: "messy" | "structured";
+  hasApiKey?: boolean;
 }) {
   return (
     <CaptureForm
       initialContactId={initialContactId}
       initialContactName={initialContactName}
       defaultMode={defaultMode}
+      hasApiKey={hasApiKey}
     />
   );
 }

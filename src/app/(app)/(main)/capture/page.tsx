@@ -1,4 +1,5 @@
 import { getContact } from "@/actions/contacts";
+import { getSettings } from "@/actions/settings";
 import { CaptureFormLazy } from "@/components/capture/capture-form-lazy";
 
 export default async function CapturePage({
@@ -13,6 +14,8 @@ export default async function CapturePage({
       ? params.mode
       : null;
 
+  const settingsPromise = getSettings();
+
   let contactId: string | null = null;
   let contactName: string | null = null;
   if (requestedContactId) {
@@ -23,24 +26,26 @@ export default async function CapturePage({
     }
   }
 
+  const settings = await settingsPromise;
   const defaultMode = modeParam || (contactId ? "structured" : "messy");
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       <div>
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-primary">
           Capture
         </h1>
         <p className="mt-1 text-muted-foreground">
           {contactName
-            ? `Log an interaction with ${contactName} — messy notes or structured fields.`
-            : "Log interactions with messy notes or a structured form."}
+            ? `Log an interaction with ${contactName} — or paste notes that mention others too.`
+            : "Paste notes about one person or many, review each profile, then save."}
         </p>
       </div>
       <CaptureFormLazy
         initialContactId={contactId}
         initialContactName={contactName}
         defaultMode={defaultMode}
+        hasApiKey={settings.hasApiKey}
       />
     </div>
   );

@@ -56,8 +56,8 @@ export function LinkedInMessagesImport() {
 
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1 pr-2">
           <h2 className="text-lg font-medium text-primary">
             LinkedIn messages
           </h2>

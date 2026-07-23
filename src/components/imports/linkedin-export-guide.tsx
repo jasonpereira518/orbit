@@ -90,7 +90,7 @@ export function LinkedInExportGuide({ variant }: { variant: GuideVariant }) {
       : "Follow these steps to download your Messages archive from LinkedIn.";
 
   return (
-    <>
+    <div className="shrink-0">
       <Button
         type="button"
         variant="outline"
@@ -142,6 +142,6 @@ export function LinkedInExportGuide({ variant }: { variant: GuideVariant }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </>
+    </div>
   );
 }
