@@ -15,7 +15,7 @@ type Params = { params: Promise<{ contactId: string }> };
 function dataUrlResponse(dataUrl: string) {
   const parsed = parseImageDataUrl(dataUrl);
   if (!parsed) return null;
-  return new NextResponse(parsed.buf, {
+  return new NextResponse(new Uint8Array(parsed.buf), {
     headers: {
       "Content-Type": parsed.contentType,
       "Cache-Control": "private, max-age=86400",
