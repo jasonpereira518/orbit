@@ -7,6 +7,9 @@ import { needsOnboarding } from "@/lib/onboarding";
  * /onboarding and /settings live outside this group so they stay reachable
  * (settings is needed for API keys; onboarding must not redirect to itself).
  */
+/** Floating ask bar + chat actions need longer than the default serverless limit. */
+export const maxDuration = 60;
+
 export default async function MainAppLayout({
   children,
 }: {

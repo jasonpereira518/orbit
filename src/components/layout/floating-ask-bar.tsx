@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -12,9 +13,13 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowUp, Loader2, RotateCcw, Search, Sparkles, X } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { toUserFacingError } from "@/lib/errors";
 import { askNetwork } from "@/actions/chat";
+import { getAskBarContact } from "@/actions/contacts";
 import { searchDashboardContacts } from "@/actions/search";
 import { createReminder } from "@/actions/reminders";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
+import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,7 +28,12 @@ import {
 } from "@/lib/keyword-search";
 import { cn } from "@/lib/utils";
 
-type ChatResult = Awaited<ReturnType<typeof askNetwork>>;
+type ChatResult = Extract<
+  Awaited<ReturnType<typeof askNetwork>>,
+  { ok: true }
+>;
+
+type AskBarContact = NonNullable<Awaited<ReturnType<typeof getAskBarContact>>>;
 
 type UserMessage = {
   id: string;
@@ -41,34 +51,80 @@ type AssistantMessage = {
 
 type ThreadMessage = UserMessage | AssistantMessage;
 
+const CONTACT_PATH_RE =
+  /^\/contacts\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
 const SUGGESTIONS = [
   "Who do I know at AWS?",
   "Who have I not followed up with recently?",
-  "Who knows about AI agents?",
+  "Who are the best recruiters for my search?",
   "Who should I reconnect with this week?",
+];
+
+const PROFILE_SUGGESTIONS = [
+  "What should I know before we talk?",
+  "Summarize our relationship",
+  "What have we talked about recently?",
+  "Suggest a warm follow-up angle",
 ];
 
 function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function contactIdFromPath(pathname: string): string | null {
+  const match = CONTACT_PATH_RE.exec(pathname);
+  return match?.[1] ?? null;
+}
+
 export function FloatingAskBar() {
+  const pathname = usePathname();
+  const pathContactId = contactIdFromPath(pathname);
+
   const inputId = useId();
   const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<number | null>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
-  const lastScrollY = useRef(0);
 
   const [open, setOpen] = useState(false);
   const [hidden, setHidden] = useState(false);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<KeywordSearchHit[]>([]);
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
+  const [lastUserQuery, setLastUserQuery] = useState("");
   const [searchPending, startSearch] = useTransition();
   const [chatPending, startChat] = useTransition();
 
-  const pinnedOpen = open || chatPending || messages.length > 0;
+  const [profileContact, setProfileContact] = useState<AskBarContact | null>(
+    null
+  );
+  const [chipDismissed, setChipDismissed] = useState(false);
+
+  const personContextActive =
+    Boolean(pathContactId) && Boolean(profileContact) && !chipDismissed;
+  const activeContactId = personContextActive ? profileContact!.id : null;
+  const activeContactName = personContextActive
+    ? profileContact!.displayName
+    : null;
+
+  useEffect(() => {
+    setChipDismissed(false);
+    setProfileContact(null);
+
+    if (!pathContactId) return;
+
+    let cancelled = false;
+    void getAskBarContact(pathContactId).then((contact) => {
+      if (!cancelled) setProfileContact(contact);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pathContactId]);
+
+  const stayVisibleWhileWaiting = chatPending;
 
   const focusBar = useCallback(() => {
     setHidden(false);
@@ -94,48 +150,64 @@ export function FloatingAskBar() {
     return () => window.removeEventListener("keydown", onKey);
   }, [focusBar, open]);
 
+  const chatPendingRef = useRef(chatPending);
+  chatPendingRef.current = chatPending;
+  const lastScrollMetaRef = useRef<{ target: EventTarget | null; y: number }>({
+    target: null,
+    y: 0,
+  });
+
   useEffect(() => {
-    function findScrollParent(el: HTMLElement | null): HTMLElement | Window {
-      let node = el?.parentElement ?? null;
-      while (node) {
-        const { overflowY } = getComputedStyle(node);
-        if (
-          (overflowY === "auto" || overflowY === "scroll") &&
-          node.scrollHeight > node.clientHeight
-        ) {
-          return node;
-        }
-        node = node.parentElement;
+    function scrollYFromEvent(e: Event): number | null {
+      const t = e.target;
+      if (
+        t === document ||
+        t === document.documentElement ||
+        t === document.body
+      ) {
+        return window.scrollY;
       }
-      return window;
+      if (t instanceof HTMLElement) {
+        // Ignore tiny nested scroll areas (e.g. the ask panel results list)
+        if (wrapRef.current?.contains(t)) return null;
+        return t.scrollTop;
+      }
+      return window.scrollY;
     }
 
-    const target = findScrollParent(wrapRef.current);
-    const getY = () =>
-      target instanceof Window ? window.scrollY : target.scrollTop;
+    function onScroll(e: Event) {
+      const y = scrollYFromEvent(e);
+      if (y === null) return;
 
-    lastScrollY.current = getY();
-
-    function onScroll() {
-      const y = getY();
-      const delta = y - lastScrollY.current;
-      lastScrollY.current = y;
+      const meta = lastScrollMetaRef.current;
+      const delta =
+        meta.target === e.target ? y - meta.y : 0;
+      lastScrollMetaRef.current = { target: e.target, y };
 
       if (Math.abs(delta) < 6) return;
 
-      // Keep visible while interacting or near the top
-      if (pinnedOpen || y < 24) {
+      // Stay visible near the top of the page, or while a reply is in flight
+      if (y < 24 || chatPendingRef.current) {
         setHidden(false);
         return;
       }
 
-      if (delta > 0) setHidden(true);
-      else setHidden(false);
+      if (delta > 0) {
+        setHidden(true);
+        setOpen(false);
+        inputRef.current?.blur();
+      } else {
+        setHidden(false);
+      }
     }
 
-    target.addEventListener("scroll", onScroll, { passive: true });
-    return () => target.removeEventListener("scroll", onScroll);
-  }, [pinnedOpen]);
+    document.addEventListener("scroll", onScroll, {
+      passive: true,
+      capture: true,
+    });
+    return () =>
+      document.removeEventListener("scroll", onScroll, { capture: true });
+  }, []);
 
   useEffect(() => {
     function onPointer(e: MouseEvent) {
@@ -168,11 +240,29 @@ export function FloatingAskBar() {
     }, 180);
   }
 
+  function fillMostRecentUserMessage() {
+    const fromThread = [...messages]
+      .reverse()
+      .find((m): m is UserMessage => m.role === "user");
+    const content = fromThread?.content || lastUserQuery;
+    if (!content) return false;
+    setQuery(content);
+    setOpen(true);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(content.length, content.length);
+    });
+    return true;
+  }
+
   const sendQuestion = useCallback(
     (raw: string) => {
       const q = raw.trim();
       if (!q || chatPending) return;
 
+      setLastUserQuery(q);
       const userMsg: UserMessage = {
         id: newId(),
         role: "user",
@@ -183,9 +273,19 @@ export function FloatingAskBar() {
       setHits([]);
       setOpen(true);
 
+      const contactId = activeContactId;
       startChat(async () => {
         try {
-          const res = await askNetwork(q);
+          const res = await askNetwork(
+            q,
+            contactId ? { contactId } : undefined
+          );
+          if (!res.ok) {
+            toast.error(res.error);
+            setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
+            setQuery(q);
+            return;
+          }
           const assistantMsg: AssistantMessage = {
             id: newId(),
             role: "assistant",
@@ -195,13 +295,18 @@ export function FloatingAskBar() {
           };
           setMessages((prev) => [...prev, assistantMsg]);
         } catch (err) {
-          toast.error(err instanceof Error ? err.message : "Search failed");
+          toast.error(
+            toUserFacingError(
+              err,
+              "Could not answer that. Add your AI API key in Settings."
+            ).message
+          );
           setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
           setQuery(q);
         }
       });
     },
-    [chatPending]
+    [activeContactId, chatPending]
   );
 
   function clearThread() {
@@ -211,7 +316,13 @@ export function FloatingAskBar() {
   }
 
   const showPanel = open;
-  const visible = !hidden || pinnedOpen;
+  const visible = !hidden || stayVisibleWhileWaiting;
+  const suggestionChips =
+    personContextActive && open ? PROFILE_SUGGESTIONS : SUGGESTIONS;
+  const placeholder =
+    personContextActive && open && activeContactName
+      ? `Ask about ${activeContactName}…`
+      : "Ask your network…";
 
   return (
     <motion.div
@@ -255,7 +366,9 @@ export function FloatingAskBar() {
                   <Sparkles className="size-3 text-primary" />
                   <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                     {messages.length > 0
-                      ? "Ask your network"
+                      ? personContextActive && activeContactName
+                        ? `Ask about ${activeContactName}`
+                        : "Ask your network"
                       : searchPending
                         ? "Searching…"
                         : hits.length > 0
@@ -301,11 +414,12 @@ export function FloatingAskBar() {
                     ) : (
                       <>
                         <p className="text-sm text-muted-foreground">
-                          Ask anything about people, companies, or follow-ups in
-                          your network.
+                          {personContextActive && activeContactName
+                            ? `Ask anything about ${activeContactName}—relationship history, talking points, or follow-ups.`
+                            : "Ask anything about people, companies, or follow-ups in your network."}
                         </p>
                         <div className="flex flex-wrap gap-1.5">
-                          {SUGGESTIONS.map((chip) => (
+                          {suggestionChips.map((chip) => (
                             <button
                               key={chip}
                               type="button"
@@ -388,10 +502,13 @@ export function FloatingAskBar() {
                       ) : (
                         <div key={msg.id} className="space-y-2">
                           <div className="rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-3 py-2 text-sm leading-relaxed">
-                            {msg.answer}
+                            <ChatMarkdown>{msg.answer}</ChatMarkdown>
                           </div>
                           {msg.recommendations.map((r) => (
-                            <MiniRecommendation key={r.contact_id} rec={r} />
+                            <MiniRecommendation
+                              key={r.recruiter_id || r.contact_id || r.name}
+                              rec={r}
+                            />
                           ))}
                           {msg.retrieved.length > 0 &&
                             msg.recommendations.length === 0 && (
@@ -432,11 +549,51 @@ export function FloatingAskBar() {
           )}
         </AnimatePresence>
 
+        <AnimatePresence>
+          {personContextActive && profileContact && (
+            <motion.div
+              key={`chip-${profileContact.id}`}
+              initial={{ opacity: 0, y: 8, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 6, scale: 0.98 }}
+              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              className="flex items-center gap-2 self-center rounded-full border border-border/70 bg-card/95 py-1 pl-1 pr-1.5 shadow-md backdrop-blur-md"
+            >
+              <ContactAvatar
+                contactId={profileContact.id}
+                firstName={profileContact.firstName}
+                fullName={profileContact.fullName}
+                linkedinUrl={profileContact.linkedinUrl}
+                profileImageUrl={profileContact.profileImageUrl}
+                size="sm"
+                className="size-6"
+              />
+              <p className="truncate text-xs text-muted-foreground">
+                Asking about{" "}
+                <span className="font-medium text-foreground">
+                  {profileContact.displayName}
+                </span>
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="shrink-0 rounded-full text-muted-foreground"
+                aria-label="Dismiss person context"
+                onClick={() => setChipDismissed(true)}
+              >
+                <X className="size-3.5" />
+              </Button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <motion.div
           layout
           className={cn(
             "flex h-12 items-center gap-2 rounded-full border border-border/70 bg-card/95 pl-4 pr-1.5 shadow-lg backdrop-blur-md",
             "focus-within:border-primary/40 focus-within:ring-[3px] focus-within:ring-primary/15",
+            personContextActive && "border-primary/25",
             open && "shadow-xl"
           )}
         >
@@ -446,7 +603,7 @@ export function FloatingAskBar() {
             ref={inputRef}
             type="text"
             value={query}
-            placeholder="Ask your network…"
+            placeholder={placeholder}
             disabled={chatPending}
             autoComplete="off"
             className={cn(
@@ -461,6 +618,12 @@ export function FloatingAskBar() {
               if (next.trim()) setOpen(true);
             }}
             onKeyDown={(e) => {
+              if (e.key === "ArrowUp" && !e.shiftKey && !query.trim()) {
+                if (fillMostRecentUserMessage()) {
+                  e.preventDefault();
+                }
+                return;
+              }
               if (e.key === "Enter") {
                 e.preventDefault();
                 sendQuestion(query);
@@ -491,10 +654,16 @@ export function FloatingAskBar() {
           <Button
             type="button"
             size="icon-sm"
-            disabled={chatPending || !query.trim()}
+            disabled={chatPending || (!query.trim() && !lastUserQuery)}
             className="size-9 shrink-0 rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
-            onClick={() => sendQuestion(query)}
-            aria-label="Ask"
+            onClick={() => {
+              if (!query.trim()) {
+                fillMostRecentUserMessage();
+                return;
+              }
+              sendQuestion(query);
+            }}
+            aria-label={query.trim() ? "Ask" : "Recall last message"}
           >
             {chatPending ? (
               <Loader2 className="size-3.5 animate-spin" />
@@ -514,44 +683,57 @@ function MiniRecommendation({
   rec: ChatResult["recommendations"][number];
 }) {
   const [pending, start] = useTransition();
+  const href = rec.recruiter_id
+    ? `/recruiters/${rec.recruiter_id}`
+    : rec.contact_id
+      ? `/contacts/${rec.contact_id}`
+      : "#";
+  const canRemind = Boolean(rec.contact_id);
 
   return (
     <div className="rounded-2xl border border-border/70 bg-background/80 p-2.5">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <Link
-            href={`/contacts/${rec.contact_id}`}
+            href={href}
             className="text-sm font-medium text-primary hover:underline"
           >
             {rec.name}
           </Link>
+          {rec.recruiter_id && (
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Recruiter
+            </p>
+          )}
           <p className="mt-0.5 text-xs text-muted-foreground">{rec.reason}</p>
           <p className="mt-1 text-xs">
             <span className="font-medium">Next: </span>
             {rec.suggested_action}
           </p>
         </div>
-        <Button
-          size="xs"
-          variant="outline"
-          className="rounded-full"
-          disabled={pending}
-          onClick={() =>
-            start(async () => {
-              await createReminder({
-                contactId: rec.contact_id,
-                title: `Reach out to ${rec.name}`,
-                description: rec.suggested_action,
-                dueDate: new Date(
-                  Date.now() + 3 * 24 * 60 * 60 * 1000
-                ).toISOString(),
-              });
-              toast.success("Reminder created");
-            })
-          }
-        >
-          Reminder
-        </Button>
+        {canRemind && (
+          <Button
+            size="xs"
+            variant="outline"
+            className="rounded-full"
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                await createReminder({
+                  contactId: rec.contact_id!,
+                  title: `Reach out to ${rec.name}`,
+                  description: rec.suggested_action,
+                  dueDate: new Date(
+                    Date.now() + 3 * 24 * 60 * 60 * 1000
+                  ).toISOString(),
+                });
+                toast.success("Reminder created");
+              })
+            }
+          >
+            Reminder
+          </Button>
+        )}
       </div>
       {rec.draft_message && (
         <div className="mt-2 rounded-xl bg-muted/50 p-2 text-xs text-muted-foreground whitespace-pre-wrap">

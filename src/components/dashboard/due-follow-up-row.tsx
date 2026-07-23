@@ -98,6 +98,7 @@ export function DueFollowUpRow({
       </div>
       <EasyFollowUp
         contactId={id}
+        contactName={fullName}
         nextFollowUpAt={nextFollowUpAt}
         compact
         className="mt-2"

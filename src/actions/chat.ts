@@ -11,6 +11,8 @@ import {
 import { requireUserId } from "@/lib/auth";
 import { chatWithNetwork } from "@/lib/ai";
 import { semanticSearchContacts } from "@/lib/search";
+import { isRecruiterIntent } from "@/lib/recruiters";
+import { loadRecruitersForChat } from "@/actions/recruiters";
 
 const TITLE_MAX = 72;
 const PRIOR_TURN_LIMIT = 8;
@@ -93,10 +95,21 @@ export async function getChatThread(threadId: string) {
 }
 
 export async function createChatThread() {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const [row] = await db.insert(chatThreads).values({ userId }).returning();
-  return row;
+  try {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const [row] = await db.insert(chatThreads).values({ userId }).returning();
+    if (!row) throw new Error("Could not create chat thread");
+    return {
+      id: row.id,
+      title: row.title,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  } catch (err) {
+    const { toUserFacingError } = await import("@/lib/errors");
+    throw toUserFacingError(err, "Could not start a new chat");
+  }
 }
 
 export async function deleteChatThread(threadId: string) {
@@ -115,121 +128,218 @@ export async function deleteChatThread(threadId: string) {
 
 export async function askNetwork(
   question: string,
-  options?: { threadId?: string }
+  options?: { threadId?: string; contactId?: string }
 ) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const q = question.trim();
-  if (!q) throw new Error("Question is required");
+  try {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const q = question.trim();
+    if (!q) throw new Error("Question is required");
 
-  const threadId = options?.threadId;
-  let thread =
-    threadId != null
-      ? await db.query.chatThreads.findFirst({
-          where: and(
-            eq(chatThreads.id, threadId),
-            eq(chatThreads.userId, userId)
-          ),
-        })
-      : null;
-
-  if (threadId && !thread) throw new Error("Chat not found");
-
-  const priorTurns =
-    threadId != null
-      ? (
-          await db.query.chatMessages.findMany({
+    const threadId = options?.threadId;
+    const focusContactId = options?.contactId?.trim() || null;
+    let thread =
+      threadId != null
+        ? await db.query.chatThreads.findFirst({
             where: and(
-              eq(chatMessages.threadId, threadId),
-              eq(chatMessages.userId, userId)
+              eq(chatThreads.id, threadId),
+              eq(chatThreads.userId, userId)
             ),
-            orderBy: [desc(chatMessages.createdAt)],
-            limit: PRIOR_TURN_LIMIT,
-            columns: { role: true, content: true },
           })
-        )
-          .reverse()
-          .map((m) => ({ role: m.role, content: m.content }))
-      : [];
+        : null;
 
-  if (threadId) {
-    await db.insert(chatMessages).values({
-      threadId,
-      userId,
-      role: "user",
-      content: q,
-    });
-  }
+    if (threadId && !thread) throw new Error("Chat not found");
 
-  const retrieved = await semanticSearchContacts(userId, q, 12);
-  const snippets = await loadKnowledgeSnippets(
-    userId,
-    retrieved.map((c) => c.id)
-  );
+    const priorTurns =
+      threadId != null
+        ? (
+            await db.query.chatMessages.findMany({
+              where: and(
+                eq(chatMessages.threadId, threadId),
+                eq(chatMessages.userId, userId)
+              ),
+              orderBy: [desc(chatMessages.createdAt)],
+              limit: PRIOR_TURN_LIMIT,
+              columns: { role: true, content: true },
+            })
+          )
+            .reverse()
+            .map((m) => ({ role: m.role, content: m.content }))
+        : [];
 
-  const result = await chatWithNetwork(
-    userId,
-    q,
-    retrieved.map((c) => ({
-      id: c.id,
-      fullName: c.fullName,
-      company: c.company,
-      title: c.title,
-      relationshipScore: c.relationshipScore,
-      aiSummary: c.aiSummary,
-      notes: c.notes,
-      keyFacts: c.keyFacts || [],
-      recentMessages: snippets.get(c.id)?.recentMessages || [],
-      tags: c.tags,
-      relevance: c.relevance,
-    })),
-    priorTurns
-  );
-
-  const allowed = new Set(retrieved.map((c) => c.id));
-  const recommendations = (result.recommendations || []).filter((r) =>
-    allowed.has(r.contact_id)
-  ) as ChatRecommendation[];
-
-  let messageId: string | undefined;
-  let title: string | null | undefined = thread?.title;
-
-  if (threadId) {
-    const [assistantMessage] = await db
-      .insert(chatMessages)
-      .values({
+    if (threadId) {
+      await db.insert(chatMessages).values({
         threadId,
         userId,
-        role: "assistant",
-        content: result.answer,
-        recommendations,
-      })
-      .returning();
-    messageId = assistantMessage.id;
+        role: "user",
+        content: q,
+      });
+    }
 
-    const nextTitle = thread?.title || titleFromQuestion(q);
-    await db
-      .update(chatThreads)
-      .set({
-        updatedAt: new Date(),
-        title: nextTitle,
-      })
-      .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)));
-    title = nextTitle;
+    const retrieved = await semanticSearchContacts(userId, q, 12);
+
+    if (focusContactId) {
+      const { contacts: contactsTable } = await import("@/db/schema");
+      const focused = await db.query.contacts.findFirst({
+        where: and(
+          eq(contactsTable.id, focusContactId),
+          eq(contactsTable.userId, userId)
+        ),
+        with: { contactTags: { with: { tag: true } } },
+      });
+      if (focused) {
+        const focusEntry = {
+          id: focused.id,
+          fullName: focused.fullName,
+          company: focused.company,
+          title: focused.title,
+          relationshipScore: focused.relationshipScore,
+          aiSummary: focused.aiSummary,
+          notes: focused.notes,
+          keyFacts: focused.keyFacts || [],
+          tags: focused.contactTags.map((ct) => ct.tag.name),
+          relevance: 1,
+        };
+        const without = retrieved.filter((c) => c.id !== focusContactId);
+        retrieved.splice(
+          0,
+          retrieved.length,
+          focusEntry as (typeof retrieved)[number],
+          ...without.slice(0, 11)
+        );
+      }
+    }
+
+    const snippets = await loadKnowledgeSnippets(
+      userId,
+      retrieved.map((c) => c.id)
+    );
+
+    if (focusContactId) {
+      const focusMsgs = await db.query.interactions.findMany({
+        where: and(
+          eq(interactions.userId, userId),
+          eq(interactions.contactId, focusContactId)
+        ),
+        orderBy: [desc(interactions.interactionDate)],
+        limit: 16,
+      });
+      snippets.set(focusContactId, {
+        recentMessages: focusMsgs
+          .map((m) => (m.aiSummary || m.rawNotes || "").trim())
+          .filter(Boolean)
+          .slice(0, 12)
+          .map((t) => t.slice(0, 320)),
+      });
+    }
+
+    const scopedQuestion = focusContactId
+      ? `[Focus: answer primarily about the pinned contact id=${focusContactId}. You may use other contacts only for intros/context.]\n\n${q}`
+      : q;
+
+    const recruiterIntent = isRecruiterIntent(q);
+    const recruitersForChat = recruiterIntent
+      ? await loadRecruitersForChat(userId, q, 8)
+      : [];
+
+    const maxScore = Math.max(
+      1,
+      ...recruitersForChat.map((r) => r.score)
+    );
+
+    const result = await chatWithNetwork(
+      userId,
+      scopedQuestion,
+      retrieved.map((c) => ({
+        id: c.id,
+        fullName: c.fullName,
+        company: c.company,
+        title: c.title,
+        relationshipScore: c.relationshipScore,
+        aiSummary: c.aiSummary,
+        notes: c.notes,
+        keyFacts: c.keyFacts || [],
+        recentMessages: snippets.get(c.id)?.recentMessages || [],
+        tags: c.tags,
+        relevance: c.relevance,
+      })),
+      priorTurns,
+      recruitersForChat.map((r) => ({
+        id: r.id,
+        fullName: r.fullName,
+        firm: r.firm,
+        specialty: r.specialty,
+        avgRating: r.avgRating,
+        logCount: r.logCount,
+        personalRating: r.personalRating,
+        status: r.status,
+        notes: r.notes,
+        piiUnlocked: r.piiUnlocked,
+        relevance: r.score / maxScore,
+      }))
+    );
+
+    const allowedContacts = new Set(retrieved.map((c) => c.id));
+    const allowedRecruiters = new Set(recruitersForChat.map((r) => r.id));
+    const recommendations = (result.recommendations || []).filter((r) => {
+      if (r.recruiter_id) return allowedRecruiters.has(r.recruiter_id);
+      if (r.contact_id) return allowedContacts.has(r.contact_id);
+      return false;
+    }) as ChatRecommendation[];
+
+    let messageId: string | undefined;
+    let title: string | null | undefined = thread?.title;
+
+    if (threadId) {
+      const [assistantMessage] = await db
+        .insert(chatMessages)
+        .values({
+          threadId,
+          userId,
+          role: "assistant",
+          content: result.answer,
+          recommendations,
+        })
+        .returning();
+      messageId = assistantMessage.id;
+
+      const nextTitle = thread?.title || titleFromQuestion(q);
+      await db
+        .update(chatThreads)
+        .set({
+          updatedAt: new Date(),
+          title: nextTitle,
+        })
+        .where(
+          and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId))
+        );
+      title = nextTitle;
+    }
+
+    return {
+      ok: true as const,
+      threadId: threadId ?? null,
+      title: title ?? null,
+      messageId: messageId ?? null,
+      answer: result.answer,
+      recommendations,
+      retrieved: retrieved.map((c) => ({
+        id: c.id,
+        fullName: c.fullName,
+        company: c.company,
+        title: c.title,
+        relevance: c.relevance,
+      })),
+      focusedContactId: focusContactId,
+    };
+  } catch (err) {
+    const { toUserFacingError } = await import("@/lib/errors");
+    return {
+      ok: false as const,
+      error: toUserFacingError(
+        err,
+        "Could not answer that. Add your AI API key in Settings and try again."
+      ).message,
+    };
   }
-
-  return {
-    threadId,
-    title: title ?? null,
-    messageId,
-    answer: result.answer,
-    recommendations,
-    retrieved: retrieved.map((c) => ({
-      id: c.id,
-      fullName: c.fullName,
-      company: c.company,
-      title: c.title,
-      relevance: c.relevance,
-    })),
-  };
 }

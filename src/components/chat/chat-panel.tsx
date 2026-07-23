@@ -18,6 +18,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { toUserFacingError } from "@/lib/errors";
 import {
   askNetwork,
   createChatThread,
@@ -27,6 +28,7 @@ import {
 } from "@/actions/chat";
 import { createReminder } from "@/actions/reminders";
 import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";
+import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -48,13 +50,16 @@ import {
 import { cn } from "@/lib/utils";
 import type { ChatRecommendation } from "@/db/schema";
 
-type ChatResult = Awaited<ReturnType<typeof askNetwork>>;
+type ChatResult = Extract<
+  Awaited<ReturnType<typeof askNetwork>>,
+  { ok: true }
+>;
 
 type ThreadSummary = {
   id: string;
   title: string | null;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: Date | string;
+  updatedAt: Date | string;
 };
 
 type UserMessage = {
@@ -75,7 +80,7 @@ type ThreadMessage = UserMessage | AssistantMessage;
 const SUGGESTION_CHIPS = [
   "Who do I know at AWS?",
   "Who have I not followed up with recently?",
-  "Who knows about AI agents?",
+  "Who are the best recruiters for my search?",
   "Who should I reconnect with this week?",
 ];
 
@@ -96,9 +101,12 @@ export function ChatPanel() {
   const [notesOpen, setNotesOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
+  const [lastUserQuery, setLastUserQuery] = useState("");
   const [pending, start] = useTransition();
+  const listRef = useRef<HTMLDivElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const stickToBottomRef = useRef(true);
 
   const refreshThreads = useCallback(async () => {
     try {
@@ -113,9 +121,30 @@ export function ChatPanel() {
     void refreshThreads();
   }, [refreshThreads]);
 
+  const isNearBottom = useCallback(() => {
+    const el = listRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
+
+  const scrollToBottom = useCallback((smooth = true) => {
+    const el = listRef.current;
+    if (!el) return;
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: smooth ? "smooth" : "auto",
+    });
+  }, []);
+
   useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, pending]);
+    if (!stickToBottomRef.current && !isNearBottom()) return;
+    // Defer so DOM has laid out new messages
+    requestAnimationFrame(() => scrollToBottom(true));
+  }, [messages, pending, isNearBottom, scrollToBottom]);
+
+  function onListScroll() {
+    stickToBottomRef.current = isNearBottom();
+  }
 
   const ensureThread = useCallback(async () => {
     if (threadId) return threadId;
@@ -140,6 +169,7 @@ export function ChatPanel() {
       const { thread, messages: rows } = await getChatThread(id);
       setThreadId(thread.id);
       setThreadTitle(thread.title);
+      stickToBottomRef.current = true;
       setMessages(
         rows.map((row) =>
           row.role === "user"
@@ -156,13 +186,16 @@ export function ChatPanel() {
               }
         )
       );
+      const lastUser = [...rows].reverse().find((row) => row.role === "user");
+      setLastUserQuery(lastUser?.content ?? "");
       setQuestion("");
+      requestAnimationFrame(() => scrollToBottom(false));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to load chat");
     } finally {
       setLoadingThread(false);
     }
-  }, []);
+  }, [scrollToBottom]);
 
   const startNewChat = useCallback(() => {
     start(async () => {
@@ -172,6 +205,7 @@ export function ChatPanel() {
         setThreadTitle(created.title);
         setMessages([]);
         setQuestion("");
+        setLastUserQuery("");
         setThreads((prev) => [
           {
             id: created.id,
@@ -214,18 +248,27 @@ export function ChatPanel() {
       const q = raw.trim();
       if (!q || pending || loadingThread) return;
 
+      setLastUserQuery(q);
       const userMsg: UserMessage = {
         id: newId(),
         role: "user",
         content: q,
       };
+      stickToBottomRef.current = true;
       setMessages((prev) => [...prev, userMsg]);
       setQuestion("");
+      requestAnimationFrame(() => scrollToBottom(true));
 
       start(async () => {
         try {
           const activeId = await ensureThread();
           const res = await askNetwork(q, { threadId: activeId });
+          if (!res.ok) {
+            toast.error(res.error);
+            setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
+            setQuestion(q);
+            return;
+          }
           const assistantMsg: AssistantMessage = {
             id: res.messageId || newId(),
             role: "assistant",
@@ -247,16 +290,44 @@ export function ChatPanel() {
             ];
           });
         } catch (err) {
-          toast.error(err instanceof Error ? err.message : "Chat failed");
+          toast.error(
+            toUserFacingError(
+              err,
+              "Could not answer that. Add your AI API key in Settings."
+            ).message
+          );
           setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
           setQuestion(q);
         }
       });
     },
-    [pending, loadingThread, ensureThread]
+    [pending, loadingThread, ensureThread, scrollToBottom]
   );
 
+  function fillMostRecentUserMessage() {
+    const fromThread = [...messages]
+      .reverse()
+      .find((m): m is UserMessage => m.role === "user");
+    const content = fromThread?.content || lastUserQuery;
+    if (!content) return false;
+    setQuestion(content);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      const len = content.length;
+      el.focus();
+      el.setSelectionRange(len, len);
+    });
+    return true;
+  }
+
   function onComposerKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "ArrowUp" && !e.shiftKey && !question.trim()) {
+      if (fillMostRecentUserMessage()) {
+        e.preventDefault();
+      }
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendQuestion(question);
@@ -267,7 +338,13 @@ export function ChatPanel() {
 
   return (
     <>
-      <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-border/70 bg-card">
+      {/*
+        Explicit viewport height so the card is always bounded.
+        Internal message list is the only scroller (flex 1 1 0 + overflow-y-auto).
+        Mobile offsets: top header + page title + padding + bottom nav.
+        Desktop offsets: page title + vertical padding.
+      */}
+      <div className="flex h-[calc(100dvh-16.5rem)] w-full max-h-[calc(100dvh-16.5rem)] flex-col overflow-hidden rounded-2xl border border-border/70 bg-card md:h-[calc(100dvh-11rem)] md:max-h-[calc(100dvh-11rem)]">
         <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2.5 sm:px-4">
           <DropdownMenu open={historyOpen} onOpenChange={setHistoryOpen}>
             <DropdownMenuTrigger
@@ -362,18 +439,22 @@ export function ChatPanel() {
           </Button>
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4">
-            <div className="mx-auto flex min-h-full max-w-3xl flex-col gap-4">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div
+            ref={listRef}
+            onScroll={onListScroll}
+            className="min-h-0 flex-1 basis-0 overflow-y-auto overscroll-y-contain px-3 py-4 touch-pan-y sm:px-4"
+          >
+            <div className="mx-auto flex max-w-3xl flex-col gap-4 pb-2">
               {loadingThread ? (
-                <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
+                <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" />
                   Loading chat…
                 </div>
               ) : (
                 <>
                   {messages.length === 0 && !pending && (
-                    <div className="flex flex-1 flex-col items-center justify-center gap-3 py-16 text-center">
+                    <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
                       <p className="font-[family-name:var(--font-display)] text-xl text-primary sm:text-2xl">
                         Ask your network
                       </p>
@@ -395,13 +476,13 @@ export function ChatPanel() {
                       <div key={msg.id} className="flex justify-start">
                         <div className="max-w-[92%] space-y-3">
                           <div className="rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-4 py-3 text-sm leading-relaxed text-foreground">
-                            {msg.answer}
+                            <ChatMarkdown>{msg.answer}</ChatMarkdown>
                           </div>
                           {msg.recommendations.length > 0 && (
                             <div className="space-y-2">
                               {msg.recommendations.map((r) => (
                                 <RecommendationCard
-                                  key={`${msg.id}-${r.contact_id}`}
+                                  key={`${msg.id}-${r.recruiter_id || r.contact_id}`}
                                   rec={r}
                                 />
                               ))}
@@ -420,7 +501,7 @@ export function ChatPanel() {
                       </div>
                     </div>
                   )}
-                  <div ref={threadEndRef} />
+                  <div ref={threadEndRef} className="h-px w-full shrink-0" />
                 </>
               )}
             </div>
@@ -443,11 +524,19 @@ export function ChatPanel() {
                   type="button"
                   size="icon"
                   disabled={
-                    pending || loadingThread || !question.trim()
+                    pending ||
+                    loadingThread ||
+                    (!question.trim() && !lastUserQuery)
                   }
                   className="h-11 w-11 shrink-0 bg-primary text-primary-foreground hover:bg-primary/90"
-                  onClick={() => sendQuestion(question)}
-                  aria-label="Send"
+                  onClick={() => {
+                    if (!question.trim()) {
+                      fillMostRecentUserMessage();
+                      return;
+                    }
+                    sendQuestion(question);
+                  }}
+                  aria-label={question.trim() ? "Send" : "Recall last message"}
                 >
                   {pending ? (
                     <Loader2 className="size-4 animate-spin" />
@@ -500,43 +589,56 @@ function RecommendationCard({
   rec: ChatResult["recommendations"][number];
 }) {
   const [pending, start] = useTransition();
+  const href = rec.recruiter_id
+    ? `/recruiters/${rec.recruiter_id}`
+    : rec.contact_id
+      ? `/contacts/${rec.contact_id}`
+      : "#";
+  const canRemind = Boolean(rec.contact_id);
 
   return (
     <div className="rounded-xl border border-border/70 bg-background p-3.5">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <Link
-            href={`/contacts/${rec.contact_id}`}
+            href={href}
             className="text-sm font-medium text-primary hover:underline"
           >
             {rec.name}
           </Link>
+          {rec.recruiter_id && (
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Recruiter
+            </p>
+          )}
           <p className="mt-0.5 text-xs text-muted-foreground">{rec.reason}</p>
           <p className="mt-1.5 text-xs">
             <span className="font-medium">Next: </span>
             {rec.suggested_action}
           </p>
         </div>
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={pending}
-          onClick={() =>
-            start(async () => {
-              await createReminder({
-                contactId: rec.contact_id,
-                title: `Reach out to ${rec.name}`,
-                description: rec.suggested_action,
-                dueDate: new Date(
-                  Date.now() + 3 * 24 * 60 * 60 * 1000
-                ).toISOString(),
-              });
-              toast.success("Reminder created");
-            })
-          }
-        >
-          Reminder
-        </Button>
+        {canRemind && (
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                await createReminder({
+                  contactId: rec.contact_id!,
+                  title: `Reach out to ${rec.name}`,
+                  description: rec.suggested_action,
+                  dueDate: new Date(
+                    Date.now() + 3 * 24 * 60 * 60 * 1000
+                  ).toISOString(),
+                });
+                toast.success("Reminder created");
+              })
+            }
+          >
+            Reminder
+          </Button>
+        )}
       </div>
       {rec.draft_message && (
         <div className="mt-2.5 rounded-lg bg-muted/50 p-2.5 text-xs">

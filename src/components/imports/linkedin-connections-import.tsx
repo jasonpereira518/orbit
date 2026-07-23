@@ -1,39 +1,54 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
 import { toast } from "@/lib/toast";
 import {
   previewLinkedInCsv,
-  confirmLinkedInImport,
 } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { LinkedInExportGuide } from "@/components/imports/linkedin-export-guide";
 import {
   BusyHint,
-  ImportProgress,
-  useBatchedImport,
+  ImportFilePicker,
 } from "@/components/imports/import-utils";
+import {
+  startImportJob,
+  useImportJob,
+} from "@/lib/import-job-runner";
 
 type ConnectionsPreview = Awaited<ReturnType<typeof previewLinkedInCsv>>;
 type ConnectionPerson = ConnectionsPreview["people"][number];
 
 export function LinkedInConnectionsImport() {
-  const router = useRouter();
+  const job = useImportJob();
   const [pending, start] = useTransition();
-  const { importProgress, runBatchedImport } = useBatchedImport();
 
   const [csvText, setCsvText] = useState("");
-  const [fileName, setFileName] = useState("linkedin.csv");
+  const [fileName, setFileName] = useState<string | null>(null);
   const [people, setPeople] = useState<ConnectionPerson[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  const busy = pending || importProgress !== null;
+  const connectionsJob =
+    job?.kind === "connections" && job.status === "running" ? job : null;
+  const importProgress = connectionsJob?.progress ?? null;
+  const busy = pending || job?.status === "running";
+
+  // Clear local review UI once this job finishes (toast handled globally).
+  useEffect(() => {
+    if (!job || job.kind !== "connections") return;
+    if (job.status !== "completed" && job.status !== "failed" && job.status !== "cancelled") return;
+    setPeople([]);
+    setSelected(new Set());
+    setCsvText("");
+    setFileName(null);
+  }, [job]);
 
   function applyPreview(res: ConnectionsPreview) {
     setPeople(res.people);
-    setSelected(new Set(res.people.map((p) => p.id)));
+    setSelected(
+      new Set(res.people.filter((p) => !p.isRepeat).map((p) => p.id))
+    );
   }
 
   return (
@@ -45,19 +60,17 @@ export function LinkedInConnectionsImport() {
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Upload your Connections CSV, review everyone, then import into your
-            orbit.
+            orbit. Imports keep running if you leave this page.
           </p>
         </div>
         <LinkedInExportGuide variant="connections" />
       </div>
 
-      <input
-        type="file"
+      <ImportFilePicker
         accept=".csv,text/csv"
         disabled={busy}
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (!file) return;
+        fileName={fileName}
+        onFile={(file) => {
           start(async () => {
             try {
               setFileName(file.name);
@@ -77,8 +90,7 @@ export function LinkedInConnectionsImport() {
         }}
       />
 
-      {pending && !importProgress ? <BusyHint>Reading CSV…</BusyHint> : null}
-      {importProgress ? <ImportProgress {...importProgress} /> : null}
+      {pending ? <BusyHint>Reading CSV…</BusyHint> : null}
 
       <div className="flex flex-wrap gap-2">
         <Button
@@ -103,23 +115,21 @@ export function LinkedInConnectionsImport() {
         <Button
           disabled={!csvText || busy || selected.size === 0}
           className="bg-primary text-primary-foreground hover:bg-primary/90"
-          onClick={async () => {
+          onClick={() => {
             if (busy) return;
             try {
               const ids = [...selected];
-              const res = await runBatchedImport(
+              startImportJob({
+                kind: "connections",
+                csvText,
+                fileName: fileName || "linkedin.csv",
                 ids,
-                ids.length === 1 ? "person" : "people",
-                (chunk, opts) =>
-                  confirmLinkedInImport(csvText, fileName, chunk, opts)
-              );
-              toast.success(
-                `Imported: ${res.contactsCreated} created, ${res.contactsUpdated} updated`
-              );
+              });
+              // Clear the review list immediately; progress lives in the runner.
               setPeople([]);
               setSelected(new Set());
               setCsvText("");
-              router.refresh();
+              setFileName(null);
             } catch (err) {
               toast.error(
                 err instanceof Error ? err.message : "Import failed"

@@ -4,8 +4,8 @@ import { motion } from "motion/react";
 import type { PreviewProps } from "@/components/onboarding/tour-config";
 
 const cards = [
-  { label: "Contacts", value: "12", hint: "People in your network", hotspot: "due" },
-  { label: "Due follow-ups", value: "3", hint: "Needs attention" },
+  { label: "Contacts", value: "12", hint: "People in your network" },
+  { label: "Due follow-ups", value: "3", hint: "Needs attention", hotspot: "due" },
   { label: "Strong ties", value: "5", hint: "Inner + mid orbit" },
   { label: "Reminders", value: "2", hint: "Pending tasks" },
 ];

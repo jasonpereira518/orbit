@@ -6,10 +6,17 @@ const nextConfig: NextConfig = {
     "@neondatabase/serverless",
     "@google/genai",
     "drizzle-orm",
+    "sharp",
   ],
   experimental: {
-    // lucide-react + date-fns are optimized by default; keep motion/clerk lean too.
-    optimizePackageImports: ["motion", "@clerk/nextjs", "@clerk/ui"],
+    // Tree-shake icon/date/motion/clerk imports across the app bundle.
+    optimizePackageImports: [
+      "lucide-react",
+      "date-fns",
+      "motion",
+      "@clerk/nextjs",
+      "@clerk/ui",
+    ],
   },
   // Turbopack can fail to resolve @clerk/shared's wildcard `./*` package exports.
   turbopack: {

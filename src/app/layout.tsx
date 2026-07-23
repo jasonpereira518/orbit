@@ -19,6 +19,13 @@ export const metadata: Metadata = {
   title: "Orbit — Personal Networking Tracker",
   description:
     "Remember, organize, and act on every meaningful relationship in your network.",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/orbit-logo.png", type: "image/png", sizes: "512x512" },
+    ],
+    apple: "/apple-icon.png",
+  },
 };
 
 export default function RootLayout({
@@ -32,7 +39,7 @@ export default function RootLayout({
       suppressHydrationWarning
       className={`${outfit.variable} ${fraunces.variable} h-full`}
     >
-      <body className="min-h-full font-sans antialiased">
+      <body className="h-full min-h-full font-sans antialiased">
         <ThemeProvider
           attribute="class"
           defaultTheme="system"

@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS interactions (
   contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
   interaction_type text NOT NULL DEFAULT 'note',
   interaction_date timestamptz NOT NULL DEFAULT now(),
+  same_day_order integer NOT NULL DEFAULT 0,
   source text,
   external_id text,
   raw_notes text,
@@ -115,15 +116,28 @@ CREATE TABLE IF NOT EXISTS interactions (
   sentiment text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS reminder_lists (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  name text NOT NULL,
+  name_normalized text NOT NULL,
+  position integer NOT NULL DEFAULT 0,
+  is_inbox integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS reminder_lists_user_idx ON reminder_lists(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS reminder_lists_user_name_uidx ON reminder_lists(user_id, name_normalized);
 CREATE TABLE IF NOT EXISTS reminders (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
   contact_id uuid REFERENCES contacts(id) ON DELETE CASCADE,
+  list_id uuid REFERENCES reminder_lists(id) ON DELETE SET NULL,
   title text NOT NULL,
   description text,
   due_date timestamptz,
   status text NOT NULL DEFAULT 'pending',
   reminder_type text NOT NULL DEFAULT 'manual',
+  action_kind text NOT NULL DEFAULT 'task',
   created_by text NOT NULL DEFAULT 'user',
   created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -187,6 +201,7 @@ CREATE INDEX IF NOT EXISTS interactions_user_idx ON interactions(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS interactions_user_external_uidx ON interactions(user_id, external_id) WHERE external_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS reminders_user_status_idx ON reminders(user_id, status);
 CREATE INDEX IF NOT EXISTS reminders_due_idx ON reminders(user_id, due_date);
+CREATE INDEX IF NOT EXISTS reminders_list_idx ON reminders(user_id, list_id);
 CREATE INDEX IF NOT EXISTS ai_suggestions_user_idx ON ai_suggestions(user_id, status);
 CREATE INDEX IF NOT EXISTS embeddings_user_idx ON contact_embeddings(user_id);
 CREATE INDEX IF NOT EXISTS embeddings_contact_idx ON contact_embeddings(contact_id);
@@ -259,6 +274,56 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages(thread_id);
 CREATE INDEX IF NOT EXISTS chat_messages_user_idx ON chat_messages(user_id);
+CREATE TABLE IF NOT EXISTS recruiters (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  full_name text NOT NULL,
+  name_normalized text NOT NULL,
+  firm text,
+  firm_normalized text,
+  specialty jsonb DEFAULT '[]',
+  email text,
+  email_normalized text,
+  linkedin_url text,
+  phone text,
+  avg_rating integer NOT NULL DEFAULT 0,
+  rating_count integer NOT NULL DEFAULT 0,
+  log_count integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS recruiters_name_idx ON recruiters(name_normalized);
+CREATE INDEX IF NOT EXISTS recruiters_firm_idx ON recruiters(firm_normalized);
+CREATE INDEX IF NOT EXISTS recruiters_email_idx ON recruiters(email_normalized);
+CREATE INDEX IF NOT EXISTS recruiters_rating_idx ON recruiters(avg_rating, log_count);
+CREATE TABLE IF NOT EXISTS user_recruiter_links (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  recruiter_id uuid NOT NULL REFERENCES recruiters(id) ON DELETE CASCADE,
+  status text NOT NULL DEFAULT 'planned',
+  personal_rating integer,
+  notes text,
+  source text NOT NULL DEFAULT 'manual',
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS user_recruiter_links_user_idx ON user_recruiter_links(user_id);
+CREATE INDEX IF NOT EXISTS user_recruiter_links_recruiter_idx ON user_recruiter_links(recruiter_id);
+CREATE UNIQUE INDEX IF NOT EXISTS user_recruiter_links_user_recruiter_uidx ON user_recruiter_links(user_id, recruiter_id);
+CREATE TABLE IF NOT EXISTS gmail_connections (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL UNIQUE,
+  email_address text NOT NULL,
+  access_token_encrypted text NOT NULL,
+  refresh_token_encrypted text,
+  token_expires_at timestamptz,
+  scopes text,
+  status text NOT NULL DEFAULT 'active',
+  last_synced_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS gmail_connections_user_idx ON gmail_connections(user_id);
 `;
 
 async function columnExists(client: PGlite, table: string, column: string) {
@@ -298,12 +363,19 @@ async function migratePglite(client: PGlite) {
 
   // Columns added after the first local DB was created
   await ensureColumn(client, "user_settings", "onboarding_completed_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "onboarding_step", "text");
   await ensureColumn(client, "user_settings", "ai_provider", "text DEFAULT 'gemini'");
   await ensureColumn(client, "user_settings", "openai_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "anthropic_api_key_encrypted", "text");
   await ensureColumn(client, "contacts", "preferred_name", "text");
   await ensureColumn(client, "contacts", "website", "text");
   await ensureColumn(client, "interactions", "external_id", "text");
+  await ensureColumn(
+    client,
+    "interactions",
+    "same_day_order",
+    "integer NOT NULL DEFAULT 0"
+  );
   await ensureColumn(
     client,
     "user_settings",
@@ -332,8 +404,40 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "twilio_auth_token_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_from_number", "text");
   await ensureColumn(client, "user_settings", "theme", "text");
+  await ensureColumn(
+    client,
+    "user_settings",
+    "desktop_notified_ids",
+    "jsonb DEFAULT '[]'"
+  );
   await ensureColumn(client, "contacts", "school", "text");
   await ensureColumn(client, "contacts", "profile_image_url", "text");
+  await ensureColumn(
+    client,
+    "user_settings",
+    "social_links",
+    "jsonb DEFAULT '{}'"
+  );
+  await ensureColumn(
+    client,
+    "reminders",
+    "list_id",
+    "uuid REFERENCES reminder_lists(id) ON DELETE SET NULL"
+  );
+  await ensureColumn(
+    client,
+    "reminders",
+    "action_kind",
+    "text NOT NULL DEFAULT 'task'"
+  );
+
+  try {
+    await client.exec(
+      `CREATE INDEX IF NOT EXISTS reminders_list_idx ON reminders(user_id, list_id)`
+    );
+  } catch {
+    // Index may already exist
+  }
 
   try {
     await client.exec(
@@ -400,12 +504,17 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     .filter(Boolean);
 
   for (const statement of statements) {
-    await sql.query(statement);
+    try {
+      await sql.query(statement);
+    } catch {
+      // Older Postgres variants / race — continue so later alters can recover
+    }
   }
 
   // Incremental columns for older Neon DBs created before these existed.
   const alters = [
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed_at timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_step text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS openai_api_key_encrypted text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS anthropic_api_key_encrypted text`,
@@ -415,6 +524,7 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS date_met timestamptz`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS company_id uuid`,
     `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS external_id text`,
+    `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS same_day_order integer NOT NULL DEFAULT 0`,
     `ALTER TABLE imports ADD COLUMN IF NOT EXISTS error_message text`,
     `ALTER TABLE imports ADD COLUMN IF NOT EXISTS stats jsonb DEFAULT '{}'`,
     `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,
@@ -424,6 +534,8 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_auth_token_encrypted text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_from_number text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS theme text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS desktop_notified_ids jsonb DEFAULT '[]'`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS social_links jsonb DEFAULT '{}'`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
     `CREATE INDEX IF NOT EXISTS companies_user_idx ON companies(user_id)`,
@@ -438,6 +550,9 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `CREATE UNIQUE INDEX IF NOT EXISTS interactions_user_external_uidx ON interactions(user_id, external_id) WHERE external_id IS NOT NULL`,
     `CREATE INDEX IF NOT EXISTS reminders_user_status_idx ON reminders(user_id, status)`,
     `CREATE INDEX IF NOT EXISTS reminders_due_idx ON reminders(user_id, due_date)`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS list_id uuid REFERENCES reminder_lists(id) ON DELETE SET NULL`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS action_kind text NOT NULL DEFAULT 'task'`,
+    `CREATE INDEX IF NOT EXISTS reminders_list_idx ON reminders(user_id, list_id)`,
     `CREATE INDEX IF NOT EXISTS ai_suggestions_user_idx ON ai_suggestions(user_id, status)`,
     `CREATE INDEX IF NOT EXISTS embeddings_user_idx ON contact_embeddings(user_id)`,
     `CREATE INDEX IF NOT EXISTS embeddings_contact_idx ON contact_embeddings(contact_id)`,
@@ -461,6 +576,56 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     )`,
     `CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages(thread_id)`,
     `CREATE INDEX IF NOT EXISTS chat_messages_user_idx ON chat_messages(user_id)`,
+    `CREATE TABLE IF NOT EXISTS recruiters (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      full_name text NOT NULL,
+      name_normalized text NOT NULL,
+      firm text,
+      firm_normalized text,
+      specialty jsonb DEFAULT '[]',
+      email text,
+      email_normalized text,
+      linkedin_url text,
+      phone text,
+      avg_rating integer NOT NULL DEFAULT 0,
+      rating_count integer NOT NULL DEFAULT 0,
+      log_count integer NOT NULL DEFAULT 0,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS recruiters_name_idx ON recruiters(name_normalized)`,
+    `CREATE INDEX IF NOT EXISTS recruiters_firm_idx ON recruiters(firm_normalized)`,
+    `CREATE INDEX IF NOT EXISTS recruiters_email_idx ON recruiters(email_normalized)`,
+    `CREATE INDEX IF NOT EXISTS recruiters_rating_idx ON recruiters(avg_rating, log_count)`,
+    `CREATE TABLE IF NOT EXISTS user_recruiter_links (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id text NOT NULL,
+      recruiter_id uuid NOT NULL REFERENCES recruiters(id) ON DELETE CASCADE,
+      status text NOT NULL DEFAULT 'planned',
+      personal_rating integer,
+      notes text,
+      source text NOT NULL DEFAULT 'manual',
+      contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS user_recruiter_links_user_idx ON user_recruiter_links(user_id)`,
+    `CREATE INDEX IF NOT EXISTS user_recruiter_links_recruiter_idx ON user_recruiter_links(recruiter_id)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS user_recruiter_links_user_recruiter_uidx ON user_recruiter_links(user_id, recruiter_id)`,
+    `CREATE TABLE IF NOT EXISTS gmail_connections (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id text NOT NULL UNIQUE,
+      email_address text NOT NULL,
+      access_token_encrypted text NOT NULL,
+      refresh_token_encrypted text,
+      token_expires_at timestamptz,
+      scopes text,
+      status text NOT NULL DEFAULT 'active',
+      last_synced_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS gmail_connections_user_idx ON gmail_connections(user_id)`,
   ];
 
   for (const statement of alters) {

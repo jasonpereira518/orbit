@@ -147,15 +147,31 @@ export async function semanticSearchContacts(
 
   if (queryEmbedding) {
     if (isPgvectorAvailable()) {
-      const pgHits = await pgvectorSearchContacts(userId, queryEmbedding, limit * 2);
-      for (const hit of pgHits) {
-        scoreByContact.set(hit.contactId, hit.similarity);
+      try {
+        const pgHits = await pgvectorSearchContacts(
+          userId,
+          queryEmbedding,
+          limit * 2
+        );
+        for (const hit of pgHits) {
+          scoreByContact.set(hit.contactId, hit.similarity);
+        }
+      } catch {
+        // pgvector query can fail on Neon (extension/dim); fall back below
       }
-    } else {
-      const embeddings = await db.query.contactEmbeddings.findMany({
+    }
+
+    // Prefer one embedding read for both vector scores (fallback) and content boost.
+    let embeddingRows:
+      | Array<{ contactId: string; embedding: number[]; content: string | null }>
+      | null = null;
+
+    if (scoreByContact.size === 0) {
+      embeddingRows = await db.query.contactEmbeddings.findMany({
         where: eq(contactEmbeddings.userId, userId),
+        columns: { contactId: true, embedding: true, content: true },
       });
-      const inMemory = inMemorySemanticScores(queryEmbedding, embeddings);
+      const inMemory = inMemorySemanticScores(queryEmbedding, embeddingRows);
       for (const [contactId, sim] of inMemory) {
         scoreByContact.set(contactId, sim);
       }
@@ -163,10 +179,12 @@ export async function semanticSearchContacts(
 
     // Also boost contacts whose stored embedding text mentions the query
     // (covers LinkedIn message chunks even when vector score is middling).
-    const contentRows = await db.query.contactEmbeddings.findMany({
-      where: eq(contactEmbeddings.userId, userId),
-      columns: { contactId: true, content: true },
-    });
+    const contentRows =
+      embeddingRows ??
+      (await db.query.contactEmbeddings.findMany({
+        where: eq(contactEmbeddings.userId, userId),
+        columns: { contactId: true, content: true },
+      }));
     for (const row of contentRows) {
       const hay = (row.content || "").toLowerCase();
       if (!hay) continue;

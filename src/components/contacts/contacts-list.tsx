@@ -17,10 +17,12 @@ import { CalendarClock, Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { deleteContact } from "@/actions/contacts";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
+import { CompanyRoleLine } from "@/components/contacts/company-role-line";
 import { ContactAvatarPreview } from "@/components/contacts/contact-preview-card";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
+import { FollowUpDraftSheet } from "@/components/follow-up/follow-up-draft-sheet";
 import {
   Dialog,
   DialogContent,
@@ -63,6 +65,7 @@ export type ContactListItem = {
   closenessTier?: "inner" | "mid" | "outer";
   priorityLevel: number;
   nextFollowUpAt?: string | Date | null;
+  lastInteractionAt?: string | Date | null;
   tags: string[];
 };
 
@@ -81,13 +84,6 @@ function lastNameOf(c: ContactListItem) {
 function letterOf(lastName: string) {
   const ch = lastName.charAt(0).toLocaleUpperCase();
   return /[A-Z]/.test(ch) ? ch : "#";
-}
-
-function roleLine(title: string | null, company: string | null) {
-  if (title && company) return `${title} at ${company}`;
-  if (title) return title;
-  if (company) return company;
-  return "No role yet";
 }
 
 function detailLine(school: string | null, location: string | null) {
@@ -113,6 +109,28 @@ function dueLabel(nextFollowUpAt?: string | Date | null) {
   }
 }
 
+function lastTouchLabel(lastInteractionAt?: string | Date | null) {
+  if (!lastInteractionAt) return null;
+  const d = new Date(lastInteractionAt);
+  if (Number.isNaN(d.getTime())) return null;
+  const days = Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
+  if (days <= 0) return "Last touch today";
+  return `Last touch ${days}d ago`;
+}
+
+function overdueFollowUpLabel(nextFollowUpAt?: string | Date | null) {
+  if (!nextFollowUpAt) return null;
+  const d = new Date(nextFollowUpAt);
+  if (Number.isNaN(d.getTime())) return null;
+  const now = new Date();
+  if (d > now) return null;
+  const days = Math.max(
+    1,
+    Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24))
+  );
+  return `Overdue ${days} day${days === 1 ? "" : "s"}`;
+}
+
 const TIER_TOOLTIP: Record<"inner" | "mid" | "outer", string> = {
   inner: "Inner orbit",
   mid: "Mid orbit",
@@ -131,13 +149,14 @@ export function ContactsList({
   const [pending, start] = useTransition();
   const router = useRouter();
   const exitTimers = useRef<Map<string, number>>(new Map());
-  const serverSignature = initialContacts.map((c) => c.id).join(",");
+  const serverSignature = initialContacts
+    .map((c) => `${c.id}:${c.nextFollowUpAt ?? ""}:${c.profileImageUrl ?? ""}`)
+    .join(",");
 
   useEffect(() => {
     setContacts(initialContacts);
     setExitingId(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync on id set change
-  }, [serverSignature]);
+  }, [serverSignature, initialContacts]);
 
   useEffect(() => {
     const timers = exitTimers.current;
@@ -209,6 +228,8 @@ export function ContactsList({
           router.refresh();
         } catch {
           toast.error("Could not delete contact");
+          // Restore server list if delete failed.
+          setContacts(initialContacts);
           router.refresh();
         }
       });
@@ -220,11 +241,11 @@ export function ContactsList({
   if (contacts.length === 0) {
     return (
       <div className="p-10 text-center text-muted-foreground">
-        No contacts yet.{" "}
+        No contacts match these filters. Clear search to see everyone, or{" "}
         <Link href="/capture" className="text-primary underline">
-          Capture notes
+          capture notes
         </Link>{" "}
-        or{" "}
+        /{" "}
         <Link href="/imports" className="text-primary underline">
           import LinkedIn
         </Link>
@@ -252,7 +273,15 @@ export function ContactsList({
                   const exiting = exitingId === c.id;
                   const overdue = isOverdue(c.nextFollowUpAt);
                   const scheduledLabel = dueLabel(c.nextFollowUpAt);
-                  const details = detailLine(c.school, c.location);
+                  const overdueText = overdueFollowUpLabel(c.nextFollowUpAt);
+                  const lastTouch = lastTouchLabel(c.lastInteractionAt);
+                  const details = [
+                    detailLine(c.school, c.location),
+                    overdueText,
+                    lastTouch,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ");
 
                   function openContact() {
                     if (exiting) return;
@@ -305,8 +334,11 @@ export function ContactsList({
                               {c.preferredName || c.fullName}
                             </p>
                             <div className="mt-0.5 flex min-w-0 items-center gap-2">
-                              <p className="min-w-0 truncate text-sm text-muted-foreground">
-                                {roleLine(c.title, c.company)}
+                              <p className="min-w-0 truncate text-sm">
+                                <CompanyRoleLine
+                                  title={c.title}
+                                  company={c.company}
+                                />
                               </p>
                               {c.closenessTier && (
                                 <ClosenessTierBadge
@@ -317,7 +349,27 @@ export function ContactsList({
                             </div>
                             {details && (
                               <p className="mt-0.5 truncate text-xs text-muted-foreground/80">
-                                {details}
+                                {overdueText ? (
+                                  <>
+                                    {detailLine(c.school, c.location) && (
+                                      <>
+                                        {detailLine(c.school, c.location)}
+                                        <span className="mx-1.5">·</span>
+                                      </>
+                                    )}
+                                    <span className="font-medium text-amber-700 dark:text-amber-300">
+                                      {overdueText}
+                                    </span>
+                                    {lastTouch && (
+                                      <>
+                                        <span className="mx-1.5">·</span>
+                                        {lastTouch}
+                                      </>
+                                    )}
+                                  </>
+                                ) : (
+                                  details
+                                )}
                               </p>
                             )}
                           </div>
@@ -352,6 +404,7 @@ export function ContactsList({
 
                             <FollowUpRowButton
                               contactId={c.id}
+                              contactName={c.preferredName || c.fullName}
                               nextFollowUpAt={c.nextFollowUpAt}
                               overdue={overdue}
                               scheduledLabel={scheduledLabel}
@@ -607,69 +660,88 @@ function ClosenessChip({
 
 function FollowUpRowButton({
   contactId,
+  contactName,
   nextFollowUpAt,
   overdue,
   scheduledLabel,
 }: {
   contactId: string;
+  contactName: string;
   nextFollowUpAt?: string | Date | null;
   overdue: boolean;
   scheduledLabel: string | null;
 }) {
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+
   return (
-    <Popover>
-      <PopoverTrigger
-        type="button"
-        aria-label={
-          overdue
-            ? `Follow-up overdue${scheduledLabel ? ` since ${scheduledLabel}` : ""}`
-            : scheduledLabel
-              ? `Follow-up due ${scheduledLabel}`
-              : "Set follow-up"
-        }
-        className={cn(
-          buttonVariants({ variant: "ghost", size: "icon-sm" }),
-          "relative shrink-0 text-muted-foreground",
-          overdue && "text-chart-4 hover:text-chart-4"
-        )}
-        onClick={(e) => {
-          e.stopPropagation();
-        }}
-      >
-        <CalendarClock className="size-4" />
-        {overdue && (
-          <span
-            aria-hidden
-            className="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-chart-4 ring-2 ring-card"
-          />
-        )}
-      </PopoverTrigger>
-      <PopoverContent
-        className="space-y-2"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Easy follow-up
-          </p>
-          {scheduledLabel && (
-            <p
-              className={cn(
-                "text-xs",
-                overdue ? "font-medium text-chart-4" : "text-muted-foreground"
-              )}
-            >
-              {overdue ? "Overdue" : "Due"} {scheduledLabel}
-            </p>
+    <>
+      <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+        <PopoverTrigger
+          type="button"
+          aria-label={
+            overdue
+              ? `Follow-up overdue${scheduledLabel ? ` since ${scheduledLabel}` : ""}`
+              : scheduledLabel
+                ? `Follow-up due ${scheduledLabel}`
+                : "Set follow-up"
+          }
+          className={cn(
+            buttonVariants({ variant: "ghost", size: "icon-sm" }),
+            "relative shrink-0 text-muted-foreground",
+            overdue && "text-chart-4 hover:text-chart-4"
           )}
-        </div>
-        <EasyFollowUp
-          contactId={contactId}
-          nextFollowUpAt={nextFollowUpAt}
-          compact
-        />
-      </PopoverContent>
-    </Popover>
+          onClick={(e) => {
+            e.stopPropagation();
+          }}
+        >
+          <CalendarClock className="size-4" />
+          {overdue && (
+            <span
+              aria-hidden
+              className="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-chart-4 ring-2 ring-card"
+            />
+          )}
+        </PopoverTrigger>
+        <PopoverContent
+          className="space-y-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Easy follow-up
+            </p>
+            {scheduledLabel && (
+              <p
+                className={cn(
+                  "text-xs",
+                  overdue ? "font-medium text-chart-4" : "text-muted-foreground"
+                )}
+              >
+                {overdue ? "Overdue" : "Due"} {scheduledLabel}
+              </p>
+            )}
+          </div>
+          <EasyFollowUp
+            contactId={contactId}
+            contactName={contactName}
+            nextFollowUpAt={nextFollowUpAt}
+            compact
+            embedDraftSheet={false}
+            onFollowUpClick={() => {
+              setPopoverOpen(false);
+              setSheetOpen(true);
+            }}
+          />
+        </PopoverContent>
+      </Popover>
+      <FollowUpDraftSheet
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        contactId={contactId}
+        contactName={contactName}
+      />
+    </>
   );
 }
 

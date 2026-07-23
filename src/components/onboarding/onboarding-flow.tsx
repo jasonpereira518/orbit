@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -12,8 +12,9 @@ import {
   Upload,
   UserPlus,
 } from "lucide-react";
-import { completeOnboarding, skipOnboarding } from "@/actions/onboarding";
+import { completeOnboarding, saveOnboardingStep, skipOnboarding } from "@/actions/onboarding";
 import { TourSidebar } from "@/components/onboarding/tour-sidebar";
+import { TourCursor } from "@/components/onboarding/tour-cursor";
 import {
   TOUR_INTERVAL_MS,
   TOUR_STEPS,
@@ -27,6 +28,8 @@ import { ImportsPreview } from "@/components/onboarding/previews/imports-preview
 import { ChatPreview } from "@/components/onboarding/previews/chat-preview";
 import { GraphPreview } from "@/components/onboarding/previews/graph-preview";
 import { DashboardPreview } from "@/components/onboarding/previews/dashboard-preview";
+import { RecruitersPreview } from "@/components/onboarding/previews/recruiters-preview";
+import { OutreachPreview } from "@/components/onboarding/previews/outreach-preview";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -36,18 +39,21 @@ const paths = [
     icon: UserPlus,
     title: "Add someone manually",
     description: "Enter a name, company, and how you know them.",
+    hotspot: "path-manual",
   },
   {
     href: "/capture",
     icon: Sparkles,
     title: "Capture from notes",
     description: "Paste meeting notes — AI extracts people and context.",
+    hotspot: "path-capture",
   },
   {
     href: "/imports",
     icon: Upload,
     title: "Import LinkedIn",
     description: "Bring in connections, messages, or calendar meetings.",
+    hotspot: "path-import",
   },
 ] as const;
 
@@ -62,15 +68,31 @@ const PREVIEWS: Record<
   chat: ChatPreview,
   graph: GraphPreview,
   dashboard: DashboardPreview,
+  recruiters: RecruitersPreview,
+  outreach: OutreachPreview,
 };
 
 const START_INDEX = TOUR_STEPS.length - 1;
 
-export function OnboardingFlow() {
+function indexForStep(stepId: string | null | undefined) {
+  if (!stepId) return 0;
+  const idx = TOUR_STEPS.findIndex((s) => s.id === stepId);
+  return idx >= 0 ? idx : 0;
+}
+
+export function OnboardingFlow({
+  initialStepId = null,
+}: {
+  initialStepId?: string | null;
+}) {
   const router = useRouter();
   const reducedMotion = usePrefersReducedMotion();
-  const [stepIndex, setStepIndex] = useState(0);
-  const [playing, setPlaying] = useState(true);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const [stepIndex, setStepIndex] = useState(() => indexForStep(initialStepId));
+  const [playing, setPlaying] = useState(() => {
+    const idx = indexForStep(initialStepId);
+    return idx !== START_INDEX;
+  });
   const [progress, setProgress] = useState(0);
   const [pending, start] = useTransition();
 
@@ -98,6 +120,8 @@ export function OnboardingFlow() {
   const isFirst = stepIndex === 0;
   const isLast = stepIndex === START_INDEX;
   const autoAdvance = playing && !isStart && !reducedMotion;
+  const hotspots = step.hotspots ?? [];
+  const showCursor = !reducedMotion && hotspots.length > 0;
 
   const goTo = useCallback((index: number) => {
     const next = Math.max(0, Math.min(START_INDEX, index));
@@ -105,6 +129,10 @@ export function OnboardingFlow() {
     setProgress(0);
     if (next === START_INDEX) {
       setPlaying(false);
+    }
+    const nextStep = TOUR_STEPS[next];
+    if (nextStep) {
+      void saveOnboardingStep(nextStep.id);
     }
   }, []);
 
@@ -198,7 +226,7 @@ export function OnboardingFlow() {
               </p>
             </div>
 
-            <div className="relative min-h-[260px] p-4 sm:p-6">
+            <div ref={previewRef} className="relative min-h-[260px] p-4 sm:p-6">
               <AnimatePresence mode="wait">
                 {isStart ? (
                   <motion.div
@@ -226,6 +254,17 @@ export function OnboardingFlow() {
                   </motion.div>
                 ) : null}
               </AnimatePresence>
+
+              {showCursor && (
+                <TourCursor
+                  containerRef={previewRef}
+                  hotspots={hotspots}
+                  progress={progress}
+                  playing={isStart ? true : playing}
+                  reducedMotion={reducedMotion}
+                  freeCycle={isStart}
+                />
+              )}
             </div>
 
             {!isStart && (
@@ -355,6 +394,7 @@ function StartStep({
               <button
                 type="button"
                 disabled={pending}
+                data-tour-hotspot={path.hotspot}
                 onClick={() => onChoosePath(path.href)}
                 className={cn(
                   "group flex w-full items-start gap-4 rounded-2xl border border-border/70 bg-background/70 p-5 text-left transition-colors",

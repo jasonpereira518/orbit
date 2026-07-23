@@ -12,6 +12,7 @@ async function persistOnboardingComplete(userId: string) {
     .update(userSettings)
     .set({
       onboardingCompletedAt: new Date(),
+      onboardingStep: null,
       updatedAt: new Date(),
     })
     .where(eq(userSettings.userId, userId))

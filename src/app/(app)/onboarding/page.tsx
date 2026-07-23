@@ -14,5 +14,5 @@ export default async function OnboardingPage() {
     redirect("/dashboard");
   }
 
-  return <OnboardingFlowLazy />;
+  return <OnboardingFlowLazy initialStepId={settings.onboardingStep} />;
 }

@@ -5,14 +5,27 @@ import { contacts } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import {
   downloadImageAsDataUrl,
+  fetchLinkedInPhotoDataUrl,
   isUnusableAvatarUrl,
+  parseImageDataUrl,
 } from "@/lib/contact-avatar";
 
 type Params = { params: Promise<{ contactId: string }> };
 
+function dataUrlResponse(dataUrl: string) {
+  const parsed = parseImageDataUrl(dataUrl);
+  if (!parsed) return null;
+  return new NextResponse(new Uint8Array(parsed.buf), {
+    headers: {
+      "Content-Type": parsed.contentType,
+      "Cache-Control": "private, max-age=86400",
+    },
+  });
+}
+
 /**
- * Serve a contact's profile photo from a durable data URL or by proxying
- * a usable remote image (with LinkedIn referer). Returns 404 when missing.
+ * Serve a contact's profile photo from a durable data URL, by proxying a
+ * usable remote image, or by resolving their LinkedIn OG image on demand.
  */
 export async function GET(_req: Request, { params }: Params) {
   let userId: string;
@@ -26,56 +39,57 @@ export async function GET(_req: Request, { params }: Params) {
 
   const contact = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-    columns: { id: true, profileImageUrl: true },
+    columns: {
+      id: true,
+      profileImageUrl: true,
+      linkedinUrl: true,
+    },
   });
 
-  if (!contact?.profileImageUrl) {
+  if (!contact) {
     return new NextResponse(null, { status: 404 });
   }
 
-  const stored = contact.profileImageUrl.trim();
+  const stored = contact.profileImageUrl?.trim() || "";
 
   if (stored.startsWith("data:image/")) {
-    const comma = stored.indexOf(",");
-    const meta = stored.slice(5, comma); // image/jpeg;base64
-    const contentType = meta.split(";")[0] || "image/jpeg";
-    const b64 = stored.slice(comma + 1);
-    if (!b64) return new NextResponse(null, { status: 404 });
-    const body = Buffer.from(b64, "base64");
-    return new NextResponse(body, {
-      headers: {
-        "Content-Type": contentType,
-        "Cache-Control": "private, max-age=86400",
-      },
-    });
+    const res = dataUrlResponse(stored);
+    if (res) return res;
   }
 
-  if (isUnusableAvatarUrl(stored)) {
-    return new NextResponse(null, { status: 404 });
+  // Proxy / persist a usable remote URL (Apollo / LinkedIn CDN, etc.).
+  if (stored && !isUnusableAvatarUrl(stored)) {
+    try {
+      const dataUrl = await downloadImageAsDataUrl(stored);
+      if (dataUrl) {
+        void db
+          .update(contacts)
+          .set({ profileImageUrl: dataUrl, updatedAt: new Date() })
+          .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+        const res = dataUrlResponse(dataUrl);
+        if (res) return res;
+      }
+    } catch {
+      // Fall through to LinkedIn resolution.
+    }
   }
 
-  // Proxy remote images so LinkedIn CDN hotlink rules don't blank the UI.
-  try {
-    const dataUrl = await downloadImageAsDataUrl(stored);
-    if (!dataUrl) return new NextResponse(null, { status: 404 });
-
-    // Persist durable copy for next time (fire-and-forget style update).
-    void db
-      .update(contacts)
-      .set({ profileImageUrl: dataUrl, updatedAt: new Date() })
-      .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
-
-    const comma = dataUrl.indexOf(",");
-    const meta = dataUrl.slice(5, comma);
-    const contentType = meta.split(";")[0] || "image/jpeg";
-    const b64 = dataUrl.slice(comma + 1);
-    return new NextResponse(Buffer.from(b64, "base64"), {
-      headers: {
-        "Content-Type": contentType,
-        "Cache-Control": "private, max-age=86400",
-      },
-    });
-  } catch {
-    return new NextResponse(null, { status: 404 });
+  // No durable photo yet — resolve from LinkedIn profile page when possible.
+  if (contact.linkedinUrl?.trim()) {
+    try {
+      const dataUrl = await fetchLinkedInPhotoDataUrl(contact.linkedinUrl);
+      if (dataUrl) {
+        void db
+          .update(contacts)
+          .set({ profileImageUrl: dataUrl, updatedAt: new Date() })
+          .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+        const res = dataUrlResponse(dataUrl);
+        if (res) return res;
+      }
+    } catch {
+      // ignore
+    }
   }
+
+  return new NextResponse(null, { status: 404 });
 }

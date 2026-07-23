@@ -3,6 +3,7 @@ export type SearchableContact = {
   fullName: string;
   preferredName?: string | null;
   company?: string | null;
+  school?: string | null;
   title?: string | null;
   location?: string | null;
   email?: string | null;
@@ -15,6 +16,7 @@ export type SearchableContact = {
   notes?: string | null;
   industry?: string | null;
   keyFacts?: string[] | null;
+  sharedInterests?: string[] | null;
   relationshipScore?: number | null;
   priorityLevel?: number | null;
   tags?: string[];
@@ -23,6 +25,7 @@ export type SearchableContact = {
 export type MatchedField =
   | "name"
   | "company"
+  | "school"
   | "role"
   | "location"
   | "email"
@@ -34,7 +37,8 @@ export type MatchedField =
   | "summary"
   | "notes"
   | "industry"
-  | "keyFacts";
+  | "keyFacts"
+  | "interests";
 
 export type SearchHitSource = "keyword" | "semantic" | "hybrid";
 
@@ -56,6 +60,7 @@ export type KeywordSearchHit = {
 const FIELD_WEIGHTS: Record<MatchedField, number> = {
   name: 12,
   company: 8,
+  school: 8,
   role: 7,
   tags: 6,
   email: 5,
@@ -63,6 +68,7 @@ const FIELD_WEIGHTS: Record<MatchedField, number> = {
   howMet: 4,
   summary: 3.5,
   keyFacts: 3.5,
+  interests: 3.5,
   notes: 3,
   industry: 3,
   phone: 2.5,
@@ -73,6 +79,7 @@ const FIELD_WEIGHTS: Record<MatchedField, number> = {
 const FIELD_LABELS: Record<MatchedField, string> = {
   name: "name",
   company: "company",
+  school: "school",
   role: "role",
   location: "location",
   email: "email",
@@ -85,6 +92,7 @@ const FIELD_LABELS: Record<MatchedField, string> = {
   notes: "notes",
   industry: "industry",
   keyFacts: "key facts",
+  interests: "interests",
 };
 
 function normalize(value: string) {
@@ -104,6 +112,7 @@ function fieldValues(contact: SearchableContact): Record<MatchedField, string> {
   return {
     name,
     company: contact.company || "",
+    school: contact.school || "",
     role: contact.title || "",
     location: contact.location || "",
     email: contact.email || "",
@@ -116,6 +125,7 @@ function fieldValues(contact: SearchableContact): Record<MatchedField, string> {
     notes: contact.notes || "",
     industry: contact.industry || "",
     keyFacts: (contact.keyFacts || []).join(" "),
+    interests: (contact.sharedInterests || []).join(" "),
   };
 }
 

@@ -1,14 +1,45 @@
 "use client";
 
 import { memo } from "react";
-import { Handle, Position, type NodeProps } from "@xyflow/react";
+import {
+  BaseEdge,
+  EdgeLabelRenderer,
+  Handle,
+  Position,
+  getStraightPath,
+  useInternalNode,
+  type EdgeProps,
+  type NodeProps,
+} from "@xyflow/react";
 import { cn } from "@/lib/utils";
 import {
   RING_LABELS,
   type ClusterLabelData,
   type GraphNodeData,
+  type NebulaData,
   type OrbitRingsData,
 } from "@/lib/graph-layout";
+import { withAlpha } from "@/lib/school-color";
+
+/** Invisible handles pinned to the star center so edges meet the nodes. */
+function StarHandles() {
+  return (
+    <>
+      <Handle
+        type="target"
+        position={Position.Top}
+        isConnectable={false}
+        className="!pointer-events-none !left-1/2 !top-1/2 !h-px !w-px !min-h-0 !min-w-0 !-translate-x-1/2 !-translate-y-1/2 !border-0 !bg-transparent !opacity-0"
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        isConnectable={false}
+        className="!pointer-events-none !left-1/2 !top-1/2 !h-px !w-px !min-h-0 !min-w-0 !-translate-x-1/2 !-translate-y-1/2 !border-0 !bg-transparent !opacity-0"
+      />
+    </>
+  );
+}
 
 function OrbitRingsNodeComponent({
   data,
@@ -38,10 +69,10 @@ function OrbitRingsNodeComponent({
               cy={max}
               r={r}
               fill="none"
-              stroke="rgba(255,255,255,0.14)"
+              stroke="rgba(255,255,255,0.08)"
               strokeWidth={1}
-              strokeDasharray={i % 2 === 0 ? "2 14" : "1 10"}
-              opacity={0.55}
+              strokeDasharray={i % 2 === 0 ? "2 16" : "1 12"}
+              opacity={0.7}
             />
           ))}
         </svg>
@@ -82,30 +113,30 @@ function SunNodeComponent({
       <div
         className={cn(
           "constellation-corona-outer absolute rounded-full",
-          selected ? "h-40 w-40" : "h-36 w-36"
+          selected ? "h-52 w-52" : "h-44 w-44"
         )}
         style={{
           background:
-            "radial-gradient(circle, rgba(255,248,220,0.35) 0%, rgba(255,220,150,0.12) 40%, transparent 70%)",
+            "radial-gradient(circle, rgba(255,248,220,0.42) 0%, rgba(255,200,100,0.18) 35%, rgba(255,160,60,0.06) 55%, transparent 72%)",
         }}
       />
       <div
         className={cn(
-          "constellation-corona absolute rounded-full bg-white/40 blur-[2px]",
-          selected ? "h-16 w-16" : "h-14 w-14"
+          "constellation-corona absolute rounded-full bg-white/50 blur-[3px]",
+          selected ? "h-20 w-20" : "h-16 w-16"
         )}
       />
       <div
         className={cn(
-          "relative z-10 rounded-full",
-          "bg-[radial-gradient(circle_at_35%_30%,_#ffffff_0%,_#fff6d6_35%,_#f0d48a_70%,_#c4a35a_100%)]",
-          "shadow-[0_0_28px_8px_rgba(255,240,200,0.55),0_0_60px_16px_rgba(196,163,90,0.25)]",
-          selected && "ring-1 ring-white/70"
+          "constellation-sun-core relative z-10 rounded-full",
+          "bg-[radial-gradient(circle_at_35%_30%,_#ffffff_0%,_#fff6d6_28%,_#f5c86a_65%,_#e09030_100%)]",
+          "shadow-[0_0_32px_10px_rgba(255,240,200,0.65),0_0_72px_22px_rgba(255,170,60,0.35),0_0_100px_40px_rgba(255,140,40,0.15)]",
+          selected && "ring-2 ring-white/80"
         )}
-        style={{ width: 18, height: 18 }}
+        style={{ width: 22, height: 22 }}
         title={data.label}
       />
-      <p className="absolute top-7 whitespace-nowrap text-[11px] font-medium tracking-wide text-white/90">
+      <p className="absolute top-8 whitespace-nowrap text-[11px] font-medium tracking-wide text-white/95 drop-shadow-[0_0_8px_rgba(0,0,0,0.8)]">
         {data.label}
       </p>
     </div>
@@ -114,19 +145,6 @@ function SunNodeComponent({
 
 function starSize(score: number) {
   return 5 + score * 2.2;
-}
-
-function starColor(
-  score: number,
-  dormant: boolean | undefined,
-  overdue?: boolean
-) {
-  if (dormant) return "rgba(180, 190, 200, 0.55)";
-  if (overdue) return "#f0d48a";
-  if (score >= 5) return "#fff8e7";
-  if (score >= 4) return "#ffffff";
-  if (score >= 3) return "#e8f0ff";
-  return "#d7e0ea";
 }
 
 function ContactNodeComponent({
@@ -139,48 +157,99 @@ function ContactNodeComponent({
   const glow = Math.max(4, score * 3);
   const bright =
     labelMode === "always" || selected || Boolean(data.spotlight);
+  const isComet = Boolean(data.comet);
+
+  if (isComet) {
+    const angleDeg = ((data.orbitAngle ?? 0) * 180) / Math.PI;
+    const disc = size + 2;
+    return (
+      <div
+        className={cn(
+          "constellation-planet-enter group relative",
+          data.motionPaused && "z-20"
+        )}
+        style={{ width: disc, height: disc }}
+      >
+        <StarHandles />
+        <div
+          className={cn(
+            "constellation-comet relative",
+            selected && "scale-110",
+            data.spotlight && "constellation-spotlight-ring"
+          )}
+          style={{
+            width: disc,
+            height: disc,
+            transform: `rotate(${angleDeg + 180}deg)`,
+          }}
+          title={`${data.label}${data.company ? ` · ${data.company}` : ""} · drifting`}
+        >
+          <span className="constellation-comet-trail" />
+          <span
+            className="constellation-comet-head"
+            style={{
+              width: disc,
+              height: disc,
+            }}
+          />
+        </div>
+        {labelMode !== "never" && (
+          <div
+            className={cn(
+              "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[130px] -translate-x-1/2 text-center transition-opacity duration-200",
+              bright ? "opacity-100" : "opacity-50 group-hover:opacity-100"
+            )}
+          >
+            <p className="truncate text-[11px] font-medium leading-tight text-[#ffb4a0]">
+              {data.label}
+            </p>
+            {data.company && (
+              <p className="truncate text-[9px] text-[#ff8a70]/70">
+                {data.company}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const fill = "#ffffff";
+  const spotlightBoost = data.spotlight ? 1.55 : 1;
+  const disc = size * (data.spotlight ? 1.15 : 1);
 
   return (
     <div
       className={cn(
-        "constellation-planet-enter group relative flex flex-col items-center",
-        data.dormant && "opacity-45",
+        "constellation-planet-enter group relative",
         data.motionPaused && "z-20"
       )}
+      style={{ width: disc, height: disc }}
     >
-      <Handle
-        type="target"
-        position={Position.Top}
-        className="!opacity-0"
-        isConnectable={false}
-      />
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        className="!opacity-0"
-        isConnectable={false}
-      />
+      <StarHandles />
       <div
         className={cn(
-          "relative rounded-full transition-transform duration-200",
+          "relative h-full w-full rounded-full transition-transform duration-200",
           selected && "scale-125",
           data.spotlight && "constellation-spotlight-ring",
-          data.overdue && !data.dormant && "ring-1 ring-[#c4a35a]/80"
+          data.overdue && "ring-1 ring-[#c4a35a]/80"
         )}
         style={{
-          width: size,
-          height: size,
-          background: `radial-gradient(circle at 35% 30%, #fff 0%, ${starColor(score, data.dormant, data.overdue)} 55%, transparent 80%)`,
-          boxShadow: data.dormant
-            ? `0 0 ${glow}px ${glow / 3}px rgba(180,190,200,0.25)`
-            : `0 0 ${glow}px ${glow / 2}px ${starColor(score, false, data.overdue)}66`,
+          background: `radial-gradient(circle at 35% 30%, #fff 0%, ${fill} 50%, transparent 78%)`,
+          boxShadow: `0 0 ${glow * spotlightBoost}px ${
+            (glow / 2) * spotlightBoost
+          }px ${withAlpha(fill, 0.55 * spotlightBoost)}, 0 0 ${
+            glow * 2 * spotlightBoost
+          }px ${glow * spotlightBoost}px ${withAlpha(fill, 0.2)}`,
         }}
-        title={`${data.label}${data.company ? ` · ${data.company}` : ""}`}
+        title={`${data.label}${data.company ? ` · ${data.company}` : ""}${
+          data.school ? ` · ${data.school}` : ""
+        }`}
       />
       {labelMode !== "never" && (
         <div
           className={cn(
-            "pointer-events-none mt-2 max-w-[130px] text-center transition-opacity duration-200",
+            "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[130px] -translate-x-1/2 text-center transition-opacity duration-200",
             bright ? "opacity-100" : "opacity-40 group-hover:opacity-100"
           )}
         >
@@ -191,9 +260,7 @@ function ContactNodeComponent({
             <p
               className={cn(
                 "truncate text-[9px] text-white/45 transition-opacity duration-200",
-                bright
-                  ? "opacity-100"
-                  : "opacity-0 group-hover:opacity-100"
+                bright ? "opacity-100" : "opacity-0 group-hover:opacity-100"
               )}
             >
               {data.company}
@@ -205,15 +272,131 @@ function ContactNodeComponent({
   );
 }
 
+function NebulaNodeComponent({ data }: NodeProps & { data: NebulaData }) {
+  const r = data.radius;
+  return (
+    <div className="pointer-events-none" style={{ width: 0, height: 0 }}>
+      <div
+        className="constellation-nebula absolute rounded-full"
+        style={{
+          left: -r,
+          top: -r,
+          width: r * 2,
+          height: r * 2,
+          background: `radial-gradient(circle at 40% 35%, ${withAlpha(
+            data.color,
+            0.28
+          )} 0%, ${withAlpha(data.color, 0.12)} 40%, ${withAlpha(
+            data.color,
+            0.04
+          )} 65%, transparent 78%)`,
+          boxShadow: `0 0 ${r * 0.4}px ${withAlpha(data.color, 0.15)}`,
+        }}
+      />
+    </div>
+  );
+}
+
 function ClusterLabelNodeComponent({
   data,
 }: NodeProps & { data: ClusterLabelData }) {
+  const brand = data.nebulaColor;
   return (
     <div className="pointer-events-none">
-      <p className="whitespace-nowrap text-center text-[10px] font-medium uppercase tracking-[0.14em] text-white/45">
+      <p
+        className="whitespace-nowrap text-center text-[10px] font-semibold uppercase tracking-[0.18em]"
+        style={
+          brand
+            ? {
+                color: brand,
+                textShadow: `0 0 12px ${withAlpha(brand, 0.55)}, 0 0 28px ${withAlpha(brand, 0.25)}`,
+              }
+            : { color: "rgba(255,255,255,0.55)" }
+        }
+      >
         {data.label}
       </p>
     </div>
+  );
+}
+
+function nodeCenter(node: ReturnType<typeof useInternalNode>) {
+  if (!node) return null;
+  const w = node.measured.width ?? 0;
+  const h = node.measured.height ?? 0;
+  return {
+    x: node.internals.positionAbsolute.x + w / 2,
+    y: node.internals.positionAbsolute.y + h / 2,
+  };
+}
+
+function LabeledEdgeComponent({
+  id,
+  source,
+  target,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  style,
+  data,
+  markerEnd,
+}: EdgeProps) {
+  // Draw through star centers (nodeOrigin [0.5,0.5] stores center as
+  // position; positionAbsolute is the measured top-left).
+  const sourceCenter = nodeCenter(useInternalNode(source));
+  const targetCenter = nodeCenter(useInternalNode(target));
+  const sx = sourceCenter?.x ?? sourceX;
+  const sy = sourceCenter?.y ?? sourceY;
+  const tx = targetCenter?.x ?? targetX;
+  const ty = targetCenter?.y ?? targetY;
+
+  const [edgePath, labelX, labelY] = getStraightPath({
+    sourceX: sx,
+    sourceY: sy,
+    targetX: tx,
+    targetY: ty,
+  });
+  const edgeData = data as
+    | {
+        label?: string;
+        kind?: string;
+        reason?: string;
+      }
+    | undefined;
+  const label = edgeData?.label || "";
+  const kind = edgeData?.kind;
+  const showLabel =
+    Boolean(label) && (kind === "constellation" || kind === "knows");
+
+  return (
+    <>
+      <BaseEdge
+        id={id}
+        path={edgePath}
+        markerEnd={markerEnd}
+        style={{
+          ...style,
+          stroke:
+            (typeof style?.stroke === "string" && style.stroke) ||
+            "rgba(255, 255, 255, 0.75)",
+          strokeLinecap: "round",
+        }}
+      />
+      {showLabel && (
+        <EdgeLabelRenderer>
+          <div
+            className="constellation-edge-label nodrag nopan pointer-events-none"
+            style={{
+              position: "absolute",
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            }}
+          >
+            {label}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
   );
 }
 
@@ -221,3 +404,5 @@ export const OrbitRingsNode = memo(OrbitRingsNodeComponent);
 export const SunNode = memo(SunNodeComponent);
 export const ContactNode = memo(ContactNodeComponent);
 export const ClusterLabelNode = memo(ClusterLabelNodeComponent);
+export const NebulaNode = memo(NebulaNodeComponent);
+export const LabeledEdge = memo(LabeledEdgeComponent);

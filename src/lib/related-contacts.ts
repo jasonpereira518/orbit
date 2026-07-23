@@ -14,9 +14,12 @@ export type RelatedContactCandidate = {
   company?: string | null;
   companyId?: string | null;
   school?: string | null;
+  location?: string | null;
   howMet?: string | null;
   profileImageUrl?: string | null;
   linkedinUrl?: string | null;
+  email?: string | null;
+  phone?: string | null;
   tags?: string[] | null;
   sharedInterests?: string[] | null;
   notes?: string | null;
@@ -32,8 +35,14 @@ export type RelatedContact = {
   firstName: string | null;
   title: string | null;
   company: string | null;
+  school: string | null;
+  location: string | null;
   profileImageUrl: string | null;
   linkedinUrl: string | null;
+  email: string | null;
+  phone: string | null;
+  aiSummary: string | null;
+  relationshipScore: number | null;
   reason: RelatedReason;
   reasonLabel: string;
 };
@@ -42,6 +51,7 @@ const REASON_WEIGHT: Record<RelatedReason, number> = {
   mention: 100,
   companyId: 90,
   company: 80,
+  event: 75,
   howMet: 70,
   school: 60,
   sharedTags: 40,
@@ -112,6 +122,7 @@ function reasonLabel(
         ? `Same company · ${source.company.trim()}`
         : "Same company";
     case "howMet":
+    case "event":
       return source.howMet?.trim()
         ? `Met via · ${source.howMet.trim()}`
         : "Same intro context";
@@ -168,15 +179,25 @@ function bestReason(
 
 /**
  * Rank contacts related to `contactId` from shared company, school, howMet,
- * mentions, tags, and interests. Caps results for profile UI.
+ * mentions, tags, and interests. Mixes connection strength with intro usefulness.
  */
 export function findRelatedContacts(
   contactId: string,
   contacts: RelatedContactCandidate[],
-  limit = 8
+  limit = 6,
+  activeGoals: string[] = []
 ): RelatedContact[] {
   const source = contacts.find((c) => c.id === contactId);
   if (!source) return [];
+
+  const goalTokens = activeGoals
+    .flatMap((g) =>
+      g
+        .toLowerCase()
+        .split(/[^a-z0-9+#.]+/i)
+        .filter((t) => t.length > 2)
+    )
+    .slice(0, 40);
 
   const scored: Array<RelatedContact & { score: number }> = [];
 
@@ -186,7 +207,19 @@ export function findRelatedContacts(
     if (!reason) continue;
 
     const weight = REASON_WEIGHT[reason];
-    const closenessBoost = (other.relationshipScore ?? 2) * 2;
+    const strengthBoost = (other.relationshipScore ?? 2) * 4;
+
+    const otherCorpus = contactCorpus(other);
+    let introBoost = 0;
+    if (goalTokens.length > 0 && otherCorpus) {
+      const hits = goalTokens.filter((t) => otherCorpus.includes(t)).length;
+      introBoost = hits * 8;
+    }
+    // Mentions and shared company/school are especially useful intro paths
+    if (reason === "mention") introBoost += 25;
+    if (reason === "company" || reason === "companyId") introBoost += 12;
+    if (reason === "school") introBoost += 8;
+
     scored.push({
       id: other.id,
       fullName: other.fullName,
@@ -194,11 +227,17 @@ export function findRelatedContacts(
       firstName: other.firstName ?? null,
       title: other.title ?? null,
       company: other.company ?? null,
+      school: other.school ?? null,
+      location: other.location ?? null,
       profileImageUrl: other.profileImageUrl ?? null,
       linkedinUrl: other.linkedinUrl ?? null,
+      email: other.email ?? null,
+      phone: other.phone ?? null,
+      aiSummary: other.aiSummary ?? null,
+      relationshipScore: other.relationshipScore ?? null,
       reason,
       reasonLabel: reasonLabel(reason, source),
-      score: weight + closenessBoost,
+      score: weight + strengthBoost + introBoost,
     });
   }
 

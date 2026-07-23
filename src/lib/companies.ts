@@ -1,14 +1,12 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "@/db";
 import { companies, contacts } from "@/db/schema";
+import {
+  displayCompanyName,
+  normalizeCompanyName,
+} from "@/lib/company-name";
 
-export function normalizeCompanyName(raw: string) {
-  return raw.trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-export function displayCompanyName(raw: string) {
-  return raw.trim().replace(/\s+/g, " ");
-}
+export { displayCompanyName, normalizeCompanyName } from "@/lib/company-name";
 
 /**
  * Find or create a per-user company row. Case/whitespace-equivalent names reuse

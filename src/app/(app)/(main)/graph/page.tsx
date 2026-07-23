@@ -15,9 +15,8 @@ export default async function GraphPage() {
             Constellation
           </h1>
           <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-            You are the brightest star. Closer ties sit nearer; companies form
-            named constellations. Straight lines link people who share a
-            company, event, or known connection — click any star to inspect.
+            You are the sun. People form constellations by company, then
+            school — linked to each other, not to the center.
           </p>
         </div>
       </div>

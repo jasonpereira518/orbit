@@ -8,10 +8,10 @@ import {
 import {
   isUnusableAvatarUrl,
   resolveContactPhotoUrl,
-} from "@/lib/contact-avatar";
+} from "@/lib/contact-avatar-url";
 import {
+  genderAvatarSrc,
   guessGenderFromFirstName,
-  type GuessedGender,
 } from "@/lib/guess-gender";
 import { cn } from "@/lib/utils";
 
@@ -32,15 +32,17 @@ export function ContactAvatar({
   size?: "default" | "sm" | "lg";
   className?: string;
 }) {
-  void linkedinUrl;
   const hasStoredPhoto =
     Boolean(profileImageUrl?.trim()) && !isUnusableAvatarUrl(profileImageUrl);
+  const hasLinkedIn = Boolean(linkedinUrl?.trim());
   // Prefer same-origin avatar route so LinkedIn CDN / data URLs load reliably.
+  // Also hit the route when we only have a LinkedIn URL — it resolves + caches.
   const photoUrl =
-    contactId && hasStoredPhoto
+    contactId && (hasStoredPhoto || hasLinkedIn)
       ? `/api/avatars/${contactId}`
       : resolveContactPhotoUrl(profileImageUrl);
   const gender = guessGenderFromFirstName(firstName, fullName);
+  const fallbackSrc = genderAvatarSrc(gender);
   const label = fullName.trim() || "Contact";
 
   return (
@@ -49,47 +51,15 @@ export function ContactAvatar({
         <AvatarImage src={photoUrl} alt={label} referrerPolicy="no-referrer" />
       ) : null}
       <AvatarFallback className="bg-muted p-0 overflow-hidden">
-        <GenderSilhouette gender={gender} />
+        {/* eslint-disable-next-line @next/next/no-img-element -- static public avatar */}
+        <img
+          src={fallbackSrc}
+          alt=""
+          aria-hidden
+          className="size-full object-cover"
+          draggable={false}
+        />
       </AvatarFallback>
     </Avatar>
-  );
-}
-
-function GenderSilhouette({ gender }: { gender: GuessedGender }) {
-  if (gender === "female") {
-    return (
-      <svg
-        viewBox="0 0 40 40"
-        className="size-full text-muted-foreground/80"
-        aria-hidden
-      >
-        <circle cx="20" cy="14" r="7" fill="currentColor" opacity="0.85" />
-        <path
-          fill="currentColor"
-          d="M8 36c0-7.5 5.4-13 12-13s12 5.5 12 13H8z"
-          opacity="0.85"
-        />
-        <path
-          fill="currentColor"
-          d="M11 16c0-5 3.5-9.5 9-9.5S29 11 29 16c0 1.2-.3 2.3-.8 3.3-1.4-2.8-3.9-4.5-8.2-4.5s-6.8 1.7-8.2 4.5c-.5-1-.8-2.1-.8-3.3z"
-          opacity="0.35"
-        />
-      </svg>
-    );
-  }
-
-  return (
-    <svg
-      viewBox="0 0 40 40"
-      className="size-full text-muted-foreground/80"
-      aria-hidden
-    >
-      <circle cx="20" cy="14" r="7" fill="currentColor" opacity="0.85" />
-      <path
-        fill="currentColor"
-        d="M7 36c1.2-7.2 6.2-12 13-12s11.8 4.8 13 12H7z"
-        opacity="0.85"
-      />
-    </svg>
   );
 }

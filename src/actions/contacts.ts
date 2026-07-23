@@ -1,6 +1,6 @@
 "use server";
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import {
@@ -20,8 +20,10 @@ import { rebuildContactEmbedding } from "@/lib/search";
 import {
   enrichPeopleFromLinkedIn,
   getApolloApiKey,
+  type LinkedInProfileEnrichment,
 } from "@/lib/apollo";
 import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
+import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import {
   downloadImageAsDataUrl,
   fetchLinkedInPhotoDataUrl,
@@ -84,24 +86,33 @@ async function syncTags(
   const db = await getDb();
   await db.delete(contactTags).where(eq(contactTags.contactId, contactId));
 
-  for (const raw of tagNames) {
-    const name = raw.trim();
-    if (!name) continue;
+  const names = [
+    ...new Set(tagNames.map((raw) => raw.trim()).filter(Boolean)),
+  ];
+  if (names.length === 0) return;
 
-    let tag = await db.query.tags.findFirst({
-      where: and(eq(tags.userId, userId), eq(tags.name, name)),
-    });
+  const existing = await db.query.tags.findMany({
+    where: and(eq(tags.userId, userId), inArray(tags.name, names)),
+  });
+  const byName = new Map(existing.map((tag) => [tag.name, tag]));
 
-    if (!tag) {
-      const [created] = await db
-        .insert(tags)
-        .values({ userId, name })
-        .returning();
-      tag = created;
+  const missing = names.filter((name) => !byName.has(name));
+  if (missing.length > 0) {
+    const created = await db
+      .insert(tags)
+      .values(missing.map((name) => ({ userId, name })))
+      .returning();
+    for (const tag of created) {
+      byName.set(tag.name, tag);
     }
-
-    await db.insert(contactTags).values({ contactId, tagId: tag.id });
   }
+
+  await db.insert(contactTags).values(
+    names.map((name) => ({
+      contactId,
+      tagId: byName.get(name)!.id,
+    }))
+  );
 }
 
 export async function listContacts(filters?: {
@@ -113,14 +124,19 @@ export async function listContacts(filters?: {
   const userId = await requireUserId();
   const db = await getDb();
 
-  let rows = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    with: { contactTags: { with: { tag: true } } },
-    orderBy: [desc(contacts.updatedAt)],
-  });
+  const [allRows, goals] = await Promise.all([
+    db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+      with: { contactTags: { with: { tag: true } } },
+      orderBy: [desc(contacts.updatedAt)],
+    }),
+    listActiveGoalTexts(userId),
+  ]);
 
-  if (filters?.q) {
-    const q = filters.q.toLowerCase();
+  let rows = allRows;
+
+  if (filters?.q?.trim()) {
+    const q = filters.q.trim().toLowerCase();
     rows = rows.filter((c) =>
       [
         c.fullName,
@@ -142,9 +158,10 @@ export async function listContacts(filters?: {
         .some((v) => v!.toLowerCase().includes(q))
     );
   }
-  if (filters?.company) {
+  if (filters?.company?.trim()) {
     rows = rows.filter(
-      (c) => (c.company || "").toLowerCase() === filters.company!.toLowerCase()
+      (c) =>
+        (c.company || "").toLowerCase() === filters.company!.trim().toLowerCase()
     );
   }
   if (filters?.minScore) {
@@ -156,8 +173,6 @@ export async function listContacts(filters?: {
       (c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now
     );
   }
-
-  const goals = await listActiveGoalTexts(userId);
 
   const mapped = rows.map((c) => {
     const tags = c.contactTags.map((ct) => ct.tag.name);
@@ -190,6 +205,113 @@ function lastNameSortKey(lastName: string | null | undefined, fullName: string) 
   return inferred.toLocaleLowerCase();
 }
 
+export type ContactFieldSuggestions = {
+  locations: string[];
+  schools: string[];
+  /** Most common location per school (case-insensitive school key → display location). */
+  locationBySchool: Record<string, string>;
+  /** Most common school per location (case-insensitive location key → display school). */
+  schoolByLocation: Record<string, string>;
+};
+
+/** Distinct location/school values from the user's network for form autocomplete. */
+export async function getContactFieldSuggestions(): Promise<ContactFieldSuggestions> {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const rows = await db.query.contacts.findMany({
+    where: eq(contacts.userId, userId),
+    columns: { location: true, school: true },
+  });
+
+  const locationCounts = new Map<string, { display: string; count: number }>();
+  const schoolCounts = new Map<string, { display: string; count: number }>();
+  const pairCounts = new Map<
+    string,
+    { school: string; location: string; count: number }
+  >();
+
+  for (const row of rows) {
+    const location = row.location?.trim();
+    const school = row.school?.trim();
+
+    if (location) {
+      const key = location.toLowerCase();
+      const prev = locationCounts.get(key);
+      locationCounts.set(key, {
+        display: prev?.display ?? location,
+        count: (prev?.count ?? 0) + 1,
+      });
+    }
+    if (school) {
+      const key = school.toLowerCase();
+      const prev = schoolCounts.get(key);
+      schoolCounts.set(key, {
+        display: prev?.display ?? school,
+        count: (prev?.count ?? 0) + 1,
+      });
+    }
+    if (location && school) {
+      const key = `${school.toLowerCase()}::${location.toLowerCase()}`;
+      const prev = pairCounts.get(key);
+      pairCounts.set(key, {
+        school: prev?.school ?? school,
+        location: prev?.location ?? location,
+        count: (prev?.count ?? 0) + 1,
+      });
+    }
+  }
+
+  const locationBySchool: Record<string, string> = {};
+  const schoolByLocation: Record<string, string> = {};
+  const bestSchoolPair = new Map<string, { location: string; count: number }>();
+  const bestLocationPair = new Map<string, { school: string; count: number }>();
+
+  for (const pair of pairCounts.values()) {
+    const schoolKey = pair.school.toLowerCase();
+    const locationKey = pair.location.toLowerCase();
+    const schoolBest = bestSchoolPair.get(schoolKey);
+    if (!schoolBest || pair.count > schoolBest.count) {
+      bestSchoolPair.set(schoolKey, {
+        location: pair.location,
+        count: pair.count,
+      });
+    }
+    const locationBest = bestLocationPair.get(locationKey);
+    if (!locationBest || pair.count > locationBest.count) {
+      bestLocationPair.set(locationKey, {
+        school: pair.school,
+        count: pair.count,
+      });
+    }
+  }
+
+  for (const [key, value] of bestSchoolPair) {
+    locationBySchool[key] = value.location;
+  }
+  for (const [key, value] of bestLocationPair) {
+    schoolByLocation[key] = value.school;
+  }
+
+  const byCountThenName = (
+    a: { display: string; count: number },
+    b: { display: string; count: number }
+  ) =>
+    b.count - a.count ||
+    a.display.localeCompare(b.display, undefined, { sensitivity: "base" });
+
+  return {
+    locations: [...locationCounts.values()]
+      .sort(byCountThenName)
+      .map((v) => v.display),
+    schools: [...schoolCounts.values()]
+      .sort(byCountThenName)
+      .map((v) => v.display),
+    locationBySchool,
+    schoolByLocation,
+  };
+}
+
 export async function getContact(id: string) {
   const userId = await requireUserId();
   const db = await getDb();
@@ -198,7 +320,12 @@ export async function getContact(id: string) {
     where: and(eq(contacts.id, id), eq(contacts.userId, userId)),
     with: {
       contactTags: { with: { tag: true } },
-      interactions: { orderBy: [desc(interactions.interactionDate)] },
+      interactions: {
+        orderBy: [
+          desc(interactions.interactionDate),
+          asc(interactions.sameDayOrder),
+        ],
+      },
       reminders: { orderBy: [desc(reminders.createdAt)] },
     },
   });
@@ -352,6 +479,22 @@ export async function updateContact(
 
   await rebuildContactEmbedding(userId, id);
 
+  const significant =
+    input.fullName !== undefined ||
+    input.preferredName !== undefined ||
+    input.title !== undefined ||
+    input.company !== undefined ||
+    input.industry !== undefined ||
+    input.howMet !== undefined ||
+    input.metContext !== undefined ||
+    input.notes !== undefined ||
+    input.keyFacts !== undefined ||
+    input.sharedInterests !== undefined;
+
+  if (significant && !options?.skipRevalidate) {
+    void generateAndStorePersonSummary(userId, id).catch(() => null);
+  }
+
   if (!options?.skipRevalidate) {
     revalidatePath("/");
     revalidatePath("/contacts");
@@ -382,17 +525,32 @@ export async function logInteraction(input: {
   interactionType?: string;
   source?: string;
   interactionDate?: string | Date;
+  /** When true, parse a date from rawNotes if interactionDate is omitted. */
+  parseDateFromNotes?: boolean;
 }) {
   const userId = await requireUserId();
   const db = await getDb();
+  const { parseInteractionDateFromNotes } = await import(
+    "@/lib/interaction-date"
+  );
+
   const parsedDate =
     input.interactionDate instanceof Date
       ? input.interactionDate
       : input.interactionDate
-        ? new Date(input.interactionDate)
+        ? new Date(
+            input.interactionDate.length <= 10
+              ? `${input.interactionDate}T12:00:00`
+              : input.interactionDate
+          )
         : null;
-  const when =
-    parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : new Date();
+  let when =
+    parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : null;
+
+  if (!when && input.parseDateFromNotes) {
+    when = parseInteractionDateFromNotes(input.rawNotes, new Date());
+  }
+  if (!when) when = new Date();
 
   const [row] = await db
     .insert(interactions)
@@ -406,6 +564,7 @@ export async function logInteraction(input: {
       interactionType: input.interactionType ?? "note",
       source: input.source,
       interactionDate: when,
+      sameDayOrder: 0,
     })
     .returning();
 
@@ -418,11 +577,131 @@ export async function logInteraction(input: {
     await rebuildContactEmbedding(userId, input.contactId);
   }
 
+  // Significant change: refresh stored person summary
+  void generateAndStorePersonSummary(userId, input.contactId).catch(() => null);
+
   revalidatePath(`/contacts/${input.contactId}`);
   revalidatePath("/");
   revalidatePath("/dashboard");
   revalidatePath("/graph");
   return row;
+}
+
+export async function updateInteraction(
+  interactionId: string,
+  input: {
+    rawNotes?: string;
+    aiSummary?: string;
+    actionItems?: string[];
+    interactionType?: string;
+    interactionDate?: string | Date;
+    parseDateFromNotes?: boolean;
+  }
+) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const { parseInteractionDateFromNotes } = await import(
+    "@/lib/interaction-date"
+  );
+
+  const existing = await db.query.interactions.findFirst({
+    where: and(
+      eq(interactions.id, interactionId),
+      eq(interactions.userId, userId)
+    ),
+  });
+  if (!existing) throw new Error("Interaction not found");
+
+  const parsedDate =
+    input.interactionDate instanceof Date
+      ? input.interactionDate
+      : input.interactionDate
+        ? new Date(
+            input.interactionDate.length <= 10
+              ? `${input.interactionDate}T12:00:00`
+              : input.interactionDate
+          )
+        : null;
+
+  let when =
+    parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : null;
+  const notes = input.rawNotes !== undefined ? input.rawNotes : existing.rawNotes;
+  if (!when && input.parseDateFromNotes) {
+    when = parseInteractionDateFromNotes(notes, new Date(existing.interactionDate));
+  }
+
+  const [row] = await db
+    .update(interactions)
+    .set({
+      ...(input.rawNotes !== undefined ? { rawNotes: input.rawNotes } : {}),
+      ...(input.aiSummary !== undefined ? { aiSummary: input.aiSummary } : {}),
+      ...(input.actionItems !== undefined
+        ? { actionItems: input.actionItems }
+        : {}),
+      ...(input.interactionType !== undefined
+        ? { interactionType: input.interactionType }
+        : {}),
+      ...(when ? { interactionDate: when } : {}),
+    })
+    .where(eq(interactions.id, interactionId))
+    .returning();
+
+  await rebuildContactEmbedding(userId, existing.contactId);
+  void generateAndStorePersonSummary(userId, existing.contactId).catch(
+    () => null
+  );
+
+  revalidatePath(`/contacts/${existing.contactId}`);
+  revalidatePath("/dashboard");
+  revalidatePath("/graph");
+  return row;
+}
+
+/** Persist manual order for interactions on the same calendar day (YYYY-MM-DD). */
+export async function reorderSameDayInteractions(
+  contactId: string,
+  dayIso: string,
+  orderedIds: string[]
+) {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const rows = await db.query.interactions.findMany({
+    where: and(
+      eq(interactions.userId, userId),
+      eq(interactions.contactId, contactId)
+    ),
+  });
+
+  const dayRows = rows.filter((r) => {
+    const d = new Date(r.interactionDate);
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return iso === dayIso;
+  });
+
+  const allowed = new Set(dayRows.map((r) => r.id));
+  if (
+    orderedIds.length === 0 ||
+    orderedIds.some((id) => !allowed.has(id)) ||
+    orderedIds.length !== allowed.size
+  ) {
+    throw new Error("Invalid reorder payload");
+  }
+
+  for (let i = 0; i < orderedIds.length; i++) {
+    await db
+      .update(interactions)
+      .set({ sameDayOrder: i })
+      .where(
+        and(
+          eq(interactions.id, orderedIds[i]),
+          eq(interactions.userId, userId)
+        )
+      );
+  }
+
+  revalidatePath(`/contacts/${contactId}`);
+  return { ok: true as const };
 }
 
 export async function regenerateContactSummary(contactId: string) {
@@ -474,6 +753,46 @@ export async function listLinkedInRefreshTargets(): Promise<{
     }));
 
   return { targets, hasApollo: Boolean(apiKey) };
+}
+
+function isLinkedInProfileUrl(raw: string) {
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+  try {
+    const url = new URL(
+      trimmed.startsWith("http") ? trimmed : `https://${trimmed}`
+    );
+    const host = url.hostname.replace(/^www\./i, "").toLowerCase();
+    return host === "linkedin.com" && /\/in\//i.test(url.pathname);
+  } catch {
+    return /linkedin\.com\/in\//i.test(trimmed);
+  }
+}
+
+/**
+ * Look up a LinkedIn profile (via Apollo) to autofill role and related fields
+ * on the contact form. Does not write to the database.
+ */
+export async function lookupLinkedInProfile(input: {
+  linkedinUrl: string;
+  fullName?: string;
+  email?: string;
+}): Promise<LinkedInProfileEnrichment | null> {
+  const userId = await requireUserId();
+  const raw = input.linkedinUrl.trim();
+  if (!isLinkedInProfileUrl(raw)) {
+    throw new Error("Enter a LinkedIn profile URL (linkedin.com/in/…)");
+  }
+
+  const linkedinUrl = buildLinkedInUrl(raw);
+  const [profile] = await enrichPeopleFromLinkedIn(userId, [
+    {
+      linkedinUrl,
+      fullName: input.fullName?.trim() || null,
+      email: input.email?.trim() || null,
+    },
+  ]);
+  return profile;
 }
 
 /**
@@ -616,10 +935,16 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
 }
 
 /** Draft a warm follow-up message from the contact profile. */
-export async function draftContactFollowUp(contactId: string) {
+export async function draftContactFollowUp(
+  contactId: string,
+  options?: {
+    channel?: "email" | "linkedin" | "sms";
+    intent?: string;
+  }
+) {
   const userId = await requireUserId();
   const goals = await listActiveGoalTexts(userId);
-  return generateContactFollowUpDraft(userId, contactId, goals);
+  return generateContactFollowUpDraft(userId, contactId, goals, options);
 }
 
 export type ContactFollowUpSendOptions = {
@@ -698,16 +1023,20 @@ export async function sendContactFollowUpEmail(
     aiSummary: "Sent follow-up email from contact profile",
   });
 
+  const { clearContactFollowUp } = await import("@/actions/reminders");
+  await clearContactFollowUp(contactId);
+
   return { ok: true as const };
 }
 
 /** Contacts related by company, school, howMet, mentions, tags, or interests. */
 export async function listRelatedContacts(
   contactId: string,
-  limit = 8
+  limit = 6
 ): Promise<RelatedContact[]> {
   const userId = await requireUserId();
   const db = await getDb();
+  const goals = await listActiveGoalTexts(userId);
 
   const rows = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
@@ -721,9 +1050,12 @@ export async function listRelatedContacts(
       company: true,
       companyId: true,
       school: true,
+      location: true,
       howMet: true,
       profileImageUrl: true,
       linkedinUrl: true,
+      email: true,
+      phone: true,
       notes: true,
       aiSummary: true,
       keyFacts: true,
@@ -738,6 +1070,40 @@ export async function listRelatedContacts(
       ...r,
       tags: r.contactTags.map((ct) => ct.tag.name),
     })),
-    limit
+    limit,
+    goals
   );
+}
+
+/** Lightweight contact payload for the floating ask bar person chip. */
+export async function getAskBarContact(contactId: string): Promise<{
+  id: string;
+  displayName: string;
+  firstName: string | null;
+  fullName: string;
+  profileImageUrl: string | null;
+  linkedinUrl: string | null;
+} | null> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const contact = await db.query.contacts.findFirst({
+    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+    columns: {
+      id: true,
+      preferredName: true,
+      firstName: true,
+      fullName: true,
+      profileImageUrl: true,
+      linkedinUrl: true,
+    },
+  });
+  if (!contact) return null;
+  return {
+    id: contact.id,
+    displayName: contact.preferredName || contact.fullName,
+    firstName: contact.firstName,
+    fullName: contact.fullName,
+    profileImageUrl: contact.profileImageUrl,
+    linkedinUrl: contact.linkedinUrl,
+  };
 }

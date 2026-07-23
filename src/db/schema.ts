@@ -21,12 +21,24 @@ export const userSettings = pgTable("user_settings", {
   onboardingCompletedAt: timestamp("onboarding_completed_at", {
     withTimezone: true,
   }),
+  onboardingStep: text("onboarding_step"),
   theme: text("theme").$type<"light" | "dark" | "system">(),
   apolloApiKeyEncrypted: text("apollo_api_key_encrypted"),
   resendApiKeyEncrypted: text("resend_api_key_encrypted"),
   twilioAccountSidEncrypted: text("twilio_account_sid_encrypted"),
   twilioAuthTokenEncrypted: text("twilio_auth_token_encrypted"),
   twilioFromNumber: text("twilio_from_number"),
+  desktopNotifiedIds: jsonb("desktop_notified_ids")
+    .$type<string[]>()
+    .default([]),
+  socialLinks: jsonb("social_links")
+    .$type<{
+      linkedin?: string;
+      twitter?: string;
+      github?: string;
+      website?: string;
+    }>()
+    .default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -143,6 +155,8 @@ export const interactions = pgTable(
     interactionDate: timestamp("interaction_date", { withTimezone: true })
       .defaultNow()
       .notNull(),
+    /** Manual order among interactions on the same calendar day (lower = earlier in list when date desc). */
+    sameDayOrder: integer("same_day_order").default(0).notNull(),
     source: text("source"),
     externalId: text("external_id"),
     rawNotes: text("raw_notes"),
@@ -160,6 +174,30 @@ export const interactions = pgTable(
   ]
 );
 
+export type ReminderActionKind =
+  | "call"
+  | "email"
+  | "meet"
+  | "task"
+  | "follow_up";
+
+export const reminderLists = pgTable(
+  "reminder_lists",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    name: text("name").notNull(),
+    nameNormalized: text("name_normalized").notNull(),
+    position: integer("position").default(0).notNull(),
+    isInbox: integer("is_inbox").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("reminder_lists_user_idx").on(t.userId),
+    uniqueIndex("reminder_lists_user_name_uidx").on(t.userId, t.nameNormalized),
+  ]
+);
+
 export const reminders = pgTable(
   "reminders",
   {
@@ -168,17 +206,25 @@ export const reminders = pgTable(
     contactId: uuid("contact_id").references(() => contacts.id, {
       onDelete: "cascade",
     }),
+    listId: uuid("list_id").references(() => reminderLists.id, {
+      onDelete: "set null",
+    }),
     title: text("title").notNull(),
     description: text("description"),
     dueDate: timestamp("due_date", { withTimezone: true }),
     status: text("status").default("pending").notNull(),
     reminderType: text("reminder_type").default("manual").notNull(),
+    actionKind: text("action_kind")
+      .$type<ReminderActionKind>()
+      .default("task")
+      .notNull(),
     createdBy: text("created_by").default("user").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
     index("reminders_user_status_idx").on(t.userId, t.status),
     index("reminders_due_idx").on(t.userId, t.dueDate),
+    index("reminders_list_idx").on(t.userId, t.listId),
   ]
 );
 
@@ -353,8 +399,98 @@ export const contactEmbeddings = pgTable(
   ]
 );
 
+export type RecruiterLinkStatus =
+  | "planned"
+  | "contacted"
+  | "active"
+  | "archived";
+
+export type RecruiterLinkSource = "manual" | "gmail" | "chat";
+
+/** Crowdsourced canonical recruiter profile (global, not user-scoped). */
+export const recruiters = pgTable(
+  "recruiters",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    fullName: text("full_name").notNull(),
+    nameNormalized: text("name_normalized").notNull(),
+    firm: text("firm"),
+    firmNormalized: text("firm_normalized"),
+    specialty: jsonb("specialty").$type<string[]>().default([]),
+    email: text("email"),
+    emailNormalized: text("email_normalized"),
+    linkedinUrl: text("linkedin_url"),
+    phone: text("phone"),
+    avgRating: integer("avg_rating").default(0).notNull(),
+    ratingCount: integer("rating_count").default(0).notNull(),
+    logCount: integer("log_count").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("recruiters_name_idx").on(t.nameNormalized),
+    index("recruiters_firm_idx").on(t.firmNormalized),
+    index("recruiters_email_idx").on(t.emailNormalized),
+    index("recruiters_rating_idx").on(t.avgRating, t.logCount),
+  ]
+);
+
+/** Personal relationship to a shared recruiter — unlocks PII for this user. */
+export const userRecruiterLinks = pgTable(
+  "user_recruiter_links",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    recruiterId: uuid("recruiter_id")
+      .notNull()
+      .references(() => recruiters.id, { onDelete: "cascade" }),
+    status: text("status")
+      .$type<RecruiterLinkStatus>()
+      .default("planned")
+      .notNull(),
+    personalRating: integer("personal_rating"),
+    notes: text("notes"),
+    source: text("source")
+      .$type<RecruiterLinkSource>()
+      .default("manual")
+      .notNull(),
+    contactId: uuid("contact_id").references(() => contacts.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("user_recruiter_links_user_idx").on(t.userId),
+    index("user_recruiter_links_recruiter_idx").on(t.recruiterId),
+    uniqueIndex("user_recruiter_links_user_recruiter_uidx").on(
+      t.userId,
+      t.recruiterId
+    ),
+  ]
+);
+
+export const gmailConnections = pgTable(
+  "gmail_connections",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull().unique(),
+    emailAddress: text("email_address").notNull(),
+    accessTokenEncrypted: text("access_token_encrypted").notNull(),
+    refreshTokenEncrypted: text("refresh_token_encrypted"),
+    tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+    scopes: text("scopes"),
+    status: text("status").default("active").notNull(),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("gmail_connections_user_idx").on(t.userId)]
+);
+
 export type ChatRecommendation = {
-  contact_id: string;
+  contact_id?: string | null;
+  recruiter_id?: string | null;
   name: string;
   reason: string;
   suggested_action: string;
@@ -424,10 +560,18 @@ export const interactionsRelations = relations(interactions, ({ one }) => ({
   }),
 }));
 
+export const reminderListsRelations = relations(reminderLists, ({ many }) => ({
+  reminders: many(reminders),
+}));
+
 export const remindersRelations = relations(reminders, ({ one }) => ({
   contact: one(contacts, {
     fields: [reminders.contactId],
     references: [contacts.id],
+  }),
+  list: one(reminderLists, {
+    fields: [reminders.listId],
+    references: [reminderLists.id],
   }),
 }));
 
@@ -484,10 +628,29 @@ export const chatMessagesRelations = relations(chatMessages, ({ one }) => ({
   }),
 }));
 
+export const recruitersRelations = relations(recruiters, ({ many }) => ({
+  links: many(userRecruiterLinks),
+}));
+
+export const userRecruiterLinksRelations = relations(
+  userRecruiterLinks,
+  ({ one }) => ({
+    recruiter: one(recruiters, {
+      fields: [userRecruiterLinks.recruiterId],
+      references: [recruiters.id],
+    }),
+    contact: one(contacts, {
+      fields: [userRecruiterLinks.contactId],
+      references: [contacts.id],
+    }),
+  })
+);
+
 export type Contact = typeof contacts.$inferSelect;
 export type NewContact = typeof contacts.$inferInsert;
 export type Interaction = typeof interactions.$inferSelect;
 export type Reminder = typeof reminders.$inferSelect;
+export type ReminderList = typeof reminderLists.$inferSelect;
 export type Tag = typeof tags.$inferSelect;
 export type AiSuggestion = typeof aiSuggestions.$inferSelect;
 export type ImportRecord = typeof imports.$inferSelect;
@@ -499,3 +662,6 @@ export type OutreachProspect = typeof outreachProspects.$inferSelect;
 export type OutreachMessage = typeof outreachMessages.$inferSelect;
 export type ChatThread = typeof chatThreads.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
+export type Recruiter = typeof recruiters.$inferSelect;
+export type UserRecruiterLink = typeof userRecruiterLinks.$inferSelect;
+export type GmailConnection = typeof gmailConnections.$inferSelect;

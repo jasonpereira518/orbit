@@ -210,14 +210,25 @@ export async function confirmCapture(input: {
 
   if (input.createReminder && followUpDate) {
     const db = await getDb();
+    const title =
+      parsed.follow_up_recommendation || `Follow up with ${parsed.name}`;
+    const { inferReminderActionKind } = await import(
+      "@/lib/reminder-action-kind"
+    );
     await db.insert(reminders).values({
       userId,
       contactId,
-      title: parsed.follow_up_recommendation || `Follow up with ${parsed.name}`,
+      title,
       description: parsed.suggested_next_message || undefined,
       dueDate: followUpDate,
       status: "pending",
       reminderType: "ai_suggested",
+      actionKind: inferReminderActionKind({
+        title,
+        description: parsed.suggested_next_message,
+        reminderType: "ai_suggested",
+        contactId,
+      }),
       createdBy: "ai",
     });
   }

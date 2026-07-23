@@ -21,6 +21,7 @@ function toSearchable(
     fullName: c.fullName,
     preferredName: c.preferredName,
     company: c.company,
+    school: c.school,
     title: c.title,
     location: c.location,
     email: c.email,
@@ -33,6 +34,7 @@ function toSearchable(
     notes: c.notes,
     industry: c.industry,
     keyFacts: c.keyFacts,
+    sharedInterests: c.sharedInterests,
     relationshipScore: c.relationshipScore,
     priorityLevel: c.priorityLevel,
     tags: c.contactTags.map((ct) => ct.tag.name),
@@ -64,11 +66,17 @@ async function semanticHitsForQuery(
   const scores = new Map<string, number>();
 
   if (isPgvectorAvailable()) {
-    const rows = await pgvectorSearchContacts(userId, queryEmbedding, 24);
-    for (const row of rows) {
-      scores.set(row.contactId, row.similarity);
+    try {
+      const rows = await pgvectorSearchContacts(userId, queryEmbedding, 24);
+      for (const row of rows) {
+        scores.set(row.contactId, row.similarity);
+      }
+    } catch {
+      // fall through to in-memory
     }
-  } else {
+  }
+
+  if (scores.size === 0) {
     const db = await getDb();
     const embeddings = await db.query.contactEmbeddings.findMany({
       where: eq(contactEmbeddings.userId, userId),
@@ -94,17 +102,19 @@ async function semanticHitsForQuery(
 }
 
 export async function searchDashboardContacts(
-  query: string
+  query: string,
+  options?: { limit?: number }
 ): Promise<KeywordSearchHit[]> {
   const q = query.trim();
   if (!q || q.length < 1) return [];
 
+  const limit = Math.min(Math.max(options?.limit ?? 12, 1), 80);
   const userId = await requireUserId();
   const rows = await loadContacts(userId);
   const searchable = rows.map(toSearchable);
   const contactsById = new Map(searchable.map((c) => [c.id, c]));
 
-  const keywordHits = rankKeywordSearch(searchable, q, 12);
+  const keywordHits = rankKeywordSearch(searchable, q, limit);
 
   // Semantic path needs a longer query or no strong keyword hits
   const useSemantic = q.length >= 3;
@@ -113,5 +123,5 @@ export async function searchDashboardContacts(
   const semanticHits = await semanticHitsForQuery(userId, q, contactsById);
   if (semanticHits.length === 0) return keywordHits;
 
-  return mergeSearchHits(keywordHits, semanticHits, 12);
+  return mergeSearchHits(keywordHits, semanticHits, limit);
 }

@@ -1,14 +1,14 @@
 "use client";
 
+import { useState, useTransition, type MouseEvent } from "react";
 import { useRouter } from "next/navigation";
-import { useTransition } from "react";
 import { toast } from "@/lib/toast";
 import {
   clearContactFollowUp,
-  completeContactFollowUp,
   scheduleContactFollowUp,
 } from "@/actions/reminders";
 import { Button } from "@/components/ui/button";
+import { FollowUpDraftSheet } from "@/components/follow-up/follow-up-draft-sheet";
 import { promptNotificationsAfterFollowUpAction } from "@/lib/browser-notifications";
 import { cn } from "@/lib/utils";
 
@@ -20,19 +20,32 @@ const PRESETS = [
 
 export function EasyFollowUp({
   contactId,
+  contactName,
   nextFollowUpAt,
   compact = false,
   className,
   onScheduled,
+  onCleared,
+  onFollowUpClick,
+  embedDraftSheet = true,
 }: {
   contactId: string;
+  contactName?: string;
   nextFollowUpAt?: string | Date | null;
   compact?: boolean;
   className?: string;
   onScheduled?: (dueDate: string) => void;
+  onCleared?: () => void;
+  /** When set, Follow-up calls this instead of opening the embedded sheet. */
+  onFollowUpClick?: () => void;
+  /** Render the draft sheet inside this component (disable when hosting sheet outside a Popover). */
+  embedDraftSheet?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const [sheetOpen, setSheetOpen] = useState(false);
+
+  const displayName = contactName?.trim() || "Contact";
 
   const dueLabel = nextFollowUpAt
     ? (() => {
@@ -68,6 +81,16 @@ export function EasyFollowUp({
         toast.error(err instanceof Error ? err.message : "Could not set follow-up");
       }
     });
+  }
+
+  function openFollowUp(e: MouseEvent<HTMLButtonElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (onFollowUpClick) {
+      onFollowUpClick();
+      return;
+    }
+    setSheetOpen(true);
   }
 
   return (
@@ -116,17 +139,9 @@ export function EasyFollowUp({
               variant="ghost"
               disabled={pending}
               className="h-8 px-2.5 text-muted-foreground"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                start(async () => {
-                  await completeContactFollowUp(contactId);
-                  toast.success("Follow-up marked done");
-                  router.refresh();
-                });
-              }}
+              onClick={openFollowUp}
             >
-              Done
+              Follow-up
             </Button>
             <Button
               type="button"
@@ -139,6 +154,7 @@ export function EasyFollowUp({
                 e.stopPropagation();
                 start(async () => {
                   await clearContactFollowUp(contactId);
+                  onCleared?.();
                   toast.success("Follow-up cleared");
                   router.refresh();
                 });
@@ -149,6 +165,15 @@ export function EasyFollowUp({
           </>
         )}
       </div>
+
+      {embedDraftSheet && (
+        <FollowUpDraftSheet
+          open={sheetOpen}
+          onOpenChange={setSheetOpen}
+          contactId={contactId}
+          contactName={displayName}
+        />
+      )}
     </div>
   );
 }

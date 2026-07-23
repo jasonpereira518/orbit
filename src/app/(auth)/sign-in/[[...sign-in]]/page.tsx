@@ -6,12 +6,14 @@ import {
   redirectIfAuthenticated,
 } from "@/lib/auth";
 import { clerkAppearance } from "@/lib/clerk-appearance";
+import { OrbitLogo } from "@/components/orbit-logo";
 
 export default async function SignInPage() {
   if (!isClerkConfigured()) {
     if (!isDemoMode()) {
       return (
         <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-6">
+          <OrbitLogo size="lg" />
           <h1 className="font-[family-name:var(--font-display)] text-3xl text-primary">
             Orbit
           </h1>
@@ -24,6 +26,7 @@ export default async function SignInPage() {
 
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-6">
+        <OrbitLogo size="lg" />
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-primary">
           Orbit
         </h1>

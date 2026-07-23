@@ -93,20 +93,20 @@ export function closenessTier(closeness: number): ClosenessBreakdown["tier"] {
 /** Tailwind text + chip classes for closeness % — distinct from name (primary). */
 export function closenessPercentColorClass(closeness: number) {
   const tier = closenessTier(closeness);
-  if (tier === "inner") return "text-amber-700 dark:text-amber-300";
-  if (tier === "mid") return "text-teal-600 dark:text-teal-400";
-  return "text-muted-foreground";
+  if (tier === "inner") return "text-emerald-700 dark:text-emerald-300";
+  if (tier === "mid") return "text-sky-700 dark:text-sky-300";
+  return "text-amber-700 dark:text-amber-300";
 }
 
 export function closenessPercentChipClass(closeness: number) {
   const tier = closenessTier(closeness);
   if (tier === "inner") {
-    return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
+    return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
   }
   if (tier === "mid") {
-    return "bg-teal-500/10 text-teal-600 dark:text-teal-400";
+    return "bg-sky-500/10 text-sky-700 dark:text-sky-300";
   }
-  return "bg-muted text-muted-foreground";
+  return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
 }
 
 /** Map continuous closeness onto the five constellation rings. */
@@ -144,4 +144,27 @@ export function computeCloseness(
     orbitScore: closenessToOrbitScore(closeness),
     tier: closenessTier(closeness),
   };
+}
+
+const FREQUENCY_WINDOW_DAYS = 90;
+
+/** Human-readable touch cadence from interactions in the last ~90 days. */
+export function formatInteractionFrequency(
+  interactionDates: Array<Date | string | null | undefined>
+): string {
+  const cutoff = Date.now() - FREQUENCY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  const recent = interactionDates.filter((d) => {
+    if (!d) return false;
+    const t = new Date(d).getTime();
+    return Number.isFinite(t) && t >= cutoff;
+  }).length;
+
+  if (recent === 0) return "No touches in 90 days";
+  if (recent === 1) return "1× in 90 days";
+
+  const perMonth = (recent / FREQUENCY_WINDOW_DAYS) * 30;
+  if (perMonth >= 3.5) return `~${Math.round(perMonth)}× / month`;
+  if (perMonth >= 1.5) return `~${perMonth.toFixed(1)}× / month`;
+  if (perMonth >= 0.75) return "~1× / month";
+  return `~${recent}× in 90 days`;
 }

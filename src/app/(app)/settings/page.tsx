@@ -6,6 +6,7 @@ import { AppearanceSettings } from "@/components/settings/appearance-settings";
 import { DataSettings } from "@/components/settings/data-settings";
 import { GoalsSettings } from "@/components/settings/goals-settings";
 import { HelpSettings } from "@/components/settings/help-settings";
+import { KnowledgeSettings } from "@/components/settings/knowledge-settings";
 import { NotificationSettings } from "@/components/settings/notification-settings";
 import { OutreachSettings } from "@/components/settings/outreach-settings";
 import { ProfileSettings } from "@/components/settings/profile-settings";
@@ -24,15 +25,20 @@ export default async function SettingsPage() {
           Settings
         </h1>
         <p className="mt-1 text-muted-foreground">
-          Account, goals, AI keys, notifications, and data controls.
+          Account, goals, AI keys, knowledge, notifications, and data controls.
         </p>
       </div>
-      <ProfileSettings profile={profile} clerkEnabled={isClerkConfigured()} />
+      <ProfileSettings
+        profile={profile}
+        clerkEnabled={isClerkConfigured()}
+        initialSocialLinks={initialSettings.socialLinks}
+      />
       <GoalsSettings initialGoals={initialGoals} />
       <AppearanceSettings initialTheme={initialSettings.theme} />
       <AiSettings initialSettings={initialSettings} />
       <NotificationSettings />
       <OutreachSettings initial={initialSettings.outreach} />
+      <KnowledgeSettings />
       <HelpSettings />
       <DataSettings />
     </div>

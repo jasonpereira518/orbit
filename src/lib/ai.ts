@@ -6,6 +6,7 @@ import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { decrypt } from "@/lib/crypto";
 import { z } from "zod";
+import { aiProviderErrorMessage } from "@/lib/errors";
 import {
   AI_PROVIDERS,
   resolveAiModel,
@@ -66,12 +67,15 @@ export function resolveGeminiModel(model?: string | null) {
   return resolveAiModel("gemini", model);
 }
 
-type StoredSettings = {
+type ProviderKeySettings = {
+  geminiApiKeyEncrypted?: string | null;
+  openaiApiKeyEncrypted?: string | null;
+  anthropicApiKeyEncrypted?: string | null;
+};
+
+type StoredSettings = ProviderKeySettings & {
   aiProvider: string | null;
   aiModel: string | null;
-  geminiApiKeyEncrypted: string | null;
-  openaiApiKeyEncrypted: string | null;
-  anthropicApiKeyEncrypted: string | null;
 };
 
 async function loadSettings(userId: string) {
@@ -90,9 +94,30 @@ function decryptKey(encrypted?: string | null) {
   }
 }
 
+/** Local-dev env fallback only. On Vercel, every user must bring their own key. */
+function allowEnvProviderKeys() {
+  return !process.env.VERCEL;
+}
+
+function getEnvProviderKey(provider: AiProvider): string | null {
+  if (!allowEnvProviderKeys()) return null;
+  if (provider === "gemini") return process.env.GEMINI_API_KEY || null;
+  if (provider === "openai") return process.env.OPENAI_API_KEY || null;
+  return process.env.ANTHROPIC_API_KEY || null;
+}
+
+function hasPersonalProviderKey(
+  provider: AiProvider,
+  settings?: ProviderKeySettings | null
+) {
+  if (provider === "gemini") return Boolean(settings?.geminiApiKeyEncrypted);
+  if (provider === "openai") return Boolean(settings?.openaiApiKeyEncrypted);
+  return Boolean(settings?.anthropicApiKeyEncrypted);
+}
+
 export function getProviderApiKey(
   provider: AiProvider,
-  settings?: StoredSettings | null
+  settings?: ProviderKeySettings | null
 ): string | null {
   const personal =
     provider === "gemini"
@@ -102,33 +127,22 @@ export function getProviderApiKey(
         : decryptKey(settings?.anthropicApiKeyEncrypted);
 
   if (personal) return personal;
-
-  if (provider === "gemini") return process.env.GEMINI_API_KEY || null;
-  if (provider === "openai") return process.env.OPENAI_API_KEY || null;
-  return process.env.ANTHROPIC_API_KEY || null;
+  return getEnvProviderKey(provider);
 }
 
 export function hasProviderKey(
   provider: AiProvider,
-  settings?: StoredSettings | null
+  settings?: ProviderKeySettings | null
 ) {
   return Boolean(getProviderApiKey(provider, settings));
 }
 
 export function usingEnvKey(
   provider: AiProvider,
-  settings?: StoredSettings | null
+  settings?: ProviderKeySettings | null
 ) {
-  const hasPersonal =
-    provider === "gemini"
-      ? Boolean(settings?.geminiApiKeyEncrypted)
-      : provider === "openai"
-        ? Boolean(settings?.openaiApiKeyEncrypted)
-        : Boolean(settings?.anthropicApiKeyEncrypted);
-  if (hasPersonal) return false;
-  if (provider === "gemini") return Boolean(process.env.GEMINI_API_KEY);
-  if (provider === "openai") return Boolean(process.env.OPENAI_API_KEY);
-  return Boolean(process.env.ANTHROPIC_API_KEY);
+  if (hasPersonalProviderKey(provider, settings)) return false;
+  return Boolean(getEnvProviderKey(provider));
 }
 
 export async function getAiConfig(userId: string) {
@@ -140,7 +154,7 @@ export async function getAiConfig(userId: string) {
   if (!apiKey) {
     const meta = AI_PROVIDERS.find((p) => p.id === provider)!;
     throw new Error(
-      `No ${meta.label} API key configured. Add one in Settings or set ${meta.envVar}.`
+      `No ${meta.label} API key configured. Add your own key in Settings.`
     );
   }
 
@@ -158,7 +172,7 @@ export async function resolveEmbeddingBackend(
     const apiKey = getProviderApiKey("openai", settings);
     if (!apiKey) {
       throw new Error(
-        "No OpenAI API key configured for embeddings. Add one in Settings or set OPENAI_API_KEY."
+        "No OpenAI API key configured for embeddings. Add your own key in Settings."
       );
     }
     return { backend: "openai", apiKey };
@@ -168,7 +182,7 @@ export async function resolveEmbeddingBackend(
     const apiKey = getProviderApiKey("gemini", settings);
     if (!apiKey) {
       throw new Error(
-        "No Gemini API key configured for embeddings. Add one in Settings or set GEMINI_API_KEY."
+        "No Gemini API key configured for embeddings. Add your own key in Settings."
       );
     }
     return { backend: "gemini", apiKey };
@@ -227,6 +241,56 @@ function findJsonEnd(text: string, start: number) {
   return -1;
 }
 
+/**
+ * Close dangling strings / braces when a model truncates mid-JSON
+ * (common with short max-output limits).
+ */
+function repairTruncatedJson(text: string): string | null {
+  const start = text.search(/[\[{]/);
+  if (start === -1) return null;
+
+  let slice = text.slice(start);
+  let inString = false;
+  let escaped = false;
+  const stack: string[] = [];
+
+  for (let i = 0; i < slice.length; i++) {
+    const ch = slice[i]!;
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") stack.push("}");
+    else if (ch === "[") stack.push("]");
+    else if (ch === "}" || ch === "]") {
+      if (stack.length > 0 && stack[stack.length - 1] === ch) stack.pop();
+    }
+  }
+
+  if (escaped) slice = slice.slice(0, -1);
+  if (inString) slice += '"';
+  while (stack.length > 0) slice += stack.pop();
+
+  try {
+    JSON.parse(slice);
+    return slice;
+  } catch {
+    return null;
+  }
+}
+
 export function parseAiJson<T = unknown>(raw: string): T {
   const text = extractJsonText(raw);
   try {
@@ -237,10 +301,18 @@ export function parseAiJson<T = unknown>(raw: string): T {
       throw new Error(`Failed to parse AI JSON: ${text.slice(0, 200)}`);
     }
     const end = findJsonEnd(text, start);
-    if (end === -1) {
-      throw new Error(`Failed to parse AI JSON: ${text.slice(0, 200)}`);
+    if (end !== -1) {
+      try {
+        return JSON.parse(text.slice(start, end + 1)) as T;
+      } catch {
+        // fall through to repair
+      }
     }
-    return JSON.parse(text.slice(start, end + 1)) as T;
+    const repaired = repairTruncatedJson(text);
+    if (repaired) {
+      return JSON.parse(repaired) as T;
+    }
+    throw new Error(`Failed to parse AI JSON: ${text.slice(0, 200)}`);
   }
 }
 
@@ -260,51 +332,70 @@ export async function completeJson(
   const temperature = input.temperature ?? 0.2;
   const system = `${input.system}\n\nRespond with valid JSON only. No markdown fences.`;
 
-  if (provider === "gemini") {
-    const client = new GoogleGenAI({ apiKey });
-    const response = await client.models.generateContent({
-      model,
-      contents: input.user,
-      config: {
+  try {
+    if (provider === "gemini") {
+      const client = new GoogleGenAI({ apiKey });
+      const response = await client.models.generateContent({
+        model,
+        contents: input.user,
+        config: {
+          temperature,
+          maxOutputTokens: 4096,
+          responseMimeType: "application/json",
+          systemInstruction: system,
+        },
+      });
+      const content = response.text;
+      if (!content) throw new Error("Empty AI response");
+      return normalizeJsonResponse(content);
+    }
+
+    if (provider === "openai") {
+      const client = new OpenAI({ apiKey });
+      const response = await client.chat.completions.create({
+        model,
         temperature,
-        responseMimeType: "application/json",
-        systemInstruction: system,
-      },
-    });
-    const content = response.text;
-    if (!content) throw new Error("Empty AI response");
-    return normalizeJsonResponse(content);
-  }
+        max_tokens: 4096,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: input.user },
+        ],
+      });
+      const content = response.choices[0]?.message?.content;
+      if (!content) throw new Error("Empty AI response");
+      return normalizeJsonResponse(content);
+    }
 
-  if (provider === "openai") {
-    const client = new OpenAI({ apiKey });
-    const response = await client.chat.completions.create({
+    const client = new Anthropic({ apiKey });
+    const response = await client.messages.create({
       model,
+      max_tokens: 4096,
       temperature,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: input.user },
-      ],
+      system,
+      messages: [{ role: "user", content: input.user }],
     });
-    const content = response.choices[0]?.message?.content;
-    if (!content) throw new Error("Empty AI response");
-    return normalizeJsonResponse(content);
+    const block = response.content.find((b) => b.type === "text");
+    if (!block || block.type !== "text" || !block.text) {
+      throw new Error("Empty AI response");
+    }
+    return normalizeJsonResponse(block.text);
+  } catch (err) {
+    if (err instanceof Error && err.message === "Empty AI response") throw err;
+    if (
+      err instanceof Error &&
+      err.message.startsWith("Failed to parse AI JSON")
+    ) {
+      throw new Error("AI returned an incomplete response. Try again.");
+    }
+    const label =
+      provider === "gemini"
+        ? "Gemini"
+        : provider === "openai"
+          ? "OpenAI"
+          : "Anthropic";
+    throw new Error(aiProviderErrorMessage(err, label));
   }
-
-  const client = new Anthropic({ apiKey });
-  const response = await client.messages.create({
-    model,
-    max_tokens: 4096,
-    temperature,
-    system,
-    messages: [{ role: "user", content: input.user }],
-  });
-  const block = response.content.find((b) => b.type === "text");
-  if (!block || block.type !== "text" || !block.text) {
-    throw new Error("Empty AI response");
-  }
-  return normalizeJsonResponse(block.text);
 }
 
 export async function parseNotesWithAI(
@@ -452,7 +543,20 @@ export async function chatWithNetwork(
     tags: string[];
     relevance: number;
   }>,
-  priorTurns: Array<{ role: "user" | "assistant"; content: string }> = []
+  priorTurns: Array<{ role: "user" | "assistant"; content: string }> = [],
+  recruitersContext: Array<{
+    id: string;
+    fullName: string;
+    firm: string | null;
+    specialty: string[];
+    avgRating: number;
+    logCount: number;
+    personalRating: number | null;
+    status: string | null;
+    notes: string | null;
+    piiUnlocked: boolean;
+    relevance: number;
+  }> = []
 ) {
   const contextBlock = contactsContext
     .map((c, i) => {
@@ -471,6 +575,20 @@ export async function chatWithNetwork(
     })
     .join("\n\n");
 
+  const recruitersBlock = recruitersContext
+    .map((r, i) => {
+      const rating = r.avgRating ? (r.avgRating / 10).toFixed(1) : "n/a";
+      const personal = r.personalRating
+        ? `personal_rating=${r.personalRating}`
+        : "not_logged";
+      const notes =
+        r.piiUnlocked && r.notes
+          ? `\nYour notes: ${r.notes.slice(0, 300)}`
+          : "";
+      return `${i + 1}. [recruiter_id=${r.id}] ${r.fullName} | firm=${r.firm || "?"} | specialty=${(r.specialty || []).join(", ") || "?"} | community_rating=${rating} (logs=${r.logCount}) | ${personal} | status=${r.status || "none"} | relevance=${r.relevance.toFixed(2)}${notes}`;
+    })
+    .join("\n\n");
+
   const historyBlock =
     priorTurns.length > 0
       ? priorTurns
@@ -478,18 +596,22 @@ export async function chatWithNetwork(
           .join("\n\n")
       : "";
 
+  const hasRecruiters = recruitersContext.length > 0;
+
   const content = await completeJson(userId, {
     temperature: 0.3,
-    user: `${historyBlock ? `Prior conversation:\n${historyBlock}\n\n` : ""}Question: ${question}\n\nContacts:\n${contextBlock || "(no contacts found)"}`,
+    user: `${historyBlock ? `Prior conversation:\n${historyBlock}\n\n` : ""}Question: ${question}\n\nContacts:\n${contextBlock || "(no contacts found)"}${hasRecruiters ? `\n\nRecruiters:\n${recruitersBlock}` : ""}`,
     system: `You are Orbit, a personal networking assistant.
-Answer ONLY using the provided contacts (including summaries, notes, key facts, and LinkedIn messages). Never invent people or message content.
-Use prior conversation for context when present, but ground every recommendation in the contacts list.
+Answer using the provided contacts${hasRecruiters ? " and recruiters" : ""} (including summaries, notes, key facts, and LinkedIn messages). Never invent people or message content.
+Use prior conversation for context when present, but ground every recommendation in the provided lists.
+${hasRecruiters ? "When the question is about recruiters, prefer recruiters the user already logged (personal_rating / status present), then highly rated community recruiters. Do not invent email/phone — contact details may be locked." : ""}
 Return JSON:
 {
   "answer": string,
   "recommendations": [
     {
-      "contact_id": string,
+      "contact_id": string|null,
+      "recruiter_id": string|null,
       "name": string,
       "reason": string,
       "suggested_action": string,
@@ -497,17 +619,18 @@ Return JSON:
     }
   ]
 }
-Only use contact_ids from the provided list.`,
+Only use contact_ids and recruiter_ids from the provided lists. For recruiter recommendations set recruiter_id and leave contact_id null (unless recommending a contact who is also a recruiter).`,
   });
 
-  return JSON.parse(content) as {
+  return parseAiJson<{
     answer: string;
     recommendations: Array<{
-      contact_id: string;
+      contact_id?: string | null;
+      recruiter_id?: string | null;
       name: string;
       reason: string;
       suggested_action: string;
       draft_message: string | null;
     }>;
-  };
+  }>(content);
 }

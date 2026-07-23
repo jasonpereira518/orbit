@@ -1,8 +1,13 @@
 "use client";
 
+import { useState, useTransition } from "react";
 import { SignOutButton, UserButton } from "@clerk/nextjs";
 import { clerkAppearance } from "@/lib/clerk-appearance";
+import { saveSocialLinks } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { toast } from "@/lib/toast";
 
 type ProfileData = {
   id: string;
@@ -11,13 +16,24 @@ type ProfileData = {
   imageUrl?: string;
 };
 
+type SocialLinks = {
+  linkedin: string;
+  twitter: string;
+  github: string;
+  website: string;
+};
+
 export function ProfileSettings({
   profile,
   clerkEnabled,
+  initialSocialLinks,
 }: {
   profile: ProfileData | null;
   clerkEnabled: boolean;
+  initialSocialLinks: SocialLinks;
 }) {
+  const [socials, setSocials] = useState(initialSocialLinks);
+  const [pending, start] = useTransition();
 
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
@@ -67,6 +83,56 @@ export function ProfileSettings({
           </SignOutButton>
         </div>
       )}
+
+      <div className="border-t border-border/60 pt-4">
+        <h3 className="text-sm font-medium text-primary">Your socials</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Shown when you click the sun in Constellation.
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {(
+            [
+              ["linkedin", "LinkedIn URL"],
+              ["twitter", "X / Twitter URL"],
+              ["github", "GitHub URL"],
+              ["website", "Personal site"],
+            ] as const
+          ).map(([key, label]) => (
+            <div key={key} className="space-y-1.5">
+              <Label htmlFor={`social-${key}`}>{label}</Label>
+              <Input
+                id={`social-${key}`}
+                type="url"
+                placeholder="https://"
+                value={socials[key]}
+                onChange={(e) =>
+                  setSocials((s) => ({ ...s, [key]: e.target.value }))
+                }
+              />
+            </div>
+          ))}
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          className="mt-3"
+          disabled={pending}
+          onClick={() =>
+            start(async () => {
+              try {
+                await saveSocialLinks(socials);
+                toast.success("Social links saved");
+              } catch (err) {
+                toast.error(
+                  err instanceof Error ? err.message : "Could not save"
+                );
+              }
+            })
+          }
+        >
+          {pending ? "Saving…" : "Save socials"}
+        </Button>
+      </div>
     </section>
   );
 }

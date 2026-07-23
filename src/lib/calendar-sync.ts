@@ -304,6 +304,7 @@ export async function applyNetworkingEvents(
             dueDate: due,
             status: "pending",
             reminderType: "post_meeting",
+            actionKind: "follow_up",
             createdBy: "calendar_sync",
           });
         }
