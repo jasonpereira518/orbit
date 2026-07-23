@@ -8,7 +8,10 @@ import { requireUserId, getCurrentUserProfile } from "@/lib/auth";
 import { computeCloseness } from "@/lib/closeness";
 import { isCometContact } from "@/lib/comet";
 import { rebuildContactEmbedding } from "@/lib/search";
-import { buildConstellationClusters } from "@/lib/constellation-clusters";
+import {
+  buildConstellationClusters,
+  toNamedGraphClusters,
+} from "@/lib/constellation-clusters";
 
 export type GraphCluster = {
   /** @deprecated use `name` — kept for UI that keyed on company */
@@ -79,16 +82,7 @@ export async function getGraphData() {
   });
 
   const { clusters: built } = buildConstellationClusters(graphContacts);
-  const clusters: GraphCluster[] = built
-    .filter((c) => c.kind === "company" || c.kind === "school")
-    .map((c) => ({
-      id: c.id,
-      name: c.name,
-      company: c.name,
-      kind: c.kind,
-      count: c.count,
-      contactIds: c.contactIds,
-    }));
+  const clusters: GraphCluster[] = toNamedGraphClusters(built);
 
   const companies = [
     ...new Set(

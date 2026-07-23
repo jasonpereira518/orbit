@@ -10,7 +10,10 @@ import {
 import { listActiveGoalTexts } from "@/actions/goals";
 import { daysAgo } from "@/lib/duplicates";
 import { isCometContact } from "@/lib/comet";
-import { buildConstellationClusters } from "@/lib/constellation-clusters";
+import {
+  buildConstellationClusters,
+  toNamedGraphClusters,
+} from "@/lib/constellation-clusters";
 import { computeNetworkMetrics } from "@/lib/network-metrics";
 
 const AUTO_SUGGESTION_TYPES = [
@@ -398,16 +401,7 @@ export async function getDashboardData(
   const userName = options?.userName || "You";
 
   const { clusters: builtClusters } = buildConstellationClusters(graphContacts);
-  const clusters = builtClusters
-    .filter((c) => c.kind === "company" || c.kind === "school")
-    .map((c) => ({
-      id: c.id,
-      name: c.name,
-      company: c.name,
-      kind: c.kind,
-      count: c.count,
-      contactIds: c.contactIds,
-    }));
+  const clusters = toNamedGraphClusters(builtClusters);
 
   const companies = [
     ...new Set(
