@@ -14,7 +14,8 @@ export function HelpSettings() {
       <div>
         <h2 className="text-lg font-medium text-primary">Help</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Replay the first-run walkthrough for adding people to your orbit.
+          Replay the product tour — contacts, capture, reminders, constellation,
+          and how to add your first people.
         </p>
       </div>
       <Button

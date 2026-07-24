@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "motion/react";
-import { FileSpreadsheet, Calendar, MessageSquare } from "lucide-react";
+import { FileSpreadsheet, Calendar, MessageSquare, BookOpen } from "lucide-react";
 import type { PreviewProps } from "@/components/onboarding/tour-config";
 
 const sources = [
@@ -54,6 +54,24 @@ export function ImportsPreview({ reducedMotion }: PreviewProps) {
           );
         })}
       </ul>
+
+      <motion.div
+        data-tour-hotspot="knowledge"
+        initial={reducedMotion ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: reducedMotion ? 0 : 0.4 }}
+        className="flex items-center gap-3 rounded-xl border border-dashed border-border/70 bg-background/40 px-3 py-2.5"
+      >
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-primary">
+          <BookOpen className="h-4 w-4" />
+        </span>
+        <div>
+          <p className="text-sm font-medium">Knowledge</p>
+          <p className="text-xs text-muted-foreground">
+            Search notes and imports after you bring them in
+          </p>
+        </div>
+      </motion.div>
     </div>
   );
 }

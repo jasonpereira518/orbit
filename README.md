@@ -57,13 +57,17 @@ Leave `DATABASE_URL` unset to use on-disk PGlite (`.data/pglite`). Set it to a N
 | Route | Purpose |
 |---|---|
 | `/` | Marketing landing |
-| `/dashboard` | Follow-ups, suggestions, recent contacts |
-| `/onboarding` | First-run tutorial — add or import your first people |
-| `/contacts` | Searchable contact list + profiles |
+| `/dashboard` | Follow-ups, suggestions, reminders, network depth |
+| `/onboarding` | First-run tutorial — tour the product, then add your first people |
+| `/contacts` | Searchable contact list + profiles (toggle to Recruiters) |
+| `/recruiters` | Recruiter tracking, directory, Gmail import |
 | `/capture` | Paste notes → AI extract → review → save |
 | `/imports` | LinkedIn connections + messages, calendar ICS subscribe/upload |
+| `/reminders` | Follow-up lists with snooze / done / quick actions |
 | `/chat` | Ask who in your network can help |
-| `/graph` | Interactive network map |
+| `/graph` | Interactive constellation map |
+| `/outreach` | Cold outreach campaigns and AI drafts |
+| `/knowledge` | Search imported notes and context |
 | `/settings` | BYOK, export, delete data |
 
 ## Demo path

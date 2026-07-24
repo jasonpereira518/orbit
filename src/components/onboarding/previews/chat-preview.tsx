@@ -13,7 +13,7 @@ export function ChatPreview({ reducedMotion }: PreviewProps) {
         data-tour-hotspot="question"
         initial={reducedMotion ? false : { opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
-        className="rounded-xl border border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+        className="ml-auto max-w-[90%] rounded-2xl rounded-br-md border border-border/60 bg-primary px-3 py-2 text-xs text-primary-foreground"
       >
         Who should I reach out to about AI internships?
       </motion.div>
@@ -22,7 +22,7 @@ export function ChatPreview({ reducedMotion }: PreviewProps) {
         initial={reducedMotion ? false : { opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: reducedMotion ? 0 : 0.25 }}
-        className="rounded-xl border border-border/60 bg-background/60 p-3"
+        className="max-w-[95%] rounded-2xl rounded-bl-md border border-border/60 bg-background/60 p-3"
       >
         <p className="text-sm leading-relaxed text-foreground">
           Start with <span className="font-medium text-primary">Marcus Lee</span>{" "}

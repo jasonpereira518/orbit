@@ -44,9 +44,13 @@ export function AppShell({
 
   if (isOnboarding) {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="relative min-h-screen overflow-hidden bg-background">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_100%_-20%,color-mix(in_oklab,var(--primary)_10%,transparent),transparent),radial-gradient(ellipse_60%_40%_at_0%_100%,rgba(196,163,90,0.07),transparent)]"
+        />
         <ThemeSync theme={theme} />
-        {children}
+        <div className="relative z-10">{children}</div>
       </div>
     );
   }

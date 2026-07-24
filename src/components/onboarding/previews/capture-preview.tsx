@@ -2,13 +2,27 @@
 
 import { motion } from "motion/react";
 import type { PreviewProps } from "@/components/onboarding/tour-config";
+import { cn } from "@/lib/utils";
 
 export function CapturePreview({ reducedMotion }: PreviewProps) {
   return (
     <div className="space-y-3 p-1">
-      <p className="font-[family-name:var(--font-display)] text-lg text-primary">
-        Capture
-      </p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="font-[family-name:var(--font-display)] text-lg text-primary">
+          Capture
+        </p>
+        <div
+          data-tour-hotspot="mode"
+          className="flex rounded-lg border border-border/70 bg-card p-0.5 text-[10px] font-medium"
+        >
+          <span className="rounded-md bg-primary px-2 py-1 text-primary-foreground shadow-sm">
+            Messy
+          </span>
+          <span className="rounded-md px-2 py-1 text-muted-foreground">
+            Structured
+          </span>
+        </div>
+      </div>
       <motion.div
         data-tour-hotspot="notes"
         initial={reducedMotion ? false : { opacity: 0.4 }}
@@ -35,12 +49,16 @@ export function CapturePreview({ reducedMotion }: PreviewProps) {
           OpenAI · Partnerships · Follow up in 14 days
         </p>
         <div className="mt-2 flex gap-1.5">
-          <span className="rounded-full bg-muted px-2 py-0.5 text-[10px]">
-            recruiting
-          </span>
-          <span className="rounded-full bg-muted px-2 py-0.5 text-[10px]">
-            intro
-          </span>
+          {["recruiting", "intro"].map((tag) => (
+            <span
+              key={tag}
+              className={cn(
+                "rounded-md bg-muted px-2 py-0.5 text-[10px] text-muted-foreground"
+              )}
+            >
+              {tag}
+            </span>
+          ))}
         </div>
       </motion.div>
     </div>

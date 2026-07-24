@@ -14,12 +14,15 @@ import {
 /** Keep in sync with TOUR_STEPS ids in tour-config (avoid importing client icons here). */
 const VALID_ONBOARDING_STEPS = new Set([
   "welcome",
+  "dashboard",
   "contacts",
+  "recruiters",
   "capture",
   "imports",
+  "reminders",
   "chat",
   "graph",
-  "dashboard",
+  "outreach",
   "start",
 ]);
 

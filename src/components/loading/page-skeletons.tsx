@@ -218,13 +218,24 @@ export function ImportsPageSkeleton() {
 
 export function OnboardingPageSkeleton() {
   return (
-    <div className="mx-auto flex min-h-[70vh] max-w-lg flex-col justify-center space-y-6">
-      <div className="space-y-2 text-center">
-        <Skeleton className="mx-auto h-10 w-48" />
-        <Skeleton className="mx-auto h-4 w-72" />
+    <div className="mx-auto flex min-h-screen max-w-5xl flex-col justify-center gap-5 px-4 py-8 sm:px-6">
+      <div className="flex gap-5">
+        <Skeleton className="hidden h-[28rem] w-48 shrink-0 rounded-[1.5rem] sm:block" />
+        <div className="flex min-w-0 flex-1 flex-col gap-4">
+          <Skeleton className="h-[26rem] w-full rounded-[1.35rem]" />
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex gap-1.5">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <Skeleton key={i} className="h-1.5 w-1.5 rounded-full" />
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <Skeleton className="h-8 w-16 rounded-lg" />
+              <Skeleton className="h-8 w-16 rounded-lg" />
+            </div>
+          </div>
+        </div>
       </div>
-      <Skeleton className="h-64 w-full rounded-2xl" />
-      <Skeleton className="mx-auto h-10 w-36" />
     </div>
   );
 }
