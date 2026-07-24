@@ -6,6 +6,8 @@ import {
 import {
   resolveConstellationShape,
   scaleForStarCount,
+  constellationFootprint,
+  assignClusterShapes,
 } from "@/lib/constellation-shapes";
 import { buildPeerEdges, peerEdgeToLayoutEdge } from "@/lib/network-metrics";
 import { clusterBrandColor } from "@/lib/school-color";
@@ -212,21 +214,23 @@ function hashUnit(id: string, salt = 0) {
 }
 
 /**
- * Map cluster members onto a real constellation figure (Cassiopeia, Draco, …).
+ * Map cluster members onto a real constellation figure (Cassiopeia, Orion, …).
+ * Keep rotation mild so classic stick-figures stay recognizable.
  */
 function placeConstellationMembers(
   members: GraphContactInput[],
   origin: { x: number; y: number },
   clusterSeed: string,
-  positions: Map<string, { x: number; y: number; angle: number; radius: number }>
+  positions: Map<string, { x: number; y: number; angle: number; radius: number }>,
+  shape = resolveConstellationShape(members.length, clusterSeed)
 ) {
   const sorted = orderConstellationMembers(members);
   const n = sorted.length;
   if (n === 0) return;
 
-  const shape = resolveConstellationShape(n, clusterSeed);
   const scale = scaleForStarCount(n);
-  const rotation = (hashUnit(clusterSeed, 11) - 0.5) * Math.PI * 0.7;
+  // ±~22° so Cassiopeia's W / Orion's belt stay readable
+  const rotation = (hashUnit(clusterSeed, 11) - 0.5) * Math.PI * 0.25;
   const cos = Math.cos(rotation);
   const sin = Math.sin(rotation);
 
@@ -238,8 +242,8 @@ function placeConstellationMembers(
     const dormant = c.dormant === true || isCometContact(c.lastInteractionAt);
     if (dormant) {
       const away = Math.atan2(origin.y, origin.x) || rotation;
-      lx += Math.cos(away) * 40;
-      ly += Math.sin(away) * 40;
+      lx += Math.cos(away) * 48;
+      ly += Math.sin(away) * 48;
     }
 
     const x = origin.x + lx;
@@ -257,7 +261,7 @@ function placeConstellationMembers(
  * Constellation map:
  * - Sun at center (identity only — no spokes)
  * - Faint orbit rings as spatial grid
- * - Clusters by Company → School arranged radially
+ * - Clusters by Company → School arranged along spiral galaxy arms
  * - Peer constellation links within clusters
  */
 export function buildHybridGraphLayout(
@@ -278,39 +282,87 @@ export function buildHybridGraphLayout(
 
   const clusterOrigins = new Map<string, { x: number; y: number }>();
   const named = clusters.filter((c) => c.kind !== "other" || c.count >= 1);
-  const namedCount = Math.max(named.length, 1);
-  let angleCursor = -Math.PI / 2;
+  // Same assignment order as buildPeerEdges so lines match star figures
+  const clusterShapes = assignClusterShapes(
+    clusters.map((c) => ({ id: c.id, contactIds: c.contactIds }))
+  );
 
-  for (let i = 0; i < named.length; i++) {
-    const cluster = named[i];
+  type Slot = {
+    id: string;
+    foot: number;
+    arm: number;
+    step: number;
+    angle: number;
+    radius: number;
+  };
+
+  const armCount = Math.min(4, Math.max(2, Math.ceil(named.length / 4)));
+  const armTurn = 0.78;
+  const armSpacing = 430;
+
+  const slots: Slot[] = named.map((cluster, i) => {
     const members = byCluster.get(cluster.id) || [];
     const size = members.length;
     const avgScore =
       members.reduce((s, c) => s + placementScore(c), 0) / Math.max(size, 1);
-    const closenessBoost = (avgScore - 3) * 22;
-
-    // Push constellations farther out and apart so figures don’t overlap
     const band =
       cluster.kind === "company" ? 0 : cluster.kind === "school" ? 1 : 2;
+    const foot = constellationFootprint(size);
+    const arm = i % armCount;
+    const step = Math.floor(i / armCount);
+
+    // Archimedean-style spiral: each arm winds as clusters move outward.
+    // Kind, size, and stable jitter keep the result organic without overlap.
     const radius =
-      320 +
+      500 +
+      step * armSpacing +
       band * 90 +
-      Math.min(size, 14) * 28 +
-      (i % 4) * 55 -
-      closenessBoost +
-      hashUnit(cluster.id, 8) * 60;
+      Math.min(size, 14) * 20 -
+      (avgScore - 3) * 12 +
+      hashUnit(cluster.id, 8) * 70;
+    const angle =
+      -Math.PI / 2 +
+      (arm * Math.PI * 2) / armCount +
+      step * armTurn +
+      (hashUnit(cluster.id, 12) - 0.5) * 0.18;
 
-    const share = Math.max(0.12, size / Math.max(contacts.length, 1));
-    const span = Math.max(
-      0.32,
-      (Math.PI * 2 * share) / Math.max(namedCount * 0.22, 1)
-    );
-    const mid = angleCursor + span / 2;
-    angleCursor += span + 0.14;
+    return {
+      id: cluster.id,
+      foot,
+      arm,
+      step,
+      angle,
+      radius: Math.max(480, radius),
+    };
+  });
 
-    clusterOrigins.set(cluster.id, {
-      x: Math.cos(mid) * Math.max(280, radius),
-      y: Math.sin(mid) * Math.max(280, radius),
+  // Resolve any collisions while preserving each cluster's spiral arm.
+  // Moving the outer/later cluster down its arm keeps the galaxy silhouette.
+  for (let iter = 0; iter < 5; iter++) {
+    for (let i = 0; i < slots.length; i++) {
+      for (let j = i + 1; j < slots.length; j++) {
+        const a = slots[i];
+        const b = slots[j];
+        const ax = Math.cos(a.angle) * a.radius;
+        const ay = Math.sin(a.angle) * a.radius;
+        const bx = Math.cos(b.angle) * b.radius;
+        const by = Math.sin(b.angle) * b.radius;
+        const dist = Math.hypot(ax - bx, ay - by);
+        const minDist = a.foot * 0.72 + b.foot * 0.72 + 150;
+        if (dist < minDist) {
+          const move = b.step >= a.step ? b : a;
+          const push = minDist - dist + 36;
+          move.radius += push;
+          move.angle += (move.arm % 2 === 0 ? 1 : -1) * push * 0.0007;
+        }
+      }
+    }
+  }
+
+  for (const slot of slots) {
+    clusterOrigins.set(slot.id, {
+      x: Math.cos(slot.angle) * slot.radius,
+      y: Math.sin(slot.angle) * slot.radius,
     });
   }
 
@@ -320,12 +372,13 @@ export function buildHybridGraphLayout(
   >();
 
   for (const cluster of named) {
-    const origin = clusterOrigins.get(cluster.id) || { x: 0, y: 380 };
+    const origin = clusterOrigins.get(cluster.id) || { x: 0, y: 480 };
     placeConstellationMembers(
       byCluster.get(cluster.id) || [],
       origin,
       cluster.id,
-      positions
+      positions,
+      clusterShapes.get(cluster.id)
     );
   }
 
@@ -335,11 +388,33 @@ export function buildHybridGraphLayout(
     if (cluster.count < 2) continue;
     const origin = clusterOrigins.get(cluster.id)!;
     const color = clusterBrandColor(cluster.name, cluster.kind);
-    const labelRadius = 60 + Math.min(cluster.count, 14) * 13;
+    const members = byCluster.get(cluster.id) || [];
+    const starExtent = members.reduce((m, c) => {
+      const p = positions.get(c.id);
+      if (!p) return m;
+      return Math.max(m, Math.hypot(p.x - origin.x, p.y - origin.y));
+    }, 80);
+    const nebulaRadius = Math.max(90, starExtent + 70);
+    const labelDist = nebulaRadius * 0.55 + 12;
+    const outward = Math.atan2(origin.y, origin.x);
+
+    clusterNodes.push({
+      id: `nebula-${cluster.id}`,
+      type: "nebula",
+      data: {
+        kind: "nebula",
+        company: cluster.name,
+        color,
+        radius: nebulaRadius,
+        clusterKind: cluster.kind,
+      },
+      position: { x: origin.x, y: origin.y },
+      draggable: false,
+      selectable: false,
+      zIndex: 0,
+    });
 
     // Label on the outer edge of the cluster (away from sun)
-    const labelDist = labelRadius * 0.7 + 8;
-    const outward = Math.atan2(origin.y, origin.x);
     clusterNodes.push({
       id: `cluster-${cluster.id}`,
       type: "clusterLabel",

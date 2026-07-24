@@ -432,12 +432,10 @@
 @keyframes constellation-nebula-breathe {
   0%,
   100% {
-    opacity: 0.85;
-    transform: scale(1);
+    opacity: 0.75;
   }
   50% {
     opacity: 1;
-    transform: scale(1.04);
   }
 }
 

@@ -36,18 +36,51 @@ const SHAPES: ConstellationShape[] = [
       [1, 2],
     ],
   },
+  // Summer Triangle vertices (Altair–Deneb–Vega style)
+  {
+    id: "summer-triangle",
+    name: "Summer Triangle",
+    stars: [
+      { x: 0, y: -1.15 },
+      { x: -1.05, y: 0.7 },
+      { x: 1.05, y: 0.55 },
+    ],
+    edges: [
+      [0, 1],
+      [1, 2],
+      [2, 0],
+    ],
+  },
   {
     id: "southern-cross",
     name: "Crux",
     stars: [
-      { x: 0, y: -1.1 },
-      { x: 0, y: 1 },
-      { x: -0.85, y: 0.15 },
-      { x: 0.9, y: 0.05 },
+      { x: 0, y: -1.15 }, // Acrux
+      { x: 0.05, y: 1.05 }, // Gacrux
+      { x: -0.95, y: 0.05 }, // Becrux
+      { x: 0.9, y: -0.1 }, // Delta Crucis
     ],
     edges: [
       [0, 1],
       [2, 3],
+    ],
+  },
+  // Delphinus — little diamond dolphin
+  {
+    id: "delphinus",
+    name: "Delphinus",
+    stars: [
+      { x: 0.15, y: -1.1 },
+      { x: -0.75, y: -0.25 },
+      { x: 0.05, y: 0.15 },
+      { x: 0.85, y: -0.2 },
+    ],
+    edges: [
+      [0, 1],
+      [1, 2],
+      [2, 3],
+      [3, 0],
+      [1, 3],
     ],
   },
   // Cassiopeia — classic W
@@ -55,11 +88,11 @@ const SHAPES: ConstellationShape[] = [
     id: "cassiopeia",
     name: "Cassiopeia",
     stars: [
-      { x: -1.2, y: 0.35 },
-      { x: -0.55, y: -0.55 },
-      { x: 0, y: 0.45 },
-      { x: 0.55, y: -0.5 },
-      { x: 1.2, y: 0.4 },
+      { x: -1.25, y: 0.45 },
+      { x: -0.6, y: -0.55 },
+      { x: 0, y: 0.5 },
+      { x: 0.6, y: -0.55 },
+      { x: 1.25, y: 0.4 },
     ],
     edges: [
       [0, 1],
@@ -73,11 +106,11 @@ const SHAPES: ConstellationShape[] = [
     id: "cepheus",
     name: "Cepheus",
     stars: [
-      { x: 0, y: -1.15 },
-      { x: -0.85, y: -0.15 },
-      { x: -0.7, y: 1 },
-      { x: 0.7, y: 1 },
-      { x: 0.85, y: -0.15 },
+      { x: 0, y: -1.2 },
+      { x: -0.9, y: -0.2 },
+      { x: -0.7, y: 1.05 },
+      { x: 0.7, y: 1.05 },
+      { x: 0.9, y: -0.2 },
     ],
     edges: [
       [0, 1],
@@ -87,16 +120,16 @@ const SHAPES: ConstellationShape[] = [
       [4, 0],
     ],
   },
-  // Lyra — small triangle + diamond (Vega at tip)
+  // Lyra — Vega tip + parallelogram
   {
     id: "lyra",
     name: "Lyra",
     stars: [
-      { x: 0, y: -1.2 }, // Vega
-      { x: -0.35, y: -0.35 },
-      { x: 0.35, y: -0.35 },
-      { x: -0.55, y: 0.7 },
-      { x: 0.55, y: 0.7 },
+      { x: 0, y: -1.25 }, // Vega
+      { x: -0.4, y: -0.35 },
+      { x: 0.4, y: -0.35 },
+      { x: -0.55, y: 0.75 },
+      { x: 0.55, y: 0.75 },
     ],
     edges: [
       [0, 1],
@@ -107,16 +140,56 @@ const SHAPES: ConstellationShape[] = [
       [3, 4],
     ],
   },
+  // Aquila — Altair with flanking wings
+  {
+    id: "aquila",
+    name: "Aquila",
+    stars: [
+      { x: 0, y: -0.15 }, // Altair
+      { x: -0.35, y: -0.55 },
+      { x: 0.35, y: -0.5 },
+      { x: -1.1, y: 0.35 },
+      { x: 1.1, y: 0.4 },
+    ],
+    edges: [
+      [1, 0],
+      [0, 2],
+      [1, 3],
+      [2, 4],
+      [3, 0],
+      [4, 0],
+    ],
+  },
+  // Cygnus — Northern Cross
+  {
+    id: "cygnus",
+    name: "Cygnus",
+    stars: [
+      { x: 0, y: -1.2 }, // Deneb
+      { x: 0, y: -0.35 },
+      { x: 0, y: 0.45 },
+      { x: 0, y: 1.15 }, // Albireo
+      { x: -1.05, y: 0.05 },
+      { x: 1.05, y: 0.1 },
+    ],
+    edges: [
+      [0, 1],
+      [1, 2],
+      [2, 3],
+      [4, 1],
+      [1, 5],
+    ],
+  },
   {
     id: "corona",
     name: "Corona Borealis",
     stars: [
-      { x: -1, y: 0.2 },
+      { x: -1.05, y: 0.25 },
       { x: -0.55, y: -0.55 },
-      { x: 0, y: -0.85 },
+      { x: 0, y: -0.9 },
       { x: 0.55, y: -0.55 },
-      { x: 1, y: 0.15 },
-      { x: 0.35, y: 0.75 },
+      { x: 1.05, y: 0.2 },
+      { x: 0.35, y: 0.8 },
     ],
     edges: [
       [0, 1],
@@ -132,13 +205,13 @@ const SHAPES: ConstellationShape[] = [
     id: "ursa-minor",
     name: "Ursa Minor",
     stars: [
-      { x: 1.3, y: -0.15 }, // Polaris handle tip
-      { x: 0.75, y: 0.05 },
+      { x: 1.35, y: -0.1 }, // Polaris
+      { x: 0.8, y: 0.05 },
       { x: 0.25, y: 0.2 },
       { x: -0.15, y: -0.35 },
-      { x: -0.85, y: -0.55 },
-      { x: -1.1, y: 0.15 },
-      { x: -0.45, y: 0.55 },
+      { x: -0.9, y: -0.55 },
+      { x: -1.15, y: 0.2 },
+      { x: -0.45, y: 0.6 },
     ],
     edges: [
       [0, 1],
@@ -150,17 +223,89 @@ const SHAPES: ConstellationShape[] = [
       [6, 3],
     ],
   },
+  // Big Dipper — classic 7-star asterism of Ursa Major
+  {
+    id: "big-dipper",
+    name: "Big Dipper",
+    stars: [
+      { x: -1.35, y: 0.35 }, // Dubhe
+      { x: -0.75, y: 0.55 }, // Merak
+      { x: -0.15, y: 0.5 }, // Phecda
+      { x: 0.35, y: 0.3 }, // Megrez
+      { x: 0.45, y: -0.3 }, // Alioth
+      { x: 0.95, y: -0.15 }, // Mizar
+      { x: 1.4, y: -0.45 }, // Alkaid
+    ],
+    edges: [
+      [0, 1],
+      [1, 2],
+      [2, 3],
+      [3, 4],
+      [4, 5],
+      [5, 6],
+      [0, 3],
+    ],
+  },
+  // Orion — hunter (shoulders, belt, feet, sword tip)
+  {
+    id: "orion",
+    name: "Orion",
+    stars: [
+      { x: -0.85, y: -1.05 }, // Betelgeuse
+      { x: 0.85, y: -1.0 }, // Bellatrix
+      { x: -0.45, y: -0.05 },
+      { x: 0, y: 0.05 },
+      { x: 0.45, y: -0.05 },
+      { x: -0.8, y: 1.05 }, // Rigel
+      { x: 0.75, y: 1.1 }, // Saiph
+      { x: 0.05, y: 0.45 }, // sword
+    ],
+    edges: [
+      [0, 1],
+      [0, 2],
+      [1, 4],
+      [2, 3],
+      [3, 4],
+      [2, 5],
+      [4, 6],
+      [3, 7],
+    ],
+  },
+  // Gemini — twin stick columns
+  {
+    id: "gemini",
+    name: "Gemini",
+    stars: [
+      { x: -0.55, y: -1.15 }, // Castor
+      { x: 0.55, y: -1.05 }, // Pollux
+      { x: -0.65, y: -0.35 },
+      { x: 0.5, y: -0.3 },
+      { x: -0.75, y: 0.4 },
+      { x: 0.55, y: 0.45 },
+      { x: -0.7, y: 1.1 },
+      { x: 0.65, y: 1.15 },
+    ],
+    edges: [
+      [0, 1],
+      [0, 2],
+      [1, 3],
+      [2, 4],
+      [3, 5],
+      [4, 6],
+      [5, 7],
+    ],
+  },
   // Bootes — kite + Arcturus
   {
     id: "bootes",
     name: "Boötes",
     stars: [
-      { x: 0, y: 1.25 }, // Arcturus
+      { x: 0, y: 1.3 }, // Arcturus
       { x: -0.15, y: 0.45 },
-      { x: -0.7, y: -0.1 },
-      { x: -0.35, y: -0.85 },
-      { x: 0.4, y: -0.9 },
-      { x: 0.75, y: -0.15 },
+      { x: -0.75, y: -0.1 },
+      { x: -0.35, y: -0.9 },
+      { x: 0.4, y: -0.95 },
+      { x: 0.8, y: -0.15 },
       { x: 0.25, y: 0.35 },
       { x: -0.05, y: -0.25 },
     ],
@@ -176,7 +321,34 @@ const SHAPES: ConstellationShape[] = [
       [7, 5],
     ],
   },
-  // Big Dipper (Ursa Major asterism) — 7 is already Ursa Minor; this is 9-star dipper+
+  // Leo — sickle + body
+  {
+    id: "leo",
+    name: "Leo",
+    stars: [
+      { x: -0.15, y: -1.15 }, // Regulus tip of sickle
+      { x: -0.55, y: -0.55 },
+      { x: -0.95, y: -0.1 },
+      { x: -0.55, y: 0.35 },
+      { x: 0.05, y: 0.15 },
+      { x: 0.55, y: -0.25 },
+      { x: 1.05, y: 0.15 },
+      { x: 1.35, y: 0.7 },
+      { x: 0.75, y: 0.95 },
+    ],
+    edges: [
+      [0, 1],
+      [1, 2],
+      [2, 3],
+      [3, 4],
+      [4, 0],
+      [4, 5],
+      [5, 6],
+      [6, 7],
+      [7, 8],
+    ],
+  },
+  // Big Dipper + pointer stars toward Polaris direction
   {
     id: "ursa-major-core",
     name: "Ursa Major",
@@ -203,7 +375,37 @@ const SHAPES: ConstellationShape[] = [
       [7, 8],
     ],
   },
-  // Hercules — sprawling H / stick figure (~12)
+  // Scorpius — curved body + stinger
+  {
+    id: "scorpius",
+    name: "Scorpius",
+    stars: [
+      { x: -1.2, y: -0.85 }, // Antares region
+      { x: -0.75, y: -0.55 },
+      { x: -0.35, y: -0.25 },
+      { x: 0.05, y: 0.05 },
+      { x: 0.35, y: 0.4 },
+      { x: 0.55, y: 0.85 },
+      { x: 0.95, y: 1.15 }, // stinger
+      { x: 1.25, y: 0.85 },
+      { x: -1.05, y: -1.2 },
+      { x: -0.55, y: -1.15 },
+      { x: -0.15, y: -0.75 },
+    ],
+    edges: [
+      [8, 0],
+      [0, 9],
+      [9, 10],
+      [0, 1],
+      [1, 2],
+      [2, 3],
+      [3, 4],
+      [4, 5],
+      [5, 6],
+      [6, 7],
+    ],
+  },
+  // Hercules — Keystone + limbs
   {
     id: "hercules",
     name: "Hercules",
@@ -237,7 +439,7 @@ const SHAPES: ConstellationShape[] = [
       [11, 5],
     ],
   },
-  // Draco — long winding serpent (~15)
+  // Draco — long winding serpent
   {
     id: "draco",
     name: "Draco",
@@ -275,7 +477,7 @@ const SHAPES: ConstellationShape[] = [
       [13, 14],
     ],
   },
-  // Full Ursa Major-ish sprawl (~17)
+  // Full Ursa Major sprawl
   {
     id: "ursa-major-full",
     name: "Ursa Major",
@@ -412,15 +614,23 @@ function shapesForCount(n: number): ConstellationShape[] {
   return SHAPES.filter((s) => s.stars.length === n);
 }
 
+function canonicalShapeId(id: string) {
+  return id.replace(/-(ext|trim)-\d+$/, "");
+}
+
 /**
  * Pick a real constellation figure for `starCount`.
  * Exact match when possible; otherwise nearest smaller, then extend
  * in the same style when larger than every template.
+ * Pass `avoidIds` to prefer unused classic figures across a sky map.
  */
 export function resolveConstellationShape(
   starCount: number,
-  seed: string
+  seed: string,
+  options?: { avoidIds?: Set<string> }
 ): ConstellationShape {
+  const avoid = options?.avoidIds;
+
   if (starCount <= 1) {
     return {
       id: "single",
@@ -430,9 +640,18 @@ export function resolveConstellationShape(
     };
   }
 
+  const pickFrom = (pool: ConstellationShape[], salt: number) => {
+    if (pool.length === 0) return null;
+    const fresh = avoid
+      ? pool.filter((s) => !avoid.has(canonicalShapeId(s.id)))
+      : pool;
+    const list = fresh.length > 0 ? fresh : pool;
+    return list[Math.floor(hashUnit(seed, salt) * list.length) % list.length];
+  };
+
   const exact = shapesForCount(starCount);
   if (exact.length > 0) {
-    const pick = exact[Math.floor(hashUnit(seed, 1) * exact.length) % exact.length];
+    const pick = pickFrom(exact, 1)!;
     return {
       ...pick,
       stars: normalizeStars(pick.stars),
@@ -448,15 +667,21 @@ export function resolveConstellationShape(
   );
 
   if (smaller.length > 0 && starCount - smaller[0].stars.length <= 4) {
+    const near = smaller.filter(
+      (s) => starCount - s.stars.length <= 4
+    );
     const base =
-      smaller[Math.floor(hashUnit(seed, 2) * Math.min(3, smaller.length))];
+      pickFrom(near.slice(0, Math.min(5, near.length)), 2) || smaller[0];
     const extended = extendShape(base, starCount, seed);
     return { ...extended, stars: normalizeStars(extended.stars) };
   }
 
   if (larger.length > 0 && larger[0].stars.length - starCount <= 2) {
     // Trim a slightly larger figure: keep first N stars + edges that stay in range
-    const base = larger[0];
+    const base = pickFrom(
+      larger.filter((s) => s.stars.length - starCount <= 2).slice(0, 4),
+      3
+    ) || larger[0];
     const stars = base.stars.slice(0, starCount);
     const edges = base.edges.filter(([a, b]) => a < starCount && b < starCount);
     // Ensure connectivity — link orphans into the path
@@ -493,13 +718,36 @@ export function resolveConstellationShape(
     (a, b) => b.stars.length - a.stars.length
   )[0];
   const pickPool = SHAPES.filter((s) => s.stars.length >= 12);
-  const base =
-    pickPool[Math.floor(hashUnit(seed, 4) * pickPool.length)] || biggest;
+  const base = pickFrom(pickPool, 4) || biggest;
   const extended = extendShape(base, starCount, seed);
   return { ...extended, stars: normalizeStars(extended.stars) };
 }
 
 export function scaleForStarCount(n: number) {
-  // Keep figures roomy; larger constellations get a bigger canvas
-  return 110 + Math.min(n, 20) * 14;
+  // Roomier figures so classic stick-shapes stay readable
+  return 130 + Math.min(n, 20) * 16;
+}
+
+/** Half-extent of a placed constellation figure (for cluster packing). */
+export function constellationFootprint(starCount: number) {
+  return scaleForStarCount(Math.max(1, starCount)) + 100;
+}
+
+/**
+ * Assign distinct real-sky figures across clusters (same order → same shapes).
+ * Use this for both star placement and constellation edge wiring.
+ */
+export function assignClusterShapes(
+  clusters: Array<{ id: string; contactIds: string[] }>
+): Map<string, ConstellationShape> {
+  const used = new Set<string>();
+  const out = new Map<string, ConstellationShape>();
+  for (const cluster of clusters) {
+    const shape = resolveConstellationShape(cluster.contactIds.length, cluster.id, {
+      avoidIds: used,
+    });
+    out.set(cluster.id, shape);
+    used.add(canonicalShapeId(shape.id));
+  }
+  return out;
 }

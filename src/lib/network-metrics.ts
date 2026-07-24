@@ -1,6 +1,6 @@
 import { orderConstellationMembers, type EdgeKind, type GraphContactInput, type LayoutEdge } from "@/lib/graph-layout";
 import { buildConstellationClusters } from "@/lib/constellation-clusters";
-import { resolveConstellationShape } from "@/lib/constellation-shapes";
+import { assignClusterShapes } from "@/lib/constellation-shapes";
 import { computeCloseness, type ClosenessContact } from "@/lib/closeness";
 
 export type PeerEdgeReason =
@@ -118,58 +118,18 @@ function addPeerEdge(
   edges.push({ source, target, ...edge });
 }
 
-/**
- * Derive peer edges between contacts.
- * Constellation edges are a single winding path (like a star figure) —
- * not a closed polygon or mesh of diagonals.
- */
-export function buildPeerEdges(
+function clusterReason(kind: string): PeerEdgeReason {
+  if (kind === "company") return "company";
+  if (kind === "school") return "school";
+  return "howMet";
+}
+
+function addSoftKnowsEdges(
+  edges: PeerEdge[],
+  seenPairs: Set<string>,
   contacts: GraphContactInput[],
-  options?: {
-    constellationOnly?: boolean;
-  }
-): PeerEdge[] {
-  const edges: PeerEdge[] = [];
-  const seenPairs = new Set<string>();
-
-  const { clusters, byContactId } = buildConstellationClusters(contacts);
-  const contactsById = new Map(contacts.map((c) => [c.id, c]));
-
-  for (const cluster of clusters) {
-    if (cluster.count < 2 || cluster.kind === "other") continue;
-    const group = cluster.contactIds
-      .map((id) => contactsById.get(id))
-      .filter((c): c is GraphContactInput => Boolean(c));
-    if (group.length < 2) continue;
-
-    const ordered = orderConstellationMembers(group);
-
-    const reason: PeerEdgeReason =
-      cluster.kind === "company"
-        ? "company"
-        : cluster.kind === "school"
-          ? "school"
-          : "howMet";
-
-    // Edges follow the real constellation figure for this star count
-    const shape = resolveConstellationShape(ordered.length, cluster.id);
-    for (const [ai, bi] of shape.edges) {
-      const a = ordered[ai];
-      const b = ordered[bi];
-      if (!a || !b) continue;
-      addPeerEdge(edges, seenPairs, a.id, b.id, {
-        kind: "constellation",
-        reason,
-        company: cluster.name,
-      });
-    }
-  }
-
-  if (options?.constellationOnly) {
-    return edges;
-  }
-
-  // Soft knows links across clusters (metrics / other surfaces)
+  byContactId: Map<string, { id: string }>
+) {
   for (let i = 0; i < contacts.length; i++) {
     for (let j = i + 1; j < contacts.length; j++) {
       const a = contacts[i];
@@ -207,7 +167,86 @@ export function buildPeerEdges(
       }
     }
   }
+}
 
+/**
+ * Derive peer edges between contacts.
+ * Constellation edges are a single winding path (like a star figure) —
+ * not a closed polygon or mesh of diagonals.
+ *
+ * Pass `{ metrics: true }` for dashboard counts: all-pairs within
+ * company/school clusters plus soft knows (not sparse star paths).
+ */
+export function buildPeerEdges(
+  contacts: GraphContactInput[],
+  options?: {
+    constellationOnly?: boolean;
+    /** All-pairs company/school + soft knows for Network depth metrics. */
+    metrics?: boolean;
+  }
+): PeerEdge[] {
+  const edges: PeerEdge[] = [];
+  const seenPairs = new Set<string>();
+
+  const { clusters, byContactId } = buildConstellationClusters(contacts);
+  const contactsById = new Map(contacts.map((c) => [c.id, c]));
+  const shapes = assignClusterShapes(
+    clusters.map((c) => ({ id: c.id, contactIds: c.contactIds }))
+  );
+
+  if (options?.metrics) {
+    for (const cluster of clusters) {
+      if (cluster.count < 2 || cluster.kind === "other") continue;
+      const reason = clusterReason(cluster.kind);
+      // Skip howMet clusters for metrics (company/school only).
+      if (reason !== "company" && reason !== "school") continue;
+
+      const ids = cluster.contactIds;
+      for (let i = 0; i < ids.length; i++) {
+        for (let j = i + 1; j < ids.length; j++) {
+          addPeerEdge(edges, seenPairs, ids[i], ids[j], {
+            kind: "constellation",
+            reason,
+            company: cluster.name,
+          });
+        }
+      }
+    }
+
+    addSoftKnowsEdges(edges, seenPairs, contacts, byContactId);
+    return edges;
+  }
+
+  for (const cluster of clusters) {
+    if (cluster.count < 2 || cluster.kind === "other") continue;
+    const group = cluster.contactIds
+      .map((id) => contactsById.get(id))
+      .filter((c): c is GraphContactInput => Boolean(c));
+    if (group.length < 2) continue;
+
+    const ordered = orderConstellationMembers(group);
+    const reason = clusterReason(cluster.kind);
+
+    // Edges follow the same real constellation figure used for placement
+    const shape = shapes.get(cluster.id);
+    if (!shape) continue;
+    for (const [ai, bi] of shape.edges) {
+      const a = ordered[ai];
+      const b = ordered[bi];
+      if (!a || !b) continue;
+      addPeerEdge(edges, seenPairs, a.id, b.id, {
+        kind: "constellation",
+        reason,
+        company: cluster.name,
+      });
+    }
+  }
+
+  if (options?.constellationOnly) {
+    return edges;
+  }
+
+  addSoftKnowsEdges(edges, seenPairs, contacts, byContactId);
   return edges;
 }
 
@@ -238,10 +277,9 @@ export function peerEdgeToLayoutEdge(edge: PeerEdge): LayoutEdge {
   };
 }
 
-function peerDegreeMap(edges: PeerEdge[], knowsOnly: boolean) {
+function peerDegreeMap(edges: PeerEdge[]) {
   const degrees = new Map<string, number>();
   for (const e of edges) {
-    if (knowsOnly && e.kind !== "knows") continue;
     degrees.set(e.source, (degrees.get(e.source) || 0) + 1);
     degrees.set(e.target, (degrees.get(e.target) || 0) + 1);
   }
@@ -255,6 +293,7 @@ export function computeNetworkMetrics(
       fullName: string;
       preferredName?: string | null;
       company?: string | null;
+      school?: string | null;
       title?: string | null;
       tags?: string[] | null;
       howMet?: string | null;
@@ -271,6 +310,7 @@ export function computeNetworkMetrics(
     fullName: c.fullName,
     preferredName: c.preferredName,
     company: c.company ?? null,
+    school: c.school ?? null,
     title: c.title ?? null,
     relationshipScore: c.relationshipScore ?? 2,
     lastInteractionAt: c.lastInteractionAt ?? null,
@@ -283,8 +323,8 @@ export function computeNetworkMetrics(
     sharedInterests: c.sharedInterests ?? null,
   }));
 
-  const peerEdges = buildPeerEdges(graphContacts);
-  const knowsDegrees = peerDegreeMap(peerEdges, true);
+  const peerEdges = buildPeerEdges(graphContacts, { metrics: true });
+  const degrees = peerDegreeMap(peerEdges);
 
   const tierCounts = { inner: 0, mid: 0, outer: 0 };
   const degreeBuckets = { none: 0, oneToTwo: 0, threePlus: 0 };
@@ -293,7 +333,7 @@ export function computeNetworkMetrics(
   for (const c of contacts) {
     const breakdown = computeCloseness(c, activeGoals);
     tierCounts[breakdown.tier] += 1;
-    const peerDegree = knowsDegrees.get(c.id) || 0;
+    const peerDegree = degrees.get(c.id) || 0;
     if (peerDegree === 0) degreeBuckets.none += 1;
     else if (peerDegree <= 2) degreeBuckets.oneToTwo += 1;
     else degreeBuckets.threePlus += 1;
@@ -308,8 +348,7 @@ export function computeNetworkMetrics(
     });
   }
 
-  const knowsEdges = peerEdges.filter((e) => e.kind === "knows");
-  const totalPeerDegree = [...knowsDegrees.values()].reduce((a, b) => a + b, 0);
+  const totalPeerDegree = [...degrees.values()].reduce((a, b) => a + b, 0);
   const avgPeerDegree =
     contacts.length > 0 ? totalPeerDegree / contacts.length : 0;
 
@@ -317,7 +356,7 @@ export function computeNetworkMetrics(
     metrics: {
       tierCounts,
       totalContacts: contacts.length,
-      totalPeerEdges: knowsEdges.length,
+      totalPeerEdges: peerEdges.length,
       avgPeerDegree: Math.round(avgPeerDegree * 10) / 10,
       degreeBuckets,
     },

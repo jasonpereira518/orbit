@@ -1,6 +1,6 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -272,27 +272,118 @@ function ContactNodeComponent({
   );
 }
 
+/** Stable 0..1 from a string, so each cluster's wash keeps its shape. */
+function nebulaHash(seed: string, salt: number) {
+  let h = (2166136261 ^ salt) >>> 0;
+  for (let i = 0; i < seed.length; i++) {
+    h = (h ^ seed.charCodeAt(i)) >>> 0;
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return (h % 10000) / 10000;
+}
+
+/** Ejecta spokes of uneven width and brightness. */
+function nebulaFilaments(
+  seed: string,
+  color: string,
+  count: number,
+  salt: number,
+  maxAlpha: number,
+  minWidth: number,
+  maxWidth: number
+) {
+  const stops: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const center =
+      (i / count) * 360 + nebulaHash(seed, i * 7 + salt) * (360 / count);
+    const width =
+      minWidth + nebulaHash(seed, i * 7 + salt + 1) * (maxWidth - minWidth);
+    const alpha = maxAlpha * (0.4 + nebulaHash(seed, i * 7 + salt + 2) * 0.6);
+    stops.push(
+      `transparent ${(center - width).toFixed(1)}deg`,
+      `${withAlpha(color, alpha)} ${center.toFixed(1)}deg`,
+      `transparent ${(center + width).toFixed(1)}deg`
+    );
+  }
+  return `conic-gradient(from 0deg, ${stops.join(", ")})`;
+}
+
+/** Fades spokes out well inside the box so no rim is ever drawn. */
+const INNER_FILAMENT_MASK =
+  "radial-gradient(closest-side, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.9) 15%, rgba(0,0,0,0.5) 38%, rgba(0,0,0,0.15) 58%, transparent 74%)";
+const OUTER_FILAMENT_MASK =
+  "radial-gradient(closest-side, transparent 20%, rgba(0,0,0,0.55) 42%, rgba(0,0,0,0.3) 62%, rgba(0,0,0,0.1) 80%, transparent 96%)";
+
 function NebulaNodeComponent({ data }: NodeProps & { data: NebulaData }) {
   const r = data.radius;
+  const color = data.color;
+
+  const { size, lobes, inner, outer, innerAngle, outerAngle } = useMemo(() => {
+    const seed = data.company;
+    // Box runs well past the stars so the wash dissolves before any boundary
+    const size = r * 4;
+    const pct = (v: number) => 50 + (v / size) * 100;
+
+    // Offset, unequal lobes — overlapping ellipses read as blown-out debris
+    const lobes = Array.from({ length: 5 }, (_, i) => {
+      const angle = nebulaHash(seed, i * 9 + 1) * Math.PI * 2;
+      const dist = (0.06 + nebulaHash(seed, i * 9 + 2) * 0.45) * r;
+      const rx = (0.5 + nebulaHash(seed, i * 9 + 3) * 0.65) * r;
+      const ry = rx * (0.5 + nebulaHash(seed, i * 9 + 4) * 0.6);
+      const alpha = 0.075 - i * 0.011;
+      return `radial-gradient(ellipse ${rx.toFixed(0)}px ${ry.toFixed(0)}px at ${pct(
+        Math.cos(angle) * dist
+      ).toFixed(1)}% ${pct(Math.sin(angle) * dist).toFixed(1)}%, ${withAlpha(
+        color,
+        alpha
+      )} 0%, ${withAlpha(color, alpha * 0.45)} 36%, transparent 72%)`;
+    }).join(", ");
+
+    return {
+      size,
+      lobes,
+      // Two layers with different reach so arms vary in length
+      inner: nebulaFilaments(seed, color, 11, 3, 0.1, 4, 15),
+      outer: nebulaFilaments(seed, color, 5, 41, 0.06, 2, 8),
+      innerAngle: nebulaHash(seed, 77) * 360,
+      outerAngle: nebulaHash(seed, 91) * 360,
+    };
+  }, [data.company, color, r]);
+
   return (
     <div className="pointer-events-none" style={{ width: 1, height: 1 }}>
       <div
-        className="constellation-nebula absolute rounded-full"
-        style={{
-          left: -r,
-          top: -r,
-          width: r * 2,
-          height: r * 2,
-          background: `radial-gradient(circle at 40% 35%, ${withAlpha(
-            data.color,
-            0.28
-          )} 0%, ${withAlpha(data.color, 0.12)} 40%, ${withAlpha(
-            data.color,
-            0.04
-          )} 65%, transparent 78%)`,
-          boxShadow: `0 0 ${r * 0.4}px ${withAlpha(data.color, 0.15)}`,
-        }}
-      />
+        className="constellation-nebula absolute"
+        style={{ left: -size / 2, top: -size / 2, width: size, height: size }}
+      >
+        <div
+          className="absolute inset-0"
+          style={{
+            background: lobes,
+            filter: `blur(${(r * 0.3).toFixed(0)}px)`,
+          }}
+        />
+        <div
+          className="absolute inset-0"
+          style={{
+            background: inner,
+            transform: `rotate(${innerAngle.toFixed(1)}deg)`,
+            maskImage: INNER_FILAMENT_MASK,
+            WebkitMaskImage: INNER_FILAMENT_MASK,
+            filter: `blur(${(r * 0.05).toFixed(0)}px)`,
+          }}
+        />
+        <div
+          className="absolute inset-0"
+          style={{
+            background: outer,
+            transform: `rotate(${outerAngle.toFixed(1)}deg)`,
+            maskImage: OUTER_FILAMENT_MASK,
+            WebkitMaskImage: OUTER_FILAMENT_MASK,
+            filter: `blur(${(r * 0.07).toFixed(0)}px)`,
+          }}
+        />
+      </div>
     </div>
   );
 }

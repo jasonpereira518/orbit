@@ -1085,7 +1085,9 @@ function GraphCanvasInner({
     };
   }, [peekPersonId, peekToken]);
 
-  // Search hit framing (person / multi-match) when not focusing a named cluster
+  // Search hit framing (person / multi-match) when not focusing a named cluster.
+  // Only zoomToken should reframe — searchHitIds alone updates from semantic
+  // enrichment and must not yank the camera back out.
   useEffect(() => {
     if (focusCluster || !hasSearch) return;
 
@@ -1112,8 +1114,8 @@ function GraphCanvasInner({
       cancelled = true;
       window.clearTimeout(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasSearch, searchQuery, searchHitIds, focusCluster, zoomToken]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- zoomToken owns reframes
+  }, [focusCluster, zoomToken, hasSearch]);
 
   const onNodeClick: NodeMouseHandler = useCallback(
     (_, node) => {
@@ -1378,6 +1380,23 @@ export function NetworkGraph({
   const lastFetchAt = useRef(initialData ? Date.now() : 0);
   const positionsHydrated = useRef(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // ⌘/Ctrl+F → constellation search (instead of browser find)
+  useEffect(() => {
+    if (compact) return;
+    function onKey(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key.toLowerCase() !== "f") return;
+      e.preventDefault();
+      const el = searchInputRef.current;
+      if (!el) return;
+      el.focus();
+      el.select();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [compact]);
 
   const loadData = useCallback((force = false) => {
     if (!force && Date.now() - lastFetchAt.current < GRAPH_REFETCH_MIN_MS) {
@@ -1465,7 +1484,12 @@ export function NetworkGraph({
     if (!data) return;
 
     // Instant local match across name, role, school, tags, keywords, etc.
-    const applyLocalResults = (extraIds: string[] = []) => {
+    // `reframe` moves the camera; semantic enrichment only updates highlights
+    // so finishing a word doesn't yank the view back out to the full map.
+    const applySearchResults = (
+      extraIds: string[] = [],
+      reframe = true
+    ) => {
       const personIds = new Set<string>([
         ...matchGraphContacts(data.contacts, q),
         ...extraIds,
@@ -1476,45 +1500,58 @@ export function NetworkGraph({
         Boolean(clusterByName) &&
         clusterByName!.name.toLowerCase() === qNorm;
 
-      // Searching a cluster name → highlight everyone in it and zoom there
+      // Searching a cluster name → highlight everyone in it
       if (isExactClusterName && clusterByName) {
         setSearchHitIds(new Set(clusterByName.contactIds));
-        setFocusCluster(clusterByName.id);
-        setZoomToken((t) => t + 1);
+        if (reframe) {
+          setFocusCluster(clusterByName.id);
+          setZoomToken((t) => t + 1);
+        }
         return;
       }
 
       // Cluster name with no person hits (partial cluster match)
       if (clusterByName && personIds.size === 0) {
         setSearchHitIds(new Set(clusterByName.contactIds));
-        setFocusCluster(clusterByName.id);
-        setZoomToken((t) => t + 1);
+        if (reframe) {
+          setFocusCluster(clusterByName.id);
+          setZoomToken((t) => t + 1);
+        }
         return;
       }
 
-      // Person / keyword search — highlight only matched people
+      // Person / keyword search — highlight matched people
       setSearchHitIds(personIds);
+
+      if (!reframe) return;
 
       const target = resolveSearchTarget(q, [...personIds], data.clusters);
       if (target.mode === "cluster") {
         // Zoom the constellation; spotlight stays on personIds only
         setFocusCluster(target.id);
-      } else {
+      } else if (target.mode === "nodes") {
         setFocusCluster(null);
+      } else {
+        // No hits — keep the current camera; don't snap home mid-typing
+        setFocusCluster(null);
+        return;
       }
       setZoomToken((t) => t + 1);
     };
 
-    applyLocalResults();
+    applySearchResults([], true);
 
-    // Enrich with semantic hits (debounced) without dropping local matches
+    // Enrich with semantic hits (debounced) without reframing the camera
     searchTimer.current = setTimeout(() => {
       const req = ++searchRequestId.current;
       searchDashboardContacts(q, { limit: 40 })
         .then((hits) => {
           if (req !== searchRequestId.current) return;
           if (lastSearchQuery.current !== q) return;
-          applyLocalResults(hits.map((h) => h.id));
+          applySearchResults(
+            hits.map((h) => h.id),
+            false
+          );
         })
         .catch(() => {
           /* local results already applied */
@@ -1714,6 +1751,7 @@ export function NetworkGraph({
               <div className="relative flex-1">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/40" />
                 <Input
+                  ref={searchInputRef}
                   value={search}
                   onChange={(e) => {
                     const next = e.target.value;
@@ -2018,6 +2056,10 @@ export function NetworkGraph({
                         AWS
                       </span>
                       Cluster label — company or school group
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <span className="h-3 w-5 bg-[conic-gradient(from_10deg,transparent_0deg,rgba(255,153,0,0.4)_18deg,transparent_36deg,rgba(255,153,0,0.28)_90deg,transparent_130deg,rgba(255,153,0,0.36)_210deg,transparent_260deg,rgba(255,153,0,0.24)_320deg,transparent_360deg)] blur-[1.5px]" />
+                      Supernova haze — brand color behind a cluster
                     </li>
                     <li className="flex items-center gap-2">
                       <span className="h-px w-4 bg-white/70" />
