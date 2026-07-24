@@ -333,13 +333,12 @@ export async function askNetwork(
       focusedContactId: focusContactId,
     };
   } catch (err) {
-    const { toUserFacingError } = await import("@/lib/errors");
+    const { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } = await import(
+      "@/lib/errors"
+    );
     return {
       ok: false as const,
-      error: toUserFacingError(
-        err,
-        "Could not answer that. Add your AI API key in Settings and try again."
-      ).message,
+      error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message,
     };
   }
 }

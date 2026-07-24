@@ -39,13 +39,35 @@ const DUPLICATE_MERGE_CONFIDENCE = 0.85;
 
 export type LinkedInRow = LinkedInConnectionRow;
 
-/** Parse LinkedIn "Connected On" values like "15 Jan 2024" or "01/15/2024". */
+/**
+ * Parse LinkedIn "Connected On" values.
+ * Handles:
+ * - "15 Jan 2024", "01/15/2024" (text exports)
+ * - Excel/Sheets serial day numbers like "46198" (CSV re-saved from a spreadsheet)
+ */
 function parseConnectedOn(raw: string): string | null {
   const value = raw.trim();
   if (!value) return null;
+
+  // Spreadsheet serial dates (days since 1899-12-30). Modern LinkedIn
+  // connections land roughly in 30000–80000 (≈1990–2100).
+  if (/^\d{4,6}(\.\d+)?$/.test(value)) {
+    const serial = Number(value);
+    if (serial >= 30000 && serial <= 80000) {
+      const ms = Date.UTC(1899, 11, 30) + Math.round(serial) * 86_400_000;
+      const fromSerial = new Date(ms);
+      if (!Number.isNaN(fromSerial.getTime())) return fromSerial.toISOString();
+    }
+  }
+
   const parsed = new Date(value);
-  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
-  return null;
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  // Bare numerics like "46198" become year 46198 in JS Date — reject those.
+  const year = parsed.getUTCFullYear();
+  if (year < 1990 || year > 2100) return null;
+
+  return parsed.toISOString();
 }
 
 function mergeStats(

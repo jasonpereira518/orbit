@@ -1,3 +1,12 @@
+/** Shown whenever AI features fail because the user has no provider key. */
+export const MISSING_AI_API_KEY_MESSAGE =
+  "Add your AI API key in Settings to use this feature.";
+
+export function isMissingAiApiKeyError(message: string | null | undefined) {
+  if (!message) return false;
+  return /api key/i.test(message);
+}
+
 /**
  * Turn unknown thrown values into Error instances with messages safe to show
  * clients. Next.js production digests opaque / non-Error throws into a useless
@@ -17,15 +26,25 @@ export function toUserFacingError(
     ) {
       const cause = (err as Error & { cause?: unknown }).cause;
       if (cause instanceof Error && cause.message.trim()) {
-        return new Error(cause.message);
+        return new Error(
+          isMissingAiApiKeyError(cause.message)
+            ? MISSING_AI_API_KEY_MESSAGE
+            : cause.message
+        );
       }
       return new Error(fallback);
+    }
+    if (isMissingAiApiKeyError(msg)) {
+      return new Error(MISSING_AI_API_KEY_MESSAGE);
     }
     return err;
   }
 
   if (typeof err === "string" && err.trim()) {
-    return new Error(err.trim());
+    const msg = err.trim();
+    return new Error(
+      isMissingAiApiKeyError(msg) ? MISSING_AI_API_KEY_MESSAGE : msg
+    );
   }
 
   if (err && typeof err === "object") {
@@ -34,7 +53,13 @@ export function toUserFacingError(
       (typeof record.message === "string" && record.message) ||
       (typeof record.error === "string" && record.error) ||
       (typeof record.statusText === "string" && record.statusText);
-    if (message) return new Error(message);
+    if (message) {
+      return new Error(
+        isMissingAiApiKeyError(message)
+          ? MISSING_AI_API_KEY_MESSAGE
+          : message
+      );
+    }
   }
 
   return new Error(fallback);

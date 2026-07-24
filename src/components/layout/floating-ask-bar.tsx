@@ -13,7 +13,7 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowUp, Loader2, RotateCcw, Search, Sparkles, X } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { toUserFacingError } from "@/lib/errors";
+import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
 import { askNetwork } from "@/actions/chat";
 import { getAskBarContact } from "@/actions/contacts";
 import { searchDashboardContacts } from "@/actions/search";
@@ -296,10 +296,7 @@ export function FloatingAskBar() {
           setMessages((prev) => [...prev, assistantMsg]);
         } catch (err) {
           toast.error(
-            toUserFacingError(
-              err,
-              "Could not answer that. Add your AI API key in Settings."
-            ).message
+            toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message
           );
           setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
           setQuery(q);

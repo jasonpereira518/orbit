@@ -12,7 +12,11 @@ import {
 } from "@/actions/capture";
 import { getSettings } from "@/actions/settings";
 import type { ParsedNote, SharedNoteContext } from "@/lib/ai";
-import { toUserFacingError } from "@/lib/errors";
+import {
+  MISSING_AI_API_KEY_MESSAGE,
+  isMissingAiApiKeyError,
+  toUserFacingError,
+} from "@/lib/errors";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -263,8 +267,11 @@ export function BulkNotesPanel({
                 try {
                   const res = await parseBulkCaptureNotes(notes);
                   if (!res.ok) {
-                    toast.error(res.error);
-                    if (/api key/i.test(res.error)) setHasApiKey(false);
+                    const missingKey = isMissingAiApiKeyError(res.error);
+                    if (missingKey) setHasApiKey(false);
+                    toast.error(
+                      missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error
+                    );
                     return;
                   }
                   setSharedNotes(res.sharedNotes || []);
@@ -297,12 +304,12 @@ export function BulkNotesPanel({
                     `Found ${res.items.length} ${res.items.length === 1 ? "person" : "people"}`
                   );
                 } catch (err) {
-                  toast.error(
-                    toUserFacingError(
-                      err,
-                      "Could not parse notes. Add your AI API key in Settings and try again."
-                    ).message
-                  );
+                  const message = toUserFacingError(
+                    err,
+                    MISSING_AI_API_KEY_MESSAGE
+                  ).message;
+                  if (isMissingAiApiKeyError(message)) setHasApiKey(false);
+                  toast.error(message);
                 }
               })
             }

@@ -85,7 +85,7 @@ export function goalRelevanceComponent(
 }
 
 export function closenessTier(closeness: number): ClosenessBreakdown["tier"] {
-  if (closeness >= 0.55) return "inner";
+  if (closeness >= 0.5) return "inner";
   if (closeness >= 0.25) return "mid";
   return "outer";
 }
@@ -109,17 +109,17 @@ export function closenessPercentChipClass(closeness: number) {
   return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
 }
 
-/** Map continuous closeness onto the five constellation rings. */
+/** Map continuous closeness onto the five constellation rings. Ring 4 ≈ Inner. */
 export function closenessToOrbitScore(closeness: number) {
-  if (closeness >= 0.7) return 5;
-  if (closeness >= 0.55) return 4;
-  if (closeness >= 0.4) return 3;
+  if (closeness >= 0.65) return 5;
+  if (closeness >= 0.5) return 4;
+  if (closeness >= 0.35) return 3;
   if (closeness >= 0.25) return 2;
   return 1;
 }
 
 /**
- * Closeness = 50% manual strength + 30% recency decay + 20% goal relevance.
+ * Closeness = 40% manual strength + 40% recency decay + 20% goal relevance.
  */
 export function computeCloseness(
   contact: ClosenessContact,
@@ -133,7 +133,7 @@ export function computeCloseness(
   const goalRelevance = goalRelevanceComponent(contact, activeGoals);
   const closeness = Math.min(
     1,
-    Math.max(0, 0.5 * strength + 0.3 * recency + 0.2 * goalRelevance)
+    Math.max(0, 0.4 * strength + 0.4 * recency + 0.2 * goalRelevance)
   );
 
   return {

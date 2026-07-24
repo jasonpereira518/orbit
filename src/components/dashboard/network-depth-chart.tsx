@@ -2,8 +2,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { NetworkMetrics } from "@/lib/network-metrics";
 import { cn } from "@/lib/utils";
 
-const INNER_SLIVER_PCT = 5;
-
 const TIER_META = [
   {
     key: "inner" as const,
@@ -36,25 +34,12 @@ function pct(count: number, total: number) {
   return Math.round((count / total) * 100);
 }
 
-/** Bar widths with a permanent Inner green sliver when inner share is 0. */
+/** Honest bar widths from real Inner/Mid/Outer shares. */
 function tierBarWidths(tierCounts: NetworkMetrics["tierCounts"], total: number) {
-  const innerRaw = pct(tierCounts.inner, total);
-  const midRaw = pct(tierCounts.mid, total);
-  const outerRaw = pct(tierCounts.outer, total);
-
-  const innerWidth = Math.max(innerRaw, INNER_SLIVER_PCT);
-  const remaining = 100 - innerWidth;
-  const midOuterSum = midRaw + outerRaw;
-
-  if (midOuterSum <= 0) {
-    return { inner: innerWidth, mid: 0, outer: Math.max(0, remaining) };
-  }
-
-  const scale = remaining / midOuterSum;
   return {
-    inner: innerWidth,
-    mid: Math.round(midRaw * scale),
-    outer: Math.max(0, 100 - innerWidth - Math.round(midRaw * scale)),
+    inner: pct(tierCounts.inner, total),
+    mid: pct(tierCounts.mid, total),
+    outer: pct(tierCounts.outer, total),
   };
 }
 
@@ -157,7 +142,8 @@ export function NetworkDepthChart({
             })}
           </div>
           <p className="text-xs text-muted-foreground">
-            Links inferred from shared company, event, tags, and mentions
+            Links inferred from shared company, school, tags, interests, and
+            mentions
           </p>
         </div>
       </CardContent>

@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { formatHowMetSummary } from "@/lib/met-context";
+import { closenessPercentChipClass } from "@/lib/closeness";
 import { RING_LABELS, type GraphNodeData } from "@/lib/graph-layout";
 import type { UserSocialLinks } from "@/actions/graph";
 
@@ -70,9 +71,7 @@ function formatMaybeRelative(value: string | null | undefined) {
 
 function closenessChipClass(closeness: number | undefined) {
   if (typeof closeness !== "number") return "bg-muted text-muted-foreground";
-  if (closeness >= 0.55) return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300";
-  if (closeness >= 0.25) return "bg-sky-500/15 text-sky-700 dark:text-sky-300";
-  return "bg-amber-500/15 text-amber-700 dark:text-amber-300";
+  return closenessPercentChipClass(closeness);
 }
 
 function LinkedInGlyph({ className }: { className?: string }) {

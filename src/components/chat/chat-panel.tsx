@@ -18,7 +18,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { toUserFacingError } from "@/lib/errors";
+import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
 import {
   askNetwork,
   createChatThread,
@@ -291,10 +291,7 @@ export function ChatPanel() {
           });
         } catch (err) {
           toast.error(
-            toUserFacingError(
-              err,
-              "Could not answer that. Add your AI API key in Settings."
-            ).message
+            toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message
           );
           setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
           setQuestion(q);

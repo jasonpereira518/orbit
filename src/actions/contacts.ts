@@ -78,6 +78,18 @@ function normalizeMetContext(value?: string | null) {
   return isMetContext(value) ? value : null;
 }
 
+/** Coerce date inputs into a Postgres-safe timestamptz, or null. */
+function safeTimestamp(value?: string | Date | null): Date | null {
+  if (value == null || value === "") return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const year = date.getUTCFullYear();
+  // Reject JS misparses (e.g. Excel serial "46198" → year 46198) that
+  // Postgres refuses with "time zone displacement out of range".
+  if (year < 1970 || year > 2100) return null;
+  return date;
+}
+
 async function syncTags(
   userId: string,
   contactId: string,
@@ -346,9 +358,8 @@ export async function createContact(
   const db = await getDb();
   const now = new Date();
   const companyFields = await companyFieldsForWrite(userId, input.company);
-  const dateMet = input.dateMet ? new Date(input.dateMet) : null;
-  const metAt =
-    dateMet && !Number.isNaN(dateMet.getTime()) ? dateMet : null;
+  const metAt = safeTimestamp(input.dateMet);
+  const followUpAt = safeTimestamp(input.nextFollowUpAt);
 
   const [contact] = await db
     .insert(contacts)
@@ -382,9 +393,7 @@ export async function createContact(
       opportunities: input.opportunities ?? [],
       firstInteractionAt: metAt ?? now,
       lastInteractionAt: metAt ?? now,
-      nextFollowUpAt: input.nextFollowUpAt
-        ? new Date(input.nextFollowUpAt)
-        : null,
+      nextFollowUpAt: followUpAt,
     })
     .returning();
 
@@ -449,7 +458,7 @@ export async function updateContact(
         ? { metContext: normalizeMetContext(input.metContext) }
         : {}),
       ...(input.dateMet !== undefined
-        ? { dateMet: input.dateMet ? new Date(input.dateMet) : null }
+        ? { dateMet: safeTimestamp(input.dateMet) }
         : {}),
       ...(input.howMet !== undefined ? { howMet: input.howMet } : {}),
       ...(input.notes !== undefined ? { notes: input.notes } : {}),
@@ -462,11 +471,7 @@ export async function updateContact(
         ? { opportunities: input.opportunities }
         : {}),
       ...(input.nextFollowUpAt !== undefined
-        ? {
-            nextFollowUpAt: input.nextFollowUpAt
-              ? new Date(input.nextFollowUpAt)
-              : null,
-          }
+        ? { nextFollowUpAt: safeTimestamp(input.nextFollowUpAt) }
         : {}),
       updatedAt: new Date(),
     })

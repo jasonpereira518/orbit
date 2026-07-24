@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { motion, useReducedMotion } from "motion/react";
 import {
   ImportHistory,
   type ImportHistoryItem,
@@ -102,6 +103,7 @@ export function ImportHub({
   calendarSubscriptions?: CalendarSub[];
 }) {
   const job = useImportJob();
+  const reducedMotion = useReducedMotion();
   const [tab, setTab] = useState<ImportTab>("connections");
   // Mount panels on first visit so inactive tabs don't load code upfront,
   // but keep them mounted afterward so in-flight imports survive switches.
@@ -140,30 +142,48 @@ export function ImportHub({
       ) : null}
 
       <div
-        className="flex gap-1 rounded-xl border border-border/60 bg-muted/40 p-1"
+        className="relative flex gap-1 rounded-xl border border-border/60 bg-muted/40 p-1"
         role="tablist"
         aria-label="Import type"
       >
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            role="tab"
-            aria-selected={tab === t.id}
-            aria-controls={`import-panel-${t.id}`}
-            id={`import-tab-${t.id}`}
-            onClick={() => setTab(t.id)}
-            className={cn(
-              "flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-              tab === t.id
-                ? "bg-card text-primary shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {t.label}
-            {job?.status === "running" && job.kind === t.id ? " ·…" : ""}
-          </button>
-        ))}
+        {TABS.map((t) => {
+          const active = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              aria-controls={`import-panel-${t.id}`}
+              id={`import-tab-${t.id}`}
+              onClick={() => setTab(t.id)}
+              className={cn(
+                "relative z-10 flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                active
+                  ? "text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {active ? (
+                <motion.span
+                  layoutId={
+                    reducedMotion ? undefined : "import-tab-pill"
+                  }
+                  className="absolute inset-0 rounded-lg bg-card shadow-sm ring-1 ring-black/[0.04] dark:ring-white/10"
+                  transition={
+                    reducedMotion
+                      ? { duration: 0 }
+                      : { type: "spring", stiffness: 420, damping: 34 }
+                  }
+                />
+              ) : null}
+              <span className="relative z-10">
+                {t.label}
+                {job?.status === "running" && job.kind === t.id ? " ·…" : ""}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {mounted.connections && (

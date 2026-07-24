@@ -13,6 +13,7 @@ import {
 } from "@/lib/ai";
 import { findDuplicateCandidates } from "@/lib/duplicates";
 import { createContact, logInteraction, updateContact } from "@/actions/contacts";
+import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
 
 export async function parseCaptureNotes(notes: string) {
   try {
@@ -52,10 +53,7 @@ export async function parseCaptureNotes(notes: string) {
     const { toUserFacingError } = await import("@/lib/errors");
     return {
       ok: false as const,
-      error: toUserFacingError(
-        err,
-        "Could not parse notes. Add your AI API key in Settings and try again."
-      ).message,
+      error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message,
     };
   }
 }
@@ -203,10 +201,7 @@ export async function parseBulkCaptureNotes(notes: string) {
     const { toUserFacingError } = await import("@/lib/errors");
     return {
       ok: false as const,
-      error: toUserFacingError(
-        err,
-        "Could not parse notes. Add your AI API key in Settings and try again."
-      ).message,
+      error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message,
     };
   }
 }
