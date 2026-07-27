@@ -8,6 +8,7 @@ import {
   useTransform,
   type PanInfo,
 } from "motion/react";
+import { Check, Trash2 } from "lucide-react";
 import type { ParsedNote } from "@/lib/ai";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -79,8 +80,10 @@ export function CaptureSwipeCard({
 }) {
   const x = useMotionValue(0);
   const rotate = useTransform(x, [-220, 0, 220], [-10, 0, 10]);
-  const acceptOpacity = useTransform(x, [20, SWIPE_DISTANCE], [0, 1]);
-  const discardOpacity = useTransform(x, [-SWIPE_DISTANCE, -20], [1, 0]);
+  const acceptOpacity = useTransform(x, [24, SWIPE_DISTANCE], [0, 1]);
+  const discardOpacity = useTransform(x, [-SWIPE_DISTANCE, -24], [1, 0]);
+  const acceptScale = useTransform(x, [24, SWIPE_DISTANCE], [0.7, 1.05]);
+  const discardScale = useTransform(x, [-SWIPE_DISTANCE, -24], [1.05, 0.7]);
 
   function handleDragEnd(_: unknown, info: PanInfo) {
     if (disabled || exiting || reduceMotion) return;
@@ -97,66 +100,99 @@ export function CaptureSwipeCard({
 
   const flyX = exiting ? exitDirection * (compact ? 420 : 560) : 0;
   const flyRotate = exiting ? exitDirection * 14 : 0;
+  const showAcceptStamp = exiting === "accepted";
+  const showDiscardStamp = exiting === "discarded";
 
   return (
-    <motion.div
-      className="relative touch-pan-y will-change-transform"
-      style={exiting || reduceMotion ? undefined : { x, rotate }}
-      drag={reduceMotion || exiting || disabled ? false : "x"}
-      dragConstraints={{ left: 0, right: 0 }}
-      dragElastic={0.92}
-      dragMomentum={false}
-      onDragEnd={handleDragEnd}
-      animate={
-        exiting
-          ? {
-              x: flyX,
-              opacity: 0,
-              rotate: reduceMotion ? 0 : flyRotate,
-            }
-          : { opacity: 1 }
-      }
-      initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 10 }}
-      transition={
-        exiting
-          ? { duration: reduceMotion ? 0.12 : 0.28, ease: [0.22, 1, 0.36, 1] }
-          : { duration: 0.2, ease: [0.22, 1, 0.36, 1] }
-      }
-      onAnimationComplete={() => {
-        if (exiting) onExitComplete();
-      }}
-    >
-      {!reduceMotion && !exiting && (
-        <>
-          <motion.div
-            aria-hidden
-            style={{ opacity: acceptOpacity }}
-            className="pointer-events-none absolute inset-0 z-10 flex items-start justify-end rounded-2xl border-2 border-emerald-500/70 bg-emerald-500/10 p-4"
-          >
-            <span className="rounded-md border border-emerald-600 bg-emerald-500/20 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-800 dark:text-emerald-200">
-              Accept
-            </span>
-          </motion.div>
-          <motion.div
-            aria-hidden
-            style={{ opacity: discardOpacity }}
-            className="pointer-events-none absolute inset-0 z-10 flex items-start justify-start rounded-2xl border-2 border-rose-500/70 bg-rose-500/10 p-4"
-          >
-            <span className="rounded-md border border-rose-600 bg-rose-500/20 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-rose-800 dark:text-rose-200">
-              Discard
-            </span>
-          </motion.div>
-        </>
-      )}
+    <div className="relative">
+      {/* Decision stamps sit behind / over the card while dragging or exiting */}
+      <motion.div
+        aria-hidden
+        className="pointer-events-none absolute inset-y-0 right-4 z-20 flex items-center"
+        style={
+          reduceMotion || exiting
+            ? undefined
+            : { opacity: acceptOpacity, scale: acceptScale }
+        }
+        animate={
+          showAcceptStamp
+            ? { opacity: 1, scale: 1 }
+            : reduceMotion
+              ? { opacity: 0, scale: 0.85 }
+              : undefined
+        }
+        initial={false}
+        transition={{ duration: 0.18 }}
+      >
+        <div
+          className={cn(
+            "flex size-16 items-center justify-center rounded-full border-2 border-emerald-500 bg-emerald-500/15 text-emerald-600 shadow-sm dark:bg-emerald-500/20 dark:text-emerald-300",
+            !showAcceptStamp && !reduceMotion && "opacity-100"
+          )}
+        >
+          <Check className="size-8 stroke-[2.5]" aria-hidden />
+        </div>
+      </motion.div>
 
-      <PersonReviewCard
-        item={item}
-        compact={compact}
-        preferredContactId={preferredContactId}
-        preferredContactName={preferredContactName}
-        onChange={onChange}
-      />
-    </motion.div>
+      <motion.div
+        aria-hidden
+        className="pointer-events-none absolute inset-y-0 left-4 z-20 flex items-center"
+        style={
+          reduceMotion || exiting
+            ? undefined
+            : { opacity: discardOpacity, scale: discardScale }
+        }
+        animate={
+          showDiscardStamp
+            ? { opacity: 1, scale: 1 }
+            : reduceMotion
+              ? { opacity: 0, scale: 0.85 }
+              : undefined
+        }
+        initial={false}
+        transition={{ duration: 0.18 }}
+      >
+        <div className="flex size-16 items-center justify-center rounded-full border-2 border-rose-500 bg-rose-500/15 text-rose-600 shadow-sm dark:bg-rose-500/20 dark:text-rose-300">
+          <Trash2 className="size-7 stroke-[2.25]" aria-hidden />
+        </div>
+      </motion.div>
+
+      <motion.div
+        className="relative z-10 touch-pan-y will-change-transform"
+        style={exiting || reduceMotion ? undefined : { x, rotate }}
+        drag={reduceMotion || exiting || disabled ? false : "x"}
+        dragConstraints={{ left: 0, right: 0 }}
+        dragElastic={0.92}
+        dragMomentum={false}
+        onDragEnd={handleDragEnd}
+        animate={
+          exiting
+            ? {
+                x: flyX,
+                opacity: 0,
+                rotate: reduceMotion ? 0 : flyRotate,
+              }
+            : { opacity: 1 }
+        }
+        initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 10 }}
+        transition={
+          exiting
+            ? { duration: reduceMotion ? 0.12 : 0.32, ease: [0.22, 1, 0.36, 1] }
+            : { duration: 0.2, ease: [0.22, 1, 0.36, 1] }
+        }
+        onAnimationComplete={() => {
+          if (exiting) onExitComplete();
+        }}
+      >
+        <PersonReviewCard
+          item={item}
+          compact={compact}
+          preferredContactId={preferredContactId}
+          preferredContactName={preferredContactName}
+          onChange={onChange}
+        />
+      </motion.div>
+    </div>
   );
 }
 

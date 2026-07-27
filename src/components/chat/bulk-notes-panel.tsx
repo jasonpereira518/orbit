@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useReducedMotion } from "motion/react";
+import { Check, Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   confirmBulkCapture,
@@ -176,7 +177,6 @@ export function BulkNotesPanel({
   const accepted = items.filter((i) => i.decision === "accepted");
   const discarded = items.filter((i) => i.decision === "discarded");
   const current = items[reviewIndex] ?? null;
-  const isLastCard = reviewIndex >= items.length - 1 && items.length > 0;
 
   function clearParseProgress() {
     if (parseTimerRef.current) {
@@ -627,8 +627,10 @@ export function BulkNotesPanel({
               variant="outline"
               size={compact ? "sm" : "default"}
               disabled={pending || Boolean(exiting)}
+              className="gap-1.5 text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/40"
               onClick={() => commitDecision("discarded")}
             >
+              <Trash2 className="size-4" aria-hidden />
               Discard
             </Button>
             <Button
@@ -639,10 +641,11 @@ export function BulkNotesPanel({
                 Boolean(exiting) ||
                 !current.parsed.name?.trim()
               }
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
+              className="gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90"
               onClick={() => commitDecision("accepted")}
             >
-              {isLastCard ? "Accept" : "Accept & next"}
+              <Check className="size-4" aria-hidden />
+              Accept
             </Button>
           </div>
         </div>
