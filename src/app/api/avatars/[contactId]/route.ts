@@ -6,7 +6,10 @@ import { requireUserId } from "@/lib/auth";
 import {
   downloadImageAsDataUrl,
   fetchLinkedInPhotoDataUrl,
+  getMicrolinkCooldownUntil,
+  isMicrolinkRateLimited,
   isUnusableAvatarUrl,
+  MicrolinkRateLimitError,
   parseImageDataUrl,
 } from "@/lib/contact-avatar";
 
@@ -21,6 +24,18 @@ function dataUrlResponse(dataUrl: string) {
       "Cache-Control": "private, max-age=86400",
     },
   });
+}
+
+async function persistProfileImage(
+  contactId: string,
+  userId: string,
+  dataUrl: string
+) {
+  const db = await getDb();
+  await db
+    .update(contacts)
+    .set({ profileImageUrl: dataUrl, updatedAt: new Date() })
+    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
 }
 
 /**
@@ -62,10 +77,7 @@ export async function GET(_req: Request, { params }: Params) {
     try {
       const dataUrl = await downloadImageAsDataUrl(stored);
       if (dataUrl) {
-        void db
-          .update(contacts)
-          .set({ profileImageUrl: dataUrl, updatedAt: new Date() })
-          .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+        await persistProfileImage(contactId, userId, dataUrl);
         const res = dataUrlResponse(dataUrl);
         if (res) return res;
       }
@@ -74,20 +86,37 @@ export async function GET(_req: Request, { params }: Params) {
     }
   }
 
-  // No durable photo yet — resolve from LinkedIn profile page when possible.
+  // No durable photo yet — resolve from LinkedIn when quota allows.
   if (contact.linkedinUrl?.trim()) {
+    if (isMicrolinkRateLimited()) {
+      const retryAfterSec = Math.max(
+        1,
+        Math.ceil((getMicrolinkCooldownUntil() - Date.now()) / 1000)
+      );
+      return new NextResponse(null, {
+        status: 429,
+        headers: { "Retry-After": String(retryAfterSec) },
+      });
+    }
+
     try {
       const dataUrl = await fetchLinkedInPhotoDataUrl(contact.linkedinUrl);
       if (dataUrl) {
-        void db
-          .update(contacts)
-          .set({ profileImageUrl: dataUrl, updatedAt: new Date() })
-          .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+        await persistProfileImage(contactId, userId, dataUrl);
         const res = dataUrlResponse(dataUrl);
         if (res) return res;
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      if (err instanceof MicrolinkRateLimitError) {
+        const retryAfterSec = Math.max(
+          1,
+          Math.ceil((err.resetAt - Date.now()) / 1000)
+        );
+        return new NextResponse(null, {
+          status: 429,
+          headers: { "Retry-After": String(retryAfterSec) },
+        });
+      }
     }
   }
 

@@ -25,8 +25,13 @@ import {
 import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import {
+  AVATAR_BACKFILL_BATCH_SIZE,
   downloadImageAsDataUrl,
   fetchLinkedInPhotoDataUrl,
+  getMicrolinkCooldownUntil,
+  isMicrolinkRateLimited,
+  isUnusableAvatarUrl,
+  MicrolinkRateLimitError,
 } from "@/lib/contact-avatar";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
 import {
@@ -760,6 +765,147 @@ export async function listLinkedInRefreshTargets(): Promise<{
   return { targets, hasApollo: Boolean(apiKey) };
 }
 
+export type AvatarBackfillResult = {
+  saved: number;
+  pending: number;
+  failed: number;
+  rateLimitedUntil: number | null;
+};
+
+/**
+ * Persist LinkedIn photos for contacts that still need one.
+ * Processes a small batch, stops when Microlink quota is hit, and returns
+ * when the client should retry after the rate-limit reset.
+ */
+export async function backfillContactAvatars(
+  limit = AVATAR_BACKFILL_BATCH_SIZE
+): Promise<AvatarBackfillResult> {
+  const userId = await requireUserId();
+  const batchSize = Math.min(
+    Math.max(1, Math.floor(limit) || AVATAR_BACKFILL_BATCH_SIZE),
+    AVATAR_BACKFILL_BATCH_SIZE
+  );
+  const db = await getDb();
+
+  const rows = await db.query.contacts.findMany({
+    where: eq(contacts.userId, userId),
+    columns: {
+      id: true,
+      linkedinUrl: true,
+      profileImageUrl: true,
+    },
+  });
+
+  const needsWork = rows
+    .filter((r) => {
+      const linkedin = r.linkedinUrl?.trim();
+      const stored = r.profileImageUrl?.trim() || "";
+      if (!linkedin && (!stored || isUnusableAvatarUrl(stored))) return false;
+      // Need LinkedIn resolution when missing/unusable.
+      if (linkedin && isUnusableAvatarUrl(stored)) return true;
+      // Also durably cache remote URLs that aren't data URLs yet.
+      if (
+        stored &&
+        !isUnusableAvatarUrl(stored) &&
+        !stored.startsWith("data:image/")
+      ) {
+        return true;
+      }
+      return false;
+    })
+    // Prefer free remote→data-URL work before spending Microlink quota.
+    .sort((a, b) => {
+      const aRemote =
+        Boolean(a.profileImageUrl?.trim()) &&
+        !isUnusableAvatarUrl(a.profileImageUrl) &&
+        !a.profileImageUrl!.startsWith("data:image/")
+          ? 0
+          : 1;
+      const bRemote =
+        Boolean(b.profileImageUrl?.trim()) &&
+        !isUnusableAvatarUrl(b.profileImageUrl) &&
+        !b.profileImageUrl!.startsWith("data:image/")
+          ? 0
+          : 1;
+      return aRemote - bRemote;
+    });
+
+  if (needsWork.length === 0) {
+    return { saved: 0, pending: 0, failed: 0, rateLimitedUntil: null };
+  }
+
+  if (isMicrolinkRateLimited()) {
+    // Still allow remote→data URL persistence without Microlink.
+    const remoteOnly = needsWork.filter((r) => {
+      const stored = r.profileImageUrl?.trim() || "";
+      return stored && !isUnusableAvatarUrl(stored) && !stored.startsWith("data:image/");
+    });
+    if (remoteOnly.length === 0) {
+      return {
+        saved: 0,
+        pending: needsWork.length,
+        failed: 0,
+        rateLimitedUntil: getMicrolinkCooldownUntil(),
+      };
+    }
+  }
+
+  let saved = 0;
+  let failed = 0;
+  let rateLimitedUntil: number | null = null;
+  const batch = needsWork.slice(0, batchSize);
+
+  for (const contact of batch) {
+    const stored = contact.profileImageUrl?.trim() || "";
+    try {
+      let dataUrl: string | null = null;
+
+      if (stored && !isUnusableAvatarUrl(stored) && !stored.startsWith("data:image/")) {
+        dataUrl = await downloadImageAsDataUrl(stored);
+      }
+
+      if (!dataUrl && contact.linkedinUrl?.trim()) {
+        if (isMicrolinkRateLimited()) {
+          rateLimitedUntil = getMicrolinkCooldownUntil();
+          break;
+        }
+        dataUrl = await fetchLinkedInPhotoDataUrl(contact.linkedinUrl);
+      }
+
+      if (!dataUrl) {
+        failed += 1;
+        continue;
+      }
+
+      await db
+        .update(contacts)
+        .set({ profileImageUrl: dataUrl, updatedAt: new Date() })
+        .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
+      saved += 1;
+    } catch (err) {
+      if (err instanceof MicrolinkRateLimitError) {
+        rateLimitedUntil = err.resetAt;
+        break;
+      }
+      failed += 1;
+    }
+  }
+
+  const pending = Math.max(0, needsWork.length - saved);
+  if (saved > 0) {
+    revalidatePath("/contacts");
+    revalidatePath("/");
+    revalidatePath("/graph");
+  }
+
+  return {
+    saved,
+    pending,
+    failed,
+    rateLimitedUntil,
+  };
+}
+
 function isLinkedInProfileUrl(raw: string) {
   const trimmed = raw.trim();
   if (!trimmed) return false;
@@ -892,7 +1038,20 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
         profileImageUrl = await downloadImageAsDataUrl(profile.profileImageUrl);
       }
       if (!profileImageUrl && contact.linkedinUrl) {
-        profileImageUrl = await fetchLinkedInPhotoDataUrl(contact.linkedinUrl);
+        if (isMicrolinkRateLimited()) {
+          // Keep remaining contacts for a later pass once quota resets.
+          unmatched += ordered.length - i;
+          break;
+        }
+        try {
+          profileImageUrl = await fetchLinkedInPhotoDataUrl(contact.linkedinUrl);
+        } catch (err) {
+          if (err instanceof MicrolinkRateLimitError) {
+            unmatched += ordered.length - i;
+            break;
+          }
+          throw err;
+        }
       }
 
       if (!profile) {

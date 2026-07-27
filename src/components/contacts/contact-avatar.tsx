@@ -23,6 +23,12 @@ export function ContactAvatar({
   profileImageUrl,
   size = "lg",
   className,
+  /**
+   * When true and there is a LinkedIn URL but no stored photo, hit the avatar
+   * API so a single profile view can resolve + persist on demand.
+   * Leave false on list views to avoid Microlink stampeding.
+   */
+  resolveLinkedIn = false,
 }: {
   contactId?: string | null;
   firstName?: string | null;
@@ -31,14 +37,15 @@ export function ContactAvatar({
   profileImageUrl?: string | null;
   size?: "default" | "sm" | "lg";
   className?: string;
+  resolveLinkedIn?: boolean;
 }) {
   const hasStoredPhoto =
     Boolean(profileImageUrl?.trim()) && !isUnusableAvatarUrl(profileImageUrl);
   const hasLinkedIn = Boolean(linkedinUrl?.trim());
   // Prefer same-origin avatar route so LinkedIn CDN / data URLs load reliably.
-  // Also hit the route when we only have a LinkedIn URL — it resolves + caches.
+  // Only resolve LinkedIn on demand when explicitly opted in (profile pages).
   const photoUrl =
-    contactId && (hasStoredPhoto || hasLinkedIn)
+    contactId && (hasStoredPhoto || (resolveLinkedIn && hasLinkedIn))
       ? `/api/avatars/${contactId}`
       : resolveContactPhotoUrl(profileImageUrl);
   const gender = guessGenderFromFirstName(firstName, fullName);
