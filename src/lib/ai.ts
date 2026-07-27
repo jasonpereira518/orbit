@@ -772,6 +772,10 @@ const PERSON_FIELD_SHAPE = `{
   "source_excerpt": string
 }`;
 
+/** Shared rule for capture summaries — conversation-first, not bio-only. */
+const SUMMARY_CONVERSATION_RULE = `- summary: 2–4 sentences covering who they are AND what you talked about with them (projects, asks, advice, intros, next steps) grounded in the notes. Weave discussion topics and action items into the narrative — do not write a bland job blurb. If the notes only mention a brief hello, say so briefly.
+- topics: short labels for what was discussed (chips), not a substitute for summary.`;
+
 function hintsPreamble(hints?: CaptureParseHints | null) {
   if (!hints) return "";
   const lines: string[] = [];
@@ -856,6 +860,7 @@ Rules:
 - If a fact is only about one person, keep it in that person's fields/source_excerpt — not in shared_notes.
 - If several people share the same event/place, set each person's met_at (and include it on shared_notes too).
 - interaction_date: YYYY-MM-DD when the notes/calendar imply a specific past event date; otherwise null.
+${SUMMARY_CONVERSATION_RULE}
 - relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.
 - If the notes only cover one person, return a single-item people array and an empty shared_notes array.
 - When seed people/hints are provided, include them if they appear in or clearly belong to this meeting, and prefer their emails when matching.`,
@@ -991,6 +996,7 @@ Rules:
 - source_excerpt must be that person's specific slice of the original notes — never the entire dump, never shared-only text alone.
 - Never invent people or facts. Prefer emails/companies from the request when the notes don't contradict them.
 - interaction_date: YYYY-MM-DD when known for this person/event; else null.
+${SUMMARY_CONVERSATION_RULE}
 - relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.
 - met_at may use shared event place when the person was clearly there.`,
     });
@@ -1097,6 +1103,7 @@ Rules:
 - Use null when unknown. Do not invent facts.
 - Separate facts from guesses; suggestions go in recommendation fields.
 - interaction_date: YYYY-MM-DD when the notes imply a specific past event date; otherwise null.
+${SUMMARY_CONVERSATION_RULE}
 - relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.`,
   });
 
