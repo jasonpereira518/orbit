@@ -257,9 +257,9 @@ function PersonReviewCard({
       >
         <Field label="What you talked about">
           <Textarea
-            className={cn(compact ? "min-h-[88px] text-sm" : "min-h-[110px]")}
+            className={cn(compact ? "min-h-[100px] text-sm" : "min-h-[130px]")}
             value={item.parsed.summary || ""}
-            placeholder="Conversation recap — topics, asks, next steps…"
+            placeholder="Detailed conversation recap — advice, frameworks, action items, next steps…"
             onChange={(e) => updateParsed({ summary: e.target.value })}
           />
         </Field>

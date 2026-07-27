@@ -144,8 +144,8 @@ export type CaptureParseHints = {
   interactionType?: string | null;
 };
 
-const TWO_PASS_CHAR_THRESHOLD = 2500;
-const DETAIL_BATCH_SIZE = 4;
+const TWO_PASS_CHAR_THRESHOLD = 1800;
+const DETAIL_BATCH_SIZE = 3;
 const CAPTURE_MAX_OUTPUT_TOKENS = 8192;
 
 const GEMINI_EMBEDDING_MODEL = "gemini-embedding-001";
@@ -773,8 +773,23 @@ const PERSON_FIELD_SHAPE = `{
 }`;
 
 /** Shared rule for capture summaries — conversation-first, not bio-only. */
-const SUMMARY_CONVERSATION_RULE = `- summary: 2–4 sentences covering who they are AND what you talked about with them (projects, asks, advice, intros, next steps) grounded in the notes. Weave discussion topics and action items into the narrative — do not write a bland job blurb. If the notes only mention a brief hello, say so briefly.
-- topics: short labels for what was discussed (chips), not a substitute for summary.`;
+const SUMMARY_CONVERSATION_RULE = `- summary: Write a detailed conversation recap (4–8 sentences when the notes support it). Include (1) the meeting/context (coffee chat, buddy meeting, shadow call, etc.), (2) concrete points they made or advised — specific phrases, frameworks, numbers, tools, processes when present, (3) action items or next steps for you, (4) any relationship context (manager, interviewer, mentor, peer). Prefer richness over brevity. Do NOT collapse rich advice into a vague blurb like "discussed career growth." If notes are only a brief hello, keep the summary short.
+- topics: 3–8 short labels for what was discussed (chips), complementary to summary — not a substitute.
+- action_items: concrete to-dos implied by the conversation (e.g. "Do PR FAQ", "Shadow customer calls", "Ask peers for Culture Cloud feedback").
+- key_facts: memorable specifics worth remembering later (frameworks, org structure, tools mentioned, personal background).`;
+
+/**
+ * How users often dump conference / internship day notes:
+ * day/event header → person (or "Meeting with X") → bullets of what was said.
+ */
+const NOTE_STRUCTURE_GUIDE = `Note structure (common in these dumps — follow it closely):
+- Day / event headers like "AWS Solutions Architect Day 6 Tuesday - 5/26/2026 …" set shared context and interaction_date for everyone under that day until the next day header.
+- Session or meeting titles ("Culture of Innovation Session", "Business Strategy Meeting", "Coffee Chat with Ashraf", "Onboarding buddy meeting - Jenny Shen", "Meeting with Sahil", "Met with Chris Shea", "Talked to Brianna", "Spoke to Lalitha", "to Reese Duncan") introduce a person OR a group session.
+- Lines under a named person are that person's conversation notes → put them in that person's source_excerpt (keep the substance; do not paraphrase away advice).
+- shared_notes: day/event headers and truly multi-person context only. Do NOT invent a person from a talk title alone (e.g. "Franck Noel Talk" is a session name unless you clearly met Franck).
+- Skip solitary activity with no person ("Worked on project", "Got to the office early", "Have 9 unread") — those are not contacts.
+- Each person gets interaction_date from the nearest preceding day header (YYYY-MM-DD). Set met_at to the session/meeting name when clear.
+- If the same person appears on multiple days, prefer ONE people[] entry and merge their excerpts/dates (use the latest interaction_date; mention both contexts in summary).`;
 
 function hintsPreamble(hints?: CaptureParseHints | null) {
   if (!hints) return "";
@@ -854,12 +869,13 @@ Rules:
 - Skip vague groups ("a few engineers") with no identifiable person.
 - Extract only information supported by the notes. Use null when unknown. Do not invent people or facts.
 - Include every key on every person object. Use null (or [] for arrays) when unknown — never omit keys.
-- source_excerpt must be the person-specific slice of the original notes (not the whole dump, and not the shared group text alone).
+${NOTE_STRUCTURE_GUIDE}
+- source_excerpt must be the person-specific slice of the original notes (not the whole dump, and not the shared group text alone). Prefer the raw conversation bullets under their name.
 - Never put person-only facts in shared_notes. Never put the full dump in every source_excerpt.
-- shared_notes: capture context that applies to MULTIPLE people at once — e.g. "met everyone at AWS Summit afterparty", "group dinner after the panel", "all discussed fundraising". Put the shared text in shared_notes[].text, list the affected people in person_names (exact names matching people[].name; use [] to mean everyone), and set met_at/topics when relevant. Do NOT duplicate that shared text into every source_excerpt.
+- shared_notes: capture context that applies to MULTIPLE people at once — e.g. a day header, "met everyone at AWS Summit afterparty". Put the shared text in shared_notes[].text, list the affected people in person_names (exact names matching people[].name; use [] to mean everyone under that day), and set met_at/topics when relevant. Do NOT duplicate that shared text into every source_excerpt.
 - If a fact is only about one person, keep it in that person's fields/source_excerpt — not in shared_notes.
 - If several people share the same event/place, set each person's met_at (and include it on shared_notes too).
-- interaction_date: YYYY-MM-DD when the notes/calendar imply a specific past event date; otherwise null.
+- interaction_date: per person from their day header when available (YYYY-MM-DD); top-level interaction_date = most recent day in the dump or null.
 ${SUMMARY_CONVERSATION_RULE}
 - relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.
 - If the notes only cover one person, return a single-item people array and an empty shared_notes array.
@@ -915,11 +931,15 @@ Return strict JSON:
   ]
 }
 Rules:
-- One object per identifiable person. Skip vague groups with no name.
+- One object per identifiable person you actually spoke with or met. Skip vague groups with no name.
+- Recognize introductions like "Coffee Chat with X", "Meeting with X", "Met with X", "Talked to X", "Spoke to X", "Onboarding buddy meeting - X", "to X" after a session title.
+- Do NOT create people from session/talk titles alone (e.g. "Franck Noel Talk", "Business Strategy Meeting", "lighting talks") unless the notes clearly show a 1:1 with that named person.
+- Skip solo work logs with no named counterpart ("Worked on project", "Got to the office early").
 - Do not invent people. Prefer seed attendees when they clearly belong to this event.
-- shared_notes hold ONLY multi-person context (not person-only facts). person_names must match people[].name (or [] for everyone).
-- interaction_date: YYYY-MM-DD when known from notes/hints; else null.
-- Keep people list complete even for long dumps.`,
+- shared_notes: day/event headers and multi-person context only (not person-only conversation bullets). person_names must match people[].name (or [] for everyone under that day).
+- interaction_date: YYYY-MM-DD from day headers when known; else null.
+- Keep people list complete even for long multi-day dumps.
+${NOTE_STRUCTURE_GUIDE}`,
   });
 
   const identity = multiPersonIdentitySchema.parse(JSON.parse(identityRaw));
@@ -993,12 +1013,14 @@ Return strict JSON:
 Rules:
 - Return one object per requested person, same order, same names.
 - Extract only facts supported by the notes. Use null / [] when unknown.
-- source_excerpt must be that person's specific slice of the original notes — never the entire dump, never shared-only text alone.
+${NOTE_STRUCTURE_GUIDE}
+- source_excerpt must be that person's specific conversation slice from the original notes (the bullets under their meeting/name) — never the entire dump, never shared-only day headers alone.
+- Preserve specific advice, frameworks, numbers, and action items in source_excerpt and summary — do not over-summarize away detail.
 - Never invent people or facts. Prefer emails/companies from the request when the notes don't contradict them.
-- interaction_date: YYYY-MM-DD when known for this person/event; else null.
+- interaction_date: YYYY-MM-DD from the day header above that person's section when known; else null.
+- met_at: the meeting/session name for that conversation when clear (e.g. "Coffee Chat", "Onboarding buddy meeting").
 ${SUMMARY_CONVERSATION_RULE}
-- relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.
-- met_at may use shared event place when the person was clearly there.`,
+- relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.`,
     });
 
     const batchParsed = personDetailBatchSchema.parse(JSON.parse(batchRaw));
@@ -1041,14 +1063,19 @@ ${SUMMARY_CONVERSATION_RULE}
         try {
           const retryRaw = await completeJson(userId, {
             temperature: 0.1,
-            maxOutputTokens: 2048,
-            user: `NOTES:\n${sliced}\n\nPerson: ${merged.name}\nReturn JSON { "source_excerpt": string } with ONLY this person's specific slice of the notes.`,
-            system:
-              "Return strict JSON with source_excerpt = the person-specific portion of the notes. Never return the whole dump.",
+            maxOutputTokens: 3072,
+            user: `NOTES:\n${sliced}\n\nPerson: ${merged.name}\nReturn JSON { "source_excerpt": string, "summary": string }.\n- source_excerpt = the conversation bullets under this person's meeting/name (not the whole dump).\n- summary = detailed recap of what you talked about with them.`,
+            system: `Return strict JSON. ${NOTE_STRUCTURE_GUIDE}\n${SUMMARY_CONVERSATION_RULE}`,
           });
-          const retry = parseAiJson<{ source_excerpt?: string }>(retryRaw);
+          const retry = parseAiJson<{
+            source_excerpt?: string;
+            summary?: string;
+          }>(retryRaw);
           if (retry.source_excerpt?.trim()) {
             merged.source_excerpt = retry.source_excerpt.trim();
+          }
+          if (!merged.summary?.trim() && retry.summary?.trim()) {
+            merged.summary = retry.summary.trim();
           }
         } catch {
           // Keep empty excerpt; caller still has shared context + fields.
@@ -1103,6 +1130,7 @@ Rules:
 - Use null when unknown. Do not invent facts.
 - Separate facts from guesses; suggestions go in recommendation fields.
 - interaction_date: YYYY-MM-DD when the notes imply a specific past event date; otherwise null.
+${NOTE_STRUCTURE_GUIDE}
 ${SUMMARY_CONVERSATION_RULE}
 - relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.`,
   });
@@ -1115,8 +1143,13 @@ export async function parseMultiPersonNotesWithAI(
   notes: string,
   hints?: CaptureParseHints | null
 ): Promise<ParsedMultiPersonNotes> {
+  const looksLikeMultiDayDump =
+    (notes.match(/\bDay\s+\d+\b/gi) || []).length >= 2 ||
+    (notes.match(/\b\d{1,2}\/\d{1,2}\/\d{4}\b/g) || []).length >= 2;
+
   const useTwoPass =
     notes.length >= TWO_PASS_CHAR_THRESHOLD ||
+    looksLikeMultiDayDump ||
     (hints?.seedPeople?.length || 0) >= 5;
 
   if (useTwoPass) {
