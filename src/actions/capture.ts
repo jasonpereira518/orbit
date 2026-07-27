@@ -8,9 +8,15 @@ import { requireUserId } from "@/lib/auth";
 import {
   parseNotesWithAI,
   parseMultiPersonNotesWithAI,
+  type CaptureParseHints,
   type ParsedNote,
   type SharedNoteContext,
 } from "@/lib/ai";
+import {
+  normalizeCaptureInput,
+  normalizePastedCaptureText,
+  type CaptureMediaFile,
+} from "@/lib/capture-ingest";
 import { findDuplicateCandidates } from "@/lib/duplicates";
 import { createContact, logInteraction, updateContact } from "@/actions/contacts";
 import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
@@ -75,6 +81,8 @@ export type BulkNotePersonPreview = {
   suggestedMergeId: string | null;
   /** Shared group/event notes folded into this person's save payload. */
   sharedNoteTexts: string[];
+  interactionDate: string | null;
+  interactionType: string | null;
 };
 
 function namesMatch(a: string, b: string) {
@@ -127,17 +135,72 @@ function mergeTopics(
   return out;
 }
 
-export async function parseBulkCaptureNotes(notes: string) {
+/**
+ * Ingest voice / photos / calendar / email into normalized capture text.
+ * Media is processed ephemerally and not stored.
+ */
+export async function ingestCaptureMedia(input: {
+  text?: string;
+  files?: CaptureMediaFile[];
+}) {
+  try {
+    const userId = await requireUserId();
+    const hasText = Boolean(input.text?.trim());
+    const hasFiles = Boolean(input.files?.length);
+    if (!hasText && !hasFiles) {
+      return { ok: false as const, error: "Add notes or upload a file first" };
+    }
+
+    const normalized = await normalizeCaptureInput(userId, {
+      text: input.text,
+      files: input.files,
+    });
+
+    return {
+      ok: true as const,
+      text: normalized.text,
+      hints: normalized.hints,
+      sources: normalized.sources,
+    };
+  } catch (err) {
+    return {
+      ok: false as const,
+      error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message,
+    };
+  }
+}
+
+export async function parseBulkCaptureNotes(
+  notes: string,
+  hints?: CaptureParseHints | null
+) {
   try {
     const userId = await requireUserId();
     if (!notes.trim()) {
       return { ok: false as const, error: "Notes are required" };
     }
 
-    const { people, shared_notes } = await parseMultiPersonNotesWithAI(
-      userId,
-      notes
-    );
+    // Auto-detect pasted ICS / email forwards when caller didn't supply hints.
+    const detected = normalizePastedCaptureText(notes);
+    const seedPeople = [
+      ...(hints?.seedPeople || []),
+      ...(detected.hints.seedPeople || []),
+    ];
+    const mergedHints: CaptureParseHints = {
+      eventDate: hints?.eventDate || detected.hints.eventDate || null,
+      seedPeople: seedPeople.length ? seedPeople : undefined,
+      interactionType:
+        hints?.interactionType || detected.hints.interactionType || null,
+    };
+
+    const corpus =
+      detected.sources.includes("calendar") ||
+      detected.sources.includes("email")
+        ? detected.text
+        : notes;
+
+    const { people, shared_notes, interaction_date } =
+      await parseMultiPersonNotesWithAI(userId, corpus, mergedHints);
     if (!people.length) {
       return { ok: false as const, error: "No people found in those notes" };
     }
@@ -146,6 +209,9 @@ export async function parseBulkCaptureNotes(notes: string) {
     const existing = await db.query.contacts.findMany({
       where: eq(contacts.userId, userId),
     });
+
+    const defaultDate = interaction_date || mergedHints.eventDate || null;
+    const interactionType = mergedHints.interactionType || "meeting_note";
 
     const items: BulkNotePersonPreview[] = people.map((person, index) => {
       const { source_excerpt, ...parsedBase } = person;
@@ -161,6 +227,7 @@ export async function parseBulkCaptureNotes(notes: string) {
           sharedForPerson.find((s) => s.met_at)?.met_at ||
           null,
         topics: mergeTopics(parsedBase.topics, sharedForPerson),
+        interaction_date: parsedBase.interaction_date || defaultDate,
       };
 
       const duplicates = findDuplicateCandidates(existing, {
@@ -177,7 +244,7 @@ export async function parseBulkCaptureNotes(notes: string) {
 
       return {
         key: `${index}-${parsed.name || "person"}`,
-        notes: composePersonNotes(source_excerpt, sharedForPerson, notes),
+        notes: composePersonNotes(source_excerpt, sharedForPerson, corpus),
         parsed,
         duplicates: duplicates.map((d) => ({
           id: d.contact.id,
@@ -189,6 +256,8 @@ export async function parseBulkCaptureNotes(notes: string) {
         })),
         suggestedMergeId,
         sharedNoteTexts: sharedForPerson.map((s) => s.text),
+        interactionDate: parsed.interaction_date,
+        interactionType,
       };
     });
 
@@ -196,6 +265,9 @@ export async function parseBulkCaptureNotes(notes: string) {
       ok: true as const,
       items,
       sharedNotes: shared_notes,
+      interactionDate: defaultDate,
+      interactionType,
+      hints: mergedHints,
     };
   } catch (err) {
     const { toUserFacingError } = await import("@/lib/errors");
@@ -215,6 +287,8 @@ export async function confirmBulkCapture(
     relationshipScore: number;
     tagNames: string[];
     followUpDays?: number | null;
+    interactionDate?: string | null;
+    interactionType?: string | null;
   }>
 ) {
   await requireUserId();
@@ -246,6 +320,8 @@ export async function confirmCapture(input: {
   relationshipScore: number;
   tagNames: string[];
   followUpDays?: number | null;
+  interactionDate?: string | null;
+  interactionType?: string | null;
 }) {
   const userId = await requireUserId();
   const { parsed } = input;
@@ -260,8 +336,14 @@ export async function confirmCapture(input: {
       : null;
 
   let contactId = input.mergeContactId || null;
+  const interactionDate =
+    input.interactionDate?.trim() ||
+    parsed.interaction_date?.trim() ||
+    null;
 
   if (contactId) {
+    // Merge: update profile fields from extraction, but do NOT overwrite
+    // contacts.notes — the new material lives on the interaction timeline.
     await updateContact(contactId, {
       fullName: parsed.name || undefined,
       company: parsed.company || undefined,
@@ -277,7 +359,6 @@ export async function confirmCapture(input: {
       relationshipScore: input.relationshipScore,
       tagNames: input.tagNames,
       nextFollowUpAt: followUpDate?.toISOString() ?? undefined,
-      notes: input.notes,
     });
   } else {
     if (!parsed.name) throw new Error("A name is required to create a contact");
@@ -308,8 +389,10 @@ export async function confirmCapture(input: {
     aiSummary: parsed.summary || undefined,
     topics: parsed.topics,
     actionItems: parsed.action_items,
-    interactionType: "meeting_note",
+    interactionType: input.interactionType || "meeting_note",
     source: "capture",
+    interactionDate: interactionDate || undefined,
+    parseDateFromNotes: !interactionDate,
   });
 
   if (input.createReminder && followUpDate) {

@@ -24,26 +24,54 @@ export {
   resolveAiProvider,
 } from "@/lib/ai-providers";
 
+/** AI often omits unknown fields; accept missing/null. */
+const nullStr = z
+  .string()
+  .nullish()
+  .transform((v) => (v == null || v === "" ? null : v));
+const nullNum = z
+  .number()
+  .nullish()
+  .transform((v) => (v == null || Number.isNaN(v) ? null : v));
+const nullScore = z
+  .number()
+  .min(1)
+  .max(5)
+  .nullish()
+  .transform((v) => (v == null || Number.isNaN(v) ? null : v));
+const nullConfidence = z
+  .number()
+  .min(0)
+  .max(1)
+  .nullish()
+  .transform((v) => (v == null || Number.isNaN(v) ? null : v));
+const strList = z
+  .array(z.string())
+  .nullish()
+  .transform((v) => v ?? []);
+
 export const noteParseSchema = z.object({
-  name: z.string().nullable(),
-  company: z.string().nullable(),
-  role: z.string().nullable(),
-  location: z.string().nullable(),
-  email: z.string().nullable(),
-  linkedin_url: z.string().nullable(),
-  met_at: z.string().nullable(),
-  topics: z.array(z.string()).default([]),
-  action_items: z.array(z.string()).default([]),
-  follow_up_recommendation: z.string().nullable(),
-  follow_up_days: z.number().nullable(),
-  relationship_score_suggestion: z.number().min(1).max(5).nullable(),
-  tags: z.array(z.string()).default([]),
-  summary: z.string().nullable(),
-  key_facts: z.array(z.string()).default([]),
-  opportunities: z.array(z.string()).default([]),
-  shared_interests: z.array(z.string()).default([]),
-  suggested_next_message: z.string().nullable(),
-  confidence: z.number().min(0).max(1).nullable(),
+  name: nullStr,
+  company: nullStr,
+  role: nullStr,
+  location: nullStr,
+  email: nullStr,
+  linkedin_url: nullStr,
+  met_at: nullStr,
+  topics: strList,
+  action_items: strList,
+  follow_up_recommendation: nullStr,
+  follow_up_days: nullNum,
+  relationship_score_suggestion: nullScore,
+  tags: strList,
+  summary: nullStr,
+  key_facts: strList,
+  opportunities: strList,
+  shared_interests: strList,
+  suggested_next_message: nullStr,
+  confidence: nullConfidence,
+  /** ISO date (YYYY-MM-DD) when the notes imply a past event/meeting. */
+  interaction_date: nullStr,
 });
 
 export type ParsedNote = z.infer<typeof noteParseSchema>;
@@ -51,10 +79,10 @@ export type ParsedNote = z.infer<typeof noteParseSchema>;
 /** Group/event context that applies to more than one person in a note dump. */
 export const sharedNoteContextSchema = z.object({
   text: z.string(),
-  met_at: z.string().nullable().optional(),
-  topics: z.array(z.string()).default([]),
+  met_at: nullStr.optional(),
+  topics: strList,
   /** Names of people this shared note applies to (must match people[].name). */
-  person_names: z.array(z.string()).default([]),
+  person_names: strList,
 });
 
 export type SharedNoteContext = z.infer<typeof sharedNoteContextSchema>;
@@ -65,15 +93,60 @@ export const multiPersonNoteParseSchema = z.object({
     .nullable()
     .optional()
     .transform((v) => v ?? []),
+  interaction_date: nullStr.optional(),
   people: z.array(
     noteParseSchema.extend({
-      source_excerpt: z.string(),
+      // Models sometimes skip this on later people in long dumps.
+      source_excerpt: z
+        .string()
+        .nullish()
+        .transform((v) => v?.trim() || ""),
     })
   ),
 });
 
 export type ParsedMultiPersonNotes = z.infer<typeof multiPersonNoteParseSchema>;
 export type ParsedPersonNote = ParsedMultiPersonNotes["people"][number];
+
+/** Pass A: identify people + shared context without full field extraction. */
+const personIdentitySchema = z.object({
+  name: z.string().min(1),
+  email: nullStr.optional(),
+  company: nullStr.optional(),
+  role: nullStr.optional(),
+});
+
+const multiPersonIdentitySchema = z.object({
+  shared_notes: z
+    .array(sharedNoteContextSchema)
+    .nullable()
+    .optional()
+    .transform((v) => v ?? []),
+  interaction_date: nullStr.optional(),
+  met_at: nullStr.optional(),
+  people: z.array(personIdentitySchema),
+});
+
+const personDetailBatchSchema = z.object({
+  people: z.array(
+    noteParseSchema.extend({
+      source_excerpt: z
+        .string()
+        .nullish()
+        .transform((v) => v?.trim() || ""),
+    })
+  ),
+});
+
+export type CaptureParseHints = {
+  eventDate?: string | null;
+  seedPeople?: Array<{ name?: string | null; email?: string | null }>;
+  interactionType?: string | null;
+};
+
+const TWO_PASS_CHAR_THRESHOLD = 2500;
+const DETAIL_BATCH_SIZE = 4;
+const CAPTURE_MAX_OUTPUT_TOKENS = 8192;
 
 const GEMINI_EMBEDDING_MODEL = "gemini-embedding-001";
 const OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
@@ -87,11 +160,6 @@ type ProviderKeySettings = {
   geminiApiKeyEncrypted?: string | null;
   openaiApiKeyEncrypted?: string | null;
   anthropicApiKeyEncrypted?: string | null;
-};
-
-type StoredSettings = ProviderKeySettings & {
-  aiProvider: string | null;
-  aiModel: string | null;
 };
 
 async function loadSettings(userId: string) {
@@ -336,16 +404,23 @@ function normalizeJsonResponse(raw: string) {
   return JSON.stringify(parseAiJson(raw));
 }
 
+export type MultimodalPart =
+  | { type: "text"; text: string }
+  | { type: "image"; mimeType: string; base64: string }
+  | { type: "audio"; mimeType: string; base64: string };
+
 export async function completeJson(
   userId: string,
   input: {
     system: string;
     user: string;
     temperature?: number;
+    maxOutputTokens?: number;
   }
 ): Promise<string> {
   const { provider, model, apiKey } = await getAiConfig(userId);
   const temperature = input.temperature ?? 0.2;
+  const maxOutputTokens = input.maxOutputTokens ?? 4096;
   const system = `${input.system}\n\nRespond with valid JSON only. No markdown fences.`;
 
   try {
@@ -356,7 +431,7 @@ export async function completeJson(
         contents: input.user,
         config: {
           temperature,
-          maxOutputTokens: 4096,
+          maxOutputTokens,
           responseMimeType: "application/json",
           systemInstruction: system,
         },
@@ -371,7 +446,7 @@ export async function completeJson(
       const response = await client.chat.completions.create({
         model,
         temperature,
-        max_tokens: 4096,
+        max_tokens: maxOutputTokens,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: system },
@@ -386,7 +461,7 @@ export async function completeJson(
     const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
       model,
-      max_tokens: 4096,
+      max_tokens: maxOutputTokens,
       temperature,
       system,
       messages: [{ role: "user", content: input.user }],
@@ -414,12 +489,584 @@ export async function completeJson(
   }
 }
 
+/** Multimodal JSON completion for vision OCR / image+text prompts. */
+export async function completeMultimodalJson(
+  userId: string,
+  input: {
+    system: string;
+    parts: MultimodalPart[];
+    temperature?: number;
+    maxOutputTokens?: number;
+  }
+): Promise<string> {
+  const { provider, model, apiKey } = await getAiConfig(userId);
+  const temperature = input.temperature ?? 0.2;
+  const maxOutputTokens = input.maxOutputTokens ?? 4096;
+  const system = `${input.system}\n\nRespond with valid JSON only. No markdown fences.`;
+  const textParts = input.parts.filter((p) => p.type === "text") as Array<{
+    type: "text";
+    text: string;
+  }>;
+  const mediaParts = input.parts.filter((p) => p.type !== "text");
+
+  try {
+    if (provider === "gemini") {
+      const client = new GoogleGenAI({ apiKey });
+      const contents = [
+        ...textParts.map((p) => ({ text: p.text })),
+        ...mediaParts.map((p) => ({
+          inlineData: {
+            mimeType: p.mimeType,
+            data: p.base64,
+          },
+        })),
+      ];
+      const response = await client.models.generateContent({
+        model,
+        contents: [{ role: "user", parts: contents }],
+        config: {
+          temperature,
+          maxOutputTokens,
+          responseMimeType: "application/json",
+          systemInstruction: system,
+        },
+      });
+      const content = response.text;
+      if (!content) throw new Error("Empty AI response");
+      return normalizeJsonResponse(content);
+    }
+
+    if (provider === "openai") {
+      const client = new OpenAI({ apiKey });
+      const content: OpenAI.Chat.ChatCompletionContentPart[] = [
+        ...textParts.map(
+          (p): OpenAI.Chat.ChatCompletionContentPart => ({
+            type: "text",
+            text: p.text,
+          })
+        ),
+        ...mediaParts.map((p) => {
+          if (p.type === "image") {
+            return {
+              type: "image_url" as const,
+              image_url: {
+                url: `data:${p.mimeType};base64,${p.base64}`,
+              },
+            };
+          }
+          // OpenAI chat completions don't accept arbitrary audio here — caller
+          // should transcribe first. Treat as a text note if somehow passed.
+          return {
+            type: "text" as const,
+            text: `[Audio attachment: ${p.mimeType}]`,
+          };
+        }),
+      ];
+      const response = await client.chat.completions.create({
+        model,
+        temperature,
+        max_tokens: maxOutputTokens,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content },
+        ],
+      });
+      const out = response.choices[0]?.message?.content;
+      if (!out) throw new Error("Empty AI response");
+      return normalizeJsonResponse(out);
+    }
+
+    const client = new Anthropic({ apiKey });
+    type AnthropicContent = Exclude<
+      Anthropic.MessageCreateParams["messages"][0]["content"],
+      string
+    >;
+    const content: AnthropicContent = [];
+    for (const p of textParts) {
+      content.push({ type: "text", text: p.text });
+    }
+    for (const p of mediaParts) {
+      if (p.type === "image") {
+        const mediaType = (
+          ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(
+            p.mimeType
+          )
+            ? p.mimeType
+            : "image/jpeg"
+        ) as "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+        content.push({
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: mediaType,
+            data: p.base64,
+          },
+        });
+      } else {
+        content.push({
+          type: "text",
+          text: `[Audio attachment: ${p.mimeType} — transcribe separately]`,
+        });
+      }
+    }
+    const response = await client.messages.create({
+      model,
+      max_tokens: maxOutputTokens,
+      temperature,
+      system,
+      messages: [{ role: "user", content }],
+    });
+    const block = response.content.find((b) => b.type === "text");
+    if (!block || block.type !== "text" || !block.text) {
+      throw new Error("Empty AI response");
+    }
+    return normalizeJsonResponse(block.text);
+  } catch (err) {
+    if (err instanceof Error && err.message === "Empty AI response") throw err;
+    if (
+      err instanceof Error &&
+      err.message.startsWith("Failed to parse AI JSON")
+    ) {
+      throw new Error("AI returned an incomplete response. Try again.");
+    }
+    const label =
+      provider === "gemini"
+        ? "Gemini"
+        : provider === "openai"
+          ? "OpenAI"
+          : "Anthropic";
+    throw new Error(aiProviderErrorMessage(err, label));
+  }
+}
+
+/** Speech-to-text using OpenAI Whisper, or Gemini audio understanding as fallback. */
+export async function transcribeAudioWithAI(
+  userId: string,
+  input: { mimeType: string; base64: string; filename?: string }
+): Promise<string> {
+  const settings = await loadSettings(userId);
+  const openaiKey = getProviderApiKey("openai", settings);
+  if (openaiKey) {
+    const client = new OpenAI({ apiKey: openaiKey });
+    const bytes = Buffer.from(input.base64, "base64");
+    const file = new File(
+      [bytes],
+      input.filename || guessAudioFilename(input.mimeType),
+      { type: input.mimeType || "audio/webm" }
+    );
+    const result = await client.audio.transcriptions.create({
+      file,
+      model: "whisper-1",
+    });
+    const text = result.text?.trim();
+    if (!text) throw new Error("Empty transcription");
+    return text;
+  }
+
+  const geminiKey = getProviderApiKey("gemini", settings);
+  if (geminiKey) {
+    const client = new GoogleGenAI({ apiKey: geminiKey });
+    const model = resolveAiModel("gemini", settings?.aiModel);
+    const response = await client.models.generateContent({
+      model,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text: "Transcribe this audio verbatim. Return JSON: {\"text\": string}. If unintelligible, use an empty string.",
+            },
+            {
+              inlineData: {
+                mimeType: input.mimeType || "audio/webm",
+                data: input.base64,
+              },
+            },
+          ],
+        },
+      ],
+      config: {
+        temperature: 0.1,
+        maxOutputTokens: 4096,
+        responseMimeType: "application/json",
+      },
+    });
+    const raw = response.text;
+    if (!raw) throw new Error("Empty transcription");
+    const parsed = parseAiJson<{ text?: string }>(raw);
+    const text = parsed.text?.trim();
+    if (!text) throw new Error("Empty transcription");
+    return text;
+  }
+
+  throw new Error(
+    "Voice capture needs an OpenAI or Gemini API key in Settings for transcription."
+  );
+}
+
+function guessAudioFilename(mimeType: string) {
+  if (mimeType.includes("mpeg") || mimeType.includes("mp3")) return "audio.mp3";
+  if (mimeType.includes("wav")) return "audio.wav";
+  if (mimeType.includes("mp4") || mimeType.includes("m4a")) return "audio.m4a";
+  if (mimeType.includes("ogg")) return "audio.ogg";
+  return "audio.webm";
+}
+
+/** OCR / note transcription from one or more images. */
+export async function transcribeImagesWithAI(
+  userId: string,
+  images: Array<{ mimeType: string; base64: string }>
+): Promise<string> {
+  if (!images.length) return "";
+  const content = await completeMultimodalJson(userId, {
+    temperature: 0.1,
+    maxOutputTokens: 8192,
+    system: `You transcribe networking / meeting notes from photos (handwritten, whiteboard, typed screenshots, business cards).
+Return strict JSON: { "text": string }
+Rules:
+- Preserve person names, companies, roles, emails, URLs, and action items exactly when readable.
+- Keep a sensible reading order (top-to-bottom, left-to-right, page by page).
+- Separate distinct blocks with blank lines.
+- Do not invent unreadable content; skip illegible fragments.
+- If multiple images, concatenate in order with a blank line between pages.`,
+    parts: [
+      {
+        type: "text",
+        text: `Transcribe ${images.length} note image(s) into plain text for contact capture.`,
+      },
+      ...images.map(
+        (img): MultimodalPart => ({
+          type: "image",
+          mimeType: img.mimeType,
+          base64: img.base64,
+        })
+      ),
+    ],
+  });
+  const parsed = parseAiJson<{ text?: string }>(content);
+  return (parsed.text || "").trim();
+}
+
+const PERSON_FIELD_SHAPE = `{
+  "name": string|null,
+  "company": string|null,
+  "role": string|null,
+  "location": string|null,
+  "email": string|null,
+  "linkedin_url": string|null,
+  "met_at": string|null,
+  "topics": string[],
+  "action_items": string[],
+  "follow_up_recommendation": string|null,
+  "follow_up_days": number|null,
+  "relationship_score_suggestion": 1-5|null,
+  "tags": string[],
+  "summary": string|null,
+  "key_facts": string[],
+  "opportunities": string[],
+  "shared_interests": string[],
+  "suggested_next_message": string|null,
+  "confidence": 0-1|null,
+  "interaction_date": string|null,
+  "source_excerpt": string
+}`;
+
+function hintsPreamble(hints?: CaptureParseHints | null) {
+  if (!hints) return "";
+  const lines: string[] = [];
+  if (hints.eventDate?.trim()) {
+    lines.push(`Known event/interaction date (ISO): ${hints.eventDate.trim()}`);
+  }
+  if (hints.seedPeople?.length) {
+    const seeds = hints.seedPeople
+      .map((p) => {
+        const name = p.name?.trim() || "";
+        const email = p.email?.trim() || "";
+        if (!name && !email) return null;
+        if (name && email) return `${name} <${email}>`;
+        return name || email;
+      })
+      .filter(Boolean);
+    if (seeds.length) {
+      lines.push(`Likely attendees / seed people:\n- ${seeds.join("\n- ")}`);
+    }
+  }
+  if (!lines.length) return "";
+  return `\n\nStructured hints from calendar/email (use when consistent with the notes):\n${lines.join("\n")}`;
+}
+
+function normalizeSharedNotes(
+  shared: SharedNoteContext[],
+  peopleNames: string[]
+): SharedNoteContext[] {
+  const nameSet = new Set(peopleNames.map((n) => n.trim().toLowerCase()));
+  return shared
+    .filter((s) => s.text?.trim())
+    .map((s) => {
+      const rawNames = (s.person_names || [])
+        .map((n) => n.trim())
+        .filter(Boolean);
+      const person_names =
+        rawNames.length === 0
+          ? peopleNames.map((n) => n.trim())
+          : rawNames.filter((n) => nameSet.has(n.toLowerCase()));
+      return {
+        ...s,
+        text: s.text.trim(),
+        person_names,
+      };
+    })
+    .filter((s) => s.person_names.length >= 2);
+}
+
+async function parseMultiPersonSinglePass(
+  userId: string,
+  notes: string,
+  hints?: CaptureParseHints | null
+): Promise<ParsedMultiPersonNotes> {
+  const content = await completeJson(userId, {
+    temperature: 0.2,
+    maxOutputTokens: CAPTURE_MAX_OUTPUT_TOKENS,
+    user: notes.slice(0, 100_000) + hintsPreamble(hints),
+    system: `You extract structured contact data from networking notes that may mention many people.
+Return strict JSON matching this shape:
+{
+  "shared_notes": [
+    {
+      "text": string,
+      "met_at": string|null,
+      "topics": string[],
+      "person_names": string[]
+    }
+  ],
+  "interaction_date": string|null,
+  "people": [
+    ${PERSON_FIELD_SHAPE}
+  ]
+}
+Rules:
+- Create one object per distinct person clearly mentioned in the notes.
+- Skip vague groups ("a few engineers") with no identifiable person.
+- Extract only information supported by the notes. Use null when unknown. Do not invent people or facts.
+- Include every key on every person object. Use null (or [] for arrays) when unknown — never omit keys.
+- source_excerpt must be the person-specific slice of the original notes (not the whole dump, and not the shared group text alone).
+- Never put person-only facts in shared_notes. Never put the full dump in every source_excerpt.
+- shared_notes: capture context that applies to MULTIPLE people at once — e.g. "met everyone at AWS Summit afterparty", "group dinner after the panel", "all discussed fundraising". Put the shared text in shared_notes[].text, list the affected people in person_names (exact names matching people[].name; use [] to mean everyone), and set met_at/topics when relevant. Do NOT duplicate that shared text into every source_excerpt.
+- If a fact is only about one person, keep it in that person's fields/source_excerpt — not in shared_notes.
+- If several people share the same event/place, set each person's met_at (and include it on shared_notes too).
+- interaction_date: YYYY-MM-DD when the notes/calendar imply a specific past event date; otherwise null.
+- relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.
+- If the notes only cover one person, return a single-item people array and an empty shared_notes array.
+- When seed people/hints are provided, include them if they appear in or clearly belong to this meeting, and prefer their emails when matching.`,
+  });
+
+  const parsed = multiPersonNoteParseSchema.parse(JSON.parse(content));
+  const people = parsed.people.filter((p) => p.name?.trim());
+  const shared_notes = normalizeSharedNotes(
+    parsed.shared_notes || [],
+    people.map((p) => p.name!.trim())
+  );
+
+  const defaultDate =
+    parsed.interaction_date || hints?.eventDate?.trim() || null;
+
+  return {
+    shared_notes,
+    interaction_date: defaultDate,
+    people: people.map((p) => ({
+      ...p,
+      interaction_date: p.interaction_date || defaultDate,
+      met_at: p.met_at || null,
+    })),
+  };
+}
+
+async function parseMultiPersonTwoPass(
+  userId: string,
+  notes: string,
+  hints?: CaptureParseHints | null
+): Promise<ParsedMultiPersonNotes> {
+  const sliced = notes.slice(0, 100_000);
+  const identityRaw = await completeJson(userId, {
+    temperature: 0.2,
+    maxOutputTokens: 4096,
+    user: sliced + hintsPreamble(hints),
+    system: `You identify every distinct person in networking notes, plus shared group/event context.
+Return strict JSON:
+{
+  "shared_notes": [
+    {
+      "text": string,
+      "met_at": string|null,
+      "topics": string[],
+      "person_names": string[]
+    }
+  ],
+  "interaction_date": string|null,
+  "met_at": string|null,
+  "people": [
+    { "name": string, "email": string|null, "company": string|null, "role": string|null }
+  ]
+}
+Rules:
+- One object per identifiable person. Skip vague groups with no name.
+- Do not invent people. Prefer seed attendees when they clearly belong to this event.
+- shared_notes hold ONLY multi-person context (not person-only facts). person_names must match people[].name (or [] for everyone).
+- interaction_date: YYYY-MM-DD when known from notes/hints; else null.
+- Keep people list complete even for long dumps.`,
+  });
+
+  const identity = multiPersonIdentitySchema.parse(JSON.parse(identityRaw));
+  const peopleIds = identity.people.filter((p) => p.name?.trim());
+
+  // Merge seed people that weren't found by name/email.
+  if (hints?.seedPeople?.length) {
+    for (const seed of hints.seedPeople) {
+      const seedName = seed.name?.trim();
+      const seedEmail = seed.email?.trim()?.toLowerCase();
+      if (!seedName && !seedEmail) continue;
+      const exists = peopleIds.some((p) => {
+        if (
+          seedName &&
+          p.name.trim().toLowerCase() === seedName.toLowerCase()
+        ) {
+          return true;
+        }
+        if (
+          seedEmail &&
+          p.email?.trim().toLowerCase() === seedEmail
+        ) {
+          return true;
+        }
+        return false;
+      });
+      if (!exists && seedName) {
+        peopleIds.push({
+          name: seedName,
+          email: seed.email ?? null,
+          company: null,
+          role: null,
+        });
+      }
+    }
+  }
+
+  if (!peopleIds.length) {
+    return { shared_notes: [], interaction_date: null, people: [] };
+  }
+
+  const shared_notes = normalizeSharedNotes(
+    identity.shared_notes || [],
+    peopleIds.map((p) => p.name.trim())
+  );
+  const defaultDate =
+    identity.interaction_date || hints?.eventDate?.trim() || null;
+  const sharedMetAt = identity.met_at || null;
+  const sharedBlock = shared_notes.map((s) => s.text).join("\n\n");
+
+  const detailed: ParsedPersonNote[] = [];
+
+  for (let i = 0; i < peopleIds.length; i += DETAIL_BATCH_SIZE) {
+    const batch = peopleIds.slice(i, i + DETAIL_BATCH_SIZE);
+    const batchRaw = await completeJson(userId, {
+      temperature: 0.2,
+      maxOutputTokens: CAPTURE_MAX_OUTPUT_TOKENS,
+      user: `FULL NOTES:\n${sliced}\n\nSHARED CONTEXT (do not copy wholesale into every source_excerpt):\n${sharedBlock || "(none)"}\n\nEXTRACT FULL DETAILS FOR THESE PEOPLE ONLY:\n${batch
+        .map(
+          (p, idx) =>
+            `${idx + 1}. ${p.name}${p.email ? ` <${p.email}>` : ""}${p.company ? ` @ ${p.company}` : ""}${p.role ? ` — ${p.role}` : ""}`
+        )
+        .join("\n")}${hintsPreamble(hints)}`,
+      system: `You extract structured contact fields for a batch of people from networking notes.
+Return strict JSON:
+{
+  "people": [
+    ${PERSON_FIELD_SHAPE}
+  ]
+}
+Rules:
+- Return one object per requested person, same order, same names.
+- Extract only facts supported by the notes. Use null / [] when unknown.
+- source_excerpt must be that person's specific slice of the original notes — never the entire dump, never shared-only text alone.
+- Never invent people or facts. Prefer emails/companies from the request when the notes don't contradict them.
+- interaction_date: YYYY-MM-DD when known for this person/event; else null.
+- relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.
+- met_at may use shared event place when the person was clearly there.`,
+    });
+
+    const batchParsed = personDetailBatchSchema.parse(JSON.parse(batchRaw));
+    for (let j = 0; j < batch.length; j++) {
+      const requested = batch[j]!;
+      const found =
+        batchParsed.people.find(
+          (p) =>
+            p.name?.trim().toLowerCase() ===
+            requested.name.trim().toLowerCase()
+        ) || batchParsed.people[j];
+
+      const merged: ParsedPersonNote = {
+        name: requested.name,
+        company: found?.company || requested.company || null,
+        role: found?.role || requested.role || null,
+        location: found?.location || null,
+        email: found?.email || requested.email || null,
+        linkedin_url: found?.linkedin_url || null,
+        met_at: found?.met_at || sharedMetAt,
+        topics: found?.topics || [],
+        action_items: found?.action_items || [],
+        follow_up_recommendation: found?.follow_up_recommendation || null,
+        follow_up_days: found?.follow_up_days || null,
+        relationship_score_suggestion:
+          found?.relationship_score_suggestion || null,
+        tags: found?.tags || [],
+        summary: found?.summary || null,
+        key_facts: found?.key_facts || [],
+        opportunities: found?.opportunities || [],
+        shared_interests: found?.shared_interests || [],
+        suggested_next_message: found?.suggested_next_message || null,
+        confidence: found?.confidence || null,
+        interaction_date: found?.interaction_date || defaultDate,
+        source_excerpt: found?.source_excerpt || "",
+      };
+
+      // Retry once for empty excerpt on multi-person dumps.
+      if (!merged.source_excerpt.trim() && peopleIds.length > 1) {
+        try {
+          const retryRaw = await completeJson(userId, {
+            temperature: 0.1,
+            maxOutputTokens: 2048,
+            user: `NOTES:\n${sliced}\n\nPerson: ${merged.name}\nReturn JSON { "source_excerpt": string } with ONLY this person's specific slice of the notes.`,
+            system:
+              "Return strict JSON with source_excerpt = the person-specific portion of the notes. Never return the whole dump.",
+          });
+          const retry = parseAiJson<{ source_excerpt?: string }>(retryRaw);
+          if (retry.source_excerpt?.trim()) {
+            merged.source_excerpt = retry.source_excerpt.trim();
+          }
+        } catch {
+          // Keep empty excerpt; caller still has shared context + fields.
+        }
+      }
+
+      detailed.push(merged);
+    }
+  }
+
+  return {
+    shared_notes,
+    interaction_date: defaultDate,
+    people: detailed,
+  };
+}
+
 export async function parseNotesWithAI(
   userId: string,
   notes: string
 ): Promise<ParsedNote> {
   const content = await completeJson(userId, {
     temperature: 0.2,
+    maxOutputTokens: CAPTURE_MAX_OUTPUT_TOKENS,
     user: notes,
     system: `You extract structured contact data from networking notes.
 Return strict JSON matching this shape:
@@ -442,12 +1089,14 @@ Return strict JSON matching this shape:
   "opportunities": string[],
   "shared_interests": string[],
   "suggested_next_message": string|null,
-  "confidence": 0-1|null
+  "confidence": 0-1|null,
+  "interaction_date": string|null
 }
 Rules:
 - Extract only information supported by the notes.
 - Use null when unknown. Do not invent facts.
 - Separate facts from guesses; suggestions go in recommendation fields.
+- interaction_date: YYYY-MM-DD when the notes imply a specific past event date; otherwise null.
 - relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.`,
   });
 
@@ -456,83 +1105,23 @@ Rules:
 
 export async function parseMultiPersonNotesWithAI(
   userId: string,
-  notes: string
+  notes: string,
+  hints?: CaptureParseHints | null
 ): Promise<ParsedMultiPersonNotes> {
-  const content = await completeJson(userId, {
-    temperature: 0.2,
-    user: notes.slice(0, 100_000),
-    system: `You extract structured contact data from networking notes that may mention many people.
-Return strict JSON matching this shape:
-{
-  "shared_notes": [
-    {
-      "text": string,
-      "met_at": string|null,
-      "topics": string[],
-      "person_names": string[]
-    }
-  ],
-  "people": [
-    {
-      "name": string|null,
-      "company": string|null,
-      "role": string|null,
-      "location": string|null,
-      "email": string|null,
-      "linkedin_url": string|null,
-      "met_at": string|null,
-      "topics": string[],
-      "action_items": string[],
-      "follow_up_recommendation": string|null,
-      "follow_up_days": number|null,
-      "relationship_score_suggestion": 1-5|null,
-      "tags": string[],
-      "summary": string|null,
-      "key_facts": string[],
-      "opportunities": string[],
-      "shared_interests": string[],
-      "suggested_next_message": string|null,
-      "confidence": 0-1|null,
-      "source_excerpt": string
-    }
-  ]
-}
-Rules:
-- Create one object per distinct person clearly mentioned in the notes.
-- Skip vague groups ("a few engineers") with no identifiable person.
-- Extract only information supported by the notes. Use null when unknown. Do not invent people or facts.
-- source_excerpt must be the person-specific slice of the original notes (not the whole dump, and not the shared group text alone).
-- shared_notes: capture context that applies to MULTIPLE people at once — e.g. "met everyone at AWS Summit afterparty", "group dinner after the panel", "all discussed fundraising". Put the shared text in shared_notes[].text, list the affected people in person_names (exact names matching people[].name; use [] to mean everyone), and set met_at/topics when relevant. Do NOT duplicate that shared text into every source_excerpt.
-- If a fact is only about one person, keep it in that person's fields/source_excerpt — not in shared_notes.
-- If several people share the same event/place, set each person's met_at (and include it on shared_notes too).
-- relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.
-- If the notes only cover one person, return a single-item people array and an empty shared_notes array.`,
-  });
+  const useTwoPass =
+    notes.length >= TWO_PASS_CHAR_THRESHOLD ||
+    (hints?.seedPeople?.length || 0) >= 5;
 
-  const parsed = multiPersonNoteParseSchema.parse(JSON.parse(content));
-  const people = parsed.people.filter((p) => p.name?.trim());
-  const nameSet = new Set(people.map((p) => p.name!.trim().toLowerCase()));
+  if (useTwoPass) {
+    return parseMultiPersonTwoPass(userId, notes, hints);
+  }
 
-  const shared_notes = (parsed.shared_notes || [])
-    .filter((s) => s.text?.trim())
-    .map((s) => {
-      const rawNames = (s.person_names || [])
-        .map((n) => n.trim())
-        .filter(Boolean);
-      // Empty person_names means the shared note applies to everyone extracted.
-      const person_names =
-        rawNames.length === 0
-          ? people.map((p) => p.name!.trim())
-          : rawNames.filter((n) => nameSet.has(n.toLowerCase()));
-      return {
-        ...s,
-        text: s.text.trim(),
-        person_names,
-      };
-    })
-    .filter((s) => s.person_names.length >= 2);
-
-  return { shared_notes, people };
+  const single = await parseMultiPersonSinglePass(userId, notes, hints);
+  // Escalate to two-pass when many people came back (token pressure risk).
+  if (single.people.length > DETAIL_BATCH_SIZE) {
+    return parseMultiPersonTwoPass(userId, notes, hints);
+  }
+  return single;
 }
 
 export async function createEmbedding(userId: string, text: string) {

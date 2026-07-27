@@ -17,6 +17,10 @@ const nextConfig: NextConfig = {
       "@clerk/nextjs",
       "@clerk/ui",
     ],
+    // Capture media (voice/photos) is sent as base64 through server actions.
+    serverActions: {
+      bodySizeLimit: "32mb",
+    },
   },
   // Turbopack can fail to resolve @clerk/shared's wildcard `./*` package exports.
   turbopack: {

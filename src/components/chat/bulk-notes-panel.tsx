@@ -7,11 +7,16 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { toast } from "@/lib/toast";
 import {
   confirmBulkCapture,
+  ingestCaptureMedia,
   parseBulkCaptureNotes,
   type BulkNotePersonPreview,
 } from "@/actions/capture";
 import { getSettings } from "@/actions/settings";
-import type { ParsedNote, SharedNoteContext } from "@/lib/ai";
+import type {
+  CaptureParseHints,
+  ParsedNote,
+  SharedNoteContext,
+} from "@/lib/ai";
 import {
   MISSING_AI_API_KEY_MESSAGE,
   isMissingAiApiKeyError,
@@ -35,6 +40,36 @@ type ReviewItem = BulkNotePersonPreview & {
   tagNames: string;
   followUpDays: number;
 };
+
+const CAPTURE_FILE_ACCEPT = [
+  ".txt",
+  ".md",
+  ".markdown",
+  ".ics",
+  ".eml",
+  "text/plain",
+  "text/markdown",
+  "text/calendar",
+  "message/rfc822",
+  "image/*",
+  "audio/*",
+  ".webm",
+  ".mp3",
+  ".wav",
+  ".m4a",
+  ".ogg",
+].join(",");
+
+async function fileToBase64(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
 
 export function BulkNotesPanel({
   compact = false,
@@ -60,6 +95,10 @@ export function BulkNotesPanel({
   const fileRef = useRef<HTMLInputElement>(null);
   const [notes, setNotes] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
+  const [captureHints, setCaptureHints] = useState<CaptureParseHints | null>(
+    null
+  );
+  const [ingestSources, setIngestSources] = useState<string[]>([]);
   const [step, setStep] = useState<"paste" | "review" | "done">("paste");
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [sharedNotes, setSharedNotes] = useState<SharedNoteContext[]>([]);
@@ -95,6 +134,8 @@ export function BulkNotesPanel({
     setStep("paste");
     setNotes("");
     setFileName(null);
+    setCaptureHints(null);
+    setIngestSources([]);
     setItems([]);
     setSharedNotes([]);
     setReviewIndex(0);
@@ -144,6 +185,8 @@ export function BulkNotesPanel({
             .map((t) => t.trim())
             .filter(Boolean),
           followUpDays: i.followUpDays,
+          interactionDate: i.interactionDate,
+          interactionType: i.interactionType,
         }));
         if (!payload.length) {
           toast.error("No contacts to save — accept at least one person");
@@ -161,6 +204,45 @@ export function BulkNotesPanel({
         }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Save failed");
+      }
+    });
+  }
+
+  function handleFilesSelected(fileList: FileList | null) {
+    if (!fileList?.length) return;
+    const files = Array.from(fileList);
+    start(async () => {
+      try {
+        const payloads = await Promise.all(
+          files.map(async (file) => ({
+            filename: file.name,
+            mimeType: file.type || "application/octet-stream",
+            base64: await fileToBase64(file),
+          }))
+        );
+        const res = await ingestCaptureMedia({
+          text: notes,
+          files: payloads,
+        });
+        if (!res.ok) {
+          const missingKey = isMissingAiApiKeyError(res.error);
+          if (missingKey) setHasApiKey(false);
+          toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
+          return;
+        }
+        setNotes(res.text);
+        setCaptureHints(res.hints || null);
+        setIngestSources(res.sources || []);
+        setFileName(
+          files.length === 1
+            ? files[0]!.name
+            : `${files.length} files ingested`
+        );
+        toast.success("Input ready — review the text, then extract people");
+      } catch (err) {
+        toast.error(
+          toUserFacingError(err, "Could not read that file").message
+        );
       }
     });
   }
@@ -205,14 +287,16 @@ export function BulkNotesPanel({
             <Label htmlFor="bulk-notes">Paste or upload notes</Label>
             {!compact && (
               <p className="mt-1 text-sm text-muted-foreground">
-                Drop in notes about one person or many — Orbit splits profiles
-                out, keeps shared event/group context attached to each, and you
+                Drop in notes about one person or many — text, voice, photos,
+                calendar invites, or email forwards. Orbit splits profiles out,
+                keeps shared event/group context attached to each, and you
                 review one card at a time.
               </p>
             )}
             {compact && (
               <p className="mt-1 text-xs text-muted-foreground">
-                Multi-person notes → extract → review one by one → save.
+                Multi-person notes (text / voice / photo / .ics / .eml) →
+                extract → review → save.
               </p>
             )}
             <Textarea
@@ -232,14 +316,11 @@ export function BulkNotesPanel({
             <input
               ref={fileRef}
               type="file"
-              accept=".txt,.md,.markdown,text/plain,text/markdown"
+              multiple
+              accept={CAPTURE_FILE_ACCEPT}
               className="hidden"
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                const text = await file.text();
-                setNotes(text);
-                setFileName(file.name);
+              onChange={(e) => {
+                handleFilesSelected(e.target.files);
                 e.target.value = "";
               }}
             />
@@ -247,13 +328,19 @@ export function BulkNotesPanel({
               type="button"
               variant="outline"
               size={compact ? "sm" : "default"}
+              disabled={pending}
               onClick={() => fileRef.current?.click()}
             >
-              Upload .txt / .md
+              Upload notes / media
             </Button>
             {fileName && (
               <span className="truncate text-xs text-muted-foreground">
                 {fileName}
+              </span>
+            )}
+            {ingestSources.length > 0 && (
+              <span className="truncate text-xs text-muted-foreground">
+                via {ingestSources.join(", ")}
               </span>
             )}
           </div>
@@ -265,7 +352,7 @@ export function BulkNotesPanel({
             onClick={() =>
               start(async () => {
                 try {
-                  const res = await parseBulkCaptureNotes(notes);
+                  const res = await parseBulkCaptureNotes(notes, captureHints);
                   if (!res.ok) {
                     const missingKey = isMissingAiApiKeyError(res.error);
                     if (missingKey) setHasApiKey(false);
