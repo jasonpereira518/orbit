@@ -27,6 +27,11 @@ import {
   type CaptureReviewItem,
   type SwipeDecision,
 } from "@/components/capture/capture-swipe-card";
+import {
+  clearCaptureNotesDraft,
+  loadCaptureNotesDraft,
+  saveCaptureNotesDraft,
+} from "@/lib/capture-draft";
 import { cn } from "@/lib/utils";
 
 const CAPTURE_FILE_ACCEPT = [
@@ -101,6 +106,7 @@ export function BulkNotesPanel({
     null
   );
   const [ingestSources, setIngestSources] = useState<string[]>([]);
+  const [draftReady, setDraftReady] = useState(false);
   const [step, setStep] = useState<"paste" | "review" | "done">("paste");
   const [items, setItems] = useState<CaptureReviewItem[]>([]);
   const [sharedNotes, setSharedNotes] = useState<SharedNoteContext[]>([]);
@@ -128,6 +134,38 @@ export function BulkNotesPanel({
       cancelled = true;
     };
   }, [hasApiKeyProp]);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Defer so hydration isn't a sync setState-in-effect (SSR-safe restore).
+    queueMicrotask(() => {
+      if (cancelled) return;
+      const draft = loadCaptureNotesDraft();
+      if (draft?.notes.trim()) {
+        setNotes(draft.notes);
+        setFileName(draft.fileName);
+        setCaptureHints(draft.hints);
+        setIngestSources(draft.ingestSources);
+      }
+      setDraftReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!draftReady) return;
+    const handle = window.setTimeout(() => {
+      saveCaptureNotesDraft({
+        notes,
+        fileName,
+        ingestSources,
+        hints: captureHints,
+      });
+    }, 250);
+    return () => window.clearTimeout(handle);
+  }, [draftReady, notes, fileName, ingestSources, captureHints]);
 
   useEffect(() => {
     return () => {
@@ -182,6 +220,7 @@ export function BulkNotesPanel({
     setReviewIndex(0);
     setExiting(null);
     clearParseProgress();
+    clearCaptureNotesDraft();
   }
 
   function applyDecision(decision: SwipeDecision) {
@@ -252,6 +291,11 @@ export function BulkNotesPanel({
         toast.success(
           `Saved: ${res.created} created, ${res.updated} updated`
         );
+        clearCaptureNotesDraft();
+        setNotes("");
+        setFileName(null);
+        setCaptureHints(null);
+        setIngestSources([]);
         if (onSaved) {
           onSaved(res);
         } else {
