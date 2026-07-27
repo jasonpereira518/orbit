@@ -3,6 +3,7 @@ import {
   buildConstellationClusters,
   type ClusterKind,
 } from "@/lib/constellation-clusters";
+import { companyFamilyKey } from "@/lib/company-family";
 import {
   resolveConstellationShape,
   scaleForStarCount,
@@ -282,6 +283,31 @@ export function buildHybridGraphLayout(
 
   const clusterOrigins = new Map<string, { x: number; y: number }>();
   const named = clusters.filter((c) => c.kind !== "other" || c.count >= 1);
+
+  // Seat related companies together (Google ↔ Google DeepMind, Amazon ↔ AWS)
+  // by grouping on family before assigning spiral arms.
+  const familyOf = (c: (typeof named)[number]) =>
+    c.kind === "company"
+      ? companyFamilyKey(c.name) || c.id
+      : `kind:${c.kind}:${c.id}`;
+
+  const familyTotals = new Map<string, number>();
+  for (const c of named) {
+    const f = familyOf(c);
+    familyTotals.set(f, (familyTotals.get(f) || 0) + c.count);
+  }
+
+  const orderedNamed = [...named].sort((a, b) => {
+    const fa = familyOf(a);
+    const fb = familyOf(b);
+    const ta = familyTotals.get(fa) || 0;
+    const tb = familyTotals.get(fb) || 0;
+    if (tb !== ta) return tb - ta;
+    if (fa !== fb) return fa.localeCompare(fb);
+    if (b.count !== a.count) return b.count - a.count;
+    return a.name.localeCompare(b.name);
+  });
+
   // Same assignment order as buildPeerEdges so lines match star figures
   const clusterShapes = assignClusterShapes(
     clusters.map((c) => ({ id: c.id, contactIds: c.contactIds }))
@@ -296,45 +322,77 @@ export function buildHybridGraphLayout(
     radius: number;
   };
 
-  const armCount = Math.min(4, Math.max(2, Math.ceil(named.length / 4)));
+  const armCount = Math.min(4, Math.max(2, Math.ceil(orderedNamed.length / 4)));
   const armTurn = 0.78;
   const armSpacing = 430;
 
-  const slots: Slot[] = named.map((cluster, i) => {
-    const members = byCluster.get(cluster.id) || [];
-    const size = members.length;
-    const avgScore =
-      members.reduce((s, c) => s + placementScore(c), 0) / Math.max(size, 1);
-    const band =
-      cluster.kind === "company" ? 0 : cluster.kind === "school" ? 1 : 2;
-    const foot = constellationFootprint(size);
-    const arm = i % armCount;
-    const step = Math.floor(i / armCount);
+  // Walk families in order: keep each family on one arm when possible,
+  // packing members as consecutive steps so they sit near each other.
+  const slots: Slot[] = [];
+  const armLoad = Array.from({ length: armCount }, () => 0);
+  let familyArmCursor = 0;
 
-    // Archimedean-style spiral: each arm winds as clusters move outward.
-    // Kind, size, and stable jitter keep the result organic without overlap.
-    const radius =
-      500 +
-      step * armSpacing +
-      band * 90 +
-      Math.min(size, 14) * 20 -
-      (avgScore - 3) * 12 +
-      hashUnit(cluster.id, 8) * 70;
-    const angle =
-      -Math.PI / 2 +
-      (arm * Math.PI * 2) / armCount +
-      step * armTurn +
-      (hashUnit(cluster.id, 12) - 0.5) * 0.18;
+  let i = 0;
+  while (i < orderedNamed.length) {
+    const family = familyOf(orderedNamed[i]);
+    const group: typeof orderedNamed = [];
+    while (i < orderedNamed.length && familyOf(orderedNamed[i]) === family) {
+      group.push(orderedNamed[i]);
+      i += 1;
+    }
 
-    return {
-      id: cluster.id,
-      foot,
-      arm,
-      step,
-      angle,
-      radius: Math.max(480, radius),
-    };
-  });
+    // Prefer the lightest arm so families spread around the galaxy
+    let arm = 0;
+    for (let a = 1; a < armCount; a++) {
+      if (armLoad[a] < armLoad[arm]) arm = a;
+    }
+    // Slight rotation of preference so we don't always fill arm 0 first
+    if (group.length === 1) {
+      arm = familyArmCursor % armCount;
+      familyArmCursor += 1;
+      for (let a = 0; a < armCount; a++) {
+        const cand = (arm + a) % armCount;
+        if (armLoad[cand] <= armLoad[arm]) arm = cand;
+      }
+    }
+
+    // Fractional steps pack related companies closer than unrelated neighbors
+    const familyStepGap = group.length > 1 ? 0.55 : 1;
+    let step = armLoad[arm];
+    for (const cluster of group) {
+      const members = byCluster.get(cluster.id) || [];
+      const size = members.length;
+      const avgScore =
+        members.reduce((s, c) => s + placementScore(c), 0) / Math.max(size, 1);
+      const band =
+        cluster.kind === "company" ? 0 : cluster.kind === "school" ? 1 : 2;
+      const foot = constellationFootprint(size);
+
+      const radius =
+        500 +
+        step * armSpacing +
+        band * 90 +
+        Math.min(size, 14) * 20 -
+        (avgScore - 3) * 12 +
+        hashUnit(cluster.id, 8) * 70;
+      const angle =
+        -Math.PI / 2 +
+        (arm * Math.PI * 2) / armCount +
+        step * armTurn +
+        (hashUnit(cluster.id, 12) - 0.5) * (group.length > 1 ? 0.04 : 0.12);
+
+      slots.push({
+        id: cluster.id,
+        foot,
+        arm,
+        step: Math.floor(step),
+        angle,
+        radius: Math.max(480, radius),
+      });
+      step += familyStepGap;
+    }
+    armLoad[arm] = Math.ceil(step);
+  }
 
   // Resolve any collisions while preserving each cluster's spiral arm.
   // Moving the outer/later cluster down its arm keeps the galaxy silhouette.

@@ -2,7 +2,10 @@
  * Constellation cluster assignment.
  * Priority: Company → School → Deep Space.
  * Clusters are only company names and schools — nothing else.
+ * Exact company aliases (AWS ↔ Amazon Web Services) share one cluster.
  */
+
+import { canonicalCompanyClusterName } from "@/lib/company-family";
 
 export type ClusterKind = "company" | "school" | "other";
 
@@ -30,12 +33,17 @@ function normalizeKey(kind: ClusterKind, name: string) {
   return `${kind}:${name.trim().toLowerCase().replace(/\s+/g, " ")}`;
 }
 
+/** Company label used for clustering — aliases collapse to one name. */
+function companyClusterLabel(raw: string | null | undefined): string {
+  return canonicalCompanyClusterName(raw) || trimLabel(raw);
+}
+
 /**
  * Assign each contact to exactly one constellation cluster.
  * Company wins when present; else School; else Deep Space.
  */
 export function assignCluster(c: ClusterContact): ClusterRef {
-  const company = trimLabel(c.company);
+  const company = companyClusterLabel(c.company);
   if (company) {
     return {
       id: normalizeKey("company", company),
@@ -77,8 +85,10 @@ export function buildConstellationClusters(
   const schoolCounts = new Map<string, number>();
 
   for (const c of contacts) {
-    const company = trimLabel(c.company);
-    if (company) companyCounts.set(company, (companyCounts.get(company) || 0) + 1);
+    const company = companyClusterLabel(c.company);
+    if (company) {
+      companyCounts.set(company, (companyCounts.get(company) || 0) + 1);
+    }
     const school = trimLabel(c.school);
     if (school) schoolCounts.set(school, (schoolCounts.get(school) || 0) + 1);
   }
@@ -86,13 +96,17 @@ export function buildConstellationClusters(
   const byContactId = new Map<string, ClusterRef>();
 
   for (const c of contacts) {
-    const company = trimLabel(c.company);
+    const company = companyClusterLabel(c.company);
     const school = trimLabel(c.school);
 
     let ref: ClusterRef;
 
     if (company && (companyCounts.get(company) || 0) >= 2) {
-      ref = { id: normalizeKey("company", company), name: company, kind: "company" };
+      ref = {
+        id: normalizeKey("company", company),
+        name: company,
+        kind: "company",
+      };
     } else if (school && (schoolCounts.get(school) || 0) >= 2) {
       ref = { id: normalizeKey("school", school), name: school, kind: "school" };
     } else {
