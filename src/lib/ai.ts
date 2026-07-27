@@ -24,26 +24,33 @@ export {
   resolveAiProvider,
 } from "@/lib/ai-providers";
 
+/** AI often omits unknown fields; Zod `.nullable()` rejects `undefined`. */
+const nullStr = z.string().nullable().default(null);
+const nullNum = z.number().nullable().default(null);
+const nullScore = z.number().min(1).max(5).nullable().default(null);
+const nullConfidence = z.number().min(0).max(1).nullable().default(null);
+const strList = z.array(z.string()).default([]);
+
 export const noteParseSchema = z.object({
-  name: z.string().nullable(),
-  company: z.string().nullable(),
-  role: z.string().nullable(),
-  location: z.string().nullable(),
-  email: z.string().nullable(),
-  linkedin_url: z.string().nullable(),
-  met_at: z.string().nullable(),
-  topics: z.array(z.string()).default([]),
-  action_items: z.array(z.string()).default([]),
-  follow_up_recommendation: z.string().nullable(),
-  follow_up_days: z.number().nullable(),
-  relationship_score_suggestion: z.number().min(1).max(5).nullable(),
-  tags: z.array(z.string()).default([]),
-  summary: z.string().nullable(),
-  key_facts: z.array(z.string()).default([]),
-  opportunities: z.array(z.string()).default([]),
-  shared_interests: z.array(z.string()).default([]),
-  suggested_next_message: z.string().nullable(),
-  confidence: z.number().min(0).max(1).nullable(),
+  name: nullStr,
+  company: nullStr,
+  role: nullStr,
+  location: nullStr,
+  email: nullStr,
+  linkedin_url: nullStr,
+  met_at: nullStr,
+  topics: strList,
+  action_items: strList,
+  follow_up_recommendation: nullStr,
+  follow_up_days: nullNum,
+  relationship_score_suggestion: nullScore,
+  tags: strList,
+  summary: nullStr,
+  key_facts: strList,
+  opportunities: strList,
+  shared_interests: strList,
+  suggested_next_message: nullStr,
+  confidence: nullConfidence,
 });
 
 export type ParsedNote = z.infer<typeof noteParseSchema>;
@@ -52,9 +59,9 @@ export type ParsedNote = z.infer<typeof noteParseSchema>;
 export const sharedNoteContextSchema = z.object({
   text: z.string(),
   met_at: z.string().nullable().optional(),
-  topics: z.array(z.string()).default([]),
+  topics: strList,
   /** Names of people this shared note applies to (must match people[].name). */
-  person_names: z.array(z.string()).default([]),
+  person_names: strList,
 });
 
 export type SharedNoteContext = z.infer<typeof sharedNoteContextSchema>;
@@ -67,7 +74,8 @@ export const multiPersonNoteParseSchema = z.object({
     .transform((v) => v ?? []),
   people: z.array(
     noteParseSchema.extend({
-      source_excerpt: z.string(),
+      // Models sometimes skip this on later people in long dumps.
+      source_excerpt: z.string().default(""),
     })
   ),
 });
@@ -451,7 +459,16 @@ Rules:
 - relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.`,
   });
 
-  return noteParseSchema.parse(JSON.parse(content));
+  try {
+    return noteParseSchema.parse(JSON.parse(content));
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      throw new Error(
+        "AI returned incomplete contact data. Try again, or shorten the notes."
+      );
+    }
+    throw err;
+  }
 }
 
 export async function parseMultiPersonNotesWithAI(
@@ -501,6 +518,7 @@ Rules:
 - Create one object per distinct person clearly mentioned in the notes.
 - Skip vague groups ("a few engineers") with no identifiable person.
 - Extract only information supported by the notes. Use null when unknown. Do not invent people or facts.
+- Include every key on every person object. Use null (or [] for arrays) when unknown — never omit keys.
 - source_excerpt must be the person-specific slice of the original notes (not the whole dump, and not the shared group text alone).
 - shared_notes: capture context that applies to MULTIPLE people at once — e.g. "met everyone at AWS Summit afterparty", "group dinner after the panel", "all discussed fundraising". Put the shared text in shared_notes[].text, list the affected people in person_names (exact names matching people[].name; use [] to mean everyone), and set met_at/topics when relevant. Do NOT duplicate that shared text into every source_excerpt.
 - If a fact is only about one person, keep it in that person's fields/source_excerpt — not in shared_notes.
@@ -509,7 +527,18 @@ Rules:
 - If the notes only cover one person, return a single-item people array and an empty shared_notes array.`,
   });
 
-  const parsed = multiPersonNoteParseSchema.parse(JSON.parse(content));
+  let parsed: ParsedMultiPersonNotes;
+  try {
+    parsed = multiPersonNoteParseSchema.parse(JSON.parse(content));
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      throw new Error(
+        "AI returned incomplete contact data. Try again, or shorten the notes."
+      );
+    }
+    throw err;
+  }
+
   const people = parsed.people.filter((p) => p.name?.trim());
   const nameSet = new Set(people.map((p) => p.name!.trim().toLowerCase()));
 
