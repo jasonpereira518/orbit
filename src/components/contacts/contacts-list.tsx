@@ -262,7 +262,7 @@ export function ContactsList({
             <li key={section.letter} className="list-none">
               <div
                 id={`contact-letter-${section.letter}`}
-                className="sticky top-0 z-10 border-b border-border/50 bg-card/95 px-4 py-1.5 backdrop-blur sm:px-5"
+                className="contact-letter-sticky sticky top-0 z-10 border-b border-border/50 bg-card/95 px-4 py-1.5 backdrop-blur sm:px-5"
               >
                 <p className="text-xs font-semibold tracking-wide text-muted-foreground">
                   {section.letter}

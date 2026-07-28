@@ -58,6 +58,7 @@ import {
 } from "@/components/graph/contact-inspect-panel";
 import {
   buildHybridGraphLayout,
+  type ClusterLabelData,
   type GraphNodeData,
   type GroupingMode,
   type NebulaData,
@@ -71,6 +72,8 @@ import {
   Info,
   KeyRound,
   Loader2,
+  Maximize2,
+  Minimize2,
   RefreshCw,
   Search,
   Sparkles,
@@ -560,6 +563,7 @@ function GraphCanvas(props: {
   hoveredId: string | null;
   onSelect: (selection: InspectSelection) => void;
   onHover: (id: string | null) => void;
+  onFocusCluster: (clusterId: string) => void;
   resetToken: number;
   compact?: boolean;
   showEdgeLabels: boolean;
@@ -658,6 +662,7 @@ function GraphCanvasInner({
   hoveredId,
   onSelect,
   onHover,
+  onFocusCluster,
   filteredContacts,
   layout,
   compact,
@@ -685,6 +690,7 @@ function GraphCanvasInner({
   hoveredId: string | null;
   onSelect: (selection: InspectSelection) => void;
   onHover: (id: string | null) => void;
+  onFocusCluster: (clusterId: string) => void;
   filteredContacts: GraphPayload["contacts"];
   layout: ReturnType<typeof buildHybridGraphLayout>;
   compact?: boolean;
@@ -1119,13 +1125,18 @@ function GraphCanvasInner({
 
   const onNodeClick: NodeMouseHandler = useCallback(
     (_, node) => {
-      if (
-        node.id === "rings" ||
-        node.type === "clusterLabel" ||
-        node.type === "nebula"
-      ) {
+      if (node.id === "rings") return;
+
+      if (node.type === "clusterLabel" || node.type === "nebula") {
+        if (compact) return;
+        const d = node.data as ClusterLabelData | NebulaData;
+        const clusterId =
+          d.clusterId ||
+          node.id.replace(/^(cluster|nebula)-/, "");
+        if (clusterId) onFocusCluster(clusterId);
         return;
       }
+
       if (compact && node.type === "contact") {
         router.push(`/contacts/${node.id}`);
         return;
@@ -1169,7 +1180,7 @@ function GraphCanvasInner({
         data: node.data as GraphNodeData,
       });
     },
-    [onSelect, data, compact, router]
+    [onSelect, onFocusCluster, data, compact, router]
   );
 
   const onNodeMouseEnter: NodeMouseHandler = useCallback(
@@ -1377,10 +1388,16 @@ export function NetworkGraph({
     processed: 0,
     total: 0,
   });
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [cssFullscreen, setCssFullscreen] = useState(false);
   const lastFetchAt = useRef(initialData ? Date.now() : 0);
   const positionsHydrated = useRef(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const operationsStoppedRef = useRef(false);
+
+  const fullscreenActive = isFullscreen || cssFullscreen;
 
   // ⌘/Ctrl+F → constellation search (instead of browser find)
   useEffect(() => {
@@ -1398,7 +1415,49 @@ export function NetworkGraph({
     return () => window.removeEventListener("keydown", onKey);
   }, [compact]);
 
+  useEffect(() => {
+    if (compact) return;
+    function syncFullscreen() {
+      setIsFullscreen(document.fullscreenElement === stageRef.current);
+    }
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    return () =>
+      document.removeEventListener("fullscreenchange", syncFullscreen);
+  }, [compact]);
+
+  useEffect(() => {
+    if (!cssFullscreen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setCssFullscreen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [cssFullscreen]);
+
+  useEffect(() => {
+    if (compact) return;
+
+    const stopAll = () => {
+      operationsStoppedRef.current = true;
+      setRefreshing(false);
+      setRefreshProgress({ processed: 0, total: 0 });
+    };
+
+    window.addEventListener("orbit:stop-operations", stopAll);
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== "orbit:stop-operations") return;
+      stopAll();
+    };
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+      window.removeEventListener("orbit:stop-operations", stopAll);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [compact]);
+
   const loadData = useCallback((force = false) => {
+    if (operationsStoppedRef.current) return;
     if (!force && Date.now() - lastFetchAt.current < GRAPH_REFETCH_MIN_MS) {
       return;
     }
@@ -1573,6 +1632,54 @@ export function NetworkGraph({
     [userId, compact]
   );
 
+  const focusClusterById = useCallback(
+    (clusterId: string) => {
+      if (search.trim()) {
+        suppressSearchHomeRef.current = true;
+        lastSearchQuery.current = "";
+        setSearch("");
+        setSearchHitIds(new Set());
+      }
+      setPeekPersonId(null);
+      setHoveredId(null);
+      setSelection(null);
+      setCompany("all");
+      setFocusCluster(clusterId);
+      setZoomToken((t) => t + 1);
+    },
+    [search]
+  );
+
+  const toggleFullscreen = useCallback(async () => {
+    const el = stageRef.current;
+    if (!el) return;
+
+    if (document.fullscreenElement === el) {
+      try {
+        await document.exitFullscreen();
+      } catch (err) {
+        console.error("Exit fullscreen failed", err);
+      }
+      return;
+    }
+
+    if (cssFullscreen) {
+      setCssFullscreen(false);
+      return;
+    }
+
+    if (typeof el.requestFullscreen === "function") {
+      try {
+        await el.requestFullscreen();
+        return;
+      } catch {
+        // Fall through to CSS fullscreen (e.g. iOS Safari)
+      }
+    }
+
+    setCssFullscreen(true);
+  }, [cssFullscreen]);
+
   const goHome = useCallback(() => {
     if (search.trim()) {
       suppressSearchHomeRef.current = true;
@@ -1603,12 +1710,14 @@ export function NetworkGraph({
 
   const runRefresh = useCallback(async () => {
     if (refreshing) return;
+    if (operationsStoppedRef.current) return;
     setRefreshing(true);
     setRefreshProgress({ processed: 0, total: 0 });
     try {
       let offset = 0;
       let done = false;
       while (!done) {
+        if (operationsStoppedRef.current) return;
         const result = await refreshConstellationBatch({ offset, limit: 8 });
         setRefreshProgress({
           processed: result.processed,
@@ -1650,7 +1759,9 @@ export function NetworkGraph({
       <div
         className={cn(
           "flex items-center justify-center rounded-2xl border border-white/10 bg-[#05070c] text-white/50",
-          compact ? "h-[300px]" : "h-[min(82vh,780px)]"
+          compact
+            ? "h-[300px]"
+            : "h-[calc(100dvh-15rem)] md:h-[calc(100dvh-10.5rem)]"
         )}
       >
         Loading constellation…
@@ -1658,18 +1769,23 @@ export function NetworkGraph({
     );
   }
 
-  const canvasHeight = compact ? "h-[300px]" : "h-[min(82vh,780px)]";
   const progressPct =
     refreshProgress.total > 0
       ? Math.round((refreshProgress.processed / refreshProgress.total) * 100)
       : 0;
 
   return (
-    <div className={compact ? "space-y-0" : "space-y-0"}>
+    <div className={compact ? "space-y-0" : "min-h-0 w-full"}>
       <div
+        ref={stageRef}
         className={cn(
-          "relative overflow-hidden rounded-2xl border border-white/10 bg-[#03050a] shadow-[inset_0_0_120px_rgba(0,0,0,0.65)]",
-          canvasHeight
+          "relative overflow-hidden border border-white/10 bg-[#03050a] shadow-[inset_0_0_120px_rgba(0,0,0,0.65)]",
+          compact
+            ? "h-[300px] rounded-2xl"
+            : "h-[calc(100dvh-15rem)] max-h-[calc(100dvh-15rem)] rounded-2xl md:h-[calc(100dvh-10.5rem)] md:max-h-[calc(100dvh-10.5rem)]",
+          fullscreenActive &&
+            "rounded-none border-0 !h-dvh !max-h-none",
+          cssFullscreen && "!fixed inset-0 z-[100] w-screen"
         )}
       >
         <Starfield />
@@ -2074,8 +2190,24 @@ export function NetworkGraph({
               </Popover>
             </div>
 
-            {/* Bottom right — Home */}
-            <div className="absolute bottom-3 right-3 z-20">
+            {/* Bottom right — Fullscreen + Home */}
+            <div className="absolute bottom-3 right-3 z-20 flex items-center gap-2">
+              <Button
+                type="button"
+                size="icon"
+                aria-label={
+                  fullscreenActive ? "Exit full screen" : "Open full screen"
+                }
+                title={fullscreenActive ? "Exit full screen" : "Full screen"}
+                onClick={() => void toggleFullscreen()}
+                className="h-9 w-9 rounded-full border border-white/15 bg-[#080b12]/80 text-white backdrop-blur-md hover:bg-[#0c1018]/90"
+              >
+                {fullscreenActive ? (
+                  <Minimize2 className="h-4 w-4" />
+                ) : (
+                  <Maximize2 className="h-4 w-4" />
+                )}
+              </Button>
               <Button
                 type="button"
                 size="icon"
@@ -2114,6 +2246,7 @@ export function NetworkGraph({
             hoveredId={hoveredId}
             onSelect={setSelection}
             onHover={setHoveredId}
+            onFocusCluster={focusClusterById}
             resetToken={resetToken}
             compact={compact}
             showEdgeLabels={false}

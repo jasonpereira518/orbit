@@ -15,6 +15,9 @@ import { clusterBrandColor } from "@/lib/school-color";
 /** Decorative orbit rings (visual grid only — no spokes). */
 export const RING_RADII = [160, 260, 360, 470, 580] as const;
 
+/** Vertical squash for the galactic disk (spiral arms + rings). */
+export const GALAXY_FLATTEN = 0.54;
+
 /** Score 5 = closest to you (the sun) … Score 1 = furthest out */
 export const RING_LABELS: Record<number, string> = {
   5: "Core orbit",
@@ -97,6 +100,8 @@ export type OrbitRingsData = {
   radii: number[];
   showLabels?: boolean;
   motionEnabled?: boolean;
+  /** Vertical scale for an elliptical galactic disk (1 = circle). */
+  flatten?: number;
 };
 
 export type ClusterLabelData = {
@@ -105,6 +110,7 @@ export type ClusterLabelData = {
   count?: number;
   nebulaColor?: string;
   clusterKind?: ClusterKind;
+  clusterId?: string;
 };
 
 export type NebulaData = {
@@ -113,6 +119,7 @@ export type NebulaData = {
   color: string;
   radius: number;
   clusterKind?: ClusterKind;
+  clusterId?: string;
 };
 
 export type LayoutNode = {
@@ -215,22 +222,25 @@ function hashUnit(id: string, salt = 0) {
 
 /**
  * Map cluster members onto a real constellation figure (Cassiopeia, Orion, …).
- * Keep rotation mild so classic stick-figures stay recognizable.
+ * `armRotation` aligns the figure with the galactic arm it sits on.
  */
 function placeConstellationMembers(
   members: GraphContactInput[],
   origin: { x: number; y: number },
   clusterSeed: string,
   positions: Map<string, { x: number; y: number; angle: number; radius: number }>,
-  shape = resolveConstellationShape(members.length, clusterSeed)
+  shape = resolveConstellationShape(members.length, clusterSeed),
+  armRotation?: number
 ) {
   const sorted = orderConstellationMembers(members);
   const n = sorted.length;
   if (n === 0) return;
 
   const scale = scaleForStarCount(n);
-  // ±~22° so Cassiopeia's W / Orion's belt stay readable
-  const rotation = (hashUnit(clusterSeed, 11) - 0.5) * Math.PI * 0.25;
+  // Prefer arm tangent so mini-galaxies flow with the larger spiral;
+  // fall back to a mild seeded tilt when no arm angle is given.
+  const rotation =
+    armRotation ?? (hashUnit(clusterSeed, 11) - 0.5) * Math.PI * 0.25;
   const cos = Math.cos(rotation);
   const sin = Math.sin(rotation);
 
@@ -259,9 +269,9 @@ function placeConstellationMembers(
 
 /**
  * Constellation map:
- * - Sun at center (identity only — no spokes)
+ * - Sun at the galactic center
  * - Faint orbit rings as spatial grid
- * - Clusters by Company → School arranged along spiral galaxy arms
+ * - Clusters arranged on a flattened multi-arm spiral galaxy
  * - Peer constellation links within clusters
  */
 export function buildHybridGraphLayout(
@@ -281,6 +291,7 @@ export function buildHybridGraphLayout(
   }
 
   const clusterOrigins = new Map<string, { x: number; y: number }>();
+  const clusterArmAngle = new Map<string, number>();
   const named = clusters.filter((c) => c.kind !== "other" || c.count >= 1);
   // Same assignment order as buildPeerEdges so lines match star figures
   const clusterShapes = assignClusterShapes(
@@ -294,76 +305,99 @@ export function buildHybridGraphLayout(
     step: number;
     angle: number;
     radius: number;
+    /** Screen-space position after disk flatten */
+    x: number;
+    y: number;
   };
 
-  const armCount = Math.min(4, Math.max(2, Math.ceil(named.length / 4)));
-  const armTurn = 0.78;
-  const armSpacing = 430;
+  // Biggest / closest clusters near the bulge; stable tie-break on id.
+  const ordered = [...named].sort((a, b) => {
+    const ma = byCluster.get(a.id) || [];
+    const mb = byCluster.get(b.id) || [];
+    if (mb.length !== ma.length) return mb.length - ma.length;
+    const sa =
+      ma.reduce((s, c) => s + placementScore(c), 0) / Math.max(ma.length, 1);
+    const sb =
+      mb.reduce((s, c) => s + placementScore(c), 0) / Math.max(mb.length, 1);
+    if (sb !== sa) return sb - sa;
+    return a.id.localeCompare(b.id);
+  });
 
-  const slots: Slot[] = named.map((cluster, i) => {
+  // Classic spiral-galaxy silhouette: 2–4 logarithmic arms on a tilted disk.
+  // Spread clusters across a 6-arm spiral galaxy.
+  // If there are fewer clusters than arms, we still keep the math valid by capping.
+  const armCount = Math.min(6, Math.max(1, ordered.length));
+  const flatten = GALAXY_FLATTEN;
+  const wind = 4.9; // stronger sweep from core to rim
+  const coreGap = 250;
+  const rimExtra = 720;
+  const maxStep = Math.max(1, Math.ceil(ordered.length / armCount) - 1);
+  const globalSpin = -Math.PI / 2; // open an arm upward for the default view
+
+  const slots: Slot[] = ordered.map((cluster, i) => {
     const members = byCluster.get(cluster.id) || [];
     const size = members.length;
-    const avgScore =
-      members.reduce((s, c) => s + placementScore(c), 0) / Math.max(size, 1);
-    const band =
-      cluster.kind === "company" ? 0 : cluster.kind === "school" ? 1 : 2;
     const foot = constellationFootprint(size);
     const arm = i % armCount;
     const step = Math.floor(i / armCount);
+    const t = maxStep === 0 ? 0 : step / maxStep;
 
-    // Archimedean-style spiral: each arm winds as clusters move outward.
-    // Kind, size, and stable jitter keep the result organic without overlap.
+    // Logarithmic-style spiral: angle winds while radius grows with t.
+    const armBase = (arm * Math.PI * 2) / armCount;
+    const jitter =
+      (hashUnit(cluster.id, 12) - 0.5) * 0.12 +
+      (hashUnit(cluster.id, 8) - 0.5) * 0.04;
+    const angle = globalSpin + armBase + t * wind + t * t * 0.9 + jitter;
+
+    const sizeBoost = Math.min(size, 16) * 14;
+    const band =
+      cluster.kind === "company" ? 0 : cluster.kind === "school" ? 35 : 70;
     const radius =
-      500 +
-      step * armSpacing +
-      band * 90 +
-      Math.min(size, 14) * 20 -
-      (avgScore - 3) * 12 +
-      hashUnit(cluster.id, 8) * 70;
-    const angle =
-      -Math.PI / 2 +
-      (arm * Math.PI * 2) / armCount +
-      step * armTurn +
-      (hashUnit(cluster.id, 12) - 0.5) * 0.18;
+      coreGap +
+      t * (rimExtra + ordered.length * 34) +
+      sizeBoost * 0.35 +
+      band +
+      hashUnit(cluster.id, 8) * 55;
 
+    const r = Math.max(coreGap * 0.9, radius);
     return {
       id: cluster.id,
       foot,
       arm,
       step,
       angle,
-      radius: Math.max(480, radius),
+      radius: r,
+      x: Math.cos(angle) * r,
+      y: Math.sin(angle) * r * flatten,
     };
   });
 
-  // Resolve any collisions while preserving each cluster's spiral arm.
-  // Moving the outer/later cluster down its arm keeps the galaxy silhouette.
-  for (let iter = 0; iter < 5; iter++) {
+  // Resolve collisions along each arm — push the outer cluster farther out
+  // so the spiral silhouette stays intact.
+  for (let iter = 0; iter < 8; iter++) {
     for (let i = 0; i < slots.length; i++) {
       for (let j = i + 1; j < slots.length; j++) {
         const a = slots[i];
         const b = slots[j];
-        const ax = Math.cos(a.angle) * a.radius;
-        const ay = Math.sin(a.angle) * a.radius;
-        const bx = Math.cos(b.angle) * b.radius;
-        const by = Math.sin(b.angle) * b.radius;
-        const dist = Math.hypot(ax - bx, ay - by);
-        const minDist = a.foot * 0.72 + b.foot * 0.72 + 150;
-        if (dist < minDist) {
-          const move = b.step >= a.step ? b : a;
-          const push = minDist - dist + 36;
-          move.radius += push;
-          move.angle += (move.arm % 2 === 0 ? 1 : -1) * push * 0.0007;
-        }
+        const dist = Math.hypot(a.x - b.x, a.y - b.y);
+        const minDist = a.foot * 0.7 + b.foot * 0.7 + 160;
+        if (dist >= minDist) continue;
+
+        const move = b.step >= a.step ? b : a;
+        const push = minDist - dist + 40;
+        move.radius += push;
+        // Keep walking the same arm (same chirality as wind)
+        move.angle += (push / Math.max(move.radius, 1)) * 0.9;
+        move.x = Math.cos(move.angle) * move.radius;
+        move.y = Math.sin(move.angle) * move.radius * flatten;
       }
     }
   }
 
   for (const slot of slots) {
-    clusterOrigins.set(slot.id, {
-      x: Math.cos(slot.angle) * slot.radius,
-      y: Math.sin(slot.angle) * slot.radius,
-    });
+    clusterOrigins.set(slot.id, { x: slot.x, y: slot.y });
+    // Tangent of the spiral ≈ angle + pitch; aligns mini-galaxies with the arm
+    clusterArmAngle.set(slot.id, slot.angle + Math.atan(1 / wind) + Math.PI / 2);
   }
 
   const positions = new Map<
@@ -378,7 +412,8 @@ export function buildHybridGraphLayout(
       origin,
       cluster.id,
       positions,
-      clusterShapes.get(cluster.id)
+      clusterShapes.get(cluster.id),
+      clusterArmAngle.get(cluster.id)
     );
   }
 
@@ -407,10 +442,11 @@ export function buildHybridGraphLayout(
         color,
         radius: nebulaRadius,
         clusterKind: cluster.kind,
+        clusterId: cluster.id,
       },
       position: { x: origin.x, y: origin.y },
       draggable: false,
-      selectable: false,
+      selectable: true,
       zIndex: 0,
     });
 
@@ -424,14 +460,15 @@ export function buildHybridGraphLayout(
         count: cluster.count,
         nebulaColor: color,
         clusterKind: cluster.kind,
+        clusterId: cluster.id,
       },
       position: {
         x: origin.x + Math.cos(outward) * labelDist,
         y: origin.y + Math.sin(outward) * labelDist,
       },
       draggable: false,
-      selectable: false,
-      zIndex: 1,
+      selectable: true,
+      zIndex: 7,
     });
   }
 
@@ -444,6 +481,7 @@ export function buildHybridGraphLayout(
         radii: [...RING_RADII],
         showLabels: false,
         motionEnabled: false,
+        flatten: GALAXY_FLATTEN,
       },
       position: { x: 0, y: 0 },
       draggable: false,

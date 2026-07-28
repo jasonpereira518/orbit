@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import {
@@ -1078,6 +1078,233 @@ export async function listRelatedContacts(
     limit,
     goals
   );
+}
+
+export type MutualContact = {
+  id: string;
+  fullName: string;
+  preferredName: string | null;
+  firstName: string | null;
+  title: string | null;
+  company: string | null;
+  school: string | null;
+  location: string | null;
+  profileImageUrl: string | null;
+  linkedinUrl: string | null;
+  email: string | null;
+  phone: string | null;
+  mutualCount: number;
+};
+
+function extractLinkedinSlug(url: string | null | undefined): string | null {
+  const t = url?.trim();
+  if (!t) return null;
+  const match = t.match(/linkedin\.com\/in\/([^/?#]+)/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+/**
+ * Mutuals for a specific contact `contactId` (belonging to the signed-in user):
+ * for each other account, count how many of the signed-in user's contacts
+ * overlap with that other account's contacts, given that other account also
+ * has the profile contact (matched by contact id and/or LinkedIn slug).
+ *
+ * Returns only the signed-in user's contacts (so we never expose other users).
+ */
+export async function listMutualContacts(
+  contactId: string,
+  limit = 6
+): Promise<MutualContact[]> {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const viewerContact = await db.query.contacts.findFirst({
+    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+    columns: {
+      id: true,
+      fullName: true,
+      preferredName: true,
+      firstName: true,
+      title: true,
+      company: true,
+      school: true,
+      location: true,
+      profileImageUrl: true,
+      linkedinUrl: true,
+      email: true,
+      phone: true,
+    },
+  });
+
+  if (!viewerContact) return [];
+
+  const profileLinkedinSlug = extractLinkedinSlug(viewerContact.linkedinUrl);
+  // If we can't match this contact identity across accounts, return nothing.
+  if (!profileLinkedinSlug) return [];
+
+  const viewerContacts = await db.query.contacts.findMany({
+    where: eq(contacts.userId, userId),
+    columns: {
+      id: true,
+      fullName: true,
+      preferredName: true,
+      firstName: true,
+      title: true,
+      company: true,
+      school: true,
+      location: true,
+      profileImageUrl: true,
+      linkedinUrl: true,
+      email: true,
+      phone: true,
+    },
+  });
+
+  // Map "identity key" => viewer contact ids.
+  // We can have duplicates in rare cases (e.g. if the same LinkedIn URL was
+  // imported twice), so keep arrays.
+  const viewerKeyToIds = new Map<string, string[]>();
+  const viewerById = new Map<string, MutualContact>();
+
+  for (const c of viewerContacts) {
+    const linkedinSlug = extractLinkedinSlug(c.linkedinUrl);
+
+    if (c.id) {
+      viewerById.set(c.id, {
+        id: c.id,
+        fullName: c.fullName,
+        preferredName: c.preferredName ?? null,
+        firstName: c.firstName ?? null,
+        title: c.title ?? null,
+        company: c.company ?? null,
+        school: c.school ?? null,
+        location: c.location ?? null,
+        profileImageUrl: c.profileImageUrl ?? null,
+        linkedinUrl: c.linkedinUrl ?? null,
+        email: c.email ?? null,
+        phone: c.phone ?? null,
+        mutualCount: 0, // filled later
+      });
+    }
+
+    const keys: string[] = [`i:${c.id}`];
+    if (linkedinSlug) keys.push(`l:${linkedinSlug}`);
+
+    for (const key of keys) {
+      const existing = viewerKeyToIds.get(key);
+      if (existing) existing.push(c.id);
+      else viewerKeyToIds.set(key, [c.id]);
+    }
+  }
+
+  const profileKeys = new Set<string>([`i:${viewerContact.id}`]);
+  if (profileLinkedinSlug) profileKeys.add(`l:${profileLinkedinSlug}`);
+
+  const MAX_OTHER_USERS_SCAN = 20;
+  const MAX_OTHER_USER_CONTACTS_SCAN = 250;
+  const MAX_OTHER_USER_MATCHING_CONTACTS = 1000;
+
+  // Step 1: find other userIds that likely have this profile contact.
+  const otherUserConditions: Array<ReturnType<typeof ilike>> = [
+    ilike(contacts.linkedinUrl, `%/in/${profileLinkedinSlug}%`),
+  ];
+
+  const otherUserRows = await db.query.contacts.findMany({
+    where: and(
+      sql`${contacts.userId} <> ${userId}`,
+      or(...otherUserConditions)
+    ),
+    columns: {
+      userId: true,
+      lastInteractionAt: true,
+    },
+    limit: MAX_OTHER_USER_MATCHING_CONTACTS,
+  });
+
+  const maxLastInteractionAtByUser = new Map<string, number>();
+  for (const r of otherUserRows) {
+    if (!r.userId) continue;
+    const ts = r.lastInteractionAt ? new Date(r.lastInteractionAt).getTime() : 0;
+    const prev = maxLastInteractionAtByUser.get(r.userId) ?? -Infinity;
+    if (ts > prev) maxLastInteractionAtByUser.set(r.userId, ts);
+  }
+
+  const otherUserIds = [...maxLastInteractionAtByUser.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, MAX_OTHER_USERS_SCAN)
+    .map(([id]) => id);
+
+  const mutualCountByViewerContactId = new Map<string, number>();
+
+  // Step 2: for each other user, count which of *your* contacts overlap
+  // (given that they also have the profile contact).
+  for (const otherUserId of otherUserIds) {
+    const otherContacts = await db.query.contacts.findMany({
+      where: eq(contacts.userId, otherUserId),
+      columns: {
+        id: true,
+        linkedinUrl: true,
+        lastInteractionAt: true,
+      },
+      // Prefer recent contacts so we find mutuals quickly.
+      orderBy: (c, { desc: descOrder }) => [descOrder(c.lastInteractionAt)],
+      limit: MAX_OTHER_USER_CONTACTS_SCAN,
+    });
+
+    let hasProfile = false;
+    const overlaps = new Set<string>(); // viewer contact ids
+
+    for (const oc of otherContacts) {
+      const linkedinSlug = extractLinkedinSlug(oc.linkedinUrl);
+
+      const keys: string[] = [`i:${oc.id}`];
+      if (linkedinSlug) keys.push(`l:${linkedinSlug}`);
+      if (keys.length === 0) continue;
+
+      if (!hasProfile) {
+        for (const k of keys) {
+          if (profileKeys.has(k)) {
+            hasProfile = true;
+            break;
+          }
+        }
+      }
+
+      for (const k of keys) {
+        const viewerIds = viewerKeyToIds.get(k);
+        if (!viewerIds) continue;
+        for (const vid of viewerIds) overlaps.add(vid);
+      }
+    }
+
+    if (!hasProfile) continue;
+
+    for (const vid of overlaps) {
+      if (vid === contactId) continue;
+      const current = mutualCountByViewerContactId.get(vid) ?? 0;
+      mutualCountByViewerContactId.set(vid, current + 1);
+    }
+  }
+
+  const result: MutualContact[] = [];
+  for (const [vid, count] of mutualCountByViewerContactId.entries()) {
+    const base = viewerById.get(vid);
+    if (!base) continue;
+    result.push({
+      ...base,
+      mutualCount: count,
+    });
+  }
+
+  result.sort(
+    (a, b) =>
+      b.mutualCount - a.mutualCount ||
+      (a.fullName || "").localeCompare(b.fullName || "", undefined, {
+        sensitivity: "base",
+      })
+  );
+
+  return result.slice(0, limit);
 }
 
 /** Lightweight contact payload for the floating ask bar person chip. */

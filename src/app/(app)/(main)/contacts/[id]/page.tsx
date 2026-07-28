@@ -2,12 +2,14 @@ import {
   getContact,
   getContactFollowUpSendOptions,
   listRelatedContacts,
+  listMutualContacts,
 } from "@/actions/contacts";
 import { listActiveGoalTexts } from "@/actions/goals";
 import { ContactFollowUpSection } from "@/components/contacts/contact-follow-up-section";
 import { ContactProfileHero } from "@/components/contacts/contact-profile-hero";
 import { ContactProfileOverview } from "@/components/contacts/contact-profile-overview";
 import { ContactRelatedPeople } from "@/components/contacts/contact-related-people";
+import { ContactMutualPeople } from "@/components/contacts/contact-mutual-people";
 import { ContactRemindersSection } from "@/components/contacts/contact-reminders-section";
 import { ContactStatPills } from "@/components/contacts/contact-stat-pills";
 import { ContactTimeline } from "@/components/contacts/contact-timeline";
@@ -28,9 +30,11 @@ export default async function ContactDetailPage({
   const [contact, userId] = await Promise.all([getContact(id), requireUserId()]);
   if (!contact) notFound();
 
-  const [goals, relatedPeople, sendOptions] = await Promise.all([
+  const [goals, relatedPeople, mutualPeople, sendOptions] =
+    await Promise.all([
     listActiveGoalTexts(userId),
     listRelatedContacts(contact.id, 6),
+    listMutualContacts(contact.id, 6),
     getContactFollowUpSendOptions(contact.id),
   ]);
 
@@ -152,6 +156,8 @@ export default async function ContactDetailPage({
       />
 
       <ContactRemindersSection reminders={contact.reminders ?? []} />
+
+      <ContactMutualPeople mutuals={mutualPeople} subjectName={displayName} />
 
       <ContactRelatedPeople people={relatedPeople} subjectName={displayName} />
     </div>

@@ -52,16 +52,14 @@ export default async function ContactsPage({
           </Link>
         </>
       }
-    >
-      <div className="space-y-6">
+      >
         <ContactsFilters
+          key={[params.q, params.company, params.minScore, params.followUp].join("|")}
           initialQ={params.q || ""}
           initialCompany={params.company || ""}
           initialMinScore={params.minScore || ""}
           initialFollowUp={params.followUp || ""}
-        />
-
-        <div className="rounded-2xl border border-border/70 bg-card">
+        >
           <ContactsList
             key={[params.q, params.company, params.minScore, params.followUp].join(
               "|"
@@ -87,8 +85,7 @@ export default async function ContactsPage({
               tags: c.tags,
             }))}
           />
-        </div>
-      </div>
+        </ContactsFilters>
     </PeopleListShell>
   );
 }

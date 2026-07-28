@@ -5,6 +5,7 @@ import Link from "next/link";
 import { toast } from "@/lib/toast";
 import { deleteAllData, exportAllData } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
+import { cancelImportJob } from "@/lib/import-job-runner";
 
 export function DataSettings() {
   const [pending, start] = useTransition();
@@ -55,6 +56,15 @@ export function DataSettings() {
             if (!confirm("Delete ALL your Orbit data? This cannot be undone."))
               return;
             start(async () => {
+              // Stop any in-flight background processes immediately.
+              // Import jobs stop after the current chunk.
+              cancelImportJob();
+              window.dispatchEvent(new Event("orbit:stop-operations"));
+              // Cross-tab best-effort: graph listeners can react via storage events.
+              localStorage.setItem(
+                "orbit:stop-operations",
+                String(Date.now())
+              );
               await deleteAllData();
               toast.success("All data deleted");
             });

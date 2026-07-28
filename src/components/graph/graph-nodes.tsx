@@ -8,6 +8,7 @@ import {
   Position,
   getStraightPath,
   useInternalNode,
+  useStore,
   type EdgeProps,
   type NodeProps,
 } from "@xyflow/react";
@@ -45,6 +46,8 @@ function OrbitRingsNodeComponent({
   data,
 }: NodeProps & { data: OrbitRingsData }) {
   const max = Math.max(...data.radii, 1);
+  const flatten = data.flatten ?? 1;
+  const height = max * 2 * flatten;
   const labels = [5, 4, 3, 2, 1] as const;
 
   return (
@@ -54,20 +57,26 @@ function OrbitRingsNodeComponent({
           "absolute",
           data.motionEnabled && "constellation-rings-spin"
         )}
-        style={{ left: -max, top: -max, width: max * 2, height: max * 2 }}
+        style={{
+          left: -max,
+          top: -height / 2,
+          width: max * 2,
+          height,
+        }}
       >
         <svg
           width={max * 2}
-          height={max * 2}
+          height={height}
           className="overflow-visible"
           aria-hidden
         >
           {data.radii.map((r, i) => (
-            <circle
+            <ellipse
               key={r}
               cx={max}
-              cy={max}
-              r={r}
+              cy={height / 2}
+              rx={r}
+              ry={r * flatten}
               fill="none"
               stroke="rgba(255,255,255,0.08)"
               strokeWidth={1}
@@ -86,7 +95,7 @@ function OrbitRingsNodeComponent({
               className="absolute whitespace-nowrap text-[9px] uppercase tracking-[0.16em] text-white/30"
               style={{
                 left: 6,
-                top: -r - 6,
+                top: -r * flatten - 6,
                 transform: "translateY(-50%)",
               }}
             >
@@ -351,10 +360,15 @@ function NebulaNodeComponent({ data }: NodeProps & { data: NebulaData }) {
   }, [data.company, color, r]);
 
   return (
-    <div className="pointer-events-none" style={{ width: 1, height: 1 }}>
+    <div
+      className="nodrag cursor-pointer"
+      style={{ width: size, height: size }}
+      title={`Zoom to ${data.company}`}
+      aria-label={`Zoom to ${data.company} cluster`}
+    >
       <div
-        className="constellation-nebula absolute"
-        style={{ left: -size / 2, top: -size / 2, width: size, height: size }}
+        className="constellation-nebula absolute inset-0"
+        style={{ width: size, height: size }}
       >
         <div
           className="absolute inset-0"
@@ -391,22 +405,36 @@ function NebulaNodeComponent({ data }: NodeProps & { data: NebulaData }) {
 function ClusterLabelNodeComponent({
   data,
 }: NodeProps & { data: ClusterLabelData }) {
+  // Round zoom so labels don't re-render on every pan/zoom frame
+  const zoom = useStore((s) => Math.round(s.transform[2] * 40) / 40);
+  // Partially counteract viewport zoom so names stay readable when zoomed out,
+  // while still shrinking a little as you zoom in on a constellation.
+  const inv = 1 / Math.max(zoom, 0.08);
+  const scale = Math.min(2.8, Math.max(0.7, Math.pow(inv, 0.85)));
   const brand = data.nebulaColor;
+
   return (
-    <div className="pointer-events-none">
-      <p
-        className="whitespace-nowrap text-center text-[10px] font-semibold uppercase tracking-[0.18em]"
-        style={
-          brand
-            ? {
-                color: brand,
-                textShadow: `0 0 12px ${withAlpha(brand, 0.55)}, 0 0 28px ${withAlpha(brand, 0.25)}`,
-              }
-            : { color: "rgba(255,255,255,0.55)" }
-        }
-      >
-        {data.label}
-      </p>
+    <div
+      className="nopan nodrag cursor-pointer px-2 py-1"
+      title={`Zoom to ${data.label}`}
+      aria-label={`Zoom to ${data.label} cluster`}
+      style={{
+        transform: `scale(${scale})`,
+        transformOrigin: "center center",
+      }}
+    >
+      <span className="relative inline-block whitespace-nowrap text-center text-[11px] font-semibold tracking-[0.08em]">
+        {brand ? (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-0 translate-x-[0.75px] translate-y-[0.75px] select-none"
+            style={{ color: brand }}
+          >
+            {data.label}
+          </span>
+        ) : null}
+        <span className="relative text-white">{data.label}</span>
+      </span>
     </div>
   );
 }

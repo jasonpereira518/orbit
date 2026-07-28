@@ -667,9 +667,7 @@ export function resolveConstellationShape(
   );
 
   if (smaller.length > 0 && starCount - smaller[0].stars.length <= 4) {
-    const near = smaller.filter(
-      (s) => starCount - s.stars.length <= 4
-    );
+    const near = smaller.filter((s) => starCount - s.stars.length <= 4);
     const base =
       pickFrom(near.slice(0, Math.min(5, near.length)), 2) || smaller[0];
     const extended = extendShape(base, starCount, seed);
@@ -678,12 +676,15 @@ export function resolveConstellationShape(
 
   if (larger.length > 0 && larger[0].stars.length - starCount <= 2) {
     // Trim a slightly larger figure: keep first N stars + edges that stay in range
-    const base = pickFrom(
-      larger.filter((s) => s.stars.length - starCount <= 2).slice(0, 4),
-      3
-    ) || larger[0];
+    const base =
+      pickFrom(
+        larger.filter((s) => s.stars.length - starCount <= 2).slice(0, 4),
+        3
+      ) || larger[0];
     const stars = base.stars.slice(0, starCount);
-    const edges = base.edges.filter(([a, b]) => a < starCount && b < starCount);
+    const edges = base.edges.filter(
+      ([a, b]) => a < starCount && b < starCount
+    );
     // Ensure connectivity — link orphans into the path
     const connected = new Set<number>([0]);
     let grew = true;
@@ -713,10 +714,8 @@ export function resolveConstellationShape(
     };
   }
 
-  // Larger than every template — extend the biggest winding figure (Draco / Ursa)
-  const biggest = [...SHAPES].sort(
-    (a, b) => b.stars.length - a.stars.length
-  )[0];
+  // Larger than every template — extend the biggest winding figure.
+  const biggest = [...SHAPES].sort((a, b) => b.stars.length - a.stars.length)[0];
   const pickPool = SHAPES.filter((s) => s.stars.length >= 12);
   const base = pickFrom(pickPool, 4) || biggest;
   const extended = extendShape(base, starCount, seed);
@@ -730,24 +729,24 @@ export function scaleForStarCount(n: number) {
 
 /** Half-extent of a placed constellation figure (for cluster packing). */
 export function constellationFootprint(starCount: number) {
-  return scaleForStarCount(Math.max(1, starCount)) + 100;
+  return scaleForStarCount(Math.max(1, starCount)) + 90;
 }
 
 /**
- * Assign distinct real-sky figures across clusters (same order → same shapes).
- * Use this for both star placement and constellation edge wiring.
+ * Assign classic constellation figures across clusters (same order → same shapes).
+ * Uses avoidIds to reduce immediate repeats among equal-size clusters.
  */
 export function assignClusterShapes(
   clusters: Array<{ id: string; contactIds: string[] }>
 ): Map<string, ConstellationShape> {
-  const used = new Set<string>();
   const out = new Map<string, ConstellationShape>();
+  const used = new Set<string>();
   for (const cluster of clusters) {
     const shape = resolveConstellationShape(cluster.contactIds.length, cluster.id, {
       avoidIds: used,
     });
-    out.set(cluster.id, shape);
     used.add(canonicalShapeId(shape.id));
+    out.set(cluster.id, shape);
   }
   return out;
 }
