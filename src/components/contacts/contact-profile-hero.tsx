@@ -178,6 +178,7 @@ function StickyMiniBar({
           fullName={fullName}
           linkedinUrl={linkedinUrl}
           profileImageUrl={profileImageUrl}
+          resolveLinkedIn
           size="sm"
           className="size-9 shrink-0"
         />
@@ -369,6 +370,7 @@ export function ContactProfileHero({
               fullName={fullName}
               linkedinUrl={linkedinUrl}
               profileImageUrl={profileImageUrl}
+              resolveLinkedIn
               size="lg"
               className="size-28 sm:size-36"
             />

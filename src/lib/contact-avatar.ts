@@ -11,6 +11,64 @@ const MAX_DOWNLOAD_BYTES = 5_000_000;
 /** Target max for persisted data-URL thumbnails (after resize). */
 const MAX_PERSIST_BYTES = 220_000;
 
+/** How many LinkedIn photos to resolve per backfill tick. */
+export const AVATAR_BACKFILL_BATCH_SIZE = 5;
+
+/** Thrown when Microlink quota is exhausted. */
+export class MicrolinkRateLimitError extends Error {
+  readonly resetAt: number;
+
+  constructor(resetAt: number) {
+    super("LinkedIn photo lookup rate limit hit");
+    this.name = "MicrolinkRateLimitError";
+    this.resetAt = resetAt;
+  }
+}
+
+/** Process-local Microlink cooldown (ms since epoch). */
+let microlinkCooldownUntil = 0;
+
+export function getMicrolinkCooldownUntil(): number {
+  return microlinkCooldownUntil;
+}
+
+export function isMicrolinkRateLimited(now = Date.now()): boolean {
+  return now < microlinkCooldownUntil;
+}
+
+function noteMicrolinkRateLimit(resetAtMs: number) {
+  const until = Math.max(resetAtMs, Date.now() + 60_000);
+  if (until > microlinkCooldownUntil) {
+    microlinkCooldownUntil = until;
+  }
+}
+
+function parseRateLimitReset(res: Response): number {
+  const resetHeader = res.headers.get("x-rate-limit-reset");
+  if (resetHeader) {
+    const asNum = Number(resetHeader);
+    if (Number.isFinite(asNum) && asNum > 0) {
+      // Microlink uses UTC epoch seconds.
+      return asNum > 1e12 ? asNum : asNum * 1000;
+    }
+  }
+  const retryAfter = res.headers.get("retry-after");
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return Date.now() + seconds * 1000;
+    }
+  }
+  return Date.now() + 60_000;
+}
+
+function noteMicrolinkHeaders(res: Response) {
+  const remaining = Number(res.headers.get("x-rate-limit-remaining"));
+  if (Number.isFinite(remaining) && remaining <= 0) {
+    noteMicrolinkRateLimit(parseRateLimitReset(res));
+  }
+}
+
 /** Parse a `data:image/...;base64,...` URL into bytes. */
 export function parseImageDataUrl(
   dataUrl: string
@@ -28,6 +86,7 @@ export function parseImageDataUrl(
 /**
  * Resolve a LinkedIn profile photo and return a durable data URL.
  * Uses Microlink meta (LinkedIn OG image), then downloads the bytes.
+ * Throws {@link MicrolinkRateLimitError} when the free quota is exhausted.
  */
 export async function fetchLinkedInPhotoDataUrl(
   linkedinUrl: string
@@ -122,24 +181,54 @@ export async function encodeAvatarDataUrl(
 async function resolveLinkedInOgImage(
   linkedinUrl: string
 ): Promise<string | null> {
+  if (isMicrolinkRateLimited()) {
+    throw new MicrolinkRateLimitError(getMicrolinkCooldownUntil());
+  }
+
   try {
     const endpoint = new URL("https://api.microlink.io/");
     endpoint.searchParams.set("url", linkedinUrl);
     endpoint.searchParams.set("palette", "false");
 
+    const headers: Record<string, string> = { Accept: "application/json" };
+    const apiKey = process.env.MICROLINK_API_KEY?.trim();
+    if (apiKey) {
+      headers["x-api-key"] = apiKey;
+    }
+
     const res = await fetch(endpoint, {
-      headers: { Accept: "application/json" },
+      headers,
       signal: AbortSignal.timeout(20_000),
     });
+
+    noteMicrolinkHeaders(res);
+
+    if (res.status === 429) {
+      const resetAt = parseRateLimitReset(res);
+      noteMicrolinkRateLimit(resetAt);
+      throw new MicrolinkRateLimitError(resetAt);
+    }
     if (!res.ok) return null;
 
     const json = (await res.json()) as {
       status?: string;
+      code?: string | number;
+      message?: string;
       data?: {
         image?: { url?: string } | string | null;
         logo?: { url?: string } | string | null;
       };
     };
+
+    if (
+      json.status === "fail" &&
+      /rate.?limit|quota|too many/i.test(String(json.message ?? json.code ?? ""))
+    ) {
+      const resetAt = parseRateLimitReset(res);
+      noteMicrolinkRateLimit(resetAt);
+      throw new MicrolinkRateLimitError(resetAt);
+    }
+
     if (json.status !== "success") return null;
 
     const candidates = [json.data?.image, json.data?.logo];
@@ -150,7 +239,8 @@ async function resolveLinkedInOgImage(
       return url;
     }
     return null;
-  } catch {
+  } catch (err) {
+    if (err instanceof MicrolinkRateLimitError) throw err;
     return null;
   }
 }

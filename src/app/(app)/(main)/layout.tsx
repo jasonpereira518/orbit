@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { requireUserId } from "@/lib/auth";
 import { needsOnboarding } from "@/lib/onboarding";
+import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 
 /**
  * First-run gate for core product routes.
@@ -22,5 +23,10 @@ export default async function MainAppLayout({
     redirect("/onboarding");
   }
 
-  return children;
+  return (
+    <>
+      <AvatarBackfill />
+      {children}
+    </>
+  );
 }
