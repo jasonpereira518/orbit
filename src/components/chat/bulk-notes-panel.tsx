@@ -3,43 +3,37 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useReducedMotion } from "motion/react";
+import { Check, Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   confirmBulkCapture,
   ingestCaptureMedia,
   parseBulkCaptureNotes,
-  type BulkNotePersonPreview,
 } from "@/actions/capture";
 import { getSettings } from "@/actions/settings";
-import type {
-  CaptureParseHints,
-  ParsedNote,
-  SharedNoteContext,
-} from "@/lib/ai";
+import type { CaptureParseHints, SharedNoteContext } from "@/lib/ai";
 import {
   MISSING_AI_API_KEY_MESSAGE,
   isMissingAiApiKeyError,
   toUserFacingError,
 } from "@/lib/errors";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import {
+  CaptureSwipeCard,
+  type CaptureReviewItem,
+  type SwipeDecision,
+} from "@/components/capture/capture-swipe-card";
+import {
+  clearCaptureNotesDraft,
+  loadCaptureNotesDraft,
+  saveCaptureNotesDraft,
+} from "@/lib/capture-draft";
 import { cn } from "@/lib/utils";
-
-type Decision = "pending" | "accepted" | "discarded";
-
-type ReviewItem = BulkNotePersonPreview & {
-  decision: Decision;
-  mergeContactId: string | null;
-  createReminder: boolean;
-  relationshipScore: number;
-  tagNames: string;
-  followUpDays: number;
-};
 
 const CAPTURE_FILE_ACCEPT = [
   ".txt",
@@ -60,6 +54,13 @@ const CAPTURE_FILE_ACCEPT = [
   ".ogg",
 ].join(",");
 
+const PARSE_STAGES = [
+  { label: "Preparing notes", until: 18 },
+  { label: "Finding people", until: 42 },
+  { label: "Extracting conversations", until: 72 },
+  { label: "Matching contacts", until: 90 },
+] as const;
+
 async function fileToBase64(file: File): Promise<string> {
   const buffer = await file.arrayBuffer();
   const bytes = new Uint8Array(buffer);
@@ -69,6 +70,13 @@ async function fileToBase64(file: File): Promise<string> {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
   return btoa(binary);
+}
+
+function stageLabelForProgress(value: number) {
+  for (const stage of PARSE_STAGES) {
+    if (value < stage.until) return stage.label;
+  }
+  return PARSE_STAGES[PARSE_STAGES.length - 1]!.label;
 }
 
 export function BulkNotesPanel({
@@ -99,23 +107,26 @@ export function BulkNotesPanel({
     null
   );
   const [ingestSources, setIngestSources] = useState<string[]>([]);
+  const [draftReady, setDraftReady] = useState(false);
   const [step, setStep] = useState<"paste" | "review" | "done">("paste");
-  const [items, setItems] = useState<ReviewItem[]>([]);
+  const [items, setItems] = useState<CaptureReviewItem[]>([]);
   const [sharedNotes, setSharedNotes] = useState<SharedNoteContext[]>([]);
   const [reviewIndex, setReviewIndex] = useState(0);
-  const [slideDirection, setSlideDirection] = useState<1 | -1>(1);
-  const [hasApiKey, setHasApiKey] = useState(hasApiKeyProp ?? true);
+  const [hasApiKeyFetched, setHasApiKeyFetched] = useState(true);
+  const hasApiKey = hasApiKeyProp ?? hasApiKeyFetched;
   const [pending, start] = useTransition();
+  const [parsing, setParsing] = useState(false);
+  const [parseProgress, setParseProgress] = useState(0);
+  const [exiting, setExiting] = useState<SwipeDecision | null>(null);
+  const [exitDirection, setExitDirection] = useState<1 | -1>(1);
+  const parseTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    if (hasApiKeyProp !== undefined) {
-      setHasApiKey(hasApiKeyProp);
-      return;
-    }
+    if (hasApiKeyProp !== undefined) return;
     let cancelled = false;
     getSettings()
       .then((settings) => {
-        if (!cancelled) setHasApiKey(settings.hasApiKey);
+        if (!cancelled) setHasApiKeyFetched(settings.hasApiKey);
       })
       .catch(() => {
         // Keep extract enabled; the action returns a clear error if needed.
@@ -125,10 +136,78 @@ export function BulkNotesPanel({
     };
   }, [hasApiKeyProp]);
 
+  useEffect(() => {
+    let cancelled = false;
+    // Defer so hydration isn't a sync setState-in-effect (SSR-safe restore).
+    queueMicrotask(() => {
+      if (cancelled) return;
+      const draft = loadCaptureNotesDraft();
+      if (draft?.notes.trim()) {
+        setNotes(draft.notes);
+        setFileName(draft.fileName);
+        setCaptureHints(draft.hints);
+        setIngestSources(draft.ingestSources);
+      }
+      setDraftReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!draftReady) return;
+    const handle = window.setTimeout(() => {
+      saveCaptureNotesDraft({
+        notes,
+        fileName,
+        ingestSources,
+        hints: captureHints,
+      });
+    }, 250);
+    return () => window.clearTimeout(handle);
+  }, [draftReady, notes, fileName, ingestSources, captureHints]);
+
+  useEffect(() => {
+    return () => {
+      if (parseTimerRef.current) clearInterval(parseTimerRef.current);
+    };
+  }, []);
+
   const accepted = items.filter((i) => i.decision === "accepted");
   const discarded = items.filter((i) => i.decision === "discarded");
   const current = items[reviewIndex] ?? null;
-  const isLastCard = reviewIndex >= items.length - 1 && items.length > 0;
+
+  function clearParseProgress() {
+    if (parseTimerRef.current) {
+      clearInterval(parseTimerRef.current);
+      parseTimerRef.current = null;
+    }
+    setParsing(false);
+    setParseProgress(0);
+  }
+
+  function beginParseProgress() {
+    setParsing(true);
+    setParseProgress(4);
+    if (parseTimerRef.current) clearInterval(parseTimerRef.current);
+    parseTimerRef.current = setInterval(() => {
+      setParseProgress((prev) => {
+        if (prev >= 90) return prev;
+        const remaining = 90 - prev;
+        const stepAmt = Math.max(0.6, remaining * 0.045);
+        return Math.min(90, prev + stepAmt);
+      });
+    }, 280);
+  }
+
+  function finishParseProgress() {
+    if (parseTimerRef.current) {
+      clearInterval(parseTimerRef.current);
+      parseTimerRef.current = null;
+    }
+    setParseProgress(100);
+  }
 
   function resetToPaste() {
     setStep("paste");
@@ -139,29 +218,45 @@ export function BulkNotesPanel({
     setItems([]);
     setSharedNotes([]);
     setReviewIndex(0);
+    setExiting(null);
+    clearParseProgress();
+    clearCaptureNotesDraft();
   }
 
-  function decide(decision: "accepted" | "discarded") {
-    if (!current) return;
-    setSlideDirection(1);
+  function applyDecision(decision: SwipeDecision) {
+    const index = reviewIndex;
+    const last = index >= items.length - 1;
     setItems((prev) =>
-      prev.map((item, i) =>
-        i === reviewIndex ? { ...item, decision } : item
-      )
+      prev.map((item, i) => (i === index ? { ...item, decision } : item))
     );
-    if (reviewIndex >= items.length - 1) {
+    setExiting(null);
+    if (last) {
       setStep("done");
     } else {
-      setReviewIndex((i) => i + 1);
+      setReviewIndex(index + 1);
     }
   }
 
+  function commitDecision(decision: SwipeDecision) {
+    if (!current || exiting) return;
+    if (decision === "accepted" && !current.parsed.name?.trim()) {
+      toast.error("Add a name before accepting");
+      return;
+    }
+    if (reduceMotion) {
+      applyDecision(decision);
+      return;
+    }
+    setExitDirection(decision === "accepted" ? 1 : -1);
+    setExiting(decision);
+  }
+
   function goBack() {
+    if (exiting) return;
     if (reviewIndex <= 0) {
       setStep("paste");
       return;
     }
-    setSlideDirection(-1);
     setReviewIndex((i) => i - 1);
     setItems((prev) =>
       prev.map((item, i) =>
@@ -196,6 +291,11 @@ export function BulkNotesPanel({
         toast.success(
           `Saved: ${res.created} created, ${res.updated} updated`
         );
+        clearCaptureNotesDraft();
+        setNotes("");
+        setFileName(null);
+        setCaptureHints(null);
+        setIngestSources([]);
         if (onSaved) {
           onSaved(res);
         } else {
@@ -226,7 +326,7 @@ export function BulkNotesPanel({
         });
         if (!res.ok) {
           const missingKey = isMissingAiApiKeyError(res.error);
-          if (missingKey) setHasApiKey(false);
+          if (missingKey) setHasApiKeyFetched(false);
           toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
           return;
         }
@@ -243,6 +343,60 @@ export function BulkNotesPanel({
         toast.error(
           toUserFacingError(err, "Could not read that file").message
         );
+      }
+    });
+  }
+
+  function extractPeople() {
+    beginParseProgress();
+    start(async () => {
+      try {
+        const res = await parseBulkCaptureNotes(notes, captureHints);
+        if (!res.ok) {
+          clearParseProgress();
+          const missingKey = isMissingAiApiKeyError(res.error);
+          if (missingKey) setHasApiKeyFetched(false);
+          toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
+          return;
+        }
+        finishParseProgress();
+        setSharedNotes(res.sharedNotes || []);
+        setItems(
+          res.items.map((item) => {
+            const preferredMatch =
+              preferredContactId &&
+              item.duplicates.some((d) => d.id === preferredContactId)
+                ? preferredContactId
+                : null;
+            return {
+              ...item,
+              decision: "pending" as const,
+              mergeContactId: preferredMatch || item.suggestedMergeId,
+              createReminder: Boolean(item.parsed.follow_up_recommendation),
+              relationshipScore:
+                item.parsed.relationship_score_suggestion || 2,
+              tagNames: (item.parsed.tags || []).join(", "),
+              followUpDays: item.parsed.follow_up_days || 14,
+            };
+          })
+        );
+        setReviewIndex(0);
+        setExiting(null);
+        window.setTimeout(() => {
+          clearParseProgress();
+          setStep("review");
+          toast.success(
+            `Found ${res.items.length} ${res.items.length === 1 ? "person" : "people"}`
+          );
+        }, 220);
+      } catch (err) {
+        clearParseProgress();
+        const message = toUserFacingError(
+          err,
+          MISSING_AI_API_KEY_MESSAGE
+        ).message;
+        if (isMissingAiApiKeyError(message)) setHasApiKeyFetched(false);
+        toast.error(message);
       }
     });
   }
@@ -309,6 +463,7 @@ export function BulkNotesPanel({
               }
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
+              disabled={parsing}
             />
           </div>
 
@@ -328,7 +483,7 @@ export function BulkNotesPanel({
               type="button"
               variant="outline"
               size={compact ? "sm" : "default"}
-              disabled={pending}
+              disabled={pending || parsing}
               onClick={() => fileRef.current?.click()}
             >
               Upload notes / media
@@ -345,64 +500,34 @@ export function BulkNotesPanel({
             )}
           </div>
 
-          <Button
-            disabled={pending || !notes.trim() || !hasApiKey}
-            size={compact ? "sm" : "default"}
-            className="w-full bg-primary text-primary-foreground hover:bg-primary/90 sm:w-auto"
-            onClick={() =>
-              start(async () => {
-                try {
-                  const res = await parseBulkCaptureNotes(notes, captureHints);
-                  if (!res.ok) {
-                    const missingKey = isMissingAiApiKeyError(res.error);
-                    if (missingKey) setHasApiKey(false);
-                    toast.error(
-                      missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error
-                    );
-                    return;
-                  }
-                  setSharedNotes(res.sharedNotes || []);
-                  setItems(
-                    res.items.map((item) => {
-                      const preferredMatch =
-                        preferredContactId &&
-                        item.duplicates.some((d) => d.id === preferredContactId)
-                          ? preferredContactId
-                          : null;
-                      return {
-                        ...item,
-                        decision: "pending" as const,
-                        mergeContactId:
-                          preferredMatch || item.suggestedMergeId,
-                        createReminder: Boolean(
-                          item.parsed.follow_up_recommendation
-                        ),
-                        relationshipScore:
-                          item.parsed.relationship_score_suggestion || 2,
-                        tagNames: (item.parsed.tags || []).join(", "),
-                        followUpDays: item.parsed.follow_up_days || 14,
-                      };
-                    })
-                  );
-                  setReviewIndex(0);
-                  setSlideDirection(1);
-                  setStep("review");
-                  toast.success(
-                    `Found ${res.items.length} ${res.items.length === 1 ? "person" : "people"}`
-                  );
-                } catch (err) {
-                  const message = toUserFacingError(
-                    err,
-                    MISSING_AI_API_KEY_MESSAGE
-                  ).message;
-                  if (isMissingAiApiKeyError(message)) setHasApiKey(false);
-                  toast.error(message);
-                }
-              })
-            }
-          >
-            {pending ? "Parsing…" : "Extract people"}
-          </Button>
+          {parsing ? (
+            <div
+              className="space-y-2 rounded-xl border border-border/70 bg-muted/30 p-3"
+              aria-live="polite"
+            >
+              <div className="flex items-center justify-between gap-2 text-sm">
+                <p className="font-medium text-foreground">
+                  {stageLabelForProgress(parseProgress)}
+                </p>
+                <span className="tabular-nums text-xs text-muted-foreground">
+                  {Math.round(parseProgress)}%
+                </span>
+              </div>
+              <Progress value={parseProgress} aria-label="Extracting people" />
+              <p className="text-xs text-muted-foreground">
+                Pulling people and conversation context from your notes…
+              </p>
+            </div>
+          ) : (
+            <Button
+              disabled={pending || !notes.trim() || !hasApiKey}
+              size={compact ? "sm" : "default"}
+              className="w-full bg-primary text-primary-foreground hover:bg-primary/90 sm:w-auto"
+              onClick={extractPeople}
+            >
+              Extract people
+            </Button>
+          )}
         </div>
       )}
 
@@ -419,11 +544,15 @@ export function BulkNotesPanel({
                 {reviewIndex + 1} of {items.length}
               </h2>
               <p className="text-xs text-muted-foreground">
-                Edit if needed, then accept or discard. Shared notes stay on
-                matching people.
+                Swipe right to accept, left to discard — or use the buttons.
               </p>
             </div>
-            <Button variant="ghost" size="sm" onClick={goBack}>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={Boolean(exiting)}
+              onClick={goBack}
+            >
               Back
             </Button>
           </div>
@@ -463,41 +592,27 @@ export function BulkNotesPanel({
             </div>
           )}
 
-          <div className="relative overflow-hidden">
-            <AnimatePresence mode="wait" custom={slideDirection}>
-              <motion.div
-                key={current.key}
-                custom={slideDirection}
-                initial={
-                  reduceMotion
-                    ? { opacity: 0 }
-                    : { opacity: 0, x: slideDirection * 48, rotate: slideDirection * 1.5 }
-                }
-                animate={{ opacity: 1, x: 0, rotate: 0 }}
-                exit={
-                  reduceMotion
-                    ? { opacity: 0 }
-                    : {
-                        opacity: 0,
-                        x: slideDirection * -56,
-                        rotate: slideDirection * -2,
-                      }
-                }
-                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-              >
-                <PersonReviewCard
-                  item={current}
-                  compact={compact}
-                  preferredContactId={preferredContactId}
-                  preferredContactName={preferredContactName}
-                  onChange={(next) =>
-                    setItems((prev) =>
-                      prev.map((p, i) => (i === reviewIndex ? next : p))
-                    )
-                  }
-                />
-              </motion.div>
-            </AnimatePresence>
+          <div className="relative overflow-hidden px-0.5 py-1">
+            <CaptureSwipeCard
+              key={current.key}
+              item={current}
+              compact={compact}
+              preferredContactId={preferredContactId}
+              preferredContactName={preferredContactName}
+              reduceMotion={reduceMotion}
+              exiting={exiting}
+              exitDirection={exitDirection}
+              disabled={Boolean(exiting)}
+              onChange={(next) =>
+                setItems((prev) =>
+                  prev.map((p, i) => (i === reviewIndex ? next : p))
+                )
+              }
+              onSwipeCommit={commitDecision}
+              onExitComplete={() => {
+                if (exiting) applyDecision(exiting);
+              }}
+            />
           </div>
 
           <div
@@ -511,19 +626,26 @@ export function BulkNotesPanel({
               type="button"
               variant="outline"
               size={compact ? "sm" : "default"}
-              disabled={pending}
-              onClick={() => decide("discarded")}
+              disabled={pending || Boolean(exiting)}
+              className="gap-1.5 text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/40"
+              onClick={() => commitDecision("discarded")}
             >
+              <Trash2 className="size-4" aria-hidden />
               Discard
             </Button>
             <Button
               type="button"
               size={compact ? "sm" : "default"}
-              disabled={pending || !current.parsed.name?.trim()}
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
-              onClick={() => decide("accepted")}
+              disabled={
+                pending ||
+                Boolean(exiting) ||
+                !current.parsed.name?.trim()
+              }
+              className="gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90"
+              onClick={() => commitDecision("accepted")}
             >
-              {isLastCard ? "Accept" : "Accept & next"}
+              <Check className="size-4" aria-hidden />
+              Accept
             </Button>
           </div>
         </div>
@@ -555,7 +677,6 @@ export function BulkNotesPanel({
               variant="ghost"
               size="sm"
               onClick={() => {
-                setSlideDirection(-1);
                 setReviewIndex(Math.max(0, items.length - 1));
                 setItems((prev) =>
                   prev.map((item, i) =>
@@ -564,6 +685,7 @@ export function BulkNotesPanel({
                       : item
                   )
                 );
+                setExiting(null);
                 setStep("review");
               }}
             >
@@ -622,238 +744,6 @@ export function BulkNotesPanel({
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function PersonReviewCard({
-  item,
-  onChange,
-  compact,
-  preferredContactId,
-  preferredContactName,
-}: {
-  item: ReviewItem;
-  onChange: (next: ReviewItem) => void;
-  compact?: boolean;
-  preferredContactId?: string | null;
-  preferredContactName?: string | null;
-}) {
-  const updateParsed = (patch: Partial<ParsedNote>) =>
-    onChange({ ...item, parsed: { ...item.parsed, ...patch } });
-
-  const showPreferred =
-    preferredContactId &&
-    preferredContactName &&
-    !item.duplicates.some((d) => d.id === preferredContactId);
-
-  return (
-    <div
-      className={cn(
-        "space-y-3 rounded-2xl border border-border/70 bg-card shadow-sm",
-        compact ? "p-3.5" : "p-5 space-y-4"
-      )}
-    >
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <p className="text-sm font-medium text-foreground">
-          {item.parsed.name || "Unnamed person"}
-        </p>
-        <div className="flex flex-wrap gap-1.5">
-          {item.sharedNoteTexts.length > 0 && (
-            <Badge variant="secondary" className="text-[10px]">
-              Includes shared note
-            </Badge>
-          )}
-          {item.suggestedMergeId && (
-            <Badge variant="secondary" className="text-[10px]">
-              Likely existing
-            </Badge>
-          )}
-        </div>
-      </div>
-
-      <div
-        className={cn(
-          "grid gap-2.5",
-          compact ? "grid-cols-1" : "sm:grid-cols-2 gap-3"
-        )}
-      >
-        <Field label="Name">
-          <Input
-            value={item.parsed.name || ""}
-            onChange={(e) => updateParsed({ name: e.target.value })}
-          />
-        </Field>
-        <Field label="Company">
-          <Input
-            value={item.parsed.company || ""}
-            onChange={(e) => updateParsed({ company: e.target.value })}
-          />
-        </Field>
-        <Field label="Role">
-          <Input
-            value={item.parsed.role || ""}
-            onChange={(e) => updateParsed({ role: e.target.value })}
-          />
-        </Field>
-        <Field label="Met at">
-          <Input
-            value={item.parsed.met_at || ""}
-            onChange={(e) => updateParsed({ met_at: e.target.value })}
-          />
-        </Field>
-        <Field label="Tags">
-          <Input
-            value={item.tagNames}
-            onChange={(e) => onChange({ ...item, tagNames: e.target.value })}
-          />
-        </Field>
-      </div>
-
-      {!compact && (
-        <Field label="Summary">
-          <Textarea
-            value={item.parsed.summary || ""}
-            onChange={(e) => updateParsed({ summary: e.target.value })}
-          />
-        </Field>
-      )}
-
-      {compact && item.parsed.summary && (
-        <p className="text-xs text-muted-foreground sm:text-sm">
-          {item.parsed.summary}
-        </p>
-      )}
-
-      {item.sharedNoteTexts.length > 0 && (
-        <div className="rounded-xl border border-sky-200/70 bg-sky-50/40 px-3 py-2 text-xs text-muted-foreground dark:border-sky-900/40 dark:bg-sky-950/15">
-          <p className="mb-1 font-medium text-foreground">Shared with others</p>
-          {item.sharedNoteTexts.map((text) => (
-            <p key={text.slice(0, 40)} className="whitespace-pre-wrap">
-              {text}
-            </p>
-          ))}
-        </div>
-      )}
-
-      {(item.parsed.topics || []).length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {item.parsed.topics.map((t) => (
-            <Badge key={t} variant="secondary" className="text-[10px]">
-              {t}
-            </Badge>
-          ))}
-        </div>
-      )}
-
-      <div className="space-y-1.5 rounded-xl border border-border/60 bg-muted/30 p-2.5">
-        <p className="text-xs font-medium">Save as</p>
-        <label className="flex items-center gap-2 text-xs">
-          <input
-            type="radio"
-            name={`merge-${item.key}`}
-            checked={!item.mergeContactId}
-            onChange={() => onChange({ ...item, mergeContactId: null })}
-          />
-          Create new contact
-        </label>
-        {showPreferred && (
-          <label className="flex items-center gap-2 text-xs">
-            <input
-              type="radio"
-              name={`merge-${item.key}`}
-              checked={item.mergeContactId === preferredContactId}
-              onChange={() =>
-                onChange({ ...item, mergeContactId: preferredContactId })
-              }
-            />
-            Merge into {preferredContactName}
-          </label>
-        )}
-        {item.duplicates.map((d) => (
-          <label key={d.id} className="flex items-start gap-2 text-xs">
-            <input
-              type="radio"
-              className="mt-0.5"
-              name={`merge-${item.key}`}
-              checked={item.mergeContactId === d.id}
-              onChange={() => onChange({ ...item, mergeContactId: d.id })}
-            />
-            <span>
-              Update{" "}
-              <Link
-                href={`/contacts/${d.id}`}
-                className="text-primary underline"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {d.fullName}
-              </Link>
-              {d.company ? ` (${d.company})` : ""}
-            </span>
-          </label>
-        ))}
-      </div>
-
-      <div
-        className={cn(
-          "grid gap-2.5",
-          compact ? "grid-cols-2" : "sm:grid-cols-3 gap-3"
-        )}
-      >
-        <Field label="Closeness">
-          <Input
-            type="number"
-            min={1}
-            max={5}
-            value={item.relationshipScore}
-            onChange={(e) =>
-              onChange({
-                ...item,
-                relationshipScore: Number(e.target.value),
-              })
-            }
-          />
-        </Field>
-        <Field label="Follow-up days">
-          <Input
-            type="number"
-            min={1}
-            value={item.followUpDays}
-            onChange={(e) =>
-              onChange({ ...item, followUpDays: Number(e.target.value) })
-            }
-          />
-        </Field>
-        <label
-          className={cn(
-            "flex items-center gap-2 text-xs",
-            compact ? "col-span-2" : "items-end pb-2 text-sm"
-          )}
-        >
-          <Checkbox
-            checked={item.createReminder}
-            onCheckedChange={(v) =>
-              onChange({ ...item, createReminder: Boolean(v) })
-            }
-          />
-          Reminder
-        </label>
-      </div>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="space-y-1">
-      <Label className="text-xs">{label}</Label>
-      {children}
     </div>
   );
 }
