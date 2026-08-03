@@ -28,8 +28,6 @@ import {
   AVATAR_BACKFILL_BATCH_SIZE,
   downloadImageAsDataUrl,
   fetchLinkedInPhotoDataUrl,
-  getMicrolinkCooldownUntil,
-  isMicrolinkRateLimited,
   isUnusableAvatarUrl,
   MicrolinkRateLimitError,
 } from "@/lib/contact-avatar";
@@ -834,22 +832,6 @@ export async function backfillContactAvatars(
     return { saved: 0, pending: 0, failed: 0, rateLimitedUntil: null };
   }
 
-  if (isMicrolinkRateLimited()) {
-    // Still allow remote→data URL persistence without Microlink.
-    const remoteOnly = needsWork.filter((r) => {
-      const stored = r.profileImageUrl?.trim() || "";
-      return stored && !isUnusableAvatarUrl(stored) && !stored.startsWith("data:image/");
-    });
-    if (remoteOnly.length === 0) {
-      return {
-        saved: 0,
-        pending: needsWork.length,
-        failed: 0,
-        rateLimitedUntil: getMicrolinkCooldownUntil(),
-      };
-    }
-  }
-
   let saved = 0;
   let failed = 0;
   let rateLimitedUntil: number | null = null;
@@ -865,11 +847,17 @@ export async function backfillContactAvatars(
       }
 
       if (!dataUrl && contact.linkedinUrl?.trim()) {
-        if (isMicrolinkRateLimited()) {
-          rateLimitedUntil = getMicrolinkCooldownUntil();
-          break;
+        try {
+          dataUrl = await fetchLinkedInPhotoDataUrl(contact.linkedinUrl);
+        } catch (err) {
+          if (err instanceof MicrolinkRateLimitError) {
+            rateLimitedUntil = err.resetAt;
+            // Unavatar was already tried inside fetchLinkedInPhotoDataUrl.
+            failed += 1;
+            continue;
+          }
+          throw err;
         }
-        dataUrl = await fetchLinkedInPhotoDataUrl(contact.linkedinUrl);
       }
 
       if (!dataUrl) {
@@ -953,7 +941,7 @@ export async function lookupLinkedInProfile(input: {
 export async function refreshContactsFromLinkedIn(contactIds: string[]) {
   const userId = await requireUserId();
   if (contactIds.length === 0) {
-    return { refreshed: 0, unmatched: 0, failed: 0, avatarOnly: false };
+    return { refreshed: 0, unmatched: 0, failed: 0, avatarOnly: false, rateLimited: false };
   }
   if (contactIds.length > LINKEDIN_REFRESH_BATCH_SIZE) {
     throw new Error(
@@ -986,7 +974,7 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
     .filter((r): r is NonNullable<typeof r> => Boolean(r?.linkedinUrl?.trim()));
 
   if (ordered.length === 0) {
-    return { refreshed: 0, unmatched: 0, failed: 0, avatarOnly: false };
+    return { refreshed: 0, unmatched: 0, failed: 0, avatarOnly: false, rateLimited: false };
   }
 
   let enriched: Awaited<ReturnType<typeof enrichPeopleFromLinkedIn>>;
@@ -1026,29 +1014,26 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
   let refreshed = 0;
   let unmatched = 0;
   let failed = 0;
+  let rateLimited = false;
 
   for (let i = 0; i < ordered.length; i++) {
     const contact = ordered[i];
     const profile = enriched[i];
 
     try {
-      // Prefer Apollo photo when present; otherwise resolve via LinkedIn OG image.
+      // Prefer Apollo photo when present; otherwise resolve via LinkedIn.
       let profileImageUrl: string | null = null;
       if (profile?.profileImageUrl) {
         profileImageUrl = await downloadImageAsDataUrl(profile.profileImageUrl);
       }
       if (!profileImageUrl && contact.linkedinUrl) {
-        if (isMicrolinkRateLimited()) {
-          // Keep remaining contacts for a later pass once quota resets.
-          unmatched += ordered.length - i;
-          break;
-        }
         try {
           profileImageUrl = await fetchLinkedInPhotoDataUrl(contact.linkedinUrl);
         } catch (err) {
           if (err instanceof MicrolinkRateLimitError) {
-            unmatched += ordered.length - i;
-            break;
+            rateLimited = true;
+            unmatched += 1;
+            continue;
           }
           throw err;
         }
@@ -1095,7 +1080,7 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
   revalidatePath("/");
   revalidatePath("/graph");
 
-  return { refreshed, unmatched, failed, avatarOnly };
+  return { refreshed, unmatched, failed, avatarOnly, rateLimited };
 }
 
 /** Draft a warm follow-up message from the contact profile. */

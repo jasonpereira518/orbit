@@ -85,8 +85,9 @@ export function parseImageDataUrl(
 
 /**
  * Resolve a LinkedIn profile photo and return a durable data URL.
- * Uses Microlink meta (LinkedIn OG image), then downloads the bytes.
- * Throws {@link MicrolinkRateLimitError} when the free quota is exhausted.
+ * Tries Microlink (OG image) first, then Unavatar as a fallback.
+ * Throws {@link MicrolinkRateLimitError} only when Microlink is limited
+ * and the Unavatar fallback also fails (so callers can surface quota).
  */
 export async function fetchLinkedInPhotoDataUrl(
   linkedinUrl: string
@@ -98,9 +99,34 @@ export async function fetchLinkedInPhotoDataUrl(
     ? linkedinUrl.trim()
     : `https://www.linkedin.com/in/${slug}`;
 
-  const imageUrl = await resolveLinkedInOgImage(normalized);
-  if (!imageUrl) return null;
-  return downloadImageAsDataUrl(imageUrl);
+  let microlinkLimited = false;
+
+  if (!isMicrolinkRateLimited()) {
+    try {
+      const imageUrl = await resolveLinkedInOgImage(normalized);
+      if (imageUrl) {
+        const dataUrl = await downloadImageAsDataUrl(imageUrl);
+        if (dataUrl) return dataUrl;
+      }
+    } catch (err) {
+      if (err instanceof MicrolinkRateLimitError) {
+        microlinkLimited = true;
+      }
+      // Fall through to Unavatar.
+    }
+  } else {
+    microlinkLimited = true;
+  }
+
+  // Unavatar resolves public LinkedIn avatars without spending Microlink quota.
+  const unavatarUrl = `https://unavatar.io/linkedin/${encodeURIComponent(slug)}?fallback=false`;
+  const fromUnavatar = await downloadImageAsDataUrl(unavatarUrl);
+  if (fromUnavatar) return fromUnavatar;
+
+  if (microlinkLimited) {
+    throw new MicrolinkRateLimitError(getMicrolinkCooldownUntil());
+  }
+  return null;
 }
 
 /** Download an external image and return a compact data URL, or null on failure. */

@@ -48,6 +48,7 @@ export function RefreshContactsButton() {
       let unmatched = 0;
       let failed = 0;
       let avatarOnly = !hasApollo;
+      let rateLimited = false;
 
       for (let i = 0; i < targets.length; i += LINKEDIN_REFRESH_BATCH_SIZE) {
         const chunk = targets.slice(i, i + LINKEDIN_REFRESH_BATCH_SIZE);
@@ -58,6 +59,7 @@ export function RefreshContactsButton() {
         unmatched += result.unmatched;
         failed += result.failed;
         if (result.avatarOnly) avatarOnly = true;
+        if (result.rateLimited) rateLimited = true;
         setProgress({
           done: Math.min(i + chunk.length, targets.length),
           total: targets.length,
@@ -77,11 +79,16 @@ export function RefreshContactsButton() {
               }
             : undefined
         );
+      } else if (rateLimited) {
+        toast.message("Photo lookup rate limited", {
+          description:
+            "LinkedIn photo providers are temporarily unavailable. Try again in a few minutes.",
+        });
       } else {
         toast.message("No profiles updated", {
           description:
             unmatched > 0
-              ? "Could not fetch photos for these LinkedIn URLs."
+              ? "Couldn’t find public photos for these LinkedIn profiles. Check that each URL is a public linkedin.com/in/… link."
               : "Nothing changed.",
         });
       }

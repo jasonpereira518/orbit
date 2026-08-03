@@ -1,14 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import {
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-  type RefObject,
-} from "react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Building2, ChevronDown, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,7 +19,6 @@ import {
 import { cn } from "@/lib/utils";
 
 const SEARCH_DEBOUNCE_MS = 250;
-const EASE = [0.22, 1, 0.36, 1] as const;
 
 const CLOSENESS_OPTIONS = [
   { value: "any", label: "Any" },
@@ -57,38 +49,18 @@ export function ContactsFilters({
   children: ReactNode;
 }) {
   const router = useRouter();
-  const reducedMotion = useReducedMotion();
   const [q, setQ] = useState(initialQ);
   const [company, setCompany] = useState(initialCompany);
   const [companyDraft, setCompanyDraft] = useState(initialCompany);
   const [companyOpen, setCompanyOpen] = useState(false);
   const [minScore, setMinScore] = useState(initialMinScore || "any");
   const [followUp, setFollowUp] = useState(initialFollowUp || "");
-  const [scrolledPast, setScrolledPast] = useState(false);
   const debounceRef = useRef<number | null>(null);
-  const sentinelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
     };
-  }, []);
-
-  useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return;
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        const past = !entry?.isIntersecting;
-        setScrolledPast(past);
-        // When you scroll back to the top we show the inline pill again.
-      },
-      { threshold: 0, rootMargin: "-12px 0px 0px 0px" }
-    );
-
-    observer.observe(sentinel);
-    return () => observer.disconnect();
   }, []);
 
   function apply(next?: Partial<FilterState>) {
@@ -125,111 +97,70 @@ export function ContactsFilters({
   const companyActive = Boolean(company.trim());
   const closenessActive = minScore !== "any";
 
-  const pillProps = {
-    q,
-    company,
-    companyDraft,
-    companyOpen,
-    minScore,
-    closenessLabel,
-    companyActive,
-    closenessActive,
-    onQChange: (value: string) => {
-      setQ(value);
-      scheduleSearch(value);
-    },
-    onClearQ: () => {
-      setQ("");
-      scheduleSearch("");
-    },
-    onCompanyOpenChange: (open: boolean) => {
-      setCompanyOpen(open);
-      if (open) setCompanyDraft(company);
-    },
-    onCompanyDraftChange: setCompanyDraft,
-    onCompanyApply: (next: string) => {
-      setCompany(next);
-      setCompanyOpen(false);
-      apply({ company: next });
-    },
-    onCompanyClear: () => {
-      setCompany("");
-      setCompanyDraft("");
-      setCompanyOpen(false);
-      apply({ company: "" });
-    },
-    onMinScoreChange: (val: string) => {
-      setMinScore(val);
-      apply({ minScore: val });
-    },
-  };
-
   return (
     <div className="space-y-6">
-      <div className="space-y-3">
-        {followUp === "due" && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2">
-            <p className="text-sm text-amber-900 dark:text-amber-200">
-              Showing contacts with due follow-ups
-            </p>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-8"
-              onClick={() => {
-                setFollowUp("");
-                apply({ followUp: "" });
-              }}
-            >
-              Clear filter
-            </Button>
-          </div>
-        )}
-
-        <div ref={sentinelRef} className="flex min-h-11 justify-center">
-          <motion.div
-            className="w-full max-w-xl"
-            animate={
-              reducedMotion
-                ? undefined
-                : {
-                    opacity: scrolledPast ? 0 : 1,
-                    y: scrolledPast ? -6 : 0,
-                  }
-            }
-            transition={{ duration: reducedMotion ? 0 : 0.22, ease: EASE }}
-            aria-hidden={scrolledPast}
-            inert={scrolledPast ? true : undefined}
+      {followUp === "due" && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+          <p className="text-sm text-amber-900 dark:text-amber-200">
+            Showing contacts with due follow-ups
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8"
+            onClick={() => {
+              setFollowUp("");
+              apply({ followUp: "" });
+            }}
           >
-            <SearchPill {...pillProps} />
-          </motion.div>
+            Clear filter
+          </Button>
         </div>
+      )}
+
+      <div className="mx-auto w-full max-w-xl">
+        <SearchPill
+          q={q}
+          company={company}
+          companyDraft={companyDraft}
+          companyOpen={companyOpen}
+          minScore={minScore}
+          closenessLabel={closenessLabel}
+          companyActive={companyActive}
+          closenessActive={closenessActive}
+          onQChange={(value) => {
+            setQ(value);
+            scheduleSearch(value);
+          }}
+          onClearQ={() => {
+            setQ("");
+            scheduleSearch("");
+          }}
+          onCompanyOpenChange={(open) => {
+            setCompanyOpen(open);
+            if (open) setCompanyDraft(company);
+          }}
+          onCompanyDraftChange={setCompanyDraft}
+          onCompanyApply={(next) => {
+            setCompany(next);
+            setCompanyOpen(false);
+            apply({ company: next });
+          }}
+          onCompanyClear={() => {
+            setCompany("");
+            setCompanyDraft("");
+            setCompanyOpen(false);
+            apply({ company: "" });
+          }}
+          onMinScoreChange={(val) => {
+            setMinScore(val);
+            apply({ minScore: val });
+          }}
+        />
       </div>
 
-      <div
-        className={cn(
-          "overflow-hidden rounded-2xl border border-border/70 bg-card",
-          scrolledPast && "[&_.contact-letter-sticky]:top-14"
-        )}
-      >
-        <AnimatePresence initial={false}>
-          {scrolledPast ? (
-            <motion.div
-              key="docked-search"
-              initial={reducedMotion ? false : { opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
-              transition={{ duration: reducedMotion ? 0 : 0.22, ease: EASE }}
-              className="sticky top-0 z-30 border-b border-border/60 bg-card/95 px-4 py-2 backdrop-blur-md sm:px-5"
-            >
-              <div className="mx-auto w-full max-w-xl">
-                <SearchPill {...pillProps} />
-              </div>
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
-
+      <div className="overflow-hidden rounded-2xl border border-border/70 bg-card">
         {children}
       </div>
     </div>
@@ -245,7 +176,6 @@ function SearchPill({
   closenessLabel,
   companyActive,
   closenessActive,
-  inputRef,
   onQChange,
   onClearQ,
   onCompanyOpenChange,
@@ -253,7 +183,6 @@ function SearchPill({
   onCompanyApply,
   onCompanyClear,
   onMinScoreChange,
-  onDismiss,
 }: {
   q: string;
   company: string;
@@ -263,7 +192,6 @@ function SearchPill({
   closenessLabel: string;
   companyActive: boolean;
   closenessActive: boolean;
-  inputRef?: RefObject<HTMLInputElement | null>;
   onQChange: (value: string) => void;
   onClearQ: () => void;
   onCompanyOpenChange: (open: boolean) => void;
@@ -271,18 +199,15 @@ function SearchPill({
   onCompanyApply: (value: string) => void;
   onCompanyClear: () => void;
   onMinScoreChange: (value: string) => void;
-  onDismiss?: () => void;
 }) {
   return (
     <div
       className={cn(
-        "flex h-11 w-full min-w-[12rem] items-center gap-1 rounded-full border border-border/70 bg-card pl-3 pr-1.5 shadow-sm",
-        "focus-within:border-primary/40 focus-within:ring-[3px] focus-within:ring-primary/15",
-        "backdrop-blur-md"
+        "flex h-11 w-full items-center gap-1 rounded-full border border-border/70 bg-card pl-3.5 pr-1.5 shadow-sm",
+        "focus-within:border-primary/40 focus-within:ring-[3px] focus-within:ring-primary/15"
       )}
     >
       <input
-        ref={inputRef}
         type="text"
         placeholder="Search contacts…"
         value={q}
@@ -394,19 +319,6 @@ function SearchPill({
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
-
-      {onDismiss ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label="Collapse search"
-          className="shrink-0 rounded-full text-muted-foreground"
-          onClick={onDismiss}
-        >
-          <X className="size-3.5" />
-        </Button>
-      ) : null}
     </div>
   );
 }

@@ -6,8 +6,6 @@ import { requireUserId } from "@/lib/auth";
 import {
   downloadImageAsDataUrl,
   fetchLinkedInPhotoDataUrl,
-  getMicrolinkCooldownUntil,
-  isMicrolinkRateLimited,
   isUnusableAvatarUrl,
   MicrolinkRateLimitError,
   parseImageDataUrl,
@@ -86,19 +84,8 @@ export async function GET(_req: Request, { params }: Params) {
     }
   }
 
-  // No durable photo yet — resolve from LinkedIn when quota allows.
+  // No durable photo yet — resolve from LinkedIn (Microlink + Unavatar fallback).
   if (contact.linkedinUrl?.trim()) {
-    if (isMicrolinkRateLimited()) {
-      const retryAfterSec = Math.max(
-        1,
-        Math.ceil((getMicrolinkCooldownUntil() - Date.now()) / 1000)
-      );
-      return new NextResponse(null, {
-        status: 429,
-        headers: { "Retry-After": String(retryAfterSec) },
-      });
-    }
-
     try {
       const dataUrl = await fetchLinkedInPhotoDataUrl(contact.linkedinUrl);
       if (dataUrl) {
