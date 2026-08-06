@@ -5,6 +5,8 @@ import { CampaignEditor } from "@/components/outreach/campaign-editor";
 import { CampaignWorkspace } from "@/components/outreach/campaign-workspace";
 import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { formatReplyRate } from "@/lib/outreach-metrics";
+import type { SequenceStep } from "@/lib/outreach-types";
 
 export default async function OutreachCampaignPage({
   params,
@@ -50,6 +52,12 @@ export default async function OutreachCampaignPage({
             <Badge variant="outline">{campaign.status}</Badge>
             <Badge variant="outline">{campaign.defaultChannel || "email"}</Badge>
             <Badge variant="outline">{campaign.tone || "professional"}</Badge>
+            {campaign.replyCta && (
+              <Badge variant="outline">{campaign.replyCta.replaceAll("_", " ")}</Badge>
+            )}
+            <Badge variant="outline">
+              Reply rate {formatReplyRate(campaign.metrics.successfulReplyRate)}
+            </Badge>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -60,7 +68,12 @@ export default async function OutreachCampaignPage({
         </div>
       </div>
 
-      <CampaignWorkspace campaign={campaign} />
+      <CampaignWorkspace
+        campaign={{
+          ...campaign,
+          sequenceSteps: (campaign.sequenceSteps ?? []) as SequenceStep[],
+        }}
+      />
     </div>
   );
 }

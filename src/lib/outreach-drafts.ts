@@ -5,14 +5,20 @@ export type DraftInput = {
   channel: OutreachChannel;
   tone: string;
   messageIntent: string;
+  replyCta?: string | null;
   userGoals: string[];
   prospect: {
     fullName: string;
     title: string | null;
     company: string | null;
     location: string | null;
+    enrichmentSummary?: string | null;
+    priorNotes?: string | null;
   };
   templateSeed?: string;
+  stepIndex?: number;
+  previousBody?: string | null;
+  variationHint?: string;
 };
 
 export type GeneratedDraft = {
@@ -22,12 +28,27 @@ export type GeneratedDraft = {
 
 function channelRules(channel: OutreachChannel) {
   if (channel === "email") {
-    return "Write a cold email under 150 words with a clear subject line and one specific CTA.";
+    return "Write a cold email under 120 words with a clear subject line and exactly one reply-seeking CTA (a question or soft ask).";
   }
   if (channel === "linkedin") {
-    return "Write a short LinkedIn connection note or InMail under 300 characters. No subject line.";
+    return "Write a short LinkedIn connection note or InMail under 280 characters with one clear reply ask. No subject line.";
   }
-  return "Write a conversational SMS under 160 characters. No subject line.";
+  return "Write a conversational SMS under 160 characters with one clear reply ask. No subject line.";
+}
+
+function replyCtaGuidance(replyCta?: string | null) {
+  switch (replyCta) {
+    case "book_intro":
+      return "Desired reply: agreement to a short intro call or suggested times.";
+    case "ask_referral":
+      return "Desired reply: a warm referral or intro to the right person.";
+    case "get_feedback":
+      return "Desired reply: candid feedback on a specific idea or question.";
+    case "explore_partnership":
+      return "Desired reply: interest in exploring a partnership next step.";
+    default:
+      return "Desired reply: an engaged, specific response to the ask.";
+  }
 }
 
 export async function generateOutreachDraft(
@@ -44,20 +65,41 @@ export async function generateOutreachDraft(
     `Title: ${input.prospect.title || "unknown"}`,
     `Company: ${input.prospect.company || "unknown"}`,
     `Location: ${input.prospect.location || "unknown"}`,
-  ].join("\n");
+    input.prospect.enrichmentSummary
+      ? `Enrichment: ${input.prospect.enrichmentSummary}`
+      : null,
+    input.prospect.priorNotes
+      ? `Prior context: ${input.prospect.priorNotes}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const step = input.stepIndex ?? 0;
+  const stepBlock =
+    step > 0
+      ? `This is follow-up #${step}. Reference the prior note lightly; do not repeat it. Prior message:\n${input.previousBody || "(none)"}`
+      : "This is the first touch.";
 
   const content = await completeJson(userId, {
-    temperature: 0.5,
-    system: `You write personalized cold outreach messages.
+    temperature: 0.55,
+    system: `You write personalized cold outreach optimized for a successful reply.
 Tone: ${input.tone}
 Intent: ${input.messageIntent}
+${replyCtaGuidance(input.replyCta)}
 ${channelRules(input.channel)}
-Avoid spammy language, fake familiarity, and exaggerated claims.
+Include one specific "why this person" detail when enrichment or role/company context exists.
+Prefer specificity over length. Avoid spammy language, fake familiarity, and exaggerated claims.
+Do not use identical phrasing across people — vary openers and hooks.
 Return JSON: { "subject": string|null, "body": string }`,
     user: `${goalsBlock}
 
 Prospect:
 ${prospectBlock}
+
+${stepBlock}
+
+${input.variationHint ? `Variation hint: ${input.variationHint}` : ""}
 
 ${input.templateSeed ? `Template seed:\n${input.templateSeed}` : ""}`,
   });
@@ -80,7 +122,13 @@ export async function generateOutreachDraftsBatch(
   async function worker() {
     while (index < inputs.length) {
       const current = index++;
-      results[current] = await generateOutreachDraft(userId, inputs[current]);
+      const input = {
+        ...inputs[current],
+        variationHint:
+          inputs[current].variationHint ||
+          `Variant ${current + 1} of ${inputs.length}`,
+      };
+      results[current] = await generateOutreachDraft(userId, input);
     }
   }
 

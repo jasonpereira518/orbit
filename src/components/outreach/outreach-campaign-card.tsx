@@ -7,6 +7,8 @@ import {
   CampaignEditor,
   type CampaignEditorInitial,
 } from "@/components/outreach/campaign-editor";
+import { formatReplyRate } from "@/lib/outreach-metrics";
+import type { CampaignMetrics } from "@/lib/outreach-types";
 
 export function OutreachCampaignCard({
   campaign,
@@ -14,10 +16,9 @@ export function OutreachCampaignCard({
   campaign: CampaignEditorInitial & {
     prospects: Array<{ id: string; status: string }>;
     updatedAt: Date;
+    metrics: CampaignMetrics;
   };
 }) {
-  const selected = campaign.prospects.filter((p) => p.status === "selected").length;
-
   return (
     <div className="rounded-2xl border border-border/70 bg-card p-5 transition-colors hover:bg-muted/20">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -34,8 +35,13 @@ export function OutreachCampaignCard({
       </div>
       <Link href={`/outreach/${campaign.id}`} className="mt-3 block">
         <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+          <span className="font-medium text-primary">
+            Reply rate {formatReplyRate(campaign.metrics.successfulReplyRate)}
+          </span>
+          <span>{campaign.metrics.sentCount} sent</span>
+          <span>{campaign.metrics.positiveReplyCount} positive</span>
+          <span>{campaign.metrics.awaitingReplyCount} awaiting</span>
           <span>{campaign.prospects.length} prospects</span>
-          <span>{selected} selected</span>
           <span>
             Updated{" "}
             {formatDistanceToNow(new Date(campaign.updatedAt), {

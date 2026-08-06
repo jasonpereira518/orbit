@@ -12,9 +12,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MessageEditorRow } from "@/components/outreach/message-editor-row";
+import { OutcomeControls } from "@/components/outreach/outcome-controls";
 import { OutreachActions } from "@/components/outreach/outreach-actions";
 import { channelLabel } from "@/lib/outreach-channels";
-import type { OutreachChannel } from "@/lib/outreach-types";
+import { isAwaitingReply, isDeliveredMessage } from "@/lib/outreach-metrics";
+import type { OutreachChannel, PipelineFilter } from "@/lib/outreach-types";
 
 export type ProspectRow = {
   id: string;
@@ -26,13 +28,23 @@ export type ProspectRow = {
   linkedinUrl: string | null;
   status: string;
   contactId: string | null;
+  pipeline?: PipelineFilter;
   message?: {
     id: string;
     channel: OutreachChannel;
     subject: string | null;
     body: string;
     status: string;
+    stepIndex?: number | null;
+    outcome?: string | null;
+    scheduledFor?: Date | string | null;
   } | null;
+  messages?: Array<{
+    id: string;
+    status: string;
+    outcome?: string | null;
+    stepIndex?: number | null;
+  }>;
 };
 
 export function ProspectTable({
@@ -47,10 +59,6 @@ export function ProspectTable({
   onUpdated?: () => void;
 }) {
   const [pending, start] = useTransition();
-  const selectedIds = useMemo(
-    () => prospects.filter((p) => p.status === "selected").map((p) => p.id),
-    [prospects]
-  );
   const [expanded, setExpanded] = useState<string | null>(null);
 
   function toggleSelection(prospectId: string, checked: boolean) {
@@ -79,7 +87,7 @@ export function ProspectTable({
   if (!prospects.length) {
     return (
       <div className="rounded-2xl border border-dashed border-border/70 p-10 text-center text-sm text-muted-foreground">
-        No prospects yet. Run a search from the campaign wizard.
+        No prospects in this view. Adjust filters or run a search from the campaign wizard.
       </div>
     );
   }
@@ -87,14 +95,14 @@ export function ProspectTable({
   return (
     <div className="overflow-hidden rounded-2xl border border-border/70 bg-card">
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[900px] text-sm">
+        <table className="w-full min-w-[980px] text-sm">
           <thead className="border-b border-border/70 bg-muted/30 text-left text-muted-foreground">
             <tr>
               <th className="px-4 py-3 w-10" />
               <th className="px-4 py-3">Person</th>
               <th className="px-4 py-3">Contact</th>
               <th className="px-4 py-3">Draft</th>
-              <th className="px-4 py-3">Actions</th>
+              <th className="px-4 py-3">Actions / outcome</th>
             </tr>
           </thead>
           <tbody>
@@ -102,9 +110,28 @@ export function ProspectTable({
               const message = prospect.message;
               const channel = (message?.channel || defaultChannel) as OutreachChannel;
               const isSelected = prospect.status === "selected";
+              const awaiting =
+                message &&
+                isAwaitingReply({
+                  id: message.id,
+                  status: message.status,
+                  outcome: message.outcome ?? null,
+                });
+              const delivered =
+                message &&
+                isDeliveredMessage({
+                  id: message.id,
+                  status: message.status,
+                  outcome: message.outcome ?? null,
+                });
 
               return (
-                <tr key={prospect.id} className="border-b border-border/50 align-top">
+                <tr
+                  key={prospect.id}
+                  className={`border-b border-border/50 align-top ${
+                    awaiting ? "bg-primary/[0.03]" : ""
+                  }`}
+                >
                   <td className="px-4 py-3">
                     <Checkbox
                       checked={isSelected}
@@ -122,8 +149,16 @@ export function ProspectTable({
                     </div>
                     <div className="mt-1 flex flex-wrap gap-1">
                       <Badge variant="outline">{prospect.status}</Badge>
+                      {prospect.pipeline && prospect.pipeline !== "all" && (
+                        <Badge variant="outline">
+                          {prospect.pipeline.replaceAll("_", " ")}
+                        </Badge>
+                      )}
                       {message?.status && (
                         <Badge variant="outline">{message.status}</Badge>
+                      )}
+                      {(message?.stepIndex ?? 0) > 0 && (
+                        <Badge variant="outline">Follow-up {message?.stepIndex}</Badge>
                       )}
                     </div>
                   </td>
@@ -190,20 +225,29 @@ export function ProspectTable({
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {message && (
-                      <OutreachActions
-                        messageId={message.id}
-                        channel={channel}
-                        subject={message.subject}
-                        body={message.body}
-                        prospect={{
-                          email: prospect.email,
-                          phone: prospect.phone,
-                          linkedinUrl: prospect.linkedinUrl,
-                        }}
-                        onUpdated={onUpdated}
-                      />
-                    )}
+                    <div className="space-y-3">
+                      {message && !delivered && (
+                        <OutreachActions
+                          messageId={message.id}
+                          channel={channel}
+                          subject={message.subject}
+                          body={message.body}
+                          prospect={{
+                            email: prospect.email,
+                            phone: prospect.phone,
+                            linkedinUrl: prospect.linkedinUrl,
+                          }}
+                          onUpdated={onUpdated}
+                        />
+                      )}
+                      {message && delivered && (
+                        <OutcomeControls
+                          messageId={message.id}
+                          currentOutcome={message.outcome}
+                          onUpdated={onUpdated}
+                        />
+                      )}
+                    </div>
                   </td>
                 </tr>
               );

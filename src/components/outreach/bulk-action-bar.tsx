@@ -6,6 +6,7 @@ import { toast } from "@/lib/toast";
 import {
   bulkSendOutreach,
   markMessageAction,
+  previewBulkSendQuality,
   updateProspectSelection,
 } from "@/actions/outreach";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,7 @@ import { DangerSendDialog } from "@/components/outreach/danger-send-dialog";
 
 type Row = {
   prospectId: string;
+  prospectName?: string;
   messageId: string;
   channel: OutreachChannel;
   subject: string | null;
@@ -43,6 +45,8 @@ export function BulkActionBar({
 }) {
   const [pending, start] = useTransition();
   const [dangerOpen, setDangerOpen] = useState(false);
+  const [qualityNote, setQualityNote] = useState<string | null>(null);
+  const [ignoreWarnings, setIgnoreWarnings] = useState(false);
 
   const activeRows = useMemo(
     () => rows.filter((r) => selectedProspectIds.includes(r.prospectId)),
@@ -73,7 +77,7 @@ export function BulkActionBar({
           r.channel === "email" && r.subject
             ? `Subject: ${r.subject}\n`
             : "";
-        return `--- ${r.prospectId} ---\n${header}${r.body}`;
+        return `--- ${r.prospectName || r.prospectId} ---\n${header}${r.body}`;
       })
       .join("\n\n");
     navigator.clipboard.writeText(text);
@@ -111,18 +115,55 @@ export function BulkActionBar({
     });
   }
 
+  function openSendDialog() {
+    start(async () => {
+      try {
+        const quality = await previewBulkSendQuality({
+          campaignId,
+          messageIds: sendable.map((r) => r.messageId),
+        });
+        if (quality.blocking.length) {
+          toast.error(quality.blocking[0].message);
+          return;
+        }
+        if (quality.warnings.length) {
+          setQualityNote(
+            `${quality.warnings.length} quality warning${
+              quality.warnings.length === 1 ? "" : "s"
+            }: ${quality.warnings[0].message}`
+          );
+          setIgnoreWarnings(true);
+        } else {
+          setQualityNote(null);
+          setIgnoreWarnings(true);
+        }
+        setDangerOpen(true);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Quality check failed");
+      }
+    });
+  }
+
   function handleBulkSend() {
     start(async () => {
       try {
         const result = await bulkSendOutreach({
           campaignId,
           messageIds: sendable.map((r) => r.messageId),
+          ignoreWarnings: ignoreWarnings || !qualityNote,
         });
         toast.success(`Sent ${result.sent}, failed ${result.failed}`);
         setDangerOpen(false);
         refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Bulk send failed");
+        const message = err instanceof Error ? err.message : "Bulk send failed";
+        if (message.startsWith("Quality warnings:")) {
+          setQualityNote(message);
+          setIgnoreWarnings(true);
+          toast.error("Review warnings, then confirm send again");
+          return;
+        }
+        toast.error(message);
       }
     });
   }
@@ -130,43 +171,45 @@ export function BulkActionBar({
   if (!rows.length) return null;
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-muted/30 p-3">
-      <span className="text-sm text-muted-foreground">
-        {selectedProspectIds.length} selected
-      </span>
-      <Button size="sm" variant="outline" onClick={handleSelectAll} disabled={pending}>
-        Select all
-      </Button>
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={handleCopyAll}
-        disabled={pending || !activeRows.length}
-      >
-        <Copy className="mr-1 h-3.5 w-3.5" />
-        Copy all
-      </Button>
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={handleOpenAll}
-        disabled={pending || !activeRows.length}
-      >
-        <ExternalLink className="mr-1 h-3.5 w-3.5" />
-        Open all
-      </Button>
-      {sendable.length > 0 && (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-muted/30 p-3">
+        <span className="text-sm text-muted-foreground">
+          {selectedProspectIds.length} selected — review & personalize before sending
+        </span>
+        <Button size="sm" variant="outline" onClick={handleSelectAll} disabled={pending}>
+          Select all
+        </Button>
         <Button
           size="sm"
           variant="outline"
-          className="border-destructive text-destructive hover:bg-destructive/10"
-          onClick={() => setDangerOpen(true)}
-          disabled={pending}
+          onClick={handleCopyAll}
+          disabled={pending || !activeRows.length}
         >
-          <Send className="mr-1 h-3.5 w-3.5" />
-          Send all ({sendable.length})
+          <Copy className="mr-1 h-3.5 w-3.5" />
+          Copy selected
         </Button>
-      )}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={handleOpenAll}
+          disabled={pending || !activeRows.length}
+        >
+          <ExternalLink className="mr-1 h-3.5 w-3.5" />
+          Open selected
+        </Button>
+        {sendable.length > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-destructive text-destructive hover:bg-destructive/10"
+            onClick={openSendDialog}
+            disabled={pending}
+          >
+            <Send className="mr-1 h-3.5 w-3.5" />
+            Send selected ({sendable.length})
+          </Button>
+        )}
+      </div>
 
       <DangerSendDialog
         open={dangerOpen}
@@ -176,6 +219,9 @@ export function BulkActionBar({
         onConfirm={handleBulkSend}
         pending={pending}
       />
+      {dangerOpen && qualityNote && (
+        <p className="text-xs text-amber-700 dark:text-amber-400">{qualityNote}</p>
+      )}
     </div>
   );
 }

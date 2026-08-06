@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import { Bell, Sparkles, Users } from "lucide-react";
+import { getOutreachPerformanceSummary } from "@/actions/outreach";
 import { fetchDashboard } from "@/actions/reminders";
 import { fetchNetworkStats } from "@/actions/stats";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,13 +14,15 @@ import { NetworkDepthChart } from "@/components/dashboard/network-depth-chart";
 import { NetworkStatsCard } from "@/components/dashboard/network-stats-card";
 import { RemindersDashboardCard } from "@/components/dashboard/reminders-dashboard-card";
 import { SuggestedOutreachCard } from "@/components/dashboard/suggested-outreach-card";
+import { OutreachPerformanceCard } from "@/components/outreach/outreach-performance-card";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export default async function DashboardPage() {
-  const [data, networkStats] = await Promise.all([
+  const [data, networkStats, outreachPerformance] = await Promise.all([
     fetchDashboard(),
     fetchNetworkStats(),
+    getOutreachPerformanceSummary(),
   ]);
 
   function tierForContact(id: string) {
@@ -111,6 +114,17 @@ export default async function DashboardPage() {
           })}
         />
 
+        <OutreachPerformanceCard
+          accountRate={outreachPerformance.accountMetrics.successfulReplyRate}
+          sentCount={outreachPerformance.accountMetrics.sentCount}
+          positiveReplyCount={
+            outreachPerformance.accountMetrics.positiveReplyCount
+          }
+          campaigns={outreachPerformance.topCampaigns}
+        />
+      </div>
+
+      <div className="grid items-start gap-6 lg:grid-cols-2">
         <RemindersDashboardCard
           items={data.reminders.map((r) => ({
             id: r.id,
@@ -125,9 +139,7 @@ export default async function DashboardPage() {
               : null,
           }))}
         />
-      </div>
 
-      <div className="grid items-start gap-6 lg:grid-cols-2">
         <Card id="due-follow-ups" className="border-border/70 shadow-none scroll-mt-8">
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
             <CardTitle className="text-base">Due follow-ups</CardTitle>
@@ -168,7 +180,9 @@ export default async function DashboardPage() {
             )}
           </CardContent>
         </Card>
+      </div>
 
+      <div className="grid items-start gap-6 lg:grid-cols-2">
         <Card className="border-border/70 shadow-none">
           <CardHeader>
             <CardTitle className="text-base">Recently updated</CardTitle>

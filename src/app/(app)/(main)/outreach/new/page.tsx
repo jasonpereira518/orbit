@@ -8,7 +8,7 @@ export default function NewOutreachPage() {
           New outreach campaign
         </h1>
         <p className="mt-1 text-muted-foreground">
-          Define your audience, find prospects, and generate personalized drafts
+          Define a tight audience, a desired reply, and personalized drafts optimized for response rate
         </p>
       </div>
       <OutreachWizard />

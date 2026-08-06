@@ -213,8 +213,10 @@ CREATE TABLE IF NOT EXISTS outreach_campaigns (
   audience_query text,
   audience_filters jsonb DEFAULT '{}',
   message_intent text,
+  reply_cta text,
   tone text DEFAULT 'professional',
   default_channel text DEFAULT 'email',
+  sequence_steps jsonb DEFAULT '[]',
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -245,6 +247,12 @@ CREATE TABLE IF NOT EXISTS outreach_messages (
   subject text,
   body text NOT NULL DEFAULT '',
   status text NOT NULL DEFAULT 'draft',
+  step_index integer NOT NULL DEFAULT 0,
+  parent_message_id uuid,
+  scheduled_for timestamptz,
+  outcome text,
+  outcome_notes text,
+  replied_at timestamptz,
   sent_at timestamptz,
   last_action_at timestamptz,
   error_message text,
@@ -254,6 +262,8 @@ CREATE TABLE IF NOT EXISTS outreach_messages (
 );
 CREATE INDEX IF NOT EXISTS outreach_messages_prospect_idx ON outreach_messages(prospect_id);
 CREATE INDEX IF NOT EXISTS outreach_messages_status_idx ON outreach_messages(status);
+CREATE INDEX IF NOT EXISTS outreach_messages_outcome_idx ON outreach_messages(outcome);
+CREATE INDEX IF NOT EXISTS outreach_messages_scheduled_idx ON outreach_messages(scheduled_for);
 CREATE TABLE IF NOT EXISTS chat_threads (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -430,10 +440,39 @@ async function migratePglite(client: PGlite) {
     "action_kind",
     "text NOT NULL DEFAULT 'task'"
   );
+  await ensureColumn(client, "outreach_campaigns", "reply_cta", "text");
+  await ensureColumn(
+    client,
+    "outreach_campaigns",
+    "sequence_steps",
+    "jsonb DEFAULT '[]'"
+  );
+  await ensureColumn(
+    client,
+    "outreach_messages",
+    "step_index",
+    "integer NOT NULL DEFAULT 0"
+  );
+  await ensureColumn(client, "outreach_messages", "parent_message_id", "uuid");
+  await ensureColumn(client, "outreach_messages", "scheduled_for", "timestamptz");
+  await ensureColumn(client, "outreach_messages", "outcome", "text");
+  await ensureColumn(client, "outreach_messages", "outcome_notes", "text");
+  await ensureColumn(client, "outreach_messages", "replied_at", "timestamptz");
 
   try {
     await client.exec(
       `CREATE INDEX IF NOT EXISTS reminders_list_idx ON reminders(user_id, list_id)`
+    );
+  } catch {
+    // Index may already exist
+  }
+
+  try {
+    await client.exec(
+      `CREATE INDEX IF NOT EXISTS outreach_messages_outcome_idx ON outreach_messages(outcome)`
+    );
+    await client.exec(
+      `CREATE INDEX IF NOT EXISTS outreach_messages_scheduled_idx ON outreach_messages(scheduled_for)`
     );
   } catch {
     // Index may already exist
@@ -553,6 +592,16 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS list_id uuid REFERENCES reminder_lists(id) ON DELETE SET NULL`,
     `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS action_kind text NOT NULL DEFAULT 'task'`,
     `CREATE INDEX IF NOT EXISTS reminders_list_idx ON reminders(user_id, list_id)`,
+    `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS reply_cta text`,
+    `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS sequence_steps jsonb DEFAULT '[]'`,
+    `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS step_index integer NOT NULL DEFAULT 0`,
+    `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS parent_message_id uuid`,
+    `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS scheduled_for timestamptz`,
+    `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS outcome text`,
+    `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS outcome_notes text`,
+    `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS replied_at timestamptz`,
+    `CREATE INDEX IF NOT EXISTS outreach_messages_outcome_idx ON outreach_messages(outcome)`,
+    `CREATE INDEX IF NOT EXISTS outreach_messages_scheduled_idx ON outreach_messages(scheduled_for)`,
     `CREATE INDEX IF NOT EXISTS ai_suggestions_user_idx ON ai_suggestions(user_id, status)`,
     `CREATE INDEX IF NOT EXISTS embeddings_user_idx ON contact_embeddings(user_id)`,
     `CREATE INDEX IF NOT EXISTS embeddings_contact_idx ON contact_embeddings(contact_id)`,

@@ -305,6 +305,11 @@ export type AudienceFilters = {
   seniorities?: string[];
 };
 
+export type OutreachSequenceStep = {
+  delayDays: number;
+  intent?: string;
+};
+
 export const outreachCampaigns = pgTable(
   "outreach_campaigns",
   {
@@ -315,8 +320,12 @@ export const outreachCampaigns = pgTable(
     audienceQuery: text("audience_query"),
     audienceFilters: jsonb("audience_filters").$type<AudienceFilters>().default({}),
     messageIntent: text("message_intent"),
+    replyCta: text("reply_cta"),
     tone: text("tone").default("professional"),
     defaultChannel: text("default_channel").default("email"),
+    sequenceSteps: jsonb("sequence_steps")
+      .$type<OutreachSequenceStep[]>()
+      .default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -366,6 +375,12 @@ export const outreachMessages = pgTable(
     subject: text("subject"),
     body: text("body").notNull().default(""),
     status: text("status").default("draft").notNull(),
+    stepIndex: integer("step_index").default(0).notNull(),
+    parentMessageId: uuid("parent_message_id"),
+    scheduledFor: timestamp("scheduled_for", { withTimezone: true }),
+    outcome: text("outcome"),
+    outcomeNotes: text("outcome_notes"),
+    repliedAt: timestamp("replied_at", { withTimezone: true }),
     sentAt: timestamp("sent_at", { withTimezone: true }),
     lastActionAt: timestamp("last_action_at", { withTimezone: true }),
     errorMessage: text("error_message"),
@@ -376,6 +391,8 @@ export const outreachMessages = pgTable(
   (t) => [
     index("outreach_messages_prospect_idx").on(t.prospectId),
     index("outreach_messages_status_idx").on(t.status),
+    index("outreach_messages_outcome_idx").on(t.outcome),
+    index("outreach_messages_scheduled_idx").on(t.scheduledFor),
   ]
 );
 
