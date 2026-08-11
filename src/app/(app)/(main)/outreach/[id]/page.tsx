@@ -55,6 +55,9 @@ export default async function OutreachCampaignPage({
             {campaign.replyCta && (
               <Badge variant="outline">{campaign.replyCta.replaceAll("_", " ")}</Badge>
             )}
+            {campaign.lastSearchSource === "demo" && (
+              <Badge variant="outline">Demo search</Badge>
+            )}
             <Badge variant="outline">
               Reply rate {formatReplyRate(campaign.metrics.successfulReplyRate)}
             </Badge>

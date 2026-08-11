@@ -217,6 +217,7 @@ CREATE TABLE IF NOT EXISTS outreach_campaigns (
   tone text DEFAULT 'professional',
   default_channel text DEFAULT 'email',
   sequence_steps jsonb DEFAULT '[]',
+  last_search_source text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -447,6 +448,7 @@ async function migratePglite(client: PGlite) {
     "sequence_steps",
     "jsonb DEFAULT '[]'"
   );
+  await ensureColumn(client, "outreach_campaigns", "last_search_source", "text");
   await ensureColumn(
     client,
     "outreach_messages",
@@ -594,6 +596,7 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `CREATE INDEX IF NOT EXISTS reminders_list_idx ON reminders(user_id, list_id)`,
     `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS reply_cta text`,
     `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS sequence_steps jsonb DEFAULT '[]'`,
+    `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS last_search_source text`,
     `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS step_index integer NOT NULL DEFAULT 0`,
     `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS parent_message_id uuid`,
     `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS scheduled_for timestamptz`,

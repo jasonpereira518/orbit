@@ -303,6 +303,8 @@ export type AudienceFilters = {
   industries?: string[];
   keywords?: string;
   seniorities?: string[];
+  organizationNames?: string[];
+  organizationDomains?: string[];
 };
 
 export type OutreachSequenceStep = {
@@ -326,6 +328,7 @@ export const outreachCampaigns = pgTable(
     sequenceSteps: jsonb("sequence_steps")
       .$type<OutreachSequenceStep[]>()
       .default([]),
+    lastSearchSource: text("last_search_source"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

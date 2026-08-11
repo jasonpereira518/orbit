@@ -1,10 +1,12 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   BulkActionBar,
 } from "@/components/outreach/bulk-action-bar";
+import { AudienceFiltersEditor } from "@/components/outreach/audience-filters-editor";
 import { CampaignInsights } from "@/components/outreach/campaign-insights";
 import { CampaignKpiStrip } from "@/components/outreach/campaign-kpi-strip";
 import { PipelineFilters } from "@/components/outreach/pipeline-filters";
@@ -18,12 +20,14 @@ import {
   generateDueFollowUps,
   generateOutreachDrafts,
   searchProspects,
+  updateCampaign,
 } from "@/actions/outreach";
 import { toast } from "@/lib/toast";
 import {
   prospectPipelineBucket,
 } from "@/lib/outreach-metrics";
 import type {
+  AudienceFilters,
   CampaignMetrics,
   OutreachChannel,
   PipelineFilter,
@@ -42,6 +46,8 @@ export function CampaignWorkspace({
     tone: string | null;
     defaultChannel: string | null;
     status: string;
+    lastSearchSource?: string | null;
+    audienceFilters?: AudienceFilters | null;
     sequenceSteps?: SequenceStep[] | null;
     metrics: CampaignMetrics;
     channelBreakdown: Array<{
@@ -67,6 +73,7 @@ export function CampaignWorkspace({
       linkedinUrl: string | null;
       status: string;
       contactId: string | null;
+      enrichment?: Record<string, unknown> | null;
       messages: Array<{
         id: string;
         channel: string;
@@ -84,7 +91,14 @@ export function CampaignWorkspace({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [pipeline, setPipeline] = useState<PipelineFilter>("all");
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState<AudienceFilters>(
+    (campaign.audienceFilters as AudienceFilters) || {}
+  );
   const defaultChannel = (campaign.defaultChannel || "email") as OutreachChannel;
+  const isDemo =
+    campaign.lastSearchSource === "demo" ||
+    campaign.prospects.some((p) => Boolean(p.enrichment?.demo));
 
   const prospects: ProspectRow[] = campaign.prospects.map((p) => {
     const sorted = [...p.messages].sort((a, b) => {
@@ -114,6 +128,8 @@ export function CampaignWorkspace({
       linkedinUrl: p.linkedinUrl,
       status: p.status,
       contactId: p.contactId,
+      isDemo: Boolean(p.enrichment?.demo),
+      companyMismatch: Boolean(p.enrichment?.companyMismatch),
       pipeline: prospectPipelineBucket({
         id: p.id,
         status: p.status,
@@ -180,8 +196,23 @@ export function CampaignWorkspace({
   function rerunSearch() {
     start(async () => {
       try {
+        await updateCampaign(campaign.id, {
+          audienceFilters: filters,
+          reparseAudience: false,
+        });
         const result = await searchProspects(campaign.id);
-        toast.success(`Imported ${result.imported} prospects`);
+        if (result.source === "demo") {
+          toast.success(
+            `Demo search: ${result.matched} matched` +
+              (result.mismatched ? `, ${result.mismatched} excluded` : "")
+          );
+        } else {
+          toast.success(
+            `Imported ${result.matched} matching prospects` +
+              (result.mismatched ? ` (${result.mismatched} excluded)` : "")
+          );
+        }
+        setShowFilters(false);
         refresh();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Search failed");
@@ -224,6 +255,17 @@ export function CampaignWorkspace({
 
   return (
     <div className="space-y-4">
+      {isDemo && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
+          <strong>Demo results.</strong> These prospects are fake placeholders, not live
+          Apollo people. Add an Apollo API key in{" "}
+          <Link href="/settings" className="underline underline-offset-2">
+            Settings → Outreach
+          </Link>{" "}
+          and re-run search for real Capital One (or other) recruiters.
+        </div>
+      )}
+
       <CampaignKpiStrip metrics={campaign.metrics} />
 
       <CampaignInsights
@@ -232,8 +274,13 @@ export function CampaignWorkspace({
       />
 
       <div className="flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" onClick={rerunSearch} disabled={pending}>
-          Re-run search
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setShowFilters((v) => !v)}
+          disabled={pending}
+        >
+          {showFilters ? "Hide filters" : "Edit filters & re-run search"}
         </Button>
         <Button
           variant="outline"
@@ -255,6 +302,19 @@ export function CampaignWorkspace({
             : ""}
         </Button>
       </div>
+
+      {showFilters && (
+        <div className="space-y-3">
+          <AudienceFiltersEditor
+            filters={filters}
+            onChange={setFilters}
+            showDemoWarning={isDemo}
+          />
+          <Button size="sm" onClick={rerunSearch} disabled={pending}>
+            Re-run search with these filters
+          </Button>
+        </div>
+      )}
 
       <PipelineFilters value={pipeline} counts={counts} onChange={setPipeline} />
 

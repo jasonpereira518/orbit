@@ -43,7 +43,13 @@ export type AudienceFilters = {
   industries?: string[];
   keywords?: string;
   seniorities?: string[];
+  /** Employer names extracted from the audience query, e.g. ["Capital One"] */
+  organizationNames?: string[];
+  /** Employer domains, e.g. ["capitalone.com"] */
+  organizationDomains?: string[];
 };
+
+export type OutreachSearchSource = "demo" | "apollo";
 
 export type NormalizedProspect = {
   externalId: string;

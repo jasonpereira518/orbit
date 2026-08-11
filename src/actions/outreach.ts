@@ -14,9 +14,11 @@ import {
 import { createContact, logInteraction } from "@/actions/contacts";
 import { listActiveGoalTexts } from "@/actions/goals";
 import {
+  companyMatchesOrganizations,
   enrichPerson,
   parseAudienceToFilters,
   searchPeople,
+  userHasApolloKey,
 } from "@/lib/apollo";
 import { requireUserId } from "@/lib/auth";
 import {
@@ -246,7 +248,7 @@ export async function updateCampaign(
   await requireCampaign(userId, campaignId);
   const db = await getDb();
 
-  const { reparseAudience, sequenceSteps, ...fields } = input;
+  const { reparseAudience, sequenceSteps, audienceFilters, ...fields } = input;
   const patch: Record<string, unknown> = {
     ...fields,
     updatedAt: new Date(),
@@ -256,7 +258,9 @@ export async function updateCampaign(
     patch.sequenceSteps = sequenceSteps as OutreachSequenceStep[];
   }
 
-  if (fields.audienceQuery !== undefined && reparseAudience !== false) {
+  if (audienceFilters !== undefined) {
+    patch.audienceFilters = audienceFilters;
+  } else if (fields.audienceQuery !== undefined && reparseAudience !== false) {
     patch.audienceFilters = fields.audienceQuery.trim()
       ? await parseAudienceToFilters(userId, fields.audienceQuery)
       : {};
@@ -279,9 +283,20 @@ export async function searchProspects(campaignId: string, page = 1) {
   const db = await getDb();
 
   const filters = (campaign.audienceFilters ?? {}) as AudienceFilters;
-  const { prospects, total } = await searchPeople(userId, filters, page);
+  const { prospects, total, source } = await searchPeople(userId, filters, page);
+
+  let matched = 0;
+  let mismatched = 0;
 
   for (const prospect of prospects) {
+    const matchesOrg = companyMatchesOrganizations(
+      prospect.company,
+      filters.organizationNames
+    );
+    const status = matchesOrg ? "selected" : "excluded";
+    if (matchesOrg) matched += 1;
+    else mismatched += 1;
+
     await db
       .insert(outreachProspects)
       .values({
@@ -294,8 +309,12 @@ export async function searchProspects(campaignId: string, page = 1) {
         phone: prospect.phone,
         linkedinUrl: prospect.linkedinUrl,
         location: prospect.location,
-        enrichment: prospect.enrichment,
-        status: "selected",
+        enrichment: {
+          ...prospect.enrichment,
+          demo: source === "demo" || Boolean(prospect.enrichment?.demo),
+          companyMismatch: !matchesOrg,
+        },
+        status,
       })
       .onConflictDoUpdate({
         target: [outreachProspects.campaignId, outreachProspects.externalId],
@@ -307,7 +326,12 @@ export async function searchProspects(campaignId: string, page = 1) {
           phone: prospect.phone,
           linkedinUrl: prospect.linkedinUrl,
           location: prospect.location,
-          enrichment: prospect.enrichment,
+          enrichment: {
+            ...prospect.enrichment,
+            demo: source === "demo" || Boolean(prospect.enrichment?.demo),
+            companyMismatch: !matchesOrg,
+          },
+          status,
           updatedAt: new Date(),
         },
       });
@@ -315,11 +339,26 @@ export async function searchProspects(campaignId: string, page = 1) {
 
   await db
     .update(outreachCampaigns)
-    .set({ status: "active", updatedAt: new Date() })
+    .set({
+      status: "active",
+      lastSearchSource: source,
+      updatedAt: new Date(),
+    })
     .where(eq(outreachCampaigns.id, campaignId));
 
   revalidatePath(`/outreach/${campaignId}`);
-  return { imported: prospects.length, total };
+  return {
+    imported: prospects.length,
+    matched,
+    mismatched,
+    total,
+    source,
+  };
+}
+
+export async function getOutreachApolloStatus() {
+  const userId = await requireUserId();
+  return { hasApollo: await userHasApolloKey(userId) };
 }
 
 export async function updateProspectSelection(input: {
@@ -467,6 +506,7 @@ export async function generateOutreachDrafts(input: {
       tone: campaign.tone || "professional",
       messageIntent:
         campaign.messageIntent || campaign.audienceQuery || "Introduce myself",
+      audienceQuery: campaign.audienceQuery,
       replyCta: campaign.replyCta,
       userGoals: goals,
       prospect: {
@@ -537,6 +577,7 @@ export async function regenerateOutreachDraft(input: {
     tone: campaign.tone || "professional",
     messageIntent:
       campaign.messageIntent || campaign.audienceQuery || "Introduce myself",
+    audienceQuery: campaign.audienceQuery,
     replyCta: campaign.replyCta,
     userGoals: goals,
     prospect: {
@@ -867,6 +908,7 @@ export async function generateDueFollowUps(campaignId: string) {
         campaign.messageIntent ||
         campaign.audienceQuery ||
         "Follow up",
+      audienceQuery: campaign.audienceQuery,
       replyCta: campaign.replyCta,
       userGoals: goals,
       prospect: {

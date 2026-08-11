@@ -26,6 +26,11 @@ export function buildLinkedInUrl(linkedinUrl: string) {
   return `https://www.linkedin.com/in/${url.replace(/^\/+/, "")}`;
 }
 
+export function buildLinkedInSearchUrl(fullName: string, company?: string | null) {
+  const q = [fullName, company].filter(Boolean).join(" ");
+  return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(q)}`;
+}
+
 export function channelLabel(channel: OutreachChannel) {
   if (channel === "email") return "Email";
   if (channel === "linkedin") return "LinkedIn";
