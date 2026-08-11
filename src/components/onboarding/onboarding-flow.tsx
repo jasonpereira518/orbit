@@ -18,6 +18,7 @@ import { TourCursor } from "@/components/onboarding/tour-cursor";
 import {
   TOUR_INTERVAL_MS,
   TOUR_STEPS,
+  type PreviewComponent,
   type TourNavKey,
 } from "@/components/onboarding/tour-config";
 import { usePrefersReducedMotion } from "@/components/onboarding/use-prefers-reduced-motion";
@@ -25,12 +26,14 @@ import { WelcomePreview } from "@/components/onboarding/previews/welcome-preview
 import { ContactsPreview } from "@/components/onboarding/previews/contacts-preview";
 import { CapturePreview } from "@/components/onboarding/previews/capture-preview";
 import { ImportsPreview } from "@/components/onboarding/previews/imports-preview";
+import { RemindersPreview } from "@/components/onboarding/previews/reminders-preview";
 import { ChatPreview } from "@/components/onboarding/previews/chat-preview";
 import { GraphPreview } from "@/components/onboarding/previews/graph-preview";
 import { DashboardPreview } from "@/components/onboarding/previews/dashboard-preview";
 import { RecruitersPreview } from "@/components/onboarding/previews/recruiters-preview";
 import { OutreachPreview } from "@/components/onboarding/previews/outreach-preview";
 import { Button } from "@/components/ui/button";
+import { OrbitLogo } from "@/components/orbit-logo";
 import { cn } from "@/lib/utils";
 
 const paths = [
@@ -57,18 +60,16 @@ const paths = [
   },
 ] as const;
 
-const PREVIEWS: Record<
-  Exclude<TourNavKey, "start">,
-  typeof WelcomePreview
-> = {
+const PREVIEWS: Record<Exclude<TourNavKey, "start">, PreviewComponent> = {
   welcome: WelcomePreview,
+  dashboard: DashboardPreview,
   contacts: ContactsPreview,
+  recruiters: RecruitersPreview,
   capture: CapturePreview,
   imports: ImportsPreview,
+  reminders: RemindersPreview,
   chat: ChatPreview,
   graph: GraphPreview,
-  dashboard: DashboardPreview,
-  recruiters: RecruitersPreview,
   outreach: OutreachPreview,
 };
 
@@ -122,6 +123,7 @@ export function OnboardingFlow({
   const autoAdvance = playing && !isStart && !reducedMotion;
   const hotspots = step.hotspots ?? [];
   const showCursor = !reducedMotion && hotspots.length > 0;
+  const tourStepCount = START_INDEX;
 
   const goTo = useCallback((index: number) => {
     const next = Math.max(0, Math.min(START_INDEX, index));
@@ -197,36 +199,63 @@ export function OnboardingFlow({
     : null;
 
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-4xl flex-col justify-center gap-6 py-6">
-      <div className="flex gap-4">
+    <div className="relative mx-auto flex min-h-screen max-w-5xl flex-col justify-center gap-5 px-4 py-8 sm:px-6">
+      <header className="flex items-center justify-between gap-3 sm:hidden">
+        <div className="flex items-center gap-2.5">
+          <OrbitLogo size="sm" />
+          <div>
+            <p className="font-[family-name:var(--font-display)] text-sm leading-none text-primary">
+              Orbit
+            </p>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">
+              Getting started
+            </p>
+          </div>
+        </div>
+        <p className="text-[11px] tabular-nums text-muted-foreground">
+          {isStart ? "Ready" : `${stepIndex + 1}/${tourStepCount}`}
+        </p>
+      </header>
+
+      <div className="flex gap-5">
         <TourSidebar
           activeKey={step.navKey}
           reducedMotion={reducedMotion}
         />
 
         <div className="flex min-w-0 flex-1 flex-col gap-4">
-          <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
-            <div className="border-b border-border/60 px-5 py-4 sm:px-6">
-              <p
-                className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
-                aria-live="polite"
-              >
-                {isStart
-                  ? "Get started"
-                  : `Step ${stepIndex + 1} of ${START_INDEX}`}
-              </p>
+          <div className="overflow-hidden rounded-[1.35rem] border border-border/70 bg-card/90 shadow-[0_20px_50px_-28px_rgba(15,61,62,0.35)] backdrop-blur-sm dark:shadow-[0_20px_50px_-28px_rgba(0,0,0,0.55)]">
+            <div className="border-b border-border/60 px-5 py-5 sm:px-6">
+              <div className="flex items-start justify-between gap-3">
+                <p
+                  className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                  aria-live="polite"
+                >
+                  {isStart
+                    ? "Get started"
+                    : `Step ${stepIndex + 1} of ${tourStepCount}`}
+                </p>
+                {!isStart && (
+                  <p className="hidden text-[11px] text-muted-foreground sm:block">
+                    {Math.round((stepIndex / tourStepCount) * 100)}% through
+                  </p>
+                )}
+              </div>
               <h1
-                className="mt-1 font-[family-name:var(--font-display)] text-2xl tracking-tight text-primary sm:text-3xl"
+                className="mt-1.5 font-[family-name:var(--font-display)] text-2xl tracking-tight text-primary sm:text-3xl"
                 aria-live="polite"
               >
                 {step.title}
               </h1>
-              <p className="mt-1.5 max-w-xl text-sm text-muted-foreground">
+              <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
                 {step.body}
               </p>
             </div>
 
-            <div ref={previewRef} className="relative min-h-[260px] p-4 sm:p-6">
+            <div
+              ref={previewRef}
+              className="relative min-h-[280px] bg-[radial-gradient(ellipse_at_top,color-mix(in_oklab,var(--primary)_6%,transparent),transparent_55%)] p-4 sm:min-h-[300px] sm:p-6"
+            >
               <AnimatePresence mode="wait">
                 {isStart ? (
                   <motion.div
@@ -257,6 +286,8 @@ export function OnboardingFlow({
 
               {showCursor && (
                 <TourCursor
+                  key={step.id}
+                  stepKey={step.id}
                   containerRef={previewRef}
                   hotspots={hotspots}
                   progress={progress}
@@ -268,7 +299,7 @@ export function OnboardingFlow({
             </div>
 
             {!isStart && (
-              <div className="h-1 w-full bg-muted">
+              <div className="h-1 w-full bg-muted/80">
                 <div
                   className="h-full bg-primary transition-none"
                   style={{
@@ -296,7 +327,9 @@ export function OnboardingFlow({
                     "h-1.5 rounded-full transition-all",
                     i === stepIndex
                       ? "w-6 bg-primary"
-                      : "w-1.5 bg-muted-foreground/35 hover:bg-muted-foreground/60"
+                      : i < stepIndex
+                        ? "w-1.5 bg-primary/45 hover:bg-primary/70"
+                        : "w-1.5 bg-muted-foreground/30 hover:bg-muted-foreground/55"
                   )}
                 />
               ))}
@@ -387,33 +420,37 @@ function StartStep({
   return (
     <div className="space-y-4">
       <ul className="space-y-3">
-        {paths.map((path) => {
+        {paths.map((path, i) => {
           const Icon = path.icon;
           return (
             <li key={path.href}>
-              <button
+              <motion.button
                 type="button"
                 disabled={pending}
                 data-tour-hotspot={path.hotspot}
                 onClick={() => onChoosePath(path.href)}
+                initial={false}
+                whileHover={pending ? undefined : { y: -1 }}
+                transition={{ type: "spring", stiffness: 400, damping: 28 }}
                 className={cn(
-                  "group flex w-full items-start gap-4 rounded-2xl border border-border/70 bg-background/70 p-5 text-left transition-colors",
-                  "hover:border-primary/25 hover:bg-accent",
-                  "disabled:pointer-events-none disabled:opacity-60"
+                  "group flex w-full items-start gap-4 rounded-2xl border border-border/70 bg-background/80 p-5 text-left transition-colors",
+                  "hover:border-primary/30 hover:bg-accent",
+                  "disabled:pointer-events-none disabled:opacity-60",
+                  i === 0 && "ring-1 ring-primary/10"
                 )}
               >
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent text-primary">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
                   <Icon className="h-5 w-5" />
                 </span>
                 <span>
                   <span className="block font-medium text-primary">
                     {path.title}
                   </span>
-                  <span className="mt-1 block text-sm text-muted-foreground">
+                  <span className="mt-1 block text-sm leading-relaxed text-muted-foreground">
                     {path.description}
                   </span>
                 </span>
-              </button>
+              </motion.button>
             </li>
           );
         })}

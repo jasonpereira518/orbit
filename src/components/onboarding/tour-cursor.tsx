@@ -12,6 +12,7 @@ import type { TourHotspot } from "@/components/onboarding/tour-config";
 import { cn } from "@/lib/utils";
 
 type Point = { x: number; y: number };
+type Size = { w: number; h: number };
 
 type TourCursorProps = {
   containerRef: RefObject<HTMLElement | null>;
@@ -20,6 +21,8 @@ type TourCursorProps = {
   progress: number;
   playing: boolean;
   reducedMotion: boolean;
+  /** Remount/reset key — typically the current tour step id. */
+  stepKey: string;
   /** When true (e.g. start step), cycle hotspots on a timer instead of progress. */
   freeCycle?: boolean;
 };
@@ -60,10 +63,12 @@ export function TourCursor({
   progress,
   playing,
   reducedMotion,
+  stepKey,
   freeCycle = false,
 }: TourCursorProps) {
   const [cycleTick, setCycleTick] = useState(0);
   const [point, setPoint] = useState<Point | null>(null);
+  const [size, setSize] = useState<Size>({ w: 400, h: 300 });
   const [visible, setVisible] = useState(false);
   const lastId = useRef<string | null>(null);
 
@@ -84,18 +89,35 @@ export function TourCursor({
       setCycleTick((t) => t + 1);
     }, CYCLE_MS);
     return () => window.clearInterval(id);
-  }, [freeCycle, reducedMotion, playing, hotspots.length]);
+  }, [freeCycle, reducedMotion, playing, hotspots.length, stepKey]);
 
-  // Reset when hotspots change (new step)
+  // Appear after a short delay once the step preview mounts
   useEffect(() => {
-    setCycleTick(0);
-    setVisible(false);
-    setPoint(null);
-    lastId.current = null;
-
     const appear = window.setTimeout(() => setVisible(true), APPEAR_DELAY_MS);
     return () => window.clearTimeout(appear);
-  }, [hotspots]);
+  }, [stepKey]);
+
+  // Track container size without reading refs during render
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const updateSize = () => {
+      setSize({ w: container.clientWidth, h: container.clientHeight });
+    };
+    updateSize();
+
+    const ro =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(updateSize)
+        : null;
+    ro?.observe(container);
+    window.addEventListener("resize", updateSize);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", updateSize);
+    };
+  }, [containerRef, stepKey]);
 
   useLayoutEffect(() => {
     if (reducedMotion || !active || !visible) {
@@ -134,12 +156,8 @@ export function TourCursor({
 
   if (reducedMotion || !active || !point || !visible) return null;
 
-  const container = containerRef.current;
-  const cw = container?.clientWidth ?? 400;
-  const ch = container?.clientHeight ?? 300;
-  const bubbleRight = point.x > cw * 0.55;
-  const bubbleBelow = point.y < ch * 0.38;
-
+  const bubbleRight = point.x > size.w * 0.55;
+  const bubbleBelow = point.y < size.h * 0.38;
   const bubbleLeft = bubbleRight ? point.x - 18 : point.x + 26;
   const bubbleTop = bubbleBelow ? point.y + 30 : point.y - 58;
 
@@ -148,7 +166,6 @@ export function TourCursor({
       className="pointer-events-none absolute inset-0 z-20"
       aria-hidden
     >
-      {/* Soft highlight ring */}
       <motion.div
         className="absolute h-9 w-9 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-primary/45 bg-primary/10"
         animate={{
@@ -165,7 +182,6 @@ export function TourCursor({
         }}
       />
 
-      {/* Cursor with a little hover drift */}
       <motion.div
         className="absolute"
         animate={{ left: point.x, top: point.y }}
@@ -187,7 +203,6 @@ export function TourCursor({
         </motion.div>
       </motion.div>
 
-      {/* Chat bubble */}
       <AnimatePresence mode="wait">
         <motion.div
           key={active.id}

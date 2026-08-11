@@ -25,19 +25,24 @@ export function OutreachPreview({ reducedMotion }: PreviewProps) {
         initial={reducedMotion ? false : { opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: reducedMotion ? 0 : 0.35 }}
-        className="rounded-xl border border-border/60 bg-background/60 px-3 py-3"
+        className="rounded-2xl border border-border/70 bg-card px-3 py-3"
       >
         <div className="flex items-start justify-between gap-2">
-          <div>
+          <div className="min-w-0">
             <p className="text-sm font-medium text-primary">
               Series A founders · SF
             </p>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
-              12 prospects · 4 drafted · 2 sent
+            <p className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground">
+              Founders building agent eval tooling in the Bay Area
             </p>
+            <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+              <span>12 prospects</span>
+              <span>4 selected</span>
+              <span>Updated 2 days ago</span>
+            </div>
           </div>
-          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
-            Active
+          <span className="shrink-0 rounded-full border border-border/70 px-2 py-0.5 text-[10px] font-medium capitalize text-muted-foreground">
+            active
           </span>
         </div>
       </motion.div>
