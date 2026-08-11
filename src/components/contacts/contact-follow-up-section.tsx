@@ -374,12 +374,12 @@ export function ContactFollowUpSection({
         {draft ? (
           <div className="space-y-3">
             <Textarea
-              rows={7}
+              rows={4}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              className="resize-y text-sm"
+              className="resize-y text-sm sm:min-h-[10.5rem]"
             />
-            <div className="flex flex-wrap gap-2">
+            <div className="sticky bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-10 -mx-1 flex flex-wrap gap-2 border-t border-border/50 bg-card/95 px-1 py-2 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
               <Button type="button" size="sm" variant="outline" onClick={openNative}>
                 Open {platform === "sms" ? "Messages" : platform === "linkedin" ? "LinkedIn" : "Mail"}
               </Button>

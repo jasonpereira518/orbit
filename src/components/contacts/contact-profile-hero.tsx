@@ -195,14 +195,23 @@ function StickyMiniBar({
             </>
           ) : null}
         </p>
-        <div className="hidden sm:block">
-          <ContactChannelIcons {...channels} className="justify-end" />
+        <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+          <div className="sm:hidden">
+            <ContactChannelIcons
+              email={channels.email}
+              phone={channels.phone}
+              className="justify-end"
+            />
+          </div>
+          <div className="hidden sm:block">
+            <ContactChannelIcons {...channels} className="justify-end" />
+          </div>
+          <ContactEditSheet
+            contactId={contactId}
+            name={displayName}
+            initial={formInitial}
+          />
         </div>
-        <ContactEditSheet
-          contactId={contactId}
-          name={displayName}
-          initial={formInitial}
-        />
       </div>
     </div>,
     document.body
@@ -353,8 +362,8 @@ export function ContactProfileHero({
         ← Contacts
       </Link>
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-5">
-        <div className="flex min-w-0 flex-1 items-center gap-5 sm:gap-6">
+      <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-5">
+        <div className="flex min-w-0 flex-1 items-center gap-4 sm:gap-6">
           <AvatarHoverPreview
             src={previewSrc}
             alt={displayName}
@@ -372,7 +381,7 @@ export function ContactProfileHero({
               profileImageUrl={profileImageUrl}
               resolveLinkedIn
               size="lg"
-              className="size-28 sm:size-36"
+              className="size-20 sm:size-36"
             />
           </AvatarHoverPreview>
 
@@ -396,7 +405,7 @@ export function ContactProfileHero({
 
         <div
           className={cn(
-            "flex shrink-0 items-center gap-2",
+            "flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto",
             compact && "invisible"
           )}
           aria-hidden={compact}
