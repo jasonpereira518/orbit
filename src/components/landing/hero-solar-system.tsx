@@ -1,96 +1,91 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/components/onboarding/use-prefers-reduced-motion";
 
 type PlanetDef = {
   id: string;
   orbit: number;
+  /** Visual sphere radius in view units (before ringed-art scale). */
   size: number;
   startAngle: number;
   duration: string;
-  spinDuration: string;
   glow: string;
-  hasRings?: boolean;
+  /** PNG includes rings/moons — use a larger layout box. */
+  hasArtRings?: boolean;
 };
 
 /**
  * Real solar system order, one planet per ring.
- * Orbit radii and periods are stylized (not to scale) but preserve relative feel.
+ * Circular orbits match the SVG guides so each body sits on its line.
+ * startAngle: zig-zag around the clock so neighbors aren't a spiral arm.
  */
 const PLANETS: PlanetDef[] = [
   {
     id: "mercury",
-    orbit: 58,
-    size: 6,
-    startAngle: 40,
-    duration: "24s",
-    spinDuration: "7s",
+    orbit: 54,
+    size: 8,
+    startAngle: 18,
+    duration: "16s",
     glow: "rgba(170, 160, 150, 0.45)",
   },
   {
     id: "venus",
     orbit: 78,
-    size: 9,
-    startAngle: 130,
-    duration: "36s",
-    spinDuration: "16s",
+    size: 11,
+    startAngle: 205,
+    duration: "24s",
     glow: "rgba(220, 190, 120, 0.5)",
   },
   {
     id: "earth",
-    orbit: 100,
-    size: 10,
-    startAngle: 220,
-    duration: "48s",
-    spinDuration: "10s",
+    orbit: 104,
+    size: 12,
+    startAngle: 112,
+    duration: "34s",
     glow: "rgba(80, 160, 220, 0.55)",
   },
   {
     id: "mars",
-    orbit: 122,
-    size: 7.5,
-    startAngle: 310,
-    duration: "62s",
-    spinDuration: "11s",
+    orbit: 128,
+    size: 9,
+    startAngle: 292,
+    duration: "42s",
     glow: "rgba(200, 100, 70, 0.5)",
   },
   {
     id: "jupiter",
-    orbit: 148,
-    size: 20,
-    startAngle: 75,
-    duration: "88s",
-    spinDuration: "5.5s",
+    orbit: 156,
+    size: 16,
+    startAngle: 168,
+    duration: "78s",
     glow: "rgba(200, 160, 100, 0.45)",
   },
   {
     id: "saturn",
-    orbit: 176,
-    size: 16,
-    startAngle: 185,
-    duration: "112s",
-    spinDuration: "6.5s",
+    orbit: 184,
+    size: 12,
+    startAngle: 48,
+    duration: "105s",
     glow: "rgba(210, 190, 140, 0.45)",
-    hasRings: true,
+    hasArtRings: true,
   },
   {
     id: "uranus",
-    orbit: 200,
-    size: 12,
-    startAngle: 265,
-    duration: "140s",
-    spinDuration: "9s",
+    orbit: 210,
+    size: 10,
+    startAngle: 248,
+    duration: "175s",
     glow: "rgba(140, 210, 210, 0.5)",
+    hasArtRings: true,
   },
   {
     id: "neptune",
-    orbit: 222,
-    size: 11.5,
-    startAngle: 20,
-    duration: "168s",
-    spinDuration: "9.5s",
+    orbit: 234,
+    size: 11,
+    startAngle: 128,
+    duration: "220s",
     glow: "rgba(70, 120, 220, 0.55)",
   },
 ];
@@ -100,9 +95,25 @@ const CX = 220;
 const CY = 220;
 const VIEW = 440;
 
+/**
+ * Hold start spacing through the enter animation so the opening
+ * composition reads balanced before orbits begin.
+ */
+const START_HOLD_MS = 900;
+
 /** Resting camera angle — slight top-down view of the ecliptic. */
 const BASE_TILT_X = 28;
 const BASE_TILT_Y = -12;
+
+/** Ringed PNGs need a larger box so rings/moons aren't clipped. */
+const ART_RING_SCALE = 1.4;
+
+/** Sun art radius in view units (PNG includes rays/glow). */
+const SUN_SIZE = 38;
+
+function effectiveRadius(p: PlanetDef) {
+  return p.size * (p.hasArtRings ? ART_RING_SCALE : 1);
+}
 
 function parseSeconds(duration: string) {
   return Number.parseFloat(duration) || 1;
@@ -110,8 +121,9 @@ function parseSeconds(duration: string) {
 
 function planetPosition(p: PlanetDef, elapsedMs: number, motionOk: boolean) {
   const periodMs = parseSeconds(p.duration) * 1000;
+  const orbitElapsed = Math.max(0, elapsedMs - START_HOLD_MS);
   const angleDeg = motionOk
-    ? p.startAngle + (elapsedMs / periodMs) * 360
+    ? p.startAngle + (orbitElapsed / periodMs) * 360
     : p.startAngle;
   const rad = (angleDeg * Math.PI) / 180;
   const x = CX + p.orbit * Math.cos(rad);
@@ -123,46 +135,46 @@ function applyPlanetTransform(
   el: HTMLElement,
   p: PlanetDef,
   elapsedMs: number,
-  motionOk: boolean
+  motionOk: boolean,
+  stagePx: number
 ) {
   const { x, y } = planetPosition(p, elapsedMs, motionOk);
-  el.style.left = `${(x / VIEW) * 100}%`;
-  el.style.top = `${(y / VIEW) * 100}%`;
-  el.style.transform = "translate(-50%, -50%)";
-  el.style.zIndex = String(Math.round(y));
+  const px = (x / VIEW) * stagePx;
+  const py = (y / VIEW) * stagePx;
+  el.style.transform = `translate3d(${px}px, ${py}px, 0.5px) translate(-50%, -50%)`;
+  const depth = Math.round(y);
+  if (el.dataset.depth !== String(depth)) {
+    el.dataset.depth = String(depth);
+    el.style.zIndex = String(depth);
+  }
 }
 
-function PlanetSphere({ p, spin }: { p: PlanetDef; spin: boolean }) {
-  const diameter = (p.size * 2) / VIEW;
+function PlanetSphere({ p }: { p: PlanetDef }) {
+  const diameter = (effectiveRadius(p) * 2) / VIEW;
   const initial = planetPosition(p, 0, false);
 
   return (
     <div
-      className={cn("hero-planet-3d", `hero-planet-3d--${p.id}`)}
+      className={cn(
+        "hero-planet-3d",
+        `hero-planet-3d--${p.id}`,
+        p.hasArtRings && "hero-planet-3d--art-rings"
+      )}
       data-planet={p.id}
       style={{
-        left: `${(initial.x / VIEW) * 100}%`,
-        top: `${(initial.y / VIEW) * 100}%`,
         width: `${diameter * 100}%`,
         height: `${diameter * 100}%`,
-        transform: "translate(-50%, -50%)",
+        transform: `translate3d(${(initial.x / VIEW) * VIEW}px, ${(initial.y / VIEW) * VIEW}px, 0.5px) translate(-50%, -50%)`,
         ["--planet-glow" as string]: p.glow,
-        ["--planet-spin" as string]: spin ? p.spinDuration : "0s",
       }}
     >
-      {p.hasRings && (
-        <div className="hero-planet-rings" aria-hidden>
-          <span className="hero-planet-ring hero-planet-ring--back" />
-          <span className="hero-planet-ring hero-planet-ring--mid" />
-          <span className="hero-planet-ring hero-planet-ring--front" />
-        </div>
-      )}
       <div className="hero-planet-sphere">
-        <div
-          className={cn(
-            "hero-planet-texture",
-            spin && "hero-planet-texture--spin"
-          )}
+        {/* eslint-disable-next-line @next/next/no-img-element -- decorative hero art */}
+        <img
+          className="hero-planet-art"
+          src={`/landing/planets/${p.id}.png`}
+          alt=""
+          draggable={false}
         />
       </div>
       <div className="hero-planet-atmosphere" />
@@ -176,7 +188,7 @@ export function HeroSolarSystem({ className }: { className?: string }) {
   const startTime = useRef(0);
   const motionOk = !reducedMotion;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     startTime.current = performance.now();
 
     const planetEls = new Map<string, HTMLElement>();
@@ -188,12 +200,19 @@ export function HeroSolarSystem({ className }: { className?: string }) {
       }
     }
 
+    let stagePx = root?.clientWidth ?? 0;
+    const resize = () => {
+      stagePx = root?.clientWidth ?? 0;
+    };
+    const ro = root ? new ResizeObserver(resize) : null;
+    if (root && ro) ro.observe(root);
+
     if (!motionOk) {
       for (const p of PLANETS) {
         const el = planetEls.get(p.id);
-        if (el) applyPlanetTransform(el, p, 0, false);
+        if (el) applyPlanetTransform(el, p, 0, false, stagePx);
       }
-      return;
+      return () => ro?.disconnect();
     }
 
     let raf = 0;
@@ -201,19 +220,22 @@ export function HeroSolarSystem({ className }: { className?: string }) {
       const elapsed = now - startTime.current;
       for (const p of PLANETS) {
         const el = planetEls.get(p.id);
-        if (el) applyPlanetTransform(el, p, elapsed, true);
+        if (el) applyPlanetTransform(el, p, elapsed, true, stagePx);
       }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
 
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro?.disconnect();
+    };
   }, [motionOk]);
 
   return (
     <div
       className={cn(
-        "hero-solar relative mx-auto aspect-square w-full max-w-[560px]",
+        "hero-solar relative mx-auto aspect-square w-full max-w-[560px] overflow-visible",
         "landing-solar-enter",
         className
       )}
@@ -232,59 +254,6 @@ export function HeroSolarSystem({ className }: { className?: string }) {
           className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
           role="presentation"
         >
-          <defs>
-            <filter
-              id="hero-sun-bloom"
-              x="-120%"
-              y="-120%"
-              width="340%"
-              height="340%"
-            >
-              <feGaussianBlur stdDeviation="5" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-
-            <radialGradient id="hero-sun-halo-outer" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="rgba(255, 200, 80, 0.12)" />
-              <stop offset="40%" stopColor="rgba(94, 234, 212, 0.1)" />
-              <stop offset="100%" stopColor="rgba(15, 61, 62, 0)" />
-            </radialGradient>
-            <radialGradient id="hero-sun-halo-mid" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="rgba(255, 210, 100, 0.35)" />
-              <stop offset="45%" stopColor="rgba(94, 234, 212, 0.2)" />
-              <stop offset="100%" stopColor="rgba(15, 61, 62, 0)" />
-            </radialGradient>
-            <radialGradient id="hero-sun-core" cx="38%" cy="34%" r="62%">
-              <stop offset="0%" stopColor="#fff8e8" />
-              <stop offset="25%" stopColor="#ffe08a" />
-              <stop offset="55%" stopColor="#e8a030" />
-              <stop offset="85%" stopColor="#c46818" />
-              <stop offset="100%" stopColor="#6b3010" />
-            </radialGradient>
-          </defs>
-
-          <g className="hero-solar-sun" transform={`translate(${CX} ${CY})`}>
-            <circle
-              className="hero-solar-corona-outer"
-              r={56}
-              fill="url(#hero-sun-halo-outer)"
-            />
-            <circle
-              className="hero-solar-corona"
-              r={38}
-              fill="url(#hero-sun-halo-mid)"
-            />
-            <circle
-              r={22}
-              fill="url(#hero-sun-core)"
-              filter="url(#hero-sun-bloom)"
-            />
-            <circle cx={-4} cy={-5} r={5} fill="rgba(255,255,255,0.4)" />
-          </g>
-
           <g className="hero-solar-rings">
             {ORBIT_RADII.map((r) => (
               <circle
@@ -301,12 +270,29 @@ export function HeroSolarSystem({ className }: { className?: string }) {
         </svg>
 
         <div
+          className="hero-solar-sun pointer-events-none absolute left-1/2 top-1/2 z-[1]"
+          style={{
+            width: `${(SUN_SIZE * 2 * 100) / VIEW}%`,
+            height: `${(SUN_SIZE * 2 * 100) / VIEW}%`,
+            transform: "translate(-50%, -50%)",
+          }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element -- decorative hero art */}
+          <img
+            className="hero-solar-sun-art h-full w-full object-contain"
+            src="/landing/planets/sun.png"
+            alt=""
+            draggable={false}
+          />
+        </div>
+
+        <div
           ref={planetsRef}
-          className="pointer-events-none absolute inset-0"
+          className="pointer-events-none absolute inset-0 z-[2]"
           style={{ transformStyle: "preserve-3d" }}
         >
           {PLANETS.map((p) => (
-            <PlanetSphere key={p.id} p={p} spin={motionOk} />
+            <PlanetSphere key={p.id} p={p} />
           ))}
         </div>
       </div>
