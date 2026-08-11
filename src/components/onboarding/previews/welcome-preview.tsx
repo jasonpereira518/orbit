@@ -16,9 +16,13 @@ export function WelcomePreview({ reducedMotion }: PreviewProps) {
             ? { duration: 0 }
             : { type: "spring", stiffness: 260, damping: 20 }
         }
-        className="shadow-[0_0_40px_rgba(89,157,231,0.35)]"
+        className="relative rounded-full"
       >
-        <OrbitLogo size="xl" />
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-[-28%] rounded-full bg-[#599de7]/40 blur-2xl"
+        />
+        <OrbitLogo size="xl" className="relative" />
       </motion.div>
       <motion.div
         data-tour-hotspot="tagline"
