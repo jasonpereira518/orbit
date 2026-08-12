@@ -8,28 +8,28 @@ const STEPS = [
   {
     kicker: "Step 01 · you",
     title: "Connect",
-    body: "Link LinkedIn and Apollo once.",
+    body: "Link LinkedIn and Apollo once — no CSVs, no manual entry.",
     dot: "#e8f3f1",
     glow: "0 0 20px rgba(232,243,241,.5)",
   },
   {
     kicker: "Step 02 · automatic",
     title: "Contacts populate",
-    body: "Records fill in and enrich themselves.",
+    body: "Everyone you talk to during your search shows up, already filled in.",
     dot: "#ebe2bb",
     glow: "none",
   },
   {
     kicker: "Step 03 · you",
     title: "Send outreach",
-    body: "Target by employer, send from Orbit.",
+    body: "Find people at the companies you're targeting, and reach out from Orbit.",
     dot: "#efd284",
     glow: "none",
   },
   {
     kicker: "Step 04 · automatic",
     title: "Replies come back",
-    body: "Orbit tracks them and resurfaces who's due.",
+    body: "Orbit tracks who replied — and nudges you about who you still owe a follow-up.",
     dot: "#f2c14e",
     glow: "0 0 20px rgba(242,193,78,.6)",
   },
@@ -83,7 +83,7 @@ export function LandingHowItWorks() {
     <section className="landing-reveal relative z-10 mx-auto w-full max-w-6xl border-t border-[#e8f3f1]/[0.07] px-6 py-20 md:px-10 md:py-24">
       <p className="text-xs uppercase tracking-[0.18em] text-[#6d807c]">How it works</p>
       <h2 className="mt-3 max-w-[18ch] font-[family-name:var(--font-display)] text-[clamp(30px,4.4vw,50px)] font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]">
-        Four steps, three of which run without you.
+        From a conversation to a callback.
       </h2>
 
       <div className="relative mx-auto mt-16 hidden aspect-square w-full max-w-[760px] lg:block">

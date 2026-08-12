@@ -6,12 +6,13 @@ export function LandingProof() {
       <div className="mt-10 grid items-center gap-10 lg:grid-cols-2">
         <div>
           <p className="max-w-[22ch] font-[family-name:var(--font-display)] text-[clamp(26px,3.6vw,40px)] font-light leading-[1.3] text-[#e8f3f1]">
-            Orbit was built by one person who was tired of losing track of people.
+            I kept meeting people who could have helped — and losing track before it mattered.
           </p>
           <p className="mt-6 max-w-[46ch] text-base leading-[1.75] text-[#9aada8]">
-            It started as a personal fix: a contact list that updated itself,
-            remembered the last conversation, and said who was overdue.
-            Everything here is the version I use every day.
+            Job searching means a lot of conversations in a short window:
+            referrals, informational interviews, recruiters. I kept having good
+            ones and then letting them go cold. Orbit is the system I built so
+            that doesn&apos;t happen — to me, or to you.
           </p>
           <div className="mt-7 flex items-center gap-3">
             <span className="h-[34px] w-[34px] shrink-0 rounded-full bg-[#e8f3f1]/15" />

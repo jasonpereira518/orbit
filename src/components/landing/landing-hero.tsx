@@ -22,10 +22,10 @@ export function LandingHero({
             Orbit
           </p>
           <h1 className="mt-6 max-w-xl font-[family-name:var(--font-display)] text-2xl leading-snug tracking-tight text-[#e8f3f1] sm:mt-8 sm:text-3xl md:text-4xl">
-            Keep every connection in orbit.
+            The people you meet are how you get hired.
           </h1>
           <p className="mt-4 max-w-md text-base leading-relaxed text-[#9aada8] sm:text-lg">
-            Your people, your last conversation, your next follow-up — all in one place.
+            Orbit remembers every conversation and tells you who to follow up with — so a good connection doesn&apos;t go cold before it becomes an opportunity.
           </p>
           <div className="mt-8 sm:mt-10">
             <LandingAuthControls clerkOn={clerkOn} demoMode={demoMode} variant="hero" />

@@ -1,18 +1,18 @@
 const FEATURES = [
   {
-    kicker: "01 — Automatic",
-    title: "Unified contacts",
-    body: "LinkedIn and Apollo enrichment merge into a single contact record. Titles, employers and emails arrive already filled in — there is no form for you to keep feeding.",
+    kicker: "No re-introductions",
+    title: "Never forget who you talked to",
+    body: "Recruiters, referrals, people from informational interviews — Orbit merges everyone into one record, so you walk into the next conversation already knowing the last one.",
   },
   {
-    kicker: "02 — Assembled for you",
-    title: "Targeted outreach",
-    body: "Name an employer and Orbit builds the list. Demo results while you explore, live Apollo results the moment you're ready to send.",
+    kicker: "Get in the door",
+    title: "Find the people at the companies you want",
+    body: "Search by employer and Orbit surfaces who to reach out to — see it work with sample data, then switch to live results when you're ready to send.",
   },
   {
-    kicker: "03 — Learned over time",
-    title: "Reply-rate optimization",
-    body: "Orbit reads what comes back and surfaces what's working, so the next message is shorter, better aimed, and one of fewer.",
+    kicker: "Send fewer, better messages",
+    title: "See what's actually getting you responses",
+    body: "Orbit tracks what worked and what didn't, so every message after your first is sharper than a generic template.",
   },
 ] as const;
 
@@ -102,9 +102,9 @@ const VISUALS = [ContactsVisual, OutreachVisual, ReplyRateVisual];
 export function LandingFeatures() {
   return (
     <section className="landing-reveal relative z-10 mx-auto w-full max-w-6xl border-t border-[#e8f3f1]/[0.07] px-6 py-20 md:px-10 md:py-24">
-      <p className="text-xs uppercase tracking-[0.18em] text-[#6d807c]">What Orbit does</p>
+      <p className="text-xs uppercase tracking-[0.18em] text-[#6d807c]">How it helps your search</p>
       <h2 className="mt-3 max-w-[16ch] font-[family-name:var(--font-display)] text-[clamp(30px,4.4vw,50px)] font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]">
-        It keeps itself up to date.
+        Every person who could help you, remembered.
       </h2>
 
       <div className="mt-12 flex flex-col gap-7">
