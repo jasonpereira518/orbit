@@ -82,12 +82,19 @@
   --sidebar-accent-foreground: #0f3d3e;
   --sidebar-border: #e4e7e1;
   --sidebar-ring: #0f3d3e;
+  /* Percentage-sized radial gradients scale off the *whole page's*
+     height (this wrapper spans every section), so a single one
+     collapses to flat background almost immediately once content
+     grows past one screen. Using fixed/vh-based sizes and stacking a
+     few glows at different scroll depths keeps the ambient light
+     visible the whole way down instead of fading out after the hero. */
   --landing-page-gradient: radial-gradient(
-    130% 80% at 64% 34%,
-    #111c33 0%,
-    #0a1120 42%,
-    #05070f 78%
-  );
+      1100px 900px at 64% 220px,
+      #111c33 0%,
+      transparent 72%
+    ),
+    radial-gradient(1000px 850px at 30% 110vh, #101a30 0%, transparent 72%),
+    radial-gradient(1000px 850px at 70% 190vh, #0d1626 0%, transparent 72%);
   color-scheme: light;
 }
 
