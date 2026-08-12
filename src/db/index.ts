@@ -19,7 +19,7 @@ const globalForDb = globalThis as unknown as {
 };
 
 // Resets on HMR so new DDL/columns are applied after schema changes.
-let schemaReconciled = false;
+let schemaReconciled: Promise<void> | undefined;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS user_settings (
@@ -385,7 +385,7 @@ async function ensureColumn(
   definition: string
 ) {
   if (await columnExists(client, table, column)) return;
-  await client.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  await client.exec(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${definition}`);
 }
 
 async function migratePglite(client: PGlite) {
@@ -784,13 +784,18 @@ export async function getDb(): Promise<Db> {
   await globalForDb.orbitReady;
 
   if (!schemaReconciled) {
-    if (globalForDb.orbitNeonSql) {
-      await migrateNeon(globalForDb.orbitNeonSql);
-    } else {
-      await migratePglite(globalForDb.orbitPglite!);
-    }
-    schemaReconciled = true;
+    schemaReconciled = (async () => {
+      if (globalForDb.orbitNeonSql) {
+        await migrateNeon(globalForDb.orbitNeonSql!);
+      } else {
+        await migratePglite(globalForDb.orbitPglite!);
+      }
+    })().catch((err) => {
+      schemaReconciled = undefined;
+      throw err;
+    });
   }
+  await schemaReconciled;
 
   // Rebuild the drizzle wrapper each call so schema HMR picks up new relations.
   if (globalForDb.orbitNeonSql) {
