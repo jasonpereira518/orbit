@@ -10,7 +10,7 @@ export function LandingHero({
   demoMode?: boolean;
 }) {
   return (
-    <section className="relative z-10 flex flex-1 flex-col justify-center px-6 pb-16 pt-4 md:px-10 md:pb-20">
+    <section className="relative z-10 flex min-h-[calc(100svh-5.5rem)] flex-col justify-center px-6 pb-16 pt-4 md:px-10 md:pb-20">
       <div className="mx-auto grid w-full max-w-6xl items-center gap-10 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:gap-12">
         <div
           className={cn(

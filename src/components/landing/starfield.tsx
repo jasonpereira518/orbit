@@ -47,16 +47,21 @@ export function Starfield() {
 
     function resize() {
       dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const parent = canvas!.parentElement;
       width = window.innerWidth;
-      height = window.innerHeight;
+      height = parent ? parent.scrollHeight : window.innerHeight;
       canvas!.width = Math.floor(width * dpr);
       canvas!.height = Math.floor(height * dpr);
       canvas!.style.width = `${width}px`;
       canvas!.style.height = `${height}px`;
       ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      const count = Math.floor((width * height) / 9000);
-      stars = Array.from({ length: Math.min(count, 220) }, () => ({
+      // Density scales with viewport area (roughly one screen's worth),
+      // then extends uniformly down the page so a tall page doesn't
+      // balloon into thousands of stars.
+      const density = (window.innerWidth * window.innerHeight) / 9000;
+      const count = Math.floor(density * (height / Math.max(window.innerHeight, 1)));
+      stars = Array.from({ length: Math.min(count, 900) }, () => ({
         x: Math.random() * width,
         y: Math.random() * height,
         r: Math.random() * 1.4 + 0.3,
@@ -171,8 +176,16 @@ export function Starfield() {
     draw(performance.now());
 
     window.addEventListener("resize", resize);
+
+    let resizeObserver: ResizeObserver | undefined;
+    if (canvas.parentElement && typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => resize());
+      resizeObserver.observe(canvas.parentElement);
+    }
+
     return () => {
       window.removeEventListener("resize", resize);
+      resizeObserver?.disconnect();
       cancelAnimationFrame(raf);
     };
   }, []);

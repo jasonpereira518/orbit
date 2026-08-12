@@ -1,4 +1,3 @@
-// src/components/landing/landing-proof.tsx
 export function LandingProof() {
   return (
     <section className="relative z-10 px-6 py-20 md:px-10 md:py-28">

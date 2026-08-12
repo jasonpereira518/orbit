@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
 
 export function LandingPricingCta({
@@ -9,37 +8,26 @@ export function LandingPricingCta({
   demoMode?: boolean;
 }) {
   return (
-    <>
-      <section className="relative z-10 px-6 py-20 md:px-10 md:py-28">
-        <div className="mx-auto max-w-3xl text-center">
-          <p className="text-sm font-medium uppercase tracking-wide text-[#6d807c]">
-            Pricing
-          </p>
-          <h2 className="mt-3 font-[family-name:var(--font-display)] text-3xl leading-tight tracking-tight text-[#e8f3f1] sm:text-4xl">
-            Free to start. No setup required.
-          </h2>
-          <p className="mt-4 text-base leading-relaxed text-[#9aada8] sm:text-lg">
-            Keep every connection in orbit.
-          </p>
-          <div className="mt-8 flex justify-center">
-            <LandingAuthControls clerkOn={clerkOn} demoMode={demoMode} variant="hero" />
-          </div>
+    <section className="relative z-10 px-6 py-20 md:px-10 md:py-28">
+      <div className="mx-auto max-w-3xl text-center">
+        <p className="text-sm font-medium uppercase tracking-wide text-[#6d807c]">
+          Pricing
+        </p>
+        <h2 className="mt-3 font-[family-name:var(--font-display)] text-3xl leading-tight tracking-tight text-[#e8f3f1] sm:text-4xl">
+          Free to start. No setup required.
+        </h2>
+        <p className="mt-4 text-base leading-relaxed text-[#9aada8] sm:text-lg">
+          Keep every connection in orbit.
+        </p>
+        <div className="mt-8 flex justify-center">
+          <LandingAuthControls
+            clerkOn={clerkOn}
+            demoMode={demoMode}
+            variant="hero"
+            showUserButton={false}
+          />
         </div>
-      </section>
-
-      <footer className="relative z-10 flex flex-col items-center gap-2 border-t border-white/10 px-6 py-8 text-sm text-[#6d807c] sm:flex-row sm:justify-between md:px-10">
-        <Link href="/privacy" className="transition-colors hover:text-[#e8f3f1]">
-          Privacy
-        </Link>
-        <a
-          href="https://jasonpereira.live/"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="landing-credit-shimmer"
-        >
-          By Jason Pereira
-        </a>
-      </footer>
-    </>
+      </div>
+    </section>
   );
 }
