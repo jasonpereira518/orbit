@@ -85,7 +85,7 @@ export function LandingHowItWorks() {
 
       <div
         ref={ringRef}
-        className="relative mx-auto mt-16 aspect-square w-full max-w-[760px]"
+        className="relative mx-auto mt-16 hidden aspect-square w-full max-w-[760px] lg:block"
         style={{
           transform: "rotate(calc(var(--ring-rotation, 0) * 1deg))",
           transition: "transform .18s linear",
@@ -145,6 +145,25 @@ export function LandingHowItWorks() {
           </div>
         ))}
       </div>
+
+      <ol className="mt-12 space-y-6 lg:hidden">
+        {STEPS.map((step) => (
+          <li key={step.title} className="flex gap-4">
+            <span
+              aria-hidden="true"
+              className="mt-1.5 h-3 w-3 shrink-0 rounded-full"
+              style={{ background: step.dot, boxShadow: step.glow }}
+            />
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.16em] text-[#6d807c]">{step.kicker}</p>
+              <p className="mt-1 font-[family-name:var(--font-display)] text-[19px] text-[#e8f3f1]">
+                {step.title}
+              </p>
+              <p className="mt-1 text-[13px] leading-[1.6] text-[#9aada8]">{step.body}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
 
       <p className="mt-8 text-center text-sm text-[#6d807c]">
         The loop keeps running whether or not you open the app.

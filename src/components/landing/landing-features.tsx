@@ -18,22 +18,22 @@ const FEATURES = [
 
 function ContactsVisual() {
   return (
-    <div className="relative h-[200px] w-full" aria-hidden="true">
-      <div className="absolute left-0 top-3.5 w-[154px] -rotate-6 rounded-2xl border border-[#e8f3f1]/10 bg-[#05070f]/70 px-3.5 py-3">
-        <p className="text-[11px] uppercase tracking-wide text-[#6d807c]">LinkedIn</p>
-        <p className="mt-1.5 text-sm text-[#e8f3f1]">Priya Raman</p>
-        <p className="text-xs text-[#9aada8]">Head of Growth</p>
+    <div className="relative h-[195px] w-full lg:h-[200px]" aria-hidden="true">
+      <div className="absolute left-0 top-0 w-[118px] -rotate-6 rounded-2xl border border-[#e8f3f1]/10 bg-[#05070f]/70 px-2.5 py-2 lg:top-3.5 lg:w-[154px] lg:px-3.5 lg:py-3">
+        <p className="text-[10px] uppercase tracking-wide text-[#6d807c] lg:text-[11px]">LinkedIn</p>
+        <p className="mt-1.5 text-xs text-[#e8f3f1] lg:text-sm">Priya Raman</p>
+        <p className="text-[11px] text-[#9aada8] lg:text-xs">Head of Growth</p>
       </div>
-      <div className="absolute left-11 top-[104px] w-[154px] rotate-3 rounded-2xl border border-[#e8f3f1]/10 bg-[#05070f]/70 px-3.5 py-3">
-        <p className="text-[11px] uppercase tracking-wide text-[#6d807c]">Apollo</p>
-        <p className="mt-1.5 text-sm text-[#e8f3f1]">priya@northwind.io</p>
-        <p className="text-xs text-[#9aada8]">Northwind · 240 emp.</p>
+      <div className="absolute left-7 top-[98px] w-[118px] rotate-3 rounded-2xl border border-[#e8f3f1]/10 bg-[#05070f]/70 px-2.5 py-2 lg:left-11 lg:top-[104px] lg:w-[154px] lg:px-3.5 lg:py-3">
+        <p className="text-[10px] uppercase tracking-wide text-[#6d807c] lg:text-[11px]">Apollo</p>
+        <p className="mt-1.5 text-xs text-[#e8f3f1] lg:text-sm">priya@northwind.io</p>
+        <p className="text-[11px] text-[#9aada8] lg:text-xs">Northwind · 240 emp.</p>
       </div>
-      <div className="absolute right-0 top-11 w-[190px] rounded-2xl border border-[#f2c14e]/35 bg-[#f2c14e]/[0.07] p-4 shadow-[0_0_40px_rgba(242,193,78,0.14)]">
-        <div className="h-[30px] w-[30px] rounded-full bg-[#e8f3f1]/15" />
-        <p className="mt-2 text-sm text-[#e8f3f1]">Priya Raman</p>
-        <p className="text-xs text-[#9aada8]">Northwind</p>
-        <p className="mt-2 text-[11px] uppercase tracking-wide text-landing-accent">One record</p>
+      <div className="absolute right-0 top-12 w-[136px] rounded-2xl border border-[#f2c14e]/35 bg-[#f2c14e]/[0.07] p-3 shadow-[0_0_40px_rgba(242,193,78,0.14)] lg:top-11 lg:w-[190px] lg:p-4">
+        <div className="h-[24px] w-[24px] rounded-full bg-[#e8f3f1]/15 lg:h-[30px] lg:w-[30px]" />
+        <p className="mt-2 text-xs text-[#e8f3f1] lg:text-sm">Priya Raman</p>
+        <p className="text-[11px] text-[#9aada8] lg:text-xs">Northwind</p>
+        <p className="mt-2 text-[10px] uppercase tracking-wide text-landing-accent lg:text-[11px]">One record</p>
       </div>
     </div>
   );

@@ -18,7 +18,7 @@ export function LandingWaitlist({
       <div className="relative grid items-center gap-11 lg:grid-cols-2">
         <div>
           <h2 className="max-w-[14ch] font-[family-name:var(--font-display)] text-[clamp(34px,5.2vw,58px)] font-normal leading-[1.1] tracking-[-0.03em] text-[#e8f3f1]">
-            Keep every connection in orbit.
+            Get in before everyone else.
           </h2>
           <p className="mt-5 max-w-[40ch] text-base leading-[1.7] text-[#9aada8] sm:text-lg">
             Early access is free. There is nothing to import and nothing to maintain.
