@@ -15,7 +15,15 @@
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-blue" />
 </p>
 
-Orbit is a personal networking CRM. Paste in messy notes from a coffee chat or conference and it extracts the people, tracks who you should follow up with, and lets you ask your own network questions like *"who do I know at OpenAI?"*
+## What is Orbit?
+
+Orbit is a personal networking CRM — a private, structured memory for every relationship in your professional life. It turns messy conference notes, LinkedIn exports, message history, and one-off "let's stay in touch"s into a searchable database you can actually act on, instead of a pile of business cards and forgotten DMs.
+
+Paste in notes from a coffee chat and Orbit uses AI to pull out who you talked to, where you met, what you discussed, and when to follow up. Import your LinkedIn connections and messages, subscribe to a calendar, or connect Gmail, and Orbit folds that history in too. Then you can search it, browse it as a follow-up dashboard, or just ask it questions in plain English — *"who do I know at OpenAI?"*, *"who haven't I followed up with recently?"*, *"who should I reconnect with this week?"*
+
+### Why it exists
+
+Networking is valuable but the record of it is scattered — LinkedIn, Gmail, a notes app, a spreadsheet, your memory. That scatter is why people forget who they talked to, miss follow-ups, lose context before a call, and underuse a network they already built. Orbit exists to make that record structured, searchable, and actionable, so a real conversation turns into a real relationship instead of a vague memory. It started as a way to track people met at conferences, recruiter conversations, and investor/mentor relationships while job hunting and building — the kind of relationships that matter but are the easiest to lose track of.
 
 ## Screenshots
 
@@ -49,7 +57,9 @@ Orbit is a personal networking CRM. Paste in messy notes from a coffee chat or c
 - Google Gemini (`@google/genai`), OpenAI, and Anthropic for note parsing, chat, and embeddings (BYOK in Settings, or server-side keys)
 - React Flow for the network graph
 
-## Quick start
+## How to use it
+
+### 1. Get it running
 
 ```bash
 cp .env.example .env.local
@@ -60,15 +70,24 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) (or the port Next prints if 3000 is taken).
 
-Without Clerk keys, the app runs as `demo-user` in development only. Add a Gemini, OpenAI, or Anthropic API key in **Settings** (or the matching env var) before using Capture / Chat.
+Without Clerk keys, the app runs as `demo-user` in development only — no sign-up needed to try it locally. Add a Gemini, OpenAI, or Anthropic API key in **Settings** (or the matching env var) before using Capture / Chat, since those features are AI-powered.
 
-Optional demo contact:
+Optional demo contact, so the dashboard isn't empty on first look:
 
 ```bash
 npm run db:seed
 ```
 
 Restart `npm run dev` afterward if the server was already running, so it reloads the shared PGlite database.
+
+### 2. Walk through it
+
+1. **Settings** → add an AI API key (Gemini, OpenAI, or Anthropic)
+2. **Capture** → paste notes from a real conversation → review the AI-extracted profile → save
+3. **Dashboard** → see who's due for a follow-up and how your network breaks down
+4. **Chat** → ask "Who should I talk to about AI-assisted development?"
+5. **Constellation** → see your network laid out as a star chart, clustered by company/school
+6. **Imports** → bring in a LinkedIn export or connect Gmail so Orbit has real history to work with
 
 ### Database
 
@@ -112,14 +131,6 @@ A few features also read credentials that aren't in `.env.example` yet: an **Apo
 | `/outreach` | Prospect search (Apollo) + tracked email/SMS campaigns |
 | `/reminders` | Follow-up reminders |
 | `/settings` | BYOK, export, delete data |
-
-## Demo path
-
-1. Settings → add an AI API key
-2. Capture → paste meeting notes → review AI extraction → save
-3. Dashboard → see follow-up suggestions
-4. Chat → "Who should I talk to about AI-assisted development?"
-5. Constellation → explore your network
 
 ## License
 
