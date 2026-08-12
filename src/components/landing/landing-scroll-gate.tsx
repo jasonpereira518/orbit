@@ -15,6 +15,15 @@ function prefersReducedMotion() {
  * and clicks it. After that one gate, scrolling is unlocked for good —
  * this never re-locks. Skipped entirely under prefers-reduced-motion,
  * where trapping scroll would be a real accessibility cost for no payoff.
+ *
+ * Rendered as the last child of LandingHero's own `relative` section (not
+ * fixed to the viewport, and not a sibling of it) — `position: fixed` here
+ * would actually anchor to `.page-transition`'s box instead of the
+ * viewport, since that ancestor's transform animation makes it the
+ * containing block for fixed descendants. Since the hero's section is
+ * ~one viewport tall and scroll is locked at 0 while this is visible,
+ * `absolute` positioned within it lands in the same visual spot without
+ * that trap.
  */
 export function LandingScrollGate({ targetId }: { targetId: string }) {
   const [locked, setLocked] = useState(true);
@@ -74,7 +83,7 @@ export function LandingScrollGate({ targetId }: { targetId: string }) {
       onClick={handleAdvance}
       aria-label="Scroll to the next section"
       className={cn(
-        "fixed bottom-8 left-1/2 z-20 -translate-x-1/2 rounded-full border border-white/15 bg-white/5 p-3 text-[#e8f3f1] backdrop-blur-sm transition-all duration-300 hover:border-white/30 hover:bg-white/10",
+        "absolute bottom-8 left-1/2 z-20 -translate-x-1/2 rounded-full border border-white/15 bg-white/5 p-3 text-[#e8f3f1] backdrop-blur-sm transition-all duration-300 hover:border-white/30 hover:bg-white/10",
         revealed
           ? "translate-y-0 opacity-100"
           : "pointer-events-none translate-y-2 opacity-0"
