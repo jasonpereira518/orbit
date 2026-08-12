@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/imports/process-stalled",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}

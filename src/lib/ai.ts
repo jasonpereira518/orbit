@@ -1149,6 +1149,43 @@ export async function createEmbedding(userId: string, text: string) {
   return values;
 }
 
+/** Embed many texts in as few network round trips as possible, preserving input order. */
+export async function createEmbeddingsBatch(
+  userId: string,
+  texts: string[]
+): Promise<number[][]> {
+  if (texts.length === 0) return [];
+  const { backend, apiKey } = await resolveEmbeddingBackend(userId);
+  const inputs = texts.map((text) => text.slice(0, 8000));
+
+  if (backend === "openai") {
+    const client = new OpenAI({ apiKey });
+    const res = await client.embeddings.create({
+      model: OPENAI_EMBEDDING_MODEL,
+      input: inputs,
+    });
+    const values = res.data
+      .slice()
+      .sort((a, b) => a.index - b.index)
+      .map((d) => d.embedding);
+    if (values.length !== inputs.length || values.some((v) => !v?.length)) {
+      throw new Error("Incomplete embedding batch response");
+    }
+    return values;
+  }
+
+  const client = new GoogleGenAI({ apiKey });
+  const res = await client.models.embedContent({
+    model: GEMINI_EMBEDDING_MODEL,
+    contents: inputs,
+  });
+  const values = res.embeddings?.map((e) => e.values ?? []) ?? [];
+  if (values.length !== inputs.length || values.some((v) => !v.length)) {
+    throw new Error("Incomplete embedding batch response");
+  }
+  return values;
+}
+
 export function cosineSimilarity(a: number[], b: number[]) {
   let dot = 0;
   let na = 0;
