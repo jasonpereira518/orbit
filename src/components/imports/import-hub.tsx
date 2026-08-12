@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { motion, useReducedMotion } from "motion/react";
+import { motion } from "motion/react";
 import {
   ImportHistory,
   type ImportHistoryItem,
@@ -11,6 +11,7 @@ import {
 import { ImportProgress } from "@/components/imports/import-utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cancelImportJob, useImportJob } from "@/lib/import-job-runner";
+import { SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 type ImportTab = "connections" | "messages" | "calendar";
@@ -103,7 +104,6 @@ export function ImportHub({
   calendarSubscriptions?: CalendarSub[];
 }) {
   const job = useImportJob();
-  const reducedMotion = useReducedMotion();
   const [tab, setTab] = useState<ImportTab>("connections");
   // Mount panels on first visit so inactive tabs don't load code upfront,
   // but keep them mounted afterward so in-flight imports survive switches.
@@ -166,15 +166,9 @@ export function ImportHub({
             >
               {active ? (
                 <motion.span
-                  layoutId={
-                    reducedMotion ? undefined : "import-tab-pill"
-                  }
+                  layoutId="import-tab-pill"
                   className="absolute inset-0 rounded-lg bg-card shadow-sm ring-1 ring-black/[0.04] dark:ring-white/10"
-                  transition={
-                    reducedMotion
-                      ? { duration: 0 }
-                      : { type: "spring", stiffness: 420, damping: 34 }
-                  }
+                  transition={SPRING_PILL}
                 />
               ) : null}
               <span className="relative z-10">

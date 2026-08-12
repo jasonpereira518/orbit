@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 type Star = {
   x: number;
@@ -21,13 +22,9 @@ type ShootingStar = {
   angle: number;
 };
 
-function prefersReducedMotion() {
-  if (typeof window === "undefined") return false;
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
 export function Starfield() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const reduced = usePrefersReducedMotion();
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -36,7 +33,6 @@ export function Starfield() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const reduced = prefersReducedMotion();
     let raf = 0;
     let stars: Star[] = [];
     let shooters: ShootingStar[] = [];
@@ -170,12 +166,22 @@ export function Starfield() {
     nextShot = performance.now() + 800;
     draw(performance.now());
 
+    // Don't burn battery repainting a starfield in a background tab.
+    function onVisibility() {
+      cancelAnimationFrame(raf);
+      if (!document.hidden && !reduced) {
+        raf = requestAnimationFrame(draw);
+      }
+    }
+
     window.addEventListener("resize", resize);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       window.removeEventListener("resize", resize);
+      document.removeEventListener("visibilitychange", onVisibility);
       cancelAnimationFrame(raf);
     };
-  }, []);
+  }, [reduced]);
 
   return (
     <canvas

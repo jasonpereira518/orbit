@@ -176,12 +176,13 @@
     0 2px 8px -2px rgba(26, 28, 26, 0.08);
   backdrop-filter: blur(28px) saturate(1.65);
   -webkit-backdrop-filter: blur(28px) saturate(1.65);
+  /* backdrop-filter is intentionally NOT transitioned — animating a re-blur
+   * of the largest persistent surface is one of the most expensive effects
+   * a browser can run. */
   transition:
-    backdrop-filter 280ms ease,
-    -webkit-backdrop-filter 280ms ease,
-    background 280ms ease,
-    border-color 280ms ease,
-    box-shadow 280ms ease;
+    background var(--transition-duration-base) ease,
+    border-color var(--transition-duration-base) ease,
+    box-shadow var(--transition-duration-base) ease;
 }
 
 .liquid-glass::before {
@@ -203,7 +204,9 @@
       transparent 50%
     );
   opacity: 1;
-  transition: opacity 280ms ease, background 280ms ease;
+  transition:
+    opacity var(--transition-duration-base) ease,
+    background var(--transition-duration-base) ease;
 }
 
 .liquid-glass > * {
@@ -225,8 +228,6 @@
     0 -1px 0 0 rgba(15, 61, 62, 0.03) inset,
     0 12px 40px -8px rgba(26, 28, 26, 0.22),
     0 4px 14px -2px rgba(26, 28, 26, 0.1);
-  backdrop-filter: blur(44px) saturate(1.9);
-  -webkit-backdrop-filter: blur(44px) saturate(1.9);
 }
 
 .liquid-glass:hover::before {
@@ -287,8 +288,6 @@
     0 -1px 0 0 rgba(0, 0, 0, 0.2) inset,
     0 16px 48px -10px rgba(0, 0, 0, 0.6),
     0 4px 14px -2px rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(44px) saturate(1.85);
-  -webkit-backdrop-filter: blur(44px) saturate(1.85);
 }
 
 .dark .liquid-glass:hover::before {
@@ -312,16 +311,6 @@
 
   .liquid-glass:hover {
     background: color-mix(in oklab, var(--sidebar) 86%, transparent);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .liquid-glass {
-    transition: none;
-  }
-
-  .liquid-glass::before {
-    transition: none;
   }
 }
 
@@ -746,36 +735,32 @@
   animation: page-transition-in 0.28s var(--ease-house) both;
 }
 
+/* ── Reduced motion: one global clamp ──
+ * 0.01ms instead of `none` so `both`/`forwards` fill modes still land
+ * elements on their end state (entrances finish visible) and animationend
+ * fires. Covers library animations (tw-animate, sonner, spinners, pulses)
+ * and every Tailwind transition — no per-animation allow-list to maintain. */
 @media (prefers-reduced-motion: reduce) {
-  .delete-confirm-btn,
-  .delete-contact-btn,
-  .contact-row,
-  .constellation-corona,
-  .constellation-corona-outer,
-  .constellation-sun-core,
-  .constellation-arm-glow,
-  .constellation-ray path,
-  .constellation-spotlight-ring,
-  .constellation-planet-enter,
-  .constellation-nebula,
-  .constellation-comet,
-  .constellation-starfield span,
-  .constellation-stage .react-flow__edge.animated path,
-  .landing-fade,
-  .landing-solar-enter,
-  .landing-credit-shimmer,
-  .page-transition {
-    animation: none !important;
-    transition: none !important;
+  *,
+  ::before,
+  ::after,
+  ::backdrop {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
   }
 
-  .landing-fade,
-  .landing-solar-enter,
-  .page-transition {
-    opacity: 1;
-    transform: none;
+  ::view-transition-old(*),
+  ::view-transition-new(*),
+  ::view-transition-group(*) {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
   }
 
+  /* Shimmer needs a static color, not just a frozen gradient frame. */
   .landing-credit-shimmer {
     background: none;
     color: #6d807c;

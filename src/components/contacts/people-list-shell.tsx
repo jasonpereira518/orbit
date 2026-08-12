@@ -8,7 +8,7 @@ import {
   motion,
   useReducedMotion,
 } from "motion/react";
-import { EASE_HOUSE } from "@/lib/motion";
+import { EASE_HOUSE, SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import {
   clearPeopleNavInBrowser,
@@ -67,13 +67,9 @@ function PeopleViewToggle({
           >
             {selected && (
               <motion.span
-                layoutId={reducedMotion ? undefined : "people-view-pill"}
+                layoutId="people-view-pill"
                 className="absolute inset-0 -z-10 rounded-md bg-primary shadow-sm"
-                transition={
-                  reducedMotion
-                    ? { duration: 0 }
-                    : { type: "spring", stiffness: 480, damping: 36 }
-                }
+                transition={SPRING_PILL}
               />
             )}
             <span className="relative">{opt.label}</span>

@@ -199,10 +199,7 @@ export function OnboardingFlow({
   return (
     <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-4xl flex-col justify-center gap-6 py-6">
       <div className="flex gap-4">
-        <TourSidebar
-          activeKey={step.navKey}
-          reducedMotion={reducedMotion}
-        />
+        <TourSidebar activeKey={step.navKey} />
 
         <div className="flex min-w-0 flex-1 flex-col gap-4">
           <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">

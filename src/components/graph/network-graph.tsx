@@ -65,6 +65,7 @@ import {
   type NebulaData,
 } from "@/lib/graph-layout";
 import { clusterBrandColor, mixWithWhite, withAlpha } from "@/lib/school-color";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { cn } from "@/lib/utils";
 import {
   Filter,
@@ -678,10 +679,7 @@ function GraphCanvasInner({
   getNodesRef.current = getNodes;
   /** Total ambient rotation shown by the CSS var (rings + arm glow). */
   const galaxyThetaRef = useRef(0);
-  const [prefersReducedMotion] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  });
+  const prefersReducedMotion = usePrefersReducedMotion();
 
   const [orbitNodes, setOrbitNodes] = useState<Node[]>(() =>
     buildStructuralNodes(layout.nodes, positionOverrides, compact)
