@@ -40,7 +40,7 @@ export async function getGraphData() {
       where: eq(contacts.userId, userId),
       with: { contactTags: { with: { tag: true } } },
     }),
-    listActiveGoalTexts(userId),
+    listActiveGoalTexts(),
     listGoals(),
     db.query.userSettings.findFirst({
       where: eq(userSettings.userId, userId),

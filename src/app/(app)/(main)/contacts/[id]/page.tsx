@@ -32,7 +32,7 @@ export default async function ContactDetailPage({
 
   const [goals, relatedPeople, mutualPeople, sendOptions] =
     await Promise.all([
-    listActiveGoalTexts(userId),
+    listActiveGoalTexts(),
     listRelatedContacts(contact.id, 6),
     listMutualContacts(contact.id, 6),
     getContactFollowUpSendOptions(contact.id),

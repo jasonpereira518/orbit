@@ -190,7 +190,7 @@ export async function listContacts(filters?: {
       with: { contactTags: { with: { tag: true } } },
       orderBy: [desc(contacts.updatedAt)],
     }),
-    listActiveGoalTexts(userId),
+    listActiveGoalTexts(),
   ]);
 
   let rows = allRows;
@@ -1226,7 +1226,7 @@ export async function draftContactFollowUp(
   }
 ) {
   const userId = await requireUserId();
-  const goals = await listActiveGoalTexts(userId);
+  const goals = await listActiveGoalTexts();
   return generateContactFollowUpDraft(userId, contactId, goals, options);
 }
 
@@ -1319,7 +1319,7 @@ export async function listRelatedContacts(
 ): Promise<RelatedContact[]> {
   const userId = await requireUserId();
   const db = await getDb();
-  const goals = await listActiveGoalTexts(userId);
+  const goals = await listActiveGoalTexts();
 
   const rows = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
