@@ -20,7 +20,7 @@ export function GlobalJobProgressBar() {
 
   return (
     <div
-      className="fixed bottom-[calc(5.25rem+env(safe-area-inset-bottom))] left-3 z-40 flex w-[min(20rem,calc(100vw-1.5rem))] flex-col gap-2 md:bottom-5 md:left-5"
+      className="fixed bottom-[calc(5.25rem+env(safe-area-inset-bottom))] right-3 z-40 flex w-[min(20rem,calc(100vw-1.5rem))] flex-col gap-2 md:bottom-5 md:right-5"
       role="status"
       aria-live="polite"
     >
@@ -64,7 +64,13 @@ function JobRow({ job }: { job: BackgroundJob }) {
 
         {job.status === "running" && (
           <div className="space-y-1">
-            <div className="h-1.5 overflow-hidden rounded-full bg-border/80">
+            <div
+              className="h-2 overflow-hidden rounded-full bg-border/80"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={determinate ? pct! : undefined}
+            >
               <div
                 className={cn(
                   "h-full rounded-full bg-primary transition-[width] duration-300 ease-out",
@@ -73,11 +79,9 @@ function JobRow({ job }: { job: BackgroundJob }) {
                 style={determinate ? { width: `${pct}%` } : undefined}
               />
             </div>
-            {determinate && (
-              <p className="text-xs tabular-nums text-muted-foreground">
-                {job.done} of {job.total} · {pct}%
-              </p>
-            )}
+            <p className="text-xs tabular-nums text-muted-foreground">
+              {determinate ? `${job.done} of ${job.total} · ${pct}%` : "Working…"}
+            </p>
           </div>
         )}
       </div>

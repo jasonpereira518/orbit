@@ -114,8 +114,10 @@ function getSnapshot() {
   return cachedList;
 }
 
+const EMPTY_JOBS: BackgroundJob[] = [];
+
 function getServerSnapshot(): BackgroundJob[] {
-  return [];
+  return EMPTY_JOBS;
 }
 
 /** All tracked jobs (running + recently finished), newest first. */
