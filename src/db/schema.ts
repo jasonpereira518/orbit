@@ -245,6 +245,7 @@ export const imports = pgTable("imports", {
   importType: text("import_type").notNull(),
   fileName: text("file_name"),
   status: text("status").default("pending").notNull(),
+  totalRows: integer("total_rows"),
   rowsProcessed: integer("rows_processed").default(0),
   contactsCreated: integer("contacts_created").default(0),
   contactsUpdated: integer("contacts_updated").default(0),
@@ -254,6 +255,38 @@ export const imports = pgTable("imports", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+export type ImportJobRowPayload = {
+  index: number;
+  firstName: string;
+  lastName: string;
+  url?: string;
+  email?: string;
+  company?: string;
+  position?: string;
+  connectedOn?: string;
+};
+
+export const importJobRows = pgTable(
+  "import_job_rows",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    importId: uuid("import_id")
+      .notNull()
+      .references(() => imports.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
+    rowIndex: integer("row_index").notNull(),
+    payload: jsonb("payload").$type<ImportJobRowPayload>().notNull(),
+    status: text("status").default("pending").notNull(),
+    contactId: uuid("contact_id"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("import_job_rows_import_status_idx").on(t.importId, t.status),
+  ]
+);
 
 export const calendarSubscriptions = pgTable(
   "calendar_subscriptions",

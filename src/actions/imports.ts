@@ -2,19 +2,29 @@
 
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import Papa from "papaparse";
 import { getDb } from "@/db";
 import {
   contacts,
   imports,
+  importJobRows,
   interactions,
   reminders,
   type ImportStats,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { daysAgo, findDuplicateCandidates } from "@/lib/duplicates";
+import {
+  DUPLICATE_MERGE_CONFIDENCE,
+  daysAgo,
+  findDuplicateCandidates,
+} from "@/lib/duplicates";
 import { createContact, updateContact } from "@/actions/contacts";
-import { parseLinkedInConnectionsCsv } from "@/lib/linkedin-connections";
+import { runLinkedInImportJob } from "@/lib/import-job-processor";
+import {
+  parseConnectedOn,
+  parseLinkedInConnectionsCsv,
+} from "@/lib/linkedin-connections";
 import {
   parseLinkedInMessagesCsv,
   participantIdentity,
@@ -30,40 +40,6 @@ import {
   type ParsedCalendarEvent,
 } from "@/lib/calendar-import";
 import { upsertContactEmbedding } from "@/lib/search";
-
-/** Align preview badges with confirm merge behavior. */
-const DUPLICATE_MERGE_CONFIDENCE = 0.85;
-
-/**
- * Parse LinkedIn "Connected On" values.
- * Handles:
- * - "15 Jan 2024", "01/15/2024" (text exports)
- * - Excel/Sheets serial day numbers like "46198" (CSV re-saved from a spreadsheet)
- */
-function parseConnectedOn(raw: string): string | null {
-  const value = raw.trim();
-  if (!value) return null;
-
-  // Spreadsheet serial dates (days since 1899-12-30). Modern LinkedIn
-  // connections land roughly in 30000–80000 (≈1990–2100).
-  if (/^\d{4,6}(\.\d+)?$/.test(value)) {
-    const serial = Number(value);
-    if (serial >= 30000 && serial <= 80000) {
-      const ms = Date.UTC(1899, 11, 30) + Math.round(serial) * 86_400_000;
-      const fromSerial = new Date(ms);
-      if (!Number.isNaN(fromSerial.getTime())) return fromSerial.toISOString();
-    }
-  }
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-
-  // Bare numerics like "46198" become year 46198 in JS Date — reject those.
-  const year = parsed.getUTCFullYear();
-  if (year < 1990 || year > 2100) return null;
-
-  return parsed.toISOString();
-}
 
 function mergeStats(
   prev: ImportStats | null | undefined,
@@ -145,6 +121,103 @@ export async function previewLinkedInCsv(csvText: string) {
     duplicateCount: people.filter((p) => p.isRepeat).length,
     // keep legacy key for any callers
     preview: people,
+  };
+}
+
+/**
+ * Starts a server-owned LinkedIn connections import: persists the selected
+ * rows once, then processes them in the background via `after()`. Survives
+ * tab close/navigation — the client should poll `getImportJobStatus`.
+ */
+export async function startLinkedInImport(
+  csvText: string,
+  fileName: string,
+  selectedIds?: string[]
+): Promise<{ importId: string; totalRows: number }> {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const { rows } = parseLinkedInConnectionsCsv(csvText);
+  const selectedIndexes =
+    selectedIds === undefined
+      ? rows.map((_, i) => i)
+      : selectedIds
+          .map((id) => Number(id))
+          .filter((i) => Number.isInteger(i) && i >= 0 && i < rows.length);
+
+  if (selectedIndexes.length === 0) {
+    throw new Error("No rows selected to import");
+  }
+
+  const [importRow] = await db
+    .insert(imports)
+    .values({
+      userId,
+      importType: "linkedin_connections",
+      fileName,
+      status: "processing",
+      totalRows: selectedIndexes.length,
+      stats: {},
+    })
+    .returning();
+
+  await db.insert(importJobRows).values(
+    selectedIndexes.map((index) => {
+      const row = rows[index];
+      return {
+        importId: importRow.id,
+        userId,
+        rowIndex: index,
+        payload: {
+          index,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          email: row.email,
+          company: row.company,
+          position: row.position,
+          connectedOn: row.connectedOn,
+          url: row.url,
+        },
+      };
+    })
+  );
+
+  after(() => runLinkedInImportJob(importRow.id).catch(() => {}));
+
+  revalidatePath("/imports");
+
+  return { importId: importRow.id, totalRows: selectedIndexes.length };
+}
+
+export type ImportJobStatus = {
+  id: string;
+  status: string;
+  totalRows: number;
+  rowsProcessed: number;
+  contactsCreated: number;
+  contactsUpdated: number;
+  duplicatesFound: number;
+  errorMessage: string | null;
+};
+
+/** Read-only status poll for a server-owned import job (see `startLinkedInImport`). */
+export async function getImportJobStatus(importId: string): Promise<ImportJobStatus> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const row = await db.query.imports.findFirst({
+    where: and(eq(imports.id, importId), eq(imports.userId, userId)),
+  });
+  if (!row) throw new Error("Import session not found");
+
+  return {
+    id: row.id,
+    status: row.status,
+    totalRows: row.totalRows ?? 0,
+    rowsProcessed: row.rowsProcessed ?? 0,
+    contactsCreated: row.contactsCreated ?? 0,
+    contactsUpdated: row.contactsUpdated ?? 0,
+    duplicatesFound: row.duplicatesFound ?? 0,
+    errorMessage: row.errorMessage,
   };
 }
 
