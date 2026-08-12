@@ -9,12 +9,6 @@ export function LandingWaitlist({
 }) {
   return (
     <section className="landing-reveal relative z-10 mx-auto w-full max-w-6xl overflow-x-hidden border-t border-[#e8f3f1]/[0.07] px-6 py-20 md:px-10 md:py-24">
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute bottom-[-420px] left-1/2 z-[-1] h-[900px] w-[900px] -translate-x-1/2 rounded-full"
-        style={{ background: "radial-gradient(circle, rgba(242,193,78,0.14), transparent 62%)" }}
-      />
-
       <div className="relative grid items-center gap-11 lg:grid-cols-2">
         <div>
           <h2 className="max-w-[14ch] font-[family-name:var(--font-display)] text-[clamp(34px,5.2vw,58px)] font-normal leading-[1.1] tracking-[-0.03em] text-[#e8f3f1]">

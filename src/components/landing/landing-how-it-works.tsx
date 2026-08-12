@@ -2,34 +2,36 @@
 
 import { useEffect, useRef } from "react";
 
+// dot/glow progress from white to gold across the 4 steps, echoing the
+// white-to-gold escalation on the Features section's reply-rate bar chart.
 const STEPS = [
   {
     kicker: "Step 01 · you",
     title: "Connect",
     body: "Link LinkedIn and Apollo once.",
     dot: "#e8f3f1",
-    glow: "0 0 20px rgba(232,243,241,.7)",
+    glow: "0 0 20px rgba(232,243,241,.5)",
   },
   {
     kicker: "Step 02 · automatic",
     title: "Contacts populate",
     body: "Records fill in and enrich themselves.",
-    dot: "#f2c14e",
+    dot: "#ebe2bb",
     glow: "none",
   },
   {
     kicker: "Step 03 · you",
     title: "Send outreach",
     body: "Target by employer, send from Orbit.",
-    dot: "#f2c14e",
+    dot: "#efd284",
     glow: "none",
   },
   {
     kicker: "Step 04 · automatic",
     title: "Replies come back",
     body: "Orbit tracks them and resurfaces who's due.",
-    dot: "#9aada8",
-    glow: "none",
+    dot: "#f2c14e",
+    glow: "0 0 20px rgba(242,193,78,.6)",
   },
 ] as const;
 
