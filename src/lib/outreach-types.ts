@@ -1,20 +1,5 @@
 export type OutreachChannel = "email" | "linkedin" | "sms";
 
-export type OutreachCampaignStatus =
-  | "draft"
-  | "active"
-  | "completed"
-  | "archived";
-
-export type OutreachProspectStatus =
-  | "suggested"
-  | "selected"
-  | "excluded"
-  | "contacted"
-  | "replied"
-  | "interested"
-  | "not_interested";
-
 export type OutreachMessageStatus =
   | "draft"
   | "generated"
@@ -113,14 +98,6 @@ export const REPLY_CTA_LABELS: Record<OutreachReplyCta, string> = {
   explore_partnership: "Explore a partnership",
   other: "Other (from message intent)",
 };
-
-export const MESSAGE_OUTCOMES: OutreachMessageOutcome[] = [
-  "positive_reply",
-  "negative_reply",
-  "neutral_reply",
-  "bounced",
-  "unsubscribed",
-];
 
 export const OUTCOME_LABELS: Record<OutreachMessageOutcome, string> = {
   positive_reply: "Positive reply",

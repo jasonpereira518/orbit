@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { addGoal, deleteGoal, listGoals } from "@/actions/goals";
+import { addGoal, deleteGoal } from "@/actions/goals";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
@@ -97,7 +97,3 @@ export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
     </section>
   );
 }
-
-export type GoalsSettingsProps = {
-  initialGoals: Awaited<ReturnType<typeof listGoals>>;
-};

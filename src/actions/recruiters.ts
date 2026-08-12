@@ -185,11 +185,6 @@ export async function updateMyLink(
   revalidateRecruiterPaths(recruiterId);
 }
 
-export async function rateRecruiter(recruiterId: string, rating: number) {
-  if (rating < 1 || rating > 5) throw new Error("Rating must be 1–5");
-  await updateMyLink(recruiterId, { personalRating: rating });
-}
-
 /** For chat: personal links first, then top community matches. */
 export async function loadRecruitersForChat(
   userId: string,

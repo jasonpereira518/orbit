@@ -14,10 +14,7 @@ import {
 import { requireUserId } from "@/lib/auth";
 import { daysAgo, findDuplicateCandidates } from "@/lib/duplicates";
 import { createContact, updateContact } from "@/actions/contacts";
-import {
-  parseLinkedInConnectionsCsv,
-  type LinkedInConnectionRow,
-} from "@/lib/linkedin-connections";
+import { parseLinkedInConnectionsCsv } from "@/lib/linkedin-connections";
 import {
   parseLinkedInMessagesCsv,
   participantIdentity,
@@ -36,8 +33,6 @@ import { upsertContactEmbedding } from "@/lib/search";
 
 /** Align preview badges with confirm merge behavior. */
 const DUPLICATE_MERGE_CONFIDENCE = 0.85;
-
-export type LinkedInRow = LinkedInConnectionRow;
 
 /**
  * Parse LinkedIn "Connected On" values.
@@ -194,23 +189,6 @@ async function resolveImportRow(
     })
     .returning();
   return created;
-}
-
-export async function failImportSession(
-  importId: string,
-  errorMessage: string
-) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  await db
-    .update(imports)
-    .set({
-      status: "failed",
-      errorMessage: errorMessage.slice(0, 500),
-      updatedAt: new Date(),
-    })
-    .where(and(eq(imports.id, importId), eq(imports.userId, userId)));
-  revalidatePath("/imports");
 }
 
 /** Stop a processing import; rows already written are kept. */
