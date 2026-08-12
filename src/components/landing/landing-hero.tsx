@@ -10,9 +10,11 @@ import { OrbitLogo } from "@/components/orbit-logo";
 export function LandingHero({
   clerkOn,
   demoMode = false,
+  signedIn = false,
 }: {
   clerkOn: boolean;
   demoMode?: boolean;
+  signedIn?: boolean;
 }) {
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#05070f] text-[#e8f3f1]">
@@ -28,6 +30,7 @@ export function LandingHero({
         <LandingAuthControls
           clerkOn={clerkOn}
           demoMode={demoMode}
+          signedIn={signedIn}
           variant="header"
         />
       </header>
@@ -53,6 +56,7 @@ export function LandingHero({
               <LandingAuthControls
                 clerkOn={clerkOn}
                 demoMode={demoMode}
+                signedIn={signedIn}
                 variant="hero"
               />
             </div>

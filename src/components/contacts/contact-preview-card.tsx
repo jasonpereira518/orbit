@@ -141,8 +141,10 @@ export function ContactAvatarPreview({
             role="tooltip"
             aria-hidden
             className={cn(
-              "pointer-events-none fixed left-0 top-0 z-[100] w-64 rounded-xl border border-border/70 bg-card p-3 shadow-lg ring-1 ring-foreground/5",
-              "animate-in fade-in-0 zoom-in-95 duration-fast ease-out"
+              // No enter animation: tw-animate keyframes would override the
+              // cursor-position transform (card flies in from 0,0), and the
+              // card should simply appear at the pointer.
+              "pointer-events-none fixed left-0 top-0 z-[100] w-64 rounded-xl border border-border/70 bg-card p-3 shadow-lg ring-1 ring-foreground/5"
             )}
           >
             <div className="flex items-start gap-2.5">
