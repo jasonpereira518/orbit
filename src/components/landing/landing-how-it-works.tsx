@@ -33,12 +33,13 @@ const STEPS = [
   },
 ] as const;
 
-// 12 / 3 / 6 / 9 o'clock, matching STEPS in order.
+// 12 / 3 / 6 / 9 o'clock, sitting exactly on the dashed ring (inset-6%,
+// i.e. radius 44% from center), matching STEPS in order.
 const NODE_POSITIONS = [
-  { top: "0%", left: "50%" },
-  { top: "50%", left: "100%" },
-  { top: "100%", left: "50%" },
-  { top: "50%", left: "0%" },
+  { top: "6%", left: "50%" },
+  { top: "50%", left: "94%" },
+  { top: "94%", left: "50%" },
+  { top: "50%", left: "6%" },
 ] as const;
 
 function prefersReducedMotion() {
@@ -83,67 +84,74 @@ export function LandingHowItWorks() {
         Four steps, three of which run without you.
       </h2>
 
-      <div
-        ref={ringRef}
-        className="relative mx-auto mt-16 hidden aspect-square w-full max-w-[760px] lg:block"
-        style={{
-          transform: "rotate(calc(var(--ring-rotation, 0) * 1deg))",
-          transition: "transform .18s linear",
-        }}
-      >
+      <div className="relative mx-auto mt-16 hidden aspect-square w-full max-w-[760px] lg:block">
         <div
-          aria-hidden="true"
-          className="absolute inset-[6%] rounded-full border border-dashed border-[#e8f3f1]/[0.13]"
-        />
-        <div
-          aria-hidden="true"
-          className="absolute inset-[24%] rounded-full border border-[#e8f3f1]/[0.07]"
-        />
-        <div
-          aria-hidden="true"
-          className="absolute inset-[34%] rounded-full"
-          style={{ background: "radial-gradient(circle, rgba(242,193,78,.16), transparent 70%)" }}
-        />
-
-        <div
-          aria-hidden="true"
-          className="absolute left-1/2 top-1/2 h-[78px] w-[78px] -translate-x-1/2 -translate-y-1/2 rounded-full"
+          ref={ringRef}
+          className="absolute inset-0"
           style={{
-            background:
-              "radial-gradient(circle at 46% 42%, #fffdf2 6%, #ffe89a 34%, #f5c451 62%, #eba92c 100%)",
-            boxShadow: "0 0 60px 14px rgba(245,196,81,0.35)",
+            transform: "rotate(calc(var(--ring-rotation, 0) * 1deg))",
+            transition: "transform .18s linear",
           }}
-        />
+        >
+          <div
+            aria-hidden="true"
+            className="absolute inset-[6%] rounded-full border border-dashed border-[#e8f3f1]/[0.13]"
+          />
+          <div
+            aria-hidden="true"
+            className="absolute inset-[24%] rounded-full border border-[#e8f3f1]/[0.07]"
+          />
+          <div
+            aria-hidden="true"
+            className="absolute inset-[34%] rounded-full"
+            style={{ background: "radial-gradient(circle, rgba(242,193,78,.16), transparent 70%)" }}
+          />
+
+          <div
+            aria-hidden="true"
+            className="absolute left-1/2 top-1/2 h-[78px] w-[78px] -translate-x-1/2 -translate-y-1/2 rounded-full"
+            style={{
+              background:
+                "radial-gradient(circle at 46% 42%, #fffdf2 6%, #ffe89a 34%, #f5c451 62%, #eba92c 100%)",
+              boxShadow: "0 0 60px 14px rgba(245,196,81,0.35)",
+            }}
+          />
+
+          {/* Step nodes sit exactly on the dashed ring and orbit with it —
+              the counter-rotation keeps each label upright while its
+              position swings around the ring. */}
+          {STEPS.map((step, index) => (
+            <div
+              key={step.title}
+              data-counter-rotate
+              className="absolute w-[42%] max-w-[230px] text-center"
+              style={{
+                top: NODE_POSITIONS[index].top,
+                left: NODE_POSITIONS[index].left,
+                transform: "translate(-50%, -50%) rotate(calc(var(--ring-rotation, 0) * -1deg))",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                className="mx-auto block h-3 w-3 rounded-full"
+                style={{ background: step.dot, boxShadow: step.glow }}
+              />
+              <p className="mt-2 text-[11px] uppercase tracking-[0.16em] text-[#6d807c]">{step.kicker}</p>
+              <p className="mt-1 font-[family-name:var(--font-display)] text-[19px] text-[#e8f3f1]">{step.title}</p>
+              <p className="mt-1 text-[13px] leading-[1.6] text-[#9aada8]">{step.body}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Outside the rotating ring entirely — stays fixed under the sun
+            regardless of scroll rotation, no counter-rotation needed. */}
         <div
-          data-counter-rotate
-          className="absolute left-1/2 top-1/2 mt-14 -translate-x-1/2 translate-y-1/2 text-center"
-          style={{ transform: "translate(-50%, 55px) rotate(calc(var(--ring-rotation, 0) * -1deg))" }}
+          className="absolute left-1/2 -translate-x-1/2 text-center"
+          style={{ top: "calc(50% + 48px)" }}
         >
           <p className="font-[family-name:var(--font-display)] text-[19px] text-[#e8f3f1]">Orbit</p>
           <p className="text-xs text-[#6d807c]">the record keeps itself</p>
         </div>
-
-        {STEPS.map((step, index) => (
-          <div
-            key={step.title}
-            data-counter-rotate
-            className="absolute w-[42%] max-w-[230px] text-center"
-            style={{
-              top: NODE_POSITIONS[index].top,
-              left: NODE_POSITIONS[index].left,
-              transform: "translate(-50%, -50%) rotate(calc(var(--ring-rotation, 0) * -1deg))",
-            }}
-          >
-            <span
-              aria-hidden="true"
-              className="mx-auto block h-3 w-3 rounded-full"
-              style={{ background: step.dot, boxShadow: step.glow }}
-            />
-            <p className="mt-2 text-[11px] uppercase tracking-[0.16em] text-[#6d807c]">{step.kicker}</p>
-            <p className="mt-1 font-[family-name:var(--font-display)] text-[19px] text-[#e8f3f1]">{step.title}</p>
-            <p className="mt-1 text-[13px] leading-[1.6] text-[#9aada8]">{step.body}</p>
-          </div>
-        ))}
       </div>
 
       <ol className="mt-12 space-y-6 lg:hidden">

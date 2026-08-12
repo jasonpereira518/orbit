@@ -8,10 +8,10 @@ export function LandingWaitlist({
   demoMode?: boolean;
 }) {
   return (
-    <section className="landing-reveal relative z-10 mx-auto w-full max-w-6xl overflow-hidden border-t border-[#e8f3f1]/[0.07] px-6 py-20 md:px-10 md:py-24">
+    <section className="landing-reveal relative z-10 mx-auto w-full max-w-6xl overflow-x-hidden border-t border-[#e8f3f1]/[0.07] px-6 py-20 md:px-10 md:py-24">
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute bottom-[-420px] left-1/2 h-[900px] w-[900px] -translate-x-1/2 rounded-full"
+        className="pointer-events-none absolute bottom-[-420px] left-1/2 z-[-1] h-[900px] w-[900px] -translate-x-1/2 rounded-full"
         style={{ background: "radial-gradient(circle, rgba(242,193,78,0.14), transparent 62%)" }}
       />
 
