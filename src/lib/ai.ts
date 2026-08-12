@@ -72,6 +72,8 @@ export const noteParseSchema = z.object({
   confidence: nullConfidence,
   /** ISO date (YYYY-MM-DD) when the notes imply a past event/meeting. */
   interaction_date: nullStr,
+  /** Field names (matching this object's keys) the model was unsure about. */
+  low_confidence_fields: strList,
 });
 
 export type ParsedNote = z.infer<typeof noteParseSchema>;
@@ -151,11 +153,6 @@ const CAPTURE_MAX_OUTPUT_TOKENS = 8192;
 const GEMINI_EMBEDDING_MODEL = "gemini-embedding-001";
 const OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
 
-/** @deprecated Use resolveAiModel */
-export function resolveGeminiModel(model?: string | null) {
-  return resolveAiModel("gemini", model);
-}
-
 type ProviderKeySettings = {
   geminiApiKeyEncrypted?: string | null;
   openaiApiKeyEncrypted?: string | null;
@@ -212,13 +209,6 @@ export function getProviderApiKey(
 
   if (personal) return personal;
   return getEnvProviderKey(provider);
-}
-
-export function hasProviderKey(
-  provider: AiProvider,
-  settings?: ProviderKeySettings | null
-) {
-  return Boolean(getProviderApiKey(provider, settings));
 }
 
 export function usingEnvKey(
@@ -769,6 +759,7 @@ const PERSON_FIELD_SHAPE = `{
   "suggested_next_message": string|null,
   "confidence": 0-1|null,
   "interaction_date": string|null,
+  "low_confidence_fields": string[],
   "source_excerpt": string
 }`;
 
@@ -852,6 +843,7 @@ Rules:
 - Include every key on every person object. Use null (or [] for arrays) when unknown — never omit keys.
 - source_excerpt must be the person-specific slice of the original notes (not the whole dump, and not the shared group text alone).
 - Never put person-only facts in shared_notes. Never put the full dump in every source_excerpt.
+- low_confidence_fields: list the field names (e.g. "company", "role") where you had to guess or infer rather than read directly from the notes. Use [] when every extracted field is directly supported.
 - shared_notes: capture context that applies to MULTIPLE people at once — e.g. "met everyone at AWS Summit afterparty", "group dinner after the panel", "all discussed fundraising". Put the shared text in shared_notes[].text, list the affected people in person_names (exact names matching people[].name; use [] to mean everyone), and set met_at/topics when relevant. Do NOT duplicate that shared text into every source_excerpt.
 - If a fact is only about one person, keep it in that person's fields/source_excerpt — not in shared_notes.
 - If several people share the same event/place, set each person's met_at (and include it on shared_notes too).
@@ -990,6 +982,7 @@ Rules:
 - Extract only facts supported by the notes. Use null / [] when unknown.
 - source_excerpt must be that person's specific slice of the original notes — never the entire dump, never shared-only text alone.
 - Never invent people or facts. Prefer emails/companies from the request when the notes don't contradict them.
+- low_confidence_fields: list field names you had to guess or infer rather than read directly from the notes. Use [] when every extracted field is directly supported.
 - interaction_date: YYYY-MM-DD when known for this person/event; else null.
 - relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.
 - met_at may use shared event place when the person was clearly there.`,
@@ -1027,6 +1020,7 @@ Rules:
         suggested_next_message: found?.suggested_next_message || null,
         confidence: found?.confidence || null,
         interaction_date: found?.interaction_date || defaultDate,
+        low_confidence_fields: found?.low_confidence_fields || [],
         source_excerpt: found?.source_excerpt || "",
       };
 
@@ -1058,49 +1052,6 @@ Rules:
     interaction_date: defaultDate,
     people: detailed,
   };
-}
-
-export async function parseNotesWithAI(
-  userId: string,
-  notes: string
-): Promise<ParsedNote> {
-  const content = await completeJson(userId, {
-    temperature: 0.2,
-    maxOutputTokens: CAPTURE_MAX_OUTPUT_TOKENS,
-    user: notes,
-    system: `You extract structured contact data from networking notes.
-Return strict JSON matching this shape:
-{
-  "name": string|null,
-  "company": string|null,
-  "role": string|null,
-  "location": string|null,
-  "email": string|null,
-  "linkedin_url": string|null,
-  "met_at": string|null,
-  "topics": string[],
-  "action_items": string[],
-  "follow_up_recommendation": string|null,
-  "follow_up_days": number|null,
-  "relationship_score_suggestion": 1-5|null,
-  "tags": string[],
-  "summary": string|null,
-  "key_facts": string[],
-  "opportunities": string[],
-  "shared_interests": string[],
-  "suggested_next_message": string|null,
-  "confidence": 0-1|null,
-  "interaction_date": string|null
-}
-Rules:
-- Extract only information supported by the notes.
-- Use null when unknown. Do not invent facts.
-- Separate facts from guesses; suggestions go in recommendation fields.
-- interaction_date: YYYY-MM-DD when the notes imply a specific past event date; otherwise null.
-- relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.`,
-  });
-
-  return noteParseSchema.parse(JSON.parse(content));
 }
 
 export async function parseMultiPersonNotesWithAI(
@@ -1146,6 +1097,43 @@ export async function createEmbedding(userId: string, text: string) {
   });
   const values = res.embeddings?.[0]?.values;
   if (!values?.length) throw new Error("Empty embedding response");
+  return values;
+}
+
+/** Embed many texts in as few network round trips as possible, preserving input order. */
+export async function createEmbeddingsBatch(
+  userId: string,
+  texts: string[]
+): Promise<number[][]> {
+  if (texts.length === 0) return [];
+  const { backend, apiKey } = await resolveEmbeddingBackend(userId);
+  const inputs = texts.map((text) => text.slice(0, 8000));
+
+  if (backend === "openai") {
+    const client = new OpenAI({ apiKey });
+    const res = await client.embeddings.create({
+      model: OPENAI_EMBEDDING_MODEL,
+      input: inputs,
+    });
+    const values = res.data
+      .slice()
+      .sort((a, b) => a.index - b.index)
+      .map((d) => d.embedding);
+    if (values.length !== inputs.length || values.some((v) => !v?.length)) {
+      throw new Error("Incomplete embedding batch response");
+    }
+    return values;
+  }
+
+  const client = new GoogleGenAI({ apiKey });
+  const res = await client.models.embedContent({
+    model: GEMINI_EMBEDDING_MODEL,
+    contents: inputs,
+  });
+  const values = res.embeddings?.map((e) => e.values ?? []) ?? [];
+  if (values.length !== inputs.length || values.some((v) => !v.length)) {
+    throw new Error("Incomplete embedding batch response");
+  }
   return values;
 }
 

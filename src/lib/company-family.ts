@@ -174,28 +174,3 @@ export function companyFamilyKey(raw: string | null | undefined): string {
   const token = normalized.split(/\s+/).find((t) => t.length >= 3);
   return token || normalized;
 }
-
-/** True when two company labels belong together spatially. */
-export function companiesAreRelated(
-  a: string | null | undefined,
-  b: string | null | undefined
-): boolean {
-  const fa = companyFamilyKey(a);
-  const fb = companyFamilyKey(b);
-  if (!fa || !fb) return false;
-  if (fa === fb) return true;
-
-  const na = stripTrailingInc(
-    normalizeCompanyName(canonicalCompanyClusterName(a) || a || "")
-  );
-  const nb = stripTrailingInc(
-    normalizeCompanyName(canonicalCompanyClusterName(b) || b || "")
-  );
-  if (!na || !nb) return false;
-
-  // Prefix containment: "google" ⊂ "google deepmind"
-  if (na.length >= 4 && nb.length >= 4) {
-    if (na.startsWith(nb) || nb.startsWith(na)) return true;
-  }
-  return false;
-}

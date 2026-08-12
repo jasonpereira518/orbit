@@ -6,10 +6,13 @@ import { formatDistanceToNow } from "date-fns";
 import {
   Bell,
   Check,
+  CheckCircle2,
   Clock,
+  Loader2,
   Sparkles,
   UserRound,
   X,
+  XCircle,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
@@ -29,6 +32,12 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import {
+  dismissBackgroundJob,
+  useActiveBackgroundJobCount,
+  useBackgroundJobs,
+  type BackgroundJob,
+} from "@/lib/background-jobs";
 
 type PanelData = Awaited<ReturnType<typeof listNotificationPanel>>;
 type PanelItem = PanelData["items"][number];
@@ -63,7 +72,10 @@ export function NotificationsPanelButton() {
     if (open) void refresh();
   }, [open, refresh]);
 
+  const jobs = useBackgroundJobs();
+  const activeJobCount = useActiveBackgroundJobCount();
   const dueCount = data?.dueCount ?? 0;
+  const badgeCount = dueCount + activeJobCount;
   const dueItems = data?.items.filter((i) => i.urgency === "due") ?? [];
   const upcomingItems =
     data?.items.filter((i) => i.urgency === "upcoming") ?? [];
@@ -90,16 +102,16 @@ export function NotificationsPanelButton() {
         size="icon"
         className="relative size-10 rounded-full border-border/70 bg-background/90 shadow-md backdrop-blur-md hover:bg-background"
         aria-label={
-          dueCount > 0
-            ? `Open notifications, ${dueCount} due`
+          badgeCount > 0
+            ? `Open notifications, ${badgeCount} due or in progress`
             : "Open notifications"
         }
         onClick={() => setOpen(true)}
       >
         <Bell className="h-4 w-4" />
-        {dueCount > 0 && (
+        {badgeCount > 0 && (
           <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
-            {dueCount > 99 ? "99+" : dueCount}
+            {badgeCount > 99 ? "99+" : badgeCount}
           </span>
         )}
       </Button>
@@ -122,7 +134,7 @@ export function NotificationsPanelButton() {
           <div className="flex-1 overflow-y-auto px-4 py-4">
             {loading && !data ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
-            ) : !data || data.totalCount === 0 ? (
+            ) : (!data || data.totalCount === 0) && jobs.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border/70 px-4 py-10 text-center">
                 <Bell className="mx-auto h-5 w-5 text-muted-foreground" />
                 <p className="mt-3 text-sm font-medium text-primary">
@@ -134,6 +146,12 @@ export function NotificationsPanelButton() {
               </div>
             ) : (
               <div className="space-y-6">
+                <Section title="Tasks" count={jobs.length}>
+                  {jobs.map((job) => (
+                    <JobRow key={job.id} job={job} />
+                  ))}
+                </Section>
+
                 <Section title="Due now" count={dueItems.length}>
                   {dueItems.map((item) => (
                     <NotificationRow
@@ -261,6 +279,84 @@ function Section({
       </div>
       <div className="space-y-2">{children}</div>
     </section>
+  );
+}
+
+function JobRow({ job }: { job: BackgroundJob }) {
+  const determinate = job.total > 0;
+  const pct = determinate ? Math.min(100, Math.round((job.done / job.total) * 100)) : null;
+
+  return (
+    <div className="rounded-xl border border-border/60 bg-card p-3">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+          {job.status === "running" ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+          ) : job.status === "completed" ? (
+            <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
+          ) : job.status === "failed" ? (
+            <XCircle className="h-3.5 w-3.5 text-destructive" />
+          ) : (
+            <XCircle className="h-3.5 w-3.5" />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-primary">
+            {job.status === "running"
+              ? job.cancelling
+                ? "Stopping…"
+                : job.label
+              : job.status === "completed"
+                ? job.resultMessage || `${job.label} — done`
+                : job.status === "failed"
+                  ? job.error || `${job.label} failed`
+                  : job.resultMessage || `${job.label} stopped`}
+          </p>
+          {job.status === "running" && (
+            <div className="mt-1.5 space-y-1">
+              <div className="h-1.5 overflow-hidden rounded-full bg-border/80">
+                <div
+                  className={cn(
+                    "h-full rounded-full bg-primary transition-[width] duration-300 ease-out",
+                    !determinate && "w-1/3 animate-pulse"
+                  )}
+                  style={determinate ? { width: `${pct}%` } : undefined}
+                />
+              </div>
+              {determinate && (
+                <p className="text-xs tabular-nums text-muted-foreground">
+                  {job.done} of {job.total} · {pct}%
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-2.5 flex flex-wrap items-center gap-1">
+        {job.status === "running" && job.onCancel && (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={job.cancelling}
+            onClick={job.onCancel}
+          >
+            <X className="h-3.5 w-3.5" />
+            Stop
+          </Button>
+        )}
+        {job.status !== "running" && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => dismissBackgroundJob(job.id)}
+          >
+            <X className="h-3.5 w-3.5" />
+            Dismiss
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }
 

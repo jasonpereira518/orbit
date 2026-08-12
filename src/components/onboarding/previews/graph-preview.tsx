@@ -59,7 +59,7 @@ export function GraphPreview({ reducedMotion }: PreviewProps) {
       </p>
       <div
         data-tour-hotspot="figure"
-        className="relative aspect-[4/3] overflow-hidden rounded-xl border border-border/60 bg-[radial-gradient(ellipse_at_center,_#1a2030_0%,_#0a0c12_60%,_#05060a_100%)]"
+        className="relative h-[180px] overflow-hidden rounded-xl border border-border/60 bg-[radial-gradient(ellipse_at_center,_#1a2030_0%,_#0a0c12_60%,_#05060a_100%)]"
       >
         <svg
           viewBox="0 0 280 220"

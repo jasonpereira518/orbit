@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS imports (
   import_type text NOT NULL,
   file_name text,
   status text NOT NULL DEFAULT 'pending',
+  total_rows integer,
   rows_processed integer DEFAULT 0,
   contacts_created integer DEFAULT 0,
   contacts_updated integer DEFAULT 0,
@@ -156,6 +157,19 @@ CREATE TABLE IF NOT EXISTS imports (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS import_job_rows (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  import_id uuid NOT NULL REFERENCES imports(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  row_index integer NOT NULL,
+  payload jsonb NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  contact_id uuid,
+  error_message text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS import_job_rows_import_status_idx ON import_job_rows(import_id, status);
 CREATE TABLE IF NOT EXISTS ai_suggestions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -335,6 +349,20 @@ CREATE TABLE IF NOT EXISTS gmail_connections (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS gmail_connections_user_idx ON gmail_connections(user_id);
+CREATE TABLE IF NOT EXISTS outlook_connections (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL UNIQUE,
+  email_address text NOT NULL,
+  access_token_encrypted text NOT NULL,
+  refresh_token_encrypted text,
+  token_expires_at timestamptz,
+  scopes text,
+  status text NOT NULL DEFAULT 'active',
+  last_synced_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS outlook_connections_user_idx ON outlook_connections(user_id);
 `;
 
 async function columnExists(client: PGlite, table: string, column: string) {
@@ -409,6 +437,7 @@ async function migratePglite(client: PGlite) {
     "updated_at",
     "timestamptz NOT NULL DEFAULT now()"
   );
+  await ensureColumn(client, "imports", "total_rows", "integer");
   await ensureColumn(client, "user_settings", "apollo_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "resend_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_account_sid_encrypted", "text");
@@ -460,6 +489,9 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "outreach_messages", "outcome", "text");
   await ensureColumn(client, "outreach_messages", "outcome_notes", "text");
   await ensureColumn(client, "outreach_messages", "replied_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "wizard_offered_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "wizard_step", "text");
+  await ensureColumn(client, "user_settings", "wizard_completed_at", "timestamptz");
 
   try {
     await client.exec(
@@ -574,6 +606,7 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE imports ADD COLUMN IF NOT EXISTS error_message text`,
     `ALTER TABLE imports ADD COLUMN IF NOT EXISTS stats jsonb DEFAULT '{}'`,
     `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,
+    `ALTER TABLE imports ADD COLUMN IF NOT EXISTS total_rows integer`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS apollo_api_key_encrypted text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS resend_api_key_encrypted text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_account_sid_encrypted text`,
@@ -613,6 +646,9 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `CREATE INDEX IF NOT EXISTS ai_suggestions_user_idx ON ai_suggestions(user_id, status)`,
     `CREATE INDEX IF NOT EXISTS embeddings_user_idx ON contact_embeddings(user_id)`,
     `CREATE INDEX IF NOT EXISTS embeddings_contact_idx ON contact_embeddings(contact_id)`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_offered_at timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_step text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_completed_at timestamptz`,
   ];
 
   for (const statement of alters) {

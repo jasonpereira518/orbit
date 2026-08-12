@@ -3,13 +3,27 @@
 import { useSyncExternalStore } from "react";
 import {
   cancelImportSession,
-  confirmLinkedInImport,
   confirmLinkedInMessagesImport,
+  getImportJobStatus,
+  startLinkedInImport,
+  type ImportJobStatus,
 } from "@/actions/imports";
 import {
   IMPORT_BATCH_SIZE,
   type ImportProgressState,
 } from "@/components/imports/import-utils";
+import {
+  finishBackgroundJob,
+  getBackgroundJob,
+  startBackgroundJob,
+  updateBackgroundJob,
+} from "@/lib/background-jobs";
+
+const POLL_INTERVAL_MS = 1500;
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+}
 
 export type ImportJobKind = "connections" | "messages";
 
@@ -43,13 +57,56 @@ function emit() {
   for (const listener of listeners) listener();
 }
 
+function importJobLabel(kind: ImportJobKind) {
+  return kind === "connections"
+    ? "Importing LinkedIn connections"
+    : "Importing LinkedIn messages";
+}
+
+/** Mirrors the singleton import snapshot into the shared multi-job store so it
+ * shows up in the persistent global progress bar and the notification panel. */
+function mirrorToBackgroundJobs(next: ImportJobSnapshot | null) {
+  if (!next) return;
+  const backgroundJobId = `import:${next.id}`;
+
+  if (next.status === "running") {
+    const done = next.progress?.done ?? 0;
+    const total = next.progress?.total ?? 0;
+    const startedAt = next.progress?.startedAt ?? Date.now();
+    if (!getBackgroundJob(backgroundJobId)) {
+      startBackgroundJob({
+        id: backgroundJobId,
+        kind: next.kind === "connections" ? "connections-import" : "messages-import",
+        label: importJobLabel(next.kind),
+        done,
+        total,
+        startedAt,
+        cancelling: next.cancelling,
+        onCancel: cancelImportJob,
+      });
+    } else {
+      updateBackgroundJob(backgroundJobId, { done, total, cancelling: next.cancelling });
+    }
+    return;
+  }
+
+  finishBackgroundJob(backgroundJobId, {
+    status: next.status,
+    resultMessage: next.resultMessage,
+    error: next.error,
+  });
+}
+
 function setSnapshot(next: ImportJobSnapshot | null) {
   snapshot = next;
+  mirrorToBackgroundJobs(next);
   emit();
 }
 
 function onBeforeUnload(event: BeforeUnloadEvent) {
-  if (snapshot?.status === "running") {
+  // Connections imports run server-side and survive navigation/tab close —
+  // only warn for the still-client-driven messages import.
+  if (snapshot?.status === "running" && snapshot.kind !== "connections") {
     event.preventDefault();
     event.returnValue = "";
   }
@@ -75,10 +132,6 @@ export function subscribeImportJob(listener: Listener) {
 export function clearImportJob() {
   if (snapshot?.status === "running") return;
   setSnapshot(null);
-}
-
-export function isImportJobRunning() {
-  return snapshot?.status === "running";
 }
 
 /** Request stop after the current batch; already-imported rows are kept. */
@@ -175,6 +228,57 @@ async function runBatches(
   return { importId, done, cancelled: false };
 }
 
+type PollOutcome =
+  | { outcome: "stale" }
+  | { outcome: "cancelled" }
+  | { outcome: "done"; status: ImportJobStatus };
+
+/** Polls a server-owned import job's status until it leaves "processing"/"pending". */
+async function pollLinkedInImportJob(
+  jobId: string,
+  importId: string,
+  label: string,
+  startedAt: number
+): Promise<PollOutcome> {
+  while (true) {
+    if (snapshot?.id !== jobId) return { outcome: "stale" };
+
+    let status: ImportJobStatus;
+    try {
+      status = await getImportJobStatus(importId);
+    } catch {
+      await sleep(POLL_INTERVAL_MS);
+      continue;
+    }
+
+    if (status.status !== "processing" && status.status !== "pending") {
+      return { outcome: "done", status };
+    }
+
+    if (snapshot?.id !== jobId) return { outcome: "stale" };
+
+    setSnapshot({
+      id: jobId,
+      kind: "connections",
+      status: "running",
+      cancelling: isCancelRequested(jobId),
+      progress: {
+        done: status.rowsProcessed,
+        total: status.totalRows,
+        label,
+        startedAt,
+      },
+    });
+
+    if (isCancelRequested(jobId)) {
+      await markSessionCancelled(importId);
+      return { outcome: "cancelled" };
+    }
+
+    await sleep(POLL_INTERVAL_MS);
+  }
+}
+
 /**
  * Starts a background LinkedIn import that continues even if the Imports
  * page unmounts (SPA navigation). Completes with a toast via ImportJobWatcher.
@@ -194,36 +298,55 @@ export function startImportJob(input: ImportJobInput) {
   void (async () => {
     try {
       if (input.kind === "connections") {
-        let contactsCreated = 0;
-        let contactsUpdated = 0;
-        const result = await runBatches(
-          input.ids,
-          label,
-          jobId,
-          "connections",
-          async (chunk, opts) => {
-            const res = await confirmLinkedInImport(
-              input.csvText,
-              input.fileName,
-              chunk,
-              opts
-            );
-            contactsCreated = res.contactsCreated;
-            contactsUpdated = res.contactsUpdated;
-            return res;
-          }
+        const startedAt = Date.now();
+        const { importId, totalRows } = await startLinkedInImport(
+          input.csvText,
+          input.fileName,
+          input.ids
         );
-        if (snapshot?.id !== jobId) return;
 
-        if (result.cancelled) {
-          await markSessionCancelled(result.importId);
+        if (snapshot?.id !== jobId) return;
+        setSnapshot({
+          id: jobId,
+          kind: "connections",
+          status: "running",
+          progress: { done: 0, total: totalRows, label, startedAt },
+        });
+
+        const result = await pollLinkedInImportJob(jobId, importId, label, startedAt);
+        if (result.outcome === "stale") return;
+
+        if (result.outcome === "cancelled") {
           cancelJobId = null;
           setSnapshot({
             id: jobId,
             kind: "connections",
             status: "cancelled",
             progress: null,
-            resultMessage: `Import stopped. ${result.done} of ${total} ${label} kept.`,
+            resultMessage: `Import stopped.`,
+          });
+          return;
+        }
+
+        const status = result.status;
+        if (status.status === "failed") {
+          setSnapshot({
+            id: jobId,
+            kind: "connections",
+            status: "failed",
+            progress: null,
+            error: status.errorMessage || "Import failed",
+          });
+          return;
+        }
+
+        if (status.status === "cancelled") {
+          setSnapshot({
+            id: jobId,
+            kind: "connections",
+            status: "cancelled",
+            progress: null,
+            resultMessage: `Import stopped. ${status.rowsProcessed} of ${status.totalRows} ${label} kept.`,
           });
           return;
         }
@@ -233,7 +356,7 @@ export function startImportJob(input: ImportJobInput) {
           kind: "connections",
           status: "completed",
           progress: null,
-          resultMessage: `Imported: ${contactsCreated} created, ${contactsUpdated} updated`,
+          resultMessage: `Imported: ${status.contactsCreated} created, ${status.contactsUpdated} updated`,
         });
         return;
       }

@@ -11,10 +11,6 @@ export class UnauthorizedError extends Error {
   }
 }
 
-export function isUnauthorizedError(err: unknown): err is UnauthorizedError {
-  return err instanceof UnauthorizedError;
-}
-
 export function isClerkConfigured() {
   return Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 }

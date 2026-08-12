@@ -9,6 +9,7 @@ import { OrbitLogo } from "@/components/orbit-logo";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
 import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
 import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
+import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar";
 import { ThemeSync } from "@/components/theme-sync";
 import { cn } from "@/lib/utils";
 import type { ThemePreference } from "@/lib/theme";
@@ -62,6 +63,7 @@ export function AppShell({
       <ThemeSync theme={theme} />
       <DueNotificationsWatcher />
       <ImportJobWatcher />
+      <GlobalJobProgressBar />
       <div className="sticky top-0 z-40 hidden h-dvh shrink-0 p-3 md:block lg:p-4">
         <AppSidebar pathname={pathname} clerkOn={clerkOn} demoMode={demoMode} />
       </div>
