@@ -28,6 +28,7 @@ import {
   completeReminder,
   generateDueFollowUps,
   getDashboardData,
+  maybeRefreshOutreachSuggestions,
   snoozeReminder,
 } from "@/lib/reminders";
 
@@ -43,9 +44,12 @@ function revalidateReminderPaths(contactId?: string | null) {
 
 export async function fetchDashboard() {
   const userId = await requireUserId();
-  const profile = await getCurrentUserProfile();
-  // Calendar sync can be slow; don't block the dashboard paint.
+  // Calendar sync and the suggestion rebuild are slow; run both after the
+  // response instead of on the dashboard's critical path. Suggestions are
+  // stale-while-revalidate: this load renders whatever exists, the next
+  // load sees the refresh (30-min TTL inside maybeRefresh…).
   after(() => {
+    void maybeRefreshOutreachSuggestions(userId).catch(() => {});
     void import("@/lib/calendar-sync")
       .then(({ syncDueCalendarSubscriptions }) =>
         syncDueCalendarSubscriptions(userId)
@@ -53,7 +57,11 @@ export async function fetchDashboard() {
       .catch(() => {});
   });
   const data = await getDashboardData(userId, {
-    userName: profile?.name || "You",
+    // Clerk profile fetch runs concurrently with the DB work; resolved at
+    // its single use site (graphPreview.summary.userName).
+    userName: getCurrentUserProfile()
+      .then((p) => p?.name || undefined)
+      .catch(() => undefined),
   });
 
   // Reuse the contact rows already loaded for the dashboard instead of a
@@ -81,7 +89,7 @@ export async function fetchDashboard() {
           }
         ).contactTags ??
         (Array.isArray((c as { tags?: string[] }).tags)
-          ? ((c as { tags: string[] }).tags || []).map((name) => ({
+          ? ((c as { tags?: string[] }).tags || []).map((name) => ({
               tag: { name },
             }))
           : []),

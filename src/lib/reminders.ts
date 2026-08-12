@@ -290,7 +290,7 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
 
 const SUGGESTION_REFRESH_TTL_MS = 30 * 60 * 1000;
 
-async function maybeRefreshOutreachSuggestions(userId: string) {
+export async function maybeRefreshOutreachSuggestions(userId: string) {
   const db = await getDb();
   const latest = await db.query.aiSuggestions.findFirst({
     where: and(
@@ -312,10 +312,11 @@ async function maybeRefreshOutreachSuggestions(userId: string) {
 
 export async function getDashboardData(
   userId: string,
-  options?: { userName?: string }
+  // userName may be a promise so the Clerk profile fetch can run concurrently
+  // with the DB queries below (its only consumer is graphPreview.summary).
+  options?: { userName?: string | Promise<string | undefined> }
 ) {
   const db = await getDb();
-  await maybeRefreshOutreachSuggestions(userId);
 
   const [allContactRows, pendingReminders, suggestions, goals, goalTexts] =
     await Promise.all([
@@ -399,7 +400,7 @@ export async function getDashboardData(
     };
   });
 
-  const userName = options?.userName || "You";
+  const userName = (await options?.userName) || "You";
 
   const { clusters: builtClusters } = buildConstellationClusters(graphContacts);
   const clusters = toNamedGraphClusters(builtClusters);
