@@ -1,8 +1,8 @@
-import { LandingHero } from "@/components/landing/landing-hero";
+import { LandingPage } from "@/components/landing/landing-page";
 import { isClerkConfigured, isDemoMode } from "@/lib/auth";
 
 export default async function MarketingPage() {
   return (
-    <LandingHero clerkOn={isClerkConfigured()} demoMode={isDemoMode()} />
+    <LandingPage clerkOn={isClerkConfigured()} demoMode={isDemoMode()} />
   );
 }
