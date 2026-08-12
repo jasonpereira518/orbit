@@ -3,6 +3,7 @@ import { LandingHero } from "@/components/landing/landing-hero";
 import { LandingFeatures } from "@/components/landing/landing-features";
 import { LandingHowItWorks } from "@/components/landing/landing-how-it-works";
 import { LandingProof } from "@/components/landing/landing-proof";
+import { LandingPricingCta } from "@/components/landing/landing-pricing-cta";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
 
 export function LandingPage({
@@ -20,6 +21,7 @@ export function LandingPage({
       <LandingFeatures />
       <LandingHowItWorks />
       <LandingProof />
+      <LandingPricingCta clerkOn={clerkOn} demoMode={demoMode} />
     </div>
   );
 }
