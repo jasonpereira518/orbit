@@ -13,9 +13,8 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { AnimatePresence, motion } from "motion/react";
 import { CalendarClock, Trash2 } from "lucide-react";
-import { DUR, EASE_HOUSE } from "@/lib/motion";
+import { DUR_MS } from "@/lib/motion";
 import { toast } from "@/lib/toast";
 import { deleteContact } from "@/actions/contacts";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
@@ -149,17 +148,26 @@ export function ContactsList({
   initialContacts: ContactListItem[];
 }) {
   const [contacts, setContacts] = useState(initialContacts);
+  const [exitingId, setExitingId] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [activeLetter, setActiveLetter] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const router = useRouter();
+  const exitTimer = useRef<number | null>(null);
   const serverSignature = initialContacts
     .map((c) => `${c.id}:${c.nextFollowUpAt ?? ""}:${c.profileImageUrl ?? ""}`)
     .join(",");
 
   useEffect(() => {
     setContacts(initialContacts);
+    setExitingId(null);
   }, [serverSignature, initialContacts]);
+
+  useEffect(() => {
+    return () => {
+      if (exitTimer.current) window.clearTimeout(exitTimer.current);
+    };
+  }, []);
 
   useEffect(() => {
     function onAvatarsUpdated(event: Event) {
@@ -232,22 +240,31 @@ export function ContactsList({
     const id = confirmId;
     const name = confirmContact?.fullName ?? "Contact";
     setConfirmId(null);
-    // Remove immediately — AnimatePresence animates the row out and the
-    // remaining rows FLIP up on transforms (no layout-property animation).
-    setContacts((prev) => prev.filter((c) => c.id !== id));
+    // One exiting row collapses via CSS (grid-rows + opacity + slide). The
+    // per-frame layout cost is bounded because rows below the viewport are
+    // content-visibility skipped. (A motion/AnimatePresence FLIP here made
+    // every React commit reconcile thousands of projection nodes — unusable
+    // at large list sizes.)
+    setExitingId(id);
 
-    start(async () => {
-      try {
-        await deleteContact(id);
-        toast.success(`${name} deleted`);
-        router.refresh();
-      } catch {
-        toast.error("Could not delete contact");
-        // Restore server list if delete failed.
-        setContacts(initialContacts);
-        router.refresh();
-      }
-    });
+    exitTimer.current = window.setTimeout(() => {
+      setContacts((prev) => prev.filter((c) => c.id !== id));
+      setExitingId((current) => (current === id ? null : current));
+      exitTimer.current = null;
+
+      start(async () => {
+        try {
+          await deleteContact(id);
+          toast.success(`${name} deleted`);
+          router.refresh();
+        } catch {
+          toast.error("Could not delete contact");
+          // Restore server list if delete failed.
+          setContacts(initialContacts);
+          router.refresh();
+        }
+      });
+    }, DUR_MS.slow);
   }
 
   if (contacts.length === 0) {
@@ -281,8 +298,8 @@ export function ContactsList({
                 </p>
               </div>
               <ul className="divide-y divide-border/60">
-                <AnimatePresence initial={false} mode="popLayout">
                 {section.contacts.map((c) => {
+                  const exiting = exitingId === c.id;
                   const overdue = isOverdue(c.nextFollowUpAt);
                   const scheduledLabel = dueLabel(c.nextFollowUpAt);
                   const overdueText = overdueFollowUpLabel(c.nextFollowUpAt);
@@ -296,6 +313,7 @@ export function ContactsList({
                     .join(" · ");
 
                   function openContact() {
+                    if (exiting) return;
                     router.push(`/contacts/${c.id}`);
                   }
 
@@ -307,15 +325,8 @@ export function ContactsList({
                   }
 
                   return (
-                    <motion.li
+                    <li
                       key={c.id}
-                      layout="position"
-                      exit={{ opacity: 0, x: -32 }}
-                      transition={{
-                        duration: DUR.base,
-                        ease: EASE_HOUSE,
-                        layout: { duration: DUR.slow, ease: EASE_HOUSE },
-                      }}
                       role="link"
                       tabIndex={0}
                       onClick={openContact}
@@ -324,12 +335,21 @@ export function ContactsList({
                         // content-visibility skips layout/paint for offscreen
                         // rows — the browser remembers real heights after
                         // first render (`auto` keyword), 74px is the estimate.
-                        "contact-row block cursor-pointer [contain-intrinsic-size:auto_74px] [content-visibility:auto]",
-                        "outline-none focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset"
+                        "contact-row grid cursor-pointer [contain-intrinsic-size:auto_74px] [content-visibility:auto]",
+                        "transition-[grid-template-rows,opacity] duration-slow ease-house",
+                        "outline-none focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset",
+                        exiting
+                          ? "grid-rows-[0fr] opacity-0"
+                          : "grid-rows-[1fr] opacity-100"
                       )}
                     >
-                      <div>
-                        <div className="flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-muted/40 sm:px-5">
+                      <div className="overflow-hidden">
+                        <div
+                          className={cn(
+                            "flex items-center gap-3 px-4 py-3.5 transition-[background-color,translate] duration-slow ease-house hover:bg-muted/40 sm:px-5",
+                            exiting && "-translate-x-8"
+                          )}
+                        >
                           <ContactAvatarPreview contact={c}>
                             <ContactAvatar
                               contactId={c.id}
@@ -424,16 +444,15 @@ export function ContactsList({
 
                             <DeleteRowButton
                               name={c.fullName}
-                              disabled={pending}
+                              disabled={pending || exiting}
                               onClick={() => requestDelete(c.id)}
                             />
                           </div>
                         </div>
                       </div>
-                    </motion.li>
+                    </li>
                   );
                 })}
-                </AnimatePresence>
               </ul>
             </li>
           ))}
