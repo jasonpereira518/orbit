@@ -15,7 +15,10 @@ export function LandingPage({
   demoMode?: boolean;
 }) {
   return (
-    <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#05070f] text-[#e8f3f1]">
+    <div
+      className="relative flex min-h-screen flex-col overflow-hidden bg-[#05070f] text-[#e8f3f1]"
+      style={{ backgroundImage: "var(--landing-page-gradient)" }}
+    >
       <LandingStarfield />
       <LandingHeader clerkOn={clerkOn} demoMode={demoMode} />
       <main>
