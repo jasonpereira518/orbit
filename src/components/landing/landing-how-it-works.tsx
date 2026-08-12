@@ -121,7 +121,10 @@ export function LandingHowItWorks() {
 
           {/* Step nodes sit exactly on the dashed ring and orbit with it —
               the counter-rotation keeps each label upright while its
-              position swings around the ring. */}
+              position swings around the ring. The anchor centers the DOT
+              itself on the ring (not the whole text block, which would
+              float the dot away from the line), so the -6px is half the
+              dot's own h-3 (12px) diameter. */}
           {STEPS.map((step, index) => (
             <div
               key={step.title}
@@ -130,7 +133,7 @@ export function LandingHowItWorks() {
               style={{
                 top: NODE_POSITIONS[index].top,
                 left: NODE_POSITIONS[index].left,
-                transform: "translate(-50%, -50%) rotate(calc(var(--ring-rotation, 0) * -1deg))",
+                transform: "translate(-50%, -6px) rotate(calc(var(--ring-rotation, 0) * -1deg))",
               }}
             >
               <span
@@ -175,7 +178,11 @@ export function LandingHowItWorks() {
         ))}
       </ol>
 
-      <p className="mt-8 text-center text-sm text-[#6d807c]">
+      {/* lg:mt-20 clears the "Send outreach" node's text, which flows
+          downward from its dot near the ring's own bottom edge and would
+          otherwise overlap this caption; mt-8 still applies below lg,
+          where the ring is replaced by the plain vertical step list. */}
+      <p className="mt-8 text-center text-sm text-[#6d807c] lg:mt-20">
         The loop keeps running whether or not you open the app.
       </p>
     </section>
