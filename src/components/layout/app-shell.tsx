@@ -68,7 +68,10 @@ export function AppShell({
         <AvatarBackfill />
         <DueNotificationsWatcher />
         <ImportJobWatcher />
-        <div className="sticky top-0 z-40 hidden h-dvh shrink-0 p-3 md:block lg:p-4">
+        <div
+          className="sticky top-0 z-40 hidden h-dvh shrink-0 p-3 md:block lg:p-4"
+          style={{ viewTransitionName: "app-sidebar" }}
+        >
           <AppSidebar pathname={pathname} clerkOn={clerkOn} demoMode={demoMode} />
         </div>
         <main
@@ -79,7 +82,10 @@ export function AppShell({
               : "min-h-screen overflow-auto"
           )}
         >
-          <header className="z-30 flex shrink-0 items-center justify-between border-b border-border/70 bg-background/95 px-4 py-3 backdrop-blur md:hidden">
+          <header
+            className="z-30 flex shrink-0 items-center justify-between border-b border-border/70 bg-background/95 px-4 py-3 backdrop-blur md:hidden"
+            style={{ viewTransitionName: "app-mobile-header" }}
+          >
             <Link href="/" className="flex items-center gap-2.5" title="Back to landing page">
               <OrbitLogo size="md" />
               <span className="font-[family-name:var(--font-display)] text-lg leading-none text-primary">

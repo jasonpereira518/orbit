@@ -718,21 +718,82 @@
   user-select: none;
 }
 
-/* ── Page transitions ── */
+/* ── View Transitions (route navigation) ── */
 
-@keyframes page-transition-in {
+@keyframes vt-fade {
   from {
     opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
   }
 }
 
-.page-transition {
-  animation: page-transition-in 0.28s var(--ease-house) both;
+/* Exit fast, enter on the house curve once the exit has cleared. */
+::view-transition-old(.page-exit) {
+  animation: var(--transition-duration-fast) ease-in both vt-fade reverse;
+}
+
+::view-transition-new(.page-enter) {
+  animation: var(--transition-duration-base) var(--ease-house)
+    var(--transition-duration-fast) both vt-fade;
+}
+
+/* Contacts ↔ recruiters directional slide (typed navigations). */
+@keyframes people-slide {
+  from {
+    translate: var(--people-offset) 0;
+  }
+  to {
+    translate: 0 0;
+  }
+}
+
+::view-transition-old(.people-fwd) {
+  --people-offset: -36px;
+  animation:
+    var(--transition-duration-fast) ease-in both vt-fade reverse,
+    var(--transition-duration-slow) var(--ease-house) both people-slide reverse;
+}
+
+::view-transition-new(.people-fwd) {
+  --people-offset: 36px;
+  animation:
+    var(--transition-duration-base) ease-out var(--transition-duration-fast)
+      both vt-fade,
+    var(--transition-duration-slow) var(--ease-house) both people-slide;
+}
+
+::view-transition-old(.people-back) {
+  --people-offset: 36px;
+  animation:
+    var(--transition-duration-fast) ease-in both vt-fade reverse,
+    var(--transition-duration-slow) var(--ease-house) both people-slide reverse;
+}
+
+::view-transition-new(.people-back) {
+  --people-offset: -36px;
+  animation:
+    var(--transition-duration-base) ease-out var(--transition-duration-fast)
+      both vt-fade,
+    var(--transition-duration-slow) var(--ease-house) both people-slide;
+}
+
+/* Persistent chrome stays anchored while page content transitions. */
+::view-transition-group(app-sidebar),
+::view-transition-group(app-mobile-header),
+::view-transition-group(app-mobile-nav) {
+  animation: none;
+  z-index: 60;
+}
+
+::view-transition-old(app-sidebar),
+::view-transition-old(app-mobile-header),
+::view-transition-old(app-mobile-nav) {
+  display: none;
+}
+
+::view-transition-new(app-sidebar),
+::view-transition-new(app-mobile-header),
+::view-transition-new(app-mobile-nav) {
+  animation: none;
 }
 
 /* ── Reduced motion: one global clamp ──
