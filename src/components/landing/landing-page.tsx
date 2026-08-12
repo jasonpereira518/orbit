@@ -1,5 +1,6 @@
 import { LandingHeader } from "@/components/landing/landing-header";
 import { LandingHero } from "@/components/landing/landing-hero";
+import { LandingScrollGate } from "@/components/landing/landing-scroll-gate";
 import { LandingFeatures } from "@/components/landing/landing-features";
 import { LandingHowItWorks } from "@/components/landing/landing-how-it-works";
 import { LandingProof } from "@/components/landing/landing-proof";
@@ -23,6 +24,7 @@ export function LandingPage({
       <LandingHeader clerkOn={clerkOn} demoMode={demoMode} />
       <main>
         <LandingHero clerkOn={clerkOn} demoMode={demoMode} />
+        <LandingScrollGate targetId="features" />
         <LandingFeatures />
         <LandingHowItWorks />
         <LandingProof />

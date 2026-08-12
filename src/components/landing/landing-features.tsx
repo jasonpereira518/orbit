@@ -101,7 +101,10 @@ const VISUALS = [ContactsVisual, OutreachVisual, ReplyRateVisual];
 
 export function LandingFeatures() {
   return (
-    <section className="landing-reveal relative z-10 mx-auto w-full max-w-6xl border-t border-[#e8f3f1]/[0.07] px-6 py-20 md:px-10 md:py-24">
+    <section
+      id="features"
+      className="landing-reveal relative z-10 mx-auto w-full max-w-6xl border-t border-[#e8f3f1]/[0.07] px-6 py-20 md:px-10 md:py-24"
+    >
       <p className="text-xs uppercase tracking-[0.18em] text-[#6d807c]">How it helps your search</p>
       <h2 className="mt-3 max-w-[16ch] font-[family-name:var(--font-display)] text-[clamp(30px,4.4vw,50px)] font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]">
         Every person who could help you, remembered.
