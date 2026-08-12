@@ -40,6 +40,9 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-landing-accent: #f2c14e;
+  --color-landing-button-surface: #eef7f4;
+  --color-landing-button-label: #0f2e28;
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -79,6 +82,19 @@
   --sidebar-accent-foreground: #0f3d3e;
   --sidebar-border: #e4e7e1;
   --sidebar-ring: #0f3d3e;
+  /* Percentage-sized radial gradients scale off the *whole page's*
+     height (this wrapper spans every section), so a single one
+     collapses to flat background almost immediately once content
+     grows past one screen. Using fixed/vh-based sizes and stacking a
+     few glows at different scroll depths keeps the ambient light
+     visible the whole way down instead of fading out after the hero. */
+  --landing-page-gradient: radial-gradient(
+      1100px 900px at 64% 220px,
+      #111c33 0%,
+      transparent 72%
+    ),
+    radial-gradient(1000px 850px at 30% 110vh, #101a30 0%, transparent 72%),
+    radial-gradient(1000px 850px at 70% 190vh, #0d1626 0%, transparent 72%);
   color-scheme: light;
 }
 
@@ -577,6 +593,44 @@
   animation: none;
 }
 
+/* ── Landing glass surfaces ── */
+
+.landing-glass {
+  border: 1px solid rgba(232, 243, 241, 0.08);
+  background: linear-gradient(
+    180deg,
+    rgba(232, 243, 241, 0.045) 0%,
+    rgba(232, 243, 241, 0.015) 100%
+  );
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+@keyframes landing-reveal-in {
+  from {
+    opacity: 0;
+    transform: translateY(22px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.landing-reveal {
+  animation: landing-reveal-in 0.8s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  animation-timeline: view();
+  animation-range: entry 8% cover 30%;
+}
+
+@supports not (animation-timeline: view()) {
+  .landing-reveal {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* ── Landing hero ── */
 
 @keyframes landing-fade {
@@ -742,6 +796,7 @@
   .landing-fade,
   .landing-solar-enter,
   .landing-credit-shimmer,
+  .landing-reveal,
   .page-transition {
     animation: none !important;
     transition: none !important;
@@ -749,6 +804,7 @@
 
   .landing-fade,
   .landing-solar-enter,
+  .landing-reveal,
   .page-transition {
     opacity: 1;
     transform: none;

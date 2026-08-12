@@ -9,6 +9,8 @@ type Star = {
   a: number;
   twinkle: number;
   phase: number;
+  gold: boolean;
+  bloom: boolean;
 };
 
 type ShootingStar = {
@@ -47,23 +49,29 @@ export function Starfield() {
 
     function resize() {
       dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const parent = canvas!.parentElement;
       width = window.innerWidth;
-      height = window.innerHeight;
+      height = parent ? parent.scrollHeight : window.innerHeight;
       canvas!.width = Math.floor(width * dpr);
       canvas!.height = Math.floor(height * dpr);
       canvas!.style.width = `${width}px`;
       canvas!.style.height = `${height}px`;
       ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      const count = Math.floor((width * height) / 9000);
-      stars = Array.from({ length: Math.min(count, 220) }, () => ({
-        x: Math.random() * width,
-        y: Math.random() * height,
-        r: Math.random() * 1.4 + 0.3,
-        a: Math.random() * 0.55 + 0.25,
-        twinkle: Math.random() * 0.008 + 0.004,
-        phase: Math.random() * Math.PI * 2,
-      }));
+      const count = Math.floor((width * height) / 2400);
+      stars = Array.from({ length: Math.min(count, 1400) }, () => {
+        const gold = Math.random() < 0.04;
+        return {
+          x: Math.random() * width,
+          y: Math.random() * height,
+          r: Math.random() * 1.4 + 0.3,
+          a: Math.random() * 0.55 + 0.25,
+          twinkle: Math.random() * 0.008 + 0.004,
+          phase: Math.random() * Math.PI * 2,
+          gold,
+          bloom: gold && Math.random() < 0.35,
+        };
+      });
     }
 
     function spawnShooter(now: number) {
@@ -76,49 +84,31 @@ export function Starfield() {
         maxLife: Math.random() * 28 + 22,
         angle: Math.PI / 4 + (Math.random() - 0.5) * 0.25,
       });
-      nextShot = now + Math.random() * 2800 + 2200;
+      nextShot = now + Math.random() * 9000 + 5000;
     }
 
     function draw(now: number) {
       ctx!.clearRect(0, 0, width, height);
 
-      // Deep space base + subtle nebula wash
-      const g = ctx!.createRadialGradient(
-        width * 0.5,
-        height * 0.35,
-        0,
-        width * 0.5,
-        height * 0.5,
-        Math.max(width, height) * 0.75
-      );
-      g.addColorStop(0, "#12182a");
-      g.addColorStop(0.55, "#0a0d18");
-      g.addColorStop(1, "#05070f");
-      ctx!.fillStyle = g;
-      ctx!.fillRect(0, 0, width, height);
-
-      const teal = ctx!.createRadialGradient(
-        width * 0.15,
-        height * 0.85,
-        0,
-        width * 0.15,
-        height * 0.85,
-        width * 0.45
-      );
-      teal.addColorStop(0, "rgba(15, 61, 62, 0.28)");
-      teal.addColorStop(1, "rgba(15, 61, 62, 0)");
-      ctx!.fillStyle = teal;
-      ctx!.fillRect(0, 0, width, height);
-
       for (const s of stars) {
         const alpha = reduced
           ? s.a
           : s.a * (0.65 + 0.35 * Math.sin(now * s.twinkle + s.phase));
+        const color = s.gold
+          ? `rgba(242, 193, 78, ${alpha})`
+          : `rgba(232, 243, 241, ${alpha})`;
         ctx!.beginPath();
-        ctx!.fillStyle = `rgba(232, 243, 241, ${alpha})`;
+        ctx!.fillStyle = color;
+        if (s.bloom) {
+          ctx!.shadowBlur = 6;
+          ctx!.shadowColor = s.gold ? "rgba(242, 193, 78, 0.8)" : "rgba(232, 243, 241, 0.6)";
+        } else {
+          ctx!.shadowBlur = 0;
+        }
         ctx!.arc(s.x, s.y, s.r, 0, Math.PI * 2);
         ctx!.fill();
       }
+      ctx!.shadowBlur = 0;
 
       if (!reduced) {
         if (now >= nextShot && shooters.length < 2) {
@@ -171,8 +161,16 @@ export function Starfield() {
     draw(performance.now());
 
     window.addEventListener("resize", resize);
+
+    let resizeObserver: ResizeObserver | undefined;
+    if (canvas.parentElement && typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => resize());
+      resizeObserver.observe(canvas.parentElement);
+    }
+
     return () => {
       window.removeEventListener("resize", resize);
+      resizeObserver?.disconnect();
       cancelAnimationFrame(raf);
     };
   }, []);

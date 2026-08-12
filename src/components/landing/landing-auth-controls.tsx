@@ -17,10 +17,12 @@ export function LandingAuthControls({
   clerkOn,
   demoMode,
   variant,
+  showUserButton = true,
 }: {
   clerkOn: boolean;
   demoMode: boolean;
   variant: "header" | "hero";
+  showUserButton?: boolean;
 }) {
   const primaryHref = clerkOn ? "/sign-up" : demoMode ? "/dashboard" : "/sign-in";
   const secondaryHref = clerkOn ? "/sign-in" : demoMode ? "/dashboard" : "/sign-in";
@@ -70,7 +72,7 @@ export function LandingAuthControls({
         <Link href="/dashboard" className={solid}>
           Open app
         </Link>
-        <UserButton appearance={clerkAppearance} />
+        {showUserButton && <UserButton appearance={clerkAppearance} />}
       </Show>
     </div>
   );
