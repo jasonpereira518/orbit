@@ -10,7 +10,8 @@
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:setup": "tsx scripts/setup-db.ts",
-    "db:seed": "tsx scripts/seed-demo.ts"
+    "db:seed": "tsx scripts/seed-demo.ts",
+    "db:seed:graph": "tsx scripts/seed-graph-fixture.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.3",

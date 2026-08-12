@@ -373,12 +373,22 @@
   }
 }
 
-@keyframes constellation-ring-spin {
+@keyframes constellation-armglow-breathe {
+  0%,
+  100% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes constellation-ray-in {
   from {
-    transform: rotate(0deg);
+    opacity: 0;
   }
   to {
-    transform: rotate(360deg);
+    opacity: 1;
   }
 }
 
@@ -451,9 +461,12 @@
   animation: constellation-corona 2.6s ease-in-out infinite;
 }
 
-.constellation-rings-spin {
-  animation: constellation-ring-spin 180s linear infinite;
-  transform-origin: center;
+.constellation-arm-glow {
+  animation: constellation-armglow-breathe 11s ease-in-out infinite;
+}
+
+.constellation-ray path {
+  animation: constellation-ray-in 0.24s ease-out both;
 }
 
 .constellation-spotlight-ring {
@@ -732,7 +745,8 @@
   .constellation-corona,
   .constellation-corona-outer,
   .constellation-sun-core,
-  .constellation-rings-spin,
+  .constellation-arm-glow,
+  .constellation-ray path,
   .constellation-spotlight-ring,
   .constellation-planet-enter,
   .constellation-nebula,
