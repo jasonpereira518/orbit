@@ -76,10 +76,6 @@ export async function getApolloApiKey(userId: string): Promise<string | null> {
   return decryptKey(settings?.apolloApiKeyEncrypted) || process.env.APOLLO_API_KEY || null;
 }
 
-export function hasApolloKey(userId: string, settings?: { apolloApiKeyEncrypted?: string | null }) {
-  return Boolean(decryptKey(settings?.apolloApiKeyEncrypted) || process.env.APOLLO_API_KEY);
-}
-
 export async function userHasApolloKey(userId: string): Promise<boolean> {
   return Boolean(await getApolloApiKey(userId));
 }

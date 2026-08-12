@@ -24,7 +24,6 @@ import { runLinkedInImportJob } from "@/lib/import-job-processor";
 import {
   parseConnectedOn,
   parseLinkedInConnectionsCsv,
-  type LinkedInConnectionRow,
 } from "@/lib/linkedin-connections";
 import {
   parseLinkedInMessagesCsv,
@@ -41,8 +40,6 @@ import {
   type ParsedCalendarEvent,
 } from "@/lib/calendar-import";
 import { upsertContactEmbedding } from "@/lib/search";
-
-export type LinkedInRow = LinkedInConnectionRow;
 
 function mergeStats(
   prev: ImportStats | null | undefined,
@@ -265,23 +262,6 @@ async function resolveImportRow(
     })
     .returning();
   return created;
-}
-
-export async function failImportSession(
-  importId: string,
-  errorMessage: string
-) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  await db
-    .update(imports)
-    .set({
-      status: "failed",
-      errorMessage: errorMessage.slice(0, 500),
-      updatedAt: new Date(),
-    })
-    .where(and(eq(imports.id, importId), eq(imports.userId, userId)));
-  revalidatePath("/imports");
 }
 
 /** Stop a processing import; rows already written are kept. */

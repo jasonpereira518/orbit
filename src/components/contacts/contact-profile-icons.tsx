@@ -1,18 +1,7 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
-import {
-  Building2,
-  Globe,
-  GraduationCap,
-  Mail,
-  Phone,
-} from "lucide-react";
-import {
-  orgLogoUrl,
-  resolveCompanyDomain,
-  resolveSchoolDomain,
-} from "@/lib/org-logos";
+import { type ReactNode } from "react";
+import { Globe, Mail, Phone } from "lucide-react";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { cn } from "@/lib/utils";
 import {
@@ -68,122 +57,6 @@ function ChannelIcon({
       </TooltipTrigger>
       <TooltipContent side="bottom">{label}</TooltipContent>
     </Tooltip>
-  );
-}
-
-/** Square company / school logo that links to the org website. */
-function OrgLogoTile({
-  domain,
-  label,
-  href,
-  fallback,
-}: {
-  domain: string | null;
-  label: string;
-  href: string | null;
-  fallback: ReactNode;
-}) {
-  const [failed, setFailed] = useState(false);
-  const showImg = Boolean(domain) && !failed;
-  const classes = cn(
-    "inline-flex size-11 items-center justify-center rounded-md border border-border/70 bg-card p-1.5 text-muted-foreground shadow-none transition-colors",
-    "hover:border-border hover:bg-muted/50 hover:text-foreground",
-    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
-    !href && "cursor-default"
-  );
-
-  const content = showImg ? (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={orgLogoUrl(domain!)}
-      alt=""
-      width={32}
-      height={32}
-      className="size-8 rounded-sm object-contain"
-      onError={() => setFailed(true)}
-    />
-  ) : (
-    fallback
-  );
-
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          href ? (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={`Open ${label} website`}
-              title={label}
-              className={classes}
-            />
-          ) : (
-            <span aria-label={label} title={label} className={classes} />
-          )
-        }
-      >
-        {content}
-      </TooltipTrigger>
-      <TooltipContent side="bottom">
-        {href ? `Open ${label}` : label}
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-/** Square company / school logos — place beside the profile name row. */
-export function ContactOrgLogos({
-  company,
-  school,
-  email,
-  website,
-  className,
-}: {
-  company?: string | null;
-  school?: string | null;
-  email?: string | null;
-  website?: string | null;
-  className?: string;
-}) {
-  const companyDomain = resolveCompanyDomain({ company, email, website });
-  const schoolDomain = resolveSchoolDomain(school);
-
-  const companyHref = companyDomain
-    ? `https://${companyDomain}`
-    : website?.trim()
-      ? website.startsWith("http")
-        ? website
-        : `https://${website}`
-      : null;
-  const schoolHref = schoolDomain ? `https://${schoolDomain}` : null;
-
-  if (!company && !school) return null;
-
-  return (
-    <TooltipProvider>
-      <div
-        className={cn("flex shrink-0 flex-wrap items-center gap-2", className)}
-      >
-        {company ? (
-          <OrgLogoTile
-            domain={companyDomain}
-            label={company}
-            href={companyHref}
-            fallback={<Building2 className="size-5" />}
-          />
-        ) : null}
-        {school ? (
-          <OrgLogoTile
-            domain={schoolDomain}
-            label={school}
-            href={schoolHref}
-            fallback={<GraduationCap className="size-5" />}
-          />
-        ) : null}
-      </div>
-    </TooltipProvider>
   );
 }
 
