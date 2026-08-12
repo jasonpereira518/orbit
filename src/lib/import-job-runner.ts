@@ -77,10 +77,6 @@ export function clearImportJob() {
   setSnapshot(null);
 }
 
-export function isImportJobRunning() {
-  return snapshot?.status === "running";
-}
-
 /** Request stop after the current batch; already-imported rows are kept. */
 export function cancelImportJob() {
   if (snapshot?.status !== "running") return;

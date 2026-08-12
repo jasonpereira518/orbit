@@ -1,4 +1,3 @@
-import type { ComponentType } from "react";
 import {
   LayoutDashboard,
   Users,
@@ -57,8 +56,6 @@ export const TOUR_NAV_EXTRAS = [
   { key: "recruiters" as const, label: "Recruiters", icon: UsersRound },
   { key: "outreach" as const, label: "Outreach", icon: Send },
 ];
-
-export const TOUR_NAV = [...TOUR_NAV_CORE, ...TOUR_NAV_EXTRAS];
 
 export const TOUR_STEPS: TourStep[] = [
   {
@@ -172,5 +169,3 @@ export const TOUR_STEPS: TourStep[] = [
 export type PreviewProps = {
   reducedMotion?: boolean;
 };
-
-export type PreviewComponent = ComponentType<PreviewProps>;

@@ -151,11 +151,6 @@ const CAPTURE_MAX_OUTPUT_TOKENS = 8192;
 const GEMINI_EMBEDDING_MODEL = "gemini-embedding-001";
 const OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
 
-/** @deprecated Use resolveAiModel */
-export function resolveGeminiModel(model?: string | null) {
-  return resolveAiModel("gemini", model);
-}
-
 type ProviderKeySettings = {
   geminiApiKeyEncrypted?: string | null;
   openaiApiKeyEncrypted?: string | null;
@@ -212,13 +207,6 @@ export function getProviderApiKey(
 
   if (personal) return personal;
   return getEnvProviderKey(provider);
-}
-
-export function hasProviderKey(
-  provider: AiProvider,
-  settings?: ProviderKeySettings | null
-) {
-  return Boolean(getProviderApiKey(provider, settings));
 }
 
 export function usingEnvKey(
@@ -1058,49 +1046,6 @@ Rules:
     interaction_date: defaultDate,
     people: detailed,
   };
-}
-
-export async function parseNotesWithAI(
-  userId: string,
-  notes: string
-): Promise<ParsedNote> {
-  const content = await completeJson(userId, {
-    temperature: 0.2,
-    maxOutputTokens: CAPTURE_MAX_OUTPUT_TOKENS,
-    user: notes,
-    system: `You extract structured contact data from networking notes.
-Return strict JSON matching this shape:
-{
-  "name": string|null,
-  "company": string|null,
-  "role": string|null,
-  "location": string|null,
-  "email": string|null,
-  "linkedin_url": string|null,
-  "met_at": string|null,
-  "topics": string[],
-  "action_items": string[],
-  "follow_up_recommendation": string|null,
-  "follow_up_days": number|null,
-  "relationship_score_suggestion": 1-5|null,
-  "tags": string[],
-  "summary": string|null,
-  "key_facts": string[],
-  "opportunities": string[],
-  "shared_interests": string[],
-  "suggested_next_message": string|null,
-  "confidence": 0-1|null,
-  "interaction_date": string|null
-}
-Rules:
-- Extract only information supported by the notes.
-- Use null when unknown. Do not invent facts.
-- Separate facts from guesses; suggestions go in recommendation fields.
-- interaction_date: YYYY-MM-DD when the notes imply a specific past event date; otherwise null.
-- relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.`,
-  });
-
-  return noteParseSchema.parse(JSON.parse(content));
 }
 
 export async function parseMultiPersonNotesWithAI(
