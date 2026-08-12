@@ -52,7 +52,44 @@ export async function fetchDashboard() {
       )
       .catch(() => {});
   });
-  return getDashboardData(userId, { userName: profile?.name || "You" });
+  const data = await getDashboardData(userId, {
+    userName: profile?.name || "You",
+  });
+
+  // Reuse the contact rows already loaded for the dashboard instead of a
+  // second full-network scan for NetworkStatsCard.
+  const { getNetworkStats } = await import("@/lib/network-stats");
+  const contactRows = [...data.contactById.values()];
+  const networkStats = await getNetworkStats(userId, {
+    contacts: contactRows.map((c) => ({
+      relationshipScore: c.relationshipScore,
+      lastInteractionAt: c.lastInteractionAt,
+      createdAt: c.createdAt,
+      company: c.company,
+      title: c.title,
+      industry: c.industry,
+      howMet: c.howMet,
+      notes: c.notes,
+      aiSummary: c.aiSummary,
+      keyFacts: c.keyFacts,
+      sharedInterests: c.sharedInterests,
+      nextFollowUpAt: c.nextFollowUpAt,
+      contactTags:
+        (
+          c as {
+            contactTags?: Array<{ tag: { name: string } }>;
+          }
+        ).contactTags ??
+        (Array.isArray((c as { tags?: string[] }).tags)
+          ? ((c as { tags: string[] }).tags || []).map((name) => ({
+              tag: { name },
+            }))
+          : []),
+    })),
+    goalTexts: data.goals.map((g) => g.text),
+  });
+
+  return { data, networkStats };
 }
 
 export async function listRemindersPage(options?: {

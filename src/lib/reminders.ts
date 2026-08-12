@@ -15,6 +15,7 @@ import {
   toNamedGraphClusters,
 } from "@/lib/constellation-clusters";
 import { computeNetworkMetrics } from "@/lib/network-metrics";
+import { clientContactAvatarUrl } from "@/lib/contact-avatar-url";
 
 const AUTO_SUGGESTION_TYPES = [
   "dormant_high_value",
@@ -393,7 +394,7 @@ export async function getDashboardData(
       phone: c.phone ?? null,
       linkedinUrl: c.linkedinUrl ?? null,
       website: c.website ?? null,
-      profileImageUrl: c.profileImageUrl ?? null,
+      profileImageUrl: clientContactAvatarUrl(c.id, c.profileImageUrl),
       dormant,
     };
   });

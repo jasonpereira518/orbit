@@ -47,6 +47,10 @@ import {
 } from "@/lib/closeness";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { cn } from "@/lib/utils";
+import {
+  AVATARS_UPDATED_EVENT,
+  type AvatarsUpdatedDetail,
+} from "@/components/contacts/avatar-backfill";
 
 export type ContactListItem = {
   id: string;
@@ -157,6 +161,29 @@ export function ContactsList({
     setContacts(initialContacts);
     setExitingId(null);
   }, [serverSignature, initialContacts]);
+
+  useEffect(() => {
+    function onAvatarsUpdated(event: Event) {
+      const detail = (event as CustomEvent<AvatarsUpdatedDetail>).detail;
+      const ids = detail?.contactIds;
+      if (!ids?.length) return;
+      const idSet = new Set(ids);
+      setContacts((prev) =>
+        prev.map((c) =>
+          idSet.has(c.id)
+            ? {
+                ...c,
+                profileImageUrl: `/api/avatars/${c.id}?t=${Date.now()}`,
+              }
+            : c
+        )
+      );
+    }
+    window.addEventListener(AVATARS_UPDATED_EVENT, onAvatarsUpdated);
+    return () => {
+      window.removeEventListener(AVATARS_UPDATED_EVENT, onAvatarsUpdated);
+    };
+  }, []);
 
   useEffect(() => {
     const timers = exitTimers.current;

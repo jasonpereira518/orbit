@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { OrbitLogo } from "@/components/orbit-logo";
+import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
 import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
 import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
@@ -60,6 +61,7 @@ export function AppShell({
       )}
     >
       <ThemeSync theme={theme} />
+      <AvatarBackfill />
       <DueNotificationsWatcher />
       <ImportJobWatcher />
       <div className="sticky top-0 z-40 hidden h-dvh shrink-0 p-3 md:block lg:p-4">

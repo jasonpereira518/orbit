@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { SignInButton, SignUpButton, Show, UserButton } from "@clerk/nextjs";
 import { clerkAppearance } from "@/lib/clerk-appearance";
 
@@ -13,6 +14,25 @@ const ctaSolidClass =
 const ctaGhostClass =
   "inline-flex items-center justify-center rounded-lg border border-white/20 bg-white/5 px-6 py-3 text-sm text-[#e8f3f1] transition-colors hover:border-white/35 hover:bg-white/10";
 
+function AuthLinkPair({
+  solid,
+  ghost,
+}: {
+  solid: string;
+  ghost: string;
+}) {
+  return (
+    <>
+      <Link href="/sign-in" className={ghost}>
+        Sign in
+      </Link>
+      <Link href="/sign-up" className={solid}>
+        Get started
+      </Link>
+    </>
+  );
+}
+
 export function LandingAuthControls({
   clerkOn,
   demoMode,
@@ -22,20 +42,23 @@ export function LandingAuthControls({
   demoMode: boolean;
   variant: "header" | "hero";
 }) {
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
+
   const primaryHref = clerkOn ? "/sign-up" : demoMode ? "/dashboard" : "/sign-in";
   const secondaryHref = clerkOn ? "/sign-in" : demoMode ? "/dashboard" : "/sign-in";
   const solid = variant === "header" ? solidClass : ctaSolidClass;
   const ghost = variant === "header" ? ghostClass : ctaGhostClass;
+  const wrapClass =
+    variant === "hero"
+      ? "flex w-full flex-col gap-3 sm:w-auto sm:flex-row"
+      : "flex items-center gap-2 sm:gap-3";
 
   if (!clerkOn) {
     return (
-      <div
-        className={
-          variant === "hero"
-            ? "flex w-full flex-col gap-3 sm:w-auto sm:flex-row"
-            : "flex items-center gap-2 sm:gap-3"
-        }
-      >
+      <div className={wrapClass}>
         <Link href={secondaryHref} className={ghost}>
           Sign in
         </Link>
@@ -46,14 +69,17 @@ export function LandingAuthControls({
     );
   }
 
+  // Paint real links immediately; swap to Clerk buttons after hydration.
+  if (!hydrated) {
+    return (
+      <div className={wrapClass}>
+        <AuthLinkPair solid={solid} ghost={ghost} />
+      </div>
+    );
+  }
+
   return (
-    <div
-      className={
-        variant === "hero"
-          ? "flex w-full flex-col gap-3 sm:w-auto sm:flex-row"
-          : "flex items-center gap-2 sm:gap-3"
-      }
-    >
+    <div className={wrapClass}>
       <Show when="signed-out">
         <SignInButton mode="redirect" forceRedirectUrl="/dashboard">
           <button type="button" className={ghost}>

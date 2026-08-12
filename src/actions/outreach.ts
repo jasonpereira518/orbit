@@ -154,8 +154,46 @@ export async function getCampaign(campaignId: string) {
 }
 
 export async function getOutreachPerformanceSummary() {
-  const campaigns = await listCampaigns();
-  const ranked = [...campaigns]
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  // Slim projection — metrics only, no full message bodies / prospect trees.
+  const campaigns = await db.query.outreachCampaigns.findMany({
+    where: eq(outreachCampaigns.userId, userId),
+    columns: {
+      id: true,
+      name: true,
+      status: true,
+      defaultChannel: true,
+      updatedAt: true,
+    },
+    with: {
+      prospects: {
+        columns: { id: true, status: true },
+        with: {
+          messages: {
+            columns: {
+              id: true,
+              status: true,
+              outcome: true,
+              stepIndex: true,
+              channel: true,
+              sentAt: true,
+              scheduledFor: true,
+              repliedAt: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const withMetrics = campaigns.map((campaign) => ({
+    ...campaign,
+    metrics: computeCampaignMetrics(campaign.prospects),
+  }));
+
+  const ranked = [...withMetrics]
     .filter((c) => c.metrics.sentCount > 0)
     .sort((a, b) => {
       const aRate = a.metrics.successfulReplyRate ?? -1;
@@ -172,7 +210,7 @@ export async function getOutreachPerformanceSummary() {
       status: c.status,
     }));
 
-  const totals = campaigns.reduce(
+  const totals = withMetrics.reduce(
     (acc, c) => {
       acc.sent += c.metrics.sentCount;
       acc.bounced += c.metrics.bouncedCount;

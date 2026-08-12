@@ -3,7 +3,6 @@ import { formatDistanceToNow } from "date-fns";
 import { Bell, Sparkles, Users } from "lucide-react";
 import { getOutreachPerformanceSummary } from "@/actions/outreach";
 import { fetchDashboard } from "@/actions/reminders";
-import { fetchNetworkStats } from "@/actions/stats";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { DashboardGraphPreview } from "@/components/dashboard/dashboard-graph-preview";
@@ -19,11 +18,12 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export default async function DashboardPage() {
-  const [data, networkStats, outreachPerformance] = await Promise.all([
+  const [{ data, networkStats }, outreachPerformance] = await Promise.all([
     fetchDashboard(),
-    fetchNetworkStats(),
     getOutreachPerformanceSummary(),
   ]);
+
+  const isEmptyNetwork = data.stats.totalContacts === 0;
 
   function tierForContact(id: string) {
     return data.closenessById.get(id)?.tier;
@@ -61,6 +61,38 @@ export default async function DashboardPage() {
           to ask your network.
         </p>
       </header>
+
+      {isEmptyNetwork && (
+        <div className="rounded-2xl border border-dashed border-border/70 px-6 py-10 text-center">
+          <h2 className="font-[family-name:var(--font-display)] text-2xl text-primary">
+            Your orbit is empty
+          </h2>
+          <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+            Import LinkedIn connections, capture notes from a meeting, or add
+            someone by hand — then Orbit can remind you who to reach out to.
+          </p>
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            <Link
+              href="/imports"
+              className={cn(buttonVariants(), "bg-primary text-primary-foreground")}
+            >
+              Import LinkedIn
+            </Link>
+            <Link
+              href="/capture"
+              className={cn(buttonVariants({ variant: "outline" }))}
+            >
+              Capture notes
+            </Link>
+            <Link
+              href="/contacts/new"
+              className={cn(buttonVariants({ variant: "ghost" }))}
+            >
+              Add a contact
+            </Link>
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
@@ -189,7 +221,29 @@ export default async function DashboardPage() {
           </CardHeader>
           <CardContent className="space-y-2">
             {data.recentContacts.length === 0 ? (
-              <Empty hint="No contacts yet. Start by capturing notes." />
+              <div className="space-y-3">
+                <Empty hint="No contacts yet." />
+                <div className="flex flex-wrap gap-2">
+                  <Link
+                    href="/imports"
+                    className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+                  >
+                    Import
+                  </Link>
+                  <Link
+                    href="/capture"
+                    className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+                  >
+                    Capture
+                  </Link>
+                  <Link
+                    href="/contacts/new"
+                    className={cn(buttonVariants({ size: "sm" }))}
+                  >
+                    Add contact
+                  </Link>
+                </div>
+              </div>
             ) : (
               data.recentContacts.map((c) => {
                 const tier = tierForContact(c.id);

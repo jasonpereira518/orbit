@@ -1,11 +1,17 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { backfillContactAvatars } from "@/actions/contacts";
 
 const BATCH_PAUSE_MS = 750;
 const MAX_WAIT_MS = 15 * 60_000;
+
+export const AVATARS_UPDATED_EVENT = "orbit:avatars-updated";
+
+export type AvatarsUpdatedDetail = {
+  contactIds: string[];
+};
 
 function sleep(ms: number, signal: AbortSignal) {
   return new Promise<void>((resolve) => {
@@ -25,14 +31,25 @@ function sleep(ms: number, signal: AbortSignal) {
   });
 }
 
+function notifyAvatarsUpdated(contactIds: string[]) {
+  if (typeof window === "undefined" || contactIds.length === 0) return;
+  window.dispatchEvent(
+    new CustomEvent<AvatarsUpdatedDetail>(AVATARS_UPDATED_EVENT, {
+      detail: { contactIds },
+    })
+  );
+}
+
 /**
  * Quietly fills missing LinkedIn photos in the background.
- * Saves each successful photo, then waits for Microlink quota to reset
- * before continuing — so the contacts list fills in over time.
+ * Soft-updates the UI via `orbit:avatars-updated` instead of a full
+ * `router.refresh()` so browsing stays smooth.
  */
 export function AvatarBackfill() {
-  const router = useRouter();
+  const pathname = usePathname();
   const running = useRef(false);
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
 
   useEffect(() => {
     if (running.current) return;
@@ -50,11 +67,11 @@ export function AvatarBackfill() {
 
           if (result.saved > 0) {
             idlePasses = 0;
-            router.refresh();
+            const ids = result.savedIds ?? [];
+            notifyAvatarsUpdated(ids);
           }
 
           if (result.pending <= 0) {
-            // Nothing left — stop until the next page visit.
             return;
           }
 
@@ -67,10 +84,8 @@ export function AvatarBackfill() {
             continue;
           }
 
-          // No rate limit but still pending (failed lookups / remote downloads).
           idlePasses += 1;
           if (idlePasses >= 3 && result.saved === 0) {
-            // Avoid tight loops when remaining contacts can't be resolved.
             await sleep(60_000, controller.signal);
             idlePasses = 0;
             continue;
@@ -89,7 +104,7 @@ export function AvatarBackfill() {
       controller.abort();
       running.current = false;
     };
-  }, [router]);
+  }, []);
 
   return null;
 }
