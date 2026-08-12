@@ -1,7 +1,6 @@
 import { cn } from "@/lib/utils";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
 import { LandingSolarSystem } from "@/components/landing/landing-visuals";
-import { LandingScrollGate } from "@/components/landing/landing-scroll-gate";
 
 export function LandingHero({
   clerkOn,
@@ -35,8 +34,6 @@ export function LandingHero({
 
         <LandingSolarSystem className="w-full max-w-[min(100%,560px)] lg:max-w-[580px] lg:justify-self-end" />
       </div>
-
-      <LandingScrollGate targetId="features" />
     </section>
   );
 }
