@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { consumeGmailOAuthState } from "@/actions/gmail";
+import { consumeOutlookOAuthState } from "@/actions/outlook";
 import {
   exchangeCodeForTokens,
-  fetchGoogleProfileEmail,
-  upsertGmailConnection,
-} from "@/lib/gmail";
+  fetchMicrosoftProfileEmail,
+  upsertOutlookConnection,
+} from "@/lib/outlook";
 import { isDemoMode } from "@/lib/auth";
 
 export async function GET(request: Request) {
@@ -14,13 +14,10 @@ export async function GET(request: Request) {
   const state = url.searchParams.get("state");
   const error = url.searchParams.get("error");
 
-  // returnTo (if present in state) lets Contacts-initiated connects land back
-  // on /imports instead of the default /recruiters destination.
-  let redirectBase = new URL("/recruiters", url.origin);
+  let redirectBase = new URL("/imports", url.origin);
 
   if (error) {
-    redirectBase.searchParams.set("gmail", "error");
-    redirectBase.searchParams.set("google", "error");
+    redirectBase.searchParams.set("outlook", "error");
     redirectBase.searchParams.set("reason", error);
     return NextResponse.redirect(redirectBase);
   }
@@ -28,7 +25,7 @@ export async function GET(request: Request) {
   try {
     if (!code) throw new Error("Missing authorization code");
 
-    const { userId: stateUserId, returnTo } = await consumeGmailOAuthState(state);
+    const { userId: stateUserId, returnTo } = await consumeOutlookOAuthState(state);
     if (returnTo) redirectBase = new URL(returnTo, url.origin);
 
     let sessionUserId: string | null = null;
@@ -44,15 +41,13 @@ export async function GET(request: Request) {
     }
 
     const tokens = await exchangeCodeForTokens(code);
-    const email = await fetchGoogleProfileEmail(tokens.access_token);
-    await upsertGmailConnection(sessionUserId, tokens, email);
+    const email = await fetchMicrosoftProfileEmail(tokens.access_token);
+    await upsertOutlookConnection(sessionUserId, tokens, email);
 
-    redirectBase.searchParams.set("gmail", "connected");
-    redirectBase.searchParams.set("google", "connected");
+    redirectBase.searchParams.set("outlook", "connected");
     return NextResponse.redirect(redirectBase);
   } catch (err) {
-    redirectBase.searchParams.set("gmail", "error");
-    redirectBase.searchParams.set("google", "error");
+    redirectBase.searchParams.set("outlook", "error");
     redirectBase.searchParams.set(
       "reason",
       err instanceof Error ? err.message : "oauth_failed"

@@ -72,6 +72,8 @@ export const noteParseSchema = z.object({
   confidence: nullConfidence,
   /** ISO date (YYYY-MM-DD) when the notes imply a past event/meeting. */
   interaction_date: nullStr,
+  /** Field names (matching this object's keys) the model was unsure about. */
+  low_confidence_fields: strList,
 });
 
 export type ParsedNote = z.infer<typeof noteParseSchema>;
@@ -769,6 +771,7 @@ const PERSON_FIELD_SHAPE = `{
   "suggested_next_message": string|null,
   "confidence": 0-1|null,
   "interaction_date": string|null,
+  "low_confidence_fields": string[],
   "source_excerpt": string
 }`;
 
@@ -852,6 +855,7 @@ Rules:
 - Include every key on every person object. Use null (or [] for arrays) when unknown — never omit keys.
 - source_excerpt must be the person-specific slice of the original notes (not the whole dump, and not the shared group text alone).
 - Never put person-only facts in shared_notes. Never put the full dump in every source_excerpt.
+- low_confidence_fields: list the field names (e.g. "company", "role") where you had to guess or infer rather than read directly from the notes. Use [] when every extracted field is directly supported.
 - shared_notes: capture context that applies to MULTIPLE people at once — e.g. "met everyone at AWS Summit afterparty", "group dinner after the panel", "all discussed fundraising". Put the shared text in shared_notes[].text, list the affected people in person_names (exact names matching people[].name; use [] to mean everyone), and set met_at/topics when relevant. Do NOT duplicate that shared text into every source_excerpt.
 - If a fact is only about one person, keep it in that person's fields/source_excerpt — not in shared_notes.
 - If several people share the same event/place, set each person's met_at (and include it on shared_notes too).
@@ -990,6 +994,7 @@ Rules:
 - Extract only facts supported by the notes. Use null / [] when unknown.
 - source_excerpt must be that person's specific slice of the original notes — never the entire dump, never shared-only text alone.
 - Never invent people or facts. Prefer emails/companies from the request when the notes don't contradict them.
+- low_confidence_fields: list field names you had to guess or infer rather than read directly from the notes. Use [] when every extracted field is directly supported.
 - interaction_date: YYYY-MM-DD when known for this person/event; else null.
 - relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.
 - met_at may use shared event place when the person was clearly there.`,
@@ -1027,6 +1032,7 @@ Rules:
         suggested_next_message: found?.suggested_next_message || null,
         confidence: found?.confidence || null,
         interaction_date: found?.interaction_date || defaultDate,
+        low_confidence_fields: found?.low_confidence_fields || [],
         source_excerpt: found?.source_excerpt || "",
       };
 
@@ -1090,14 +1096,16 @@ Return strict JSON matching this shape:
   "shared_interests": string[],
   "suggested_next_message": string|null,
   "confidence": 0-1|null,
-  "interaction_date": string|null
+  "interaction_date": string|null,
+  "low_confidence_fields": string[]
 }
 Rules:
 - Extract only information supported by the notes.
 - Use null when unknown. Do not invent facts.
 - Separate facts from guesses; suggestions go in recommendation fields.
 - interaction_date: YYYY-MM-DD when the notes imply a specific past event date; otherwise null.
-- relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.`,
+- relationship_score_suggestion: 1=barely know, 2=met once, 3=real conversation, 4=strong, 5=mentor/advocate.
+- low_confidence_fields: list field names (e.g. "company", "role") you had to guess or infer rather than read directly from the notes. Use [] when every extracted field is directly supported.`,
   });
 
   return noteParseSchema.parse(JSON.parse(content));

@@ -6,8 +6,10 @@ import Papa from "papaparse";
 import { getDb } from "@/db";
 import {
   contacts,
+  gmailConnections,
   imports,
   interactions,
+  outlookConnections,
   reminders,
   type ImportStats,
 } from "@/db/schema";
@@ -33,6 +35,11 @@ import {
   type ParsedCalendarEvent,
 } from "@/lib/calendar-import";
 import { upsertContactEmbedding } from "@/lib/search";
+import { fetchGooglePeopleContacts, getValidAccessToken, hasContactsScope } from "@/lib/gmail";
+import {
+  fetchOutlookContacts,
+  getValidAccessToken as getValidOutlookAccessToken,
+} from "@/lib/outlook";
 
 /** Align preview badges with confirm merge behavior. */
 const DUPLICATE_MERGE_CONFIDENCE = 0.85;
@@ -108,9 +115,25 @@ function calendarMeetingExternalId(eventUid: string, contactId: string) {
   return `cal:${eventUid}:${contactId}`;
 }
 
+/** Replacement-character artifacts from decoding a non-UTF8 export as UTF-8. */
+function hasEncodingArtifacts(rows: { firstName: string; lastName: string; company: string; position: string }[]) {
+  return rows.some(
+    (r) =>
+      r.firstName.includes("�") ||
+      r.lastName.includes("�") ||
+      r.company.includes("�") ||
+      r.position.includes("�")
+  );
+}
+
 export async function previewLinkedInCsv(csvText: string) {
   const userId = await requireUserId();
-  const { columns, rows } = parseLinkedInConnectionsCsv(csvText);
+  const { columns, rows, warnings } = parseLinkedInConnectionsCsv(csvText);
+  if (hasEncodingArtifacts(rows)) {
+    warnings.push(
+      "Some characters may not have decoded correctly — if names look garbled, re-export the CSV with UTF-8 encoding."
+    );
+  }
   const db = await getDb();
   const existing = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
@@ -148,6 +171,7 @@ export async function previewLinkedInCsv(csvText: string) {
     totalRows: people.length,
     people,
     duplicateCount: people.filter((p) => p.isRepeat).length,
+    warnings,
     // keep legacy key for any callers
     preview: people,
   };
@@ -1147,4 +1171,322 @@ export async function confirmCalendarImport(payload: {
       .where(eq(imports.id, importRow.id));
     throw err;
   }
+}
+
+export type GoogleContactPerson = {
+  id: string;
+  fullName: string;
+  company: string;
+  title: string;
+  email: string;
+  phone: string;
+  photoUrl: string | null;
+  isRepeat: boolean;
+  duplicate: {
+    id: string;
+    fullName: string;
+    reason: string;
+    confidence: number;
+  } | null;
+};
+
+export async function previewGoogleContacts(): Promise<{
+  connected: boolean;
+  contactsScopeGranted: boolean;
+  people: GoogleContactPerson[];
+}> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const conn = await db.query.gmailConnections.findFirst({
+    where: and(eq(gmailConnections.userId, userId), eq(gmailConnections.status, "active")),
+  });
+  if (!conn) {
+    return { connected: false, contactsScopeGranted: false, people: [] };
+  }
+  if (!hasContactsScope(conn.scopes)) {
+    return { connected: true, contactsScopeGranted: false, people: [] };
+  }
+
+  const accessToken = await getValidAccessToken(userId);
+  const googleContacts = await fetchGooglePeopleContacts(accessToken);
+
+  const existing = await db.query.contacts.findMany({
+    where: eq(contacts.userId, userId),
+  });
+
+  const people = googleContacts.map((p) => {
+    const dups = findDuplicateCandidates(existing, {
+      fullName: p.fullName,
+      email: p.email,
+      company: p.company,
+      title: p.title,
+    });
+    const top = dups[0];
+    return {
+      id: p.resourceName,
+      fullName: p.fullName,
+      company: p.company,
+      title: p.title,
+      email: p.email,
+      phone: p.phone,
+      photoUrl: p.photoUrl,
+      isRepeat: Boolean(top && top.confidence >= DUPLICATE_MERGE_CONFIDENCE),
+      duplicate: top
+        ? {
+            id: top.contact.id,
+            fullName: top.contact.fullName,
+            reason: top.reason,
+            confidence: top.confidence,
+          }
+        : null,
+    };
+  });
+
+  return { connected: true, contactsScopeGranted: true, people };
+}
+
+export async function confirmGoogleContactsImport(selectedIds: string[]) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const writeOpts = { skipRevalidate: true };
+
+  const accessToken = await getValidAccessToken(userId);
+  const googleContacts = await fetchGooglePeopleContacts(accessToken);
+  const selected = new Set(selectedIds);
+  const rows = googleContacts.filter((p) => selected.has(p.resourceName));
+
+  const existing = await db.query.contacts.findMany({
+    where: eq(contacts.userId, userId),
+  });
+
+  let created = 0;
+  let updated = 0;
+
+  for (const row of rows) {
+    if (!row.fullName.trim()) continue;
+    const dups = findDuplicateCandidates(existing, {
+      fullName: row.fullName,
+      email: row.email,
+      company: row.company,
+      title: row.title,
+    });
+
+    if (dups[0] && dups[0].confidence >= DUPLICATE_MERGE_CONFIDENCE) {
+      await updateContact(
+        dups[0].contact.id,
+        {
+          company: row.company || undefined,
+          title: row.title || undefined,
+          email: row.email || undefined,
+          phone: row.phone || undefined,
+          profileImageUrl: row.photoUrl || undefined,
+          source: "google_contacts",
+          howMet: "Google Contacts",
+          metContext: "online",
+        },
+        writeOpts
+      );
+      updated++;
+    } else {
+      const contact = await createContact(
+        {
+          fullName: row.fullName,
+          firstName: row.firstName || undefined,
+          lastName: row.lastName || undefined,
+          company: row.company || undefined,
+          title: row.title || undefined,
+          email: row.email || undefined,
+          phone: row.phone || undefined,
+          profileImageUrl: row.photoUrl || undefined,
+          source: "google_contacts",
+          relationshipScore: 2,
+          howMet: "Google Contacts",
+          metContext: "online",
+          tagNames: ["google-contacts"],
+        },
+        writeOpts
+      );
+      existing.push(contact as (typeof existing)[number]);
+      created++;
+    }
+  }
+
+  await db.insert(imports).values({
+    userId,
+    importType: "google_contacts",
+    fileName: "Google Contacts",
+    status: "completed",
+    rowsProcessed: rows.length,
+    contactsCreated: created,
+    contactsUpdated: updated,
+    duplicatesFound: updated,
+  });
+
+  try {
+    await refreshOutreachSuggestions(userId);
+  } catch {
+    // non-fatal
+  }
+
+  revalidatePath("/");
+  revalidatePath("/contacts");
+  revalidatePath("/imports");
+  revalidatePath("/graph");
+
+  return { created, updated };
+}
+
+export type OutlookContactPerson = {
+  id: string;
+  fullName: string;
+  company: string;
+  title: string;
+  email: string;
+  phone: string;
+  isRepeat: boolean;
+  duplicate: {
+    id: string;
+    fullName: string;
+    reason: string;
+    confidence: number;
+  } | null;
+};
+
+export async function previewOutlookContacts(): Promise<{
+  connected: boolean;
+  people: OutlookContactPerson[];
+}> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const conn = await db.query.outlookConnections.findFirst({
+    where: and(eq(outlookConnections.userId, userId), eq(outlookConnections.status, "active")),
+  });
+  if (!conn) {
+    return { connected: false, people: [] };
+  }
+
+  const accessToken = await getValidOutlookAccessToken(userId);
+  const outlookContacts = await fetchOutlookContacts(accessToken);
+
+  const existing = await db.query.contacts.findMany({
+    where: eq(contacts.userId, userId),
+  });
+
+  const people = outlookContacts.map((p) => {
+    const dups = findDuplicateCandidates(existing, {
+      fullName: p.fullName,
+      email: p.email,
+      company: p.company,
+      title: p.title,
+    });
+    const top = dups[0];
+    return {
+      id: p.id,
+      fullName: p.fullName,
+      company: p.company,
+      title: p.title,
+      email: p.email,
+      phone: p.phone,
+      isRepeat: Boolean(top && top.confidence >= DUPLICATE_MERGE_CONFIDENCE),
+      duplicate: top
+        ? {
+            id: top.contact.id,
+            fullName: top.contact.fullName,
+            reason: top.reason,
+            confidence: top.confidence,
+          }
+        : null,
+    };
+  });
+
+  return { connected: true, people };
+}
+
+export async function confirmOutlookContactsImport(selectedIds: string[]) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const writeOpts = { skipRevalidate: true };
+
+  const accessToken = await getValidOutlookAccessToken(userId);
+  const outlookContacts = await fetchOutlookContacts(accessToken);
+  const selected = new Set(selectedIds);
+  const rows = outlookContacts.filter((p) => selected.has(p.id));
+
+  const existing = await db.query.contacts.findMany({
+    where: eq(contacts.userId, userId),
+  });
+
+  let created = 0;
+  let updated = 0;
+
+  for (const row of rows) {
+    if (!row.fullName.trim()) continue;
+    const dups = findDuplicateCandidates(existing, {
+      fullName: row.fullName,
+      email: row.email,
+      company: row.company,
+      title: row.title,
+    });
+
+    if (dups[0] && dups[0].confidence >= DUPLICATE_MERGE_CONFIDENCE) {
+      await updateContact(
+        dups[0].contact.id,
+        {
+          company: row.company || undefined,
+          title: row.title || undefined,
+          email: row.email || undefined,
+          phone: row.phone || undefined,
+          source: "outlook_contacts",
+          howMet: "Outlook Contacts",
+          metContext: "online",
+        },
+        writeOpts
+      );
+      updated++;
+    } else {
+      const contact = await createContact(
+        {
+          fullName: row.fullName,
+          firstName: row.firstName || undefined,
+          lastName: row.lastName || undefined,
+          company: row.company || undefined,
+          title: row.title || undefined,
+          email: row.email || undefined,
+          phone: row.phone || undefined,
+          source: "outlook_contacts",
+          relationshipScore: 2,
+          howMet: "Outlook Contacts",
+          metContext: "online",
+          tagNames: ["outlook-contacts"],
+        },
+        writeOpts
+      );
+      existing.push(contact as (typeof existing)[number]);
+      created++;
+    }
+  }
+
+  await db.insert(imports).values({
+    userId,
+    importType: "outlook_contacts",
+    fileName: "Outlook Contacts",
+    status: "completed",
+    rowsProcessed: rows.length,
+    contactsCreated: created,
+    contactsUpdated: updated,
+    duplicatesFound: updated,
+  });
+
+  try {
+    await refreshOutreachSuggestions(userId);
+  } catch {
+    // non-fatal
+  }
+
+  revalidatePath("/");
+  revalidatePath("/contacts");
+  revalidatePath("/imports");
+  revalidatePath("/graph");
+
+  return { created, updated };
 }

@@ -20,7 +20,8 @@ const VALID_ONBOARDING_STEPS = new Set([
   "chat",
   "graph",
   "dashboard",
-  "start",
+  "recruiters",
+  "outreach",
 ]);
 
 export async function getOnboardingStatus() {

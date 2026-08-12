@@ -11,7 +11,10 @@ import { LinkedInExportGuide } from "@/components/imports/linkedin-export-guide"
 import {
   BusyHint,
   ImportFilePicker,
+  ImportWarningBanner,
 } from "@/components/imports/import-utils";
+
+const LARGE_FILE_WARNING_BYTES = 15 * 1024 * 1024;
 import {
   startImportJob,
   useImportJob,
@@ -28,6 +31,7 @@ export function LinkedInConnectionsImport() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [people, setPeople] = useState<ConnectionPerson[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [warnings, setWarnings] = useState<string[]>([]);
 
   const connectionsJob =
     job?.kind === "connections" && job.status === "running" ? job : null;
@@ -42,6 +46,7 @@ export function LinkedInConnectionsImport() {
     setSelected(new Set());
     setCsvText("");
     setFileName(null);
+    setWarnings([]);
   }, [job]);
 
   function applyPreview(res: ConnectionsPreview) {
@@ -49,6 +54,7 @@ export function LinkedInConnectionsImport() {
     setSelected(
       new Set(res.people.filter((p) => !p.isRepeat).map((p) => p.id))
     );
+    setWarnings(res.warnings ?? []);
   }
 
   return (
@@ -71,6 +77,11 @@ export function LinkedInConnectionsImport() {
         disabled={busy}
         fileName={fileName}
         onFile={(file) => {
+          if (file.size > LARGE_FILE_WARNING_BYTES) {
+            toast.message(
+              `This is a large file (${(file.size / (1024 * 1024)).toFixed(1)}MB) — import may take a while.`
+            );
+          }
           start(async () => {
             try {
               setFileName(file.name);
@@ -82,6 +93,7 @@ export function LinkedInConnectionsImport() {
             } catch (err) {
               setPeople([]);
               setSelected(new Set());
+              setWarnings([]);
               toast.error(
                 err instanceof Error ? err.message : "Preview failed"
               );
@@ -103,6 +115,7 @@ export function LinkedInConnectionsImport() {
                 applyPreview(res);
                 toast.success(`Loaded ${res.totalRows} people`);
               } catch (err) {
+                setWarnings([]);
                 toast.error(
                   err instanceof Error ? err.message : "Preview failed"
                 );
@@ -130,6 +143,7 @@ export function LinkedInConnectionsImport() {
               setSelected(new Set());
               setCsvText("");
               setFileName(null);
+              setWarnings([]);
             } catch (err) {
               toast.error(
                 err instanceof Error ? err.message : "Import failed"
@@ -142,6 +156,11 @@ export function LinkedInConnectionsImport() {
             : `Import ${selected.size || 0} selected`}
         </Button>
       </div>
+
+      <ImportWarningBanner
+        warnings={warnings}
+        onDismiss={() => setWarnings([])}
+      />
 
       {people.length > 0 && (
         <ImportPeopleReview

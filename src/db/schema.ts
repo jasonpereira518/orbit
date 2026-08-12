@@ -22,6 +22,9 @@ export const userSettings = pgTable("user_settings", {
     withTimezone: true,
   }),
   onboardingStep: text("onboarding_step"),
+  wizardOfferedAt: timestamp("wizard_offered_at", { withTimezone: true }),
+  wizardStep: text("wizard_step"),
+  wizardCompletedAt: timestamp("wizard_completed_at", { withTimezone: true }),
   theme: text("theme").$type<"light" | "dark" | "system">(),
   apolloApiKeyEncrypted: text("apollo_api_key_encrypted"),
   resendApiKeyEncrypted: text("resend_api_key_encrypted"),
@@ -506,6 +509,24 @@ export const gmailConnections = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("gmail_connections_user_idx").on(t.userId)]
+);
+
+export const outlookConnections = pgTable(
+  "outlook_connections",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull().unique(),
+    emailAddress: text("email_address").notNull(),
+    accessTokenEncrypted: text("access_token_encrypted").notNull(),
+    refreshTokenEncrypted: text("refresh_token_encrypted"),
+    tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+    scopes: text("scopes"),
+    status: text("status").default("active").notNull(),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("outlook_connections_user_idx").on(t.userId)]
 );
 
 export type ChatRecommendation = {
