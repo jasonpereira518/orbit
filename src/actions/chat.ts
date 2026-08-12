@@ -239,7 +239,7 @@ export async function askNetwork(
 
     const recruiterIntent = isRecruiterIntent(q);
     const recruitersForChat = recruiterIntent
-      ? await loadRecruitersForChat(userId, q, 8)
+      ? await loadRecruitersForChat(q, 8)
       : [];
 
     const maxScore = Math.max(

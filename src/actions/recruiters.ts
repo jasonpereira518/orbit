@@ -192,10 +192,10 @@ export async function rateRecruiter(recruiterId: string, rating: number) {
 
 /** For chat: personal links first, then top community matches. */
 export async function loadRecruitersForChat(
-  userId: string,
   question: string,
   limit = 8
 ) {
+  const userId = await requireUserId();
   const db = await getDb();
   const personal = await db.query.userRecruiterLinks.findMany({
     where: eq(userRecruiterLinks.userId, userId),

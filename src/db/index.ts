@@ -547,8 +547,13 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
   for (const statement of statements) {
     try {
       await sql.query(statement);
-    } catch {
-      // Older Postgres variants / race — continue so later alters can recover
+    } catch (err) {
+      // Older Postgres variants / race — continue so later alters can recover,
+      // but surface anything unexpected instead of swallowing it silently.
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/already exists/i.test(message)) {
+        console.error(`[db] DDL statement failed: ${statement}\n`, message);
+      }
     }
   }
 
@@ -608,83 +613,18 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `CREATE INDEX IF NOT EXISTS ai_suggestions_user_idx ON ai_suggestions(user_id, status)`,
     `CREATE INDEX IF NOT EXISTS embeddings_user_idx ON contact_embeddings(user_id)`,
     `CREATE INDEX IF NOT EXISTS embeddings_contact_idx ON contact_embeddings(contact_id)`,
-    `CREATE TABLE IF NOT EXISTS chat_threads (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id text NOT NULL,
-      title text,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      updated_at timestamptz NOT NULL DEFAULT now()
-    )`,
-    `CREATE INDEX IF NOT EXISTS chat_threads_user_idx ON chat_threads(user_id)`,
-    `CREATE INDEX IF NOT EXISTS chat_threads_user_updated_idx ON chat_threads(user_id, updated_at)`,
-    `CREATE TABLE IF NOT EXISTS chat_messages (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      thread_id uuid NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
-      user_id text NOT NULL,
-      role text NOT NULL,
-      content text NOT NULL,
-      recommendations jsonb,
-      created_at timestamptz NOT NULL DEFAULT now()
-    )`,
-    `CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages(thread_id)`,
-    `CREATE INDEX IF NOT EXISTS chat_messages_user_idx ON chat_messages(user_id)`,
-    `CREATE TABLE IF NOT EXISTS recruiters (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      full_name text NOT NULL,
-      name_normalized text NOT NULL,
-      firm text,
-      firm_normalized text,
-      specialty jsonb DEFAULT '[]',
-      email text,
-      email_normalized text,
-      linkedin_url text,
-      phone text,
-      avg_rating integer NOT NULL DEFAULT 0,
-      rating_count integer NOT NULL DEFAULT 0,
-      log_count integer NOT NULL DEFAULT 0,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      updated_at timestamptz NOT NULL DEFAULT now()
-    )`,
-    `CREATE INDEX IF NOT EXISTS recruiters_name_idx ON recruiters(name_normalized)`,
-    `CREATE INDEX IF NOT EXISTS recruiters_firm_idx ON recruiters(firm_normalized)`,
-    `CREATE INDEX IF NOT EXISTS recruiters_email_idx ON recruiters(email_normalized)`,
-    `CREATE INDEX IF NOT EXISTS recruiters_rating_idx ON recruiters(avg_rating, log_count)`,
-    `CREATE TABLE IF NOT EXISTS user_recruiter_links (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id text NOT NULL,
-      recruiter_id uuid NOT NULL REFERENCES recruiters(id) ON DELETE CASCADE,
-      status text NOT NULL DEFAULT 'planned',
-      personal_rating integer,
-      notes text,
-      source text NOT NULL DEFAULT 'manual',
-      contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      updated_at timestamptz NOT NULL DEFAULT now()
-    )`,
-    `CREATE INDEX IF NOT EXISTS user_recruiter_links_user_idx ON user_recruiter_links(user_id)`,
-    `CREATE INDEX IF NOT EXISTS user_recruiter_links_recruiter_idx ON user_recruiter_links(recruiter_id)`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS user_recruiter_links_user_recruiter_uidx ON user_recruiter_links(user_id, recruiter_id)`,
-    `CREATE TABLE IF NOT EXISTS gmail_connections (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id text NOT NULL UNIQUE,
-      email_address text NOT NULL,
-      access_token_encrypted text NOT NULL,
-      refresh_token_encrypted text,
-      token_expires_at timestamptz,
-      scopes text,
-      status text NOT NULL DEFAULT 'active',
-      last_synced_at timestamptz,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      updated_at timestamptz NOT NULL DEFAULT now()
-    )`,
-    `CREATE INDEX IF NOT EXISTS gmail_connections_user_idx ON gmail_connections(user_id)`,
   ];
 
   for (const statement of alters) {
     try {
       await sql.query(statement);
-    } catch {
-      // Older Postgres variants / race — ignore
+    } catch (err) {
+      // Older Postgres variants / race — ignore "already exists"-style failures,
+      // but surface anything else so real DDL drift doesn't fail silently.
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/already exists/i.test(message)) {
+        console.error(`[db] DDL statement failed: ${statement}\n`, message);
+      }
     }
   }
 
