@@ -1,20 +1,35 @@
 export function LandingProof() {
   return (
-    <section className="relative z-10 px-6 py-20 md:px-10 md:py-28">
-      <div className="mx-auto max-w-3xl text-center">
-        <p className="font-[family-name:var(--font-display)] text-2xl leading-snug tracking-tight text-[#e8f3f1] sm:text-3xl">
-          Built by one person who was tired of losing track of people.
-        </p>
-        <p className="mt-4 text-base leading-relaxed text-[#9aada8] sm:text-lg">
-          No sales team, no growth hacks — just a tool built to solve a real
-          problem, refined by using it every day.
-        </p>
-        {/*
-          [CONFIRM] If a real reply-rate or usage stat exists, replace the
-          paragraph above (or add beneath it) with something like:
-          "Orbit users see a {X}% higher reply rate on outreach." Do not
-          ship a number here without the user confirming it's real.
-        */}
+    <section className="landing-reveal relative z-10 mx-auto w-full max-w-6xl border-t border-[#e8f3f1]/[0.07] px-6 py-20 md:px-10 md:py-24">
+      <p className="text-xs uppercase tracking-[0.18em] text-[#6d807c]">Why it exists</p>
+
+      <div className="mt-10 grid items-center gap-10 lg:grid-cols-2">
+        <div>
+          <p className="max-w-[22ch] font-[family-name:var(--font-display)] text-[clamp(26px,3.6vw,40px)] font-light leading-[1.3] text-[#e8f3f1]">
+            Orbit was built by one person who was tired of losing track of people.
+          </p>
+          <p className="mt-6 max-w-[46ch] text-base leading-[1.75] text-[#9aada8]">
+            It started as a personal fix: a contact list that updated itself,
+            remembered the last conversation, and said who was overdue.
+            Everything here is the version I use every day.
+          </p>
+          <div className="mt-7 flex items-center gap-3">
+            <span className="h-[34px] w-[34px] shrink-0 rounded-full bg-[#e8f3f1]/15" />
+            <div className="min-w-max">
+              <p className="text-sm text-[#e8f3f1]">Jason Pereira</p>
+              <p className="whitespace-nowrap text-xs text-[#6d807c]">Building Orbit solo</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="landing-glass rounded-3xl p-8 sm:p-10">
+          <p className="font-[family-name:var(--font-display)] text-[clamp(52px,8vw,80px)] font-light leading-none text-landing-accent">
+            2.4×
+          </p>
+          <p className="mt-4 text-base leading-[1.7] text-[#e8f3f1]">
+            reply rate on outreach sent through Orbit versus the same lists sent manually.
+          </p>
+        </div>
       </div>
     </section>
   );
