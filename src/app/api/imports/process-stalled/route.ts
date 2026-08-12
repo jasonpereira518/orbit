@@ -8,7 +8,12 @@ export const maxDuration = 300;
 
 const STALL_THRESHOLD_MS = 3 * 60 * 1000;
 
-/** Vercel Cron target: resumes server-owned import jobs whose invocation died mid-run. */
+/**
+ * Vercel Cron target: resumes server-owned import jobs whose invocation died
+ * mid-run. Runs once/day (Hobby plan's minimum cron interval) — the primary
+ * resumption path is still the processor's own self-continuation via the
+ * `[id]/continue` route; this is only a last-resort backstop.
+ */
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
   if (secret && request.headers.get("authorization") !== `Bearer ${secret}`) {

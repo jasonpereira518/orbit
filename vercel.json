@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/imports/process-stalled",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 0 * * *"
     }
   ]
 }
