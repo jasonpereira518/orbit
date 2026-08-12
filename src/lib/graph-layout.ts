@@ -177,11 +177,6 @@ export function orderConstellationMembers(members: GraphContactInput[]) {
   });
 }
 
-export function ringRadiusForScore(score: number) {
-  const s = clampScore(score);
-  return RING_RADII[5 - s];
-}
-
 export function displayName(c: {
   fullName: string;
   preferredName?: string | null;

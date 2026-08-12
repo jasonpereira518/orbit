@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS imports (
   import_type text NOT NULL,
   file_name text,
   status text NOT NULL DEFAULT 'pending',
+  total_rows integer,
   rows_processed integer DEFAULT 0,
   contacts_created integer DEFAULT 0,
   contacts_updated integer DEFAULT 0,
@@ -156,6 +157,19 @@ CREATE TABLE IF NOT EXISTS imports (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS import_job_rows (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  import_id uuid NOT NULL REFERENCES imports(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  row_index integer NOT NULL,
+  payload jsonb NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  contact_id uuid,
+  error_message text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS import_job_rows_import_status_idx ON import_job_rows(import_id, status);
 CREATE TABLE IF NOT EXISTS ai_suggestions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -423,6 +437,7 @@ async function migratePglite(client: PGlite) {
     "updated_at",
     "timestamptz NOT NULL DEFAULT now()"
   );
+  await ensureColumn(client, "imports", "total_rows", "integer");
   await ensureColumn(client, "user_settings", "apollo_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "resend_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_account_sid_encrypted", "text");
@@ -586,6 +601,20 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE imports ADD COLUMN IF NOT EXISTS error_message text`,
     `ALTER TABLE imports ADD COLUMN IF NOT EXISTS stats jsonb DEFAULT '{}'`,
     `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,
+    `ALTER TABLE imports ADD COLUMN IF NOT EXISTS total_rows integer`,
+    `CREATE TABLE IF NOT EXISTS import_job_rows (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      import_id uuid NOT NULL REFERENCES imports(id) ON DELETE CASCADE,
+      user_id text NOT NULL,
+      row_index integer NOT NULL,
+      payload jsonb NOT NULL,
+      status text NOT NULL DEFAULT 'pending',
+      contact_id uuid,
+      error_message text,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS import_job_rows_import_status_idx ON import_job_rows(import_id, status)`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS apollo_api_key_encrypted text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS resend_api_key_encrypted text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_account_sid_encrypted text`,

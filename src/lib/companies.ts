@@ -66,6 +66,52 @@ export async function companyFieldsForWrite(
   return { companyId: resolved.id, company: resolved.name };
 }
 
+export type CompanyResolver = (
+  rawName: string | null | undefined
+) => Promise<{ id: string; name: string } | null>;
+
+/**
+ * Preloads all of a user's companies into memory and returns a resolver that
+ * avoids a DB round trip per lookup for names already seen. Falls back to
+ * `resolveCompany` (find-or-create) for cache misses, then caches the result.
+ * Use for bulk operations (e.g. CSV import) instead of calling `resolveCompany`
+ * once per row.
+ */
+export async function createCompanyResolver(
+  userId: string
+): Promise<CompanyResolver> {
+  const db = await getDb();
+  const existing = await db.query.companies.findMany({
+    where: eq(companies.userId, userId),
+  });
+  const cache = new Map<string, { id: string; name: string }>(
+    existing.map((row) => [row.nameNormalized, { id: row.id, name: row.name }])
+  );
+
+  return async (rawName) => {
+    const display = rawName ? displayCompanyName(rawName) : "";
+    if (!display) return null;
+    const normalized = normalizeCompanyName(display);
+
+    const cached = cache.get(normalized);
+    if (cached) return cached;
+
+    const resolved = await resolveCompany(userId, rawName);
+    if (resolved) cache.set(normalized, resolved);
+    return resolved;
+  };
+}
+
+/** Attach companyId + canonical company text using a preloaded resolver (see `createCompanyResolver`). */
+export async function companyFieldsForWriteCached(
+  resolve: CompanyResolver,
+  rawName: string | null | undefined
+): Promise<{ companyId: string | null; company: string | null }> {
+  const resolved = await resolve(rawName);
+  if (!resolved) return { companyId: null, company: null };
+  return { companyId: resolved.id, company: resolved.name };
+}
+
 /**
  * Link existing free-text company values to companies rows and canonicalize
  * contact.company to the shared display name.

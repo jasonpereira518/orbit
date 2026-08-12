@@ -90,14 +90,6 @@ export function closenessTier(closeness: number): ClosenessBreakdown["tier"] {
   return "outer";
 }
 
-/** Tailwind text + chip classes for closeness % — distinct from name (primary). */
-export function closenessPercentColorClass(closeness: number) {
-  const tier = closenessTier(closeness);
-  if (tier === "inner") return "text-emerald-700 dark:text-emerald-300";
-  if (tier === "mid") return "text-sky-700 dark:text-sky-300";
-  return "text-amber-700 dark:text-amber-300";
-}
-
 export function closenessPercentChipClass(closeness: number) {
   const tier = closenessTier(closeness);
   if (tier === "inner") {

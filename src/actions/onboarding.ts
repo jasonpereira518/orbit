@@ -6,10 +6,7 @@ import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { ensureUserSettings } from "@/lib/user-settings";
-import {
-  needsOnboarding,
-  persistOnboardingComplete,
-} from "@/lib/onboarding";
+import { persistOnboardingComplete } from "@/lib/onboarding";
 
 /** Keep in sync with TOUR_STEPS ids in tour-config (avoid importing client icons here). */
 const VALID_ONBOARDING_STEPS = new Set([
@@ -23,11 +20,6 @@ const VALID_ONBOARDING_STEPS = new Set([
   "recruiters",
   "outreach",
 ]);
-
-export async function getOnboardingStatus() {
-  const userId = await requireUserId();
-  return { needsOnboarding: await needsOnboarding(userId) };
-}
 
 async function markOnboardingComplete(userId: string) {
   await persistOnboardingComplete(userId);
