@@ -52,7 +52,9 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
   };
 }
 
-export async function startGmailOAuth(): Promise<{ url: string }> {
+export async function startGmailOAuth(
+  returnTo?: string
+): Promise<{ url: string }> {
   const userId = await requireUserId();
   const summary = getGmailOAuthConfigSummary();
   if (!summary.configured) {
@@ -70,7 +72,10 @@ export async function startGmailOAuth(): Promise<{ url: string }> {
     hasClientId: summary.hasClientId,
   });
 
-  const state = `${userId}:${crypto.randomUUID()}`;
+  // returnTo is a same-origin path only — never an absolute/external URL.
+  const safeReturnTo =
+    returnTo && returnTo.startsWith("/") ? returnTo : "";
+  const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}`;
   const jar = await cookies();
   jar.set(OAUTH_STATE_COOKIE, state, {
     httpOnly: true,
@@ -123,14 +128,17 @@ export async function confirmGmailRecruiterImports(
   return { imported };
 }
 
-export async function consumeGmailOAuthState(state: string | null) {
+export async function consumeGmailOAuthState(
+  state: string | null
+): Promise<{ userId: string; returnTo: string | null }> {
   const jar = await cookies();
   const expected = jar.get(OAUTH_STATE_COOKIE)?.value;
   jar.delete(OAUTH_STATE_COOKIE);
   if (!state || !expected || state !== expected) {
     throw new Error("Invalid OAuth state");
   }
-  const userId = state.split(":")[0];
+  const [userId, , encodedReturnTo] = state.split(":");
   if (!userId) throw new Error("Invalid OAuth state");
-  return userId;
+  const returnTo = encodedReturnTo ? decodeURIComponent(encodedReturnTo) : "";
+  return { userId, returnTo: returnTo.startsWith("/") ? returnTo : null };
 }

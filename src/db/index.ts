@@ -349,6 +349,20 @@ CREATE TABLE IF NOT EXISTS gmail_connections (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS gmail_connections_user_idx ON gmail_connections(user_id);
+CREATE TABLE IF NOT EXISTS outlook_connections (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL UNIQUE,
+  email_address text NOT NULL,
+  access_token_encrypted text NOT NULL,
+  refresh_token_encrypted text,
+  token_expires_at timestamptz,
+  scopes text,
+  status text NOT NULL DEFAULT 'active',
+  last_synced_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS outlook_connections_user_idx ON outlook_connections(user_id);
 `;
 
 async function columnExists(client: PGlite, table: string, column: string) {
@@ -475,6 +489,9 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "outreach_messages", "outcome", "text");
   await ensureColumn(client, "outreach_messages", "outcome_notes", "text");
   await ensureColumn(client, "outreach_messages", "replied_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "wizard_offered_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "wizard_step", "text");
+  await ensureColumn(client, "user_settings", "wizard_completed_at", "timestamptz");
 
   try {
     await client.exec(
@@ -707,6 +724,23 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
       updated_at timestamptz NOT NULL DEFAULT now()
     )`,
     `CREATE INDEX IF NOT EXISTS gmail_connections_user_idx ON gmail_connections(user_id)`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_offered_at timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_step text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_completed_at timestamptz`,
+    `CREATE TABLE IF NOT EXISTS outlook_connections (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id text NOT NULL UNIQUE,
+      email_address text NOT NULL,
+      access_token_encrypted text NOT NULL,
+      refresh_token_encrypted text,
+      token_expires_at timestamptz,
+      scopes text,
+      status text NOT NULL DEFAULT 'active',
+      last_synced_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS outlook_connections_user_idx ON outlook_connections(user_id)`,
   ];
 
   for (const statement of alters) {

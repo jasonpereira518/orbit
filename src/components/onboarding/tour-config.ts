@@ -20,8 +20,7 @@ export type TourNavKey =
   | "graph"
   | "dashboard"
   | "recruiters"
-  | "outreach"
-  | "start";
+  | "outreach";
 
 export type TourHotspot = {
   /** Matches `data-tour-hotspot` on a preview element. */
@@ -35,8 +34,6 @@ export type TourStep = {
   navKey: TourNavKey | null;
   title: string;
   body: string;
-  /** When true, show add-first-people CTAs instead of a preview. */
-  isStart?: boolean;
   /** Elements the guided cursor points to, in order, during this step. */
   hotspots?: TourHotspot[];
 };
@@ -150,18 +147,6 @@ export const TOUR_STEPS: TourStep[] = [
       { id: "campaign", label: "Your campaigns live here." },
       { id: "new", label: "Start a new cold outreach campaign." },
       { id: "draft", label: "AI drafts messages you can edit & send." },
-    ],
-  },
-  {
-    id: "start",
-    navKey: null,
-    title: "Add your first people",
-    body: "Orbit works best once someone is in your network. Pick how you want to start.",
-    isStart: true,
-    hotspots: [
-      { id: "path-manual", label: "Add someone by hand." },
-      { id: "path-capture", label: "Or extract people from notes." },
-      { id: "path-import", label: "Or import LinkedIn / calendar." },
     ],
   },
 ];

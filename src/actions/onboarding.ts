@@ -17,7 +17,8 @@ const VALID_ONBOARDING_STEPS = new Set([
   "chat",
   "graph",
   "dashboard",
-  "start",
+  "recruiters",
+  "outreach",
 ]);
 
 async function markOnboardingComplete(userId: string) {

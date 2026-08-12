@@ -57,6 +57,22 @@ export function stripLinkedInConnectionsPreamble(csvText: string): string {
   return text;
 }
 
+/** Header fields that only appear in a Messages.csv export, never Connections.csv. */
+const MESSAGES_ONLY_FIELDS = [
+  "conversation id",
+  "conversation title",
+  "from",
+  "to",
+  "content",
+];
+
+function looksLikeMessagesExport(fields: string[]) {
+  const lower = fields.map((f) => f.trim().toLowerCase());
+  const hasNameFields = lower.includes("first name") && lower.includes("last name");
+  if (hasNameFields) return false;
+  return MESSAGES_ONLY_FIELDS.filter((f) => lower.includes(f)).length >= 2;
+}
+
 /**
  * Parse LinkedIn "Connected On" values.
  * Handles:
@@ -91,7 +107,12 @@ export function parseConnectedOn(raw: string): string | null {
 export function parseLinkedInConnectionsCsv(csvText: string): {
   columns: string[];
   rows: LinkedInConnectionRow[];
+  warnings: string[];
 } {
+  if (!csvText.trim().length) {
+    throw new Error("That file is empty.");
+  }
+
   const text = stripLinkedInConnectionsPreamble(csvText);
   const parsed = Papa.parse<Record<string, string>>(text, {
     header: true,
@@ -102,14 +123,19 @@ export function parseLinkedInConnectionsCsv(csvText: string): {
     throw new Error(parsed.errors[0]?.message || "Failed to parse CSV");
   }
 
+  const fields = (parsed.meta.fields || []).map((f) => f.trim()).filter(Boolean);
+
+  if (looksLikeMessagesExport(fields)) {
+    throw new Error(
+      "This looks like a Messages export, not Connections. Use the Messages import below instead."
+    );
+  }
+
   const rows = parsed.data
     .map(mapLinkedInConnectionRow)
     .filter((r) => r.firstName || r.lastName);
 
   if (!rows.length) {
-    const fields = (parsed.meta.fields || [])
-      .map((f) => f.trim())
-      .filter(Boolean);
     const hint = fields.length
       ? ` Found columns: ${fields.slice(0, 8).join(", ")}.`
       : "";
@@ -118,8 +144,16 @@ export function parseLinkedInConnectionsCsv(csvText: string): {
     );
   }
 
+  const warnings: string[] = [];
+  if (parsed.errors.length) {
+    warnings.push(
+      `${parsed.errors.length} row${parsed.errors.length === 1 ? "" : "s"} could not be read and ${parsed.errors.length === 1 ? "was" : "were"} skipped.`
+    );
+  }
+
   return {
-    columns: parsed.meta.fields || [],
+    columns: fields,
     rows,
+    warnings,
   };
 }

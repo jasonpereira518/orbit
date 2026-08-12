@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 
-const LINKEDIN_DATA_URL =
+export const LINKEDIN_DATA_URL =
   "https://www.linkedin.com/mypreferences/d/download-my-data";
 
 type GuideVariant = "connections" | "messages";

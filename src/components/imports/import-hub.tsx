@@ -55,6 +55,22 @@ const LinkedInConnectionsImport = dynamic(
   { loading: () => <PanelSkeleton /> }
 );
 
+const GoogleContactsImport = dynamic(
+  () =>
+    import("@/components/imports/google-contacts-import").then((m) => ({
+      default: m.GoogleContactsImport,
+    })),
+  { loading: () => <PanelSkeleton /> }
+);
+
+const OutlookContactsImport = dynamic(
+  () =>
+    import("@/components/imports/outlook-contacts-import").then((m) => ({
+      default: m.OutlookContactsImport,
+    })),
+  { loading: () => <PanelSkeleton /> }
+);
+
 const LinkedInMessagesImport = dynamic(
   () =>
     import("@/components/imports/linkedin-messages-import").then((m) => ({
@@ -192,8 +208,11 @@ export function ImportHub({
           role="tabpanel"
           aria-labelledby="import-tab-connections"
           hidden={tab !== "connections"}
+          className="space-y-6"
         >
           <LinkedInConnectionsImport />
+          <GoogleContactsImport />
+          <OutlookContactsImport />
         </div>
       )}
       {mounted.messages && (
