@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { toast } from "@/lib/toast";
 import {
   confirmBulkCapture,
@@ -28,6 +28,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 type Decision = "pending" | "accepted" | "discarded";
@@ -91,7 +92,6 @@ export function BulkNotesPanel({
   }) => void;
 }) {
   const router = useRouter();
-  const reduceMotion = useReducedMotion();
   const fileRef = useRef<HTMLInputElement>(null);
   const [notes, setNotes] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
@@ -468,22 +468,18 @@ export function BulkNotesPanel({
               <motion.div
                 key={current.key}
                 custom={slideDirection}
-                initial={
-                  reduceMotion
-                    ? { opacity: 0 }
-                    : { opacity: 0, x: slideDirection * 48, rotate: slideDirection * 1.5 }
-                }
+                initial={{
+                  opacity: 0,
+                  x: slideDirection * 48,
+                  rotate: slideDirection * 1.5,
+                }}
                 animate={{ opacity: 1, x: 0, rotate: 0 }}
-                exit={
-                  reduceMotion
-                    ? { opacity: 0 }
-                    : {
-                        opacity: 0,
-                        x: slideDirection * -56,
-                        rotate: slideDirection * -2,
-                      }
-                }
-                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                exit={{
+                  opacity: 0,
+                  x: slideDirection * -56,
+                  rotate: slideDirection * -2,
+                }}
+                transition={{ duration: DUR.base, ease: EASE_HOUSE }}
               >
                 <PersonReviewCard
                   item={current}

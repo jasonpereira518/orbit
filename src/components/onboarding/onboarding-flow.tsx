@@ -20,7 +20,7 @@ import {
   TOUR_STEPS,
   type TourNavKey,
 } from "@/components/onboarding/tour-config";
-import { usePrefersReducedMotion } from "@/components/onboarding/use-prefers-reduced-motion";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { WelcomePreview } from "@/components/onboarding/previews/welcome-preview";
 import { ContactsPreview } from "@/components/onboarding/previews/contacts-preview";
 import { CapturePreview } from "@/components/onboarding/previews/capture-preview";
@@ -290,7 +290,7 @@ export function OnboardingFlow({
                     goTo(i);
                   }}
                   className={cn(
-                    "h-1.5 rounded-full transition-all",
+                    "h-1.5 rounded-full transition-[width,background-color]",
                     i === stepIndex
                       ? "w-6 bg-primary"
                       : "w-1.5 bg-muted-foreground/35 hover:bg-muted-foreground/60"

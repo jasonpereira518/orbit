@@ -65,6 +65,7 @@ import {
   type NebulaData,
 } from "@/lib/graph-layout";
 import { clusterBrandColor, mixWithWhite, withAlpha } from "@/lib/school-color";
+import { CAMERA_MS } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { cn } from "@/lib/utils";
 import {
@@ -204,7 +205,7 @@ function DefaultViewFitter({
         getNodes()
       );
       const zoom = zoomToFitSunCentered(maxAbsX, maxAbsY, width, height);
-      const duration = homeToken <= 1 ? 0 : 450;
+      const duration = homeToken <= 1 ? 0 : CAMERA_MS.move;
 
       void setCenter(0, 0, { zoom, duration }).then((ok) => {
         if (cancelled) return;
@@ -1027,7 +1028,7 @@ function GraphCanvasInner({
       void fitViewRef.current({
         nodes: nodesToFit.map((id) => ({ id })),
         padding: 0.4,
-        duration: 550,
+        duration: CAMERA_MS.wide,
         maxZoom: 1.5,
         minZoom: 0.2,
       });
@@ -1056,7 +1057,7 @@ function GraphCanvasInner({
       void fitViewRef.current({
         nodes: [{ id: peekPersonId }],
         padding: 0.55,
-        duration: 420,
+        duration: CAMERA_MS.move,
         maxZoom: 1.8,
         minZoom: 0.3,
       });
@@ -1088,7 +1089,7 @@ function GraphCanvasInner({
       void fitViewRef.current({
         nodes: matchIds.map((nid) => ({ id: nid })),
         padding: matchIds.length === 1 ? 0.55 : 0.35,
-        duration: 400,
+        duration: CAMERA_MS.move,
         maxZoom: matchIds.length === 1 ? 1.75 : 1.2,
       });
     }, 40);
@@ -2101,7 +2102,7 @@ export function NetworkGraph({
                 </div>
                 <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
                   <div
-                    className="h-full rounded-full bg-[#f0d48a] transition-all duration-300"
+                    className="h-full rounded-full bg-[#f0d48a] transition-[width] duration-slow ease-house"
                     style={{ width: `${progressPct}%` }}
                   />
                 </div>

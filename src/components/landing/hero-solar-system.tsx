@@ -2,7 +2,7 @@
 
 import { useLayoutEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
-import { usePrefersReducedMotion } from "@/components/onboarding/use-prefers-reduced-motion";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 type PlanetDef = {
   id: string;
@@ -226,8 +226,18 @@ export function HeroSolarSystem({ className }: { className?: string }) {
     };
     raf = requestAnimationFrame(tick);
 
+    // Don't animate orbits in a background tab.
+    const onVisibility = () => {
+      cancelAnimationFrame(raf);
+      if (!document.hidden) {
+        raf = requestAnimationFrame(tick);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
     return () => {
       cancelAnimationFrame(raf);
+      document.removeEventListener("visibilitychange", onVisibility);
       ro?.disconnect();
     };
   }, [motionOk]);

@@ -130,7 +130,7 @@ export function RefreshContactsButton() {
         >
           <span
             className={cn(
-              "absolute inset-x-0 bottom-0 rounded-full bg-primary transition-[height] duration-300 ease-out",
+              "absolute inset-x-0 bottom-0 rounded-full bg-primary transition-[height] duration-slow ease-house",
               progress ? "" : "h-0"
             )}
             style={progress ? { height: `${pct}%` } : undefined}
