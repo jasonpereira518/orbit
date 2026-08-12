@@ -8,6 +8,7 @@ import {
   motion,
   useReducedMotion,
 } from "motion/react";
+import { EASE_HOUSE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import {
   clearPeopleNavInBrowser,
@@ -22,7 +23,6 @@ const OPTIONS = [
   { key: "recruiters" as const, href: "/recruiters", label: "Recruiters" },
 ];
 
-const EASE = [0.22, 1, 0.36, 1] as const;
 const EXIT_MS = 220;
 
 function PeopleViewToggle({
@@ -145,7 +145,7 @@ export function PeopleListShell({
             key={title}
             initial={reducedMotion ? false : { opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: reducedMotion ? 0 : 0.25, ease: EASE }}
+            transition={{ duration: reducedMotion ? 0 : 0.25, ease: EASE_HOUSE }}
             className="font-[family-name:var(--font-display)] text-3xl text-primary"
           >
             {title}
@@ -157,7 +157,7 @@ export function PeopleListShell({
             transition={{
               duration: reducedMotion ? 0 : 0.25,
               delay: reducedMotion ? 0 : 0.04,
-              ease: EASE,
+              ease: EASE_HOUSE,
             }}
             className="mt-1 text-muted-foreground"
           >
@@ -199,7 +199,7 @@ export function PeopleListShell({
               }
               transition={{
                 duration: reducedMotion ? 0 : EXIT_MS / 1000,
-                ease: EASE,
+                ease: EASE_HOUSE,
               }}
               className="w-full will-change-transform"
             >

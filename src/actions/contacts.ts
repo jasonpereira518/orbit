@@ -202,7 +202,8 @@ export async function listContacts(filters?: {
         c.howMet,
         c.website,
         c.aiSummary,
-        c.notes,
+        // notes intentionally excluded — no longer selected (payload slimming);
+        // list search matches the AI summary instead of raw note text.
       ]
         .filter(Boolean)
         .some((v) => v!.toLowerCase().includes(q))

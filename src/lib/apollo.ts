@@ -438,12 +438,15 @@ export async function enrichPeopleFromLinkedIn(
     );
   }
 
-  const apiKey = await getApolloApiKey(userId);
-  if (!apiKey) {
+  const maybeApiKey = await getApolloApiKey(userId);
+  if (!maybeApiKey) {
     throw new Error(
       "Add an Apollo API key in Settings → Outreach to refresh LinkedIn profiles."
     );
   }
+  // Rebind post-guard so the hoisted matchOne closure sees `string`, not
+  // `string | null`.
+  const apiKey = maybeApiKey;
 
   const results: (LinkedInProfileEnrichment | null)[] = new Array(people.length);
   let nextIndex = 0;

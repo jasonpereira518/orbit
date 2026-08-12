@@ -46,6 +46,25 @@
   --radius-xl: calc(var(--radius) * 1.4);
 }
 
+/* ── Motion tokens ──
+ * Two-tier personality: interactions are snappy (fast/base), hero moments
+ * are celestial (slow/celestial on the house curve).
+ * TS mirror for motion/react + rAF consumers: src/lib/motion.ts — keep in sync.
+ * Plain @theme (not inline) so the vars land on :root for raw CSS keyframes. */
+@theme {
+  --transition-duration-fast: 120ms; /* hover, press, tooltips, exits */
+  --transition-duration-base: 180ms; /* overlays, toggles, small enters */
+  --transition-duration-slow: 320ms; /* page/section reveals */
+  --transition-duration-celestial: 700ms; /* landing + constellation set-pieces */
+
+  --ease-house: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Retime every bare `transition-*` utility (~100 call sites) onto the
+   * interaction tier in one place. */
+  --default-transition-duration: 120ms;
+  --default-transition-timing-function: cubic-bezier(0, 0, 0.2, 1);
+}
+
 :root {
   --background: #fbfbf9;
   --foreground: #1a1c1a;
@@ -322,17 +341,6 @@
   }
 }
 
-@keyframes delete-ripple {
-  0% {
-    transform: scale(0.4);
-    opacity: 0.55;
-  }
-  100% {
-    transform: scale(1.8);
-    opacity: 0;
-  }
-}
-
 @keyframes delete-confirm-pulse {
   0%,
   100% {
@@ -474,7 +482,7 @@
 }
 
 .constellation-planet-enter {
-  animation: constellation-planet-enter 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: constellation-planet-enter 0.45s var(--ease-house) both;
 }
 
 .constellation-starfield span {
@@ -615,11 +623,11 @@
 }
 
 .landing-fade {
-  animation: landing-fade 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: landing-fade var(--transition-duration-celestial) var(--ease-house) both;
 }
 
 .landing-solar-enter {
-  animation: landing-solar-enter 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.15s both;
+  animation: landing-solar-enter 0.9s var(--ease-house) 0.15s both;
 }
 
 @keyframes landing-credit-shimmer {
@@ -735,7 +743,7 @@
 }
 
 .page-transition {
-  animation: page-transition-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: page-transition-in 0.28s var(--ease-house) both;
 }
 
 @media (prefers-reduced-motion: reduce) {
