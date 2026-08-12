@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import {
   getContact,
   getContactFollowUpSendOptions,
@@ -13,6 +14,8 @@ import { ContactMutualPeople } from "@/components/contacts/contact-mutual-people
 import { ContactRemindersSection } from "@/components/contacts/contact-reminders-section";
 import { ContactStatPills } from "@/components/contacts/contact-stat-pills";
 import { ContactTimeline } from "@/components/contacts/contact-timeline";
+import { Reveal } from "@/components/motion/reveal";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   computeCloseness,
   formatInteractionFrequency,
@@ -27,16 +30,21 @@ export default async function ContactDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [contact, userId] = await Promise.all([getContact(id), requireUserId()]);
-  if (!contact) notFound();
 
-  const [goals, relatedPeople, mutualPeople, sendOptions] =
-    await Promise.all([
-    listActiveGoalTexts(userId),
-    listRelatedContacts(contact.id, 6),
-    listMutualContacts(contact.id, 6),
-    getContactFollowUpSendOptions(contact.id),
-  ]);
+  // Every side query needs only the route param — start them all before the
+  // first await so nothing serializes behind getContact. The .catch wrappers
+  // keep an eagerly-started promise from surfacing an unhandled rejection
+  // (or racing notFound() into the error boundary on a bogus id); on
+  // failure the section simply doesn't render.
+  const sendOptionsPromise = getContactFollowUpSendOptions(id).catch(() => null);
+  const relatedPromise = listRelatedContacts(id, 6).catch(() => []);
+  const mutualsPromise = listMutualContacts(id, 6).catch(() => []);
+  const goalsPromise = requireUserId().then((uid) => listActiveGoalTexts(uid));
+
+  // notFound() must fire BEFORE any Suspense boundary renders so the route
+  // still returns a real 404 status.
+  const [contact, goals] = await Promise.all([getContact(id), goalsPromise]);
+  if (!contact) notFound();
 
   const closeness = computeCloseness(
     {
@@ -104,62 +112,139 @@ export default async function ContactDetailPage({
 
   return (
     <div className="space-y-6 pb-8">
-      <ContactProfileHero
-        contactId={contact.id}
-        displayName={displayName}
-        fullName={contact.fullName}
-        preferredName={contact.preferredName}
-        firstName={contact.firstName}
-        title={contact.title}
-        company={contact.company}
-        school={contact.school}
-        location={contact.location}
-        profileImageUrl={contact.profileImageUrl}
-        linkedinUrl={contact.linkedinUrl}
-        channels={channels}
-        formInitial={formInitial}
-      />
+      <div className="reveal-mount">
+        <ContactProfileHero
+          contactId={contact.id}
+          displayName={displayName}
+          fullName={contact.fullName}
+          preferredName={contact.preferredName}
+          firstName={contact.firstName}
+          title={contact.title}
+          company={contact.company}
+          school={contact.school}
+          location={contact.location}
+          profileImageUrl={contact.profileImageUrl}
+          linkedinUrl={contact.linkedinUrl}
+          channels={channels}
+          formInitial={formInitial}
+        />
+      </div>
 
-      <ContactStatPills closeness={closeness} lastTouchAt={lastTouchAt} />
+      <div
+        className="reveal-mount"
+        style={{ "--reveal-delay": "60ms" } as React.CSSProperties}
+      >
+        <ContactStatPills closeness={closeness} lastTouchAt={lastTouchAt} />
+      </div>
 
-      <ContactProfileOverview
-        contactId={contact.id}
-        aiSummary={contact.aiSummary}
-        keyFacts={contact.keyFacts || []}
-        sharedInterests={contact.sharedInterests || []}
-        industry={contact.industry}
-        closeness={closeness}
-        lastTouchAt={lastTouchAt}
-        frequencyLabel={frequencyLabel}
-        howMetSummary={howMetSummary}
-      />
+      <div
+        className="reveal-mount"
+        style={{ "--reveal-delay": "120ms" } as React.CSSProperties}
+      >
+        <ContactProfileOverview
+          contactId={contact.id}
+          aiSummary={contact.aiSummary}
+          keyFacts={contact.keyFacts || []}
+          sharedInterests={contact.sharedInterests || []}
+          industry={contact.industry}
+          closeness={closeness}
+          lastTouchAt={lastTouchAt}
+          frequencyLabel={frequencyLabel}
+          howMetSummary={howMetSummary}
+        />
+      </div>
 
-      <ContactFollowUpSection
-        contactId={contact.id}
-        contactName={displayName}
-        nextFollowUpAt={contact.nextFollowUpAt}
-        sendOptions={sendOptions}
-        phone={contact.phone}
-      />
+      <Suspense fallback={<Skeleton className="h-40 w-full rounded-2xl" />}>
+        <StreamedFollowUp
+          sendOptions={sendOptionsPromise}
+          contactId={contact.id}
+          contactName={displayName}
+          nextFollowUpAt={contact.nextFollowUpAt}
+          phone={contact.phone}
+        />
+      </Suspense>
 
-      <ContactTimeline
-        contactId={contact.id}
-        interactions={contact.interactions.map((i) => ({
-          id: i.id,
-          interactionType: i.interactionType,
-          interactionDate: i.interactionDate,
-          sameDayOrder: i.sameDayOrder,
-          rawNotes: i.rawNotes,
-          aiSummary: i.aiSummary,
-          actionItems: i.actionItems,
-        }))}
-      />
+      <Reveal>
+        <ContactTimeline
+          contactId={contact.id}
+          interactions={contact.interactions.map((i) => ({
+            id: i.id,
+            interactionType: i.interactionType,
+            interactionDate: i.interactionDate,
+            sameDayOrder: i.sameDayOrder,
+            rawNotes: i.rawNotes,
+            aiSummary: i.aiSummary,
+            actionItems: i.actionItems,
+          }))}
+        />
+      </Reveal>
 
-      <ContactRemindersSection reminders={contact.reminders ?? []} />
+      <Reveal>
+        <ContactRemindersSection reminders={contact.reminders ?? []} />
+      </Reveal>
 
-      <ContactMutualPeople mutuals={mutualPeople} subjectName={displayName} />
+      {/* No fallbacks here: these sections render nothing when empty, and a
+          skeleton that can collapse into nothing reads as a glitch. */}
+      <Suspense fallback={null}>
+        <StreamedMutuals mutuals={mutualsPromise} subjectName={displayName} />
+      </Suspense>
 
-      <ContactRelatedPeople people={relatedPeople} subjectName={displayName} />
+      <Suspense fallback={null}>
+        <StreamedRelated people={relatedPromise} subjectName={displayName} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function StreamedFollowUp({
+  sendOptions,
+  ...rest
+}: {
+  sendOptions: Promise<Awaited<
+    ReturnType<typeof getContactFollowUpSendOptions>
+  > | null>;
+  contactId: string;
+  contactName: string;
+  nextFollowUpAt: Date | string | null;
+  phone: string | null;
+}) {
+  const resolved = await sendOptions;
+  if (!resolved) return null;
+  return (
+    <div className="reveal-mount">
+      <ContactFollowUpSection {...rest} sendOptions={resolved} />
+    </div>
+  );
+}
+
+async function StreamedMutuals({
+  mutuals,
+  subjectName,
+}: {
+  mutuals: ReturnType<typeof listMutualContacts>;
+  subjectName: string;
+}) {
+  const resolved = await mutuals;
+  if (resolved.length === 0) return null;
+  return (
+    <div className="reveal-mount">
+      <ContactMutualPeople mutuals={resolved} subjectName={subjectName} />
+    </div>
+  );
+}
+
+async function StreamedRelated({
+  people,
+  subjectName,
+}: {
+  people: ReturnType<typeof listRelatedContacts>;
+  subjectName: string;
+}) {
+  const resolved = await people;
+  if (resolved.length === 0) return null;
+  return (
+    <div className="reveal-mount">
+      <ContactRelatedPeople people={resolved} subjectName={subjectName} />
     </div>
   );
 }

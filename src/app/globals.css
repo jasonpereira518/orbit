@@ -718,6 +718,33 @@
   user-select: none;
 }
 
+/* ── Staged reveals ──
+ * .reveal-mount plays on insertion (page mount OR streamed Suspense swap —
+ * swaps happen pre-hydration, so this must stay pure CSS). Stagger siblings
+ * with --reveal-delay; cap the cascade around 240ms.
+ * [data-reveal] is the scroll-triggered variant driven by <Reveal>. */
+
+@keyframes reveal-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+.reveal-mount {
+  animation: reveal-rise var(--transition-duration-slow) var(--ease-house)
+    var(--reveal-delay, 0ms) both;
+}
+
+[data-reveal="pending"] {
+  opacity: 0;
+}
+
+[data-reveal="in"] {
+  animation: reveal-rise var(--transition-duration-slow) var(--ease-house)
+    var(--reveal-delay, 0ms) both;
+}
+
 /* ── View Transitions (route navigation) ── */
 
 @keyframes vt-fade {
