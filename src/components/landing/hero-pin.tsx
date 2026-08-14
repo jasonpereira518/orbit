@@ -14,12 +14,13 @@ const REST_TILT_X = 28;
 const REST_TILT_Y = -12;
 
 /* Ring label geometry uses the solar stage's 440-unit viewBox (VIEW in
- * hero-solar-system.tsx); labels sit on the top point of each ring. */
+ * hero-solar-system.tsx); labels sit on the top or bottom point of each
+ * ring (Steady orbit goes bottom so it clears the claim copy). */
 const SOLAR_VIEW = 440;
 const RING_LABELS = [
-  { text: "Inner circle", r: 78 },
-  { text: "Steady orbit", r: 156 },
-  { text: "Drifting", r: 234 },
+  { text: "Inner circle", r: 78, side: 1 },
+  { text: "Steady orbit", r: 156, side: -1 },
+  { text: "Drifting", r: 234, side: 1 },
 ];
 
 function subscribeLg(cb: () => void) {
@@ -125,7 +126,7 @@ export function HeroPin({
                       key={label.text}
                       className="absolute left-1/2 inline-block -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#05070f]/70 px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-[#c4a35a]"
                       style={{
-                        top: `${50 - (label.r / SOLAR_VIEW) * 100}%`,
+                        top: `${50 - label.side * (label.r / SOLAR_VIEW) * 100}%`,
                         opacity: labelOpacities[i],
                       }}
                     >
