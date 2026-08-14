@@ -3,9 +3,17 @@
 import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { backfillContactAvatars } from "@/actions/contacts";
+import {
+  dismissBackgroundJob,
+  finishBackgroundJob,
+  getBackgroundJob,
+  startBackgroundJob,
+  updateBackgroundJob,
+} from "@/lib/background-jobs";
 
 const BATCH_PAUSE_MS = 750;
 const MAX_WAIT_MS = 15 * 60_000;
+const JOB_ID = "avatar-backfill";
 
 export const AVATARS_UPDATED_EVENT = "orbit:avatars-updated";
 
@@ -26,7 +34,7 @@ function sleep(ms: number, signal: AbortSignal) {
         window.clearTimeout(timer);
         resolve();
       },
-      { once: true }
+      { once: true },
     );
   });
 }
@@ -36,7 +44,7 @@ function notifyAvatarsUpdated(contactIds: string[]) {
   window.dispatchEvent(
     new CustomEvent<AvatarsUpdatedDetail>(AVATARS_UPDATED_EVENT, {
       detail: { contactIds },
-    })
+    }),
   );
 }
 
@@ -59,26 +67,61 @@ export function AvatarBackfill() {
 
     async function run() {
       let idlePasses = 0;
+      let totalSaved = 0;
+      let jobStarted = false;
+      const startedAt = Date.now();
 
       while (!controller.signal.aborted) {
         try {
           const result = await backfillContactAvatars();
           if (controller.signal.aborted) return;
 
+          if (!jobStarted) {
+            if (result.saved > 0 || result.pending > 0) {
+              jobStarted = true;
+              startBackgroundJob({
+                id: JOB_ID,
+                kind: "avatar-backfill",
+                label: "Fetching LinkedIn photos",
+                done: 0,
+                total: result.saved + result.pending,
+                startedAt,
+              });
+            } else if (getBackgroundJob(JOB_ID)) {
+              // Nothing to do this run — clear a stale card hydrated from a
+              // previous session's localStorage snapshot.
+              dismissBackgroundJob(JOB_ID);
+            }
+          }
+
           if (result.saved > 0) {
+            totalSaved += result.saved;
             idlePasses = 0;
             const ids = result.savedIds ?? [];
             notifyAvatarsUpdated(ids);
           }
 
+          if (jobStarted) {
+            updateBackgroundJob(JOB_ID, {
+              done: totalSaved,
+              total: totalSaved + result.pending,
+            });
+          }
+
           if (result.pending <= 0) {
+            if (jobStarted) {
+              finishBackgroundJob(JOB_ID, {
+                status: "completed",
+                resultMessage: `Fetched ${totalSaved} LinkedIn photo${totalSaved === 1 ? "" : "s"}`,
+              });
+            }
             return;
           }
 
           if (result.rateLimitedUntil && result.rateLimitedUntil > Date.now()) {
             const wait = Math.min(
               MAX_WAIT_MS,
-              Math.max(5_000, result.rateLimitedUntil - Date.now() + 1_000)
+              Math.max(5_000, result.rateLimitedUntil - Date.now() + 1_000),
             );
             await sleep(wait, controller.signal);
             continue;
@@ -103,6 +146,10 @@ export function AvatarBackfill() {
     return () => {
       controller.abort();
       running.current = false;
+      // Real work stops here — don't leave a "running" card behind.
+      if (getBackgroundJob(JOB_ID)?.status === "running") {
+        dismissBackgroundJob(JOB_ID);
+      }
     };
   }, []);
 

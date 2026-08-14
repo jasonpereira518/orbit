@@ -10,6 +10,7 @@ import { OrbitLogo } from "@/components/orbit-logo";
 import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
 import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
+import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar";
 import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
 import { ThemeSync } from "@/components/theme-sync";
 import { cn } from "@/lib/utils";
@@ -20,7 +21,7 @@ const FloatingAskBar = dynamic(
     import("@/components/layout/floating-ask-bar").then((m) => ({
       default: m.FloatingAskBar,
     })),
-  { ssr: false }
+  { ssr: false },
 );
 
 export function AppShell({
@@ -61,32 +62,41 @@ export function AppShell({
       <div
         className={cn(
           "flex bg-background",
-          isViewportLocked ? "h-dvh overflow-hidden" : "min-h-screen"
+          isViewportLocked ? "h-dvh overflow-hidden" : "min-h-screen",
         )}
       >
         <ThemeSync theme={theme} />
         <AvatarBackfill />
         <DueNotificationsWatcher />
         <ImportJobWatcher />
+        <GlobalJobProgressBar />
         <div
           className="sticky top-0 z-40 hidden h-dvh shrink-0 p-3 md:block lg:p-4"
           style={{ viewTransitionName: "app-sidebar" }}
         >
-          <AppSidebar pathname={pathname} clerkOn={clerkOn} demoMode={demoMode} />
+          <AppSidebar
+            pathname={pathname}
+            clerkOn={clerkOn}
+            demoMode={demoMode}
+          />
         </div>
         <main
           className={cn(
             "relative flex min-h-0 flex-1 flex-col",
             isViewportLocked
               ? "h-dvh overflow-hidden"
-              : "min-h-screen overflow-auto"
+              : "min-h-screen overflow-auto",
           )}
         >
           <header
             className="z-30 flex shrink-0 items-center justify-between border-b border-border/70 bg-background/95 px-4 py-3 backdrop-blur md:hidden"
             style={{ viewTransitionName: "app-mobile-header" }}
           >
-            <Link href="/" className="flex items-center gap-2.5" title="Back to landing page">
+            <Link
+              href="/"
+              className="flex items-center gap-2.5"
+              title="Back to landing page"
+            >
               <OrbitLogo size="md" />
               <span className="font-[family-name:var(--font-display)] text-lg leading-none text-primary">
                 Orbit
@@ -107,7 +117,7 @@ export function AppShell({
                 : isSettings
                   ? "flex-1 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-8"
                   : "flex-1 pb-[calc(9.5rem+env(safe-area-inset-bottom))] md:pb-24",
-              isConstellation && "py-4 md:py-5"
+              isConstellation && "py-4 md:py-5",
             )}
           >
             {children}
