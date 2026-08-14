@@ -13,10 +13,14 @@ import {
 import { requireUserId } from "@/lib/auth";
 import { computeCloseness } from "@/lib/closeness";
 import { listActiveGoalTexts } from "@/actions/goals";
-import { companyFieldsForWrite } from "@/lib/companies";
+import {
+  companyFieldsForWrite,
+  companyFieldsForWriteCached,
+  type CompanyResolver,
+} from "@/lib/companies";
 import { isMetContext } from "@/lib/met-context";
 import { generateAndStorePersonSummary } from "@/lib/person-summary";
-import { rebuildContactEmbedding } from "@/lib/search";
+import { rebuildContactEmbedding, rebuildContactEmbeddingsBatch } from "@/lib/search";
 import {
   enrichPeopleFromLinkedIn,
   getApolloApiKey,
@@ -48,6 +52,8 @@ import {
 export type ContactWriteOptions = {
   /** Skip path revalidation during bulk imports. */
   skipRevalidate?: boolean;
+  /** Skip the synchronous embedding API call; caller will rebuild embeddings in a batch. */
+  skipEmbedding?: boolean;
 };
 
 export type ContactInput = {
@@ -134,6 +140,45 @@ async function syncTags(
   );
 }
 
+/** Bulk variant of `syncTags` for freshly-created contacts (no existing tags to delete). */
+async function syncTagsBulk(
+  userId: string,
+  items: { contactId: string; tagNames?: string[] }[]
+) {
+  const perContactNames = items.map((item) => [
+    ...new Set((item.tagNames || []).map((raw) => raw.trim()).filter(Boolean)),
+  ]);
+  const allNames = [...new Set(perContactNames.flat())];
+  if (allNames.length === 0) return;
+
+  const db = await getDb();
+  const existing = await db.query.tags.findMany({
+    where: and(eq(tags.userId, userId), inArray(tags.name, allNames)),
+  });
+  const byName = new Map(existing.map((tag) => [tag.name, tag]));
+
+  const missing = allNames.filter((name) => !byName.has(name));
+  if (missing.length > 0) {
+    const created = await db
+      .insert(tags)
+      .values(missing.map((name) => ({ userId, name })))
+      .returning();
+    for (const tag of created) {
+      byName.set(tag.name, tag);
+    }
+  }
+
+  const rows = items.flatMap((item, i) =>
+    perContactNames[i].map((name) => ({
+      contactId: item.contactId,
+      tagId: byName.get(name)!.id,
+    }))
+  );
+  if (rows.length > 0) {
+    await db.insert(contactTags).values(rows);
+  }
+}
+
 export async function listContacts(filters?: {
   q?: string;
   company?: string;
@@ -183,7 +228,7 @@ export async function listContacts(filters?: {
       with: { contactTags: { with: { tag: true } } },
       orderBy: [desc(contacts.updatedAt)],
     }),
-    listActiveGoalTexts(userId),
+    listActiveGoalTexts(),
   ]);
 
   let rows = allRows;
@@ -442,7 +487,9 @@ export async function createContact(
     .returning();
 
   await syncTags(userId, contact.id, input.tagNames);
-  await rebuildContactEmbedding(userId, contact.id);
+  if (!options?.skipEmbedding) {
+    await rebuildContactEmbedding(userId, contact.id);
+  }
 
   if (!options?.skipRevalidate) {
     revalidatePath("/");
@@ -451,6 +498,91 @@ export async function createContact(
   }
 
   return contact;
+}
+
+/**
+ * Bulk-create contacts in a single insert, using a preloaded `CompanyResolver`
+ * (see `createCompanyResolver`) instead of a per-row company lookup, and a
+ * single batched embedding pass instead of one embedding call per contact.
+ * For bulk imports only — general callers should use `createContact`.
+ */
+export async function createContactsBulk(
+  inputs: ContactInput[],
+  companyResolve: CompanyResolver,
+  options?: ContactWriteOptions
+) {
+  if (inputs.length === 0) return [];
+
+  const userId = await requireUserId();
+  const db = await getDb();
+  const now = new Date();
+
+  const companyFieldsList = await Promise.all(
+    inputs.map((input) => companyFieldsForWriteCached(companyResolve, input.company))
+  );
+
+  const values = inputs.map((input, i) => {
+    const companyFields = companyFieldsList[i];
+    const metAt = safeTimestamp(input.dateMet);
+    const followUpAt = safeTimestamp(input.nextFollowUpAt);
+    return {
+      userId,
+      fullName: input.fullName,
+      firstName: input.firstName,
+      lastName: input.lastName,
+      preferredName: input.preferredName,
+      company: companyFields.company,
+      companyId: companyFields.companyId,
+      title: input.title,
+      location: input.location,
+      school: input.school,
+      email: input.email,
+      phone: input.phone,
+      linkedinUrl: input.linkedinUrl,
+      website: input.website,
+      profileImageUrl: input.profileImageUrl ?? null,
+      relationshipScore: input.relationshipScore ?? 2,
+      priorityLevel: input.priorityLevel ?? 0,
+      source: input.source ?? "manual",
+      industry: input.industry,
+      metContext: normalizeMetContext(input.metContext),
+      dateMet: metAt,
+      howMet: input.howMet,
+      notes: input.notes,
+      aiSummary: input.aiSummary,
+      keyFacts: input.keyFacts ?? [],
+      sharedInterests: input.sharedInterests ?? [],
+      opportunities: input.opportunities ?? [],
+      firstInteractionAt: metAt ?? now,
+      lastInteractionAt: metAt ?? now,
+      nextFollowUpAt: followUpAt,
+    };
+  });
+
+  const created = await db.insert(contacts).values(values).returning();
+
+  await syncTagsBulk(
+    userId,
+    created.map((contact, i) => ({
+      contactId: contact.id,
+      tagNames: inputs[i].tagNames,
+    }))
+  );
+
+  if (!options?.skipEmbedding) {
+    await rebuildContactEmbeddingsBatch(
+      userId,
+      created.map((contact) => contact.id)
+    );
+  }
+
+  if (!options?.skipRevalidate) {
+    revalidatePath("/");
+    revalidatePath("/contacts");
+    revalidatePath("/graph");
+  }
+
+  return created;
 }
 
 export async function updateContact(
@@ -526,7 +658,9 @@ export async function updateContact(
     await syncTags(userId, id, input.tagNames);
   }
 
-  await rebuildContactEmbedding(userId, id);
+  if (!options?.skipEmbedding) {
+    await rebuildContactEmbedding(userId, id);
+  }
 
   const significant =
     input.fullName !== undefined ||
@@ -1149,7 +1283,7 @@ export async function draftContactFollowUp(
   }
 ) {
   const userId = await requireUserId();
-  const goals = await listActiveGoalTexts(userId);
+  const goals = await listActiveGoalTexts();
   return generateContactFollowUpDraft(userId, contactId, goals, options);
 }
 
@@ -1242,7 +1376,7 @@ export async function listRelatedContacts(
 ): Promise<RelatedContact[]> {
   const userId = await requireUserId();
   const db = await getDb();
-  const goals = await listActiveGoalTexts(userId);
+  const goals = await listActiveGoalTexts();
 
   const rows = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),

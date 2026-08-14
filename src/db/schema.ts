@@ -22,6 +22,9 @@ export const userSettings = pgTable("user_settings", {
     withTimezone: true,
   }),
   onboardingStep: text("onboarding_step"),
+  wizardOfferedAt: timestamp("wizard_offered_at", { withTimezone: true }),
+  wizardStep: text("wizard_step"),
+  wizardCompletedAt: timestamp("wizard_completed_at", { withTimezone: true }),
   theme: text("theme").$type<"light" | "dark" | "system">(),
   apolloApiKeyEncrypted: text("apollo_api_key_encrypted"),
   resendApiKeyEncrypted: text("resend_api_key_encrypted"),
@@ -252,6 +255,7 @@ export const imports = pgTable("imports", {
   importType: text("import_type").notNull(),
   fileName: text("file_name"),
   status: text("status").default("pending").notNull(),
+  totalRows: integer("total_rows"),
   rowsProcessed: integer("rows_processed").default(0),
   contactsCreated: integer("contacts_created").default(0),
   contactsUpdated: integer("contacts_updated").default(0),
@@ -261,6 +265,38 @@ export const imports = pgTable("imports", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+export type ImportJobRowPayload = {
+  index: number;
+  firstName: string;
+  lastName: string;
+  url?: string;
+  email?: string;
+  company?: string;
+  position?: string;
+  connectedOn?: string;
+};
+
+export const importJobRows = pgTable(
+  "import_job_rows",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    importId: uuid("import_id")
+      .notNull()
+      .references(() => imports.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
+    rowIndex: integer("row_index").notNull(),
+    payload: jsonb("payload").$type<ImportJobRowPayload>().notNull(),
+    status: text("status").default("pending").notNull(),
+    contactId: uuid("contact_id"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("import_job_rows_import_status_idx").on(t.importId, t.status),
+  ]
+);
 
 export const calendarSubscriptions = pgTable(
   "calendar_subscriptions",
@@ -513,6 +549,24 @@ export const gmailConnections = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("gmail_connections_user_idx").on(t.userId)]
+);
+
+export const outlookConnections = pgTable(
+  "outlook_connections",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull().unique(),
+    emailAddress: text("email_address").notNull(),
+    accessTokenEncrypted: text("access_token_encrypted").notNull(),
+    refreshTokenEncrypted: text("refresh_token_encrypted"),
+    tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+    scopes: text("scopes"),
+    status: text("status").default("active").notNull(),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("outlook_connections_user_idx").on(t.userId)]
 );
 
 export type ChatRecommendation = {

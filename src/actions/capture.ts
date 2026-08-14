@@ -6,7 +6,6 @@ import { getDb } from "@/db";
 import { contacts, reminders } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import {
-  parseNotesWithAI,
   parseMultiPersonNotesWithAI,
   type CaptureParseHints,
   type ParsedNote,
@@ -20,49 +19,6 @@ import {
 import { findDuplicateCandidates } from "@/lib/duplicates";
 import { createContact, logInteraction, updateContact } from "@/actions/contacts";
 import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
-
-export async function parseCaptureNotes(notes: string) {
-  try {
-    const userId = await requireUserId();
-    if (!notes.trim()) {
-      return { ok: false as const, error: "Notes are required" };
-    }
-
-    const parsed = await parseNotesWithAI(userId, notes);
-
-    const db = await getDb();
-    const existing = await db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
-    });
-
-    const duplicates = findDuplicateCandidates(existing, {
-      fullName: parsed.name,
-      email: parsed.email,
-      linkedinUrl: parsed.linkedin_url,
-      company: parsed.company,
-      title: parsed.role,
-    }).slice(0, 5);
-
-    return {
-      ok: true as const,
-      parsed,
-      duplicates: duplicates.map((d) => ({
-        id: d.contact.id,
-        fullName: d.contact.fullName,
-        company: d.contact.company,
-        title: d.contact.title,
-        reason: d.reason,
-        confidence: d.confidence,
-      })),
-    };
-  } catch (err) {
-    const { toUserFacingError } = await import("@/lib/errors");
-    return {
-      ok: false as const,
-      error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message,
-    };
-  }
-}
 
 export type BulkNoteDuplicate = {
   id: string;

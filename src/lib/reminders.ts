@@ -343,7 +343,7 @@ export async function getDashboardData(
         where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
         orderBy: (g, { desc }) => [desc(g.createdAt)],
       }),
-      listActiveGoalTexts(userId),
+      listActiveGoalTexts(),
     ]);
 
   const enrichedContacts = allContactRows.map((c) => {

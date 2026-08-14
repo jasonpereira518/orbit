@@ -680,7 +680,7 @@ export async function markReminderDone(id: string) {
 /** Draft a follow-up message grounded in the reminder contact's conversation history. */
 export async function draftFollowUpResponse(reminderId: string) {
   const userId = await requireUserId();
-  const goals = await listActiveGoalTexts(userId);
+  const goals = await listActiveGoalTexts();
   return generateFollowUpDraft(userId, reminderId, goals);
 }
 

@@ -69,6 +69,12 @@ import { CAMERA_MS } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { cn } from "@/lib/utils";
 import {
+  dismissBackgroundJob,
+  finishBackgroundJob,
+  startBackgroundJob,
+  updateBackgroundJob,
+} from "@/lib/background-jobs";
+import {
   Filter,
   Home,
   Info,
@@ -1369,6 +1375,7 @@ export function NetworkGraph({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const operationsStoppedRef = useRef(false);
+  const refreshJobIdRef = useRef<string | null>(null);
 
   const fullscreenActive = isFullscreen || cssFullscreen;
 
@@ -1414,6 +1421,10 @@ export function NetworkGraph({
       operationsStoppedRef.current = true;
       setRefreshing(false);
       setRefreshProgress({ processed: 0, total: 0 });
+      if (refreshJobIdRef.current) {
+        dismissBackgroundJob(refreshJobIdRef.current);
+        refreshJobIdRef.current = null;
+      }
     };
 
     window.addEventListener("orbit:stop-operations", stopAll);
@@ -1686,6 +1697,16 @@ export function NetworkGraph({
     if (operationsStoppedRef.current) return;
     setRefreshing(true);
     setRefreshProgress({ processed: 0, total: 0 });
+    const jobId = `graph-refresh-${Date.now()}`;
+    refreshJobIdRef.current = jobId;
+    startBackgroundJob({
+      id: jobId,
+      kind: "graph-refresh",
+      label: "Refreshing constellation",
+      done: 0,
+      total: 0,
+      startedAt: Date.now(),
+    });
     try {
       let offset = 0;
       let done = false;
@@ -1694,6 +1715,10 @@ export function NetworkGraph({
         const result = await refreshConstellationBatch({ offset, limit: 8 });
         setRefreshProgress({
           processed: result.processed,
+          total: result.total,
+        });
+        updateBackgroundJob(jobId, {
+          done: result.processed,
           total: result.total,
         });
         offset = result.processed;
@@ -1705,9 +1730,18 @@ export function NetworkGraph({
         }
         if (result.total === 0) break;
       }
+      finishBackgroundJob(jobId, {
+        status: "completed",
+        resultMessage: "Constellation refreshed",
+      });
     } catch (err) {
       console.error(err);
+      finishBackgroundJob(jobId, {
+        status: "failed",
+        error: "Constellation refresh failed",
+      });
     } finally {
+      refreshJobIdRef.current = null;
       setRefreshing(false);
     }
   }, [refreshing]);

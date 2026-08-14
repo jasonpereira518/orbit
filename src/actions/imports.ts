@@ -2,21 +2,30 @@
 
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import Papa from "papaparse";
 import { getDb } from "@/db";
 import {
   contacts,
+  gmailConnections,
   imports,
+  importJobRows,
   interactions,
+  outlookConnections,
   reminders,
   type ImportStats,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { daysAgo, findDuplicateCandidates } from "@/lib/duplicates";
-import { createContact, updateContact } from "@/actions/contacts";
 import {
+  DUPLICATE_MERGE_CONFIDENCE,
+  daysAgo,
+  findDuplicateCandidates,
+} from "@/lib/duplicates";
+import { createContact, updateContact } from "@/actions/contacts";
+import { runLinkedInImportJob } from "@/lib/import-job-processor";
+import {
+  parseConnectedOn,
   parseLinkedInConnectionsCsv,
-  type LinkedInConnectionRow,
 } from "@/lib/linkedin-connections";
 import {
   parseLinkedInMessagesCsv,
@@ -33,42 +42,11 @@ import {
   type ParsedCalendarEvent,
 } from "@/lib/calendar-import";
 import { upsertContactEmbedding } from "@/lib/search";
-
-/** Align preview badges with confirm merge behavior. */
-const DUPLICATE_MERGE_CONFIDENCE = 0.85;
-
-export type LinkedInRow = LinkedInConnectionRow;
-
-/**
- * Parse LinkedIn "Connected On" values.
- * Handles:
- * - "15 Jan 2024", "01/15/2024" (text exports)
- * - Excel/Sheets serial day numbers like "46198" (CSV re-saved from a spreadsheet)
- */
-function parseConnectedOn(raw: string): string | null {
-  const value = raw.trim();
-  if (!value) return null;
-
-  // Spreadsheet serial dates (days since 1899-12-30). Modern LinkedIn
-  // connections land roughly in 30000–80000 (≈1990–2100).
-  if (/^\d{4,6}(\.\d+)?$/.test(value)) {
-    const serial = Number(value);
-    if (serial >= 30000 && serial <= 80000) {
-      const ms = Date.UTC(1899, 11, 30) + Math.round(serial) * 86_400_000;
-      const fromSerial = new Date(ms);
-      if (!Number.isNaN(fromSerial.getTime())) return fromSerial.toISOString();
-    }
-  }
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-
-  // Bare numerics like "46198" become year 46198 in JS Date — reject those.
-  const year = parsed.getUTCFullYear();
-  if (year < 1990 || year > 2100) return null;
-
-  return parsed.toISOString();
-}
+import { fetchGooglePeopleContacts, getValidAccessToken, hasContactsScope } from "@/lib/gmail";
+import {
+  fetchOutlookContacts,
+  getValidAccessToken as getValidOutlookAccessToken,
+} from "@/lib/outlook";
 
 function mergeStats(
   prev: ImportStats | null | undefined,
@@ -108,9 +86,25 @@ function calendarMeetingExternalId(eventUid: string, contactId: string) {
   return `cal:${eventUid}:${contactId}`;
 }
 
+/** Replacement-character artifacts from decoding a non-UTF8 export as UTF-8. */
+function hasEncodingArtifacts(rows: { firstName: string; lastName: string; company: string; position: string }[]) {
+  return rows.some(
+    (r) =>
+      r.firstName.includes("�") ||
+      r.lastName.includes("�") ||
+      r.company.includes("�") ||
+      r.position.includes("�")
+  );
+}
+
 export async function previewLinkedInCsv(csvText: string) {
   const userId = await requireUserId();
-  const { columns, rows } = parseLinkedInConnectionsCsv(csvText);
+  const { columns, rows, warnings } = parseLinkedInConnectionsCsv(csvText);
+  if (hasEncodingArtifacts(rows)) {
+    warnings.push(
+      "Some characters may not have decoded correctly — if names look garbled, re-export the CSV with UTF-8 encoding."
+    );
+  }
   const db = await getDb();
   const existing = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
@@ -148,8 +142,106 @@ export async function previewLinkedInCsv(csvText: string) {
     totalRows: people.length,
     people,
     duplicateCount: people.filter((p) => p.isRepeat).length,
+    warnings,
     // keep legacy key for any callers
     preview: people,
+  };
+}
+
+/**
+ * Starts a server-owned LinkedIn connections import: persists the selected
+ * rows once, then processes them in the background via `after()`. Survives
+ * tab close/navigation — the client should poll `getImportJobStatus`.
+ */
+export async function startLinkedInImport(
+  csvText: string,
+  fileName: string,
+  selectedIds?: string[]
+): Promise<{ importId: string; totalRows: number }> {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const { rows } = parseLinkedInConnectionsCsv(csvText);
+  const selectedIndexes =
+    selectedIds === undefined
+      ? rows.map((_, i) => i)
+      : selectedIds
+          .map((id) => Number(id))
+          .filter((i) => Number.isInteger(i) && i >= 0 && i < rows.length);
+
+  if (selectedIndexes.length === 0) {
+    throw new Error("No rows selected to import");
+  }
+
+  const [importRow] = await db
+    .insert(imports)
+    .values({
+      userId,
+      importType: "linkedin_connections",
+      fileName,
+      status: "processing",
+      totalRows: selectedIndexes.length,
+      stats: {},
+    })
+    .returning();
+
+  await db.insert(importJobRows).values(
+    selectedIndexes.map((index) => {
+      const row = rows[index];
+      return {
+        importId: importRow.id,
+        userId,
+        rowIndex: index,
+        payload: {
+          index,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          email: row.email,
+          company: row.company,
+          position: row.position,
+          connectedOn: row.connectedOn,
+          url: row.url,
+        },
+      };
+    })
+  );
+
+  after(() => runLinkedInImportJob(importRow.id).catch(() => {}));
+
+  revalidatePath("/imports");
+
+  return { importId: importRow.id, totalRows: selectedIndexes.length };
+}
+
+export type ImportJobStatus = {
+  id: string;
+  status: string;
+  totalRows: number;
+  rowsProcessed: number;
+  contactsCreated: number;
+  contactsUpdated: number;
+  duplicatesFound: number;
+  errorMessage: string | null;
+};
+
+/** Read-only status poll for a server-owned import job (see `startLinkedInImport`). */
+export async function getImportJobStatus(importId: string): Promise<ImportJobStatus> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const row = await db.query.imports.findFirst({
+    where: and(eq(imports.id, importId), eq(imports.userId, userId)),
+  });
+  if (!row) throw new Error("Import session not found");
+
+  return {
+    id: row.id,
+    status: row.status,
+    totalRows: row.totalRows ?? 0,
+    rowsProcessed: row.rowsProcessed ?? 0,
+    contactsCreated: row.contactsCreated ?? 0,
+    contactsUpdated: row.contactsUpdated ?? 0,
+    duplicatesFound: row.duplicatesFound ?? 0,
+    errorMessage: row.errorMessage,
   };
 }
 
@@ -194,23 +286,6 @@ async function resolveImportRow(
     })
     .returning();
   return created;
-}
-
-export async function failImportSession(
-  importId: string,
-  errorMessage: string
-) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  await db
-    .update(imports)
-    .set({
-      status: "failed",
-      errorMessage: errorMessage.slice(0, 500),
-      updatedAt: new Date(),
-    })
-    .where(and(eq(imports.id, importId), eq(imports.userId, userId)));
-  revalidatePath("/imports");
 }
 
 /** Stop a processing import; rows already written are kept. */
@@ -1147,4 +1222,322 @@ export async function confirmCalendarImport(payload: {
       .where(eq(imports.id, importRow.id));
     throw err;
   }
+}
+
+export type GoogleContactPerson = {
+  id: string;
+  fullName: string;
+  company: string;
+  title: string;
+  email: string;
+  phone: string;
+  photoUrl: string | null;
+  isRepeat: boolean;
+  duplicate: {
+    id: string;
+    fullName: string;
+    reason: string;
+    confidence: number;
+  } | null;
+};
+
+export async function previewGoogleContacts(): Promise<{
+  connected: boolean;
+  contactsScopeGranted: boolean;
+  people: GoogleContactPerson[];
+}> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const conn = await db.query.gmailConnections.findFirst({
+    where: and(eq(gmailConnections.userId, userId), eq(gmailConnections.status, "active")),
+  });
+  if (!conn) {
+    return { connected: false, contactsScopeGranted: false, people: [] };
+  }
+  if (!hasContactsScope(conn.scopes)) {
+    return { connected: true, contactsScopeGranted: false, people: [] };
+  }
+
+  const accessToken = await getValidAccessToken(userId);
+  const googleContacts = await fetchGooglePeopleContacts(accessToken);
+
+  const existing = await db.query.contacts.findMany({
+    where: eq(contacts.userId, userId),
+  });
+
+  const people = googleContacts.map((p) => {
+    const dups = findDuplicateCandidates(existing, {
+      fullName: p.fullName,
+      email: p.email,
+      company: p.company,
+      title: p.title,
+    });
+    const top = dups[0];
+    return {
+      id: p.resourceName,
+      fullName: p.fullName,
+      company: p.company,
+      title: p.title,
+      email: p.email,
+      phone: p.phone,
+      photoUrl: p.photoUrl,
+      isRepeat: Boolean(top && top.confidence >= DUPLICATE_MERGE_CONFIDENCE),
+      duplicate: top
+        ? {
+            id: top.contact.id,
+            fullName: top.contact.fullName,
+            reason: top.reason,
+            confidence: top.confidence,
+          }
+        : null,
+    };
+  });
+
+  return { connected: true, contactsScopeGranted: true, people };
+}
+
+export async function confirmGoogleContactsImport(selectedIds: string[]) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const writeOpts = { skipRevalidate: true };
+
+  const accessToken = await getValidAccessToken(userId);
+  const googleContacts = await fetchGooglePeopleContacts(accessToken);
+  const selected = new Set(selectedIds);
+  const rows = googleContacts.filter((p) => selected.has(p.resourceName));
+
+  const existing = await db.query.contacts.findMany({
+    where: eq(contacts.userId, userId),
+  });
+
+  let created = 0;
+  let updated = 0;
+
+  for (const row of rows) {
+    if (!row.fullName.trim()) continue;
+    const dups = findDuplicateCandidates(existing, {
+      fullName: row.fullName,
+      email: row.email,
+      company: row.company,
+      title: row.title,
+    });
+
+    if (dups[0] && dups[0].confidence >= DUPLICATE_MERGE_CONFIDENCE) {
+      await updateContact(
+        dups[0].contact.id,
+        {
+          company: row.company || undefined,
+          title: row.title || undefined,
+          email: row.email || undefined,
+          phone: row.phone || undefined,
+          profileImageUrl: row.photoUrl || undefined,
+          source: "google_contacts",
+          howMet: "Google Contacts",
+          metContext: "online",
+        },
+        writeOpts
+      );
+      updated++;
+    } else {
+      const contact = await createContact(
+        {
+          fullName: row.fullName,
+          firstName: row.firstName || undefined,
+          lastName: row.lastName || undefined,
+          company: row.company || undefined,
+          title: row.title || undefined,
+          email: row.email || undefined,
+          phone: row.phone || undefined,
+          profileImageUrl: row.photoUrl || undefined,
+          source: "google_contacts",
+          relationshipScore: 2,
+          howMet: "Google Contacts",
+          metContext: "online",
+          tagNames: ["google-contacts"],
+        },
+        writeOpts
+      );
+      existing.push(contact as (typeof existing)[number]);
+      created++;
+    }
+  }
+
+  await db.insert(imports).values({
+    userId,
+    importType: "google_contacts",
+    fileName: "Google Contacts",
+    status: "completed",
+    rowsProcessed: rows.length,
+    contactsCreated: created,
+    contactsUpdated: updated,
+    duplicatesFound: updated,
+  });
+
+  try {
+    await refreshOutreachSuggestions(userId);
+  } catch {
+    // non-fatal
+  }
+
+  revalidatePath("/");
+  revalidatePath("/contacts");
+  revalidatePath("/imports");
+  revalidatePath("/graph");
+
+  return { created, updated };
+}
+
+export type OutlookContactPerson = {
+  id: string;
+  fullName: string;
+  company: string;
+  title: string;
+  email: string;
+  phone: string;
+  isRepeat: boolean;
+  duplicate: {
+    id: string;
+    fullName: string;
+    reason: string;
+    confidence: number;
+  } | null;
+};
+
+export async function previewOutlookContacts(): Promise<{
+  connected: boolean;
+  people: OutlookContactPerson[];
+}> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const conn = await db.query.outlookConnections.findFirst({
+    where: and(eq(outlookConnections.userId, userId), eq(outlookConnections.status, "active")),
+  });
+  if (!conn) {
+    return { connected: false, people: [] };
+  }
+
+  const accessToken = await getValidOutlookAccessToken(userId);
+  const outlookContacts = await fetchOutlookContacts(accessToken);
+
+  const existing = await db.query.contacts.findMany({
+    where: eq(contacts.userId, userId),
+  });
+
+  const people = outlookContacts.map((p) => {
+    const dups = findDuplicateCandidates(existing, {
+      fullName: p.fullName,
+      email: p.email,
+      company: p.company,
+      title: p.title,
+    });
+    const top = dups[0];
+    return {
+      id: p.id,
+      fullName: p.fullName,
+      company: p.company,
+      title: p.title,
+      email: p.email,
+      phone: p.phone,
+      isRepeat: Boolean(top && top.confidence >= DUPLICATE_MERGE_CONFIDENCE),
+      duplicate: top
+        ? {
+            id: top.contact.id,
+            fullName: top.contact.fullName,
+            reason: top.reason,
+            confidence: top.confidence,
+          }
+        : null,
+    };
+  });
+
+  return { connected: true, people };
+}
+
+export async function confirmOutlookContactsImport(selectedIds: string[]) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const writeOpts = { skipRevalidate: true };
+
+  const accessToken = await getValidOutlookAccessToken(userId);
+  const outlookContacts = await fetchOutlookContacts(accessToken);
+  const selected = new Set(selectedIds);
+  const rows = outlookContacts.filter((p) => selected.has(p.id));
+
+  const existing = await db.query.contacts.findMany({
+    where: eq(contacts.userId, userId),
+  });
+
+  let created = 0;
+  let updated = 0;
+
+  for (const row of rows) {
+    if (!row.fullName.trim()) continue;
+    const dups = findDuplicateCandidates(existing, {
+      fullName: row.fullName,
+      email: row.email,
+      company: row.company,
+      title: row.title,
+    });
+
+    if (dups[0] && dups[0].confidence >= DUPLICATE_MERGE_CONFIDENCE) {
+      await updateContact(
+        dups[0].contact.id,
+        {
+          company: row.company || undefined,
+          title: row.title || undefined,
+          email: row.email || undefined,
+          phone: row.phone || undefined,
+          source: "outlook_contacts",
+          howMet: "Outlook Contacts",
+          metContext: "online",
+        },
+        writeOpts
+      );
+      updated++;
+    } else {
+      const contact = await createContact(
+        {
+          fullName: row.fullName,
+          firstName: row.firstName || undefined,
+          lastName: row.lastName || undefined,
+          company: row.company || undefined,
+          title: row.title || undefined,
+          email: row.email || undefined,
+          phone: row.phone || undefined,
+          source: "outlook_contacts",
+          relationshipScore: 2,
+          howMet: "Outlook Contacts",
+          metContext: "online",
+          tagNames: ["outlook-contacts"],
+        },
+        writeOpts
+      );
+      existing.push(contact as (typeof existing)[number]);
+      created++;
+    }
+  }
+
+  await db.insert(imports).values({
+    userId,
+    importType: "outlook_contacts",
+    fileName: "Outlook Contacts",
+    status: "completed",
+    rowsProcessed: rows.length,
+    contactsCreated: created,
+    contactsUpdated: updated,
+    duplicatesFound: updated,
+  });
+
+  try {
+    await refreshOutreachSuggestions(userId);
+  } catch {
+    // non-fatal
+  }
+
+  revalidatePath("/");
+  revalidatePath("/contacts");
+  revalidatePath("/imports");
+  revalidatePath("/graph");
+
+  return { created, updated };
 }

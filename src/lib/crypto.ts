@@ -3,7 +3,15 @@ import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "crypt
 const ALGO = "aes-256-gcm";
 
 function getKey() {
-  const secret = process.env.ENCRYPTION_SECRET || "orbit-dev-secret-change-me-in-prod";
+  const secret = process.env.ENCRYPTION_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "ENCRYPTION_SECRET must be set in production — refusing to encrypt/decrypt with a default key."
+      );
+    }
+    return scryptSync("orbit-dev-secret-change-me-in-prod", "orbit-salt", 32);
+  }
   return scryptSync(secret, "orbit-salt", 32);
 }
 

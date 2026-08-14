@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { usePathname } from "next/navigation";
 import { backfillContactAvatars } from "@/actions/contacts";
 import {
   dismissBackgroundJob,
@@ -34,7 +33,7 @@ function sleep(ms: number, signal: AbortSignal) {
         window.clearTimeout(timer);
         resolve();
       },
-      { once: true },
+      { once: true }
     );
   });
 }
@@ -44,7 +43,7 @@ function notifyAvatarsUpdated(contactIds: string[]) {
   window.dispatchEvent(
     new CustomEvent<AvatarsUpdatedDetail>(AVATARS_UPDATED_EVENT, {
       detail: { contactIds },
-    }),
+    })
   );
 }
 
@@ -54,10 +53,7 @@ function notifyAvatarsUpdated(contactIds: string[]) {
  * `router.refresh()` so browsing stays smooth.
  */
 export function AvatarBackfill() {
-  const pathname = usePathname();
   const running = useRef(false);
-  const pathnameRef = useRef(pathname);
-  pathnameRef.current = pathname;
 
   useEffect(() => {
     if (running.current) return;
@@ -97,8 +93,7 @@ export function AvatarBackfill() {
           if (result.saved > 0) {
             totalSaved += result.saved;
             idlePasses = 0;
-            const ids = result.savedIds ?? [];
-            notifyAvatarsUpdated(ids);
+            notifyAvatarsUpdated(result.savedIds ?? []);
           }
 
           if (jobStarted) {
@@ -109,6 +104,7 @@ export function AvatarBackfill() {
           }
 
           if (result.pending <= 0) {
+            // Nothing left — stop until the next page visit.
             if (jobStarted) {
               finishBackgroundJob(JOB_ID, {
                 status: "completed",
@@ -121,14 +117,16 @@ export function AvatarBackfill() {
           if (result.rateLimitedUntil && result.rateLimitedUntil > Date.now()) {
             const wait = Math.min(
               MAX_WAIT_MS,
-              Math.max(5_000, result.rateLimitedUntil - Date.now() + 1_000),
+              Math.max(5_000, result.rateLimitedUntil - Date.now() + 1_000)
             );
             await sleep(wait, controller.signal);
             continue;
           }
 
+          // No rate limit but still pending (failed lookups / remote downloads).
           idlePasses += 1;
           if (idlePasses >= 3 && result.saved === 0) {
+            // Avoid tight loops when remaining contacts can't be resolved.
             await sleep(60_000, controller.signal);
             idlePasses = 0;
             continue;

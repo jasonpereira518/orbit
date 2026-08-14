@@ -3,16 +3,9 @@
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
-import {
-  ChevronLeft,
-  ChevronRight,
-  Pause,
-  Play,
-  Sparkles,
-  Upload,
-  UserPlus,
-} from "lucide-react";
+import { ChevronLeft, ChevronRight, Pause, Play, Sparkles } from "lucide-react";
 import { completeOnboarding, saveOnboardingStep, skipOnboarding } from "@/actions/onboarding";
+import { markWizardOffered } from "@/actions/onboarding-wizard";
 import { TourSidebar } from "@/components/onboarding/tour-sidebar";
 import { TourCursor } from "@/components/onboarding/tour-cursor";
 import {
@@ -33,34 +26,7 @@ import { OutreachPreview } from "@/components/onboarding/previews/outreach-previ
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-const paths = [
-  {
-    href: "/contacts/new",
-    icon: UserPlus,
-    title: "Add someone manually",
-    description: "Enter a name, company, and how you know them.",
-    hotspot: "path-manual",
-  },
-  {
-    href: "/capture",
-    icon: Sparkles,
-    title: "Capture from notes",
-    description: "Paste meeting notes — AI extracts people and context.",
-    hotspot: "path-capture",
-  },
-  {
-    href: "/imports",
-    icon: Upload,
-    title: "Import LinkedIn",
-    description: "Bring in connections, messages, or calendar meetings.",
-    hotspot: "path-import",
-  },
-] as const;
-
-const PREVIEWS: Record<
-  Exclude<TourNavKey, "start">,
-  typeof WelcomePreview
-> = {
+const PREVIEWS: Record<TourNavKey, typeof WelcomePreview> = {
   welcome: WelcomePreview,
   contacts: ContactsPreview,
   capture: CapturePreview,
@@ -72,7 +38,7 @@ const PREVIEWS: Record<
   outreach: OutreachPreview,
 };
 
-const START_INDEX = TOUR_STEPS.length - 1;
+const LAST_INDEX = TOUR_STEPS.length - 1;
 
 function indexForStep(stepId: string | null | undefined) {
   if (!stepId) return 0;
@@ -91,21 +57,11 @@ export function OnboardingFlow({
   const [stepIndex, setStepIndex] = useState(() => indexForStep(initialStepId));
   const [playing, setPlaying] = useState(() => {
     const idx = indexForStep(initialStepId);
-    return idx !== START_INDEX;
+    return idx !== LAST_INDEX;
   });
   const [progress, setProgress] = useState(0);
   const [pending, start] = useTransition();
-
-  const finishOnboarding = useCallback(
-    (href: string) => {
-      start(async () => {
-        const res = await completeOnboarding(href);
-        router.replace(res.redirectTo);
-        router.refresh();
-      });
-    },
-    [router]
-  );
+  const [offerFor, setOfferFor] = useState<"skip" | null>(null);
 
   const finishSkip = useCallback(() => {
     start(async () => {
@@ -115,19 +71,35 @@ export function OnboardingFlow({
     });
   }, [router]);
 
+  const offerWizard = useCallback(() => {
+    setOfferFor("skip");
+    void markWizardOffered();
+  }, []);
+
+  const startWizard = useCallback(() => {
+    start(async () => {
+      await completeOnboarding("/onboarding/wizard");
+      router.push("/onboarding/wizard");
+      router.refresh();
+    });
+  }, [router]);
+
+  const declineWizard = useCallback(() => {
+    finishSkip();
+  }, [finishSkip]);
+
   const step = TOUR_STEPS[stepIndex]!;
-  const isStart = Boolean(step.isStart);
   const isFirst = stepIndex === 0;
-  const isLast = stepIndex === START_INDEX;
-  const autoAdvance = playing && !isStart && !reducedMotion;
+  const isLast = stepIndex === LAST_INDEX;
+  const autoAdvance = playing && !reducedMotion;
   const hotspots = step.hotspots ?? [];
-  const showCursor = !reducedMotion && hotspots.length > 0;
+  const showCursor = !reducedMotion && !offerFor && hotspots.length > 0;
 
   const goTo = useCallback((index: number) => {
-    const next = Math.max(0, Math.min(START_INDEX, index));
+    const next = Math.max(0, Math.min(LAST_INDEX, index));
     setStepIndex(next);
     setProgress(0);
-    if (next === START_INDEX) {
+    if (next === LAST_INDEX) {
       setPlaying(false);
     }
     const nextStep = TOUR_STEPS[next];
@@ -137,7 +109,7 @@ export function OnboardingFlow({
   }, []);
 
   const goNext = useCallback(() => {
-    if (stepIndex < START_INDEX) goTo(stepIndex + 1);
+    if (stepIndex < LAST_INDEX) goTo(stepIndex + 1);
   }, [goTo, stepIndex]);
 
   const goBack = useCallback(() => {
@@ -182,7 +154,6 @@ export function OnboardingFlow({
         e.preventDefault();
         goBack();
       } else if (e.key === " " || e.code === "Space") {
-        if (isStart) return;
         e.preventDefault();
         setPlaying((p) => !p);
       }
@@ -190,11 +161,9 @@ export function OnboardingFlow({
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [goBack, goNext, isStart]);
+  }, [goBack, goNext]);
 
-  const Preview = !isStart
-    ? PREVIEWS[step.id as Exclude<TourNavKey, "start">]
-    : null;
+  const Preview = PREVIEWS[step.id];
 
   return (
     <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-4xl flex-col justify-center gap-6 py-6">
@@ -208,35 +177,38 @@ export function OnboardingFlow({
                 className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
                 aria-live="polite"
               >
-                {isStart
-                  ? "Get started"
-                  : `Step ${stepIndex + 1} of ${START_INDEX}`}
+                {offerFor ? "One more thing" : `Step ${stepIndex + 1} of ${LAST_INDEX + 1}`}
               </p>
               <h1
                 className="mt-1 font-[family-name:var(--font-display)] text-2xl tracking-tight text-primary sm:text-3xl"
                 aria-live="polite"
               >
-                {step.title}
+                {offerFor ? "Want a 2-minute guided setup?" : step.title}
               </h1>
               <p className="mt-1.5 max-w-xl text-sm text-muted-foreground">
-                {step.body}
+                {offerFor
+                  ? "We'll walk you through adding your first people step by step."
+                  : step.body}
               </p>
             </div>
 
-            <div ref={previewRef} className="relative min-h-[260px] p-4 sm:p-6">
+            <div
+              ref={previewRef}
+              className="relative h-[260px] overflow-y-auto p-4 sm:p-6"
+            >
               <AnimatePresence mode="wait">
-                {isStart ? (
+                {offerFor ? (
                   <motion.div
-                    key="start"
+                    key="offer"
                     initial={reducedMotion ? false : { opacity: 0, y: 12 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={reducedMotion ? undefined : { opacity: 0, y: -8 }}
                     transition={{ duration: reducedMotion ? 0 : 0.3 }}
                   >
-                    <StartStep
+                    <OfferStep
                       pending={pending}
-                      onChoosePath={finishOnboarding}
-                      onSkip={finishSkip}
+                      onStartWizard={startWizard}
+                      onDecline={declineWizard}
                     />
                   </motion.div>
                 ) : Preview ? (
@@ -257,25 +229,23 @@ export function OnboardingFlow({
                   containerRef={previewRef}
                   hotspots={hotspots}
                   progress={progress}
-                  playing={isStart ? true : playing}
+                  playing={playing}
                   reducedMotion={reducedMotion}
-                  freeCycle={isStart}
                 />
               )}
             </div>
 
-            {!isStart && (
-              <div className="h-1 w-full bg-muted">
-                <div
-                  className="h-full bg-primary transition-none"
-                  style={{
-                    width: `${(reducedMotion ? 0 : progress) * 100}%`,
-                  }}
-                />
-              </div>
-            )}
+            <div className="h-1 w-full bg-muted">
+              <div
+                className="h-full bg-primary transition-none"
+                style={{
+                  width: `${(reducedMotion ? 0 : progress) * 100}%`,
+                }}
+              />
+            </div>
           </div>
 
+          {!offerFor && (
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-1.5">
               {TOUR_STEPS.map((s, i) => (
@@ -285,7 +255,7 @@ export function OnboardingFlow({
                   aria-label={`Go to ${s.title}`}
                   aria-current={i === stepIndex ? "step" : undefined}
                   onClick={() => {
-                    if (i === START_INDEX) setPlaying(false);
+                    if (i === LAST_INDEX) setPlaying(false);
                     else setPlaying(true);
                     goTo(i);
                   }}
@@ -300,18 +270,16 @@ export function OnboardingFlow({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              {!isStart && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={pending}
-                  className="text-muted-foreground"
-                  onClick={finishSkip}
-                >
-                  Skip tour
-                </Button>
-              )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={pending}
+                className="text-muted-foreground"
+                onClick={finishSkip}
+              >
+                Skip tour
+              </Button>
 
               <Button
                 type="button"
@@ -325,7 +293,7 @@ export function OnboardingFlow({
                 Back
               </Button>
 
-              {!isStart && !reducedMotion && (
+              {!reducedMotion && (
                 <Button
                   type="button"
                   variant="outline"
@@ -343,7 +311,7 @@ export function OnboardingFlow({
                 </Button>
               )}
 
-              {!isLast && (
+              {!isLast ? (
                 <Button
                   type="button"
                   size="sm"
@@ -355,13 +323,24 @@ export function OnboardingFlow({
                   Next
                   <ChevronRight className="h-4 w-4" />
                 </Button>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="bg-primary text-primary-foreground hover:bg-primary/90"
+                  disabled={pending}
+                  onClick={offerWizard}
+                >
+                  Finish
+                </Button>
               )}
             </div>
           </div>
+          )}
 
           <p className="text-center text-[11px] text-muted-foreground sm:text-left">
-            {isStart
-              ? "You only see this once when you set up your account."
+            {offerFor
+              ? "You can also run guided setup later from Settings."
               : reducedMotion
                 ? "Use Next / Back to move through the tour."
                 : "Auto-advances — pause anytime, or use arrow keys and space."}
@@ -372,59 +351,51 @@ export function OnboardingFlow({
   );
 }
 
-function StartStep({
+function OfferStep({
   pending,
-  onChoosePath,
-  onSkip,
+  onStartWizard,
+  onDecline,
 }: {
   pending: boolean;
-  onChoosePath: (href: string) => void;
-  onSkip: () => void;
+  onStartWizard: () => void;
+  onDecline: () => void;
 }) {
   return (
     <div className="space-y-4">
-      <ul className="space-y-3">
-        {paths.map((path) => {
-          const Icon = path.icon;
-          return (
-            <li key={path.href}>
-              <button
-                type="button"
-                disabled={pending}
-                data-tour-hotspot={path.hotspot}
-                onClick={() => onChoosePath(path.href)}
-                className={cn(
-                  "group flex w-full items-start gap-4 rounded-2xl border border-border/70 bg-background/70 p-5 text-left transition-colors",
-                  "hover:border-primary/25 hover:bg-accent",
-                  "disabled:pointer-events-none disabled:opacity-60"
-                )}
-              >
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent text-primary">
-                  <Icon className="h-5 w-5" />
-                </span>
-                <span>
-                  <span className="block font-medium text-primary">
-                    {path.title}
-                  </span>
-                  <span className="mt-1 block text-sm text-muted-foreground">
-                    {path.description}
-                  </span>
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+      <div className="flex items-start gap-4 rounded-2xl border border-primary/25 bg-accent/60 p-5">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent text-primary">
+          <Sparkles className="h-5 w-5" />
+        </span>
+        <span>
+          <span className="block font-medium text-primary">
+            Guided setup walks you through it
+          </span>
+          <span className="mt-1 block text-sm text-muted-foreground">
+            Instead of figuring it out on your own, we&apos;ll take you
+            step by step through adding your first people.
+          </span>
+        </span>
+      </div>
 
-      <div className="flex justify-start pt-1">
+      <div className="flex flex-wrap justify-start gap-2 pt-1">
         <Button
+          type="button"
+          size="sm"
+          disabled={pending}
+          className="bg-primary text-primary-foreground hover:bg-primary/90"
+          onClick={onStartWizard}
+        >
+          Start guided setup
+        </Button>
+        <Button
+          type="button"
           variant="ghost"
           size="sm"
           disabled={pending}
           className="text-muted-foreground"
-          onClick={onSkip}
+          onClick={onDecline}
         >
-          Skip for now
+          I&apos;ll do it myself
         </Button>
       </div>
     </div>

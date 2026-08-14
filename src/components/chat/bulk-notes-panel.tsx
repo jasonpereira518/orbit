@@ -638,6 +638,9 @@ function PersonReviewCard({
   const updateParsed = (patch: Partial<ParsedNote>) =>
     onChange({ ...item, parsed: { ...item.parsed, ...patch } });
 
+  const lowConfidence = new Set(item.parsed.low_confidence_fields || []);
+  const [showSource, setShowSource] = useState(false);
+
   const showPreferred =
     preferredContactId &&
     preferredContactName &&
@@ -674,25 +677,25 @@ function PersonReviewCard({
           compact ? "grid-cols-1" : "sm:grid-cols-2 gap-3"
         )}
       >
-        <Field label="Name">
+        <Field label="Name" lowConfidence={lowConfidence.has("name")}>
           <Input
             value={item.parsed.name || ""}
             onChange={(e) => updateParsed({ name: e.target.value })}
           />
         </Field>
-        <Field label="Company">
+        <Field label="Company" lowConfidence={lowConfidence.has("company")}>
           <Input
             value={item.parsed.company || ""}
             onChange={(e) => updateParsed({ company: e.target.value })}
           />
         </Field>
-        <Field label="Role">
+        <Field label="Role" lowConfidence={lowConfidence.has("role")}>
           <Input
             value={item.parsed.role || ""}
             onChange={(e) => updateParsed({ role: e.target.value })}
           />
         </Field>
-        <Field label="Met at">
+        <Field label="Met at" lowConfidence={lowConfidence.has("met_at")}>
           <Input
             value={item.parsed.met_at || ""}
             onChange={(e) => updateParsed({ met_at: e.target.value })}
@@ -729,6 +732,23 @@ function PersonReviewCard({
               {text}
             </p>
           ))}
+        </div>
+      )}
+
+      {item.notes.trim() && (
+        <div>
+          <button
+            type="button"
+            className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+            onClick={() => setShowSource((v) => !v)}
+          >
+            {showSource ? "Hide source text" : "Show source text"}
+          </button>
+          {showSource && (
+            <p className="mt-1.5 whitespace-pre-wrap rounded-xl border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              {item.notes}
+            </p>
+          )}
         </div>
       )}
 
@@ -842,14 +862,31 @@ function PersonReviewCard({
 function Field({
   label,
   children,
+  lowConfidence,
 }: {
   label: string;
   children: React.ReactNode;
+  lowConfidence?: boolean;
 }) {
   return (
-    <div className="space-y-1">
-      <Label className="text-xs">{label}</Label>
-      {children}
+    <div className={cn("space-y-1", lowConfidence && "rounded-lg")}>
+      <Label
+        className={cn(
+          "text-xs",
+          lowConfidence && "text-amber-700 dark:text-amber-400"
+        )}
+      >
+        {label}
+        {lowConfidence ? " *" : ""}
+      </Label>
+      <div
+        className={cn(
+          lowConfidence &&
+            "rounded-md ring-1 ring-amber-500/50 ring-offset-1 ring-offset-background"
+        )}
+      >
+        {children}
+      </div>
     </div>
   );
 }

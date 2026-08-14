@@ -503,7 +503,7 @@ export async function generateOutreachDrafts(input: {
   const userId = await requireUserId();
   const campaign = await requireCampaign(userId, input.campaignId);
   const db = await getDb();
-  const goals = await listActiveGoalTexts(userId);
+  const goals = await listActiveGoalTexts();
 
   const channel = (input.channel ||
     campaign.defaultChannel ||
@@ -587,7 +587,7 @@ export async function regenerateOutreachDraft(input: {
   const userId = await requireUserId();
   const campaign = await requireCampaign(userId, input.campaignId);
   const db = await getDb();
-  const goals = await listActiveGoalTexts(userId);
+  const goals = await listActiveGoalTexts();
 
   const prospect = await db.query.outreachProspects.findFirst({
     where: and(
@@ -889,7 +889,7 @@ export async function generateDueFollowUps(campaignId: string) {
   const userId = await requireUserId();
   const campaign = await requireCampaign(userId, campaignId);
   const db = await getDb();
-  const goals = await listActiveGoalTexts(userId);
+  const goals = await listActiveGoalTexts();
   const now = new Date();
 
   const due = await db.query.outreachMessages.findMany({

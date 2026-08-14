@@ -11,6 +11,11 @@ import {
 import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import {
+  finishBackgroundJob,
+  startBackgroundJob,
+  updateBackgroundJob,
+} from "@/lib/background-jobs";
 
 type RefreshProgress = {
   done: number;
@@ -31,6 +36,7 @@ export function RefreshContactsButton() {
     if (pending) return;
     setPending(true);
     setProgress({ done: 0, total: 0 });
+    const jobId = `linkedin-refresh-${Date.now()}`;
 
     try {
       const { targets, hasApollo } = await listLinkedInRefreshTargets();
@@ -43,6 +49,14 @@ export function RefreshContactsButton() {
       }
 
       setProgress({ done: 0, total: targets.length });
+      startBackgroundJob({
+        id: jobId,
+        kind: "linkedin-refresh",
+        label: "Refreshing contacts from LinkedIn",
+        done: 0,
+        total: targets.length,
+        startedAt: Date.now(),
+      });
 
       let refreshed = 0;
       let unmatched = 0;
@@ -60,17 +74,18 @@ export function RefreshContactsButton() {
         failed += result.failed;
         if (result.avatarOnly) avatarOnly = true;
         if (result.rateLimited) rateLimited = true;
-        setProgress({
-          done: Math.min(i + chunk.length, targets.length),
-          total: targets.length,
-        });
+        const done = Math.min(i + chunk.length, targets.length);
+        setProgress({ done, total: targets.length });
+        updateBackgroundJob(jobId, { done, total: targets.length });
       }
 
+      let resultMessage: string;
       if (refreshed > 0) {
+        resultMessage = avatarOnly
+          ? `Updated photos for ${refreshed} contact${refreshed === 1 ? "" : "s"}`
+          : `Refreshed ${refreshed} contact${refreshed === 1 ? "" : "s"} from LinkedIn`;
         toast.success(
-          avatarOnly
-            ? `Updated photos for ${refreshed} contact${refreshed === 1 ? "" : "s"}`
-            : `Refreshed ${refreshed} contact${refreshed === 1 ? "" : "s"} from LinkedIn`,
+          resultMessage,
           avatarOnly
             ? {
                 description: hasApollo
@@ -80,12 +95,14 @@ export function RefreshContactsButton() {
             : undefined
         );
       } else if (rateLimited) {
-        toast.message("Photo lookup rate limited", {
+        resultMessage = "Photo lookup rate limited";
+        toast.message(resultMessage, {
           description:
             "LinkedIn photo providers are temporarily unavailable. Try again in a few minutes.",
         });
       } else {
-        toast.message("No profiles updated", {
+        resultMessage = "No profiles updated";
+        toast.message(resultMessage, {
           description:
             unmatched > 0
               ? "Couldn’t find public photos for these LinkedIn profiles. Check that each URL is a public linkedin.com/in/… link."
@@ -99,11 +116,13 @@ export function RefreshContactsButton() {
         );
       }
 
+      finishBackgroundJob(jobId, { status: "completed", resultMessage });
       router.refresh();
     } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Could not refresh contacts"
-      );
+      const message =
+        err instanceof Error ? err.message : "Could not refresh contacts";
+      toast.error(message);
+      finishBackgroundJob(jobId, { status: "failed", error: message });
     } finally {
       setPending(false);
       setProgress(null);

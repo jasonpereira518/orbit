@@ -21,7 +21,6 @@ import {
   formatInteractionFrequency,
 } from "@/lib/closeness";
 import { formatHowMetSummary } from "@/lib/met-context";
-import { requireUserId } from "@/lib/auth";
 import { notFound } from "next/navigation";
 
 export default async function ContactDetailPage({
@@ -39,7 +38,8 @@ export default async function ContactDetailPage({
   const sendOptionsPromise = getContactFollowUpSendOptions(id).catch(() => null);
   const relatedPromise = listRelatedContacts(id, 6).catch(() => []);
   const mutualsPromise = listMutualContacts(id, 6).catch(() => []);
-  const goalsPromise = requireUserId().then((uid) => listActiveGoalTexts(uid));
+  // listActiveGoalTexts resolves the user internally as of the goals rework.
+  const goalsPromise = listActiveGoalTexts();
 
   // notFound() must fire BEFORE any Suspense boundary renders so the route
   // still returns a real 404 status.

@@ -85,23 +85,6 @@ export const APP_NAV_SETTINGS: AppNavItem = {
   icon: Settings,
 };
 
-/** @deprecated Prefer APP_NAV_CORE */
-export const APP_NAV_NETWORK: AppNavItem[] = [
-  DASHBOARD,
-  CONTACTS,
-  REMINDERS,
-  CONSTELLATION,
-];
-
-/** @deprecated Prefer APP_NAV_CORE / APP_NAV_EXTRAS */
-export const APP_NAV_WORKSPACE: AppNavItem[] = [
-  CAPTURE,
-  CHAT,
-  IMPORTS,
-  OUTREACH,
-  KNOWLEDGE,
-];
-
 export const APP_NAV: AppNavItem[] = [
   ...APP_NAV_CORE,
   ...APP_NAV_EXTRAS,

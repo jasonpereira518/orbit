@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { Loader2, X } from "lucide-react";
+import { AlertTriangle, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -224,6 +224,40 @@ export function ImportProgress({
           onClick={onCancel}
           aria-label="Stop import"
           title="Stop import"
+        >
+          <X className="size-4" />
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Dismissible, non-blocking warning banner for CSV parse issues (skipped rows, encoding, etc.). */
+export function ImportWarningBanner({
+  warnings,
+  onDismiss,
+}: {
+  warnings: string[];
+  onDismiss?: () => void;
+}) {
+  if (!warnings.length) return null;
+
+  return (
+    <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+      <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+      <ul className="min-w-0 flex-1 space-y-1">
+        {warnings.map((w, i) => (
+          <li key={i}>{w}</li>
+        ))}
+      </ul>
+      {onDismiss ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className="shrink-0 text-amber-700 hover:text-amber-900 dark:text-amber-400"
+          onClick={onDismiss}
+          aria-label="Dismiss warning"
         >
           <X className="size-4" />
         </Button>

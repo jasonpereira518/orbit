@@ -15,7 +15,8 @@ export async function listGoals() {
   });
 }
 
-export async function listActiveGoalTexts(userId: string) {
+export async function listActiveGoalTexts() {
+  const userId = await requireUserId();
   const db = await getDb();
   const rows = await db.query.userGoals.findMany({
     where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),

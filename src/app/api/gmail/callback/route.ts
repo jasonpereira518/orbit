@@ -14,10 +14,13 @@ export async function GET(request: Request) {
   const state = url.searchParams.get("state");
   const error = url.searchParams.get("error");
 
-  const redirectBase = new URL("/recruiters", url.origin);
+  // returnTo (if present in state) lets Contacts-initiated connects land back
+  // on /imports instead of the default /recruiters destination.
+  let redirectBase = new URL("/recruiters", url.origin);
 
   if (error) {
     redirectBase.searchParams.set("gmail", "error");
+    redirectBase.searchParams.set("google", "error");
     redirectBase.searchParams.set("reason", error);
     return NextResponse.redirect(redirectBase);
   }
@@ -25,7 +28,9 @@ export async function GET(request: Request) {
   try {
     if (!code) throw new Error("Missing authorization code");
 
-    const stateUserId = await consumeGmailOAuthState(state);
+    const { userId: stateUserId, returnTo } = await consumeGmailOAuthState(state);
+    if (returnTo) redirectBase = new URL(returnTo, url.origin);
+
     let sessionUserId: string | null = null;
     if (isDemoMode()) {
       sessionUserId = "demo-user";
@@ -43,9 +48,11 @@ export async function GET(request: Request) {
     await upsertGmailConnection(sessionUserId, tokens, email);
 
     redirectBase.searchParams.set("gmail", "connected");
+    redirectBase.searchParams.set("google", "connected");
     return NextResponse.redirect(redirectBase);
   } catch (err) {
     redirectBase.searchParams.set("gmail", "error");
+    redirectBase.searchParams.set("google", "error");
     redirectBase.searchParams.set(
       "reason",
       err instanceof Error ? err.message : "oauth_failed"

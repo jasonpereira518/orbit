@@ -1,8 +1,8 @@
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import { getDb, isPgvectorAvailable } from "@/db";
 import { contactEmbeddings, contacts } from "@/db/schema";
 import { metContextLabel } from "@/lib/met-context";
-import { createEmbedding, cosineSimilarity } from "@/lib/ai";
+import { createEmbedding, createEmbeddingsBatch, cosineSimilarity } from "@/lib/ai";
 import { formatVectorLiteral } from "@/lib/pgvector";
 
 async function persistEmbeddingVector(rowId: string, embedding: number[]) {
@@ -250,15 +250,28 @@ export async function semanticSearchContacts(
   return results;
 }
 
-export async function rebuildContactEmbedding(userId: string, contactId: string) {
-  const db = await getDb();
-  const contact = await db.query.contacts.findFirst({
-    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-    with: { contactTags: { with: { tag: true } } },
-  });
-  if (!contact) return;
+type ContactEmbeddingSource = {
+  fullName: string;
+  preferredName?: string | null;
+  title?: string | null;
+  company?: string | null;
+  location?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  linkedinUrl?: string | null;
+  website?: string | null;
+  aiSummary?: string | null;
+  notes?: string | null;
+  metContext?: string | null;
+  dateMet?: Date | string | null;
+  howMet?: string | null;
+  keyFacts?: string[] | null;
+  opportunities?: string[] | null;
+  contactTags?: { tag: { name: string } }[];
+};
 
-  const content = [
+function buildContactEmbeddingContent(contact: ContactEmbeddingSource): string {
+  return [
     contact.fullName,
     contact.preferredName,
     contact.title,
@@ -281,6 +294,101 @@ export async function rebuildContactEmbedding(userId: string, contactId: string)
   ]
     .filter(Boolean)
     .join("\n");
+}
 
+export async function rebuildContactEmbedding(userId: string, contactId: string) {
+  const db = await getDb();
+  const contact = await db.query.contacts.findFirst({
+    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+    with: { contactTags: { with: { tag: true } } },
+  });
+  if (!contact) return;
+
+  const content = buildContactEmbeddingContent(contact);
   await upsertContactEmbedding(userId, contactId, "profile", content, contactId);
+}
+
+/** Rebuild "profile" embeddings for many contacts with one batched embedding API call. */
+export async function rebuildContactEmbeddingsBatch(
+  userId: string,
+  contactIds: string[]
+) {
+  const ids = [...new Set(contactIds)];
+  if (ids.length === 0) return;
+
+  const db = await getDb();
+  const rows = await db.query.contacts.findMany({
+    where: and(eq(contacts.userId, userId), inArray(contacts.id, ids)),
+    with: { contactTags: { with: { tag: true } } },
+  });
+
+  const entries = rows
+    .map((contact) => ({ contactId: contact.id, content: buildContactEmbeddingContent(contact) }))
+    .filter((entry) => entry.content.trim().length > 0);
+  if (entries.length === 0) return;
+
+  let embeddings: number[][];
+  try {
+    embeddings = await createEmbeddingsBatch(
+      userId,
+      entries.map((entry) => entry.content)
+    );
+  } catch {
+    // AI key may be missing; skip embeddings silently, matching upsertContactEmbedding.
+    return;
+  }
+
+  const existing = await db.query.contactEmbeddings.findMany({
+    where: and(
+      eq(contactEmbeddings.userId, userId),
+      eq(contactEmbeddings.sourceType, "profile"),
+      inArray(
+        contactEmbeddings.contactId,
+        entries.map((entry) => entry.contactId)
+      )
+    ),
+  });
+  const existingByContactId = new Map(existing.map((row) => [row.contactId, row]));
+
+  const toInsert: Array<{
+    userId: string;
+    contactId: string;
+    sourceType: string;
+    sourceId: string;
+    embedding: number[];
+    content: string;
+  }> = [];
+  const toUpdate: Array<{ id: string; embedding: number[]; content: string }> = [];
+
+  entries.forEach((entry, index) => {
+    const embedding = embeddings[index];
+    const found = existingByContactId.get(entry.contactId);
+    if (found) {
+      toUpdate.push({ id: found.id, embedding, content: entry.content });
+    } else {
+      toInsert.push({
+        userId,
+        contactId: entry.contactId,
+        sourceType: "profile",
+        sourceId: entry.contactId,
+        embedding,
+        content: entry.content,
+      });
+    }
+  });
+
+  if (toInsert.length > 0) {
+    const inserted = await db.insert(contactEmbeddings).values(toInsert).returning();
+    for (const row of inserted) {
+      await persistEmbeddingVector(row.id, row.embedding as number[]);
+    }
+  }
+
+  for (const update of toUpdate) {
+    await db
+      .update(contactEmbeddings)
+      .set({ embedding: update.embedding, content: update.content })
+      .where(eq(contactEmbeddings.id, update.id));
+    await persistEmbeddingVector(update.id, update.embedding);
+  }
 }

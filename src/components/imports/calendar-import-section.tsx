@@ -18,6 +18,11 @@ import {
   ImportProgress,
   type ImportProgressState,
 } from "@/components/imports/import-utils";
+import {
+  finishBackgroundJob,
+  startBackgroundJob,
+  updateBackgroundJob,
+} from "@/lib/background-jobs";
 
 type CalendarPreview = Awaited<ReturnType<typeof previewCalendarImport>>;
 
@@ -133,6 +138,7 @@ export function CalendarImportSection({
             className="bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={async () => {
               if (busy) return;
+              const jobId = `calendar-import-${Date.now()}`;
               try {
                 let importId: string | undefined;
                 let offset = 0;
@@ -145,6 +151,14 @@ export function CalendarImportSection({
                   done: 0,
                   total: 1,
                   label: "events",
+                  startedAt,
+                });
+                startBackgroundJob({
+                  id: jobId,
+                  kind: "calendar-import",
+                  label: "Importing calendar",
+                  done: 0,
+                  total: 1,
                   startedAt,
                 });
 
@@ -166,12 +180,15 @@ export function CalendarImportSection({
                   meetingsLogged += res.meetingsLogged;
                   contactsMatched += res.contactsMatched;
                   offset += res.eventsProcessed;
+                  const done = Math.min(offset, Math.max(total, 1));
+                  const boundedTotal = Math.max(total, 1);
                   setImportProgress({
-                    done: Math.min(offset, Math.max(total, 1)),
-                    total: Math.max(total, 1),
+                    done,
+                    total: boundedTotal,
                     label: total === 1 ? "event" : "events",
                     startedAt,
                   });
+                  updateBackgroundJob(jobId, { done, total: boundedTotal });
                 } while (offset < total);
 
                 await confirmCalendarImport({
@@ -184,17 +201,17 @@ export function CalendarImportSection({
                   chunk: { offset: total, limit: 0 },
                 });
 
-                toast.success(
-                  `Logged ${meetingsLogged} meetings across ${contactsMatched} contacts`,
-                );
+                const resultMessage = `Logged ${meetingsLogged} meetings across ${contactsMatched} contacts`;
+                toast.success(resultMessage);
+                finishBackgroundJob(jobId, { status: "completed", resultMessage });
                 setCalendarPreview(null);
                 setCalendarText("");
                 setCalendarFileName(null);
                 router.refresh();
               } catch (err) {
-                toast.error(
-                  err instanceof Error ? err.message : "Import failed",
-                );
+                const message = err instanceof Error ? err.message : "Import failed";
+                toast.error(message);
+                finishBackgroundJob(jobId, { status: "failed", error: message });
               } finally {
                 setImportProgress(null);
               }

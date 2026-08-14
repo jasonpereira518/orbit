@@ -7,6 +7,9 @@ import {
 } from "@/actions/calendar";
 import { ImportHub } from "@/components/imports/import-hub";
 
+/** Large connections imports process in the background via after(); allow it room to run. */
+export const maxDuration = 300;
+
 export default async function ImportsPage() {
   // Keep the history paint fast; refresh subscriptions after the response.
   after(() => {
