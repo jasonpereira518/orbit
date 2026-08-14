@@ -1,5 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
-import { LandingHero } from "@/components/landing/landing-hero";
+import { LandingPage } from "@/components/landing/landing-page";
 import { isClerkConfigured, isDemoMode } from "@/lib/auth";
 
 export default async function MarketingPage() {
@@ -9,7 +9,7 @@ export default async function MarketingPage() {
   const { userId } = clerkOn ? await auth() : { userId: null };
 
   return (
-    <LandingHero
+    <LandingPage
       clerkOn={clerkOn}
       demoMode={isDemoMode()}
       signedIn={Boolean(userId)}

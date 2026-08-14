@@ -748,7 +748,7 @@
 @keyframes reveal-rise {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(var(--reveal-rise, 10px));
   }
 }
 
@@ -764,6 +764,21 @@
 [data-reveal="in"] {
   animation: reveal-rise var(--transition-duration-slow) var(--ease-house)
     var(--reveal-delay, 0ms) both;
+}
+
+/* Landing narrative scenes: set-piece reveals get the celestial tier and a
+ * taller rise; below-fold scenes skip layout/paint until approached. */
+.reveal-celestial {
+  --reveal-rise: 18px;
+}
+
+.reveal-celestial[data-reveal="in"] {
+  animation-duration: var(--transition-duration-celestial);
+}
+
+.landing-scene {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 800px;
 }
 
 /* ── View Transitions (route navigation) ── */
