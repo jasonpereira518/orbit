@@ -29,7 +29,7 @@ function ClerkWaitlistForm() {
   if (status === "success") {
     return (
       <p className="text-sm text-[#e8f3f1]">
-        You&apos;re on the list — we&apos;ll email you as spots open.
+        You&apos;re in — we&apos;ll email you when there&apos;s news.
       </p>
     );
   }
@@ -49,7 +49,7 @@ function ClerkWaitlistForm() {
         className={inputClass}
       />
       <button type="submit" disabled={status === "loading"} className={buttonClass}>
-        {status === "loading" ? "Joining…" : "Join the waitlist"}
+        {status === "loading" ? "Signing up…" : "Get updates"}
       </button>
       {status === "error" && (
         <p className="text-sm text-[#e8a84e]">
@@ -66,7 +66,7 @@ function DemoWaitlistForm() {
   if (submitted) {
     return (
       <p className="text-sm text-[#e8f3f1]">
-        Thanks! (Demo mode — no real waitlist entry was created.)
+        Thanks! (Demo mode — no real signup was created.)
       </p>
     );
   }
@@ -90,7 +90,7 @@ function DemoWaitlistForm() {
         className={inputClass}
       />
       <button type="submit" className={buttonClass}>
-        Join the waitlist
+        Get updates
       </button>
     </form>
   );

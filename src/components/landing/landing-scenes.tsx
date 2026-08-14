@@ -2,6 +2,7 @@ import Link from "next/link";
 import { CometStreak } from "@/components/landing/comet-streak";
 import { ConstellationFigure } from "@/components/landing/constellation-figure";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
+import { WaitlistForm } from "@/components/landing/waitlist-form";
 import { Reveal } from "@/components/motion/reveal";
 
 // All narrative copy is server-rendered here so it ships in the document;
@@ -105,6 +106,7 @@ export function SceneFinale({
     <section
       aria-labelledby="landing-cta"
       className="landing-scene relative z-10 px-6 pt-24 md:px-10"
+      style={{ "--scene-size": "1250px" } as React.CSSProperties}
     >
       <div className="mx-auto flex w-full max-w-3xl flex-col items-center text-center">
         <Reveal className="reveal-celestial">
@@ -127,20 +129,47 @@ export function SceneFinale({
             />
           </div>
         </Reveal>
+
+        <Reveal className="reveal-celestial mt-16 w-full max-w-md" delay={280}>
+          <div className="landing-glass rounded-3xl p-6 text-left md:p-8">
+            <p className={KICKER}>Stay in the loop</p>
+            <p className="mt-2 text-lg text-[#e8f3f1]">
+              Get updates as Orbit grows.
+            </p>
+            <div className="mt-4">
+              <WaitlistForm clerkOn={clerkOn} demoMode={demoMode} />
+            </div>
+            <p className="mt-3 text-xs text-[#6d807c]">
+              No spam — just launch news.
+            </p>
+          </div>
+        </Reveal>
       </div>
 
-      <footer className="mx-auto flex w-full max-w-6xl items-center justify-between pb-6 pt-24 md:pb-8">
+      <footer className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 pb-6 pt-24 md:pb-8">
         <Link
           href="/privacy"
           className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
         >
           Privacy
         </Link>
+        <Link
+          href="/terms"
+          className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
+        >
+          Terms
+        </Link>
+        <Link
+          href="/contact"
+          className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
+        >
+          Contact
+        </Link>
         <a
           href="https://jasonpereira.live/"
           target="_blank"
           rel="noopener noreferrer"
-          className="landing-credit-shimmer text-sm"
+          className="landing-credit-shimmer ml-auto text-sm"
         >
           By Jason Pereira
         </a>
