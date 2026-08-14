@@ -832,7 +832,16 @@
 
 .landing-scene {
   content-visibility: auto;
-  contain-intrinsic-size: auto 800px;
+  /* Placeholder must approximate the real height — a big mismatch makes
+   * scroll anchoring jump PAST the section as it expands. Tall scenes
+   * override via --scene-size. */
+  contain-intrinsic-size: auto var(--scene-size, 800px);
+}
+
+/* Overscroll rubber-banding paints the body behind the page — keep it
+ * space-dark while the landing is mounted instead of the app's light bg. */
+body:has(.landing-root) {
+  background-color: #05070f;
 }
 
 /* ── View Transitions (route navigation) ── */

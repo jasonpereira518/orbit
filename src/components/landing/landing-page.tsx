@@ -9,6 +9,7 @@ import {
   SceneConstellations,
   SceneFinale,
 } from "@/components/landing/landing-scenes";
+import { SceneFeatures } from "@/components/landing/scene-features";
 
 // Composition root for the scroll narrative. The starfield is a fixed
 // page-wide background; it must stay a direct child of this untransformed
@@ -26,7 +27,7 @@ export function LandingPage({
   const authProps = { clerkOn, demoMode, signedIn };
 
   return (
-    <div className="relative overflow-x-clip bg-[#05070f] text-[#e8f3f1]">
+    <div className="landing-root relative overflow-x-clip bg-[#05070f] text-[#e8f3f1]">
       <LandingStarfield />
 
       <HeroPin
@@ -48,6 +49,7 @@ export function LandingPage({
 
       <SceneConstellations />
       <SceneComets />
+      <SceneFeatures />
       <SceneFinale {...authProps} />
     </div>
   );
