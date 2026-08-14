@@ -21,7 +21,7 @@ export function SceneConstellations() {
       <div className="mx-auto grid w-full max-w-6xl items-center gap-10 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:gap-12">
         <div>
           <Reveal className="reveal-celestial">
-            <p className={KICKER}>Groups</p>
+            <p className={KICKER}>Clusters</p>
           </Reveal>
           <Reveal className="reveal-celestial" delay={80}>
             <h2 id="landing-groups" className={HEADING}>
