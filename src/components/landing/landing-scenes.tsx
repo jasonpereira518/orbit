@@ -5,10 +5,10 @@ import { Reveal } from "@/components/motion/reveal";
 // All narrative copy is server-rendered here so it ships in the document;
 // <Reveal> only choreographs when it becomes visible.
 
-const KICKER = "text-xs uppercase tracking-[0.16em] text-[#c4a35a]";
-const HEADING =
+export const KICKER = "text-xs uppercase tracking-[0.16em] text-[#c4a35a]";
+export const HEADING =
   "mt-3 font-[family-name:var(--font-display)] text-[clamp(30px,4.4vw,50px)] font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]";
-const BODY = "mt-4 max-w-md text-base leading-relaxed text-[#9aada8] sm:text-lg";
+export const BODY = "mt-4 max-w-md text-base leading-relaxed text-[#9aada8] sm:text-lg";
 
 export function SceneConstellations() {
   return (

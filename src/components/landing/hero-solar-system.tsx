@@ -1,8 +1,21 @@
 "use client";
 
 import { useLayoutEffect, useRef } from "react";
+import { motion, type MotionValue } from "motion/react";
 import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
+
+/**
+ * Scroll-scrubbed camera values from the hero pin. The scrub writes only to
+ * the stage tilt and the cadence-ring group — the rAF loop stays the sole
+ * writer of per-planet transforms (two writers on one node is a hazard).
+ * REST_TILT_X/Y in hero-pin.tsx mirror BASE_TILT_X/Y — keep in sync.
+ */
+export type HeroSolarCamera = {
+  rotateX: MotionValue<number>;
+  rotateY: MotionValue<number>;
+  cadenceOpacity: MotionValue<number>;
+};
 
 type PlanetDef = {
   id: string;
@@ -182,7 +195,16 @@ function PlanetSphere({ p }: { p: PlanetDef }) {
   );
 }
 
-export function HeroSolarSystem({ className }: { className?: string }) {
+/** The three labeled cadence rings (venus/jupiter/neptune orbits). */
+const CADENCE_RADII = [78, 156, 234];
+
+export function HeroSolarSystem({
+  className,
+  camera,
+}: {
+  className?: string;
+  camera?: HeroSolarCamera;
+}) {
   const reducedMotion = usePrefersReducedMotion();
   const planetsRef = useRef<HTMLDivElement>(null);
   const startTime = useRef(0);
@@ -252,12 +274,20 @@ export function HeroSolarSystem({ className }: { className?: string }) {
       style={{ perspective: "1100px", perspectiveOrigin: "50% 45%" }}
       aria-hidden
     >
-      <div
+      <motion.div
         className="hero-solar-stage relative h-full w-full"
-        style={{
-          transform: `rotateX(${BASE_TILT_X}deg) rotateY(${BASE_TILT_Y}deg)`,
-          transformStyle: "preserve-3d",
-        }}
+        style={
+          camera
+            ? {
+                rotateX: camera.rotateX,
+                rotateY: camera.rotateY,
+                transformStyle: "preserve-3d",
+              }
+            : {
+                transform: `rotateX(${BASE_TILT_X}deg) rotateY(${BASE_TILT_Y}deg)`,
+                transformStyle: "preserve-3d",
+              }
+        }
       >
         <svg
           viewBox={`0 0 ${VIEW} ${VIEW}`}
@@ -277,6 +307,21 @@ export function HeroSolarSystem({ className }: { className?: string }) {
               />
             ))}
           </g>
+          {camera ? (
+            <motion.g style={{ opacity: camera.cadenceOpacity }}>
+              {CADENCE_RADII.map((r) => (
+                <circle
+                  key={r}
+                  cx={CX}
+                  cy={CY}
+                  r={r}
+                  fill="none"
+                  stroke="rgba(196, 163, 90, 0.4)"
+                  strokeWidth={0.75}
+                />
+              ))}
+            </motion.g>
+          ) : null}
         </svg>
 
         <div
@@ -305,7 +350,7 @@ export function HeroSolarSystem({ className }: { className?: string }) {
             <PlanetSphere key={p.id} p={p} />
           ))}
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }
