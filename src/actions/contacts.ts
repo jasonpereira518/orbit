@@ -26,12 +26,15 @@ import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import {
   AVATAR_BACKFILL_BATCH_SIZE,
-  downloadImageAsDataUrl,
-  fetchLinkedInPhotoDataUrl,
+  downloadAndPersistAvatar,
+  fetchLinkedInPhotoUrl,
   isUnusableAvatarUrl,
   MicrolinkRateLimitError,
 } from "@/lib/contact-avatar";
-import { clientContactAvatarUrl } from "@/lib/contact-avatar-url";
+import {
+  clientContactAvatarUrl,
+  isDurableAvatarUrl,
+} from "@/lib/contact-avatar-url";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
 import {
   findRelatedContacts,
@@ -840,28 +843,28 @@ export async function backfillContactAvatars(
       if (!linkedin && (!stored || isUnusableAvatarUrl(stored))) return false;
       // Need LinkedIn resolution when missing/unusable.
       if (linkedin && isUnusableAvatarUrl(stored)) return true;
-      // Also durably cache remote URLs that aren't data URLs yet.
+      // Also durably cache remote URLs that aren't in Blob storage yet.
       if (
         stored &&
         !isUnusableAvatarUrl(stored) &&
-        !stored.startsWith("data:image/")
+        !isDurableAvatarUrl(stored)
       ) {
         return true;
       }
       return false;
     })
-    // Prefer free remote→data-URL work before spending Microlink quota.
+    // Prefer free remote→Blob caching work before spending Microlink quota.
     .sort((a, b) => {
       const aRemote =
         Boolean(a.profileImageUrl?.trim()) &&
         !isUnusableAvatarUrl(a.profileImageUrl) &&
-        !a.profileImageUrl!.startsWith("data:image/")
+        !isDurableAvatarUrl(a.profileImageUrl)
           ? 0
           : 1;
       const bRemote =
         Boolean(b.profileImageUrl?.trim()) &&
         !isUnusableAvatarUrl(b.profileImageUrl) &&
-        !b.profileImageUrl!.startsWith("data:image/")
+        !isDurableAvatarUrl(b.profileImageUrl)
           ? 0
           : 1;
       return aRemote - bRemote;
@@ -886,19 +889,19 @@ export async function backfillContactAvatars(
   for (const contact of batch) {
     const stored = contact.profileImageUrl?.trim() || "";
     try {
-      let dataUrl: string | null = null;
+      let photoUrl: string | null = null;
 
-      if (stored && !isUnusableAvatarUrl(stored) && !stored.startsWith("data:image/")) {
-        dataUrl = await downloadImageAsDataUrl(stored);
+      if (stored && !isUnusableAvatarUrl(stored) && !isDurableAvatarUrl(stored)) {
+        photoUrl = await downloadAndPersistAvatar(contact.id, stored);
       }
 
-      if (!dataUrl && contact.linkedinUrl?.trim()) {
+      if (!photoUrl && contact.linkedinUrl?.trim()) {
         try {
-          dataUrl = await fetchLinkedInPhotoDataUrl(contact.linkedinUrl);
+          photoUrl = await fetchLinkedInPhotoUrl(contact.id, contact.linkedinUrl);
         } catch (err) {
           if (err instanceof MicrolinkRateLimitError) {
             rateLimitedUntil = err.resetAt;
-            // Unavatar was already tried inside fetchLinkedInPhotoDataUrl.
+            // Unavatar was already tried inside fetchLinkedInPhotoUrl.
             failed += 1;
             continue;
           }
@@ -906,14 +909,14 @@ export async function backfillContactAvatars(
         }
       }
 
-      if (!dataUrl) {
+      if (!photoUrl) {
         failed += 1;
         continue;
       }
 
       await db
         .update(contacts)
-        .set({ profileImageUrl: dataUrl, updatedAt: new Date() })
+        .set({ profileImageUrl: photoUrl, updatedAt: new Date() })
         .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
       saved += 1;
       savedIds.push(contact.id);
@@ -1072,11 +1075,17 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
       // Prefer Apollo photo when present; otherwise resolve via LinkedIn.
       let profileImageUrl: string | null = null;
       if (profile?.profileImageUrl) {
-        profileImageUrl = await downloadImageAsDataUrl(profile.profileImageUrl);
+        profileImageUrl = await downloadAndPersistAvatar(
+          contact.id,
+          profile.profileImageUrl
+        );
       }
       if (!profileImageUrl && contact.linkedinUrl) {
         try {
-          profileImageUrl = await fetchLinkedInPhotoDataUrl(contact.linkedinUrl);
+          profileImageUrl = await fetchLinkedInPhotoUrl(
+            contact.id,
+            contact.linkedinUrl
+          );
         } catch (err) {
           if (err instanceof MicrolinkRateLimitError) {
             rateLimited = true;
