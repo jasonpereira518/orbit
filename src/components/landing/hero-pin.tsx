@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { motion, useScroll, useTransform } from "motion/react";
 import { scrub01 } from "@/lib/motion";
 import { cn } from "@/lib/utils";
@@ -20,7 +20,7 @@ const SOLAR_VIEW = 440;
 const RING_LABELS = [
   { text: "Inner circle", r: 78, side: 1 },
   { text: "Steady orbit", r: 156, side: -1 },
-  { text: "Drifting", r: 234, side: 1 },
+  { text: "Drifting", r: 234, side: -1 },
 ];
 
 function subscribeLg(cb: () => void) {
@@ -73,11 +73,46 @@ export function HeroPin({
   );
 
   // Beat 2 (p 0→0.55): camera pulls back and the ecliptic flattens
-  // face-on; on lg the system recenters from the right column.
+  // face-on; the system recenters onto measured targets — horizontally to
+  // the frame's center (lg only), vertically to 60% of the frame so the
+  // flattened rings sit clear of the claim copy above.
   const camScale = useTransform(scrollYProgress, [0, 0.55], [1, 0.68]);
-  const camX = useTransform(scrollYProgress, [0.1, 0.55], ["0%", "-48%"]);
+  const camTarget = useRef({ x: 0, y: 0 });
+  const camX = useTransform(
+    scrollYProgress,
+    (v) => scrub01(v, 0.1, 0.55) * camTarget.current.x
+  );
+  const camY = useTransform(
+    scrollYProgress,
+    (v) => scrub01(v, 0.1, 0.55) * camTarget.current.y
+  );
   const rotateX = useTransform(scrollYProgress, [0, 0.55], [REST_TILT_X, 0]);
   const rotateY = useTransform(scrollYProgress, [0, 0.55], [REST_TILT_Y, 0]);
+
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const camWrapRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const frame = frameRef.current;
+    const el = camWrapRef.current;
+    if (!frame || !el || reduced) return;
+    const measure = () => {
+      const frameRect = frame.getBoundingClientRect();
+      const rect = el.getBoundingClientRect();
+      // Subtract the scrub's current translation to recover the wrapper's
+      // untransformed center (scale is about the center, so it cancels out).
+      const cx = rect.left + rect.width / 2 - camX.get() - frameRect.left;
+      const cy = rect.top + rect.height / 2 - camY.get() - frameRect.top;
+      camTarget.current = {
+        x: frameRect.width / 2 - cx,
+        y: frameRect.height * 0.6 - cy,
+      };
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(frame);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [reduced, isLg, camX, camY]);
 
   // Beat 3 (p 0.45→0.84): cadence rings brighten, claim + labels arrive.
   const cadenceOpacity = useTransform(scrollYProgress, (v) => scrub01(v, 0.45, 0.7));
@@ -92,6 +127,7 @@ export function HeroPin({
   return (
     <section ref={wrapRef} className={reduced ? "relative" : "relative h-[260svh]"}>
       <div
+        ref={frameRef}
         className={cn(
           "flex flex-col",
           reduced ? "min-h-svh" : "sticky top-0 h-svh overflow-hidden"
@@ -113,8 +149,13 @@ export function HeroPin({
             </motion.div>
 
             <motion.div
+              ref={camWrapRef}
               className="relative mx-auto w-full max-w-[min(100%,560px)] lg:mx-0 lg:justify-self-end"
-              style={reduced ? undefined : { scale: camScale, x: isLg ? camX : 0 }}
+              style={
+                reduced
+                  ? undefined
+                  : { scale: camScale, x: isLg ? camX : 0, y: camY }
+              }
             >
               <LandingSolarSystem
                 camera={reduced ? undefined : { rotateX, rotateY, cadenceOpacity }}
@@ -141,7 +182,7 @@ export function HeroPin({
 
         {!reduced && (
           <motion.div
-            className="pointer-events-none absolute inset-x-0 top-[12svh] z-20 px-6 text-center"
+            className="pointer-events-none absolute inset-x-0 top-[9svh] z-20 px-6 text-center"
             style={{ opacity: claimOpacity, y: claimY }}
           >
             <div className="mx-auto max-w-2xl">{claim}</div>
