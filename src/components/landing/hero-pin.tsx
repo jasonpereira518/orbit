@@ -74,9 +74,10 @@ export function HeroPin({
 
   // Beat 2 (p 0→0.55): camera pulls back and the ecliptic flattens
   // face-on; the system recenters onto measured targets — horizontally to
-  // the frame's center (lg only), vertically to 60% of the frame so the
-  // flattened rings sit clear of the claim copy above.
-  const camScale = useTransform(scrollYProgress, [0, 0.55], [1, 0.68]);
+  // the frame's center (lg only), vertically low enough that the outer
+  // ring clears the claim copy above (min 60% of the frame).
+  const CAM_SCALE_END = 0.68;
+  const camScale = useTransform(scrollYProgress, [0, 0.55], [1, CAM_SCALE_END]);
   const camTarget = useRef({ x: 0, y: 0 });
   const camX = useTransform(
     scrollYProgress,
@@ -91,6 +92,7 @@ export function HeroPin({
 
   const frameRef = useRef<HTMLDivElement | null>(null);
   const camWrapRef = useRef<HTMLDivElement | null>(null);
+  const claimRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const frame = frameRef.current;
     const el = camWrapRef.current;
@@ -102,9 +104,23 @@ export function HeroPin({
       // untransformed center (scale is about the center, so it cancels out).
       const cx = rect.left + rect.width / 2 - camX.get() - frameRect.left;
       const cy = rect.top + rect.height / 2 - camY.get() - frameRect.top;
+      // The end-state outer ring must clear the claim copy: offsetWidth is
+      // the untransformed stage width, the outermost ring spans r/VIEW of
+      // it, and the whole system lands at CAM_SCALE_END.
+      const outerRingR =
+        el.offsetWidth *
+        (RING_LABELS[RING_LABELS.length - 1]!.r / SOLAR_VIEW) *
+        CAM_SCALE_END;
+      const claimBottom = claimRef.current
+        ? claimRef.current.getBoundingClientRect().bottom - frameRect.top
+        : frameRect.height * 0.3;
+      const targetCenterY = Math.max(
+        frameRect.height * 0.6,
+        claimBottom + outerRingR + 40
+      );
       camTarget.current = {
         x: frameRect.width / 2 - cx,
-        y: frameRect.height * 0.6 - cy,
+        y: targetCenterY - cy,
       };
     };
     measure();
@@ -182,6 +198,7 @@ export function HeroPin({
 
         {!reduced && (
           <motion.div
+            ref={claimRef}
             className="pointer-events-none absolute inset-x-0 top-[9svh] z-20 px-6 text-center"
             style={{ opacity: claimOpacity, y: claimY }}
           >
