@@ -2,6 +2,7 @@
 
 import { useRef } from "react";
 import { motion, useScroll, useTransform } from "motion/react";
+import { scrub01 } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import {
@@ -27,10 +28,11 @@ export function ConstellationFigure({ className }: { className?: string }) {
   });
 
   // Chains overlap their draw windows so the figure feels continuous.
+  // Function transforms (scrub01) keep pathLength off the WAAPI path.
   const chainProgress = [
-    useTransform(scrollYProgress, [0, 0.45], [0, 1]),
-    useTransform(scrollYProgress, [0.25, 0.7], [0, 1]),
-    useTransform(scrollYProgress, [0.5, 1], [0, 1]),
+    useTransform(scrollYProgress, (v) => scrub01(v, 0, 0.45)),
+    useTransform(scrollYProgress, (v) => scrub01(v, 0.25, 0.7)),
+    useTransform(scrollYProgress, (v) => scrub01(v, 0.5, 1)),
   ];
 
   return (

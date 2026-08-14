@@ -48,3 +48,17 @@ export const CAMERA_MS = {
   move: 450,
   wide: 550,
 } as const;
+
+/**
+ * Clamped linear progress of `v` through [a, b], for scroll scrubs.
+ *
+ * Scrubbed opacity/pathLength MUST use function transforms built on this —
+ * never `useTransform(value, [a,b], [x,y])` range maps. motion promotes
+ * range-mapped opacity to a WAAPI ViewTimeline animation tracking the
+ * *element's* viewport position, which disagrees with target-based
+ * `useScroll` offsets inside sticky pins (values run out and back in).
+ * Function transforms cannot be keyframe-extracted, so they stay JS-driven.
+ */
+export function scrub01(v: number, a: number, b: number) {
+  return Math.min(1, Math.max(0, (v - a) / (b - a)));
+}

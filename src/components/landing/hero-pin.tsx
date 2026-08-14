@@ -2,6 +2,7 @@
 
 import { useRef, useSyncExternalStore } from "react";
 import { motion, useScroll, useTransform } from "motion/react";
+import { scrub01 } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { LandingSolarSystem } from "@/components/landing/landing-visuals";
@@ -60,8 +61,11 @@ export function HeroPin({
     offset: ["start start", "end end"],
   });
 
+  // Opacity scrubs are function transforms on scrub01 — see its doc
+  // comment for why range maps must not be used for opacity here.
+
   // Beat 1 (p 0→0.25): hero copy exits.
-  const copyOpacity = useTransform(scrollYProgress, [0, 0.25], [1, 0]);
+  const copyOpacity = useTransform(scrollYProgress, (v) => 1 - scrub01(v, 0, 0.25));
   const copyY = useTransform(scrollYProgress, [0, 0.25], [0, -32]);
   const copyPointer = useTransform(copyOpacity, (o) =>
     o < 0.4 ? ("none" as const) : ("auto" as const)
@@ -75,13 +79,13 @@ export function HeroPin({
   const rotateY = useTransform(scrollYProgress, [0, 0.55], [REST_TILT_Y, 0]);
 
   // Beat 3 (p 0.45→0.84): cadence rings brighten, claim + labels arrive.
-  const cadenceOpacity = useTransform(scrollYProgress, [0.45, 0.7], [0, 1]);
-  const claimOpacity = useTransform(scrollYProgress, [0.55, 0.75], [0, 1]);
+  const cadenceOpacity = useTransform(scrollYProgress, (v) => scrub01(v, 0.45, 0.7));
+  const claimOpacity = useTransform(scrollYProgress, (v) => scrub01(v, 0.55, 0.75));
   const claimY = useTransform(scrollYProgress, [0.55, 0.75], [28, 0]);
   const labelOpacities = [
-    useTransform(scrollYProgress, [0.62, 0.72], [0, 1]),
-    useTransform(scrollYProgress, [0.68, 0.78], [0, 1]),
-    useTransform(scrollYProgress, [0.74, 0.84], [0, 1]),
+    useTransform(scrollYProgress, (v) => scrub01(v, 0.62, 0.72)),
+    useTransform(scrollYProgress, (v) => scrub01(v, 0.68, 0.78)),
+    useTransform(scrollYProgress, (v) => scrub01(v, 0.74, 0.84)),
   ];
 
   return (

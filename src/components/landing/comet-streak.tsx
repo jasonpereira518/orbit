@@ -2,6 +2,7 @@
 
 import { useRef } from "react";
 import { motion, useScroll, useTransform } from "motion/react";
+import { scrub01 } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 /**
@@ -21,7 +22,10 @@ export function CometStreak() {
 
   const x = useTransform(scrollYProgress, [0, 1], ["-15vw", "105vw"]);
   const y = useTransform(scrollYProgress, [0, 1], ["0vh", "22vh"]);
-  const opacity = useTransform(scrollYProgress, [0.12, 0.5, 0.88], [0, 1, 0]);
+  // Function transform keeps the fade off the WAAPI path (see scrub01).
+  const opacity = useTransform(scrollYProgress, (v) =>
+    v < 0.5 ? scrub01(v, 0.12, 0.5) : 1 - scrub01(v, 0.5, 0.88)
+  );
 
   return (
     <div ref={ref} aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
