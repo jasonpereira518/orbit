@@ -5,6 +5,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import {
+  Calendar as CalendarIcon,
+  FileSpreadsheet,
+  MessageSquare,
+} from "lucide-react";
+import {
   ImportHistory,
   type ImportHistoryItem,
 } from "@/components/imports/import-history";
@@ -34,10 +39,30 @@ type CalendarSub = {
   } | null;
 };
 
-const TABS: { id: ImportTab; label: string }[] = [
-  { id: "connections", label: "Connections" },
-  { id: "messages", label: "Messages" },
-  { id: "calendar", label: "Calendar" },
+const TABS: {
+  id: ImportTab;
+  label: string;
+  icon: typeof FileSpreadsheet;
+  activeText: string;
+}[] = [
+  {
+    id: "connections",
+    label: "Connections",
+    icon: FileSpreadsheet,
+    activeText: "text-import-connections",
+  },
+  {
+    id: "messages",
+    label: "Messages",
+    icon: MessageSquare,
+    activeText: "text-import-messages",
+  },
+  {
+    id: "calendar",
+    label: "Calendar",
+    icon: CalendarIcon,
+    activeText: "text-import-calendar",
+  },
 ];
 
 const PanelSkeleton = () => (
@@ -53,7 +78,7 @@ const LinkedInConnectionsImport = dynamic(
     import("@/components/imports/linkedin-connections-import").then((m) => ({
       default: m.LinkedInConnectionsImport,
     })),
-  { loading: () => <PanelSkeleton /> }
+  { loading: () => <PanelSkeleton /> },
 );
 
 const LinkedInMessagesImport = dynamic(
@@ -61,7 +86,7 @@ const LinkedInMessagesImport = dynamic(
     import("@/components/imports/linkedin-messages-import").then((m) => ({
       default: m.LinkedInMessagesImport,
     })),
-  { loading: () => <PanelSkeleton /> }
+  { loading: () => <PanelSkeleton /> },
 );
 
 const CalendarImportSection = dynamic(
@@ -69,7 +94,7 @@ const CalendarImportSection = dynamic(
     import("@/components/imports/calendar-import-section").then((m) => ({
       default: m.CalendarImportSection,
     })),
-  { loading: () => <PanelSkeleton /> }
+  { loading: () => <PanelSkeleton /> },
 );
 
 /** Refresh server-rendered data when the user returns to this browser tab. */
@@ -124,7 +149,7 @@ export function ImportHub({
     if (job.kind !== "connections" && job.kind !== "messages") return;
     setTab(job.kind);
     setMounted((prev) =>
-      prev[job.kind] ? prev : { ...prev, [job.kind]: true }
+      prev[job.kind] ? prev : { ...prev, [job.kind]: true },
     );
   }, [job]);
 
@@ -148,6 +173,7 @@ export function ImportHub({
       >
         {TABS.map((t) => {
           const active = tab === t.id;
+          const Icon = t.icon;
           return (
             <button
               key={t.id}
@@ -158,10 +184,10 @@ export function ImportHub({
               id={`import-tab-${t.id}`}
               onClick={() => setTab(t.id)}
               className={cn(
-                "relative z-10 flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                "relative z-10 flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                 active
-                  ? "text-primary"
-                  : "text-muted-foreground hover:text-foreground"
+                  ? t.activeText
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               {active ? (
@@ -171,6 +197,12 @@ export function ImportHub({
                   transition={SPRING_PILL}
                 />
               ) : null}
+              <Icon
+                className={cn(
+                  "relative z-10 h-3.5 w-3.5",
+                  !active && "text-muted-foreground/70",
+                )}
+              />
               <span className="relative z-10">
                 {t.label}
                 {job?.status === "running" && job.kind === t.id ? " ·…" : ""}
@@ -207,7 +239,9 @@ export function ImportHub({
           aria-labelledby="import-tab-calendar"
           hidden={tab !== "calendar"}
         >
-          <CalendarImportSection calendarSubscriptions={calendarSubscriptions} />
+          <CalendarImportSection
+            calendarSubscriptions={calendarSubscriptions}
+          />
         </div>
       )}
 

@@ -24,6 +24,9 @@
   --color-chart-3: var(--chart-3);
   --color-chart-2: var(--chart-2);
   --color-chart-1: var(--chart-1);
+  --color-import-connections: var(--import-connections);
+  --color-import-messages: var(--import-messages);
+  --color-import-calendar: var(--import-calendar);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -89,6 +92,9 @@
   --chart-3: #7aa896;
   --chart-4: #c4a35a;
   --chart-5: #8b5e3c;
+  --import-connections: #5b5fc7;
+  --import-messages: #c2694a;
+  --import-calendar: #b8873a;
   --radius: 0.625rem;
   --sidebar: #f7f8f6;
   --sidebar-foreground: #1a1c1a;
@@ -125,6 +131,9 @@
   --chart-3: #9dc4f1;
   --chart-4: #3d7fc7;
   --chart-5: #b8d4f5;
+  --import-connections: #9b9ff5;
+  --import-messages: #e08a68;
+  --import-calendar: #d9a855;
   --sidebar: #272727;
   --sidebar-foreground: #f0f0f0;
   --sidebar-primary: #599de7;
@@ -143,14 +152,30 @@
   body {
     @apply bg-background text-foreground;
     background-image:
-      radial-gradient(ellipse 80% 50% at 100% -20%, rgba(15, 61, 62, 0.06), transparent),
-      radial-gradient(ellipse 60% 40% at 0% 100%, rgba(196, 163, 90, 0.05), transparent);
+      radial-gradient(
+        ellipse 80% 50% at 100% -20%,
+        rgba(15, 61, 62, 0.06),
+        transparent
+      ),
+      radial-gradient(
+        ellipse 60% 40% at 0% 100%,
+        rgba(196, 163, 90, 0.05),
+        transparent
+      );
     background-attachment: fixed;
   }
   .dark body {
     background-image:
-      radial-gradient(ellipse 80% 50% at 100% -20%, rgba(89, 157, 231, 0.14), transparent),
-      radial-gradient(ellipse 60% 40% at 0% 100%, rgba(53, 53, 53, 0.55), transparent);
+      radial-gradient(
+        ellipse 80% 50% at 100% -20%,
+        rgba(89, 157, 231, 0.14),
+        transparent
+      ),
+      radial-gradient(
+        ellipse 60% 40% at 0% 100%,
+        rgba(53, 53, 53, 0.55),
+        transparent
+      );
   }
 }
 
@@ -161,13 +186,12 @@
   isolation: isolate;
   overflow: hidden;
   border-radius: 1.5rem;
-  background:
-    linear-gradient(
-      165deg,
-      rgba(255, 255, 255, 0.72) 0%,
-      rgba(255, 255, 255, 0.42) 42%,
-      rgba(247, 248, 246, 0.38) 100%
-    );
+  background: linear-gradient(
+    165deg,
+    rgba(255, 255, 255, 0.72) 0%,
+    rgba(255, 255, 255, 0.42) 42%,
+    rgba(247, 248, 246, 0.38) 100%
+  );
   border: 1px solid rgba(255, 255, 255, 0.55);
   box-shadow:
     0 1px 0 0 rgba(255, 255, 255, 0.65) inset,
@@ -215,13 +239,12 @@
 }
 
 .liquid-glass:hover {
-  background:
-    linear-gradient(
-      165deg,
-      rgba(255, 255, 255, 0.58) 0%,
-      rgba(255, 255, 255, 0.32) 42%,
-      rgba(247, 248, 246, 0.28) 100%
-    );
+  background: linear-gradient(
+    165deg,
+    rgba(255, 255, 255, 0.58) 0%,
+    rgba(255, 255, 255, 0.32) 42%,
+    rgba(247, 248, 246, 0.28) 100%
+  );
   border-color: rgba(255, 255, 255, 0.72);
   box-shadow:
     0 1px 0 0 rgba(255, 255, 255, 0.8) inset,
@@ -245,13 +268,12 @@
 }
 
 .dark .liquid-glass {
-  background:
-    linear-gradient(
-      165deg,
-      rgba(55, 55, 55, 0.72) 0%,
-      rgba(39, 39, 39, 0.55) 45%,
-      rgba(32, 32, 32, 0.48) 100%
-    );
+  background: linear-gradient(
+    165deg,
+    rgba(55, 55, 55, 0.72) 0%,
+    rgba(39, 39, 39, 0.55) 45%,
+    rgba(32, 32, 32, 0.48) 100%
+  );
   border-color: rgba(255, 255, 255, 0.12);
   box-shadow:
     0 1px 0 0 rgba(255, 255, 255, 0.14) inset,
@@ -275,13 +297,12 @@
 }
 
 .dark .liquid-glass:hover {
-  background:
-    linear-gradient(
-      165deg,
-      rgba(60, 60, 60, 0.55) 0%,
-      rgba(39, 39, 39, 0.4) 45%,
-      rgba(28, 28, 28, 0.36) 100%
-    );
+  background: linear-gradient(
+    165deg,
+    rgba(60, 60, 60, 0.55) 0%,
+    rgba(39, 39, 39, 0.4) 45%,
+    rgba(28, 28, 28, 0.36) 100%
+  );
   border-color: rgba(255, 255, 255, 0.18);
   box-shadow:
     0 1px 0 0 rgba(255, 255, 255, 0.2) inset,
@@ -304,7 +325,9 @@
     );
 }
 
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+@supports not (
+  (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))
+) {
   .liquid-glass {
     background: color-mix(in oklab, var(--sidebar) 92%, transparent);
   }
@@ -336,7 +359,8 @@
     box-shadow: 0 0 0 0 color-mix(in oklch, var(--destructive) 35%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 6px color-mix(in oklch, var(--destructive) 0%, transparent);
+    box-shadow: 0 0 0 6px
+      color-mix(in oklch, var(--destructive) 0%, transparent);
   }
 }
 
@@ -612,7 +636,8 @@
 }
 
 .landing-fade {
-  animation: landing-fade var(--transition-duration-celestial) var(--ease-house) both;
+  animation: landing-fade var(--transition-duration-celestial) var(--ease-house)
+    both;
 }
 
 .landing-solar-enter {
@@ -696,11 +721,7 @@
   position: absolute;
   inset: -18%;
   border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    var(--planet-glow) 0%,
-    transparent 62%
-  );
+  background: radial-gradient(circle, var(--planet-glow) 0%, transparent 62%);
   opacity: 0.35;
   filter: blur(0.2em);
   pointer-events: none;

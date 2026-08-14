@@ -1,21 +1,14 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import { FileSpreadsheet } from "lucide-react";
 import { toast } from "@/lib/toast";
-import {
-  previewLinkedInCsv,
-} from "@/actions/imports";
+import { previewLinkedInCsv } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { LinkedInExportGuide } from "@/components/imports/linkedin-export-guide";
-import {
-  BusyHint,
-  ImportFilePicker,
-} from "@/components/imports/import-utils";
-import {
-  startImportJob,
-  useImportJob,
-} from "@/lib/import-job-runner";
+import { BusyHint, ImportFilePicker } from "@/components/imports/import-utils";
+import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 
 type ConnectionsPreview = Awaited<ReturnType<typeof previewLinkedInCsv>>;
 type ConnectionPerson = ConnectionsPreview["people"][number];
@@ -37,7 +30,12 @@ export function LinkedInConnectionsImport() {
   // Clear local review UI once this job finishes (toast handled globally).
   useEffect(() => {
     if (!job || job.kind !== "connections") return;
-    if (job.status !== "completed" && job.status !== "failed" && job.status !== "cancelled") return;
+    if (
+      job.status !== "completed" &&
+      job.status !== "failed" &&
+      job.status !== "cancelled"
+    )
+      return;
     setPeople([]);
     setSelected(new Set());
     setCsvText("");
@@ -47,21 +45,26 @@ export function LinkedInConnectionsImport() {
   function applyPreview(res: ConnectionsPreview) {
     setPeople(res.people);
     setSelected(
-      new Set(res.people.filter((p) => !p.isRepeat).map((p) => p.id))
+      new Set(res.people.filter((p) => !p.isRepeat).map((p) => p.id)),
     );
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
+    <section className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-connections/70 bg-card p-6">
       <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0 flex-1 pr-2">
-          <h2 className="text-lg font-medium text-primary">
-            LinkedIn connections
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Upload your Connections CSV, review everyone, then import into your
-            orbit. Imports keep running if you leave this page.
-          </p>
+        <div className="flex min-w-0 flex-1 items-start gap-3 pr-2">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-connections/10 text-import-connections">
+            <FileSpreadsheet className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-lg font-medium text-primary">
+              LinkedIn connections
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Upload your Connections CSV, review everyone, then import into
+              your orbit. Imports keep running if you leave this page.
+            </p>
+          </div>
         </div>
         <LinkedInExportGuide variant="connections" />
       </div>
@@ -83,7 +86,7 @@ export function LinkedInConnectionsImport() {
               setPeople([]);
               setSelected(new Set());
               toast.error(
-                err instanceof Error ? err.message : "Preview failed"
+                err instanceof Error ? err.message : "Preview failed",
               );
             }
           });
@@ -104,7 +107,7 @@ export function LinkedInConnectionsImport() {
                 toast.success(`Loaded ${res.totalRows} people`);
               } catch (err) {
                 toast.error(
-                  err instanceof Error ? err.message : "Preview failed"
+                  err instanceof Error ? err.message : "Preview failed",
                 );
               }
             })
@@ -131,9 +134,7 @@ export function LinkedInConnectionsImport() {
               setCsvText("");
               setFileName(null);
             } catch (err) {
-              toast.error(
-                err instanceof Error ? err.message : "Import failed"
-              );
+              toast.error(err instanceof Error ? err.message : "Import failed");
             }
           }}
         >
