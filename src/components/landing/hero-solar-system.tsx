@@ -246,20 +246,31 @@ export function HeroSolarSystem({
       }
       raf = requestAnimationFrame(tick);
     };
-    raf = requestAnimationFrame(tick);
 
-    // Don't animate orbits in a background tab.
-    const onVisibility = () => {
+    // Run orbits only while the stage is on screen in a foreground tab —
+    // once the pinned hero scrolls away there is nothing to animate.
+    let inView = true;
+    const sync = () => {
       cancelAnimationFrame(raf);
-      if (!document.hidden) {
+      if (!document.hidden && inView) {
         raf = requestAnimationFrame(tick);
       }
     };
-    document.addEventListener("visibilitychange", onVisibility);
+    const io = root
+      ? new IntersectionObserver((entries) => {
+          inView = entries[0]?.isIntersecting ?? true;
+          sync();
+        })
+      : null;
+    if (root && io) io.observe(root);
+    sync();
+
+    document.addEventListener("visibilitychange", sync);
 
     return () => {
       cancelAnimationFrame(raf);
-      document.removeEventListener("visibilitychange", onVisibility);
+      document.removeEventListener("visibilitychange", sync);
+      io?.disconnect();
       ro?.disconnect();
     };
   }, [motionOk]);

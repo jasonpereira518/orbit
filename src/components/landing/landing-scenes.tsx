@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { CometStreak } from "@/components/landing/comet-streak";
+import { ConstellationFigure } from "@/components/landing/constellation-figure";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
 import { Reveal } from "@/components/motion/reveal";
 
@@ -34,12 +36,7 @@ export function SceneConstellations() {
             </p>
           </Reveal>
         </div>
-        {/* Scene centerpiece slot: constellation line-draw lands here. */}
-        <div
-          aria-hidden
-          data-scene-slot="constellation"
-          className="relative min-h-[320px] w-full lg:justify-self-end"
-        />
+        <ConstellationFigure className="max-w-[520px] lg:justify-self-end" />
       </div>
     </section>
   );
@@ -51,6 +48,7 @@ export function SceneComets() {
       aria-labelledby="landing-reminders"
       className="landing-scene relative z-10 px-6 py-24 md:px-10"
     >
+      <CometStreak />
       <div className="mx-auto w-full max-w-6xl">
         <div className="max-w-xl">
           <Reveal className="reveal-celestial">
