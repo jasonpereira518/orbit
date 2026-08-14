@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
+import { LandingHeader } from "@/components/landing/landing-header";
 import {
   LandingSolarSystem,
   LandingStarfield,
 } from "@/components/landing/landing-visuals";
-import { OrbitLogo } from "@/components/orbit-logo";
 
 export function LandingHero({
   clerkOn,
@@ -17,25 +17,12 @@ export function LandingHero({
   signedIn?: boolean;
 }) {
   return (
-    <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#05070f] text-[#e8f3f1]">
+    <div className="relative flex min-h-svh flex-col overflow-x-clip bg-[#05070f] text-[#e8f3f1]">
       <LandingStarfield />
 
-      <header className="relative z-10 flex items-center justify-between px-6 py-5 md:px-10">
-        <Link href="/" className="flex items-center gap-2.5" aria-label="Orbit home">
-          <OrbitLogo size="md" priority />
-          <span className="font-[family-name:var(--font-display)] text-xl tracking-tight text-[#e8f3f1]">
-            Orbit
-          </span>
-        </Link>
-        <LandingAuthControls
-          clerkOn={clerkOn}
-          demoMode={demoMode}
-          signedIn={signedIn}
-          variant="header"
-        />
-      </header>
+      <LandingHeader clerkOn={clerkOn} demoMode={demoMode} signedIn={signedIn} />
 
-      <main className="relative z-10 flex flex-1 flex-col justify-center px-6 pb-16 pt-4 md:px-10 md:pb-20">
+      <main className="relative z-10 flex flex-1 flex-col justify-center px-6 pb-8 pt-4 md:px-10 md:pb-10">
         <div className="mx-auto grid w-full max-w-6xl items-center gap-10 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:gap-12">
           <div
             className={cn(
@@ -66,20 +53,22 @@ export function LandingHero({
         </div>
       </main>
 
-      <Link
-        href="/privacy"
-        className="absolute bottom-5 left-6 z-10 text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1] md:bottom-8 md:left-10"
-      >
-        Privacy
-      </Link>
-      <a
-        href="https://jasonpereira.live/"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="landing-credit-shimmer absolute bottom-5 right-6 z-10 text-sm md:bottom-8 md:right-10"
-      >
-        By Jason Pereira
-      </a>
+      <div className="relative z-10 flex items-center justify-between px-6 pb-5 md:px-10 md:pb-8">
+        <Link
+          href="/privacy"
+          className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
+        >
+          Privacy
+        </Link>
+        <a
+          href="https://jasonpereira.live/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="landing-credit-shimmer text-sm"
+        >
+          By Jason Pereira
+        </a>
+      </div>
     </div>
   );
 }
