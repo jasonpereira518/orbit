@@ -108,29 +108,34 @@ export function SceneFinale({
       className="landing-scene relative z-10 px-6 pt-24 md:px-10"
       style={{ "--scene-size": "1250px" } as React.CSSProperties}
     >
-      <div className="mx-auto flex w-full max-w-3xl flex-col items-center text-center">
-        <Reveal className="reveal-celestial">
-          <h2 id="landing-cta" className={HEADING}>
-            Bring your universe into Orbit.
-          </h2>
-        </Reveal>
-        <Reveal className="reveal-celestial" delay={100}>
-          <p className={BODY}>
-            Start with the people you already know — Orbit keeps them close.
-          </p>
-        </Reveal>
-        <Reveal className="reveal-celestial" delay={200}>
-          <div className="mt-8">
-            <LandingAuthControls
-              clerkOn={clerkOn}
-              demoMode={demoMode}
-              signedIn={signedIn}
-              variant="hero"
-            />
-          </div>
-        </Reveal>
+      <div className="mx-auto grid w-full max-w-5xl items-center gap-12 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+        <div className="flex flex-col items-center text-center lg:items-start lg:text-left">
+          <Reveal className="reveal-celestial">
+            <h2 id="landing-cta" className={HEADING}>
+              Bring your universe into Orbit.
+            </h2>
+          </Reveal>
+          <Reveal className="reveal-celestial" delay={100}>
+            <p className={BODY}>
+              Start with the people you already know — Orbit keeps them close.
+            </p>
+          </Reveal>
+          <Reveal className="reveal-celestial" delay={200}>
+            <div className="mt-8">
+              <LandingAuthControls
+                clerkOn={clerkOn}
+                demoMode={demoMode}
+                signedIn={signedIn}
+                variant="hero"
+              />
+            </div>
+          </Reveal>
+        </div>
 
-        <Reveal className="reveal-celestial mt-16 w-full max-w-md" delay={280}>
+        <Reveal
+          className="reveal-celestial mx-auto w-full max-w-md lg:mx-0 lg:justify-self-end"
+          delay={160}
+        >
           <div className="landing-glass rounded-3xl p-6 text-left md:p-8">
             <p className={KICKER}>Stay in the loop</p>
             <p className="mt-2 text-lg text-[#e8f3f1]">
