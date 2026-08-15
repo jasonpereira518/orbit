@@ -51,7 +51,7 @@ export function CometStreak() {
   );
   const headGlow = useTransform(
     scrollYProgress,
-    (v) => `0 0 12px 4px ${mix(ICE, RED, drift(v), 0.45 + 0.15 * drift(v))}`
+    (v) => `0 0 20px 7px ${mix(ICE, RED, drift(v), 0.5 + 0.2 * drift(v))}`
   );
   const tailGradient = useTransform(
     scrollYProgress,
@@ -66,8 +66,8 @@ export function CometStreak() {
 
   // Bow shock ahead of the head: thicker, larger, and more present the
   // farther the comet has drifted.
-  const shockWidth = useTransform(scrollYProgress, (v) => 1 + 3 * drift(v));
-  const shockScale = useTransform(scrollYProgress, (v) => 0.75 + 0.5 * drift(v));
+  const shockWidth = useTransform(scrollYProgress, (v) => 1.5 + 4.5 * drift(v));
+  const shockScale = useTransform(scrollYProgress, (v) => 0.9 + 0.65 * drift(v));
   const shockOpacity = useTransform(scrollYProgress, (v) => 0.85 * drift(v));
   const shockColor = useTransform(scrollYProgress, (v) =>
     mix(ICE, RED, drift(v), 0.8)
@@ -85,11 +85,11 @@ export function CometStreak() {
       >
         {/* Tail sweeps behind the head. */}
         <motion.div
-          className="h-[2px] w-44 rounded-full bg-[linear-gradient(90deg,transparent,rgba(196,220,230,0.55),rgba(255,255,255,0.95))]"
+          className="h-[3px] w-64 rounded-full bg-[linear-gradient(90deg,transparent,rgba(196,220,230,0.55),rgba(255,255,255,0.95))]"
           style={reduced ? undefined : { background: tailGradient }}
         />
         <motion.div
-          className="absolute -right-1 top-1/2 size-[7px] -translate-y-1/2 rounded-full bg-white shadow-[0_0_12px_4px_rgba(196,220,230,0.45)]"
+          className="absolute -right-1.5 top-1/2 size-[12px] -translate-y-1/2 rounded-full bg-white shadow-[0_0_20px_7px_rgba(196,220,230,0.5)]"
           style={
             reduced
               ? undefined
@@ -99,9 +99,9 @@ export function CometStreak() {
         {/* Bow shock — an arc bulging ahead of the head (travel is +x). */}
         {!reduced && (
           <motion.div
-            className="absolute top-1/2 h-[22px] w-[14px] -translate-y-1/2 rounded-full border border-transparent blur-[1px]"
+            className="absolute top-1/2 h-[32px] w-[20px] -translate-y-1/2 rounded-full border border-transparent blur-[1.5px]"
             style={{
-              right: -13,
+              right: -19,
               borderRightColor: shockColor,
               borderWidth: shockWidth,
               scale: shockScale,

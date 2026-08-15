@@ -125,6 +125,25 @@ export function Starfield() {
         bctx.restore();
       }
 
+      // Deepen the top-left corner toward black — "multiply" only darkens,
+      // so it grounds that corner without dulling the nebula glow or
+      // recoloring anything further into the frame.
+      const corner = bctx.createRadialGradient(
+        0,
+        0,
+        0,
+        0,
+        0,
+        Math.max(width, height) * 0.65
+      );
+      corner.addColorStop(0, "rgba(0, 0, 0, 0.6)");
+      corner.addColorStop(1, "rgba(0, 0, 0, 0)");
+      bctx.save();
+      bctx.globalCompositeOperation = "multiply";
+      bctx.fillStyle = corner;
+      bctx.fillRect(0, 0, width, height);
+      bctx.restore();
+
       bg = off;
     }
 
