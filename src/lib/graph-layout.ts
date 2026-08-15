@@ -8,9 +8,15 @@ import {
   scaleForStarCount,
   constellationFootprint,
   assignClusterShapes,
+  figureStarCount,
+  scatterFieldFactor,
 } from "@/lib/constellation-shapes";
 import { buildPeerEdges, peerEdgeToLayoutEdge } from "@/lib/network-metrics";
-import { clusterBrandColor } from "@/lib/school-color";
+import {
+  clusterBrandColor,
+  mixWithWhite,
+  withAlpha,
+} from "@/lib/school-color";
 
 /** Decorative orbit rings (visual grid only — no spokes). */
 export const RING_RADII = [160, 260, 360, 470, 580] as const;
@@ -87,11 +93,13 @@ export type GraphNodeData = {
   clusterId?: string;
   clusterName?: string;
   clusterKind?: ClusterKind;
+  /** Whether this star traces the constellation figure or scatters around it. */
+  figureRole?: "figure" | "scatter";
+  /** Brand color of the star's cluster (undefined for Deep Space singletons). */
+  clusterColor?: string;
   orbitAngle?: number;
   orbitRadius?: number;
   spotlight?: boolean;
-  labelMode?: "always" | "hover" | "never";
-  motionEnabled?: boolean;
   motionPaused?: boolean;
 };
 
@@ -99,7 +107,6 @@ export type OrbitRingsData = {
   kind: "rings";
   radii: number[];
   showLabels?: boolean;
-  motionEnabled?: boolean;
   /** Vertical scale for an elliptical galactic disk (1 = circle). */
   flatten?: number;
 };
@@ -122,10 +129,22 @@ export type NebulaData = {
   clusterId?: string;
 };
 
+export type ArmGlowData = {
+  kind: "armGlow";
+  /** Unflattened polyline per spiral arm; the renderer applies the disk flatten. */
+  arms: Array<Array<{ x: number; y: number }>>;
+  flatten: number;
+};
+
 export type LayoutNode = {
   id: string;
-  type: "user" | "contact" | "orbitRings" | "clusterLabel" | "nebula";
-  data: GraphNodeData | OrbitRingsData | ClusterLabelData | NebulaData;
+  type: "user" | "contact" | "orbitRings" | "clusterLabel" | "nebula" | "armGlow";
+  data:
+    | GraphNodeData
+    | OrbitRingsData
+    | ClusterLabelData
+    | NebulaData
+    | ArmGlowData;
   position: { x: number; y: number };
   draggable?: boolean;
   selectable?: boolean;
@@ -158,8 +177,6 @@ export type LayoutEdge = {
   style?: Record<string, string | number>;
 };
 
-export type GroupingMode = "score" | "company";
-
 function clampScore(score: number | null | undefined) {
   return Math.min(5, Math.max(1, score || 2));
 }
@@ -168,9 +185,19 @@ function placementScore(c: GraphContactInput) {
   return clampScore(c.orbitScore ?? c.relationshipScore);
 }
 
-/** Stable order for constellation star placement and path edges. */
+function isDormantContact(c: GraphContactInput) {
+  return c.dormant === true || isCometContact(c.lastInteractionAt);
+}
+
+/**
+ * Stable order for constellation star placement and path edges.
+ * Dormant contacts sort last so figures are traced by active, closest people;
+ * in clusters above the figure cap they demote to the scatter field.
+ */
 export function orderConstellationMembers(members: GraphContactInput[]) {
   return [...members].sort((a, b) => {
+    const dormantDiff = (isDormantContact(a) ? 1 : 0) - (isDormantContact(b) ? 1 : 0);
+    if (dormantDiff !== 0) return dormantDiff;
     const scoreDiff = placementScore(b) - placementScore(a);
     if (scoreDiff !== 0) return scoreDiff;
     return displayName(a).localeCompare(displayName(b));
@@ -216,37 +243,76 @@ function hashUnit(id: string, salt = 0) {
 }
 
 /**
- * Map cluster members onto a real constellation figure (Cassiopeia, Orion, …).
- * `armRotation` aligns the figure with the galactic arm it sits on.
+ * Fill the cluster's scatter field: members beyond the figure cap become
+ * fainter background stars on a seeded uniform disk around the figure.
+ * Deterministic, with two bounded passes pushing scatter off figure stars
+ * and off the figure's line segments so the shape stays readable.
  */
-function placeConstellationMembers(
+function placeScatterMembers(
   members: GraphContactInput[],
   origin: { x: number; y: number },
-  clusterSeed: string,
   positions: Map<string, { x: number; y: number; angle: number; radius: number }>,
-  shape = resolveConstellationShape(members.length, clusterSeed),
-  armRotation?: number
+  opts: {
+    scale: number;
+    fieldRadius: number;
+    /** Rotated figure-star points in cluster-local space (post dormant nudge). */
+    figureLocal: Array<{ x: number; y: number }>;
+    figureEdges: Array<[number, number]>;
+  }
 ) {
-  const sorted = orderConstellationMembers(members);
-  const n = sorted.length;
-  if (n === 0) return;
+  const { scale, fieldRadius, figureLocal, figureEdges } = opts;
+  const inner = scale * 0.3;
+  const STAR_MIN_DIST = 26;
+  const LINE_MIN_DIST = 14;
 
-  const scale = scaleForStarCount(n);
-  // Prefer arm tangent so mini-galaxies flow with the larger spiral;
-  // fall back to a mild seeded tilt when no arm angle is given.
-  const rotation =
-    armRotation ?? (hashUnit(clusterSeed, 11) - 0.5) * Math.PI * 0.25;
-  const cos = Math.cos(rotation);
-  const sin = Math.sin(rotation);
+  for (const c of members) {
+    const dormant = isDormantContact(c);
+    const theta = hashUnit(c.id, 21) * Math.PI * 2;
+    // sqrt() → uniform density over the disk; comets rim the outer band.
+    const radius = dormant
+      ? scale * (0.85 + hashUnit(c.id, 22) * 0.3)
+      : inner + Math.sqrt(hashUnit(c.id, 22)) * Math.max(fieldRadius - inner, 20);
+    let lx = Math.cos(theta) * radius;
+    let ly = Math.sin(theta) * radius;
 
-  sorted.forEach((c, i) => {
-    const star = shape.stars[i] || { x: 0, y: 0 };
-    let lx = (star.x * cos - star.y * sin) * scale;
-    let ly = (star.x * sin + star.y * cos) * scale;
+    for (let pass = 0; pass < 2; pass++) {
+      for (const p of figureLocal) {
+        const dx = lx - p.x;
+        const dy = ly - p.y;
+        const d = Math.hypot(dx, dy);
+        if (d >= STAR_MIN_DIST) continue;
+        const push = STAR_MIN_DIST - d;
+        const ux = d > 0.001 ? dx / d : Math.cos(theta);
+        const uy = d > 0.001 ? dy / d : Math.sin(theta);
+        lx += ux * push;
+        ly += uy * push;
+      }
+      for (const [ai, bi] of figureEdges) {
+        const a = figureLocal[ai];
+        const b = figureLocal[bi];
+        if (!a || !b) continue;
+        const abx = b.x - a.x;
+        const aby = b.y - a.y;
+        const len2 = abx * abx + aby * aby;
+        const t =
+          len2 > 0
+            ? Math.max(0, Math.min(1, ((lx - a.x) * abx + (ly - a.y) * aby) / len2))
+            : 0;
+        const dx = lx - (a.x + abx * t);
+        const dy = ly - (a.y + aby * t);
+        const d = Math.hypot(dx, dy);
+        if (d >= LINE_MIN_DIST) continue;
+        const push = LINE_MIN_DIST - d;
+        const norm = Math.sqrt(len2) || 1;
+        const ux = d > 0.001 ? dx / d : -aby / norm;
+        const uy = d > 0.001 ? dy / d : abx / norm;
+        lx += ux * push;
+        ly += uy * push;
+      }
+    }
 
-    const dormant = c.dormant === true || isCometContact(c.lastInteractionAt);
     if (dormant) {
-      const away = Math.atan2(origin.y, origin.x) || rotation;
+      const away = Math.atan2(origin.y, origin.x) || theta;
       lx += Math.cos(away) * 48;
       ly += Math.sin(away) * 48;
     }
@@ -259,7 +325,70 @@ function placeConstellationMembers(
       angle: Math.atan2(y, x),
       radius: Math.hypot(x, y),
     });
+  }
+}
+
+/**
+ * Map cluster members onto a real constellation figure (Cassiopeia, Orion, …).
+ * The top members (by placement order) trace the figure; the rest scatter as
+ * fainter background stars around it. `armRotation` aligns the figure with
+ * the galactic arm it sits on.
+ */
+function placeConstellationMembers(
+  members: GraphContactInput[],
+  origin: { x: number; y: number },
+  clusterSeed: string,
+  positions: Map<string, { x: number; y: number; angle: number; radius: number }>,
+  shape = resolveConstellationShape(figureStarCount(members.length), clusterSeed),
+  armRotation?: number,
+  figureIds?: Set<string>
+) {
+  const sorted = orderConstellationMembers(members);
+  const n = sorted.length;
+  if (n === 0) return;
+
+  const figureCount = Math.min(shape.stars.length, n);
+  const scale = scaleForStarCount(figureCount);
+  // Prefer arm tangent so mini-galaxies flow with the larger spiral;
+  // fall back to a mild seeded tilt when no arm angle is given.
+  const rotation =
+    armRotation ?? (hashUnit(clusterSeed, 11) - 0.5) * Math.PI * 0.25;
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+
+  const figureLocal: Array<{ x: number; y: number }> = [];
+  sorted.slice(0, figureCount).forEach((c, i) => {
+    const star = shape.stars[i] || { x: 0, y: 0 };
+    let lx = (star.x * cos - star.y * sin) * scale;
+    let ly = (star.x * sin + star.y * cos) * scale;
+
+    if (isDormantContact(c)) {
+      const away = Math.atan2(origin.y, origin.x) || rotation;
+      lx += Math.cos(away) * 48;
+      ly += Math.sin(away) * 48;
+    }
+
+    figureLocal.push({ x: lx, y: ly });
+    figureIds?.add(c.id);
+
+    const x = origin.x + lx;
+    const y = origin.y + ly;
+    positions.set(c.id, {
+      x,
+      y,
+      angle: Math.atan2(y, x),
+      radius: Math.hypot(x, y),
+    });
   });
+
+  if (n > figureCount) {
+    placeScatterMembers(sorted.slice(figureCount), origin, positions, {
+      scale,
+      fieldRadius: scale * scatterFieldFactor(n),
+      figureLocal,
+      figureEdges: shape.edges,
+    });
+  }
 }
 
 /**
@@ -271,8 +400,7 @@ function placeConstellationMembers(
  */
 export function buildHybridGraphLayout(
   contacts: GraphContactInput[],
-  userName: string,
-  _options?: { grouping?: GroupingMode }
+  userName: string
 ): { nodes: LayoutNode[]; edges: LayoutEdge[] } {
   const { clusters, byContactId } = buildConstellationClusters(contacts);
   const contactsById = new Map(contacts.map((c) => [c.id, c]));
@@ -395,10 +523,30 @@ export function buildHybridGraphLayout(
     clusterArmAngle.set(slot.id, slot.angle + Math.atan(1 / wind) + Math.PI / 2);
   }
 
+  // Soft dust lanes tracing the same curves the cluster slots follow
+  // (sans per-cluster jitter/size boosts). Stored unflattened — the
+  // renderer applies the disk flatten so it can rotate as a rigid body.
+  const armGlowArms: Array<Array<{ x: number; y: number }>> = [];
+  if (ordered.length > 0) {
+    const steps = 24;
+    for (let arm = 0; arm < armCount; arm++) {
+      const armBase = (arm * Math.PI * 2) / armCount;
+      const points: Array<{ x: number; y: number }> = [];
+      for (let s = 0; s <= steps; s++) {
+        const t = 0.04 + (s / steps) * (1.05 - 0.04);
+        const angle = globalSpin + armBase + t * wind + t * t * 0.9;
+        const radius = coreGap * 0.8 + t * (rimExtra + ordered.length * 34) + 40;
+        points.push({ x: Math.cos(angle) * radius, y: Math.sin(angle) * radius });
+      }
+      armGlowArms.push(points);
+    }
+  }
+
   const positions = new Map<
     string,
     { x: number; y: number; angle: number; radius: number }
   >();
+  const figureIds = new Set<string>();
 
   for (const cluster of named) {
     const origin = clusterOrigins.get(cluster.id) || { x: 0, y: 480 };
@@ -408,16 +556,19 @@ export function buildHybridGraphLayout(
       cluster.id,
       positions,
       clusterShapes.get(cluster.id),
-      clusterArmAngle.get(cluster.id)
+      clusterArmAngle.get(cluster.id),
+      figureIds
     );
   }
 
   const clusterNodes: LayoutNode[] = [];
+  const clusterColorById = new Map<string, string>();
   for (const cluster of named) {
     if (cluster.kind === "other") continue;
     if (cluster.count < 2) continue;
     const origin = clusterOrigins.get(cluster.id)!;
     const color = clusterBrandColor(cluster.name, cluster.kind);
+    clusterColorById.set(cluster.id, color);
     const members = byCluster.get(cluster.id) || [];
     const starExtent = members.reduce((m, c) => {
       const p = positions.get(c.id);
@@ -468,6 +619,23 @@ export function buildHybridGraphLayout(
   }
 
   const nodes: LayoutNode[] = [
+    ...(armGlowArms.length > 0
+      ? [
+          {
+            id: "arm-glow",
+            type: "armGlow" as const,
+            data: {
+              kind: "armGlow" as const,
+              arms: armGlowArms,
+              flatten,
+            },
+            position: { x: 0, y: 0 },
+            draggable: false,
+            selectable: false,
+            zIndex: -3,
+          },
+        ]
+      : []),
     {
       id: "rings",
       type: "orbitRings",
@@ -475,7 +643,6 @@ export function buildHybridGraphLayout(
         kind: "rings",
         radii: [...RING_RADII],
         showLabels: false,
-        motionEnabled: false,
         flatten: GALAXY_FLATTEN,
       },
       position: { x: 0, y: 0 },
@@ -541,6 +708,8 @@ export function buildHybridGraphLayout(
           clusterId: cluster?.id,
           clusterName: cluster?.name,
           clusterKind: cluster?.kind,
+          figureRole: figureIds.has(c.id) ? ("figure" as const) : ("scatter" as const),
+          clusterColor: cluster ? clusterColorById.get(cluster.id) : undefined,
           orbitAngle: pos.angle,
           orbitRadius: pos.radius,
         },
@@ -550,19 +719,30 @@ export function buildHybridGraphLayout(
     }),
   ];
 
-  // Constellation path edges only — white lines along each figure
+  // Constellation path edges only — brand-tinted lines along each figure
   const edges: LayoutEdge[] = [];
   for (const peer of buildPeerEdges(contacts, { constellationOnly: true })) {
     const layoutEdge = peerEdgeToLayoutEdge(peer);
+    const brand =
+      peer.company && (peer.reason === "company" || peer.reason === "school")
+        ? clusterBrandColor(peer.company, peer.reason)
+        : undefined;
     edges.push({
       ...layoutEdge,
       type: "labeled",
       label: undefined,
+      style: brand
+        ? {
+            ...layoutEdge.style,
+            stroke: withAlpha(mixWithWhite(brand, 0.55), 0.8),
+          }
+        : layoutEdge.style,
       data: layoutEdge.data
         ? {
             kind: layoutEdge.data.kind,
             company: layoutEdge.data.company,
             reason: layoutEdge.data.reason,
+            brandColor: brand,
           }
         : undefined,
     });

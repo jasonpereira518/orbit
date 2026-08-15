@@ -9,6 +9,7 @@ import {
 } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import type { TourHotspot } from "@/components/onboarding/tour-config";
+import { SPRING_SOFT } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 type Point = { x: number; y: number };
@@ -148,18 +149,20 @@ export function TourCursor({
       className="pointer-events-none absolute inset-0 z-20"
       aria-hidden
     >
-      {/* Soft highlight ring */}
+      {/* Soft highlight ring — glides on x/y transforms (left/top would
+          force layout every spring frame; Tailwind's translate centering
+          uses the separate `translate` property, so they compose). */}
       <motion.div
-        className="absolute h-9 w-9 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-primary/45 bg-primary/10"
+        className="absolute left-0 top-0 h-9 w-9 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-primary/45 bg-primary/10"
         animate={{
-          left: point.x,
-          top: point.y,
+          x: point.x,
+          y: point.y,
           scale: [1, 1.18, 1],
           opacity: [0.5, 0.85, 0.5],
         }}
         transition={{
-          left: { type: "spring", stiffness: 170, damping: 22 },
-          top: { type: "spring", stiffness: 170, damping: 22 },
+          x: SPRING_SOFT,
+          y: SPRING_SOFT,
           scale: { duration: 1.7, repeat: Infinity, ease: "easeInOut" },
           opacity: { duration: 1.7, repeat: Infinity, ease: "easeInOut" },
         }}
@@ -167,9 +170,9 @@ export function TourCursor({
 
       {/* Cursor with a little hover drift */}
       <motion.div
-        className="absolute"
-        animate={{ left: point.x, top: point.y }}
-        transition={{ type: "spring", stiffness: 150, damping: 20 }}
+        className="absolute left-0 top-0"
+        animate={{ x: point.x, y: point.y }}
+        transition={SPRING_SOFT}
       >
         <motion.div
           animate={

@@ -212,6 +212,8 @@ CREATE INDEX IF NOT EXISTS tags_user_id_idx ON tags(user_id);
 CREATE INDEX IF NOT EXISTS contact_tags_contact_idx ON contact_tags(contact_id);
 CREATE INDEX IF NOT EXISTS interactions_contact_idx ON interactions(contact_id);
 CREATE INDEX IF NOT EXISTS interactions_user_idx ON interactions(user_id);
+CREATE INDEX IF NOT EXISTS interactions_user_type_idx ON interactions(user_id, interaction_type);
+CREATE INDEX IF NOT EXISTS interactions_user_contact_type_date_idx ON interactions(user_id, contact_id, interaction_type, interaction_date);
 CREATE UNIQUE INDEX IF NOT EXISTS interactions_user_external_uidx ON interactions(user_id, external_id) WHERE external_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS reminders_user_status_idx ON reminders(user_id, status);
 CREATE INDEX IF NOT EXISTS reminders_due_idx ON reminders(user_id, due_date);
@@ -520,6 +522,19 @@ async function migratePglite(client: PGlite) {
     );
   } catch {
     // Existing duplicate external_ids — app-level dedupe still applies
+  }
+
+  try {
+    await client.exec(
+      `CREATE INDEX IF NOT EXISTS interactions_user_type_idx
+       ON interactions(user_id, interaction_type)`
+    );
+    await client.exec(
+      `CREATE INDEX IF NOT EXISTS interactions_user_contact_type_date_idx
+       ON interactions(user_id, contact_id, interaction_type, interaction_date)`
+    );
+  } catch {
+    // Index may already exist
   }
 }
 

@@ -45,6 +45,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
+  ArmGlowNode,
   ClusterLabelNode,
   ContactNode,
   LabeledEdge,
@@ -58,13 +59,14 @@ import {
 } from "@/components/graph/contact-inspect-panel";
 import {
   buildHybridGraphLayout,
+  GALAXY_FLATTEN,
   type ClusterLabelData,
   type GraphNodeData,
-  type GroupingMode,
   type NebulaData,
-  type OrbitRingsData,
 } from "@/lib/graph-layout";
-import { clusterBrandColor } from "@/lib/school-color";
+import { clusterBrandColor, mixWithWhite, withAlpha } from "@/lib/school-color";
+import { CAMERA_MS } from "@/lib/motion";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { cn } from "@/lib/utils";
 import {
   dismissBackgroundJob,
@@ -86,8 +88,6 @@ import {
 } from "lucide-react";
 
 type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
-type LabelMode = "always" | "hover" | "never";
-type LinksMode = "on" | "auto" | "off";
 type PositionMap = Record<string, { x: number; y: number }>;
 
 /**
@@ -132,7 +132,7 @@ function computeSunExtents(
 
   for (const n of liveNodes) {
     if (n.hidden) continue;
-    if (n.type === "orbitRings") continue;
+    if (n.type === "orbitRings" || n.type === "armGlow") continue;
     const halfW = Math.max(24, (n.measured?.width ?? 48) / 2);
     const halfH = Math.max(24, (n.measured?.height ?? 48) / 2);
     if (n.type === "nebula") {
@@ -211,7 +211,7 @@ function DefaultViewFitter({
         getNodes()
       );
       const zoom = zoomToFitSunCentered(maxAbsX, maxAbsY, width, height);
-      const duration = homeToken <= 1 ? 0 : 450;
+      const duration = homeToken <= 1 ? 0 : CAMERA_MS.move;
 
       void setCenter(0, 0, { zoom, duration }).then((ok) => {
         if (cancelled) return;
@@ -263,6 +263,7 @@ const nodeTypes = {
   orbitRings: OrbitRingsNode,
   clusterLabel: ClusterLabelNode,
   nebula: NebulaNode,
+  armGlow: ArmGlowNode,
 };
 
 const edgeTypes: EdgeTypes = {
@@ -270,8 +271,12 @@ const edgeTypes: EdgeTypes = {
   straight: LabeledEdge,
 };
 
-const HIGH_NODE_THRESHOLD = 80;
-const ORBIT_DEG_PER_SEC = 2.2;
+/** Ambient galaxy drift — slow enough to feel alive without distracting. */
+const GALAXY_DEG_PER_MIN = 3;
+/** How often the CSS-var rotation is committed back into node positions. */
+const ROTATION_COMMIT_MS = 450;
+/** Max sun→member rays drawn for a hovered/selected cluster. */
+const RAY_CAP = 30;
 
 function positionsStorageKey(userId: string) {
   return `orbit-graph-positions-v4:${userId}`;
@@ -504,23 +509,12 @@ function Starfield() {
 function buildStructuralNodes(
   layoutNodes: ReturnType<typeof buildHybridGraphLayout>["nodes"],
   positionOverrides: PositionMap,
-  motionEnabled: boolean,
-  prefersReducedMotion: boolean,
   compact?: boolean
 ): Node[] {
   return layoutNodes.map((n) => {
-    if (n.type === "orbitRings") {
-      const rings = n.data as OrbitRingsData;
-      return {
-        ...n,
-        data: {
-          ...rings,
-          showLabels: false,
-          motionEnabled: motionEnabled && !prefersReducedMotion,
-        },
-      } as Node;
-    }
     if (
+      n.type === "orbitRings" ||
+      n.type === "armGlow" ||
       n.type === "user" ||
       n.type === "clusterLabel" ||
       n.type === "nebula"
@@ -539,7 +533,6 @@ function buildStructuralNodes(
       draggable: !compact,
       data: {
         ...d,
-        motionEnabled,
         motionPaused: Boolean(override),
       },
     } as Node;
@@ -559,10 +552,6 @@ function GraphCanvas(props: {
   homeToken: number;
   peekPersonId: string | null;
   peekToken: number;
-  grouping: GroupingMode;
-  labelMode: LabelMode;
-  linksMode: LinksMode;
-  motionEnabled: boolean;
   positionOverrides: PositionMap;
   onPositionOverridesChange: (next: PositionMap) => void;
   selection: InspectSelection;
@@ -572,7 +561,6 @@ function GraphCanvas(props: {
   onFocusCluster: (clusterId: string) => void;
   resetToken: number;
   compact?: boolean;
-  showEdgeLabels: boolean;
 }) {
   const filteredContacts = useMemo(() => {
     const kw = props.keyword.trim().toLowerCase();
@@ -610,15 +598,12 @@ function GraphCanvas(props: {
   ]);
 
   const layout = useMemo(() => {
-    return buildHybridGraphLayout(filteredContacts, props.data.summary.userName, {
-      grouping: props.grouping,
-    });
-  }, [filteredContacts, props.data.summary.userName, props.grouping]);
+    return buildHybridGraphLayout(filteredContacts, props.data.summary.userName);
+  }, [filteredContacts, props.data.summary.userName]);
 
   const layoutKey = useMemo(() => {
     const ids = filteredContacts.map((c) => c.id).join(",");
     return [
-      props.grouping,
       props.company,
       props.school,
       props.keyword,
@@ -628,7 +613,6 @@ function GraphCanvas(props: {
     ].join("|");
   }, [
     filteredContacts,
-    props.grouping,
     props.company,
     props.school,
     props.keyword,
@@ -648,9 +632,6 @@ function GraphCanvas(props: {
 
 function GraphCanvasInner({
   company,
-  school,
-  keyword,
-  minScore,
   search,
   searchHitIds,
   focusCluster,
@@ -658,10 +639,6 @@ function GraphCanvasInner({
   homeToken,
   peekPersonId,
   peekToken,
-  grouping,
-  labelMode,
-  linksMode,
-  motionEnabled,
   positionOverrides,
   onPositionOverridesChange,
   selection,
@@ -672,7 +649,6 @@ function GraphCanvasInner({
   filteredContacts,
   layout,
   compact,
-  showEdgeLabels,
   data,
 }: {
   company: string;
@@ -686,10 +662,6 @@ function GraphCanvasInner({
   homeToken: number;
   peekPersonId: string | null;
   peekToken: number;
-  grouping: GroupingMode;
-  labelMode: LabelMode;
-  linksMode: LinksMode;
-  motionEnabled: boolean;
   positionOverrides: PositionMap;
   onPositionOverridesChange: (next: PositionMap) => void;
   selection: InspectSelection;
@@ -700,11 +672,11 @@ function GraphCanvasInner({
   filteredContacts: GraphPayload["contacts"];
   layout: ReturnType<typeof buildHybridGraphLayout>;
   compact?: boolean;
-  showEdgeLabels: boolean;
   data: GraphPayload;
 }) {
   const router = useRouter();
   const { fitView, getNodes } = useReactFlow();
+  const storeApi = useStoreApi();
   const draggingId = useRef<string | null>(null);
   const fitViewRef = useRef(fitView);
   const getNodesRef = useRef(getNodes);
@@ -712,21 +684,12 @@ function GraphCanvasInner({
   const prevPeekZoomKey = useRef("");
   fitViewRef.current = fitView;
   getNodesRef.current = getNodes;
-  const orbitAngles = useRef<Map<string, number>>(new Map());
-  const [prefersReducedMotion] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  });
+  /** Total ambient rotation shown by the CSS var (rings + arm glow). */
+  const galaxyThetaRef = useRef(0);
+  const prefersReducedMotion = usePrefersReducedMotion();
 
   const [orbitNodes, setOrbitNodes] = useState<Node[]>(() =>
-    buildStructuralNodes(
-      layout.nodes,
-      positionOverrides,
-      motionEnabled,
-      typeof window !== "undefined" &&
-        window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-      compact
-    )
+    buildStructuralNodes(layout.nodes, positionOverrides, compact)
   );
 
   const focusCompany = useMemo(() => {
@@ -753,16 +716,8 @@ function GraphCanvasInner({
 
   const nodes = useMemo(() => {
     return orbitNodes.map((n) => {
-      if (n.type === "orbitRings") {
-        const rings = n.data as OrbitRingsData;
-        return {
-          ...n,
-          data: {
-            ...rings,
-            showLabels: false,
-            motionEnabled: motionEnabled && !prefersReducedMotion,
-          },
-        } as Node;
+      if (n.type === "orbitRings" || n.type === "armGlow") {
+        return n;
       }
       if (n.type === "user") {
         return {
@@ -807,8 +762,6 @@ function GraphCanvasInner({
         hidden: false,
         data: {
           ...d,
-          labelMode,
-          motionEnabled,
           motionPaused: isHovered || isSelected || hasOverride,
           spotlight,
         },
@@ -822,52 +775,19 @@ function GraphCanvasInner({
     orbitNodes,
     hoveredId,
     selection,
-    searchQuery,
     searchHitIds,
     hasSearch,
-    labelMode,
-    motionEnabled,
-    prefersReducedMotion,
     positionOverrides,
     focusCompany,
     company,
   ]);
 
   const edges = useMemo(() => {
-    const contactCount = filteredContacts.length;
-    const showPeerLinks =
-      linksMode === "on" ||
-      (linksMode === "auto" &&
-        (contactCount < HIGH_NODE_THRESHOLD || Boolean(focusCompany)));
-
-    const nodeById = new Map(
-      layout.nodes.map((n) => [n.id, n.data as GraphNodeData | undefined])
-    );
-
-    return layout.edges
+    const mapped = layout.edges
       .filter((e) => {
         const kind = e.data?.kind;
-        // Never draw spokes to the sun — only peer constellation / knows links
-        if (kind === "solar") return false;
-        if (kind !== "constellation" && kind !== "knows") return false;
-        if (linksMode === "off") return false;
-        if (!showPeerLinks) return false;
-        if (
-          linksMode === "auto" &&
-          contactCount >= HIGH_NODE_THRESHOLD &&
-          focusCompany
-        ) {
-          if (kind === "constellation") {
-            return e.data?.company === focusCompany;
-          }
-          const sourceCo = nodeById.get(e.source)?.company;
-          const targetCo = nodeById.get(e.target)?.company;
-          return sourceCo === focusCompany || targetCo === focusCompany;
-        }
-        if (linksMode === "auto" && contactCount >= HIGH_NODE_THRESHOLD) {
-          return kind === "constellation";
-        }
-        return true;
+        // Peer constellation / knows links only — sun rays are injected below
+        return kind === "constellation" || kind === "knows";
       })
       .map((e) => {
         const relatedToHover =
@@ -901,24 +821,12 @@ function GraphCanvasInner({
           opacity = Math.min(1, opacity + 0.35);
         }
 
-        const kind = edgeKind;
-        const useLabeled =
-          showEdgeLabels &&
-          (kind === "constellation" || kind === "knows") &&
-          (Boolean(focusCompany) ||
-            emphasized ||
-            hasSearch ||
-            contactCount < 40);
-
         return {
           ...e,
           type: "labeled" as const,
-          label: useLabeled ? e.data?.label || e.label : undefined,
+          label: undefined,
           animated: false,
-          data: {
-            ...e.data,
-            label: useLabeled ? e.data?.label || e.label : undefined,
-          },
+          data: { ...e.data, label: undefined },
           style: {
             ...e.style,
             opacity,
@@ -928,74 +836,144 @@ function GraphCanvasInner({
           },
         } as Edge;
       });
+
+    // Faint sun→member rays for the hovered/selected/focused cluster only,
+    // appended after the dim mapping so they never inherit the 0.12 clamp.
+    if (!compact && focusCompany) {
+      const members = layout.nodes
+        .filter((n) => {
+          if (n.type !== "contact") return false;
+          const d = n.data as GraphNodeData;
+          return (d.clusterName ?? d.company) === focusCompany;
+        })
+        .map((n) => ({ id: n.id, d: n.data as GraphNodeData }))
+        .sort((a, b) => {
+          const fa = a.d.figureRole === "scatter" ? 1 : 0;
+          const fb = b.d.figureRole === "scatter" ? 1 : 0;
+          if (fa !== fb) return fa - fb;
+          return (b.d.score ?? 0) - (a.d.score ?? 0);
+        })
+        .slice(0, RAY_CAP);
+
+      if (members.length > 0) {
+        const brand = members[0].d.clusterColor;
+        const stroke = withAlpha(mixWithWhite(brand ?? "#ffffff", 0.6), 0.14);
+        for (const m of members) {
+          mapped.push({
+            id: `solar-${m.id}`,
+            source: "me",
+            target: m.id,
+            type: "labeled",
+            className: "constellation-ray",
+            selectable: false,
+            focusable: false,
+            animated: false,
+            data: { kind: "solar" },
+            style: { stroke, strokeWidth: 0.75 },
+          } as Edge);
+        }
+      }
+    }
+
+    return mapped;
   }, [
     layout.edges,
     layout.nodes,
-    filteredContacts.length,
-    linksMode,
     focusCompany,
+    focusCluster,
     hoveredId,
     selection,
-    searchQuery,
     searchHitIds,
     hasSearch,
-    showEdgeLabels,
+    compact,
   ]);
 
+  /**
+   * Ambient galaxy rotation. Every frame the accrued angle lands on a CSS var
+   * (rings + arm glow rotate on the compositor, no React render); every
+   * ROTATION_COMMIT_MS the pending delta is committed to node state as a rigid
+   * disk rotation p' = F(Rot(δ, F⁻¹(p))) with F = scaleY(GALAXY_FLATTEN) — the
+   * same transform the CSS layers use, so the whole sky moves as one body.
+   * Paused while dragging, while the inspect panel is open, in the compact
+   * card, in hidden tabs, and under prefers-reduced-motion. State lives inside
+   * GraphCanvasInner, so a layoutKey remount resets θ to 0 alongside the
+   * freshly built (unrotated) layout — the stale CSS var dies with the old
+   * React Flow DOM node.
+   */
   useEffect(() => {
-    if (!motionEnabled || prefersReducedMotion) return;
+    if (compact || prefersReducedMotion || selection) return;
 
     let frame = 0;
     let last = performance.now();
+    let lastCommit = last;
+    let pendingDelta = 0;
 
-    const tick = (now: number) => {
-      const dt = Math.min(0.05, (now - last) / 1000);
-      last = now;
-      const delta = ((ORBIT_DEG_PER_SEC * Math.PI) / 180) * dt;
-
-      setOrbitNodes((prev) => {
-        let changed = false;
-        const next = prev.map((n) => {
-          if (n.type !== "contact") return n;
-          if (positionOverrides[n.id]) return n;
-          if (draggingId.current === n.id) return n;
-          if (hoveredId === n.id) return n;
-          if (selection?.type === "contact" && selection.id === n.id) return n;
-
-          const d = n.data as GraphNodeData;
-          const radius = d.orbitRadius ?? Math.hypot(n.position.x, n.position.y);
-          let angle = orbitAngles.current.get(n.id);
-          if (angle === undefined) {
-            angle = Math.atan2(n.position.y, n.position.x);
-            orbitAngles.current.set(n.id, angle);
+    const commitPending = () => {
+      const delta = pendingDelta;
+      if (delta === 0) return;
+      pendingDelta = 0;
+      const cos = Math.cos(delta);
+      const sin = Math.sin(delta);
+      setOrbitNodes((prev) =>
+        prev.map((n) => {
+          if (
+            n.type !== "contact" &&
+            n.type !== "nebula" &&
+            n.type !== "clusterLabel"
+          ) {
+            return n;
           }
-          angle += delta;
-          orbitAngles.current.set(n.id, angle);
-          changed = true;
+          if (draggingId.current === n.id) return n;
+          const ux = n.position.x;
+          const uy = n.position.y / GALAXY_FLATTEN;
+          const position = {
+            x: ux * cos - uy * sin,
+            y: (ux * sin + uy * cos) * GALAXY_FLATTEN,
+          };
+          if (n.type !== "contact") return { ...n, position };
+          const d = n.data as GraphNodeData;
           return {
             ...n,
-            position: {
-              x: Math.cos(angle) * radius,
-              y: Math.sin(angle) * radius,
+            position,
+            data: {
+              ...d,
+              orbitAngle: Math.atan2(position.y, position.x),
+              orbitRadius: Math.hypot(position.x, position.y),
             },
-            data: { ...d, orbitAngle: angle, orbitRadius: radius },
           };
-        });
-        return changed ? next : prev;
-      });
+        })
+      );
+    };
 
+    const tick = (now: number) => {
       frame = requestAnimationFrame(tick);
+      const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
+      last = now;
+      if (draggingId.current !== null || document.hidden) return;
+
+      const delta = (((GALAXY_DEG_PER_MIN / 60) * Math.PI) / 180) * dt;
+      pendingDelta += delta;
+      galaxyThetaRef.current += delta;
+      storeApi
+        .getState()
+        .domNode?.style.setProperty(
+          "--galaxy-rot",
+          `${galaxyThetaRef.current.toFixed(6)}rad`
+        );
+
+      if (now - lastCommit >= ROTATION_COMMIT_MS) {
+        lastCommit = now;
+        commitPending();
+      }
     };
 
     frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [
-    motionEnabled,
-    prefersReducedMotion,
-    positionOverrides,
-    hoveredId,
-    selection,
-  ]);
+    return () => {
+      cancelAnimationFrame(frame);
+      // Keep stars in step with the CSS-var rotation across pauses
+      commitPending();
+    };
+  }, [compact, prefersReducedMotion, selection, storeApi]);
 
   /**
    * Cluster / search / peek zooms are separate. Default wide view is owned by
@@ -1056,7 +1034,7 @@ function GraphCanvasInner({
       void fitViewRef.current({
         nodes: nodesToFit.map((id) => ({ id })),
         padding: 0.4,
-        duration: 550,
+        duration: CAMERA_MS.wide,
         maxZoom: 1.5,
         minZoom: 0.2,
       });
@@ -1085,7 +1063,7 @@ function GraphCanvasInner({
       void fitViewRef.current({
         nodes: [{ id: peekPersonId }],
         padding: 0.55,
-        duration: 420,
+        duration: CAMERA_MS.move,
         maxZoom: 1.8,
         minZoom: 0.3,
       });
@@ -1117,7 +1095,7 @@ function GraphCanvasInner({
       void fitViewRef.current({
         nodes: matchIds.map((nid) => ({ id: nid })),
         padding: matchIds.length === 1 ? 0.55 : 0.35,
-        duration: 400,
+        duration: CAMERA_MS.move,
         maxZoom: matchIds.length === 1 ? 1.75 : 1.2,
       });
     }, 40);
@@ -1228,7 +1206,6 @@ function GraphCanvasInner({
       onPositionOverridesChange(next);
       const angle = Math.atan2(node.position.y, node.position.x);
       const radius = Math.hypot(node.position.x, node.position.y);
-      orbitAngles.current.set(node.id, angle);
       setOrbitNodes((prev) =>
         prev.map((n) =>
           n.id === node.id
@@ -1375,10 +1352,6 @@ export function NetworkGraph({
   const [homeToken, setHomeToken] = useState(1);
   const [peekPersonId, setPeekPersonId] = useState<string | null>(null);
   const [peekToken, setPeekToken] = useState(0);
-  const [grouping] = useState<GroupingMode>("company");
-  const [labelMode] = useState<LabelMode>("hover");
-  const [linksMode] = useState<LinksMode>("on");
-  const [motionEnabled] = useState(false);
   const [positionOverrides, setPositionOverrides] = useState<PositionMap>(() =>
     initialData ? positionsFromPayload(initialData) : {}
   );
@@ -2163,7 +2136,7 @@ export function NetworkGraph({
                 </div>
                 <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
                   <div
-                    className="h-full rounded-full bg-[#f0d48a] transition-all duration-300"
+                    className="h-full rounded-full bg-[#f0d48a] transition-[width] duration-slow ease-house"
                     style={{ width: `${progressPct}%` }}
                   />
                 </div>
@@ -2270,10 +2243,6 @@ export function NetworkGraph({
             homeToken={homeToken}
             peekPersonId={peekPersonId}
             peekToken={peekToken}
-            grouping={grouping}
-            labelMode={labelMode}
-            linksMode={linksMode}
-            motionEnabled={motionEnabled && !compact}
             positionOverrides={positionOverrides}
             onPositionOverridesChange={handlePositionOverridesChange}
             selection={selection}
@@ -2283,7 +2252,6 @@ export function NetworkGraph({
             onFocusCluster={focusClusterById}
             resetToken={resetToken}
             compact={compact}
-            showEdgeLabels={false}
           />
         </ReactFlowProvider>
       </div>

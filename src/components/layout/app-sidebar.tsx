@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
-import { motion, useReducedMotion } from "motion/react";
+import { motion } from "motion/react";
 import {
   APP_NAV_CORE,
   APP_NAV_EXTRAS,
@@ -12,6 +12,7 @@ import {
   type AppNavItem,
 } from "@/components/layout/app-nav";
 import { OrbitLogo } from "@/components/orbit-logo";
+import { SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -20,11 +21,9 @@ import { clerkAppearance } from "@/lib/clerk-appearance";
 function SidebarNavLink({
   item,
   pathname,
-  reducedMotion,
 }: {
   item: AppNavItem;
   pathname: string;
-  reducedMotion: boolean | null;
 }) {
   const active = isNavActive(pathname, item.href);
   const Icon = item.icon;
@@ -41,13 +40,9 @@ function SidebarNavLink({
     >
       {active && (
         <motion.span
-          layoutId={reducedMotion ? undefined : "app-nav-pill"}
+          layoutId="app-nav-pill"
           className="absolute inset-0 rounded-xl bg-white/70 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/10 dark:ring-white/10"
-          transition={
-            reducedMotion
-              ? { duration: 0 }
-              : { type: "spring", stiffness: 380, damping: 32 }
-          }
+          transition={SPRING_PILL}
         />
       )}
       <Icon className="relative z-10 h-4 w-4 shrink-0" />
@@ -65,8 +60,6 @@ export function AppSidebar({
   clerkOn: boolean;
   demoMode: boolean;
 }) {
-  const reducedMotion = useReducedMotion();
-
   return (
     <aside className="liquid-glass flex h-full w-[4.5rem] flex-col text-sidebar-foreground lg:w-60">
       <div className="flex items-center justify-between gap-2 px-3 py-5 lg:px-5 lg:py-6">
@@ -109,7 +102,6 @@ export function AppSidebar({
             key={item.href}
             item={item}
             pathname={pathname}
-            reducedMotion={reducedMotion}
           />
         ))}
 
@@ -126,7 +118,6 @@ export function AppSidebar({
             key={item.href}
             item={item}
             pathname={pathname}
-            reducedMotion={reducedMotion}
           />
         ))}
 
@@ -134,7 +125,6 @@ export function AppSidebar({
           <SidebarNavLink
             item={APP_NAV_SETTINGS}
             pathname={pathname}
-            reducedMotion={reducedMotion}
           />
         </div>
       </nav>

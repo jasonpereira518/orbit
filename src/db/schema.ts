@@ -172,6 +172,13 @@ export const interactions = pgTable(
   (t) => [
     index("interactions_contact_idx").on(t.contactId),
     index("interactions_user_idx").on(t.userId),
+    index("interactions_user_type_idx").on(t.userId, t.interactionType),
+    index("interactions_user_contact_type_date_idx").on(
+      t.userId,
+      t.contactId,
+      t.interactionType,
+      t.interactionDate
+    ),
     // Soft unique for import dedupe; NULLs allowed (manual notes have no externalId).
     uniqueIndex("interactions_user_external_uidx").on(t.userId, t.externalId),
   ]

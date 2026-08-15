@@ -9,6 +9,8 @@ const nextConfig: NextConfig = {
     "sharp",
   ],
   experimental: {
+    // Route navigations animate via React's <ViewTransition> (route-transition.tsx).
+    viewTransition: true,
     // Tree-shake icon/date/motion/clerk imports across the app bundle.
     optimizePackageImports: [
       "lucide-react",

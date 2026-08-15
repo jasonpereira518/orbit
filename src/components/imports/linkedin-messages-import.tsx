@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import { MessageSquare } from "lucide-react";
 import { toast } from "@/lib/toast";
-import {
-  previewLinkedInMessagesCsv,
-} from "@/actions/imports";
+import { previewLinkedInMessagesCsv } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { LinkedInExportGuide } from "@/components/imports/linkedin-export-guide";
@@ -13,10 +12,7 @@ import {
   ImportFilePicker,
   readCsvOrZipMessages,
 } from "@/components/imports/import-utils";
-import {
-  startImportJob,
-  useImportJob,
-} from "@/lib/import-job-runner";
+import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 
 type MessagesPreview = Awaited<ReturnType<typeof previewLinkedInMessagesCsv>>;
 type MessagePerson = MessagesPreview["people"][number];
@@ -38,7 +34,12 @@ export function LinkedInMessagesImport() {
 
   useEffect(() => {
     if (!job || job.kind !== "messages") return;
-    if (job.status !== "completed" && job.status !== "failed" && job.status !== "cancelled") return;
+    if (
+      job.status !== "completed" &&
+      job.status !== "failed" &&
+      job.status !== "cancelled"
+    )
+      return;
     setPeople([]);
     setSelected(new Set());
     setMeta(null);
@@ -49,22 +50,28 @@ export function LinkedInMessagesImport() {
   function applyPreview(res: MessagesPreview) {
     setPeople(res.people);
     setSelected(
-      new Set(res.people.filter((p) => !p.isRepeat).map((p) => p.id))
+      new Set(res.people.filter((p) => !p.isRepeat).map((p) => p.id)),
     );
     setMeta({ totalMessages: res.totalMessages });
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
+    <section className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-messages/70 bg-card p-6">
       <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0 flex-1 pr-2">
-          <h2 className="text-lg font-medium text-primary">
-            LinkedIn messages
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Upload a Messages CSV or ZIP, review conversation partners, then
-            import message history. Imports keep running if you leave this page.
-          </p>
+        <div className="flex min-w-0 flex-1 items-start gap-3 pr-2">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-messages/10 text-import-messages">
+            <MessageSquare className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-lg font-medium text-primary">
+              LinkedIn messages
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Upload a Messages CSV or ZIP, review conversation partners, then
+              import message history. Imports keep running if you leave this
+              page.
+            </p>
+          </div>
         </div>
         <LinkedInExportGuide variant="messages" />
       </div>
@@ -82,14 +89,14 @@ export function LinkedInMessagesImport() {
               const res = await previewLinkedInMessagesCsv(text);
               applyPreview(res);
               toast.success(
-                `Loaded ${res.totalConversations} people from ${res.totalMessages} messages`
+                `Loaded ${res.totalConversations} people from ${res.totalMessages} messages`,
               );
             } catch (err) {
               setPeople([]);
               setSelected(new Set());
               setMeta(null);
               toast.error(
-                err instanceof Error ? err.message : "Could not read file"
+                err instanceof Error ? err.message : "Could not read file",
               );
             }
           });
@@ -110,7 +117,7 @@ export function LinkedInMessagesImport() {
                 toast.success(`Loaded ${res.totalConversations} people`);
               } catch (err) {
                 toast.error(
-                  err instanceof Error ? err.message : "Preview failed"
+                  err instanceof Error ? err.message : "Preview failed",
                 );
               }
             })
@@ -137,9 +144,7 @@ export function LinkedInMessagesImport() {
               setMessagesText("");
               setFileName(null);
             } catch (err) {
-              toast.error(
-                err instanceof Error ? err.message : "Import failed"
-              );
+              toast.error(err instanceof Error ? err.message : "Import failed");
             }
           }}
         >

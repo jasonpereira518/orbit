@@ -5,9 +5,11 @@ import { OrbitLogo } from "@/components/orbit-logo";
 export function LandingHeader({
   clerkOn,
   demoMode = false,
+  signedIn = false,
 }: {
   clerkOn: boolean;
   demoMode?: boolean;
+  signedIn?: boolean;
 }) {
   return (
     <header className="relative z-10 flex items-center justify-between px-6 py-5 md:px-10">
@@ -17,7 +19,12 @@ export function LandingHeader({
           Orbit
         </span>
       </Link>
-      <LandingAuthControls clerkOn={clerkOn} demoMode={demoMode} variant="header" />
+      <LandingAuthControls
+        clerkOn={clerkOn}
+        demoMode={demoMode}
+        signedIn={signedIn}
+        variant="header"
+      />
     </header>
   );
 }

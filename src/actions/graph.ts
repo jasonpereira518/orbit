@@ -12,6 +12,7 @@ import {
   buildConstellationClusters,
   toNamedGraphClusters,
 } from "@/lib/constellation-clusters";
+import { clientContactAvatarUrl } from "@/lib/contact-avatar-url";
 
 export type GraphCluster = {
   /** @deprecated use `name` — kept for UI that keyed on company */
@@ -38,6 +39,32 @@ export async function getGraphData() {
   const [rows, goalTexts, goals, settings] = await Promise.all([
     db.query.contacts.findMany({
       where: eq(contacts.userId, userId),
+      columns: {
+        id: true,
+        fullName: true,
+        preferredName: true,
+        company: true,
+        school: true,
+        title: true,
+        relationshipScore: true,
+        lastInteractionAt: true,
+        nextFollowUpAt: true,
+        aiSummary: true,
+        keyFacts: true,
+        howMet: true,
+        metContext: true,
+        dateMet: true,
+        // Omit notes (heavy) from graph payload
+        notes: false,
+        sharedInterests: true,
+        email: true,
+        phone: true,
+        linkedinUrl: true,
+        website: true,
+        profileImageUrl: true,
+        createdAt: true,
+        industry: true,
+      },
       with: { contactTags: { with: { tag: true } } },
     }),
     listActiveGoalTexts(),
@@ -49,7 +76,7 @@ export async function getGraphData() {
 
   const graphContacts = rows.map((c) => {
     const tags = c.contactTags.map((ct) => ct.tag.name);
-    const breakdown = computeCloseness({ ...c, tags }, goalTexts);
+    const breakdown = computeCloseness({ ...c, notes: null, tags }, goalTexts);
     const dormant = isCometContact(c.lastInteractionAt);
     return {
       id: c.id,
@@ -70,13 +97,13 @@ export async function getGraphData() {
       howMet: c.howMet,
       metContext: c.metContext,
       dateMet: c.dateMet,
-      notes: c.notes,
+      notes: null as string | null,
       sharedInterests: c.sharedInterests,
       email: c.email,
       phone: c.phone,
       linkedinUrl: c.linkedinUrl,
       website: c.website,
-      profileImageUrl: c.profileImageUrl,
+      profileImageUrl: clientContactAvatarUrl(c.id, c.profileImageUrl),
       dormant,
     };
   });

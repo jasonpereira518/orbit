@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { motion } from "motion/react";
+import { SPRING_PILL } from "@/lib/motion";
 import { toast } from "@/lib/toast";
 import { listContacts, logInteraction } from "@/actions/contacts";
 import { scheduleContactFollowUp } from "@/actions/reminders";
@@ -304,13 +306,18 @@ function ModeTab({
       aria-selected={active}
       onClick={onClick}
       className={cn(
-        "flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-all sm:flex-none sm:px-4",
-        active
-          ? "bg-background text-foreground shadow-sm"
-          : "text-muted-foreground hover:text-foreground"
+        "relative flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors sm:flex-none sm:px-4",
+        active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
       )}
     >
-      {children}
+      {active && (
+        <motion.span
+          layoutId="capture-mode-pill"
+          className="absolute inset-0 rounded-md bg-background shadow-sm"
+          transition={SPRING_PILL}
+        />
+      )}
+      <span className="relative z-10">{children}</span>
     </button>
   );
 }

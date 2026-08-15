@@ -177,6 +177,12 @@ function addSoftKnowsEdges(
  * Pass `{ metrics: true }` for dashboard counts: all-pairs within
  * company/school clusters plus soft knows (not sparse star paths).
  */
+/**
+ * Peer edges between contacts. Constellation figures are traced by each
+ * cluster's top members only (shapes are capped at FIGURE_STAR_MAX stars via
+ * the shared assignClusterShapes/orderConstellationMembers helpers, keeping
+ * these lines in lockstep with star placement in graph-layout).
+ */
 export function buildPeerEdges(
   contacts: GraphContactInput[],
   options?: {

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
 import { backfillContactAvatars } from "@/actions/contacts";
 import {
   dismissBackgroundJob,
@@ -14,6 +13,12 @@ import {
 const BATCH_PAUSE_MS = 750;
 const MAX_WAIT_MS = 15 * 60_000;
 const JOB_ID = "avatar-backfill";
+
+export const AVATARS_UPDATED_EVENT = "orbit:avatars-updated";
+
+export type AvatarsUpdatedDetail = {
+  contactIds: string[];
+};
 
 function sleep(ms: number, signal: AbortSignal) {
   return new Promise<void>((resolve) => {
@@ -33,13 +38,21 @@ function sleep(ms: number, signal: AbortSignal) {
   });
 }
 
+function notifyAvatarsUpdated(contactIds: string[]) {
+  if (typeof window === "undefined" || contactIds.length === 0) return;
+  window.dispatchEvent(
+    new CustomEvent<AvatarsUpdatedDetail>(AVATARS_UPDATED_EVENT, {
+      detail: { contactIds },
+    })
+  );
+}
+
 /**
  * Quietly fills missing LinkedIn photos in the background.
- * Saves each successful photo, then waits for Microlink quota to reset
- * before continuing — so the contacts list fills in over time.
+ * Soft-updates the UI via `orbit:avatars-updated` instead of a full
+ * `router.refresh()` so browsing stays smooth.
  */
 export function AvatarBackfill() {
-  const router = useRouter();
   const running = useRef(false);
 
   useEffect(() => {
@@ -59,22 +72,28 @@ export function AvatarBackfill() {
           const result = await backfillContactAvatars();
           if (controller.signal.aborted) return;
 
-          if (!jobStarted && (result.saved > 0 || result.pending > 0)) {
-            jobStarted = true;
-            startBackgroundJob({
-              id: JOB_ID,
-              kind: "avatar-backfill",
-              label: "Fetching LinkedIn photos",
-              done: 0,
-              total: result.saved + result.pending,
-              startedAt,
-            });
+          if (!jobStarted) {
+            if (result.saved > 0 || result.pending > 0) {
+              jobStarted = true;
+              startBackgroundJob({
+                id: JOB_ID,
+                kind: "avatar-backfill",
+                label: "Fetching LinkedIn photos",
+                done: 0,
+                total: result.saved + result.pending,
+                startedAt,
+              });
+            } else if (getBackgroundJob(JOB_ID)) {
+              // Nothing to do this run — clear a stale card hydrated from a
+              // previous session's localStorage snapshot.
+              dismissBackgroundJob(JOB_ID);
+            }
           }
 
           if (result.saved > 0) {
             totalSaved += result.saved;
             idlePasses = 0;
-            router.refresh();
+            notifyAvatarsUpdated(result.savedIds ?? []);
           }
 
           if (jobStarted) {
@@ -130,7 +149,7 @@ export function AvatarBackfill() {
         dismissBackgroundJob(JOB_ID);
       }
     };
-  }, [router]);
+  }, []);
 
   return null;
 }

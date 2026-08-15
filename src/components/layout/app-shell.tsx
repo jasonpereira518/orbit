@@ -3,13 +3,15 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { MotionConfig } from "motion/react";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { OrbitLogo } from "@/components/orbit-logo";
+import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
 import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
-import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
 import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar";
+import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
 import { ThemeSync } from "@/components/theme-sync";
 import { cn } from "@/lib/utils";
 import type { ThemePreference } from "@/lib/theme";
@@ -19,7 +21,7 @@ const FloatingAskBar = dynamic(
     import("@/components/layout/floating-ask-bar").then((m) => ({
       default: m.FloatingAskBar,
     })),
-  { ssr: false }
+  { ssr: false },
 );
 
 export function AppShell({
@@ -46,66 +48,85 @@ export function AppShell({
 
   if (isOnboarding) {
     return (
-      <div className="min-h-screen bg-background">
-        <ThemeSync theme={theme} />
-        {children}
-      </div>
+      <MotionConfig reducedMotion="user">
+        <div className="min-h-screen bg-background">
+          <ThemeSync theme={theme} />
+          {children}
+        </div>
+      </MotionConfig>
     );
   }
 
   return (
-    <div
-      className={cn(
-        "flex bg-background",
-        isViewportLocked ? "h-dvh overflow-hidden" : "min-h-screen"
-      )}
-    >
-      <ThemeSync theme={theme} />
-      <DueNotificationsWatcher />
-      <ImportJobWatcher />
-      <GlobalJobProgressBar />
-      <div className="sticky top-0 z-40 hidden h-dvh shrink-0 p-3 md:block lg:p-4">
-        <AppSidebar pathname={pathname} clerkOn={clerkOn} demoMode={demoMode} />
-      </div>
-      <main
+    <MotionConfig reducedMotion="user">
+      <div
         className={cn(
-          "relative flex min-h-0 flex-1 flex-col",
-          isViewportLocked
-            ? "h-dvh overflow-hidden"
-            : "min-h-screen overflow-auto"
+          "flex bg-background",
+          isViewportLocked ? "h-dvh overflow-hidden" : "min-h-screen",
         )}
       >
-        <header className="z-30 flex shrink-0 items-center justify-between border-b border-border/70 bg-background/95 px-4 py-3 backdrop-blur md:hidden">
-          <Link href="/" className="flex items-center gap-2.5" title="Back to landing page">
-            <OrbitLogo size="md" />
-            <span className="font-[family-name:var(--font-display)] text-lg leading-none text-primary">
-              Orbit
-            </span>
-          </Link>
-          <NotificationsPanelButton />
-        </header>
-
-        <div className="fixed right-5 top-5 z-30 hidden md:right-8 md:top-6 md:block">
-          <NotificationsPanelButton />
-        </div>
-
+        <ThemeSync theme={theme} />
+        <AvatarBackfill />
+        <DueNotificationsWatcher />
+        <ImportJobWatcher />
+        <GlobalJobProgressBar />
         <div
+          className="sticky top-0 z-40 hidden h-dvh shrink-0 p-3 md:block lg:p-4"
+          style={{ viewTransitionName: "app-sidebar" }}
+        >
+          <AppSidebar
+            pathname={pathname}
+            clerkOn={clerkOn}
+            demoMode={demoMode}
+          />
+        </div>
+        <main
           className={cn(
-            "mx-auto flex w-full max-w-6xl flex-col px-4 py-6 md:px-10 md:py-8",
+            "relative flex min-h-0 flex-1 flex-col",
             isViewportLocked
-              ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-8"
-              : isSettings
-                ? "flex-1 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-8"
-                : "flex-1 pb-[calc(9.5rem+env(safe-area-inset-bottom))] md:pb-24",
-            isConstellation && "py-4 md:py-5"
+              ? "h-dvh overflow-hidden"
+              : "min-h-screen overflow-auto",
           )}
         >
-          {children}
-        </div>
+          <header
+            className="z-30 flex shrink-0 items-center justify-between border-b border-border/70 bg-background/95 px-4 py-3 backdrop-blur md:hidden"
+            style={{ viewTransitionName: "app-mobile-header" }}
+          >
+            <Link
+              href="/"
+              className="flex items-center gap-2.5"
+              title="Back to landing page"
+            >
+              <OrbitLogo size="md" />
+              <span className="font-[family-name:var(--font-display)] text-lg leading-none text-primary">
+                Orbit
+              </span>
+            </Link>
+            <NotificationsPanelButton />
+          </header>
 
-        {showAskBar && <FloatingAskBar />}
-        <MobileNav clerkOn={clerkOn} demoMode={demoMode} />
-      </main>
-    </div>
+          <div className="fixed right-5 top-5 z-30 hidden md:right-8 md:top-6 md:block">
+            <NotificationsPanelButton />
+          </div>
+
+          <div
+            className={cn(
+              "mx-auto flex w-full max-w-6xl flex-col px-4 py-6 md:px-10 md:py-8",
+              isViewportLocked
+                ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-8"
+                : isSettings
+                  ? "flex-1 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-8"
+                  : "flex-1 pb-[calc(9.5rem+env(safe-area-inset-bottom))] md:pb-24",
+              isConstellation && "py-4 md:py-5",
+            )}
+          >
+            {children}
+          </div>
+
+          {showAskBar && <FloatingAskBar />}
+          <MobileNav clerkOn={clerkOn} demoMode={demoMode} />
+        </main>
+      </div>
+    </MotionConfig>
   );
 }
