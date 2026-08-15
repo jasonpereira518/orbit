@@ -19,7 +19,7 @@ const REST_TILT_Y = -12;
 const SOLAR_VIEW = 440;
 const RING_LABELS = [
   { text: "Inner circle", r: 78, side: 1 },
-  { text: "Steady orbit", r: 156, side: -1 },
+  { text: "Still warm", r: 156, side: -1 },
   { text: "Drifting", r: 234, side: -1 },
 ];
 
@@ -163,7 +163,7 @@ export function HeroPin({
         {header}
 
         <main className="relative z-10 flex flex-1 flex-col justify-center px-6 pb-8 pt-4 md:px-10 md:pb-10">
-          <div className="mx-auto grid w-full max-w-6xl items-center gap-10 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:gap-12">
+          <div className="mx-auto grid w-full max-w-6xl -translate-y-4 items-center gap-10 md:-translate-y-6 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:gap-12">
             <motion.div
               className="max-w-3xl"
               style={
@@ -192,7 +192,7 @@ export function HeroPin({
                   {RING_LABELS.map((label, i) => (
                     <motion.span
                       key={label.text}
-                      className="absolute left-1/2 inline-block -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#05070f]/70 px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-[#c4a35a]"
+                      className="absolute left-1/2 inline-block -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#05070f]/70 px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-[#f2c14e]"
                       style={{
                         top: `${50 - label.side * (label.r / SOLAR_VIEW) * 100}%`,
                         opacity: labelOpacities[i],

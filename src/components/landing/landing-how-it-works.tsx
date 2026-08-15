@@ -1,14 +1,19 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
+import { motion, useScroll, useTransform, type MotionValue } from "motion/react";
+import { scrub01 } from "@/lib/motion";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
+import { Reveal } from "@/components/motion/reveal";
 
-// dot/glow progress from white to gold across the 4 steps, echoing the
-// white-to-gold escalation on the Features section's reply-rate bar chart.
+// dot/glow progress from white to gold across the 4 steps — the same
+// escalation the reply-rate bars used, so "further along the loop" reads as
+// "warmer" everywhere on the page.
 const STEPS = [
   {
     kicker: "Step 01 · you",
     title: "Connect",
-    body: "Link LinkedIn and Apollo once — no CSVs, no manual entry.",
+    body: "Link LinkedIn and Gmail once — no CSVs, no manual entry.",
     dot: "#e8f3f1",
     glow: "0 0 20px rgba(232,243,241,.5)",
   },
@@ -44,69 +49,192 @@ const NODE_POSITIONS = [
   { top: "50%", left: "6%" },
 ] as const;
 
-function prefersReducedMotion() {
-  if (typeof window === "undefined") return false;
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+type Step = (typeof STEPS)[number];
+
+/** Each step lights as the ring reaches it, so the loop builds in the order
+ * the copy claims. Windows overlap by 0.06 so it reads as one sweep. */
+function stepWindow(index: number): [number, number] {
+  return [0.15 + index * 0.14, 0.35 + index * 0.14];
+}
+
+function StepNode({
+  step,
+  index,
+  p,
+  counter,
+  reduced,
+}: {
+  step: Step;
+  index: number;
+  p: MotionValue<number>;
+  counter: MotionValue<number>;
+  reduced: boolean;
+}) {
+  const [a, b] = stepWindow(index);
+  const opacity = useTransform(p, (v) => scrub01(v, a, b));
+
+  return (
+    // Outer element owns the ring placement; the inner one owns the
+    // counter-rotation, so the label stays upright while its position swings.
+    // The -6px is half the dot's own 12px diameter — it centers the DOT on
+    // the ring rather than the whole text block. origin-top pivots that
+    // counter-rotation at the dot itself (the div's top edge) rather than
+    // its own center, which sits down in the body copy — otherwise the dot
+    // swings off the ring by however tall each step's text happens to be.
+    <div
+      className="absolute w-[42%] max-w-[230px] text-center"
+      style={{
+        top: NODE_POSITIONS[index].top,
+        left: NODE_POSITIONS[index].left,
+        transform: "translate(-50%, -6px)",
+      }}
+    >
+      <motion.div
+        className="origin-top"
+        style={reduced ? undefined : { rotate: counter, opacity }}
+      >
+        <span
+          aria-hidden="true"
+          className="mx-auto block h-3 w-3 rounded-full"
+          style={{ background: step.dot, boxShadow: step.glow }}
+        />
+        <p className="mt-2 text-[11px] uppercase tracking-[0.16em] text-[#6d807c]">
+          {step.kicker}
+        </p>
+        <p className="mt-1 font-[family-name:var(--font-display)] text-[19px] text-[#e8f3f1]">
+          {step.title}
+        </p>
+        <p className="mt-1 text-[13px] leading-[1.6] text-[#9aada8]">
+          {step.body}
+        </p>
+      </motion.div>
+    </div>
+  );
+}
+
+function StepRow({
+  step,
+  index,
+  p,
+  reduced,
+}: {
+  step: Step;
+  index: number;
+  p: MotionValue<number>;
+  reduced: boolean;
+}) {
+  const [a, b] = stepWindow(index);
+  const opacity = useTransform(p, (v) => scrub01(v, a, b));
+  const x = useTransform(p, (v) => 14 * (1 - scrub01(v, a, b)));
+
+  return (
+    <motion.li
+      className="relative flex gap-4"
+      style={reduced ? undefined : { opacity, x }}
+    >
+      <span
+        aria-hidden="true"
+        className="relative z-10 mt-1.5 h-3 w-3 shrink-0 rounded-full"
+        style={{ background: step.dot, boxShadow: step.glow }}
+      />
+      <div>
+        <p className="text-[11px] uppercase tracking-[0.16em] text-[#6d807c]">
+          {step.kicker}
+        </p>
+        <p className="mt-1 font-[family-name:var(--font-display)] text-[19px] text-[#e8f3f1]">
+          {step.title}
+        </p>
+        <p className="mt-1 text-[13px] leading-[1.6] text-[#9aada8]">
+          {step.body}
+        </p>
+      </div>
+    </motion.li>
+  );
 }
 
 export function LandingHowItWorks() {
-  const ringRef = useRef<HTMLDivElement>(null);
+  const sectionRef = useRef<HTMLElement>(null);
+  const reduced = usePrefersReducedMotion();
 
-  useEffect(() => {
-    if (prefersReducedMotion()) return;
+  // Measured on the section, not the ring: the ring is itself rotated, and a
+  // rotated element's bounding box changes size as it turns, which would feed
+  // the rotation back into its own progress.
+  // Ends at "end center" rather than "end start" so the loop finishes
+  // drawing while the section is still centered in view, not exactly as
+  // it scrolls out of frame.
+  const { scrollYProgress: p } = useScroll({
+    target: sectionRef,
+    offset: ["start end", "end center"],
+  });
 
-    const ring = ringRef.current;
-    if (!ring) return;
-
-    let raf = 0;
-
-    function onScroll() {
-      raf = requestAnimationFrame(() => {
-        const rect = ring!.getBoundingClientRect();
-        const p =
-          (window.innerHeight - rect.top) / (window.innerHeight + rect.height);
-        const clamped = Math.min(Math.max(p, 0), 1);
-        const rotation = clamped * 34 - 17;
-        ring!.style.setProperty("--ring-rotation", String(rotation));
-      });
-    }
-
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      cancelAnimationFrame(raf);
-    };
-  }, []);
+  // Eases to 0° (dots seated on the ring's top/right/bottom/left marks) by
+  // the halfway point, then holds — the dots settle onto the line instead
+  // of sweeping past it for the rest of the scroll.
+  const rotate = useTransform(p, (v) => scrub01(v, 0, 0.5) * 17 - 17);
+  const counter = useTransform(rotate, (r) => -r);
+  const ringDraw = useTransform(p, (v) => scrub01(v, 0.12, 0.6));
+  const dashedOpacity = useTransform(
+    p,
+    (v) => 0.25 + 0.75 * scrub01(v, 0.05, 0.4)
+  );
+  const spineDraw = useTransform(p, (v) => scrub01(v, 0.12, 0.9));
 
   return (
-    <section className="landing-reveal relative z-10 mx-auto w-full max-w-6xl border-t border-[#e8f3f1]/[0.07] px-6 py-20 md:px-10 md:py-24">
-      <p className="text-xs uppercase tracking-[0.18em] text-[#6d807c]">How it works</p>
-      <h2 className="mt-3 max-w-[18ch] font-[family-name:var(--font-display)] text-[clamp(30px,4.4vw,50px)] font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]">
-        From a conversation to a callback.
-      </h2>
+    <section
+      ref={sectionRef}
+      aria-labelledby="landing-how"
+      className="landing-scene scene-how relative z-10 mx-auto w-full max-w-6xl border-t border-[#e8f3f1]/[0.07] px-6 py-20 md:px-10 md:py-24"
+    >
+      <Reveal className="reveal-celestial">
+        <p className="text-xs uppercase tracking-[0.18em] text-[#f2c14e]">
+          How it works
+        </p>
+      </Reveal>
+      <Reveal className="reveal-celestial" delay={80}>
+        <h2
+          id="landing-how"
+          className="mt-3 max-w-[18ch] font-[family-name:var(--font-display)] text-[clamp(30px,4.4vw,50px)] font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]"
+        >
+          From a conversation to a callback.
+        </h2>
+      </Reveal>
 
       <div className="relative mx-auto mt-16 hidden aspect-square w-full max-w-[760px] lg:block">
-        <div
-          ref={ringRef}
+        <motion.div
           className="absolute inset-0"
-          style={{
-            transform: "rotate(calc(var(--ring-rotation, 0) * 1deg))",
-            transition: "transform .18s linear",
-          }}
+          style={reduced ? undefined : { rotate }}
         >
-          <div
+          {/* Dashed ring stays a border rather than an SVG path: motion's
+              pathLength drives stroke-dasharray, so a dashed stroke can't
+              also draw itself. It fades in instead. */}
+          <motion.div
             aria-hidden="true"
             className="absolute inset-[6%] rounded-full border border-dashed border-[#e8f3f1]/[0.13]"
+            style={reduced ? undefined : { opacity: dashedOpacity }}
           />
-          <div
+          <svg
             aria-hidden="true"
-            className="absolute inset-[24%] rounded-full border border-[#e8f3f1]/[0.07]"
-          />
+            viewBox="0 0 100 100"
+            className="absolute inset-[24%] h-auto w-auto"
+          >
+            <motion.circle
+              cx={50}
+              cy={50}
+              r={49}
+              fill="none"
+              stroke="rgba(232,243,241,0.07)"
+              strokeWidth={1}
+              transform="rotate(-90 50 50)"
+              style={reduced ? undefined : { pathLength: ringDraw }}
+            />
+          </svg>
           <div
             aria-hidden="true"
             className="absolute inset-[34%] rounded-full"
-            style={{ background: "radial-gradient(circle, rgba(242,193,78,.16), transparent 70%)" }}
+            style={{
+              background:
+                "radial-gradient(circle, rgba(242,193,78,.16), transparent 70%)",
+            }}
           />
 
           <div
@@ -119,34 +247,17 @@ export function LandingHowItWorks() {
             }}
           />
 
-          {/* Step nodes sit exactly on the dashed ring and orbit with it —
-              the counter-rotation keeps each label upright while its
-              position swings around the ring. The anchor centers the DOT
-              itself on the ring (not the whole text block, which would
-              float the dot away from the line), so the -6px is half the
-              dot's own h-3 (12px) diameter. */}
           {STEPS.map((step, index) => (
-            <div
+            <StepNode
               key={step.title}
-              data-counter-rotate
-              className="absolute w-[42%] max-w-[230px] text-center"
-              style={{
-                top: NODE_POSITIONS[index].top,
-                left: NODE_POSITIONS[index].left,
-                transform: "translate(-50%, -6px) rotate(calc(var(--ring-rotation, 0) * -1deg))",
-              }}
-            >
-              <span
-                aria-hidden="true"
-                className="mx-auto block h-3 w-3 rounded-full"
-                style={{ background: step.dot, boxShadow: step.glow }}
-              />
-              <p className="mt-2 text-[11px] uppercase tracking-[0.16em] text-[#6d807c]">{step.kicker}</p>
-              <p className="mt-1 font-[family-name:var(--font-display)] text-[19px] text-[#e8f3f1]">{step.title}</p>
-              <p className="mt-1 text-[13px] leading-[1.6] text-[#9aada8]">{step.body}</p>
-            </div>
+              step={step}
+              index={index}
+              p={p}
+              counter={counter}
+              reduced={reduced}
+            />
           ))}
-        </div>
+        </motion.div>
 
         {/* Outside the rotating ring entirely — stays fixed under the sun
             regardless of scroll rotation, no counter-rotation needed. */}
@@ -154,37 +265,55 @@ export function LandingHowItWorks() {
           className="absolute left-1/2 -translate-x-1/2 text-center"
           style={{ top: "calc(50% + 48px)" }}
         >
-          <p className="font-[family-name:var(--font-display)] text-[19px] text-[#e8f3f1]">Orbit</p>
+          <p className="font-[family-name:var(--font-display)] text-[19px] text-[#e8f3f1]">
+            Orbit
+          </p>
           <p className="text-xs text-[#6d807c]">the record keeps itself</p>
         </div>
       </div>
 
-      <ol className="mt-12 space-y-6 lg:hidden">
-        {STEPS.map((step) => (
-          <li key={step.title} className="flex gap-4">
-            <span
-              aria-hidden="true"
-              className="mt-1.5 h-3 w-3 shrink-0 rounded-full"
-              style={{ background: step.dot, boxShadow: step.glow }}
+      {/* Below lg the ring can't shrink without going illegible, so the loop
+          becomes a vertical timeline — same beat (it builds as you scroll),
+          different geometry. The spine draws down as the steps light. */}
+      <div className="relative mt-12 lg:hidden">
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 1 100"
+          preserveAspectRatio="none"
+          className="absolute left-[5.5px] top-2 h-[calc(100%-1rem)] w-px overflow-visible"
+        >
+          <motion.line
+            x1={0.5}
+            y1={0}
+            x2={0.5}
+            y2={100}
+            stroke="rgba(232,243,241,0.16)"
+            strokeWidth={1}
+            vectorEffect="non-scaling-stroke"
+            style={reduced ? undefined : { pathLength: spineDraw }}
+          />
+        </svg>
+        <ol className="space-y-6">
+          {STEPS.map((step, index) => (
+            <StepRow
+              key={step.title}
+              step={step}
+              index={index}
+              p={p}
+              reduced={reduced}
             />
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.16em] text-[#6d807c]">{step.kicker}</p>
-              <p className="mt-1 font-[family-name:var(--font-display)] text-[19px] text-[#e8f3f1]">
-                {step.title}
-              </p>
-              <p className="mt-1 text-[13px] leading-[1.6] text-[#9aada8]">{step.body}</p>
-            </div>
-          </li>
-        ))}
-      </ol>
+          ))}
+        </ol>
+      </div>
 
       {/* lg:mt-20 clears the "Send outreach" node's text, which flows
           downward from its dot near the ring's own bottom edge and would
-          otherwise overlap this caption; mt-8 still applies below lg,
-          where the ring is replaced by the plain vertical step list. */}
-      <p className="mt-8 text-center text-sm text-[#6d807c] lg:mt-20">
-        The loop keeps running whether or not you open the app.
-      </p>
+          otherwise overlap this caption. */}
+      <Reveal className="reveal-celestial">
+        <p className="mt-8 text-center text-sm text-[#6d807c] lg:mt-20">
+          It keeps working in the background, even when you close the app.
+        </p>
+      </Reveal>
     </section>
   );
 }

@@ -327,7 +327,7 @@ export function HeroSolarSystem({
                   cy={CY}
                   r={r}
                   fill="none"
-                  stroke="rgba(196, 163, 90, 0.4)"
+                  stroke="rgba(242, 193, 78, 0.4)"
                   strokeWidth={0.75}
                 />
               ))}

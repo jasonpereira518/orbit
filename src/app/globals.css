@@ -640,31 +640,6 @@
   -webkit-backdrop-filter: blur(12px);
 }
 
-@keyframes landing-reveal-in {
-  from {
-    opacity: 0;
-    transform: translateY(22px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.landing-reveal {
-  animation: landing-reveal-in 0.8s cubic-bezier(0.2, 0.7, 0.3, 1) both;
-  animation-timeline: view();
-  animation-range: entry 8% cover 30%;
-}
-
-@supports not (animation-timeline: view()) {
-  .landing-reveal {
-    animation: none;
-    opacity: 1;
-    transform: none;
-  }
-}
-
 /* ── Landing hero ── */
 
 @keyframes landing-fade {
@@ -838,10 +813,57 @@
   contain-intrinsic-size: auto var(--scene-size, 800px);
 }
 
+/* Per-scene intrinsic sizes. These live here rather than in inline styles
+ * because every scene is TALLER below lg (cards stack, the orbit map becomes
+ * a vertical timeline) — and under-estimating is the direction that makes
+ * scroll anchoring jump. Re-measure whenever a scene gains or loses content;
+ * the audit snippet is in the plan's verification section. */
+/* This scene is min-h-[90svh], so its size is viewport-driven — declaring it
+ * in svh stays exact at every window height instead of being right at one. */
+.scene-constellations {
+  --scene-size: 90svh;
+}
+.scene-comets {
+  --scene-size: 575px;
+}
+.scene-how {
+  --scene-size: 1250px;
+}
+.scene-features {
+  --scene-size: 2000px;
+}
+.scene-finale {
+  --scene-size: 560px;
+}
+
+/* Measured at 500x667 and biased up slightly, since narrower viewports wrap
+ * more text. Below lg the constellation scene's content exceeds 90svh, so it
+ * needs a px value rather than the viewport-driven one. */
+@media (width < 64rem) {
+  .scene-constellations {
+    --scene-size: 820px;
+  }
+  .scene-comets {
+    --scene-size: 540px;
+  }
+  .scene-how {
+    --scene-size: 780px;
+  }
+  .scene-features {
+    --scene-size: 2900px;
+  }
+  .scene-finale {
+    --scene-size: 820px;
+  }
+}
+
 /* Overscroll rubber-banding paints the body behind the page — keep it
- * space-dark while the landing is mounted instead of the app's light bg. */
+ * space-dark while the landing is mounted instead of the app's light bg.
+ * Matches the deep-space vignette's terminal color (scene-finale), not the
+ * base page color — otherwise overscrolling past the darkened footer
+ * reveals a lighter strip where the body shows through. */
 body:has(.landing-root) {
-  background-color: #05070f;
+  background-color: #00010a;
 }
 
 /* ── View Transitions (route navigation) ── */

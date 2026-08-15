@@ -1,6 +1,7 @@
 import { HeroPin } from "@/components/landing/hero-pin";
 import { LandingHeader } from "@/components/landing/landing-header";
 import { LandingHeroCopy } from "@/components/landing/landing-hero";
+import { LandingHowItWorks } from "@/components/landing/landing-how-it-works";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
 import {
   BODY,
@@ -27,7 +28,7 @@ export function LandingPage({
   const authProps = { clerkOn, demoMode, signedIn };
 
   return (
-    <div className="landing-root relative overflow-x-clip bg-[#05070f] text-[#e8f3f1]">
+    <div className="landing-root relative overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
       <LandingStarfield />
 
       <HeroPin
@@ -35,13 +36,16 @@ export function LandingPage({
         heroCopy={<LandingHeroCopy {...authProps} />}
         claim={
           <>
-            <p className={KICKER}>Your people</p>
+            {/* Keep this to the current line count. HeroPin measures the
+             * claim's bottom to size the flattened system above it — a taller
+             * claim silently drives the camera toward CAM_SCALE_MIN. */}
+            <p className={KICKER}>Your search, mapped</p>
             <h2 className="mt-3 font-[family-name:var(--font-display)] text-[clamp(26px,3.6vw,42px)] font-normal leading-[1.15] tracking-[-0.02em] text-[#e8f3f1]">
-              Everyone orbits at their own distance.
+              The people who can get you hired are already drifting.
             </h2>
             <p className={`${BODY} mx-auto`}>
-              Orbit tracks how close you actually are — and tells you when
-              it&apos;s time to pull someone back in.
+              Orbit sorts every contact by how warm they actually are — and
+              tells you which ones to pull back in before the role closes.
             </p>
           </>
         }
@@ -49,6 +53,9 @@ export function LandingPage({
 
       <SceneConstellations />
       <SceneComets />
+      {/* The loop answers the pain Comets just stated — placing it before
+       * that beat would turn it into a feature tour. */}
+      <LandingHowItWorks />
       <SceneFeatures />
       <SceneFinale {...authProps} />
     </div>
