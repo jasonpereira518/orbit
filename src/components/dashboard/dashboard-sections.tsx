@@ -257,69 +257,78 @@ export async function RemindersAndFollowUpsSection({
   );
 }
 
+export async function RecentlyUpdatedSection({
+  bundle,
+}: {
+  bundle: DashboardBundle;
+}) {
+  const { data } = await bundle;
+  return (
+    <div className="reveal-mount min-w-0" style={revealDelay(240)}>
+      <Card className="border-border/70 shadow-none">
+        <CardHeader>
+          <CardTitle className="text-base">Recently updated</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {data.recentContacts.length === 0 ? (
+            <div className="space-y-3">
+              <Empty hint="No contacts yet." />
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  href="/imports"
+                  className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+                >
+                  Import
+                </Link>
+                <Link
+                  href="/capture"
+                  className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+                >
+                  Capture
+                </Link>
+                <Link
+                  href="/contacts/new"
+                  className={cn(buttonVariants({ size: "sm" }))}
+                >
+                  Add contact
+                </Link>
+              </div>
+            </div>
+          ) : (
+            data.recentContacts.map((c) => {
+              const tier = tierForContact(data, c.id);
+              return (
+                <Link
+                  key={c.id}
+                  href={`/contacts/${c.id}`}
+                  className="flex items-center justify-between rounded-lg px-2 py-2 hover:bg-muted/60"
+                >
+                  <div className="flex min-w-0 items-center gap-2">
+                    {tier && <ClosenessTierBadge tier={tier} dotOnly />}
+                    <div className="min-w-0">
+                      <p className="font-medium">{c.fullName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {c.company || "No company"}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {formatDistanceToNow(new Date(c.updatedAt), { addSuffix: true })}
+                  </span>
+                </Link>
+              );
+            })
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
   const { data, networkStats } = await bundle;
   return (
     <div className="reveal-mount space-y-8" style={revealDelay(240)}>
-      <div className="grid items-start gap-6 lg:grid-cols-2">
-        <Card className="border-border/70 shadow-none">
-          <CardHeader>
-            <CardTitle className="text-base">Recently updated</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {data.recentContacts.length === 0 ? (
-              <div className="space-y-3">
-                <Empty hint="No contacts yet." />
-                <div className="flex flex-wrap gap-2">
-                  <Link
-                    href="/imports"
-                    className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-                  >
-                    Import
-                  </Link>
-                  <Link
-                    href="/capture"
-                    className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-                  >
-                    Capture
-                  </Link>
-                  <Link
-                    href="/contacts/new"
-                    className={cn(buttonVariants({ size: "sm" }))}
-                  >
-                    Add contact
-                  </Link>
-                </div>
-              </div>
-            ) : (
-              data.recentContacts.map((c) => {
-                const tier = tierForContact(data, c.id);
-                return (
-                  <Link
-                    key={c.id}
-                    href={`/contacts/${c.id}`}
-                    className="flex items-center justify-between rounded-lg px-2 py-2 hover:bg-muted/60"
-                  >
-                    <div className="flex min-w-0 items-center gap-2">
-                      {tier && <ClosenessTierBadge tier={tier} dotOnly />}
-                      <div className="min-w-0">
-                        <p className="font-medium">{c.fullName}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {c.company || "No company"}
-                        </p>
-                      </div>
-                    </div>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {formatDistanceToNow(new Date(c.updatedAt), { addSuffix: true })}
-                    </span>
-                  </Link>
-                );
-              })
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
       <GoalsSummary
         goals={data.goals}
         goalAlignedContacts={data.goalAlignedContacts.map((c) => ({
