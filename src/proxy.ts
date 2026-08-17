@@ -19,16 +19,24 @@ const isPublicRoute = createRouteMatcher([
 const configured = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
 /**
- * Origins allowed to present a Clerk session to this app. The browser
- * extension's origin comes from its stable ID (pinned by the `key` field in its
- * manifest), so it has to be configured rather than inferred.
+ * Origins allowed to present a Clerk session to this app.
+ *
+ * Opt-in, and deliberately gated on EXTENSION_ORIGIN being set: passing
+ * `authorizedParties` replaces Clerk's default origin check entirely, so an
+ * incomplete list locks users out. Preview deployments in particular get a
+ * dynamic *.vercel.app host that no static list can predict — so unless the
+ * extension is actually configured, we leave Clerk's default behavior alone.
+ *
+ * When it is set, EXTENSION_ORIGIN is the extension's own origin, derived from
+ * its stable ID (pinned by the `key` field in its manifest), and
+ * NEXT_PUBLIC_APP_URL must match the host users actually browse.
  */
-const authorizedParties = [
-  process.env.NEXT_PUBLIC_APP_URL,
-  process.env.EXTENSION_ORIGIN,
-]
-  .map((value) => value?.trim())
-  .filter((value): value is string => Boolean(value));
+const extensionOrigin = process.env.EXTENSION_ORIGIN?.trim();
+const authorizedParties = extensionOrigin
+  ? [extensionOrigin, process.env.NEXT_PUBLIC_APP_URL?.trim()].filter(
+      (value): value is string => Boolean(value)
+    )
+  : [];
 
 function withPathname(req: Request) {
   const requestHeaders = new Headers(req.headers);

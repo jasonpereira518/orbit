@@ -370,7 +370,7 @@ function suggestionFromProbe(
  * Deliberately a targeted lookup rather than a scan — it only asks about the one
  * company and one school on the page.
  */
-async function loadNetworkOverlap(
+export async function loadNetworkOverlap(
   userId: string,
   probe: PageProbe,
   excludeContactId?: string
@@ -493,5 +493,48 @@ export async function resolveContactFromPage(
     suggested,
     changes: [],
     startersSeed: heuristicStarters(starterContext, 2),
+  };
+}
+
+/**
+ * Assemble the context the starter generators need, for either a known contact
+ * (warm) or a page-only stranger (cold).
+ */
+export async function buildStarterContext(
+  userId: string,
+  page: PageContext,
+  contactId?: string | null
+): Promise<StarterContext> {
+  const probe = probeFromPage(page);
+  const goals = await listActiveGoalTextsForUser(userId);
+
+  if (contactId) {
+    const bundle = await buildSnapshot(userId, contactId, goals);
+    if (bundle) {
+      const db = await getDb();
+      const row = await db.query.contacts.findFirst({
+        where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+        columns: { title: true, company: true, location: true },
+      });
+      return {
+        ...bundle.starterContext,
+        mode: "warm",
+        page,
+        networkOverlap: { companies: [], schools: [] },
+        changes: row ? diffPageAgainstContact(probe, row) : [],
+      };
+    }
+  }
+
+  return {
+    mode: "cold",
+    page,
+    contact: null,
+    tags: [],
+    recentInteractions: [],
+    openReminders: [],
+    userGoals: goals,
+    networkOverlap: await loadNetworkOverlap(userId, probe),
+    changes: [],
   };
 }

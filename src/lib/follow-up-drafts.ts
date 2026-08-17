@@ -45,7 +45,7 @@ export type FollowUpDraft = {
   contactName: string;
 };
 
-function buildConversationTranscript(
+export function buildConversationTranscript(
   rows: Array<{
     interactionType: string;
     interactionDate: Date | null;
@@ -67,7 +67,7 @@ function buildConversationTranscript(
     .slice(0, 12_000);
 }
 
-type ContactRow = typeof contacts.$inferSelect;
+export type ContactRow = typeof contacts.$inferSelect;
 
 async function loadContactContext(userId: string, contactId: string) {
   const db = await getDb();
@@ -88,7 +88,7 @@ async function loadContactContext(userId: string, contactId: string) {
   return { contact, recent };
 }
 
-function buildProfileBlock(contact: ContactRow) {
+export function buildProfileBlock(contact: ContactRow) {
   const howMet = formatHowMetSummary({
     metContext: contact.metContext,
     dateMet: contact.dateMet,
