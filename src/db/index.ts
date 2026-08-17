@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   email text,
   phone text,
   linkedin_url text,
+  x_handle text,
   website text,
   profile_image_url text,
   relationship_score integer NOT NULL DEFAULT 2,
@@ -81,6 +82,16 @@ CREATE TABLE IF NOT EXISTS contacts (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS contacts_user_id_idx ON contacts(user_id);
+CREATE INDEX IF NOT EXISTS contacts_user_linkedin_idx ON contacts(user_id, linkedin_url);
+CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle);
+CREATE TABLE IF NOT EXISTS extension_usage (
+  user_id text PRIMARY KEY,
+  window_started_at timestamptz NOT NULL DEFAULT now(),
+  request_count integer NOT NULL DEFAULT 0,
+  ai_window_started_at timestamptz NOT NULL DEFAULT now(),
+  ai_count integer NOT NULL DEFAULT 0,
+  last_seen_at timestamptz
+);
 CREATE TABLE IF NOT EXISTS user_goals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -632,6 +643,9 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS social_links jsonb DEFAULT '{}'`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
+    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS x_handle text`,
+    `CREATE INDEX IF NOT EXISTS contacts_user_linkedin_idx ON contacts(user_id, linkedin_url)`,
+    `CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle)`,
     `CREATE INDEX IF NOT EXISTS companies_user_idx ON companies(user_id)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS companies_user_name_uidx ON companies(user_id, name_normalized)`,
     `CREATE INDEX IF NOT EXISTS user_goals_user_idx ON user_goals(user_id)`,

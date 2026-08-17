@@ -81,6 +81,8 @@ export const contacts = pgTable(
     email: text("email"),
     phone: text("phone"),
     linkedinUrl: text("linkedin_url"),
+    /** Bare X/Twitter handle, no leading "@" — see normalizeXHandle in lib/duplicates. */
+    xHandle: text("x_handle"),
     website: text("website"),
     profileImageUrl: text("profile_image_url"),
     relationshipScore: integer("relationship_score").default(2).notNull(),
@@ -106,6 +108,10 @@ export const contacts = pgTable(
     index("contacts_user_id_idx").on(t.userId),
     index("contacts_company_idx").on(t.userId, t.company),
     index("contacts_follow_up_idx").on(t.userId, t.nextFollowUpAt),
+    // The browser extension resolves a profile to a contact on every popup open;
+    // without these, each lookup is a full per-user scan.
+    index("contacts_user_linkedin_idx").on(t.userId, t.linkedinUrl),
+    index("contacts_user_x_idx").on(t.userId, t.xHandle),
   ]
 );
 
@@ -727,8 +733,28 @@ export const userRecruiterLinksRelations = relations(
   })
 );
 
+/**
+ * Rolling-window request counters for the browser extension API.
+ *
+ * One row per user. The AI window is tracked separately and kept much tighter
+ * because those calls spend the user's own provider credits.
+ */
+export const extensionUsage = pgTable("extension_usage", {
+  userId: text("user_id").primaryKey(),
+  windowStartedAt: timestamp("window_started_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  requestCount: integer("request_count").default(0).notNull(),
+  aiWindowStartedAt: timestamp("ai_window_started_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  aiCount: integer("ai_count").default(0).notNull(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+});
+
 export type Contact = typeof contacts.$inferSelect;
 export type NewContact = typeof contacts.$inferInsert;
+export type ExtensionUsage = typeof extensionUsage.$inferSelect;
 export type Interaction = typeof interactions.$inferSelect;
 export type Reminder = typeof reminders.$inferSelect;
 export type ReminderList = typeof reminderLists.$inferSelect;
