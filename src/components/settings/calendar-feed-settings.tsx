@@ -23,23 +23,29 @@ function maskUrl(url: string) {
 
 export function CalendarFeedSettings() {
   const [status, setStatus] = useState<CalendarFeedStatus | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [confirmingRegen, setConfirmingRegen] = useState(false);
   const [pending, start] = useTransition();
 
+  // A failed load must be visible and recoverable. Without the error branch the
+  // section sits on "Loading…" forever, which turns one transient server-action
+  // failure into a permanently dead panel with no way to retry.
   useEffect(() => {
     let cancelled = false;
+    setLoadFailed(false);
     getCalendarFeedStatus()
       .then((s) => {
         if (!cancelled) setStatus(s);
       })
       .catch(() => {
-        if (!cancelled) toast.error("Could not load calendar feed settings");
+        if (!cancelled) setLoadFailed(true);
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadKey]);
 
   function run(label: string, fn: () => Promise<CalendarFeedStatus>) {
     start(async () => {
@@ -65,7 +71,20 @@ export function CalendarFeedSettings() {
         </p>
       </div>
 
-      {!status ? (
+      {loadFailed && !status ? (
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground">
+            Couldn&apos;t load your calendar feed settings.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setReloadKey((k) => k + 1)}
+          >
+            Try again
+          </Button>
+        </div>
+      ) : !status ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : !status.enabled ? (
         <div className="space-y-3">
