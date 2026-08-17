@@ -18,8 +18,26 @@ npm run build
 
 Load `dist/` via `chrome://extensions` → Developer mode → **Load unpacked**.
 
-`npm run dev` gives you HMR on the popup; Chrome still needs a manual reload of
-the extension when the manifest or service worker changes.
+### `dev` and `build` write to the same `dist/`
+
+This trips everyone once. `npm run dev` does **not** bundle the popup — it
+writes a `dist/` whose popup page loads from the Vite dev server, so the panel
+only works while that server is running. Stop the server (or run `dev` and then
+walk away) and clicking the icon gives:
+
+> Cannot connect to http://localhost:5173/src/popup/index.html. Make sure Vite
+> is running, then reload the extension.
+
+That is not a broken build — it's the dev shim with nothing behind it. Fix:
+
+```bash
+npm run build     # overwrite dist/ with a real, self-contained bundle
+```
+
+then hit **Reload** on the extension card in `chrome://extensions`.
+
+So: `npm run dev` while you're iterating on the popup (keep it running),
+`npm run build` whenever you actually want to *use* the extension.
 
 ### Environment
 
