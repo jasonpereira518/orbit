@@ -9,6 +9,7 @@ import {
   type ImportJobRowPayload,
 } from "@/db/schema";
 import { createContactsBulk, updateContact, type ContactInput } from "@/actions/contacts";
+import { getAppBaseUrl } from "@/lib/app-url";
 import { createCompanyResolver } from "@/lib/companies";
 import {
   DUPLICATE_MERGE_CONFIDENCE,
@@ -27,12 +28,6 @@ const TIME_BUDGET_MS = 4.5 * 60 * 1000;
 
 function rowFullName(payload: ImportJobRowPayload) {
   return `${payload.firstName} ${payload.lastName}`.trim();
-}
-
-function getAppBaseUrl() {
-  if (process.env.APP_BASE_URL) return process.env.APP_BASE_URL;
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  return `http://localhost:${process.env.PORT || 3000}`;
 }
 
 /** Kick a self-continuation request so remaining rows keep processing in a fresh invocation. */
@@ -102,6 +97,7 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
   let duplicatesFound = importRow.duplicatesFound ?? 0;
   let rowsProcessed = importRow.rowsProcessed ?? 0;
   let skippedTotal = importRow.stats?.skipped ?? 0;
+  const allTouchedContactIds = new Set<string>();
 
   try {
     while (true) {
@@ -211,6 +207,7 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
 
       if (touchedContactIds.length > 0) {
         await rebuildContactEmbeddingsBatch(userId, touchedContactIds);
+        for (const id of touchedContactIds) allTouchedContactIds.add(id);
       }
 
       await markRowsDone(
@@ -257,6 +254,7 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
   revalidatePath("/graph");
   revalidatePath("/knowledge");
   revalidatePath("/chat");
+  for (const id of allTouchedContactIds) revalidatePath(`/contacts/${id}`);
 }
 
 async function failImport(importId: string, err: unknown) {
