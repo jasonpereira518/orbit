@@ -36,10 +36,12 @@ body {
   padding: 0;
 }
 
+/* A side panel is sized by the browser, not by us: it fills the window height
+ * and its width is the user's to drag. The old fixed 400x600 box was a popup
+ * constraint and would letterbox the panel. */
 body {
-  width: 400px;
-  min-height: 340px;
-  max-height: 600px;
+  width: 100%;
+  height: 100vh;
   overflow: hidden;
   background: var(--background);
   color: var(--foreground);
@@ -51,9 +53,9 @@ body {
 #root {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  min-height: 340px;
-  max-height: 600px;
+  height: 100vh;
+  /* Below this the layout stops being honest; Chrome allows narrow drags. */
+  min-width: 320px;
 }
 
 /* Staggered entrance, mirroring the app's reveal. */

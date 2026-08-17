@@ -27,6 +27,8 @@ export type PanelState = {
   startersLoading: boolean;
   startersDegraded: boolean;
   error: string | null;
+  /** Set when the user navigated away while holding unsaved work. */
+  pendingUrl: string | null;
 };
 
 const INITIAL: PanelState = {
@@ -40,12 +42,14 @@ const INITIAL: PanelState = {
   startersLoading: false,
   startersDegraded: false,
   error: null,
+  pendingUrl: null,
 };
 
 export function usePanel() {
   const session = useSession();
   const [state, setState] = useState<PanelState>(INITIAL);
   const abortRef = useRef<AbortController | null>(null);
+  const dirtyRef = useRef(false);
 
   // Clerk hands back a new getToken identity on every render. Closing over it
   // directly made `api` -> `run` -> the mount effect all unstable, so the effect
@@ -80,7 +84,20 @@ export function usePanel() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    setState({ ...INITIAL });
+    // Reset the data slices but keep the shell — in a persistent panel,
+    // blanking to INITIAL on every navigation is a full-panel flash several
+    // times a minute. The identity zone holds the previous person until the
+    // new local read lands ~40ms later, which reads as a cut, not a teardown.
+    setState((s) => ({
+      ...s,
+      resolved: null,
+      resolving: true,
+      starters: [],
+      startersLoading: false,
+      startersDegraded: false,
+      error: null,
+      pageError: null,
+    }));
 
     // Read the page first and paint it immediately — it's local, so this lands
     // in tens of milliseconds while the network work is still in flight.
@@ -96,6 +113,13 @@ export function usePanel() {
     }
     const page = read.page;
     setState((s) => ({ ...s, page }));
+
+    // Paint-first: everything above depends only on the local DOM read, so the
+    // identity zone is on screen at ~40ms whether or not Clerk has finished
+    // initialising. Gating this behind auth made the panel's first paint wait
+    // on 1.3MB of SDK parse plus a session sync — the exact opposite of the
+    // staged-arrival design. When the session resolves, `run` re-fires.
+    if (!session.isLoaded) return;
 
     if (!session.isSignedIn) {
       setState((s) => ({ ...s, phase: "signed-out", resolving: false }));
@@ -134,12 +158,65 @@ export function usePanel() {
         resolving: false,
       }));
     }
-  }, [api, loadStarters, session.isSignedIn]);
+  }, [api, loadStarters, session.isLoaded, session.isSignedIn]);
 
   useEffect(() => {
-    if (!session.isLoaded) return;
     void run();
     return () => abortRef.current?.abort();
+  }, [run]);
+
+  /**
+   * Follow the tab.
+   *
+   * Unlike a popup, the panel stays open while the user browses profile after
+   * profile — so it has to keep up or it is lying. LinkedIn is an SPA and fires
+   * onUpdated repeatedly during a single navigation, hence the debounce; and we
+   * only re-run when the *canonical* URL actually changes, so query-string
+   * churn doesn't cause pointless work.
+   *
+   * `activeTab` survives same-document and same-domain navigation, so browsing
+   * within LinkedIn keeps working without another click on the icon.
+   */
+  const lastUrlRef = useRef<string | null>(null);
+  useEffect(() => {
+    let timer: number | undefined;
+    const schedule = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(async () => {
+        const [tab] = await chrome.tabs.query({
+          active: true,
+          currentWindow: true,
+        });
+        const url = tab?.url ?? null;
+        if (!url || url === lastUrlRef.current) return;
+        lastUrlRef.current = url;
+
+        // A half-typed note or an edited capture field outranks the page: once
+        // a draft exists the panel is bound to the draft, not to the tab.
+        if (dirtyRef.current) {
+          setState((s) => ({ ...s, pendingUrl: url }));
+          return;
+        }
+        void run();
+      }, 250);
+    };
+
+    const onUpdated = (
+      _tabId: number,
+      change: chrome.tabs.OnUpdatedInfo,
+      tab: chrome.tabs.Tab
+    ) => {
+      if (!tab.active) return;
+      if (change.url || change.status === "complete") schedule();
+    };
+
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.onActivated.addListener(schedule);
+    return () => {
+      window.clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onActivated.removeListener(schedule);
+    };
   }, [session.isLoaded, run]);
 
   /** Re-run resolve after a write, so the panel reflects the new state. */
@@ -154,5 +231,16 @@ export function usePanel() {
     }
   }, [api, state.page]);
 
-  return { state, setState, api, reload: run, refresh };
+  const setDirty = useCallback((value: boolean) => {
+    dirtyRef.current = value;
+  }, []);
+
+  /** Discard the held draft and move to the page the user is actually on. */
+  const followPending = useCallback(() => {
+    dirtyRef.current = false;
+    setState((s) => ({ ...s, pendingUrl: null }));
+    void run();
+  }, [run]);
+
+  return { state, setState, api, reload: run, refresh, setDirty, followPending };
 }

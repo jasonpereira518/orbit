@@ -4,7 +4,7 @@ import { ClerkProvider } from "@clerk/chrome-extension";
 import { App } from "./App";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { APP_URL, CLERK_PUBLISHABLE_KEY } from "@/lib/env";
-import "@/styles/popup.css";
+import "@/styles/panel.css";
 
 const root = document.getElementById("root")!;
 

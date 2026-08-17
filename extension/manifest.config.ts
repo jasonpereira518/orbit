@@ -65,7 +65,11 @@ export default defineManifest({
   // Generate the keypair once and keep the .pem out of git; see the README.
   ...(env.VITE_EXTENSION_KEY ? { key: env.VITE_EXTENSION_KEY } : {}),
 
-  action: { default_title: "Orbit", default_popup: "src/popup/index.html" },
+  // No default_popup: the action toggles the side panel instead (see the
+  // background worker). The panel persists while the user browses, which is
+  // what makes adding several people in a row a workflow rather than a chore.
+  action: { default_title: "Orbit" },
+  side_panel: { default_path: "src/panel/index.html" },
   background: { service_worker: "src/background/index.ts", type: "module" },
 
   // activeTab grants access to the current tab only, and only after the user
@@ -76,7 +80,7 @@ export default defineManifest({
   // the web app's session means reading its session cookie from the Orbit
   // origin. It is scoped by host_permissions below, so it grants nothing on
   // LinkedIn or anywhere else.
-  permissions: ["activeTab", "scripting", "storage", "cookies"],
+  permissions: ["activeTab", "scripting", "storage", "cookies", "sidePanel"],
   host_permissions: [`${appOrigin}/*`, ...clerkHosts],
 
   // Declared but never requested in v1. Declaring costs no install-time warning
