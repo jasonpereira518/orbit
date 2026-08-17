@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ConversationStarter,
   MeResponse,
@@ -47,16 +47,19 @@ export function usePanel() {
   const [state, setState] = useState<PanelState>(INITIAL);
   const abortRef = useRef<AbortController | null>(null);
 
-  const api = useCallback(
-    () => createApi(session.getToken),
-    [session.getToken]
-  );
+  // Clerk hands back a new getToken identity on every render. Closing over it
+  // directly made `api` -> `run` -> the mount effect all unstable, so the effect
+  // re-ran on every render, called setState, and looped forever — which renders
+  // as a blank panel. Read it through a ref so the api object is created once.
+  const getTokenRef = useRef(session.getToken);
+  getTokenRef.current = session.getToken;
+  const api = useMemo(() => createApi(() => getTokenRef.current()), []);
 
   const loadStarters = useCallback(
     async (page: PageContext, contactId: string | null) => {
       setState((s) => ({ ...s, startersLoading: true }));
       try {
-        const result = await api().starters({ page, contactId, limit: 3 });
+        const result = await api.starters({ page, contactId, limit: 3 });
         setState((s) => ({
           ...s,
           starters: result.starters,
@@ -101,8 +104,8 @@ export function usePanel() {
 
     try {
       const [me, resolved] = await Promise.all([
-        api().me(controller.signal),
-        api().resolve(page, controller.signal),
+        api.me(controller.signal),
+        api.resolve(page, controller.signal),
       ]);
       if (controller.signal.aborted) return;
 
@@ -144,12 +147,12 @@ export function usePanel() {
     if (!state.page) return;
     setState((s) => ({ ...s, resolving: true }));
     try {
-      const resolved = await api().resolve(state.page);
+      const resolved = await api.resolve(state.page);
       setState((s) => ({ ...s, resolved, resolving: false }));
     } catch {
       setState((s) => ({ ...s, resolving: false }));
     }
   }, [api, state.page]);
 
-  return { state, setState, api: api(), reload: run, refresh };
+  return { state, setState, api, reload: run, refresh };
 }
