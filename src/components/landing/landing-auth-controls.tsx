@@ -52,7 +52,7 @@ export function LandingAuthControls({
           Sign in
         </Link>
         <Link href={href} className={solid}>
-          Start free
+          Get Started
         </Link>
       </div>
     );
@@ -87,7 +87,7 @@ export function LandingAuthControls({
         Sign in
       </Link>
       <Link href="/sign-up" className={solid}>
-        Start free
+        Get Started
       </Link>
     </div>
   );

@@ -5,6 +5,7 @@ import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import {
   ChartsSection,
   OutreachPerformanceSection,
+  RecentlyUpdatedSection,
   RemindersAndFollowUpsSection,
   StatsSection,
   SuggestedOutreachSection,
@@ -64,6 +65,9 @@ export default function DashboardPage() {
           }
         >
           <RemindersAndFollowUpsSection bundle={bundle} />
+        </Suspense>
+        <Suspense fallback={<DashboardCardSkeleton className="h-64" />}>
+          <RecentlyUpdatedSection bundle={bundle} />
         </Suspense>
       </div>
 
