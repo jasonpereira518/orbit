@@ -1,0 +1,139 @@
+import { randomBytes } from "node:crypto";
+import { and, asc, eq, gte, isNotNull, lte } from "drizzle-orm";
+import { getDb } from "@/db";
+import { contacts, reminders, userSettings } from "@/db/schema";
+import { getAppBaseUrl } from "@/lib/app-url";
+import { buildIcsFeed, type IcsFeedEvent } from "@/lib/ics";
+
+/** Bounded so a long-lived account can't produce a multi-megabyte feed. */
+const PAST_WINDOW_DAYS = 90;
+const FUTURE_WINDOW_DAYS = 365;
+const MAX_EVENTS = 500;
+
+/**
+ * Alarm offset for all-day events. An all-day event starts at midnight *local* in the
+ * client, so +9h lands a 9am local reminder — local-time alerting derived purely from a
+ * floating date, with no timezone stored anywhere.
+ */
+const ALL_DAY_ALARM = "PT9H";
+const TIMED_ALARM = "-PT15M";
+
+export function generateCalendarFeedToken() {
+  return randomBytes(32).toString("base64url");
+}
+
+export function buildCalendarFeedUrl(token: string) {
+  return `${getAppBaseUrl()}/api/calendar/${token}.ics`;
+}
+
+export function buildCalendarFeedWebcalUrl(token: string) {
+  return buildCalendarFeedUrl(token).replace(/^https?:\/\//, "webcal://");
+}
+
+/**
+ * Resolves a feed token to its owner. Returns null rather than throwing so the route can
+ * answer 404 without revealing whether the token merely expired.
+ */
+export async function findUserByFeedToken(rawToken: string) {
+  const token = rawToken.replace(/\.ics$/i, "").trim();
+  // Cheap floor against enumeration; real tokens are 43 chars.
+  if (token.length < 24) return null;
+
+  const db = await getDb();
+  const row = await db.query.userSettings.findFirst({
+    where: eq(userSettings.calendarFeedToken, token),
+    columns: { userId: true, calendarFeedLastFetchedAt: true },
+  });
+  return row ?? null;
+}
+
+/** Throttled so a polling calendar client doesn't cause a write per request. */
+export async function touchFeedFetchedAt(
+  userId: string,
+  lastFetchedAt: Date | null
+) {
+  const FIFTEEN_MIN = 15 * 60_000;
+  if (lastFetchedAt && Date.now() - lastFetchedAt.getTime() < FIFTEEN_MIN) {
+    return;
+  }
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({ calendarFeedLastFetchedAt: new Date() })
+    .where(eq(userSettings.userId, userId));
+}
+
+export async function buildRemindersFeed(userId: string) {
+  const db = await getDb();
+  const now = new Date();
+  const from = new Date(now.getTime() - PAST_WINDOW_DAYS * 86_400_000);
+  const to = new Date(now.getTime() + FUTURE_WINDOW_DAYS * 86_400_000);
+
+  const rows = await db
+    .select({
+      id: reminders.id,
+      title: reminders.title,
+      description: reminders.description,
+      dueDate: reminders.dueDate,
+      actionKind: reminders.actionKind,
+      createdAt: reminders.createdAt,
+      contactId: reminders.contactId,
+      contactFullName: contacts.fullName,
+      contactPreferredName: contacts.preferredName,
+    })
+    .from(reminders)
+    .leftJoin(contacts, eq(reminders.contactId, contacts.id))
+    .where(
+      and(
+        eq(reminders.userId, userId),
+        eq(reminders.status, "pending"),
+        // Undated reminders have no place in a calendar; inventing a date would
+        // produce events that drift and alarm at the wrong time.
+        isNotNull(reminders.dueDate),
+        gte(reminders.dueDate, from),
+        lte(reminders.dueDate, to)
+      )
+    )
+    .orderBy(asc(reminders.dueDate))
+    .limit(MAX_EVENTS);
+
+  const baseUrl = getAppBaseUrl();
+
+  const events: IcsFeedEvent[] = rows.map((r) => {
+    const due = new Date(r.dueDate!);
+    // A due date whose UTC time is exactly midnight originated as a plain date with no
+    // time of day, so it becomes an all-day event. Anything else carried a real time.
+    const allDay =
+      due.getUTCHours() === 0 &&
+      due.getUTCMinutes() === 0 &&
+      due.getUTCSeconds() === 0;
+
+    const contactName = r.contactPreferredName || r.contactFullName;
+    const descriptionParts = [r.description?.trim()].filter(Boolean) as string[];
+    if (contactName) descriptionParts.push(`Contact: ${contactName}`);
+    descriptionParts.push(
+      r.contactId ? `${baseUrl}/contacts/${r.contactId}` : `${baseUrl}/reminders`
+    );
+
+    return {
+      // Stable and derived only from the immutable row id — never from the due date,
+      // which snoozing mutates in place and would otherwise spawn ghost events.
+      uid: `orbit-reminder-${r.id}@orbit.app`,
+      summary: r.title,
+      description: descriptionParts.join("\n"),
+      url: r.contactId
+        ? `${baseUrl}/contacts/${r.contactId}`
+        : `${baseUrl}/reminders`,
+      categories: r.actionKind,
+      allDay,
+      start: due,
+      stamp: new Date(r.createdAt),
+      alarmTrigger: allDay ? ALL_DAY_ALARM : TIMED_ALARM,
+    };
+  });
+
+  return buildIcsFeed(events, {
+    calendarName: "Orbit Reminders",
+    description: "Pending reminders from Orbit",
+  });
+}

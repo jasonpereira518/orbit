@@ -42,6 +42,27 @@ export const userSettings = pgTable("user_settings", {
       website?: string;
     }>()
     .default({}),
+  /**
+   * The user's own email, mirrored from Clerk via the webhook. Clerk owns identity;
+   * this copy exists so background jobs (which have no request context) can reach the
+   * user without a Clerk API hop. No unique constraint — two accounts may legitimately
+   * transit the same address.
+   */
+  email: text("email"),
+  /**
+   * Opaque bearer token for the read-only ICS reminder feed. Stored in plaintext
+   * deliberately: the URL must stay re-displayable when the user adds a second device,
+   * and `crypto.ts` uses a random IV per call so ciphertext could not be indexed for
+   * lookup. Same sensitivity class as `calendar_subscriptions.ics_url`, which already
+   * holds the user's Google secret iCal URL in plaintext.
+   */
+  calendarFeedToken: text("calendar_feed_token"),
+  calendarFeedTokenCreatedAt: timestamp("calendar_feed_token_created_at", {
+    withTimezone: true,
+  }),
+  calendarFeedLastFetchedAt: timestamp("calendar_feed_last_fetched_at", {
+    withTimezone: true,
+  }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -235,6 +256,61 @@ export const reminders = pgTable(
     index("reminders_user_status_idx").on(t.userId, t.status),
     index("reminders_due_idx").on(t.userId, t.dueDate),
     index("reminders_list_idx").on(t.userId, t.listId),
+  ]
+);
+
+/**
+ * Dated commitments the AI pulled out of captured notes, staged for review.
+ *
+ * These are deliberately NOT rows in `reminders`: an unconfirmed extraction must never
+ * reach `listDueNotificationItems`, which fires OS desktop notifications. Confirming a
+ * row here inserts into `reminders` and back-links via `reminderId`.
+ */
+export const suggestedReminders = pgTable(
+  "suggested_reminders",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** Set null rather than cascade — a deleted contact shouldn't silently drop the item. */
+    contactId: uuid("contact_id").references(() => contacts.id, {
+      onDelete: "set null",
+    }),
+    /** Groups everything extracted from one capture submission. */
+    captureBatchId: uuid("capture_batch_id").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    /** The date text verbatim as written in the note, e.g. "Sept 2". */
+    rawDatePhrase: text("raw_date_phrase").notNull(),
+    /** Resolved absolute date, pinned to local noon. Never null — absolute dates only. */
+    dueDate: timestamp("due_date", { withTimezone: true }).notNull(),
+    /** 1 when the note stated no year and we inferred the nearest future one. */
+    yearInferred: integer("year_inferred").default(0).notNull(),
+    /** The sentence the commitment came from — this is what makes it auditable. */
+    sourceExcerpt: text("source_excerpt").notNull(),
+    /** sha256 of the normalized source note, so a re-paste is recognized. */
+    sourceHash: text("source_hash").notNull(),
+    /** sha256(sourceHash|isoDate|normalizedTitle) — the per-item dedupe key. */
+    itemHash: text("item_hash").notNull(),
+    actionKind: text("action_kind")
+      .$type<ReminderActionKind>()
+      .default("task")
+      .notNull(),
+    /** 0-100, matching aiSuggestions.confidenceScore's scale. */
+    confidenceScore: integer("confidence_score"),
+    /** pending | confirmed | discarded */
+    status: text("status").default("pending").notNull(),
+    reminderId: uuid("reminder_id").references(() => reminders.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("suggested_reminders_user_status_idx").on(t.userId, t.status),
+    index("suggested_reminders_batch_idx").on(t.captureBatchId),
+    uniqueIndex("suggested_reminders_user_item_uidx").on(t.userId, t.itemHash),
   ]
 );
 
@@ -656,6 +732,16 @@ export const remindersRelations = relations(reminders, ({ one }) => ({
   }),
 }));
 
+export const suggestedRemindersRelations = relations(
+  suggestedReminders,
+  ({ one }) => ({
+    contact: one(contacts, {
+      fields: [suggestedReminders.contactId],
+      references: [contacts.id],
+    }),
+  })
+);
+
 export const contactEmbeddingsRelations = relations(
   contactEmbeddings,
   ({ one }) => ({
@@ -732,6 +818,7 @@ export type NewContact = typeof contacts.$inferInsert;
 export type Interaction = typeof interactions.$inferSelect;
 export type Reminder = typeof reminders.$inferSelect;
 export type ReminderList = typeof reminderLists.$inferSelect;
+export type SuggestedReminder = typeof suggestedReminders.$inferSelect;
 export type Tag = typeof tags.$inferSelect;
 export type AiSuggestion = typeof aiSuggestions.$inferSelect;
 export type ImportRecord = typeof imports.$inferSelect;

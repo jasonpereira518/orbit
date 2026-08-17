@@ -9,6 +9,7 @@ import {
   type ImportJobRowPayload,
 } from "@/db/schema";
 import { createContactsBulk, updateContact, type ContactInput } from "@/actions/contacts";
+import { getAppBaseUrl } from "@/lib/app-url";
 import { createCompanyResolver } from "@/lib/companies";
 import {
   DUPLICATE_MERGE_CONFIDENCE,
@@ -27,12 +28,6 @@ const TIME_BUDGET_MS = 4.5 * 60 * 1000;
 
 function rowFullName(payload: ImportJobRowPayload) {
   return `${payload.firstName} ${payload.lastName}`.trim();
-}
-
-function getAppBaseUrl() {
-  if (process.env.APP_BASE_URL) return process.env.APP_BASE_URL;
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  return `http://localhost:${process.env.PORT || 3000}`;
 }
 
 /** Kick a self-continuation request so remaining rows keep processing in a fresh invocation. */

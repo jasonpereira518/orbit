@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
@@ -8,6 +9,7 @@ import {
   Calendar as CalendarIcon,
   FileSpreadsheet,
   MessageSquare,
+  NotebookPen,
 } from "lucide-react";
 import {
   ImportHistory,
@@ -263,6 +265,24 @@ export function ImportHub({
           />
         </div>
       )}
+
+      {/* Notes live in Capture rather than as a tab here, so there's exactly one
+          extraction path — but this is where people look for them. */}
+      <Link
+        href="/capture"
+        className="flex items-start gap-3 rounded-2xl border border-border/70 bg-card p-5 transition-colors hover:border-primary/40"
+      >
+        <NotebookPen className="mt-0.5 size-5 shrink-0 text-primary" />
+        <span className="space-y-1">
+          <span className="block text-sm font-medium text-foreground">
+            Meeting &amp; chat notes
+          </span>
+          <span className="block text-sm text-muted-foreground">
+            Paste or upload your notes and Orbit pulls out the people — plus any
+            dates you wrote down, as reminders you review before they&apos;re set.
+          </span>
+        </span>
+      </Link>
 
       <ImportHistory history={history} />
     </div>

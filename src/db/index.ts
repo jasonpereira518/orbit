@@ -141,6 +141,29 @@ CREATE TABLE IF NOT EXISTS reminders (
   created_by text NOT NULL DEFAULT 'user',
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS suggested_reminders (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  capture_batch_id uuid NOT NULL,
+  title text NOT NULL,
+  description text,
+  raw_date_phrase text NOT NULL,
+  due_date timestamptz NOT NULL,
+  year_inferred integer NOT NULL DEFAULT 0,
+  source_excerpt text NOT NULL,
+  source_hash text NOT NULL,
+  item_hash text NOT NULL,
+  action_kind text NOT NULL DEFAULT 'task',
+  confidence_score integer,
+  status text NOT NULL DEFAULT 'pending',
+  reminder_id uuid REFERENCES reminders(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  resolved_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS suggested_reminders_user_status_idx ON suggested_reminders(user_id, status);
+CREATE INDEX IF NOT EXISTS suggested_reminders_batch_idx ON suggested_reminders(capture_batch_id);
+CREATE UNIQUE INDEX IF NOT EXISTS suggested_reminders_user_item_uidx ON suggested_reminders(user_id, item_hash);
 CREATE TABLE IF NOT EXISTS imports (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -494,10 +517,34 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "wizard_offered_at", "timestamptz");
   await ensureColumn(client, "user_settings", "wizard_step", "text");
   await ensureColumn(client, "user_settings", "wizard_completed_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "email", "text");
+  await ensureColumn(client, "user_settings", "calendar_feed_token", "text");
+  await ensureColumn(
+    client,
+    "user_settings",
+    "calendar_feed_token_created_at",
+    "timestamptz"
+  );
+  await ensureColumn(
+    client,
+    "user_settings",
+    "calendar_feed_last_fetched_at",
+    "timestamptz"
+  );
 
   try {
     await client.exec(
       `CREATE INDEX IF NOT EXISTS reminders_list_idx ON reminders(user_id, list_id)`
+    );
+  } catch {
+    // Index may already exist
+  }
+
+  try {
+    await client.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx
+       ON user_settings(calendar_feed_token)
+       WHERE calendar_feed_token IS NOT NULL`
     );
   } catch {
     // Index may already exist
@@ -664,6 +711,11 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_offered_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_step text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_completed_at timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token_created_at timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_last_fetched_at timestamptz`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
   ];
 
   for (const statement of alters) {
