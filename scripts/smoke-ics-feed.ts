@@ -6,6 +6,8 @@
 
 import { buildIcsFeed } from "../src/lib/ics";
 import { parseIcsEvents } from "../src/lib/calendar-import";
+import { isDateOnly } from "../src/lib/calendar-feed";
+import { atLocalNoon } from "../src/lib/interaction-date";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -90,6 +92,24 @@ check(
   "timed date survives round-trip",
   parsed[1].start?.toISOString() === "2026-09-03T14:00:00.000Z",
   parsed[1].start?.toISOString()
+);
+
+// Date-only detection. Both storage conventions in this codebase must be recognized,
+// or a dated commitment degrades into a spurious half-hour meeting and loses its
+// 9am-local alarm. This regressed once already: extracted dates are stored via
+// atLocalNoon, which is never UTC midnight outside a UTC server.
+check(
+  "UTC midnight counts as date-only",
+  isDateOnly(new Date(Date.UTC(2026, 9, 15, 0, 0, 0)))
+);
+check(
+  "atLocalNoon counts as date-only (whatever the server timezone)",
+  isDateOnly(atLocalNoon(new Date(2026, 9, 15))),
+  atLocalNoon(new Date(2026, 9, 15)).toISOString()
+);
+check(
+  "a real appointment time is not date-only",
+  !isDateOnly(new Date(Date.UTC(2026, 9, 15, 14, 30, 0)))
 );
 
 console.log("\nAll ICS feed smoke checks passed.");

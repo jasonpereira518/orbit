@@ -18,6 +18,29 @@ const MAX_EVENTS = 500;
 const ALL_DAY_ALARM = "PT9H";
 const TIMED_ALARM = "-PT15M";
 
+/**
+ * Whether a due date carries no meaningful time of day, and so should be emitted as a
+ * floating all-day event.
+ *
+ * Two storage conventions both mean "date only" in this codebase, and each must be
+ * recognized or the event degrades into a spurious half-hour meeting:
+ *   - UTC midnight — `new Date("YYYY-MM-DD")`, e.g. `createReminder`.
+ *   - Local noon — `atLocalNoon()`, used by extracted dates and
+ *     `scheduleContactFollowUpAt`. Noon is deliberate: it keeps the calendar day stable
+ *     in the UI across timezone offsets, but it is emphatically not a real appointment
+ *     time, and treating it as one also risks rendering on the wrong day for viewers
+ *     far from the server's timezone.
+ */
+export function isDateOnly(due: Date) {
+  const utcMidnight =
+    due.getUTCHours() === 0 &&
+    due.getUTCMinutes() === 0 &&
+    due.getUTCSeconds() === 0;
+  const localNoon =
+    due.getHours() === 12 && due.getMinutes() === 0 && due.getSeconds() === 0;
+  return utcMidnight || localNoon;
+}
+
 export function generateCalendarFeedToken() {
   return randomBytes(32).toString("base64url");
 }
@@ -101,12 +124,7 @@ export async function buildRemindersFeed(userId: string) {
 
   const events: IcsFeedEvent[] = rows.map((r) => {
     const due = new Date(r.dueDate!);
-    // A due date whose UTC time is exactly midnight originated as a plain date with no
-    // time of day, so it becomes an all-day event. Anything else carried a real time.
-    const allDay =
-      due.getUTCHours() === 0 &&
-      due.getUTCMinutes() === 0 &&
-      due.getUTCSeconds() === 0;
+    const allDay = isDateOnly(due);
 
     const contactName = r.contactPreferredName || r.contactFullName;
     const descriptionParts = [r.description?.trim()].filter(Boolean) as string[];
