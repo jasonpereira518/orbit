@@ -3,7 +3,6 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import {
   Calendar as CalendarIcon,
@@ -19,6 +18,7 @@ import { ImportProgress } from "@/components/imports/import-utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cancelImportJob, useImportJob } from "@/lib/import-job-runner";
 import { SPRING_PILL } from "@/lib/motion";
+import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
 import { cn } from "@/lib/utils";
 
 type ImportTab = "connections" | "messages" | "calendar";
@@ -114,30 +114,6 @@ const CalendarImportSection = dynamic(
     })),
   { loading: () => <PanelSkeleton /> },
 );
-
-/** Refresh server-rendered data when the user returns to this browser tab. */
-function useRefreshOnVisible() {
-  const router = useRouter();
-
-  useEffect(() => {
-    let lastRefresh = 0;
-    function onVisible() {
-      if (document.visibilityState !== "visible") return;
-      // visibilitychange + focus often fire together; coalesce into one refresh.
-      const now = Date.now();
-      if (now - lastRefresh < 500) return;
-      lastRefresh = now;
-      router.refresh();
-    }
-
-    document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("focus", onVisible);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("focus", onVisible);
-    };
-  }, [router]);
-}
 
 export function ImportHub({
   history,

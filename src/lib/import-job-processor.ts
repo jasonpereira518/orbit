@@ -97,6 +97,7 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
   let duplicatesFound = importRow.duplicatesFound ?? 0;
   let rowsProcessed = importRow.rowsProcessed ?? 0;
   let skippedTotal = importRow.stats?.skipped ?? 0;
+  const allTouchedContactIds = new Set<string>();
 
   try {
     while (true) {
@@ -206,6 +207,7 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
 
       if (touchedContactIds.length > 0) {
         await rebuildContactEmbeddingsBatch(userId, touchedContactIds);
+        for (const id of touchedContactIds) allTouchedContactIds.add(id);
       }
 
       await markRowsDone(
@@ -252,6 +254,7 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
   revalidatePath("/graph");
   revalidatePath("/knowledge");
   revalidatePath("/chat");
+  for (const id of allTouchedContactIds) revalidatePath(`/contacts/${id}`);
 }
 
 async function failImport(importId: string, err: unknown) {

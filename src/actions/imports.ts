@@ -798,6 +798,7 @@ export async function confirmLinkedInMessagesImport(
       revalidatePath("/graph");
       revalidatePath("/chat");
       revalidatePath("/knowledge");
+      for (const id of touchedAll) revalidatePath(`/contacts/${id}`);
     }
 
     return {
@@ -1199,6 +1200,7 @@ export async function confirmCalendarImport(payload: {
       revalidatePath("/contacts");
       revalidatePath("/imports");
       revalidatePath("/graph");
+      for (const id of touched) revalidatePath(`/contacts/${id}`);
     }
 
     return {
