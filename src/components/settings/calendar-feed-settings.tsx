@@ -13,6 +13,35 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
+/**
+ * How long to wait for the status action before giving up on it.
+ *
+ * This exists because the failure seen in production is a *hang*, not a rejection:
+ * the action never settles, so a plain .catch() never fires and the panel sits on
+ * "Loading…" forever. Racing a timer converts that into a rejection the UI can show
+ * and the user can retry. Note this only stops the client waiting — the server action
+ * itself keeps running to completion or its own platform timeout.
+ */
+const LOAD_TIMEOUT_MS = 12_000;
+
+const TIMED_OUT = "orbit:timed-out";
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(TIMED_OUT)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 /** Shows enough of the token to identify the link without exposing it on screen. */
 function maskUrl(url: string) {
   return url.replace(/\/api\/calendar\/([^.]+)/, (_m, token: string) => {
@@ -23,24 +52,27 @@ function maskUrl(url: string) {
 
 export function CalendarFeedSettings() {
   const [status, setStatus] = useState<CalendarFeedStatus | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadFailure, setLoadFailure] = useState<"timeout" | "error" | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [confirmingRegen, setConfirmingRegen] = useState(false);
   const [pending, start] = useTransition();
 
-  // A failed load must be visible and recoverable. Without the error branch the
-  // section sits on "Loading…" forever, which turns one transient server-action
-  // failure into a permanently dead panel with no way to retry.
+  // A failed load must be visible and recoverable. Without this the section sits on
+  // "Loading…" forever — a dead panel with no way to retry. The two failure modes are
+  // kept distinct on purpose: knowing whether the action rejected or simply never
+  // answered is the signal needed to chase the underlying cause.
   useEffect(() => {
     let cancelled = false;
-    setLoadFailed(false);
-    getCalendarFeedStatus()
+    setLoadFailure(null);
+    withTimeout(getCalendarFeedStatus(), LOAD_TIMEOUT_MS)
       .then((s) => {
         if (!cancelled) setStatus(s);
       })
-      .catch(() => {
-        if (!cancelled) setLoadFailed(true);
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        const timedOut = err instanceof Error && err.message === TIMED_OUT;
+        setLoadFailure(timedOut ? "timeout" : "error");
       });
     return () => {
       cancelled = true;
@@ -71,10 +103,12 @@ export function CalendarFeedSettings() {
         </p>
       </div>
 
-      {loadFailed && !status ? (
+      {loadFailure && !status ? (
         <div className="space-y-2">
           <p className="text-sm text-muted-foreground">
-            Couldn&apos;t load your calendar feed settings.
+            {loadFailure === "timeout"
+              ? "Your calendar feed settings took too long to load."
+              : "Couldn't load your calendar feed settings."}
           </p>
           <Button
             size="sm"
