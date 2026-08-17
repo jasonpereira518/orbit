@@ -11,7 +11,10 @@
     "db:push": "drizzle-kit push",
     "db:setup": "tsx scripts/setup-db.ts",
     "db:seed": "tsx scripts/seed-demo.ts",
-    "db:seed:graph": "tsx scripts/seed-graph-fixture.ts"
+    "db:seed:graph": "tsx scripts/seed-graph-fixture.ts",
+    "ext:dev": "npm --prefix extension run dev",
+    "ext:build": "npm --prefix extension run build",
+    "ext:zip": "npm --prefix extension run zip"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.3",
