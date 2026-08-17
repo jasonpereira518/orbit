@@ -273,6 +273,37 @@ export type StartersResponse = {
 };
 
 /* -------------------------------------------------------------------------- */
+/* Reading the page with a model                                              */
+/* -------------------------------------------------------------------------- */
+
+export type ParseDegradedReason = "no_api_key" | "no_text" | "ai_error";
+
+/**
+ * Fields a model read out of the page text.
+ *
+ * Separate from `/resolve` on purpose: resolution is a slug lookup that must
+ * stay fast, while this costs a model call. The panel fires them in parallel
+ * and the record fills in as each lands.
+ */
+export type ParsedProfileFields = {
+  fullName: string | null;
+  title: string | null;
+  company: string | null;
+  location: string | null;
+  school: string | null;
+  email: string | null;
+  keyFacts: string[];
+  sharedInterests: string[];
+  /** Field keys the model flagged as uncertain. */
+  lowConfidence: string[];
+  degraded: boolean;
+  degradedReason?: ParseDegradedReason;
+};
+
+export type ParseRequest = { page: PageContext };
+export type ParseResponse = ParsedProfileFields;
+
+/* -------------------------------------------------------------------------- */
 /* Writes                                                                     */
 /* -------------------------------------------------------------------------- */
 

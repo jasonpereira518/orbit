@@ -7,6 +7,7 @@ import type {
   LogInteractionResponse,
   MeResponse,
   PageContext,
+  ParseResponse,
   ResolveResponse,
   SaveContactRequest,
   SaveContactResponse,
@@ -85,6 +86,9 @@ export function createApi(getToken: TokenGetter) {
 
     resolve: (page: PageContext, signal?: AbortSignal) =>
       post<ResolveResponse>("/resolve", { page }, signal),
+
+    parseProfile: (page: PageContext, signal?: AbortSignal) =>
+      post<ParseResponse>("/parse", { page }, signal),
 
     starters: (body: StartersRequest, signal?: AbortSignal) =>
       post<StartersResponse>("/starters", body, signal),

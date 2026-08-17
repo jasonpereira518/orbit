@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ConversationStarter,
+  ParseResponse,
   MeResponse,
   PageContext,
   ResolveResponse,
@@ -25,6 +26,9 @@ export type PanelState = {
   resolved: ResolveResponse | null;
   resolving: boolean;
   starters: ConversationStarter[];
+  /** Fields a model read from the page; fills rows the adapter left empty. */
+  parsed: ParseResponse | null;
+  parsing: boolean;
   startersLoading: boolean;
   startersDegraded: boolean;
   error: string | null;
@@ -42,6 +46,8 @@ const INITIAL: PanelState = {
   resolved: null,
   resolving: true,
   starters: [],
+  parsed: null,
+  parsing: false,
   startersLoading: false,
   startersDegraded: false,
   error: null,
@@ -97,6 +103,8 @@ export function usePanel() {
       resolved: null,
       resolving: true,
       starters: [],
+      parsed: null,
+      parsing: false,
       startersLoading: false,
       startersDegraded: false,
       error: null,
@@ -129,6 +137,20 @@ export function usePanel() {
     if (!session.isSignedIn) {
       setState((s) => ({ ...s, phase: "signed-out", resolving: false }));
       return;
+    }
+
+    // Read the page with a model in parallel with resolution. Nothing waits on
+    // it: the record is already complete and submittable from the adapter's
+    // fields, and these only fill the gaps.
+    if (page.text.blob) {
+      setState((s) => ({ ...s, parsing: true }));
+      void api
+        .parseProfile(page, controller.signal)
+        .then((parsed) => {
+          if (controller.signal.aborted) return;
+          setState((s) => ({ ...s, parsed, parsing: false }));
+        })
+        .catch(() => setState((s) => ({ ...s, parsing: false })));
     }
 
     try {

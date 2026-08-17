@@ -15,6 +15,7 @@
 import { z } from "zod";
 import type {
   ContactSearchResponse,
+  ParseRequest,
   FollowUpRequest,
   LogInteractionRequest,
   PageContext,
@@ -108,6 +109,10 @@ export const resolveRequestSchema = z.object({
   page: pageContextSchema,
 });
 
+export const parseRequestSchema = z.object({
+  page: pageContextSchema,
+});
+
 export const startersRequestSchema = z.object({
   contactId: z.uuid().nullish(),
   page: pageContextSchema,
@@ -190,10 +195,11 @@ export const contactSearchRequestSchema = z.object({
 /* Drift guards. If a schema and its contract type diverge, these stop compiling. */
 const _resolve: Exact<z.infer<typeof resolveRequestSchema>, ResolveRequest> = true;
 const _page: Exact<z.infer<typeof pageContextSchema>, PageContext> = true;
+const _parse: Exact<z.infer<typeof parseRequestSchema>, ParseRequest> = true;
 const _starters: Exact<z.infer<typeof startersRequestSchema>, StartersRequest> = true;
 const _save: Exact<z.infer<typeof saveContactRequestSchema>, SaveContactRequest> = true;
 const _log: Exact<z.infer<typeof logInteractionRequestSchema>, LogInteractionRequest> = true;
 const _followUp: Exact<z.infer<typeof followUpRequestSchema>, FollowUpRequest> = true;
-void [_resolve, _page, _starters, _save, _log, _followUp];
+void [_resolve, _page, _parse, _starters, _save, _log, _followUp];
 
 export type { ContactSearchResponse };

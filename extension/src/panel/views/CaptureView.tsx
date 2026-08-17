@@ -46,7 +46,11 @@ export function CaptureView({
   onSaved: (contactId: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
 }) {
-  const draft = useRecordDraft(page, state.resolved?.suggested ?? null);
+  const draft = useRecordDraft(
+    page,
+    state.resolved?.suggested ?? null,
+    state.parsed
+  );
   const [hovered, setHovered] = useState<RecordField | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,6 +66,7 @@ export function CaptureView({
         ? `You corrected ${hovered.label}`
         : `${hovered.label} ${humanSource(hovered.source)}`;
     }
+    if (state.parsing) return "Reading the rest of this page…";
     if (loginWalled) return "LinkedIn hid most of this. Add what you know.";
     if (draft.fromPageCount === 0) {
       return "This page didn't say much. Add what you know.";
@@ -69,7 +74,10 @@ export function CaptureView({
     if (draft.editedLabels.length > 0) {
       return `You corrected ${draft.editedLabels.join(", ")} · ${draft.fromPageCount} from the page`;
     }
-    return `Read from this page · ${draft.fromPageCount} field${draft.fromPageCount === 1 ? "" : "s"}`;
+    const plural = draft.fromPageCount === 1 ? "" : "s";
+    return draft.aiCount > 0
+      ? `Read from this page · ${draft.fromPageCount} field${plural}, ${draft.aiCount} inferred`
+      : `Read from this page · ${draft.fromPageCount} field${plural}`;
   })();
 
   const save = async (force = false) => {

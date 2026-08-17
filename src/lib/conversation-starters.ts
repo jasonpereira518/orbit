@@ -485,7 +485,7 @@ const startersResponseSchema = z.object({
  * fenced and explicitly labelled as untrusted data. Control characters are
  * stripped so a payload can't fake the fence.
  */
-function untrustedPageBlock(page: PageContext): string {
+export function untrustedPageBlock(page: PageContext): string {
   const blob = page.text.blob
      
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, " ")

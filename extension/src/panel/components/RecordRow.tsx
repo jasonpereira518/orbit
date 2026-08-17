@@ -13,7 +13,7 @@ import type { FieldConfidence } from "@contract";
 import { cn } from "@/lib/cn";
 import { CompanyMark } from "./ui";
 
-export type FieldOrigin = "page" | "server" | "user";
+export type FieldOrigin = "page" | "ai" | "server" | "user";
 
 export type RecordField = {
   key: string;
@@ -60,6 +60,8 @@ export function humanSource(source: string | null): string {
       return "from the email thread";
     case "mailto":
       return "from a mailto link";
+    case "ai":
+      return "read from the page text";
     default:
       return "read from this page";
   }

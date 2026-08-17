@@ -14,6 +14,7 @@ import type {
   ContactFieldSuggestion,
   FieldConfidence,
   PageContext,
+  ParsedProfileFields,
 } from "@contract";
 import type { FieldOrigin, RecordField } from "../components/RecordRow";
 
@@ -77,7 +78,8 @@ export type RecordDraft = {
 
 export function useRecordDraft(
   page: PageContext | null,
-  suggested: ContactFieldSuggestion | null
+  suggested: ContactFieldSuggestion | null,
+  parsed: ParsedProfileFields | null = null
 ) {
   const [edits, setEdits] = useState<Partial<Record<FieldKey, string>>>({});
   const [revealed, setRevealed] = useState<FieldKey[]>([]);
@@ -86,6 +88,15 @@ export function useRecordDraft(
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const touchedHowMet = useRef(false);
 
+  /**
+   * Precedence: what the user typed, then what the page structurally said, then
+   * what a model read from the page text, then the server's suggestion.
+   *
+   * The first rule is the one that matters. A model call lands one to three
+   * seconds after the record is on screen and editable, so it will routinely
+   * arrive *after* someone has started correcting a field. Overwriting them
+   * then would be worse than never filling the field at all.
+   */
   const cells = useMemo(() => {
     const out = {} as Record<FieldKey, Cell>;
     for (const key of Object.keys(LABELS) as FieldKey[]) {
@@ -96,9 +107,30 @@ export function useRecordDraft(
         out[key] = { ...local, value: edited, origin: "user" };
         continue;
       }
-      // The server refines only what the page didn't already answer well.
+      if (local.value) {
+        out[key] = local;
+        continue;
+      }
+
+      const parsedValue = parsed?.[key as keyof ParsedProfileFields];
+      if (typeof parsedValue === "string" && parsedValue) {
+        out[key] = {
+          value: parsedValue,
+          source: "ai",
+          // The model tells us which fields it was unsure about; show that
+          // rather than presenting every inferred value with equal certainty.
+          confidence: parsed?.lowConfidence?.includes(
+            key === "fullName" ? "full_name" : key
+          )
+            ? "low"
+            : "medium",
+          origin: "ai",
+        };
+        continue;
+      }
+
       const serverValue = suggested?.[key as keyof ContactFieldSuggestion];
-      if (!local.value && typeof serverValue === "string" && serverValue) {
+      if (typeof serverValue === "string" && serverValue) {
         out[key] = {
           value: serverValue,
           source: null,
@@ -110,7 +142,7 @@ export function useRecordDraft(
       out[key] = local;
     }
     return out;
-  }, [page, suggested, edits]);
+  }, [page, suggested, parsed, edits]);
 
   const visible: FieldKey[] = useMemo(() => {
     const keys = [...CORE];
@@ -171,8 +203,9 @@ export function useRecordDraft(
 
   const editedLabels = (Object.keys(edits) as FieldKey[]).map((k) => LABELS[k]);
   const fromPageCount = fields.filter(
-    (f) => f.origin === "page" && f.value && !f.readOnly
+    (f) => (f.origin === "page" || f.origin === "ai") && f.value && !f.readOnly
   ).length;
+  const aiCount = fields.filter((f) => f.origin === "ai" && f.value).length;
 
   return {
     fields,
@@ -190,6 +223,7 @@ export function useRecordDraft(
     focusKey,
     editedLabels,
     fromPageCount,
+    aiCount,
     /** Values the save call should send. */
     toFields: () => ({
       fullName: cells.fullName.value.trim(),
@@ -203,6 +237,10 @@ export function useRecordDraft(
       xHandle: suggested?.xHandle ?? undefined,
       photoUrl: suggested?.photoUrl ?? undefined,
       tagNames: suggested?.tagNames ?? undefined,
+      keyFacts: parsed?.keyFacts?.length ? parsed.keyFacts : undefined,
+      sharedInterests: parsed?.sharedInterests?.length
+        ? parsed.sharedInterests
+        : undefined,
     }),
   };
 }
