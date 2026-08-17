@@ -13,6 +13,7 @@ export type PanelPhase =
   | "loading"
   | "signed-out"
   | "unsupported"
+  | "needs-permission"
   | "error"
   | "ready";
 
@@ -29,6 +30,8 @@ export type PanelState = {
   error: string | null;
   /** Set when the user navigated away while holding unsaved work. */
   pendingUrl: string | null;
+  /** The origin to ask for, when we could see the URL but not run on it. */
+  pendingOrigin: string | null;
 };
 
 const INITIAL: PanelState = {
@@ -43,6 +46,7 @@ const INITIAL: PanelState = {
   startersDegraded: false,
   error: null,
   pendingUrl: null,
+  pendingOrigin: null,
 };
 
 export function usePanel() {
@@ -105,8 +109,9 @@ export function usePanel() {
     if (!read.ok) {
       setState((s) => ({
         ...s,
-        phase: "unsupported",
+        phase: read.reason === "no-permission" ? "needs-permission" : "unsupported",
         pageError: read.message,
+        pendingOrigin: read.origin ?? null,
         resolving: false,
       }));
       return;

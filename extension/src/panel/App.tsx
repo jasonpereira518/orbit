@@ -14,6 +14,7 @@ import { OrbitGlyph } from "./components/orbit";
 import { Button, Meta, Skeleton } from "./components/ui";
 import { AmbiguousView } from "./views/AmbiguousView";
 import { CaptureView } from "./views/CaptureView";
+import { GrantAccessView } from "./views/GrantAccessView";
 import { KnownContactView } from "./views/KnownContactView";
 import { usePanel } from "./state/usePanel";
 
@@ -80,6 +81,9 @@ export function App() {
     if (state.phase === "signed-out") {
       return <VerdictZone tone="accent">Not signed in</VerdictZone>;
     }
+    if (state.phase === "needs-permission") {
+      return <VerdictZone tone="accent">Waiting on your go-ahead</VerdictZone>;
+    }
     if (state.phase === "unsupported") {
       return <VerdictZone>Can&apos;t read this page</VerdictZone>;
     }
@@ -138,6 +142,15 @@ export function App() {
               <Meta>Orbit only reads a page when you click the icon.</Meta>
             </div>
           }
+        />
+      );
+    }
+
+    if (state.phase === "needs-permission") {
+      return (
+        <GrantAccessView
+          pendingOrigin={state.pendingOrigin}
+          onGranted={() => void reload()}
         />
       );
     }

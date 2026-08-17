@@ -1,12 +1,17 @@
 import type { PageContext } from "@contract";
 
+export type PageReadReason =
+  | "restricted"
+  | "no-tab"
+  | "no-permission"
+  | "injection-failed";
+
 export type PageReadResult =
   | { ok: true; page: PageContext }
-  | { ok: false; reason: "restricted" | "no-tab" | "injection-failed"; message: string };
+  | { ok: false; reason: PageReadReason; message: string; origin?: string };
 
-/** Pages Chrome refuses to inject into. Worth naming so the popup can say why. */
-function restrictedReason(url: string | undefined): string | null {
-  if (!url) return "Orbit can't read this page.";
+/** Pages Chrome refuses to inject into. Worth naming so the panel can say why. */
+function restrictedReason(url: string): string | null {
   if (/^(chrome|edge|about|devtools|view-source):/i.test(url)) {
     return "Orbit can't read browser pages.";
   }
@@ -15,6 +20,16 @@ function restrictedReason(url: string | undefined): string | null {
   }
   if (/^file:/i.test(url)) return "Orbit can't read local files.";
   return null;
+}
+
+function originOf(url: string): string | undefined {
+  try {
+    const { protocol, hostname } = new URL(url);
+    if (!/^https?:$/.test(protocol)) return undefined;
+    return `${protocol}//${hostname}/*`;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -33,6 +48,21 @@ export async function readActivePage(): Promise<PageReadResult> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) {
     return { ok: false, reason: "no-tab", message: "No active tab." };
+  }
+
+  // An empty `url` on a real tab means we hold no permission for it.
+  //
+  // This is the side panel's central difference from a popup. `activeTab` is
+  // granted by "executing an action" — but when the action's job is to open the
+  // side panel, Chrome does not fire the action and does not grant it. So a
+  // panel opened from the toolbar can see that a tab exists and nothing more,
+  // and the only way through is an explicit host permission for the site.
+  if (!tab.url) {
+    return {
+      ok: false,
+      reason: "no-permission",
+      message: "Orbit needs your go-ahead to read this site.",
+    };
   }
 
   const restricted = restrictedReason(tab.url);
@@ -64,11 +94,13 @@ export async function readActivePage(): Promise<PageReadResult> {
     }
     return { ok: true, page: value };
   } catch {
-    // activeTab is granted per click and revoked on cross-origin navigation.
+    // We could see the URL but not run on it — a host permission was revoked,
+    // or this is a page Chrome protects. Offer the grant for its origin.
     return {
       ok: false,
-      reason: "injection-failed",
-      message: "Click the Orbit icon again to read this page.",
+      reason: "no-permission",
+      message: "Orbit needs your go-ahead to read this site.",
+      origin: originOf(tab.url),
     };
   }
 }
