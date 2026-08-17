@@ -9,7 +9,7 @@
  * run the existing scoring over that.
  */
 
-import { and, eq, ilike, isNotNull, ne, or, sql } from "drizzle-orm";
+import { and, eq, ilike, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, interactions, reminders } from "@/db/schema";
 import type { Contact } from "@/db/schema";
@@ -196,7 +196,7 @@ export type SnapshotBundle = {
   starterContext: Omit<StarterContext, "mode" | "page" | "networkOverlap" | "changes">;
 };
 
-async function buildSnapshot(
+export async function buildSnapshot(
   userId: string,
   contactId: string,
   goals: string[]
@@ -418,16 +418,14 @@ async function loadNetworkOverlap(
 /* Entry point                                                                */
 /* -------------------------------------------------------------------------- */
 
-export async function resolveContactFromPage(
-  userId: string,
-  page: PageContext
-): Promise<ResolveResponse> {
+/**
+ * Score a page against the user's contacts. Exported so the save path can rerun
+ * the same check server-side rather than trusting the client's `mode` — which
+ * is what stops a double-clicked popup from filling a CRM with duplicates.
+ */
+export async function matchesForPage(userId: string, page: PageContext) {
   const probe = probeFromPage(page);
-  const [candidateRows, goals] = await Promise.all([
-    loadCandidates(userId, probe),
-    listActiveGoalTextsForUser(userId),
-  ]);
-
+  const candidateRows = await loadCandidates(userId, probe);
   const matches = findDuplicateCandidates(candidateRows, {
     fullName: probe.fullName,
     email: probe.email,
@@ -436,8 +434,19 @@ export async function resolveContactFromPage(
     company: probe.company,
     title: probe.title,
   });
+  return { probe, matches, status: classify(matches) };
+}
 
-  const status = classify(matches);
+export { toCandidate };
+
+export async function resolveContactFromPage(
+  userId: string,
+  page: PageContext
+): Promise<ResolveResponse> {
+  const [{ probe, matches, status }, goals] = await Promise.all([
+    matchesForPage(userId, page),
+    listActiveGoalTextsForUser(userId),
+  ]);
   const suggested = suggestionFromProbe(probe, page);
 
   if (status === "confident") {
