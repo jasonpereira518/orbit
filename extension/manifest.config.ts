@@ -72,7 +72,11 @@ export default defineManifest({
   // clicks the toolbar icon — so installing shows no "read your data on
   // linkedin.com" warning, and the extension structurally cannot read or fetch
   // any site in the background.
-  permissions: ["activeTab", "scripting", "storage"],
+  // "cookies" is required by @clerk/chrome-extension's syncHost mode: sharing
+  // the web app's session means reading its session cookie from the Orbit
+  // origin. It is scoped by host_permissions below, so it grants nothing on
+  // LinkedIn or anywhere else.
+  permissions: ["activeTab", "scripting", "storage", "cookies"],
   host_permissions: [`${appOrigin}/*`, ...clerkHosts],
 
   // Declared but never requested in v1. Declaring costs no install-time warning

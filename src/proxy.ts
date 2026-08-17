@@ -31,12 +31,17 @@ const configured = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
  * its stable ID (pinned by the `key` field in its manifest), and
  * NEXT_PUBLIC_APP_URL must match the host users actually browse.
  */
-const extensionOrigin = process.env.EXTENSION_ORIGIN?.trim();
-const authorizedParties = extensionOrigin
-  ? [extensionOrigin, process.env.NEXT_PUBLIC_APP_URL?.trim()].filter(
-      (value): value is string => Boolean(value)
-    )
-  : [];
+const extensionOrigins = (process.env.EXTENSION_ORIGIN ?? "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+
+const authorizedParties =
+  extensionOrigins.length > 0
+    ? [...extensionOrigins, process.env.NEXT_PUBLIC_APP_URL?.trim()].filter(
+        (value): value is string => Boolean(value)
+      )
+    : [];
 
 function withPathname(req: Request) {
   const requestHeaders = new Headers(req.headers);
