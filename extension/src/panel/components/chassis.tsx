@@ -83,6 +83,7 @@ export function IdentityZone({
   const name = pageDisplayName(page);
   const subtitle = pageSubtitle(page);
   const company = page.identity.company?.value ?? null;
+  const title = page.identity.title?.value ?? null;
 
   return (
     <div
@@ -100,9 +101,11 @@ export function IdentityZone({
           {name ?? "This page"}
         </p>
         <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--muted-foreground)]">
+          {title ? <span className="shrink-0 truncate">{title}</span> : null}
+          {title && company ? <span aria-hidden>·</span> : null}
           {company ? (
             <CompanyMark company={company} className="min-w-0" />
-          ) : subtitle ? (
+          ) : !title && subtitle ? (
             <span className="truncate">{subtitle}</span>
           ) : null}
         </div>

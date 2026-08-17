@@ -168,7 +168,7 @@ export function CaptureView({
                   draft.setHowMet(suggestion);
                   onDirtyChange?.(true);
                 }}
-                className="text-[11px] text-[var(--muted-foreground)] underline-offset-2 hover:text-[var(--foreground)] hover:underline"
+                className="rounded-full border border-[var(--border)] px-2 py-0.5 text-[11px] text-[var(--muted-foreground)] transition-colors hover:border-[var(--ring)] hover:text-[var(--foreground)]"
               >
                 {suggestion}
               </button>

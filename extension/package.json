@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Orbit browser extension — see who you already know on the pages you're reading.",
+  "description": "Orbit browser extension \u2014 see who you already know on the pages you're reading.",
   "scripts": {
     "dev": "vite",
     "build": "npm run check:tokens && npm run build:inject && vite build",
@@ -12,7 +12,8 @@
     "lint": "eslint src",
     "check:tokens": "node scripts/tokens.mjs check",
     "zip": "npm run build && node scripts/zip.mjs",
-    "tokens:sync": "node scripts/tokens.mjs sync"
+    "tokens:sync": "node scripts/tokens.mjs sync",
+    "preview:design": "vite --config vite.preview.config.ts"
   },
   "dependencies": {
     "@clerk/chrome-extension": "^3.1.71",
