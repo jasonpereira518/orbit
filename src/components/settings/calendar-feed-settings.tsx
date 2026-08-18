@@ -79,16 +79,26 @@ export function CalendarFeedSettings() {
     };
   }, [reloadKey]);
 
+  // Mutations get the same timeout as the initial load. Without it a stalled
+  // create/regenerate/disable never rejects, so this catch never runs and the
+  // button simply does nothing — a silent no-op with no way to tell it failed.
   function run(label: string, fn: () => Promise<CalendarFeedStatus>) {
     start(async () => {
       try {
-        const next = await fn();
+        const next = await withTimeout(fn(), LOAD_TIMEOUT_MS);
         setStatus(next);
         setConfirmingRegen(false);
         setRevealed(false);
         toast.success(label);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Something went wrong");
+        const timedOut = err instanceof Error && err.message === TIMED_OUT;
+        toast.error(
+          timedOut
+            ? "That took too long. Please try again."
+            : err instanceof Error
+              ? err.message
+              : "Something went wrong"
+        );
       }
     });
   }
