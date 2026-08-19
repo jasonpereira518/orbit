@@ -1,6 +1,5 @@
-import { HeroPin } from "@/components/landing/hero-pin";
-import { LandingHeader } from "@/components/landing/landing-header";
 import { LandingHeroCopy } from "@/components/landing/landing-hero";
+import { LandingPageShell } from "@/components/landing/landing-page-shell";
 import { LandingHowItWorks } from "@/components/landing/landing-how-it-works";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
 import {
@@ -31,8 +30,8 @@ export function LandingPage({
     <div className="landing-root relative overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
       <LandingStarfield />
 
-      <HeroPin
-        header={<LandingHeader {...authProps} />}
+      <LandingPageShell
+        {...authProps}
         heroCopy={<LandingHeroCopy {...authProps} />}
         claim={
           <>
@@ -49,15 +48,15 @@ export function LandingPage({
             </p>
           </>
         }
-      />
-
-      <SceneConstellations />
-      <SceneComets />
-      {/* The loop answers the pain Comets just stated — placing it before
-       * that beat would turn it into a feature tour. */}
-      <LandingHowItWorks />
-      <SceneFeatures />
-      <SceneFinale {...authProps} />
+      >
+        <SceneConstellations />
+        <SceneComets />
+        {/* The loop answers the pain Comets just stated — placing it before
+         * that beat would turn it into a feature tour. */}
+        <LandingHowItWorks />
+        <SceneFeatures />
+        <SceneFinale {...authProps} />
+      </LandingPageShell>
     </div>
   );
 }

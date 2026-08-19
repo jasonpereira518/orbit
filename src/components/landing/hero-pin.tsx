@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { forwardRef, useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { motion, useScroll, useTransform } from "motion/react";
 import { scrub01 } from "@/lib/motion";
 import { cn } from "@/lib/utils";
@@ -39,15 +39,13 @@ function subscribeLg(cb: () => void) {
  * is the single reduced-motion gate for the scene: reduced ⇒ no pin, no
  * bindings, static composition with the claim as a normal flow section.
  */
-export function HeroPin({
-  header,
-  heroCopy,
-  claim,
-}: {
-  header: React.ReactNode;
-  heroCopy: React.ReactNode;
-  claim: React.ReactNode;
-}) {
+export const HeroPin = forwardRef<
+  HTMLElement,
+  {
+    heroCopy: ReactNode;
+    claim: ReactNode;
+  }
+>(function HeroPin({ heroCopy, claim }, ref) {
   const wrapRef = useRef<HTMLElement | null>(null);
   const reduced = usePrefersReducedMotion();
   const isLg = useSyncExternalStore(
@@ -151,8 +149,14 @@ export function HeroPin({
     useTransform(scrollYProgress, (v) => scrub01(v, 0.74, 0.84)),
   ];
 
+  function setWrapRef(node: HTMLElement | null) {
+    wrapRef.current = node;
+    if (typeof ref === "function") ref(node);
+    else if (ref) ref.current = node;
+  }
+
   return (
-    <section ref={wrapRef} className={reduced ? "relative" : "relative h-[260svh]"}>
+    <section ref={setWrapRef} className={reduced ? "relative" : "relative h-[260svh]"}>
       <div
         ref={frameRef}
         className={cn(
@@ -160,7 +164,9 @@ export function HeroPin({
           reduced ? "min-h-svh" : "sticky top-0 h-svh overflow-hidden"
         )}
       >
-        {header}
+        {/* Fixed header overlays the hero; reserve its height so copy/grid
+         * stay vertically centered where they were when the header lived here. */}
+        <div aria-hidden className="shrink-0 h-[4.5rem] md:h-[4.75rem]" />
 
         <main className="relative z-10 flex flex-1 flex-col justify-center px-6 pb-8 pt-4 md:px-10 md:pb-10">
           <div className="mx-auto grid w-full max-w-6xl -translate-y-4 items-center gap-10 md:-translate-y-6 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:gap-12">
@@ -225,4 +231,4 @@ export function HeroPin({
       )}
     </section>
   );
-}
+});
