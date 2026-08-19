@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__claude-in-chrome__read_console_messages",
+      "mcp__Claude_Browser__read_page",
+      "mcp__claude-in-chrome__tabs_context_mcp",
+      "mcp__Claude_Browser__preview_logs",
+      "mcp__Claude_Browser__read_console_messages",
+      "mcp__Claude_Browser__get_page_text",
+      "mcp__Claude_Browser__find",
+      "mcp__plugin_claude-mem_mcp-search__get_observations",
+      "mcp__Claude_Preview__preview_screenshot",
+      "mcp__claude-in-chrome__read_network_requests",
+      "mcp__claude-in-chrome__find"
+    ]
+  }
+}
