@@ -1,11 +1,12 @@
 "use client";
 
-import { forwardRef, useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
+import { forwardRef, useEffect, useRef, type ReactNode } from "react";
 import { motion, useScroll, useTransform } from "motion/react";
 import { scrub01 } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { LandingSolarSystem } from "@/components/landing/landing-visuals";
+import { useIsLg } from "@/components/landing/use-is-lg";
 
 /* Resting camera angle — keep in sync with BASE_TILT_X/Y in
  * hero-solar-system.tsx (not imported: a value import would pull the
@@ -22,12 +23,6 @@ const RING_LABELS = [
   { text: "Still warm", r: 156, side: -1 },
   { text: "Drifting", r: 234, side: -1 },
 ];
-
-function subscribeLg(cb: () => void) {
-  const mq = window.matchMedia("(min-width: 1024px)");
-  mq.addEventListener("change", cb);
-  return () => mq.removeEventListener("change", cb);
-}
 
 /**
  * Pin orchestrator for the hero → orbits scene. The wrapper spans 260svh;
@@ -48,11 +43,7 @@ export const HeroPin = forwardRef<
 >(function HeroPin({ heroCopy, claim }, ref) {
   const wrapRef = useRef<HTMLElement | null>(null);
   const reduced = usePrefersReducedMotion();
-  const isLg = useSyncExternalStore(
-    subscribeLg,
-    () => window.matchMedia("(min-width: 1024px)").matches,
-    () => false
-  );
+  const isLg = useIsLg();
 
   // Hooks run unconditionally; `reduced` gates the *bindings* below.
   const { scrollYProgress } = useScroll({

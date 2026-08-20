@@ -18,6 +18,9 @@ const nextConfig: NextConfig = {
       "motion",
       "@clerk/nextjs",
       "@clerk/ui",
+      // three's entry is a barrel; deep-path rewriting is what keeps the
+      // lazy earth-globe chunk from pulling loaders/controls/post-processing.
+      "three",
     ],
     // Capture media (voice/photos) is sent as base64 through server actions.
     serverActions: {

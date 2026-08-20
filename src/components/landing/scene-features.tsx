@@ -62,10 +62,12 @@ const ALSO_IN_ORBIT = [
 ];
 
 export function SceneFeatures() {
+  // lg:pt-10 — the how-it-works pin hands off with the departing globe still
+  // filling the top of the frame, so a full py-24 here opened a dead gap.
   return (
     <section
       aria-labelledby="landing-features-heading"
-      className="landing-scene scene-features relative z-10 px-6 py-24 md:px-10"
+      className="landing-scene scene-features relative z-10 px-6 py-24 md:px-10 lg:pt-10"
     >
       <div className="mx-auto w-full max-w-6xl">
         <div id="landing-features" className="max-w-xl">

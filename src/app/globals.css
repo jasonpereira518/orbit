@@ -882,8 +882,14 @@
 .scene-comets {
   --scene-size: 575px;
 }
+/* The Earth-journey scene opts out of the skip entirely, so it needs no
+ * --scene-size. Its height comes from the pin wrapper's explicit PIN_SVH
+ * (how-it-works-choreography.ts), and contain-intrinsic-size would replace
+ * exactly that with a guess while the section is off screen — the jump-past
+ * hazard the sizes above exist to avoid. The pin only ever paints one
+ * viewport, so there is nothing to save by skipping it. */
 .scene-how {
-  --scene-size: 1250px;
+  content-visibility: visible;
 }
 .scene-features {
   --scene-size: 2000px;
@@ -901,9 +907,6 @@
   }
   .scene-comets {
     --scene-size: 540px;
-  }
-  .scene-how {
-    --scene-size: 780px;
   }
   .scene-features {
     --scene-size: 2900px;
