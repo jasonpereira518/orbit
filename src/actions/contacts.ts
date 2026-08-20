@@ -28,6 +28,7 @@ import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import {
   AVATAR_BACKFILL_BATCH_SIZE,
+  AvatarStorageError,
   downloadAndPersistAvatar,
   fetchLinkedInPhotoUrl,
   isUnusableAvatarUrl,
@@ -542,9 +543,21 @@ export async function listLinkedInRefreshTargets(): Promise<{
 export type AvatarBackfillResult = {
   saved: number;
   savedIds: string[];
+  /**
+   * Contacts we tried and couldn't resolve. Pass them back as `skipIds` so the
+   * next batch moves past them instead of retrying the same few forever.
+   */
+  failedIds: string[];
   pending: number;
   failed: number;
   rateLimitedUntil: number | null;
+  /** Set when the photo store itself is broken — the whole run should stop. */
+  storageError: string | null;
+};
+
+export type AvatarBackfillOptions = {
+  limit?: number;
+  skipIds?: string[];
 };
 
 /**
@@ -553,13 +566,15 @@ export type AvatarBackfillResult = {
  * when the client should retry after the rate-limit reset.
  */
 export async function backfillContactAvatars(
-  limit = AVATAR_BACKFILL_BATCH_SIZE
+  options: AvatarBackfillOptions = {}
 ): Promise<AvatarBackfillResult> {
   const userId = await requireUserId();
+  const limit = options.limit ?? AVATAR_BACKFILL_BATCH_SIZE;
   const batchSize = Math.min(
     Math.max(1, Math.floor(limit) || AVATAR_BACKFILL_BATCH_SIZE),
     AVATAR_BACKFILL_BATCH_SIZE
   );
+  const skip = new Set(options.skipIds ?? []);
   const db = await getDb();
 
   const rows = await db.query.contacts.findMany({
@@ -573,6 +588,7 @@ export async function backfillContactAvatars(
 
   const needsWork = rows
     .filter((r) => {
+      if (skip.has(r.id)) return false;
       const linkedin = r.linkedinUrl?.trim();
       const stored = r.profileImageUrl?.trim() || "";
       if (!linkedin && (!stored || isUnusableAvatarUrl(stored))) return false;
@@ -609,16 +625,20 @@ export async function backfillContactAvatars(
     return {
       saved: 0,
       savedIds: [],
+      failedIds: [],
       pending: 0,
       failed: 0,
       rateLimitedUntil: null,
+      storageError: null,
     };
   }
 
   let saved = 0;
   const savedIds: string[] = [];
+  const failedIds: string[] = [];
   let failed = 0;
   let rateLimitedUntil: number | null = null;
+  let storageError: string | null = null;
   const batch = needsWork.slice(0, batchSize);
 
   for (const contact of batch) {
@@ -646,6 +666,7 @@ export async function backfillContactAvatars(
 
       if (!photoUrl) {
         failed += 1;
+        failedIds.push(contact.id);
         continue;
       }
 
@@ -660,11 +681,17 @@ export async function backfillContactAvatars(
         rateLimitedUntil = err.resetAt;
         break;
       }
+      if (err instanceof AvatarStorageError) {
+        // Every remaining contact would fail the same way — stop the run.
+        storageError = err.message;
+        break;
+      }
       failed += 1;
+      failedIds.push(contact.id);
     }
   }
 
-  const pending = Math.max(0, needsWork.length - saved);
+  const pending = Math.max(0, needsWork.length - saved - failedIds.length);
   if (saved > 0) {
     revalidatePath("/contacts");
     revalidatePath("/");
@@ -674,9 +701,11 @@ export async function backfillContactAvatars(
   return {
     saved,
     savedIds,
+    failedIds,
     pending,
     failed,
     rateLimitedUntil,
+    storageError,
   };
 }
 
