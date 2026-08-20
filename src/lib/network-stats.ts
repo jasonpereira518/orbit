@@ -77,31 +77,67 @@ function pickHeadline(input: {
   };
 }
 
-export async function getNetworkStats(userId: string): Promise<NetworkStats> {
+export async function getNetworkStats(
+  userId: string,
+  preloaded?: {
+    contacts: Array<{
+      relationshipScore: number | null;
+      lastInteractionAt: Date | string | null;
+      createdAt: Date | string;
+      company: string | null;
+      title: string | null;
+      industry: string | null;
+      howMet: string | null;
+      notes: string | null;
+      aiSummary: string | null;
+      keyFacts: string[] | null;
+      sharedInterests: string[] | null;
+      nextFollowUpAt: Date | string | null;
+      contactTags: Array<{ tag: { name: string } }>;
+    }>;
+    interactionCount?: number;
+    companyCount?: number;
+    goalTexts?: string[];
+  }
+): Promise<NetworkStats> {
   const db = await getDb();
 
   const [allContacts, interactionCountRows, companyCountRows, allGoals] =
     await Promise.all([
-      db.query.contacts.findMany({
-        where: eq(contacts.userId, userId),
-        with: { contactTags: { with: { tag: true } } },
-      }),
-      db
-        .select({ value: count() })
-        .from(interactions)
-        .where(eq(interactions.userId, userId)),
-      db
-        .select({ value: count() })
-        .from(companies)
-        .where(eq(companies.userId, userId)),
-      db.query.userGoals.findMany({ where: eq(userGoals.userId, userId) }),
+      preloaded?.contacts
+        ? Promise.resolve(preloaded.contacts)
+        : db.query.contacts.findMany({
+            where: eq(contacts.userId, userId),
+            with: { contactTags: { with: { tag: true } } },
+          }),
+      preloaded?.interactionCount != null
+        ? Promise.resolve([{ value: preloaded.interactionCount }])
+        : db
+            .select({ value: count() })
+            .from(interactions)
+            .where(eq(interactions.userId, userId)),
+      preloaded?.companyCount != null
+        ? Promise.resolve([{ value: preloaded.companyCount }])
+        : db
+            .select({ value: count() })
+            .from(companies)
+            .where(eq(companies.userId, userId)),
+      preloaded?.goalTexts
+        ? Promise.resolve(
+            preloaded.goalTexts.map((text) => ({ text, active: 1 as const }))
+          )
+        : db.query.userGoals.findMany({ where: eq(userGoals.userId, userId) }),
     ]);
 
   const interactionCount = interactionCountRows[0]?.value ?? 0;
   const companyCount = companyCountRows[0]?.value ?? 0;
 
   const now = new Date();
-  const activeGoals = allGoals.filter((g) => g.active).map((g) => g.text);
+  const activeGoals = preloaded?.goalTexts
+    ? preloaded.goalTexts
+    : (allGoals as Array<{ text: string; active?: number | boolean }>)
+        .filter((g) => g.active)
+        .map((g) => g.text);
 
   let innerCircle = 0;
   let closenessSum = 0;

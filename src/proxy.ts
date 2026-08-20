@@ -4,9 +4,14 @@ import { NextResponse } from "next/server";
 const isPublicRoute = createRouteMatcher([
   "/",
   "/privacy",
+  "/terms",
+  "/contact",
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/webhooks(.*)",
+  // Calendar clients (Google, Apple, Outlook) cannot complete a Clerk session. The feed
+  // is authenticated by the opaque token in its path instead.
+  "/api/calendar/(.*)",
 ]);
 
 const configured = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);

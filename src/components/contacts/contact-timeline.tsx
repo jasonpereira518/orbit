@@ -53,6 +53,7 @@ import {
   monthShort,
 } from "@/components/contacts/timeline-date-scrubber";
 import { cn } from "@/lib/utils";
+import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
 
 export type TimelineInteraction = {
   id: string;
@@ -97,6 +98,7 @@ export function ContactTimeline({
   interactions: TimelineInteraction[];
 }) {
   const router = useRouter();
+  useRefreshOnVisible();
   const listRef = useRef<HTMLDivElement>(null);
   const [pending, start] = useTransition();
   const [notesOpen, setNotesOpen] = useState<TimelineInteraction | null>(null);

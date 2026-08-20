@@ -202,15 +202,6 @@ export async function saveAiSettings(input: {
   return { ok: true, embeddingReset: Boolean(previousBackend && nextBackend && previousBackend !== nextBackend) };
 }
 
-/** @deprecated Prefer saveAiSettings */
-export async function saveApiKey(apiKey: string, aiModel?: string) {
-  return saveAiSettings({
-    provider: "gemini",
-    apiKey,
-    model: aiModel,
-  });
-}
-
 export async function clearApiKey(provider?: AiProvider) {
   const userId = await requireUserId();
   const db = await getDb();

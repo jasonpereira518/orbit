@@ -15,12 +15,13 @@ import {
 import { cn } from "@/lib/utils";
 import {
   RING_LABELS,
+  type ArmGlowData,
   type ClusterLabelData,
   type GraphNodeData,
   type NebulaData,
   type OrbitRingsData,
 } from "@/lib/graph-layout";
-import { withAlpha } from "@/lib/school-color";
+import { mixWithWhite, withAlpha } from "@/lib/school-color";
 
 /** Invisible handles pinned to the star center so edges meet the nodes. */
 function StarHandles() {
@@ -47,44 +48,48 @@ function OrbitRingsNodeComponent({
 }: NodeProps & { data: OrbitRingsData }) {
   const max = Math.max(...data.radii, 1);
   const flatten = data.flatten ?? 1;
-  const height = max * 2 * flatten;
   const labels = [5, 4, 3, 2, 1] as const;
 
+  // Circles in an unflattened frame, squashed by the wrapper — statically
+  // identical to ellipses, but the inner rotation (--galaxy-rot, driven by
+  // the ambient-motion loop) sweeps the dashes along the disk as one body.
   return (
     <div className="pointer-events-none" style={{ width: 1, height: 1 }}>
       <div
-        className={cn(
-          "absolute",
-          data.motionEnabled && "constellation-rings-spin"
-        )}
+        className="absolute"
         style={{
           left: -max,
-          top: -height / 2,
+          top: -max,
           width: max * 2,
-          height,
+          height: max * 2,
+          transform: `scaleY(${flatten})`,
         }}
       >
-        <svg
-          width={max * 2}
-          height={height}
-          className="overflow-visible"
-          aria-hidden
+        <div
+          className="absolute inset-0"
+          style={{ transform: "rotate(var(--galaxy-rot, 0rad))" }}
         >
-          {data.radii.map((r, i) => (
-            <ellipse
-              key={r}
-              cx={max}
-              cy={height / 2}
-              rx={r}
-              ry={r * flatten}
-              fill="none"
-              stroke="rgba(255,255,255,0.08)"
-              strokeWidth={1}
-              strokeDasharray={i % 2 === 0 ? "2 16" : "1 12"}
-              opacity={0.7}
-            />
-          ))}
-        </svg>
+          <svg
+            width={max * 2}
+            height={max * 2}
+            className="overflow-visible"
+            aria-hidden
+          >
+            {data.radii.map((r, i) => (
+              <circle
+                key={r}
+                cx={max}
+                cy={max}
+                r={r}
+                fill="none"
+                stroke="rgba(255,255,255,0.08)"
+                strokeWidth={1}
+                strokeDasharray={i % 2 === 0 ? "2 16" : "1 12"}
+                opacity={0.7}
+              />
+            ))}
+          </svg>
+        </div>
       </div>
       {data.showLabels &&
         data.radii.map((r, i) => {
@@ -162,11 +167,12 @@ function ContactNodeComponent({
 }: NodeProps & { data: GraphNodeData }) {
   const score = data.score || 2;
   const size = starSize(score);
-  const labelMode = data.labelMode ?? "hover";
   const glow = Math.max(4, score * 3);
-  const bright =
-    labelMode === "always" || selected || Boolean(data.spotlight);
+  const bright = selected || Boolean(data.spotlight);
   const isComet = Boolean(data.comet);
+  const isScatter = data.figureRole === "scatter";
+  // Scatter stars stay faint until hovered/selected/spotlit, then pop to full.
+  const dimmedScatter = isScatter && !selected && !data.spotlight;
 
   if (isComet) {
     const angleDeg = ((data.orbitAngle ?? 0) * 180) / Math.PI;
@@ -202,30 +208,38 @@ function ContactNodeComponent({
             }}
           />
         </div>
-        {labelMode !== "never" && (
-          <div
-            className={cn(
-              "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[130px] -translate-x-1/2 text-center transition-opacity duration-200",
-              bright ? "opacity-100" : "opacity-50 group-hover:opacity-100"
-            )}
-          >
-            <p className="truncate text-[11px] font-medium leading-tight text-[#ffb4a0]">
-              {data.label}
+        <div
+          className={cn(
+            "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[130px] -translate-x-1/2 text-center transition-opacity duration-200",
+            bright
+              ? "opacity-100"
+              : isScatter
+                ? "opacity-0 group-hover:opacity-100"
+                : "opacity-50 group-hover:opacity-100"
+          )}
+        >
+          <p className="truncate text-[11px] font-medium leading-tight text-[#ffb4a0]">
+            {data.label}
+          </p>
+          {data.company && (
+            <p className="truncate text-[9px] text-[#ff8a70]/70">
+              {data.company}
             </p>
-            {data.company && (
-              <p className="truncate text-[9px] text-[#ff8a70]/70">
-                {data.company}
-              </p>
-            )}
-          </div>
-        )}
+          )}
+        </div>
       </div>
     );
   }
 
-  const fill = "#ffffff";
+  // Figure stars carry their cluster's brand tint (near-white core, colored
+  // glow); scatter stars stay white and faint until emphasized.
+  const tint = !isScatter ? data.clusterColor : undefined;
+  const fill = tint ?? "#ffffff";
+  const core = tint ? mixWithWhite(tint, 0.75) : "#ffffff";
   const spotlightBoost = data.spotlight ? 1.55 : 1;
-  const disc = size * (data.spotlight ? 1.15 : 1);
+  const alphaScale = dimmedScatter ? 0.5 : 1;
+  const baseDisc = dimmedScatter ? Math.max(4, size * 0.55) : size;
+  const disc = baseDisc * (data.spotlight ? 1.15 : 1);
 
   return (
     <div
@@ -244,39 +258,41 @@ function ContactNodeComponent({
           data.overdue && "ring-1 ring-[#c4a35a]/80"
         )}
         style={{
-          background: `radial-gradient(circle at 35% 30%, #fff 0%, ${fill} 50%, transparent 78%)`,
+          background: `radial-gradient(circle at 35% 30%, #fff 0%, ${core} 50%, transparent 78%)`,
           boxShadow: `0 0 ${glow * spotlightBoost}px ${
             (glow / 2) * spotlightBoost
-          }px ${withAlpha(fill, 0.55 * spotlightBoost)}, 0 0 ${
+          }px ${withAlpha(fill, 0.55 * spotlightBoost * alphaScale)}, 0 0 ${
             glow * 2 * spotlightBoost
-          }px ${glow * spotlightBoost}px ${withAlpha(fill, 0.2)}`,
+          }px ${glow * spotlightBoost}px ${withAlpha(fill, 0.2 * alphaScale)}`,
         }}
         title={`${data.label}${data.company ? ` · ${data.company}` : ""}${
           data.school ? ` · ${data.school}` : ""
         }`}
       />
-      {labelMode !== "never" && (
-        <div
-          className={cn(
-            "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[130px] -translate-x-1/2 text-center transition-opacity duration-200",
-            bright ? "opacity-100" : "opacity-40 group-hover:opacity-100"
-          )}
-        >
-          <p className="truncate text-[11px] font-medium leading-tight text-white/95">
-            {data.label}
+      <div
+        className={cn(
+          "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[130px] -translate-x-1/2 text-center transition-opacity duration-200",
+          bright
+            ? "opacity-100"
+            : dimmedScatter
+              ? "opacity-0 group-hover:opacity-100"
+              : "opacity-40 group-hover:opacity-100"
+        )}
+      >
+        <p className="truncate text-[11px] font-medium leading-tight text-white/95">
+          {data.label}
+        </p>
+        {data.company && (
+          <p
+            className={cn(
+              "truncate text-[9px] text-white/45 transition-opacity duration-200",
+              bright ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+            )}
+          >
+            {data.company}
           </p>
-          {data.company && (
-            <p
-              className={cn(
-                "truncate text-[9px] text-white/45 transition-opacity duration-200",
-                bright ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-              )}
-            >
-              {data.company}
-            </p>
-          )}
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -397,6 +413,104 @@ function NebulaNodeComponent({ data }: NodeProps & { data: NebulaData }) {
             filter: `blur(${(r * 0.07).toFixed(0)}px)`,
           }}
         />
+      </div>
+    </div>
+  );
+}
+
+/** Fade the dust lanes out at the galactic core (the sun owns it) and rim. */
+const ARM_GLOW_MASK =
+  "radial-gradient(circle, transparent 0%, transparent 5%, rgba(0,0,0,0.85) 16%, rgba(0,0,0,1) 34%, rgba(0,0,0,0.75) 68%, transparent 96%)";
+
+/**
+ * Static spiral-arm glow: soft blurred bands plus faint dust specks tracing
+ * the same curves the cluster slots follow. Pure DOM/CSS — the only thing
+ * that ever animates is the wrapper's transform (rotation + breathe).
+ */
+function ArmGlowNodeComponent({ data }: NodeProps & { data: ArmGlowData }) {
+  const { arms, flatten } = data;
+
+  const { size, paths, dust } = useMemo(() => {
+    let extent = 1;
+    for (const arm of arms) {
+      for (const p of arm) {
+        extent = Math.max(extent, Math.abs(p.x), Math.abs(p.y));
+      }
+    }
+    // Head-room for the widest stroke plus the blur radius
+    const size = Math.ceil(extent * 2 + 400);
+    const half = size / 2;
+
+    const paths = arms.map((arm) =>
+      arm
+        .map(
+          (p, i) =>
+            `${i === 0 ? "M" : "L"}${(p.x + half).toFixed(1)},${(p.y + half).toFixed(1)}`
+        )
+        .join(" ")
+    );
+
+    const dust: Array<{ x: number; y: number; r: number; o: number }> = [];
+    arms.forEach((arm, ai) => {
+      for (let i = 0; i < 25; i++) {
+        const t = (i / 24) * (arm.length - 1);
+        const lo = Math.floor(t);
+        const hi = Math.min(arm.length - 1, lo + 1);
+        const frac = t - lo;
+        const px = arm[lo].x + (arm[hi].x - arm[lo].x) * frac;
+        const py = arm[lo].y + (arm[hi].y - arm[lo].y) * frac;
+        const seed = `arm${ai}-dust${i}`;
+        dust.push({
+          x: px + half + (nebulaHash(seed, 5) - 0.5) * 130,
+          y: py + half + (nebulaHash(seed, 9) - 0.5) * 130,
+          r: 1 + nebulaHash(seed, 13) * 2.4,
+          o: 0.08 + nebulaHash(seed, 17) * 0.12,
+        });
+      }
+    });
+
+    return { size, paths, dust };
+  }, [arms]);
+
+  const half = size / 2;
+
+  return (
+    <div className="pointer-events-none" style={{ width: 1, height: 1 }}>
+      <div
+        className="absolute"
+        style={{
+          left: -half,
+          top: -half,
+          width: size,
+          height: size,
+          transform: `scaleY(${flatten})`,
+        }}
+      >
+        <div
+          className="constellation-arm-glow absolute inset-0"
+          style={{
+            transform: "rotate(var(--galaxy-rot, 0rad))",
+            maskImage: ARM_GLOW_MASK,
+            WebkitMaskImage: ARM_GLOW_MASK,
+          }}
+        >
+          <svg width={size} height={size} className="overflow-visible" aria-hidden>
+            <g style={{ filter: "blur(28px)" }} strokeLinecap="round" fill="none">
+              {paths.map((d, i) => (
+                <g key={i}>
+                  <path d={d} stroke="rgba(190,205,235,0.05)" strokeWidth={170} />
+                  <path d={d} stroke="rgba(190,205,235,0.065)" strokeWidth={90} />
+                  <path d={d} stroke="rgba(190,205,235,0.08)" strokeWidth={40} />
+                </g>
+              ))}
+            </g>
+            <g fill="#cfdcf4">
+              {dust.map((p, i) => (
+                <circle key={i} cx={p.x} cy={p.y} r={p.r} opacity={p.o} />
+              ))}
+            </g>
+          </svg>
+        </div>
       </div>
     </div>
   );
@@ -524,4 +638,5 @@ export const SunNode = memo(SunNodeComponent);
 export const ContactNode = memo(ContactNodeComponent);
 export const ClusterLabelNode = memo(ClusterLabelNodeComponent);
 export const NebulaNode = memo(NebulaNodeComponent);
+export const ArmGlowNode = memo(ArmGlowNodeComponent);
 export const LabeledEdge = memo(LabeledEdgeComponent);

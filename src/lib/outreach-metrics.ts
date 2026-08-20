@@ -40,10 +40,6 @@ export function hasReplyOutcome(message: MessageMetricRow) {
   return Boolean(message.outcome && REPLY_OUTCOMES.has(message.outcome as OutreachMessageOutcome));
 }
 
-export function isPositiveReply(message: MessageMetricRow) {
-  return message.outcome === "positive_reply";
-}
-
 export function isAwaitingReply(message: MessageMetricRow) {
   return isDeliveredMessage(message) && !message.outcome;
 }
@@ -193,15 +189,6 @@ export function computeStepBreakdown(prospects: ProspectMetricRow[]) {
         successfulReplyRate: eligible > 0 ? stats.positive / eligible : null,
       };
     });
-}
-
-export function getLatestMessage(messages: MessageMetricRow[]) {
-  if (!messages.length) return null;
-  return [...messages].sort((a, b) => {
-    const aTime = new Date(a.sentAt || a.scheduledFor || 0).getTime();
-    const bTime = new Date(b.sentAt || b.scheduledFor || 0).getTime();
-    return bTime - aTime;
-  })[0];
 }
 
 export function prospectPipelineBucket(

@@ -11,10 +11,6 @@ export class UnauthorizedError extends Error {
   }
 }
 
-export function isUnauthorizedError(err: unknown): err is UnauthorizedError {
-  return err instanceof UnauthorizedError;
-}
-
 export function isClerkConfigured() {
   return Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 }
@@ -92,10 +88,20 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
   try {
     const user = await currentUser();
     if (user) {
+      const email = user.primaryEmailAddress?.emailAddress ?? "";
+      // Opportunistic backfill for accounts that predate the email column, and a safety
+      // net if a user.updated webhook is ever missed. Deliberately here rather than in
+      // bootstrapAuthenticatedUser, which runs on every authenticated request — this
+      // path already pays for the currentUser() call. Best-effort; never blocks render.
+      if (email) {
+        void import("@/lib/user-settings")
+          .then(({ setUserEmail }) => setUserEmail(user.id, email))
+          .catch(() => {});
+      }
       return {
         id: user.id,
         name: user.fullName || user.firstName || "You",
-        email: user.primaryEmailAddress?.emailAddress ?? "",
+        email,
         imageUrl: user.imageUrl,
       };
     }

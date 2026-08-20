@@ -15,6 +15,7 @@ import {
   toNamedGraphClusters,
 } from "@/lib/constellation-clusters";
 import { computeNetworkMetrics } from "@/lib/network-metrics";
+import { clientContactAvatarUrl } from "@/lib/contact-avatar-url";
 
 const AUTO_SUGGESTION_TYPES = [
   "dormant_high_value",
@@ -289,7 +290,7 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
 
 const SUGGESTION_REFRESH_TTL_MS = 30 * 60 * 1000;
 
-async function maybeRefreshOutreachSuggestions(userId: string) {
+export async function maybeRefreshOutreachSuggestions(userId: string) {
   const db = await getDb();
   const latest = await db.query.aiSuggestions.findFirst({
     where: and(
@@ -311,10 +312,11 @@ async function maybeRefreshOutreachSuggestions(userId: string) {
 
 export async function getDashboardData(
   userId: string,
-  options?: { userName?: string }
+  // userName may be a promise so the Clerk profile fetch can run concurrently
+  // with the DB queries below (its only consumer is graphPreview.summary).
+  options?: { userName?: string | Promise<string | undefined> }
 ) {
   const db = await getDb();
-  await maybeRefreshOutreachSuggestions(userId);
 
   const [allContactRows, pendingReminders, suggestions, goals, goalTexts] =
     await Promise.all([
@@ -341,7 +343,7 @@ export async function getDashboardData(
         where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
         orderBy: (g, { desc }) => [desc(g.createdAt)],
       }),
-      listActiveGoalTexts(userId),
+      listActiveGoalTexts(),
     ]);
 
   const enrichedContacts = allContactRows.map((c) => {
@@ -393,12 +395,12 @@ export async function getDashboardData(
       phone: c.phone ?? null,
       linkedinUrl: c.linkedinUrl ?? null,
       website: c.website ?? null,
-      profileImageUrl: c.profileImageUrl ?? null,
+      profileImageUrl: clientContactAvatarUrl(c.id, c.profileImageUrl),
       dormant,
     };
   });
 
-  const userName = options?.userName || "You";
+  const userName = (await options?.userName) || "You";
 
   const { clusters: builtClusters } = buildConstellationClusters(graphContacts);
   const clusters = toNamedGraphClusters(builtClusters);

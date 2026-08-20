@@ -727,13 +727,30 @@ export function scaleForStarCount(n: number) {
   return 130 + Math.min(n, 20) * 16;
 }
 
-/** Half-extent of a placed constellation figure (for cluster packing). */
+/** Members beyond this cap become faint scatter stars instead of figure stars. */
+export const FIGURE_STAR_MAX = 9;
+
+/** How many members trace the connect-the-dots figure for a cluster size. */
+export function figureStarCount(memberCount: number) {
+  return Math.max(1, Math.min(memberCount, FIGURE_STAR_MAX));
+}
+
+/** Scatter-field growth as members overflow the figure cap. */
+export function scatterFieldFactor(memberCount: number) {
+  const overflow = Math.min(Math.max(0, memberCount - FIGURE_STAR_MAX), 24);
+  return 1 + overflow * 0.012;
+}
+
+/** Half-extent of a placed cluster — capped figure plus its scatter field. */
 export function constellationFootprint(starCount: number) {
-  return scaleForStarCount(Math.max(1, starCount)) + 90;
+  const n = Math.max(1, starCount);
+  return scaleForStarCount(figureStarCount(n)) * scatterFieldFactor(n) + 90;
 }
 
 /**
  * Assign classic constellation figures across clusters (same order → same shapes).
+ * Figures are capped at FIGURE_STAR_MAX stars — the cluster's top members trace
+ * the figure and the rest scatter — so shapes stay recognizable at any size.
  * Uses avoidIds to reduce immediate repeats among equal-size clusters.
  */
 export function assignClusterShapes(
@@ -742,9 +759,11 @@ export function assignClusterShapes(
   const out = new Map<string, ConstellationShape>();
   const used = new Set<string>();
   for (const cluster of clusters) {
-    const shape = resolveConstellationShape(cluster.contactIds.length, cluster.id, {
-      avoidIds: used,
-    });
+    const shape = resolveConstellationShape(
+      figureStarCount(cluster.contactIds.length),
+      cluster.id,
+      { avoidIds: used }
+    );
     used.add(canonicalShapeId(shape.id));
     out.set(cluster.id, shape);
   }

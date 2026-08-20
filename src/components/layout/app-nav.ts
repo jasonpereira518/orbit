@@ -10,6 +10,7 @@ import {
   Settings,
   MoreHorizontal,
   Bell,
+  BookOpen,
 } from "lucide-react";
 
 export type AppNavItem = {
@@ -58,6 +59,11 @@ const OUTREACH: AppNavItem = {
   label: "Outreach",
   icon: Send,
 };
+const KNOWLEDGE: AppNavItem = {
+  href: "/knowledge",
+  label: "Knowledge",
+  icon: BookOpen,
+};
 
 /** Primary sidebar destinations (above the Extras divider) */
 export const APP_NAV_CORE: AppNavItem[] = [
@@ -71,29 +77,13 @@ export const APP_NAV_CORE: AppNavItem[] = [
 ];
 
 /** Items under the Extras divider (Settings is rendered separately) */
-export const APP_NAV_EXTRAS: AppNavItem[] = [OUTREACH];
+export const APP_NAV_EXTRAS: AppNavItem[] = [OUTREACH, KNOWLEDGE];
 
 export const APP_NAV_SETTINGS: AppNavItem = {
   href: "/settings",
   label: "Settings",
   icon: Settings,
 };
-
-/** @deprecated Prefer APP_NAV_CORE */
-export const APP_NAV_NETWORK: AppNavItem[] = [
-  DASHBOARD,
-  CONTACTS,
-  REMINDERS,
-  CONSTELLATION,
-];
-
-/** @deprecated Prefer APP_NAV_CORE / APP_NAV_EXTRAS */
-export const APP_NAV_WORKSPACE: AppNavItem[] = [
-  CAPTURE,
-  CHAT,
-  IMPORTS,
-  OUTREACH,
-];
 
 export const APP_NAV: AppNavItem[] = [
   ...APP_NAV_CORE,
@@ -116,6 +106,7 @@ export const MOBILE_MORE_NAV = [
   REMINDERS,
   CONSTELLATION,
   OUTREACH,
+  KNOWLEDGE,
   APP_NAV_SETTINGS,
 ];
 

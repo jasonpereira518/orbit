@@ -17,6 +17,7 @@ import {
   inferReminderActionKind,
   isReminderActionKind,
 } from "@/lib/reminder-action-kind";
+import { revalidateReminderPaths } from "@/lib/reminder-paths";
 import {
   displayListName,
   ensureReminderLists,
@@ -28,31 +29,66 @@ import {
   completeReminder,
   generateDueFollowUps,
   getDashboardData,
+  maybeRefreshOutreachSuggestions,
   snoozeReminder,
 } from "@/lib/reminders";
 
-function revalidateReminderPaths(contactId?: string | null) {
-  revalidatePath("/");
-  revalidatePath("/dashboard");
-  revalidatePath("/reminders");
-  if (contactId) {
-    revalidatePath(`/contacts/${contactId}`);
-    revalidatePath("/graph");
-  }
-}
-
 export async function fetchDashboard() {
   const userId = await requireUserId();
-  const profile = await getCurrentUserProfile();
-  // Calendar sync can be slow; don't block the dashboard paint.
+  // Calendar sync and the suggestion rebuild are slow; run both after the
+  // response instead of on the dashboard's critical path. Suggestions are
+  // stale-while-revalidate: this load renders whatever exists, the next
+  // load sees the refresh (30-min TTL inside maybeRefresh…).
   after(() => {
+    void maybeRefreshOutreachSuggestions(userId).catch(() => {});
     void import("@/lib/calendar-sync")
       .then(({ syncDueCalendarSubscriptions }) =>
         syncDueCalendarSubscriptions(userId)
       )
       .catch(() => {});
   });
-  return getDashboardData(userId, { userName: profile?.name || "You" });
+  const data = await getDashboardData(userId, {
+    // Clerk profile fetch runs concurrently with the DB work; resolved at
+    // its single use site (graphPreview.summary.userName).
+    userName: getCurrentUserProfile()
+      .then((p) => p?.name || undefined)
+      .catch(() => undefined),
+  });
+
+  // Reuse the contact rows already loaded for the dashboard instead of a
+  // second full-network scan for NetworkStatsCard.
+  const { getNetworkStats } = await import("@/lib/network-stats");
+  const contactRows = [...data.contactById.values()];
+  const networkStats = await getNetworkStats(userId, {
+    contacts: contactRows.map((c) => ({
+      relationshipScore: c.relationshipScore,
+      lastInteractionAt: c.lastInteractionAt,
+      createdAt: c.createdAt,
+      company: c.company,
+      title: c.title,
+      industry: c.industry,
+      howMet: c.howMet,
+      notes: c.notes,
+      aiSummary: c.aiSummary,
+      keyFacts: c.keyFacts,
+      sharedInterests: c.sharedInterests,
+      nextFollowUpAt: c.nextFollowUpAt,
+      contactTags:
+        (
+          c as {
+            contactTags?: Array<{ tag: { name: string } }>;
+          }
+        ).contactTags ??
+        (Array.isArray((c as { tags?: string[] }).tags)
+          ? ((c as { tags?: string[] }).tags || []).map((name) => ({
+              tag: { name },
+            }))
+          : []),
+    })),
+    goalTexts: data.goals.map((g) => g.text),
+  });
+
+  return { data, networkStats };
 }
 
 export async function listRemindersPage(options?: {
@@ -635,7 +671,7 @@ export async function markReminderDone(id: string) {
 /** Draft a follow-up message grounded in the reminder contact's conversation history. */
 export async function draftFollowUpResponse(reminderId: string) {
   const userId = await requireUserId();
-  const goals = await listActiveGoalTexts(userId);
+  const goals = await listActiveGoalTexts();
   return generateFollowUpDraft(userId, reminderId, goals);
 }
 
@@ -651,10 +687,11 @@ export async function snoozeReminderAction(id: string, days = 7) {
 export async function listNotificationPanel() {
   const userId = await requireUserId();
   const db = await getDb();
-  const { aiSuggestions } = await import("@/db/schema");
+  const { aiSuggestions, suggestedReminders } = await import("@/db/schema");
   const now = new Date();
 
-  const [pendingReminders, contactRows, suggestions] = await Promise.all([
+  const [pendingReminders, contactRows, suggestions, datedSuggestions] =
+    await Promise.all([
     db.query.reminders.findMany({
       where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
       orderBy: (r, { asc: ascOrder }) => [ascOrder(r.dueDate)],
@@ -680,11 +717,19 @@ export async function listNotificationPanel() {
       orderBy: (s, { desc: descOrder }) => [descOrder(s.confidenceScore)],
       limit: 30,
     }),
+    db.query.suggestedReminders.findMany({
+      where: and(
+        eq(suggestedReminders.userId, userId),
+        eq(suggestedReminders.status, "pending")
+      ),
+      orderBy: (s, { asc: ascOrder }) => [ascOrder(s.dueDate)],
+      limit: 25,
+    }),
   ]);
 
   type PanelItem = {
     id: string;
-    kind: "reminder" | "follow_up" | "suggestion";
+    kind: "reminder" | "follow_up" | "suggestion" | "suggested_reminder";
     title: string;
     body: string | null;
     url: string;
@@ -692,6 +737,7 @@ export async function listNotificationPanel() {
     urgency: "due" | "upcoming" | "info";
     reminderId?: string;
     suggestionId?: string;
+    suggestedReminderId?: string;
     contactId?: string | null;
   };
 
@@ -748,6 +794,29 @@ export async function listNotificationPanel() {
       urgency: "info",
       suggestionId: s.id,
       contactId: related[0] ?? null,
+    });
+  }
+
+  for (const s of datedSuggestions) {
+    const due = new Date(s.dueDate);
+    // Deliberately "info", never "due", even once the date arrives. `dueCount` drives
+    // the bell badge and listDueNotificationItems fires OS desktop notifications off
+    // urgency === "due" — an unconfirmed AI guess must never reach either. The date is
+    // carried in the body text instead.
+    items.push({
+      id: `suggested_reminder:${s.id}`,
+      kind: "suggested_reminder",
+      title: s.title,
+      body: `${due.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })} · from your notes`,
+      url: "/reminders",
+      dueAt: due.toISOString(),
+      urgency: "info",
+      suggestedReminderId: s.id,
+      contactId: s.contactId,
     });
   }
 

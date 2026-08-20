@@ -18,6 +18,7 @@ import { sql } from "drizzle-orm";
   "contact_tags",
   "interactions",
   "reminders",
+  "suggested_reminders",
   "imports",
   "ai_suggestions",
   "contact_embeddings",

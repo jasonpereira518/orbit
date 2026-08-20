@@ -3,14 +3,16 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { toast } from "@/lib/toast";
 import {
   confirmBulkCapture,
   ingestCaptureMedia,
   parseBulkCaptureNotes,
   type BulkNotePersonPreview,
+  type SuggestedReminderPreview,
 } from "@/actions/capture";
+import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
 import { getSettings } from "@/actions/settings";
 import type {
   CaptureParseHints,
@@ -28,9 +30,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 type Decision = "pending" | "accepted" | "discarded";
+
+export type SuggestionReviewItem = SuggestedReminderPreview & {
+  checked: boolean;
+  /**
+   * Overrides which person this date belongs to, by name. Names rather than ids
+   * because the contacts do not exist yet at review time — the server resolves the
+   * name to a contact id after the person loop creates them.
+   */
+  personNameOverride: string | null;
+};
 
 type ReviewItem = BulkNotePersonPreview & {
   decision: Decision;
@@ -91,7 +104,6 @@ export function BulkNotesPanel({
   }) => void;
 }) {
   const router = useRouter();
-  const reduceMotion = useReducedMotion();
   const fileRef = useRef<HTMLInputElement>(null);
   const [notes, setNotes] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
@@ -104,6 +116,14 @@ export function BulkNotesPanel({
   const [sharedNotes, setSharedNotes] = useState<SharedNoteContext[]>([]);
   const [reviewIndex, setReviewIndex] = useState(0);
   const [slideDirection, setSlideDirection] = useState<1 | -1>(1);
+  const [suggestions, setSuggestions] = useState<SuggestionReviewItem[]>([]);
+  const [captureBatchId, setCaptureBatchId] = useState<string | null>(null);
+  const [sourceHash, setSourceHash] = useState<string | null>(null);
+  const [skipped, setSkipped] = useState<{
+    relative: number;
+    unverifiable: number;
+    past: number;
+  } | null>(null);
   const [hasApiKey, setHasApiKey] = useState(hasApiKeyProp ?? true);
   const [pending, start] = useTransition();
 
@@ -129,6 +149,19 @@ export function BulkNotesPanel({
   const discarded = items.filter((i) => i.decision === "discarded");
   const current = items[reviewIndex] ?? null;
   const isLastCard = reviewIndex >= items.length - 1 && items.length > 0;
+  const checkedDates = suggestions.filter((s) => s.checked).length;
+  const saveLabel = (() => {
+    const parts: string[] = [];
+    if (accepted.length) {
+      parts.push(
+        `${accepted.length} ${accepted.length === 1 ? "contact" : "contacts"}`
+      );
+    }
+    if (checkedDates) {
+      parts.push(`${checkedDates} ${checkedDates === 1 ? "date" : "dates"}`);
+    }
+    return parts.length ? `Save ${parts.join(" + ")}` : "Save";
+  })();
 
   function resetToPaste() {
     setStep("paste");
@@ -139,6 +172,10 @@ export function BulkNotesPanel({
     setItems([]);
     setSharedNotes([]);
     setReviewIndex(0);
+    setSuggestions([]);
+    setCaptureBatchId(null);
+    setSourceHash(null);
+    setSkipped(null);
   }
 
   function decide(decision: "accepted" | "discarded") {
@@ -188,13 +225,39 @@ export function BulkNotesPanel({
           interactionDate: i.interactionDate,
           interactionType: i.interactionType,
         }));
-        if (!payload.length) {
-          toast.error("No contacts to save — accept at least one person");
+        const checkedSuggestions = suggestions.filter((s) => s.checked);
+        if (!payload.length && !checkedSuggestions.length) {
+          toast.error("Nothing to save — accept a person or a date");
           return;
         }
-        const res = await confirmBulkCapture(payload);
+        const res = await confirmBulkCapture(
+          payload,
+          captureBatchId && sourceHash && checkedSuggestions.length
+            ? {
+                captureBatchId,
+                sourceHash,
+                items: checkedSuggestions.map((s) => ({
+                  key: s.key,
+                  title: s.title,
+                  description: s.description,
+                  rawDatePhrase: s.rawDatePhrase,
+                  dueDateIso: s.dueDateIso,
+                  yearInferred: s.yearInferred,
+                  personName: s.personNameOverride ?? s.personName,
+                  actionKind: s.actionKind,
+                  confidenceScore: s.confidenceScore,
+                  sourceExcerpt: s.sourceExcerpt,
+                })),
+              }
+            : undefined
+        );
+        const datePart = res.suggestionsStaged
+          ? `, ${res.suggestionsStaged} ${
+              res.suggestionsStaged === 1 ? "date" : "dates"
+            } to review`
+          : "";
         toast.success(
-          `Saved: ${res.created} created, ${res.updated} updated`
+          `Saved: ${res.created} created, ${res.updated} updated${datePart}`
         );
         if (onSaved) {
           onSaved(res);
@@ -393,12 +456,31 @@ export function BulkNotesPanel({
                       };
                     })
                   );
+                  const found = res.suggestedReminders || [];
+                  setCaptureBatchId(res.captureBatchId);
+                  setSourceHash(res.sourceHash);
+                  setSkipped(res.suggestionsSkipped || null);
+                  setSuggestions(
+                    found.map((s) => ({
+                      ...s,
+                      // High-confidence items start checked; the user still sees
+                      // every one before anything is written.
+                      checked: s.confidenceScore >= 60,
+                      personNameOverride: null,
+                    }))
+                  );
                   setReviewIndex(0);
                   setSlideDirection(1);
-                  setStep("review");
-                  toast.success(
-                    `Found ${res.items.length} ${res.items.length === 1 ? "person" : "people"}`
-                  );
+                  // A note can carry dates but no people — skip the person carousel.
+                  setStep(res.items.length ? "review" : "done");
+
+                  const peopleLabel = `${res.items.length} ${
+                    res.items.length === 1 ? "person" : "people"
+                  }`;
+                  const dateLabel = found.length
+                    ? `, ${found.length} ${found.length === 1 ? "date" : "dates"}`
+                    : "";
+                  toast.success(`Found ${peopleLabel}${dateLabel}`);
                 } catch (err) {
                   const message = toUserFacingError(
                     err,
@@ -477,22 +559,18 @@ export function BulkNotesPanel({
               <motion.div
                 key={current.key}
                 custom={slideDirection}
-                initial={
-                  reduceMotion
-                    ? { opacity: 0 }
-                    : { opacity: 0, x: slideDirection * 48, rotate: slideDirection * 1.5 }
-                }
+                initial={{
+                  opacity: 0,
+                  x: slideDirection * 48,
+                  rotate: slideDirection * 1.5,
+                }}
                 animate={{ opacity: 1, x: 0, rotate: 0 }}
-                exit={
-                  reduceMotion
-                    ? { opacity: 0 }
-                    : {
-                        opacity: 0,
-                        x: slideDirection * -56,
-                        rotate: slideDirection * -2,
-                      }
-                }
-                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                exit={{
+                  opacity: 0,
+                  x: slideDirection * -56,
+                  rotate: slideDirection * -2,
+                }}
+                transition={{ duration: DUR.base, ease: EASE_HOUSE }}
               >
                 <PersonReviewCard
                   item={current}
@@ -603,11 +681,25 @@ export function BulkNotesPanel({
                 </li>
               ))}
             </ul>
+          ) : suggestions.length > 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No people to save from these notes — just the dates below.
+            </p>
           ) : (
             <p className="text-sm text-muted-foreground">
               You discarded everyone. Go back to review again, or start over.
             </p>
           )}
+
+          <SuggestedRemindersReview
+            items={suggestions}
+            people={accepted.map((item) => ({
+              key: item.key,
+              name: item.parsed.name || "Unnamed",
+            }))}
+            onChange={setSuggestions}
+            skipped={skipped}
+          />
 
           <div className="flex flex-col gap-2 sm:flex-row">
             <Button
@@ -621,13 +713,11 @@ export function BulkNotesPanel({
             <Button
               type="button"
               size={compact ? "sm" : "default"}
-              disabled={pending || accepted.length === 0}
+              disabled={pending || (accepted.length === 0 && checkedDates === 0)}
               className="bg-primary text-primary-foreground hover:bg-primary/90 sm:flex-1"
               onClick={saveAccepted}
             >
-              {pending
-                ? "Saving…"
-                : `Save ${accepted.length} ${accepted.length === 1 ? "contact" : "contacts"}`}
+              {pending ? "Saving…" : saveLabel}
             </Button>
           </div>
         </div>
@@ -651,6 +741,9 @@ function PersonReviewCard({
 }) {
   const updateParsed = (patch: Partial<ParsedNote>) =>
     onChange({ ...item, parsed: { ...item.parsed, ...patch } });
+
+  const lowConfidence = new Set(item.parsed.low_confidence_fields || []);
+  const [showSource, setShowSource] = useState(false);
 
   const showPreferred =
     preferredContactId &&
@@ -688,25 +781,25 @@ function PersonReviewCard({
           compact ? "grid-cols-1" : "sm:grid-cols-2 gap-3"
         )}
       >
-        <Field label="Name">
+        <Field label="Name" lowConfidence={lowConfidence.has("name")}>
           <Input
             value={item.parsed.name || ""}
             onChange={(e) => updateParsed({ name: e.target.value })}
           />
         </Field>
-        <Field label="Company">
+        <Field label="Company" lowConfidence={lowConfidence.has("company")}>
           <Input
             value={item.parsed.company || ""}
             onChange={(e) => updateParsed({ company: e.target.value })}
           />
         </Field>
-        <Field label="Role">
+        <Field label="Role" lowConfidence={lowConfidence.has("role")}>
           <Input
             value={item.parsed.role || ""}
             onChange={(e) => updateParsed({ role: e.target.value })}
           />
         </Field>
-        <Field label="Met at">
+        <Field label="Met at" lowConfidence={lowConfidence.has("met_at")}>
           <Input
             value={item.parsed.met_at || ""}
             onChange={(e) => updateParsed({ met_at: e.target.value })}
@@ -743,6 +836,23 @@ function PersonReviewCard({
               {text}
             </p>
           ))}
+        </div>
+      )}
+
+      {item.notes.trim() && (
+        <div>
+          <button
+            type="button"
+            className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+            onClick={() => setShowSource((v) => !v)}
+          >
+            {showSource ? "Hide source text" : "Show source text"}
+          </button>
+          {showSource && (
+            <p className="mt-1.5 whitespace-pre-wrap rounded-xl border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              {item.notes}
+            </p>
+          )}
         </div>
       )}
 
@@ -856,14 +966,31 @@ function PersonReviewCard({
 function Field({
   label,
   children,
+  lowConfidence,
 }: {
   label: string;
   children: React.ReactNode;
+  lowConfidence?: boolean;
 }) {
   return (
-    <div className="space-y-1">
-      <Label className="text-xs">{label}</Label>
-      {children}
+    <div className={cn("space-y-1", lowConfidence && "rounded-lg")}>
+      <Label
+        className={cn(
+          "text-xs",
+          lowConfidence && "text-amber-700 dark:text-amber-400"
+        )}
+      >
+        {label}
+        {lowConfidence ? " *" : ""}
+      </Label>
+      <div
+        className={cn(
+          lowConfidence &&
+            "rounded-md ring-1 ring-amber-500/50 ring-offset-1 ring-offset-background"
+        )}
+      >
+        {children}
+      </div>
     </div>
   );
 }

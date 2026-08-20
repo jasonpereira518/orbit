@@ -3,11 +3,19 @@ import { getDb } from "@/db";
 import { gmailConnections } from "@/db/schema";
 import { decrypt, encrypt } from "@/lib/crypto";
 
+const GOOGLE_CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts.readonly";
+
 const GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/userinfo.email",
+  GOOGLE_CONTACTS_SCOPE,
   "openid",
 ].join(" ");
+
+/** True once a connection has re-consented to the People API scope. */
+export function hasContactsScope(scopes: string | null | undefined) {
+  return Boolean(scopes?.includes(GOOGLE_CONTACTS_SCOPE));
+}
 
 /** Canonical Gmail OAuth callback path — must match Google Cloud authorized redirect URIs. */
 export const GMAIL_CALLBACK_PATH = "/api/gmail/callback";
@@ -255,6 +263,78 @@ export async function fetchGoogleProfileEmail(accessToken: string) {
   return data.email;
 }
 
+export type GooglePeopleContact = {
+  resourceName: string;
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  company: string;
+  title: string;
+  email: string;
+  phone: string;
+  photoUrl: string | null;
+};
+
+type PeopleApiPerson = {
+  resourceName?: string;
+  names?: Array<{ displayName?: string; givenName?: string; familyName?: string }>;
+  organizations?: Array<{ name?: string; title?: string }>;
+  emailAddresses?: Array<{ value?: string }>;
+  phoneNumbers?: Array<{ value?: string }>;
+  photos?: Array<{ url?: string; default?: boolean }>;
+};
+
+/** One-shot fetch of all Google Contacts (People API), paging until exhausted. */
+export async function fetchGooglePeopleContacts(
+  accessToken: string
+): Promise<GooglePeopleContact[]> {
+  const people: GooglePeopleContact[] = [];
+  let pageToken: string | undefined;
+
+  do {
+    const url = new URL("https://people.googleapis.com/v1/people/me/connections");
+    url.searchParams.set(
+      "personFields",
+      "names,emailAddresses,organizations,photos,phoneNumbers"
+    );
+    url.searchParams.set("pageSize", "200");
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Google Contacts fetch failed: ${text.slice(0, 200)}`);
+    }
+    const data = (await res.json()) as {
+      connections?: PeopleApiPerson[];
+      nextPageToken?: string;
+    };
+
+    for (const person of data.connections || []) {
+      const name = person.names?.[0];
+      const org = person.organizations?.[0];
+      const photo = person.photos?.find((p) => !p.default);
+      people.push({
+        resourceName: person.resourceName || "",
+        fullName: name?.displayName || "",
+        firstName: name?.givenName || "",
+        lastName: name?.familyName || "",
+        company: org?.name || "",
+        title: org?.title || "",
+        email: person.emailAddresses?.[0]?.value || "",
+        phone: person.phoneNumbers?.[0]?.value || "",
+        photoUrl: photo?.url || null,
+      });
+    }
+
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+
+  return people.filter((p) => p.fullName || p.firstName || p.lastName);
+}
+
 const RECRUITER_TITLE_RE =
   /\b(recruiter|talent\s*acquisition|sourcer|staffing|headhunter|talent\s*partner|technical\s*recruiter)\b/i;
 
@@ -347,19 +427,51 @@ export async function scanGmailForRecruiters(
   }
 
   const listData = (await listRes.json()) as { messages?: GmailMessageMeta[] };
-  const messages = listData.messages || [];
+  const messages = (listData.messages || []).slice(0, maxMessages);
   const byEmail = new Map<string, GmailRecruiterCandidate>();
 
-  for (const msg of messages.slice(0, maxMessages)) {
-    const detailRes = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-    if (!detailRes.ok) continue;
-    const detail = (await detailRes.json()) as {
-      snippet?: string;
-      payload?: { headers?: Array<{ name: string; value: string }> };
-    };
+  type MessageDetail = {
+    snippet?: string;
+    payload?: { headers?: Array<{ name: string; value: string }> };
+  };
+
+  const GMAIL_DETAIL_CONCURRENCY = 8;
+  const GMAIL_DETAIL_TIMEOUT_MS = 10_000;
+  const details: (MessageDetail | null)[] = new Array(messages.length);
+  let nextIndex = 0;
+
+  async function fetchDetail(msg: GmailMessageMeta): Promise<MessageDetail | null> {
+    try {
+      const detailRes = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          signal: AbortSignal.timeout(GMAIL_DETAIL_TIMEOUT_MS),
+        }
+      );
+      if (!detailRes.ok) return null;
+      return (await detailRes.json()) as MessageDetail;
+    } catch {
+      return null;
+    }
+  }
+
+  async function worker() {
+    while (nextIndex < messages.length) {
+      const current = nextIndex++;
+      details[current] = await fetchDetail(messages[current]);
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(GMAIL_DETAIL_CONCURRENCY, messages.length) },
+      () => worker()
+    )
+  );
+
+  for (const detail of details) {
+    if (!detail) continue;
     const headers = detail.payload?.headers || [];
     const from =
       headers.find((h) => h.name.toLowerCase() === "from")?.value || "";

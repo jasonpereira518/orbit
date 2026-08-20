@@ -4,8 +4,9 @@ import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import {
-  downloadImageAsDataUrl,
-  fetchLinkedInPhotoDataUrl,
+  downloadAndPersistAvatar,
+  fetchLinkedInPhotoUrl,
+  isDurableAvatarUrl,
   isUnusableAvatarUrl,
   MicrolinkRateLimitError,
   parseImageDataUrl,
@@ -37,8 +38,9 @@ async function persistProfileImage(
 }
 
 /**
- * Serve a contact's profile photo from a durable data URL, by proxying a
- * usable remote image, or by resolving their LinkedIn OG image on demand.
+ * Serve a contact's profile photo: redirect to a durably stored photo
+ * (legacy data URL or Blob), proxy/persist a usable remote image into
+ * Blob storage, or resolve their LinkedIn OG image on demand.
  */
 export async function GET(_req: Request, { params }: Params) {
   let userId: string;
@@ -70,14 +72,18 @@ export async function GET(_req: Request, { params }: Params) {
     if (res) return res;
   }
 
-  // Proxy / persist a usable remote URL (Apollo / LinkedIn CDN, etc.).
+  // Already durably stored in Blob — send the browser straight there.
+  if (isDurableAvatarUrl(stored)) {
+    return NextResponse.redirect(stored);
+  }
+
+  // Proxy / persist a usable remote URL (Apollo / LinkedIn CDN, etc.) into Blob.
   if (stored && !isUnusableAvatarUrl(stored)) {
     try {
-      const dataUrl = await downloadImageAsDataUrl(stored);
-      if (dataUrl) {
-        await persistProfileImage(contactId, userId, dataUrl);
-        const res = dataUrlResponse(dataUrl);
-        if (res) return res;
+      const photoUrl = await downloadAndPersistAvatar(contactId, stored);
+      if (photoUrl) {
+        await persistProfileImage(contactId, userId, photoUrl);
+        return NextResponse.redirect(photoUrl);
       }
     } catch {
       // Fall through to LinkedIn resolution.
@@ -87,11 +93,10 @@ export async function GET(_req: Request, { params }: Params) {
   // No durable photo yet — resolve from LinkedIn (Microlink + Unavatar fallback).
   if (contact.linkedinUrl?.trim()) {
     try {
-      const dataUrl = await fetchLinkedInPhotoDataUrl(contact.linkedinUrl);
-      if (dataUrl) {
-        await persistProfileImage(contactId, userId, dataUrl);
-        const res = dataUrlResponse(dataUrl);
-        if (res) return res;
+      const photoUrl = await fetchLinkedInPhotoUrl(contactId, contact.linkedinUrl);
+      if (photoUrl) {
+        await persistProfileImage(contactId, userId, photoUrl);
+        return NextResponse.redirect(photoUrl);
       }
     } catch (err) {
       if (err instanceof MicrolinkRateLimitError) {

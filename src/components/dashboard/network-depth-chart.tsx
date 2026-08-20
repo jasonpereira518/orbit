@@ -76,7 +76,7 @@ export function NetworkDepthChart({
               return (
                 <div
                   key={t.key}
-                  className={cn(t.color, "transition-all")}
+                  className={cn(t.color, "transition-[width] duration-slow ease-house")}
                   style={{ width: `${width}%` }}
                   title={`${t.label}: ${tierCounts[t.key]}`}
                 />

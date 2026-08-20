@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Calendar as CalendarIcon } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   previewCalendarImport,
@@ -17,6 +18,11 @@ import {
   ImportProgress,
   type ImportProgressState,
 } from "@/components/imports/import-utils";
+import {
+  finishBackgroundJob,
+  startBackgroundJob,
+  updateBackgroundJob,
+} from "@/lib/background-jobs";
 
 type CalendarPreview = Awaited<ReturnType<typeof previewCalendarImport>>;
 
@@ -61,18 +67,23 @@ export function CalendarImportSection({
     <div className="space-y-6">
       <CalendarSubscribePanel initialSubscriptions={calendarSubscriptions} />
 
-      <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-        <div>
-          <h2 className="text-lg font-medium text-primary">
-            One-time calendar upload
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Export an ICS or CSV from Google, Apple, or Outlook. Orbit matches
-            attendees to contacts already in your network and logs those
-            meetings — it does not create new contacts from a one-time upload.
-            Use a calendar subscription above if you want Orbit to create
-            contacts from 1:1s.
-          </p>
+      <section className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-calendar/70 bg-card p-6">
+        <div className="flex items-start gap-3">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-calendar/10 text-import-calendar">
+            <CalendarIcon className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-lg font-medium text-primary">
+              One-time calendar upload
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Export an ICS or CSV from Google, Apple, or Outlook. Orbit matches
+              attendees to contacts already in your network and logs those
+              meetings — it does not create new contacts from a one-time upload.
+              Use a calendar subscription above if you want Orbit to create
+              contacts from 1:1s.
+            </p>
+          </div>
         </div>
         <ImportFilePicker
           accept=".ics,.csv,text/calendar,text/csv"
@@ -110,11 +121,11 @@ export function CalendarImportSection({
                   });
                   setCalendarPreview(res);
                   toast.success(
-                    `${res.windowedEvents} events in window · ${res.matchedEventCount} with matches`
+                    `${res.windowedEvents} events in window · ${res.matchedEventCount} with matches`,
                   );
                 } catch (err) {
                   toast.error(
-                    err instanceof Error ? err.message : "Preview failed"
+                    err instanceof Error ? err.message : "Preview failed",
                   );
                 }
               })
@@ -127,6 +138,7 @@ export function CalendarImportSection({
             className="bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={async () => {
               if (busy) return;
+              const jobId = `calendar-import-${Date.now()}`;
               try {
                 let importId: string | undefined;
                 let offset = 0;
@@ -139,6 +151,14 @@ export function CalendarImportSection({
                   done: 0,
                   total: 1,
                   label: "events",
+                  startedAt,
+                });
+                startBackgroundJob({
+                  id: jobId,
+                  kind: "calendar-import",
+                  label: "Importing calendar",
+                  done: 0,
+                  total: 1,
                   startedAt,
                 });
 
@@ -160,12 +180,15 @@ export function CalendarImportSection({
                   meetingsLogged += res.meetingsLogged;
                   contactsMatched += res.contactsMatched;
                   offset += res.eventsProcessed;
+                  const done = Math.min(offset, Math.max(total, 1));
+                  const boundedTotal = Math.max(total, 1);
                   setImportProgress({
-                    done: Math.min(offset, Math.max(total, 1)),
-                    total: Math.max(total, 1),
+                    done,
+                    total: boundedTotal,
                     label: total === 1 ? "event" : "events",
                     startedAt,
                   });
+                  updateBackgroundJob(jobId, { done, total: boundedTotal });
                 } while (offset < total);
 
                 await confirmCalendarImport({
@@ -178,17 +201,17 @@ export function CalendarImportSection({
                   chunk: { offset: total, limit: 0 },
                 });
 
-                toast.success(
-                  `Logged ${meetingsLogged} meetings across ${contactsMatched} contacts`
-                );
+                const resultMessage = `Logged ${meetingsLogged} meetings across ${contactsMatched} contacts`;
+                toast.success(resultMessage);
+                finishBackgroundJob(jobId, { status: "completed", resultMessage });
                 setCalendarPreview(null);
                 setCalendarText("");
                 setCalendarFileName(null);
                 router.refresh();
               } catch (err) {
-                toast.error(
-                  err instanceof Error ? err.message : "Import failed"
-                );
+                const message = err instanceof Error ? err.message : "Import failed";
+                toast.error(message);
+                finishBackgroundJob(jobId, { status: "failed", error: message });
               } finally {
                 setImportProgress(null);
               }

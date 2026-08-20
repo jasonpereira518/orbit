@@ -1,14 +1,16 @@
+import { put } from "@vercel/blob";
 import { linkedinSlug } from "@/lib/duplicates";
-import { isUnusableAvatarUrl } from "@/lib/contact-avatar-url";
+import { isDurableAvatarUrl, isUnusableAvatarUrl } from "@/lib/contact-avatar-url";
 
 export {
+  isDurableAvatarUrl,
   isUnusableAvatarUrl,
   resolveContactPhotoUrl,
 } from "@/lib/contact-avatar-url";
 
 /** Max raw download we'll attempt before giving up. */
 const MAX_DOWNLOAD_BYTES = 5_000_000;
-/** Target max for persisted data-URL thumbnails (after resize). */
+/** Target max for the sharp-decode fallback path (raw bytes, unresized). */
 const MAX_PERSIST_BYTES = 220_000;
 
 /** How many LinkedIn photos to resolve per backfill tick. */
@@ -84,12 +86,13 @@ export function parseImageDataUrl(
 }
 
 /**
- * Resolve a LinkedIn profile photo and return a durable data URL.
+ * Resolve a LinkedIn profile photo and return a durable Blob URL.
  * Tries Microlink (OG image) first, then Unavatar as a fallback.
  * Throws {@link MicrolinkRateLimitError} only when Microlink is limited
  * and the Unavatar fallback also fails (so callers can surface quota).
  */
-export async function fetchLinkedInPhotoDataUrl(
+export async function fetchLinkedInPhotoUrl(
+  contactId: string,
   linkedinUrl: string
 ): Promise<string | null> {
   const slug = linkedinSlug(linkedinUrl);
@@ -105,8 +108,8 @@ export async function fetchLinkedInPhotoDataUrl(
     try {
       const imageUrl = await resolveLinkedInOgImage(normalized);
       if (imageUrl) {
-        const dataUrl = await downloadImageAsDataUrl(imageUrl);
-        if (dataUrl) return dataUrl;
+        const photoUrl = await downloadAndPersistAvatar(contactId, imageUrl);
+        if (photoUrl) return photoUrl;
       }
     } catch (err) {
       if (err instanceof MicrolinkRateLimitError) {
@@ -120,7 +123,7 @@ export async function fetchLinkedInPhotoDataUrl(
 
   // Unavatar resolves public LinkedIn avatars without spending Microlink quota.
   const unavatarUrl = `https://unavatar.io/linkedin/${encodeURIComponent(slug)}?fallback=false`;
-  const fromUnavatar = await downloadImageAsDataUrl(unavatarUrl);
+  const fromUnavatar = await downloadAndPersistAvatar(contactId, unavatarUrl);
   if (fromUnavatar) return fromUnavatar;
 
   if (microlinkLimited) {
@@ -129,16 +132,17 @@ export async function fetchLinkedInPhotoDataUrl(
   return null;
 }
 
-/** Download an external image and return a compact data URL, or null on failure. */
-export async function downloadImageAsDataUrl(
+/** Download an external image and persist it to Blob storage, or null on failure. */
+export async function downloadAndPersistAvatar(
+  contactId: string,
   imageUrl: string
 ): Promise<string | null> {
-  if (imageUrl.startsWith("data:image/")) return imageUrl;
+  if (isDurableAvatarUrl(imageUrl)) return imageUrl;
   if (isUnusableAvatarUrl(imageUrl)) return null;
 
   const downloaded = await downloadImageBytes(imageUrl);
   if (!downloaded) return null;
-  return encodeAvatarDataUrl(downloaded.buf, downloaded.contentType);
+  return persistAvatarBlob(contactId, downloaded.buf, downloaded.contentType);
 }
 
 export async function downloadImageBytes(
@@ -175,31 +179,46 @@ export async function downloadImageBytes(
 }
 
 /**
- * Resize/compress to a durable avatar data URL.
+ * Resize/compress and upload to Blob storage at a stable per-contact path,
+ * so re-uploads overwrite the previous photo instead of orphaning it.
  * LinkedIn CDN photos are often >180KB — we used to drop those entirely.
  */
-export async function encodeAvatarDataUrl(
+async function persistAvatarBlob(
+  contactId: string,
   buf: Buffer,
   contentType: string
 ): Promise<string | null> {
+  let out: Buffer;
+  let outType = "image/jpeg";
   try {
     const sharp = (await import("sharp")).default;
-    const out = await sharp(buf)
+    out = await sharp(buf)
       .rotate()
       .resize(256, 256, { fit: "cover", withoutEnlargement: true })
       .jpeg({ quality: 82, mozjpeg: true })
       .toBuffer();
     if (out.byteLength === 0) return null;
-    return `data:image/jpeg;base64,${out.toString("base64")}`;
   } catch {
     // Fall back to raw bytes when sharp can't decode (rare formats).
     if (
-      contentType.startsWith("image/") &&
-      buf.byteLength > 0 &&
-      buf.byteLength <= MAX_PERSIST_BYTES
+      !contentType.startsWith("image/") ||
+      buf.byteLength === 0 ||
+      buf.byteLength > MAX_PERSIST_BYTES
     ) {
-      return `data:${contentType};base64,${buf.toString("base64")}`;
+      return null;
     }
+    out = buf;
+    outType = contentType;
+  }
+
+  try {
+    const blob = await put(`avatars/${contactId}.jpg`, out, {
+      access: "public",
+      contentType: outType,
+      addRandomSuffix: false,
+    });
+    return blob.url;
+  } catch {
     return null;
   }
 }

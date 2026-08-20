@@ -33,37 +33,38 @@ export function GenericPageSkeleton() {
   );
 }
 
-export function DashboardPageSkeleton() {
+/** Matches the reminders page body: list sidebar + reminder rows. */
+export function RemindersViewSkeleton() {
   return (
-    <div className="space-y-8">
-      <div className="space-y-4">
-        <div className="space-y-2">
-          <Skeleton className="h-4 w-24" />
-          <Skeleton className="h-10 w-56" />
-          <Skeleton className="h-4 w-80 max-w-full" />
-        </div>
-        <Skeleton className="h-10 w-full max-w-md rounded-lg" />
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="flex flex-col gap-6 md:flex-row">
+      <div className="w-full space-y-2 md:w-56">
         {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-24 rounded-2xl" />
+          <Skeleton key={i} className="h-9 rounded-lg" />
         ))}
       </div>
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Skeleton className="h-80 rounded-2xl" />
-        <Skeleton className="h-80 rounded-2xl" />
-      </div>
-      <Skeleton className="h-48 rounded-2xl" />
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Skeleton className="h-64 rounded-2xl" />
-        <Skeleton className="h-64 rounded-2xl" />
-      </div>
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Skeleton className="h-64 rounded-2xl" />
-        <Skeleton className="h-64 rounded-2xl" />
+      <div className="flex-1 space-y-2">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Skeleton key={i} className="h-16 rounded-xl" />
+        ))}
       </div>
     </div>
   );
+}
+
+/** Matches the dashboard's 4-up stat grid (also its Suspense fallback). */
+export function DashboardStatRowSkeleton() {
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <Skeleton key={i} className="h-24 rounded-2xl" />
+      ))}
+    </div>
+  );
+}
+
+/** One dashboard card slot; height matches the card it stands in for. */
+export function DashboardCardSkeleton({ className }: { className?: string }) {
+  return <Skeleton className={`rounded-2xl ${className ?? "h-64"}`} />;
 }
 
 export function ContactsPageSkeleton() {

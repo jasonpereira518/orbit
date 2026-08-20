@@ -57,7 +57,7 @@ export function OutreachPerformanceCard({
               <Link
                 key={campaign.id}
                 href={`/outreach/${campaign.id}`}
-                className="flex items-center justify-between rounded-xl border border-border/60 px-3 py-2 text-sm transition-colors hover:bg-muted/30"
+                className="flex items-center justify-between rounded-xl border border-border/60 px-3 py-2 text-sm transition-colors hover:bg-muted/40"
               >
                 <span className="truncate font-medium text-primary">
                   {campaign.name}

@@ -154,8 +154,46 @@ export async function getCampaign(campaignId: string) {
 }
 
 export async function getOutreachPerformanceSummary() {
-  const campaigns = await listCampaigns();
-  const ranked = [...campaigns]
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  // Slim projection — metrics only, no full message bodies / prospect trees.
+  const campaigns = await db.query.outreachCampaigns.findMany({
+    where: eq(outreachCampaigns.userId, userId),
+    columns: {
+      id: true,
+      name: true,
+      status: true,
+      defaultChannel: true,
+      updatedAt: true,
+    },
+    with: {
+      prospects: {
+        columns: { id: true, status: true },
+        with: {
+          messages: {
+            columns: {
+              id: true,
+              status: true,
+              outcome: true,
+              stepIndex: true,
+              channel: true,
+              sentAt: true,
+              scheduledFor: true,
+              repliedAt: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const withMetrics = campaigns.map((campaign) => ({
+    ...campaign,
+    metrics: computeCampaignMetrics(campaign.prospects),
+  }));
+
+  const ranked = [...withMetrics]
     .filter((c) => c.metrics.sentCount > 0)
     .sort((a, b) => {
       const aRate = a.metrics.successfulReplyRate ?? -1;
@@ -172,7 +210,7 @@ export async function getOutreachPerformanceSummary() {
       status: c.status,
     }));
 
-  const totals = campaigns.reduce(
+  const totals = withMetrics.reduce(
     (acc, c) => {
       acc.sent += c.metrics.sentCount;
       acc.bounced += c.metrics.bouncedCount;
@@ -465,7 +503,7 @@ export async function generateOutreachDrafts(input: {
   const userId = await requireUserId();
   const campaign = await requireCampaign(userId, input.campaignId);
   const db = await getDb();
-  const goals = await listActiveGoalTexts(userId);
+  const goals = await listActiveGoalTexts();
 
   const channel = (input.channel ||
     campaign.defaultChannel ||
@@ -549,7 +587,7 @@ export async function regenerateOutreachDraft(input: {
   const userId = await requireUserId();
   const campaign = await requireCampaign(userId, input.campaignId);
   const db = await getDb();
-  const goals = await listActiveGoalTexts(userId);
+  const goals = await listActiveGoalTexts();
 
   const prospect = await db.query.outreachProspects.findFirst({
     where: and(
@@ -851,7 +889,7 @@ export async function generateDueFollowUps(campaignId: string) {
   const userId = await requireUserId();
   const campaign = await requireCampaign(userId, campaignId);
   const db = await getDb();
-  const goals = await listActiveGoalTexts(userId);
+  const goals = await listActiveGoalTexts();
   const now = new Date();
 
   const due = await db.query.outreachMessages.findMany({

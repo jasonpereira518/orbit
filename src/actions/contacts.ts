@@ -3,18 +3,20 @@
 import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
-import {
-  contactTags,
-  contacts,
-  interactions,
-  reminders,
-  tags,
-} from "@/db/schema";
+import { contacts, interactions, reminders } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { computeCloseness } from "@/lib/closeness";
 import { listActiveGoalTexts } from "@/actions/goals";
-import { companyFieldsForWrite } from "@/lib/companies";
-import { isMetContext } from "@/lib/met-context";
+import { type CompanyResolver } from "@/lib/companies";
+import {
+  createContactForUser,
+  createContactsBulkForUser,
+  logInteractionForUser,
+  updateContactForUser,
+  type ContactInput,
+  type ContactWriteOptions,
+  type LogInteractionInput,
+} from "@/lib/contact-writes";
 import { generateAndStorePersonSummary } from "@/lib/person-summary";
 import { rebuildContactEmbedding } from "@/lib/search";
 import {
@@ -26,11 +28,15 @@ import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import {
   AVATAR_BACKFILL_BATCH_SIZE,
-  downloadImageAsDataUrl,
-  fetchLinkedInPhotoDataUrl,
+  downloadAndPersistAvatar,
+  fetchLinkedInPhotoUrl,
   isUnusableAvatarUrl,
   MicrolinkRateLimitError,
 } from "@/lib/contact-avatar";
+import {
+  clientContactAvatarUrl,
+  isDurableAvatarUrl,
+} from "@/lib/contact-avatar-url";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
 import {
   findRelatedContacts,
@@ -41,94 +47,10 @@ import {
   sendOutreachMessage,
 } from "@/lib/outreach-send";
 
-export type ContactWriteOptions = {
-  /** Skip path revalidation during bulk imports. */
-  skipRevalidate?: boolean;
-};
-
-export type ContactInput = {
-  fullName: string;
-  firstName?: string;
-  lastName?: string;
-  preferredName?: string;
-  company?: string;
-  title?: string;
-  location?: string;
-  school?: string;
-  email?: string;
-  phone?: string;
-  linkedinUrl?: string;
-  website?: string;
-  profileImageUrl?: string | null;
-  relationshipScore?: number;
-  priorityLevel?: number;
-  source?: string;
-  industry?: string;
-  metContext?: string;
-  dateMet?: string | null;
-  howMet?: string;
-  notes?: string;
-  aiSummary?: string;
-  keyFacts?: string[];
-  sharedInterests?: string[];
-  opportunities?: string[];
-  nextFollowUpAt?: string | null;
-  tagNames?: string[];
-};
-
-function normalizeMetContext(value?: string | null) {
-  if (!value?.trim()) return null;
-  return isMetContext(value) ? value : null;
-}
-
-/** Coerce date inputs into a Postgres-safe timestamptz, or null. */
-function safeTimestamp(value?: string | Date | null): Date | null {
-  if (value == null || value === "") return null;
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  const year = date.getUTCFullYear();
-  // Reject JS misparses (e.g. Excel serial "46198" → year 46198) that
-  // Postgres refuses with "time zone displacement out of range".
-  if (year < 1970 || year > 2100) return null;
-  return date;
-}
-
-async function syncTags(
-  userId: string,
-  contactId: string,
-  tagNames: string[] = []
-) {
-  const db = await getDb();
-  await db.delete(contactTags).where(eq(contactTags.contactId, contactId));
-
-  const names = [
-    ...new Set(tagNames.map((raw) => raw.trim()).filter(Boolean)),
-  ];
-  if (names.length === 0) return;
-
-  const existing = await db.query.tags.findMany({
-    where: and(eq(tags.userId, userId), inArray(tags.name, names)),
-  });
-  const byName = new Map(existing.map((tag) => [tag.name, tag]));
-
-  const missing = names.filter((name) => !byName.has(name));
-  if (missing.length > 0) {
-    const created = await db
-      .insert(tags)
-      .values(missing.map((name) => ({ userId, name })))
-      .returning();
-    for (const tag of created) {
-      byName.set(tag.name, tag);
-    }
-  }
-
-  await db.insert(contactTags).values(
-    names.map((name) => ({
-      contactId,
-      tagId: byName.get(name)!.id,
-    }))
-  );
-}
+export type {
+  ContactInput,
+  ContactWriteOptions,
+} from "@/lib/contact-writes";
 
 export async function listContacts(filters?: {
   q?: string;
@@ -142,10 +64,44 @@ export async function listContacts(filters?: {
   const [allRows, goals] = await Promise.all([
     db.query.contacts.findMany({
       where: eq(contacts.userId, userId),
+      columns: {
+        id: true,
+        userId: true,
+        fullName: true,
+        firstName: true,
+        lastName: true,
+        preferredName: true,
+        company: true,
+        title: true,
+        location: true,
+        school: true,
+        email: true,
+        phone: true,
+        linkedinUrl: true,
+        website: true,
+        // Omit raw profileImageUrl blob — rewritten via clientContactAvatarUrl.
+        profileImageUrl: true,
+        relationshipScore: true,
+        priorityLevel: true,
+        source: true,
+        industry: true,
+        metContext: true,
+        dateMet: true,
+        howMet: true,
+        // Heavy text fields not needed for list UI — keep short summary only.
+        notes: false,
+        aiSummary: true,
+        keyFacts: true,
+        sharedInterests: true,
+        nextFollowUpAt: true,
+        lastInteractionAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
       with: { contactTags: { with: { tag: true } } },
       orderBy: [desc(contacts.updatedAt)],
     }),
-    listActiveGoalTexts(userId),
+    listActiveGoalTexts(),
   ]);
 
   let rows = allRows;
@@ -167,7 +123,8 @@ export async function listContacts(filters?: {
         c.howMet,
         c.website,
         c.aiSummary,
-        c.notes,
+        // notes intentionally excluded — no longer selected (payload slimming);
+        // list search matches the AI summary instead of raw note text.
       ]
         .filter(Boolean)
         .some((v) => v!.toLowerCase().includes(q))
@@ -194,6 +151,8 @@ export async function listContacts(filters?: {
     const closeness = computeCloseness({ ...c, tags }, goals);
     return {
       ...c,
+      // Never ship base64 data URLs in list payloads.
+      profileImageUrl: clientContactAvatarUrl(c.id, c.profileImageUrl),
       tags,
       closeness: closeness.closeness,
       closenessTier: closeness.tier,
@@ -357,59 +316,26 @@ export async function createContact(
   input: ContactInput,
   options?: ContactWriteOptions
 ) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const now = new Date();
-  const companyFields = await companyFieldsForWrite(userId, input.company);
-  const metAt = safeTimestamp(input.dateMet);
-  const followUpAt = safeTimestamp(input.nextFollowUpAt);
+  return createContactForUser(await requireUserId(), input, options);
+}
 
-  const [contact] = await db
-    .insert(contacts)
-    .values({
-      userId,
-      fullName: input.fullName,
-      firstName: input.firstName,
-      lastName: input.lastName,
-      preferredName: input.preferredName,
-      company: companyFields.company,
-      companyId: companyFields.companyId,
-      title: input.title,
-      location: input.location,
-      school: input.school,
-      email: input.email,
-      phone: input.phone,
-      linkedinUrl: input.linkedinUrl,
-      website: input.website,
-      profileImageUrl: input.profileImageUrl ?? null,
-      relationshipScore: input.relationshipScore ?? 2,
-      priorityLevel: input.priorityLevel ?? 0,
-      source: input.source ?? "manual",
-      industry: input.industry,
-      metContext: normalizeMetContext(input.metContext),
-      dateMet: metAt,
-      howMet: input.howMet,
-      notes: input.notes,
-      aiSummary: input.aiSummary,
-      keyFacts: input.keyFacts ?? [],
-      sharedInterests: input.sharedInterests ?? [],
-      opportunities: input.opportunities ?? [],
-      firstInteractionAt: metAt ?? now,
-      lastInteractionAt: metAt ?? now,
-      nextFollowUpAt: followUpAt,
-    })
-    .returning();
-
-  await syncTags(userId, contact.id, input.tagNames);
-  await rebuildContactEmbedding(userId, contact.id);
-
-  if (!options?.skipRevalidate) {
-    revalidatePath("/");
-    revalidatePath("/contacts");
-    revalidatePath("/graph");
-  }
-
-  return contact;
+/**
+ * Bulk-create contacts in a single insert, using a preloaded `CompanyResolver`
+ * (see `createCompanyResolver`) instead of a per-row company lookup, and a
+ * single batched embedding pass instead of one embedding call per contact.
+ * For bulk imports only — general callers should use `createContact`.
+ */
+export async function createContactsBulk(
+  inputs: ContactInput[],
+  companyResolve: CompanyResolver,
+  options?: ContactWriteOptions
+) {
+  return createContactsBulkForUser(
+    await requireUserId(),
+    inputs,
+    companyResolve,
+    options
+  );
 }
 
 export async function updateContact(
@@ -417,100 +343,7 @@ export async function updateContact(
   input: Partial<ContactInput>,
   options?: ContactWriteOptions
 ) {
-  const userId = await requireUserId();
-  const db = await getDb();
-
-  const companyPatch =
-    input.company !== undefined
-      ? await companyFieldsForWrite(userId, input.company)
-      : null;
-
-  const [contact] = await db
-    .update(contacts)
-    .set({
-      ...(input.fullName !== undefined ? { fullName: input.fullName } : {}),
-      ...(input.firstName !== undefined ? { firstName: input.firstName } : {}),
-      ...(input.lastName !== undefined ? { lastName: input.lastName } : {}),
-      ...(input.preferredName !== undefined
-        ? { preferredName: input.preferredName }
-        : {}),
-      ...(companyPatch
-        ? { company: companyPatch.company, companyId: companyPatch.companyId }
-        : {}),
-      ...(input.title !== undefined ? { title: input.title } : {}),
-      ...(input.location !== undefined ? { location: input.location } : {}),
-      ...(input.school !== undefined ? { school: input.school } : {}),
-      ...(input.email !== undefined ? { email: input.email } : {}),
-      ...(input.phone !== undefined ? { phone: input.phone } : {}),
-      ...(input.linkedinUrl !== undefined
-        ? { linkedinUrl: input.linkedinUrl }
-        : {}),
-      ...(input.website !== undefined ? { website: input.website } : {}),
-      ...(input.profileImageUrl !== undefined
-        ? { profileImageUrl: input.profileImageUrl }
-        : {}),
-      ...(input.relationshipScore !== undefined
-        ? { relationshipScore: input.relationshipScore }
-        : {}),
-      ...(input.priorityLevel !== undefined
-        ? { priorityLevel: input.priorityLevel }
-        : {}),
-      ...(input.source !== undefined ? { source: input.source } : {}),
-      ...(input.industry !== undefined ? { industry: input.industry } : {}),
-      ...(input.metContext !== undefined
-        ? { metContext: normalizeMetContext(input.metContext) }
-        : {}),
-      ...(input.dateMet !== undefined
-        ? { dateMet: safeTimestamp(input.dateMet) }
-        : {}),
-      ...(input.howMet !== undefined ? { howMet: input.howMet } : {}),
-      ...(input.notes !== undefined ? { notes: input.notes } : {}),
-      ...(input.aiSummary !== undefined ? { aiSummary: input.aiSummary } : {}),
-      ...(input.keyFacts !== undefined ? { keyFacts: input.keyFacts } : {}),
-      ...(input.sharedInterests !== undefined
-        ? { sharedInterests: input.sharedInterests }
-        : {}),
-      ...(input.opportunities !== undefined
-        ? { opportunities: input.opportunities }
-        : {}),
-      ...(input.nextFollowUpAt !== undefined
-        ? { nextFollowUpAt: safeTimestamp(input.nextFollowUpAt) }
-        : {}),
-      updatedAt: new Date(),
-    })
-    .where(and(eq(contacts.id, id), eq(contacts.userId, userId)))
-    .returning();
-
-  if (input.tagNames) {
-    await syncTags(userId, id, input.tagNames);
-  }
-
-  await rebuildContactEmbedding(userId, id);
-
-  const significant =
-    input.fullName !== undefined ||
-    input.preferredName !== undefined ||
-    input.title !== undefined ||
-    input.company !== undefined ||
-    input.industry !== undefined ||
-    input.howMet !== undefined ||
-    input.metContext !== undefined ||
-    input.notes !== undefined ||
-    input.keyFacts !== undefined ||
-    input.sharedInterests !== undefined;
-
-  if (significant && !options?.skipRevalidate) {
-    void generateAndStorePersonSummary(userId, id).catch(() => null);
-  }
-
-  if (!options?.skipRevalidate) {
-    revalidatePath("/");
-    revalidatePath("/contacts");
-    revalidatePath(`/contacts/${id}`);
-    revalidatePath("/graph");
-  }
-
-  return contact;
+  return updateContactForUser(await requireUserId(), id, input, options);
 }
 
 export async function deleteContact(id: string) {
@@ -524,75 +357,8 @@ export async function deleteContact(id: string) {
   revalidatePath("/graph");
 }
 
-export async function logInteraction(input: {
-  contactId: string;
-  rawNotes?: string;
-  aiSummary?: string;
-  topics?: string[];
-  actionItems?: string[];
-  interactionType?: string;
-  source?: string;
-  interactionDate?: string | Date;
-  /** When true, parse a date from rawNotes if interactionDate is omitted. */
-  parseDateFromNotes?: boolean;
-}) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const { parseInteractionDateFromNotes } = await import(
-    "@/lib/interaction-date"
-  );
-
-  const parsedDate =
-    input.interactionDate instanceof Date
-      ? input.interactionDate
-      : input.interactionDate
-        ? new Date(
-            input.interactionDate.length <= 10
-              ? `${input.interactionDate}T12:00:00`
-              : input.interactionDate
-          )
-        : null;
-  let when =
-    parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : null;
-
-  if (!when && input.parseDateFromNotes) {
-    when = parseInteractionDateFromNotes(input.rawNotes, new Date());
-  }
-  if (!when) when = new Date();
-
-  const [row] = await db
-    .insert(interactions)
-    .values({
-      userId,
-      contactId: input.contactId,
-      rawNotes: input.rawNotes,
-      aiSummary: input.aiSummary,
-      topics: input.topics ?? [],
-      actionItems: input.actionItems ?? [],
-      interactionType: input.interactionType ?? "note",
-      source: input.source,
-      interactionDate: when,
-      sameDayOrder: 0,
-    })
-    .returning();
-
-  await db
-    .update(contacts)
-    .set({ lastInteractionAt: when, updatedAt: new Date() })
-    .where(and(eq(contacts.id, input.contactId), eq(contacts.userId, userId)));
-
-  if (input.rawNotes || input.aiSummary) {
-    await rebuildContactEmbedding(userId, input.contactId);
-  }
-
-  // Significant change: refresh stored person summary
-  void generateAndStorePersonSummary(userId, input.contactId).catch(() => null);
-
-  revalidatePath(`/contacts/${input.contactId}`);
-  revalidatePath("/");
-  revalidatePath("/dashboard");
-  revalidatePath("/graph");
-  return row;
+export async function logInteraction(input: LogInteractionInput) {
+  return logInteractionForUser(await requireUserId(), input);
 }
 
 export async function updateInteraction(
@@ -765,6 +531,7 @@ export async function listLinkedInRefreshTargets(): Promise<{
 
 export type AvatarBackfillResult = {
   saved: number;
+  savedIds: string[];
   pending: number;
   failed: number;
   rateLimitedUntil: number | null;
@@ -801,38 +568,45 @@ export async function backfillContactAvatars(
       if (!linkedin && (!stored || isUnusableAvatarUrl(stored))) return false;
       // Need LinkedIn resolution when missing/unusable.
       if (linkedin && isUnusableAvatarUrl(stored)) return true;
-      // Also durably cache remote URLs that aren't data URLs yet.
+      // Also durably cache remote URLs that aren't in Blob storage yet.
       if (
         stored &&
         !isUnusableAvatarUrl(stored) &&
-        !stored.startsWith("data:image/")
+        !isDurableAvatarUrl(stored)
       ) {
         return true;
       }
       return false;
     })
-    // Prefer free remote→data-URL work before spending Microlink quota.
+    // Prefer free remote→Blob caching work before spending Microlink quota.
     .sort((a, b) => {
       const aRemote =
         Boolean(a.profileImageUrl?.trim()) &&
         !isUnusableAvatarUrl(a.profileImageUrl) &&
-        !a.profileImageUrl!.startsWith("data:image/")
+        !isDurableAvatarUrl(a.profileImageUrl)
           ? 0
           : 1;
       const bRemote =
         Boolean(b.profileImageUrl?.trim()) &&
         !isUnusableAvatarUrl(b.profileImageUrl) &&
-        !b.profileImageUrl!.startsWith("data:image/")
+        !isDurableAvatarUrl(b.profileImageUrl)
           ? 0
           : 1;
       return aRemote - bRemote;
     });
 
   if (needsWork.length === 0) {
-    return { saved: 0, pending: 0, failed: 0, rateLimitedUntil: null };
+    return {
+      saved: 0,
+      savedIds: [],
+      pending: 0,
+      failed: 0,
+      rateLimitedUntil: null,
+    };
   }
 
   let saved = 0;
+  const savedIds: string[] = [];
   let failed = 0;
   let rateLimitedUntil: number | null = null;
   const batch = needsWork.slice(0, batchSize);
@@ -840,19 +614,19 @@ export async function backfillContactAvatars(
   for (const contact of batch) {
     const stored = contact.profileImageUrl?.trim() || "";
     try {
-      let dataUrl: string | null = null;
+      let photoUrl: string | null = null;
 
-      if (stored && !isUnusableAvatarUrl(stored) && !stored.startsWith("data:image/")) {
-        dataUrl = await downloadImageAsDataUrl(stored);
+      if (stored && !isUnusableAvatarUrl(stored) && !isDurableAvatarUrl(stored)) {
+        photoUrl = await downloadAndPersistAvatar(contact.id, stored);
       }
 
-      if (!dataUrl && contact.linkedinUrl?.trim()) {
+      if (!photoUrl && contact.linkedinUrl?.trim()) {
         try {
-          dataUrl = await fetchLinkedInPhotoDataUrl(contact.linkedinUrl);
+          photoUrl = await fetchLinkedInPhotoUrl(contact.id, contact.linkedinUrl);
         } catch (err) {
           if (err instanceof MicrolinkRateLimitError) {
             rateLimitedUntil = err.resetAt;
-            // Unavatar was already tried inside fetchLinkedInPhotoDataUrl.
+            // Unavatar was already tried inside fetchLinkedInPhotoUrl.
             failed += 1;
             continue;
           }
@@ -860,16 +634,17 @@ export async function backfillContactAvatars(
         }
       }
 
-      if (!dataUrl) {
+      if (!photoUrl) {
         failed += 1;
         continue;
       }
 
       await db
         .update(contacts)
-        .set({ profileImageUrl: dataUrl, updatedAt: new Date() })
+        .set({ profileImageUrl: photoUrl, updatedAt: new Date() })
         .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
       saved += 1;
+      savedIds.push(contact.id);
     } catch (err) {
       if (err instanceof MicrolinkRateLimitError) {
         rateLimitedUntil = err.resetAt;
@@ -888,6 +663,7 @@ export async function backfillContactAvatars(
 
   return {
     saved,
+    savedIds,
     pending,
     failed,
     rateLimitedUntil,
@@ -1024,11 +800,17 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
       // Prefer Apollo photo when present; otherwise resolve via LinkedIn.
       let profileImageUrl: string | null = null;
       if (profile?.profileImageUrl) {
-        profileImageUrl = await downloadImageAsDataUrl(profile.profileImageUrl);
+        profileImageUrl = await downloadAndPersistAvatar(
+          contact.id,
+          profile.profileImageUrl
+        );
       }
       if (!profileImageUrl && contact.linkedinUrl) {
         try {
-          profileImageUrl = await fetchLinkedInPhotoDataUrl(contact.linkedinUrl);
+          profileImageUrl = await fetchLinkedInPhotoUrl(
+            contact.id,
+            contact.linkedinUrl
+          );
         } catch (err) {
           if (err instanceof MicrolinkRateLimitError) {
             rateLimited = true;
@@ -1092,7 +874,7 @@ export async function draftContactFollowUp(
   }
 ) {
   const userId = await requireUserId();
-  const goals = await listActiveGoalTexts(userId);
+  const goals = await listActiveGoalTexts();
   return generateContactFollowUpDraft(userId, contactId, goals, options);
 }
 
@@ -1185,7 +967,7 @@ export async function listRelatedContacts(
 ): Promise<RelatedContact[]> {
   const userId = await requireUserId();
   const db = await getDb();
-  const goals = await listActiveGoalTexts(userId);
+  const goals = await listActiveGoalTexts();
 
   const rows = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),

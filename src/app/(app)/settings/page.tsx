@@ -8,6 +8,7 @@ import { GoalsSettings } from "@/components/settings/goals-settings";
 import { HelpSettings } from "@/components/settings/help-settings";
 import { KnowledgeSettings } from "@/components/settings/knowledge-settings";
 import { NotificationSettings } from "@/components/settings/notification-settings";
+import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
 import { OutreachSettings } from "@/components/settings/outreach-settings";
 import { ProfileSettings } from "@/components/settings/profile-settings";
 
@@ -37,6 +38,7 @@ export default async function SettingsPage() {
       <AppearanceSettings initialTheme={initialSettings.theme} />
       <AiSettings initialSettings={initialSettings} />
       <NotificationSettings />
+      <CalendarFeedSettings />
       <OutreachSettings initial={initialSettings.outreach} />
       <KnowledgeSettings />
       <HelpSettings />

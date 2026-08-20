@@ -14,6 +14,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { CalendarClock, MoreHorizontal, Trash2 } from "lucide-react";
+import { DUR_MS } from "@/lib/motion";
 import { toast } from "@/lib/toast";
 import { deleteContact } from "@/actions/contacts";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
@@ -53,6 +54,10 @@ import {
 } from "@/lib/closeness";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { cn } from "@/lib/utils";
+import {
+  AVATARS_UPDATED_EVENT,
+  type AvatarsUpdatedDetail,
+} from "@/components/contacts/avatar-backfill";
 
 export type ContactListItem = {
   id: string;
@@ -154,7 +159,7 @@ export function ContactsList({
   const [activeLetter, setActiveLetter] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const router = useRouter();
-  const exitTimers = useRef<Map<string, number>>(new Map());
+  const exitTimer = useRef<number | null>(null);
   const serverSignature = initialContacts
     .map((c) => `${c.id}:${c.nextFollowUpAt ?? ""}:${c.profileImageUrl ?? ""}`)
     .join(",");
@@ -165,10 +170,31 @@ export function ContactsList({
   }, [serverSignature, initialContacts]);
 
   useEffect(() => {
-    const timers = exitTimers.current;
     return () => {
-      timers.forEach((timer) => window.clearTimeout(timer));
-      timers.clear();
+      if (exitTimer.current) window.clearTimeout(exitTimer.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    function onAvatarsUpdated(event: Event) {
+      const detail = (event as CustomEvent<AvatarsUpdatedDetail>).detail;
+      const ids = detail?.contactIds;
+      if (!ids?.length) return;
+      const idSet = new Set(ids);
+      setContacts((prev) =>
+        prev.map((c) =>
+          idSet.has(c.id)
+            ? {
+                ...c,
+                profileImageUrl: `/api/avatars/${c.id}?t=${Date.now()}`,
+              }
+            : c
+        )
+      );
+    }
+    window.addEventListener(AVATARS_UPDATED_EVENT, onAvatarsUpdated);
+    return () => {
+      window.removeEventListener(AVATARS_UPDATED_EVENT, onAvatarsUpdated);
     };
   }, []);
 
@@ -220,12 +246,17 @@ export function ContactsList({
     const id = confirmId;
     const name = confirmContact?.fullName ?? "Contact";
     setConfirmId(null);
+    // One exiting row collapses via CSS (grid-rows + opacity + slide). The
+    // per-frame layout cost is bounded because rows below the viewport are
+    // content-visibility skipped. (A motion/AnimatePresence FLIP here made
+    // every React commit reconcile thousands of projection nodes — unusable
+    // at large list sizes.)
     setExitingId(id);
 
-    const timer = window.setTimeout(() => {
+    exitTimer.current = window.setTimeout(() => {
       setContacts((prev) => prev.filter((c) => c.id !== id));
       setExitingId((current) => (current === id ? null : current));
-      exitTimers.current.delete(id);
+      exitTimer.current = null;
 
       start(async () => {
         try {
@@ -239,9 +270,7 @@ export function ContactsList({
           router.refresh();
         }
       });
-    }, 420);
-
-    exitTimers.current.set(id, timer);
+    }, DUR_MS.slow);
   }
 
   if (contacts.length === 0) {
@@ -309,7 +338,11 @@ export function ContactsList({
                       onClick={openContact}
                       onKeyDown={onRowKeyDown}
                       className={cn(
-                        "contact-row grid cursor-pointer transition-[grid-template-rows,opacity] duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+                        // content-visibility skips layout/paint for offscreen
+                        // rows — the browser remembers real heights after
+                        // first render (`auto` keyword), 74px is the estimate.
+                        "contact-row grid cursor-pointer [contain-intrinsic-size:auto_74px] [content-visibility:auto]",
+                        "transition-[grid-template-rows,opacity] duration-slow ease-house",
                         "outline-none focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset",
                         exiting
                           ? "grid-rows-[0fr] opacity-0"
@@ -319,8 +352,7 @@ export function ContactsList({
                       <div className="overflow-hidden">
                         <div
                           className={cn(
-                            "flex items-center gap-3 px-4 py-3.5 pr-10 transition-colors hover:bg-muted/40 sm:px-5 sm:pr-5",
-                            "transition-transform duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+                            "flex items-center gap-3 px-4 py-3.5 pr-10 transition-[background-color,translate] duration-slow ease-house hover:bg-muted/40 sm:px-5 sm:pr-5",
                             exiting && "-translate-x-8"
                           )}
                         >

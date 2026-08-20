@@ -45,11 +45,14 @@ export function ContactForm({
   contactId,
   className,
   onSuccess,
+  redirectOnSuccess = true,
 }: {
   initial?: Partial<ContactInput> & { tags?: string[] };
   contactId?: string;
   className?: string;
-  onSuccess?: () => void;
+  onSuccess?: (contact: { id: string }) => void;
+  /** Set to false when embedding the form somewhere that manages its own navigation (e.g. the setup wizard). */
+  redirectOnSuccess?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -207,13 +210,13 @@ export function ContactForm({
             if (contactId) {
               await updateContact(contactId, payload);
               toast.success("Contact updated");
-              onSuccess?.();
-              router.push(`/contacts/${contactId}`);
+              onSuccess?.({ id: contactId });
+              if (redirectOnSuccess) router.push(`/contacts/${contactId}`);
             } else {
               const c = await createContact(payload);
               toast.success("Contact created");
-              onSuccess?.();
-              router.push(`/contacts/${c.id}`);
+              onSuccess?.({ id: c.id });
+              if (redirectOnSuccess) router.push(`/contacts/${c.id}`);
             }
             router.refresh();
           } catch (err) {

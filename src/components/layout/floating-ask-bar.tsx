@@ -11,6 +11,7 @@ import {
   useTransition,
 } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { ArrowUp, Loader2, RotateCcw, Search, Sparkles, X } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
@@ -366,11 +367,7 @@ export function FloatingAskBar() {
           ? { y: 0, opacity: 1 }
           : { y: 72, opacity: 0 }
       }
-      transition={{
-        duration: 0.55,
-        ease: [0.32, 0.72, 0, 1],
-        opacity: { duration: 0.45, ease: [0.4, 0, 0.2, 1] },
-      }}
+      transition={{ duration: DUR.slow, ease: EASE_HOUSE }}
       className={cn(
         "pointer-events-none fixed inset-x-0 z-50 flex justify-center px-4",
         "bottom-[calc(4.5rem+env(safe-area-inset-bottom)+var(--ask-keyboard-inset,0px))] md:bottom-5",
@@ -391,7 +388,7 @@ export function FloatingAskBar() {
               initial={{ opacity: 0, y: 12, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 8, scale: 0.98 }}
-              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              transition={{ duration: DUR.base, ease: EASE_HOUSE }}
               className="overflow-hidden rounded-[1.75rem] border border-border/70 bg-card/95 shadow-xl backdrop-blur-md"
             >
               <div className="flex items-center justify-between border-b border-border/60 px-3.5 py-2">
@@ -589,7 +586,7 @@ export function FloatingAskBar() {
               initial={{ opacity: 0, y: 8, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 6, scale: 0.98 }}
-              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              transition={{ duration: DUR.base, ease: EASE_HOUSE }}
               className="flex items-center gap-2 self-center rounded-full border border-border/70 bg-card/95 py-1 pl-1 pr-1.5 shadow-md backdrop-blur-md"
             >
               <ContactAvatar

@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import type { HeroSolarCamera } from "@/components/landing/hero-solar-system";
 
 const Starfield = dynamic(
   () =>
@@ -30,6 +31,12 @@ export function LandingStarfield() {
   return <Starfield />;
 }
 
-export function LandingSolarSystem({ className }: { className?: string }) {
-  return <HeroSolarSystem className={className} />;
+export function LandingSolarSystem({
+  className,
+  camera,
+}: {
+  className?: string;
+  camera?: HeroSolarCamera;
+}) {
+  return <HeroSolarSystem className={className} camera={camera} />;
 }

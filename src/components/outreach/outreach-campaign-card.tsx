@@ -20,7 +20,7 @@ export function OutreachCampaignCard({
   };
 }) {
   return (
-    <div className="rounded-2xl border border-border/70 bg-card p-5 transition-colors hover:bg-muted/20">
+    <div className="rounded-2xl border border-border/70 bg-card p-5 transition-[border-color,box-shadow] hover:border-primary/30 hover:shadow-md">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <Link href={`/outreach/${campaign.id}`} className="min-w-0 flex-1">
           <h2 className="text-lg font-medium text-primary">{campaign.name}</h2>

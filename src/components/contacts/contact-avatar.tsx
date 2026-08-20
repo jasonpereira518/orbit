@@ -55,7 +55,13 @@ export function ContactAvatar({
   return (
     <Avatar size={size} className={cn("bg-muted", className)} aria-label={label}>
       {photoUrl ? (
-        <AvatarImage src={photoUrl} alt={label} referrerPolicy="no-referrer" />
+        <AvatarImage
+          src={photoUrl}
+          alt={label}
+          referrerPolicy="no-referrer"
+          loading="lazy"
+          decoding="async"
+        />
       ) : null}
       <AvatarFallback className="bg-muted p-0 overflow-hidden">
         {/* eslint-disable-next-line @next/next/no-img-element -- static public avatar */}
@@ -65,6 +71,8 @@ export function ContactAvatar({
           aria-hidden
           className="size-full object-cover"
           draggable={false}
+          loading="lazy"
+          decoding="async"
         />
       </AvatarFallback>
     </Avatar>
