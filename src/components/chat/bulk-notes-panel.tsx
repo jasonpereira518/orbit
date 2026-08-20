@@ -512,8 +512,9 @@ export function BulkNotesPanel({
           <div
             className={cn(
               "grid grid-cols-2 gap-2",
-              "sticky bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-10 -mx-1 border-t border-border/60 bg-card/95 px-1 pt-3 pb-2 backdrop-blur md:bottom-0",
-              compact && "-mx-1"
+              compact
+                ? "sticky bottom-0 -mx-1 border-t border-border/60 bg-card pt-3"
+                : "sticky bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-10 -mx-1 border-t border-border/60 bg-card/95 px-1 pt-3 pb-2 backdrop-blur md:bottom-0"
             )}
           >
             <Button
