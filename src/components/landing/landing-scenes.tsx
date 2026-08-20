@@ -18,7 +18,7 @@ export function SceneConstellations() {
   return (
     <section
       aria-labelledby="landing-groups-heading"
-      className="landing-scene scene-constellations relative z-10 flex min-h-[90svh] items-center px-6 py-24 md:px-10"
+      className="landing-scene scene-constellations relative z-10 flex min-h-[110svh] items-center px-6 py-36 md:px-10 md:py-44"
     >
       <div className="mx-auto grid w-full max-w-6xl items-center gap-10 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:gap-12">
         <div id="landing-groups">
@@ -31,8 +31,8 @@ export function SceneConstellations() {
             </h2>
           </Reveal>
           <Reveal className="reveal-celestial" delay={160}>
-            {/* The figure's hover labels are aria-hidden and mouse-only, so
-             * this paragraph is the sole carrier of the payload. */}
+            {/* Names fade in as the figure draws; this paragraph still
+             * carries the grouping payload for assistive tech. */}
             <p className={BODY}>
               Orbit groups your contacts by employer, school, and old team — so
               the company at the top of your list stops being a cold
@@ -138,7 +138,7 @@ export function SceneFinale({
             </p>
           </Reveal>
           <Reveal className="reveal-celestial" delay={200}>
-            <div className="mt-8">
+            <div className="mt-8 hidden sm:block">
               <LandingAuthControls
                 clerkOn={clerkOn}
                 demoMode={demoMode}

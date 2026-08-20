@@ -10,7 +10,7 @@ const ghostClass =
 const solidClass =
   "rounded-full bg-[#e8f3f1] px-4 py-2 text-sm font-medium text-[#0f3d3e] transition-colors hover:bg-white";
 const ctaSolidClass =
-  "inline-flex items-center justify-center rounded-lg bg-[#e8f3f1] px-6 py-3 text-sm font-medium text-[#0f3d3e] transition-colors hover:bg-white";
+  "inline-flex items-center justify-center rounded-full bg-[#e8f3f1] px-6 py-3 text-sm font-medium text-[#0f3d3e] transition-colors hover:bg-white";
 const ctaGhostClass =
   "inline-flex items-center justify-center rounded-lg border border-white/20 bg-white/5 px-6 py-3 text-sm text-[#e8f3f1] transition-colors hover:border-white/35 hover:bg-white/10";
 
@@ -41,7 +41,7 @@ export function LandingAuthControls({
   const ghost = variant === "header" ? ghostClass : ctaGhostClass;
   const wrapClass =
     variant === "hero"
-      ? "flex w-full flex-col gap-3 sm:w-auto sm:flex-row"
+      ? "hidden sm:flex sm:w-auto sm:flex-row sm:gap-3"
       : "flex items-center gap-2 sm:gap-3";
 
   if (!clerkOn) {

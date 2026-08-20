@@ -22,18 +22,18 @@ export function LandingHeroCopy({
         "motion-reduce:opacity-100 motion-reduce:translate-y-0"
       )}
     >
-      <p className="font-[family-name:var(--font-display)] text-6xl leading-[0.95] tracking-tight text-white sm:text-7xl md:text-8xl lg:text-[5.5rem] xl:text-9xl">
+      <p className="font-[family-name:var(--font-display)] text-5xl leading-[0.95] tracking-tight text-white sm:text-6xl md:text-8xl lg:text-[5.5rem] xl:text-9xl">
         Orbit
       </p>
-      <h1 className="mt-6 max-w-xl font-[family-name:var(--font-display)] text-2xl leading-snug tracking-tight text-[#e8f3f1] sm:mt-8 sm:text-3xl md:text-4xl">
+      <h1 className="mt-3 max-w-xl font-[family-name:var(--font-display)] text-xl leading-snug tracking-tight text-[#e8f3f1] sm:mt-6 sm:text-2xl md:mt-8 md:text-4xl">
         Keep your connections in Orbit.
       </h1>
-      <p className="mt-4 max-w-md text-base leading-relaxed text-[#9aada8] sm:text-lg">
+      <p className="mt-3 max-w-md text-sm leading-relaxed text-[#9aada8] sm:mt-4 sm:text-base md:text-lg">
         Orbit remembers every conversation and tells you who to follow up with
         — so a good connection doesn&apos;t go cold before it becomes an
         opportunity.
       </p>
-      <div className="mt-8 sm:mt-10">
+      <div className="mt-8 hidden sm:mt-10 sm:block">
         <LandingAuthControls
           clerkOn={clerkOn}
           demoMode={demoMode}
