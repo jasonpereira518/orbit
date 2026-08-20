@@ -640,6 +640,62 @@
   -webkit-backdrop-filter: blur(12px);
 }
 
+/* Sticky nav pill — more opaque than .dark .liquid-glass so the starfield
+ * doesn't bleed through as much behind logo + auth controls. */
+.landing-header-glass {
+  border-radius: inherit;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid rgba(232, 243, 241, 0.18);
+  background: linear-gradient(
+    165deg,
+    rgba(18, 24, 36, 0.96) 0%,
+    rgba(10, 14, 24, 0.94) 45%,
+    rgba(6, 8, 16, 0.92) 100%
+  );
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 1px 0 0 rgba(255, 255, 255, 0.12) inset,
+    0 -1px 0 0 rgba(0, 0, 0, 0.4) inset,
+    0 16px 48px -12px rgba(0, 0, 0, 0.65),
+    0 4px 14px -4px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+}
+
+.landing-header-glass::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(
+      120% 80% at 12% -10%,
+      rgba(255, 255, 255, 0.1) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      90% 60% at 100% 100%,
+      rgba(242, 193, 78, 0.07) 0%,
+      transparent 50%
+    );
+}
+
+.landing-header-glass > * {
+  position: relative;
+  z-index: 1;
+}
+
+#landing-groups,
+#landing-reminders,
+#landing-how,
+#landing-features,
+#landing-cta {
+  scroll-margin-top: 6rem;
+}
+
 /* ── Landing hero ── */
 
 @keyframes landing-fade {

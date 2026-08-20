@@ -17,16 +17,16 @@ export const BODY = "mt-4 max-w-md text-base leading-relaxed text-[#9aada8] sm:t
 export function SceneConstellations() {
   return (
     <section
-      aria-labelledby="landing-groups"
+      aria-labelledby="landing-groups-heading"
       className="landing-scene scene-constellations relative z-10 flex min-h-[90svh] items-center px-6 py-24 md:px-10"
     >
       <div className="mx-auto grid w-full max-w-6xl items-center gap-10 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:gap-12">
-        <div>
+        <div id="landing-groups">
           <Reveal className="reveal-celestial">
             <p className={KICKER}>Who you know, where</p>
           </Reveal>
           <Reveal className="reveal-celestial" delay={80}>
-            <h2 id="landing-groups" className={HEADING}>
+            <h2 id="landing-groups-heading" className={HEADING}>
               Every company on your list already has someone in it.
             </h2>
           </Reveal>
@@ -49,17 +49,17 @@ export function SceneConstellations() {
 export function SceneComets() {
   return (
     <section
-      aria-labelledby="landing-reminders"
+      aria-labelledby="landing-reminders-heading"
       className="landing-scene scene-comets relative z-10 px-6 py-24 md:px-10"
     >
       <CometStreak />
       <div className="mx-auto w-full max-w-6xl">
-        <div className="max-w-xl">
+        <div id="landing-reminders" className="max-w-xl">
           <Reveal className="reveal-celestial">
             <p className={KICKER}>Before it goes cold</p>
           </Reveal>
           <Reveal className="reveal-celestial" delay={80}>
-            <h2 id="landing-reminders" className={HEADING}>
+            <h2 id="landing-reminders-heading" className={HEADING}>
               That warm intro is already cooling.
             </h2>
           </Reveal>
@@ -110,7 +110,8 @@ export function SceneFinale({
 }) {
   return (
     <section
-      aria-labelledby="landing-cta"
+      id="landing-cta"
+      aria-labelledby="landing-cta-heading"
       className="landing-scene scene-finale relative z-10 px-6 pt-24 md:px-10"
     >
       {/* Deep-space vignette: the base starfield stays put underneath, but
@@ -126,7 +127,7 @@ export function SceneFinale({
       <div className="mx-auto grid w-full max-w-5xl -translate-y-4 items-center gap-12 md:-translate-y-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="flex flex-col items-center text-center lg:items-start lg:text-left">
           <Reveal className="reveal-celestial">
-            <h2 id="landing-cta" className={HEADING}>
+            <h2 id="landing-cta-heading" className={HEADING}>
               Don&apos;t lose the person who gets you hired.
             </h2>
           </Reveal>

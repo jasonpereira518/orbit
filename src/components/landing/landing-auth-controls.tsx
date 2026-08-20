@@ -8,7 +8,7 @@ import { clerkAppearance } from "@/lib/clerk-appearance";
 const ghostClass =
   "rounded-lg px-3 py-2 text-sm text-[#c5d4d1] transition-colors hover:text-white";
 const solidClass =
-  "rounded-lg bg-[#e8f3f1] px-3.5 py-2 text-sm font-medium text-[#0f3d3e] transition-colors hover:bg-white";
+  "rounded-full bg-[#e8f3f1] px-4 py-2 text-sm font-medium text-[#0f3d3e] transition-colors hover:bg-white";
 const ctaSolidClass =
   "inline-flex items-center justify-center rounded-lg bg-[#e8f3f1] px-6 py-3 text-sm font-medium text-[#0f3d3e] transition-colors hover:bg-white";
 const ctaGhostClass =

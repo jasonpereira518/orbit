@@ -182,22 +182,24 @@ export function LandingHowItWorks() {
   return (
     <section
       ref={sectionRef}
-      aria-labelledby="landing-how"
+      aria-labelledby="landing-how-heading"
       className="landing-scene scene-how relative z-10 mx-auto w-full max-w-6xl border-t border-[#e8f3f1]/[0.07] px-6 py-20 md:px-10 md:py-24"
     >
-      <Reveal className="reveal-celestial">
-        <p className="text-xs uppercase tracking-[0.18em] text-[#f2c14e]">
-          How it works
-        </p>
-      </Reveal>
-      <Reveal className="reveal-celestial" delay={80}>
-        <h2
-          id="landing-how"
-          className="mt-3 max-w-[18ch] font-[family-name:var(--font-display)] text-[clamp(30px,4.4vw,50px)] font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]"
-        >
-          From a conversation to a callback.
-        </h2>
-      </Reveal>
+      <div id="landing-how">
+        <Reveal className="reveal-celestial">
+          <p className="text-xs uppercase tracking-[0.18em] text-[#f2c14e]">
+            How it works
+          </p>
+        </Reveal>
+        <Reveal className="reveal-celestial" delay={80}>
+          <h2
+            id="landing-how-heading"
+            className="mt-3 max-w-[18ch] font-[family-name:var(--font-display)] text-[clamp(30px,4.4vw,50px)] font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]"
+          >
+            From a conversation to a callback.
+          </h2>
+        </Reveal>
+      </div>
 
       <div className="relative mx-auto mt-16 hidden aspect-square w-full max-w-[760px] lg:block">
         <motion.div
