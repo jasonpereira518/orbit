@@ -243,14 +243,15 @@ export function FloatingAskBar() {
       el.style.setProperty("--ask-panel-max-vh", `${panelMax}vh`);
     }
 
+    const wrap = wrapRef.current;
     syncViewport();
     vv.addEventListener("resize", syncViewport);
     vv.addEventListener("scroll", syncViewport);
     return () => {
       vv.removeEventListener("resize", syncViewport);
       vv.removeEventListener("scroll", syncViewport);
-      wrapRef.current?.style.removeProperty("--ask-keyboard-inset");
-      wrapRef.current?.style.removeProperty("--ask-panel-max-vh");
+      wrap?.style.removeProperty("--ask-keyboard-inset");
+      wrap?.style.removeProperty("--ask-panel-max-vh");
     };
   }, [open]);
 

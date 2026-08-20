@@ -74,10 +74,6 @@ function ContactCombobox({
   }, [options, query]);
 
   useEffect(() => {
-    setHighlight(0);
-  }, [matches]);
-
-  useEffect(() => {
     function onPointerDown(event: PointerEvent) {
       if (!rootRef.current?.contains(event.target as Node)) {
         setOpen(false);
@@ -112,6 +108,7 @@ function ContactCombobox({
         placeholder={loading ? "Loading contacts…" : "Search contacts…"}
         onChange={(e) => {
           setQuery(e.target.value);
+          setHighlight(0);
           if (value) onChange("");
           setOpen(true);
         }}
@@ -223,7 +220,6 @@ export function CaptureForm({
   useEffect(() => {
     if (mode !== "structured" || initialContactId) return;
     let cancelled = false;
-    setContactsLoading(true);
     listContacts()
       .then((rows) => {
         if (cancelled) return;
@@ -264,7 +260,10 @@ export function CaptureForm({
           </ModeTab>
           <ModeTab
             active={mode === "structured"}
-            onClick={() => setMode("structured")}
+            onClick={() => {
+              setMode("structured");
+              if (!initialContactId) setContactsLoading(true);
+            }}
           >
             Structured Logging
           </ModeTab>

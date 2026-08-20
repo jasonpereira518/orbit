@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { listContacts } from "@/actions/contacts";
 import { ContactsFilters } from "@/components/contacts/contacts-filters";
 import { ContactsList } from "@/components/contacts/contacts-list";

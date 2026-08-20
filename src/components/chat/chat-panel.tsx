@@ -168,13 +168,14 @@ export function ChatPanel() {
       }
     }
 
+    const panel = panelRef.current;
     syncKeyboardInset();
     vv.addEventListener("resize", syncKeyboardInset);
     vv.addEventListener("scroll", syncKeyboardInset);
     return () => {
       vv.removeEventListener("resize", syncKeyboardInset);
       vv.removeEventListener("scroll", syncKeyboardInset);
-      panelRef.current?.style.removeProperty("--chat-keyboard-inset");
+      panel?.style.removeProperty("--chat-keyboard-inset");
     };
   }, []);
 
