@@ -104,6 +104,7 @@ export function ChatPanel() {
   const [lastUserQuery, setLastUserQuery] = useState("");
   const [pending, start] = useTransition();
   const listRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const stickToBottomRef = useRef(true);
@@ -141,6 +142,41 @@ export function ChatPanel() {
     // Defer so DOM has laid out new messages
     requestAnimationFrame(() => scrollToBottom(true));
   }, [messages, pending, isNearBottom, scrollToBottom]);
+
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    function syncKeyboardInset() {
+      const el = panelRef.current;
+      if (!el || !vv) return;
+      const overlap = Math.max(
+        0,
+        window.innerHeight - vv.height - vv.offsetTop
+      );
+      el.style.setProperty(
+        "--chat-keyboard-inset",
+        `${overlap > 40 ? overlap : 0}px`
+      );
+      if (overlap > 40) {
+        requestAnimationFrame(() => {
+          textareaRef.current?.scrollIntoView({
+            block: "nearest",
+            behavior: "smooth",
+          });
+        });
+      }
+    }
+
+    syncKeyboardInset();
+    vv.addEventListener("resize", syncKeyboardInset);
+    vv.addEventListener("scroll", syncKeyboardInset);
+    return () => {
+      vv.removeEventListener("resize", syncKeyboardInset);
+      vv.removeEventListener("scroll", syncKeyboardInset);
+      panelRef.current?.style.removeProperty("--chat-keyboard-inset");
+    };
+  }, []);
 
   function onListScroll() {
     stickToBottomRef.current = isNearBottom();
@@ -336,12 +372,13 @@ export function ChatPanel() {
   return (
     <>
       {/*
-        Explicit viewport height so the card is always bounded.
-        Internal message list is the only scroller (flex 1 1 0 + overflow-y-auto).
-        Mobile offsets: top header + page title + padding + bottom nav.
-        Desktop offsets: page title + vertical padding.
+        Flex-fill inside the viewport-locked shell so the message list is the
+        only scroller. Keyboard inset keeps the composer above the soft keyboard.
       */}
-      <div className="flex h-[calc(100dvh-16.5rem)] w-full max-h-[calc(100dvh-16.5rem)] flex-col overflow-hidden rounded-2xl border border-border/70 bg-card md:h-[calc(100dvh-11rem)] md:max-h-[calc(100dvh-11rem)]">
+      <div
+        ref={panelRef}
+        className="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-2xl border border-border/70 bg-card pb-[var(--chat-keyboard-inset,0px)]"
+      >
         <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2.5 sm:px-4">
           <DropdownMenu open={historyOpen} onOpenChange={setHistoryOpen}>
             <DropdownMenuTrigger
@@ -387,7 +424,7 @@ export function ChatPanel() {
                     </div>
                     <button
                       type="button"
-                      className="mt-0.5 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 group-focus-within:opacity-100"
+                      className="mt-0.5 rounded p-1.5 text-muted-foreground opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive sm:p-0.5 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
                       aria-label="Delete chat"
                       onClick={(e) => {
                         e.preventDefault();
@@ -451,7 +488,7 @@ export function ChatPanel() {
               ) : (
                 <>
                   {messages.length === 0 && !pending && (
-                    <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+                    <div className="flex flex-col items-center justify-center gap-3 py-10 text-center sm:py-16">
                       <p className="font-[family-name:var(--font-display)] text-xl text-primary sm:text-2xl">
                         Ask your network
                       </p>
@@ -459,6 +496,19 @@ export function ChatPanel() {
                         Who can help, who to follow up with, or who knows what —
                         try a suggestion below.
                       </p>
+                      <div className="flex max-w-md flex-wrap justify-center gap-1.5 pt-1">
+                        {SUGGESTION_CHIPS.map((chip) => (
+                          <button
+                            key={chip}
+                            type="button"
+                            disabled={pending || loadingThread}
+                            className="rounded-full border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                            onClick={() => sendQuestion(chip)}
+                          >
+                            {chip}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
 
@@ -541,19 +591,6 @@ export function ChatPanel() {
                     <ArrowUp className="size-4" />
                   )}
                 </Button>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {SUGGESTION_CHIPS.map((chip) => (
-                  <button
-                    key={chip}
-                    type="button"
-                    disabled={pending || loadingThread}
-                    className="rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-                    onClick={() => sendQuestion(chip)}
-                  >
-                    {chip}
-                  </button>
-                ))}
               </div>
             </div>
           </div>

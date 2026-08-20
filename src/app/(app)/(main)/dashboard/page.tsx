@@ -53,12 +53,17 @@ export default async function DashboardPage() {
           Stay in orbit
         </h1>
         <p className="max-w-xl text-muted-foreground">
-          Follow-ups, dormant connections, and people worth reaching out to — in one place.
-          Press{" "}
-          <kbd className="rounded-md border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[11px]">
-            ⌘K
-          </kbd>{" "}
-          to ask your network.
+          Follow-ups, dormant connections, and people worth reaching out to — in
+          one place.
+          <span className="sm:hidden"> Use Ask below to query your network.</span>
+          <span className="hidden sm:inline">
+            {" "}
+            Press{" "}
+            <kbd className="rounded-md border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[11px]">
+              ⌘K
+            </kbd>{" "}
+            to ask your network.
+          </span>
         </p>
       </header>
 
@@ -91,60 +96,12 @@ export default async function DashboardPage() {
         />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <NetworkDepthChart metrics={data.networkMetrics} />
-        <DashboardGraphPreview graphPreview={data.graphPreview} />
-      </div>
-
-      <div className="grid items-stretch gap-6 lg:grid-cols-2">
-        <SuggestedOutreachCard
-          items={data.suggestions.map((s) => {
-            const contactId = s.relatedContactIds?.[0] ?? null;
-            const meta = contactMeta(contactId);
-            return {
-              id: s.id,
-              suggestionType: s.suggestionType,
-              description: s.description,
-              contactId,
-              contactName: meta.name,
-              contactTitle: meta.title,
-              contactCompany: meta.company,
-              tier: contactId ? tierForContact(contactId) : undefined,
-            };
-          })}
-        />
-
-        <OutreachPerformanceCard
-          accountRate={outreachPerformance.accountMetrics.successfulReplyRate}
-          sentCount={outreachPerformance.accountMetrics.sentCount}
-          positiveReplyCount={
-            outreachPerformance.accountMetrics.positiveReplyCount
-          }
-          campaigns={outreachPerformance.topCampaigns}
-        />
-      </div>
-
       <div className="grid items-start gap-6 lg:grid-cols-2">
-        <RemindersDashboardCard
-          items={data.reminders.map((r) => ({
-            id: r.id,
-            title: r.title,
-            description: r.description,
-            dueDate: r.dueDate,
-            reminderType: r.reminderType,
-            actionKind: r.actionKind,
-            contactId: r.contactId,
-            contactName: r.contactId
-              ? data.contactNameById.get(r.contactId) ?? null
-              : null,
-          }))}
-        />
-
-        <Card id="due-follow-ups" className="border-border/70 shadow-none scroll-mt-8">
-          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+        <Card id="due-follow-ups" className="scroll-mt-8 border-border/70 shadow-none">
+          <CardHeader className="flex flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
             <CardTitle className="text-base">Due follow-ups</CardTitle>
             {data.dueFollowUps.length > 0 && (
-              <div className="flex items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <GenerateFollowUpsButton limit={8} />
                 <Link
                   href="/contacts?followUp=due"
@@ -180,6 +137,67 @@ export default async function DashboardPage() {
             )}
           </CardContent>
         </Card>
+
+        <SuggestedOutreachCard
+          items={data.suggestions.map((s) => {
+            const contactId = s.relatedContactIds?.[0] ?? null;
+            const meta = contactMeta(contactId);
+            return {
+              id: s.id,
+              suggestionType: s.suggestionType,
+              description: s.description,
+              contactId,
+              contactName: meta.name,
+              contactTitle: meta.title,
+              contactCompany: meta.company,
+              tier: contactId ? tierForContact(contactId) : undefined,
+            };
+          })}
+        />
+      </div>
+
+      <div className="grid items-start gap-6 lg:grid-cols-2">
+        <RemindersDashboardCard
+          items={data.reminders.map((r) => ({
+            id: r.id,
+            title: r.title,
+            description: r.description,
+            dueDate: r.dueDate,
+            reminderType: r.reminderType,
+            actionKind: r.actionKind,
+            contactId: r.contactId,
+            contactName: r.contactId
+              ? data.contactNameById.get(r.contactId) ?? null
+              : null,
+          }))}
+        />
+
+        <div className="hidden lg:block">
+          <OutreachPerformanceCard
+            accountRate={outreachPerformance.accountMetrics.successfulReplyRate}
+            sentCount={outreachPerformance.accountMetrics.sentCount}
+            positiveReplyCount={
+              outreachPerformance.accountMetrics.positiveReplyCount
+            }
+            campaigns={outreachPerformance.topCampaigns}
+          />
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <NetworkDepthChart metrics={data.networkMetrics} />
+        <DashboardGraphPreview graphPreview={data.graphPreview} />
+      </div>
+
+      <div className="lg:hidden">
+        <OutreachPerformanceCard
+          accountRate={outreachPerformance.accountMetrics.successfulReplyRate}
+          sentCount={outreachPerformance.accountMetrics.sentCount}
+          positiveReplyCount={
+            outreachPerformance.accountMetrics.positiveReplyCount
+          }
+          campaigns={outreachPerformance.topCampaigns}
+        />
       </div>
 
       <div className="grid items-start gap-6 lg:grid-cols-2">

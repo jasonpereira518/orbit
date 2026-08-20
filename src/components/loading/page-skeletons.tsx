@@ -144,10 +144,10 @@ export function FormPageSkeleton({ wide = false }: { wide?: boolean }) {
 
 export function ChatPageSkeleton() {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-5">
+    <div className="flex min-h-0 flex-1 flex-col gap-2 sm:gap-4">
       <div className="shrink-0 space-y-2">
-        <Skeleton className="h-9 w-64" />
-        <Skeleton className="h-4 w-80 max-w-full" />
+        <Skeleton className="h-8 w-24 sm:h-9 sm:w-64" />
+        <Skeleton className="hidden h-4 w-80 max-w-full sm:block" />
       </div>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/70">
         <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-4 py-3">
@@ -167,19 +167,11 @@ export function ChatPageSkeleton() {
             <div className="flex justify-start">
               <Skeleton className="h-24 w-4/5 rounded-2xl" />
             </div>
-            <div className="flex justify-end">
-              <Skeleton className="h-10 w-1/2 rounded-2xl" />
-            </div>
           </div>
         </div>
-        <div className="shrink-0 space-y-2 border-t border-border/60 p-4">
-          <div className="mx-auto max-w-3xl space-y-2.5">
+        <div className="shrink-0 border-t border-border/60 p-4">
+          <div className="mx-auto max-w-3xl">
             <Skeleton className="h-14 w-full rounded-lg" />
-            <div className="flex flex-wrap gap-1.5">
-              <Skeleton className="h-6 w-28 rounded-full" />
-              <Skeleton className="h-6 w-36 rounded-full" />
-              <Skeleton className="h-6 w-32 rounded-full" />
-            </div>
           </div>
         </div>
       </div>

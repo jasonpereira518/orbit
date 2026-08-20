@@ -11,7 +11,7 @@ const ChatPanel = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="flex h-[calc(100dvh-16.5rem)] w-full flex-col overflow-hidden rounded-2xl border border-border/70 md:h-[calc(100dvh-11rem)]">
+      <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-2xl border border-border/70">
         <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-4 py-3">
           <Skeleton className="h-8 w-20" />
           <div className="min-w-0 flex-1 space-y-1.5">
@@ -32,13 +32,8 @@ const ChatPanel = dynamic(
           </div>
         </div>
         <div className="shrink-0 space-y-2 border-t border-border/60 p-4">
-          <div className="mx-auto max-w-3xl space-y-2.5">
+          <div className="mx-auto max-w-3xl">
             <Skeleton className="h-14 w-full rounded-lg" />
-            <div className="flex flex-wrap gap-1.5">
-              <Skeleton className="h-6 w-28 rounded-full" />
-              <Skeleton className="h-6 w-36 rounded-full" />
-              <Skeleton className="h-6 w-32 rounded-full" />
-            </div>
           </div>
         </div>
       </div>
