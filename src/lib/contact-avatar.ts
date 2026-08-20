@@ -12,9 +12,42 @@ export {
 const MAX_DOWNLOAD_BYTES = 5_000_000;
 /** Target max for the sharp-decode fallback path (raw bytes, unresized). */
 const MAX_PERSIST_BYTES = 220_000;
+/** Max encoded bytes we'll inline when Blob storage isn't configured. */
+const MAX_INLINE_BYTES = 120_000;
 
 /** How many LinkedIn photos to resolve per backfill tick. */
 export const AVATAR_BACKFILL_BATCH_SIZE = 5;
+
+/**
+ * Thrown when the photo store itself fails, as opposed to a contact simply
+ * having no findable photo. Callers stop the whole run on this — retrying
+ * every contact against a broken store just burns quota and shows no progress.
+ */
+export class AvatarStorageError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "AvatarStorageError";
+  }
+}
+
+/** True when Vercel Blob has credentials to talk to a store. */
+export function hasBlobStorage(): boolean {
+  return Boolean(
+    process.env.BLOB_READ_WRITE_TOKEN?.trim() ||
+      (process.env.VERCEL_OIDC_TOKEN?.trim() && process.env.BLOB_STORE_ID?.trim())
+  );
+}
+
+let warnedMissingBlob = false;
+
+function warnMissingBlobOnce() {
+  if (warnedMissingBlob) return;
+  warnedMissingBlob = true;
+  console.warn(
+    "[avatars] BLOB_READ_WRITE_TOKEN is not set - storing photos inline instead. " +
+      "Provision a Vercel Blob store to keep them out of Postgres."
+  );
+}
 
 /** Thrown when Microlink quota is exhausted. */
 export class MicrolinkRateLimitError extends Error {
@@ -112,6 +145,8 @@ export async function fetchLinkedInPhotoUrl(
         if (photoUrl) return photoUrl;
       }
     } catch (err) {
+      // A broken photo store fails the same way for Unavatar — don't retry it.
+      if (err instanceof AvatarStorageError) throw err;
       if (err instanceof MicrolinkRateLimitError) {
         microlinkLimited = true;
       }
@@ -132,7 +167,11 @@ export async function fetchLinkedInPhotoUrl(
   return null;
 }
 
-/** Download an external image and persist it to Blob storage, or null on failure. */
+/**
+ * Download an external image and store it durably, or null when the image
+ * can't be fetched or decoded. Throws {@link AvatarStorageError} when the
+ * photo store itself is broken.
+ */
 export async function downloadAndPersistAvatar(
   contactId: string,
   imageUrl: string
@@ -142,7 +181,7 @@ export async function downloadAndPersistAvatar(
 
   const downloaded = await downloadImageBytes(imageUrl);
   if (!downloaded) return null;
-  return persistAvatarBlob(contactId, downloaded.buf, downloaded.contentType);
+  return persistAvatar(contactId, downloaded.buf, downloaded.contentType);
 }
 
 export async function downloadImageBytes(
@@ -179,25 +218,22 @@ export async function downloadImageBytes(
 }
 
 /**
- * Resize/compress and upload to Blob storage at a stable per-contact path,
- * so re-uploads overwrite the previous photo instead of orphaning it.
+ * Resize/compress to a small square JPEG.
  * LinkedIn CDN photos are often >180KB — we used to drop those entirely.
  */
-async function persistAvatarBlob(
-  contactId: string,
+async function encodeAvatar(
   buf: Buffer,
   contentType: string
-): Promise<string | null> {
-  let out: Buffer;
-  let outType = "image/jpeg";
+): Promise<{ buf: Buffer; contentType: string } | null> {
   try {
     const sharp = (await import("sharp")).default;
-    out = await sharp(buf)
+    const out = await sharp(buf)
       .rotate()
       .resize(256, 256, { fit: "cover", withoutEnlargement: true })
       .jpeg({ quality: 82, mozjpeg: true })
       .toBuffer();
     if (out.byteLength === 0) return null;
+    return { buf: out, contentType: "image/jpeg" };
   } catch {
     // Fall back to raw bytes when sharp can't decode (rare formats).
     if (
@@ -207,19 +243,48 @@ async function persistAvatarBlob(
     ) {
       return null;
     }
-    out = buf;
-    outType = contentType;
+    return { buf, contentType };
+  }
+}
+
+/**
+ * Store a photo durably and return the URL to keep on the contact.
+ *
+ * Blob storage is the preferred home, at a stable per-contact path so
+ * re-fetches overwrite instead of orphaning. When no Blob store is configured
+ * we inline the (already tiny) JPEG as a data URL — still durable as far as
+ * the rest of the app is concerned, and served via `/api/avatars/[contactId]`.
+ * A Blob store that *is* configured but rejects the upload is a real failure
+ * and throws, so callers stop instead of silently reporting "no photo".
+ */
+async function persistAvatar(
+  contactId: string,
+  buf: Buffer,
+  contentType: string
+): Promise<string | null> {
+  const encoded = await encodeAvatar(buf, contentType);
+  if (!encoded) return null;
+
+  if (!hasBlobStorage()) {
+    warnMissingBlobOnce();
+    if (encoded.buf.byteLength > MAX_INLINE_BYTES) return null;
+    return `data:${encoded.contentType};base64,${encoded.buf.toString("base64")}`;
   }
 
   try {
-    const blob = await put(`avatars/${contactId}.jpg`, out, {
+    const blob = await put(`avatars/${contactId}.jpg`, encoded.buf, {
       access: "public",
-      contentType: outType,
+      contentType: encoded.contentType,
       addRandomSuffix: false,
     });
     return blob.url;
-  } catch {
-    return null;
+  } catch (err) {
+    throw new AvatarStorageError(
+      `Couldn't save the photo to Blob storage: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      { cause: err }
+    );
   }
 }
 
