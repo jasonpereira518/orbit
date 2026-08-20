@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
-import { LANDING_SECTIONS } from "@/components/landing/landing-sections";
+import { LandingSectionNav } from "@/components/landing/landing-section-nav";
+import { useActiveLandingSection } from "@/components/landing/use-active-landing-section";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { cn } from "@/lib/utils";
 
@@ -25,11 +26,18 @@ const GLASS_SPRING = {
   mass: 0.75,
 };
 
-function scrollToSection(id: string, smooth: boolean) {
-  document.getElementById(id)?.scrollIntoView({
-    behavior: smooth ? "smooth" : "auto",
-    block: "start",
-  });
+function subscribeLg(cb: () => void) {
+  const mq = window.matchMedia("(min-width: 1024px)");
+  mq.addEventListener("change", cb);
+  return () => mq.removeEventListener("change", cb);
+}
+
+function useIsLgUp() {
+  return useSyncExternalStore(
+    subscribeLg,
+    () => window.matchMedia("(min-width: 1024px)").matches,
+    () => false
+  );
 }
 
 export function LandingHeader({
@@ -44,8 +52,11 @@ export function LandingHeader({
   signedIn?: boolean;
 }) {
   const reduced = useReducedMotion();
+  const isLgUp = useIsLgUp();
   const wasPastHero = useRef(pastHero);
   const enteringNav = pastHero && !wasPastHero.current;
+  const showSectionNav = pastHero && isLgUp;
+  const { activeId, setActiveId } = useActiveLandingSection(showSectionNav);
 
   useEffect(() => {
     wasPastHero.current = pastHero;
@@ -98,7 +109,10 @@ export function LandingHeader({
           className={cn(
             "relative z-10 flex w-full items-center",
             pastHero
-              ? "gap-2 px-3 py-2 sm:gap-3 sm:px-5 sm:py-2.5 md:px-6 md:py-3"
+              ? cn(
+                  "gap-2 px-3 py-2 sm:gap-3 sm:px-5 sm:py-2.5 md:px-6 md:py-3",
+                  showSectionNav ? "justify-start" : "justify-between"
+                )
               : "justify-between px-6 py-5 md:px-10"
           )}
         >
@@ -119,11 +133,10 @@ export function LandingHeader({
           </Link>
 
           <AnimatePresence initial={false}>
-            {pastHero ? (
-              <motion.nav
+            {showSectionNav ? (
+              <motion.div
                 key="section-nav"
-                aria-label="Page sections"
-                className="flex min-w-0 flex-1 items-center justify-center gap-0.5 overflow-x-auto sm:gap-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                className="flex min-w-0 flex-1"
                 initial={reduced ? false : { opacity: 0, y: 6, filter: "blur(4px)" }}
                 animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
                 exit={
@@ -139,37 +152,8 @@ export function LandingHeader({
                   }
                 }
               >
-                {LANDING_SECTIONS.map(({ id, label }, i) => (
-                  <motion.a
-                    key={id}
-                    href={`#${id}`}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      scrollToSection(id, !reduced);
-                      history.replaceState(null, "", `#${id}`);
-                    }}
-                    className="shrink-0 rounded-lg px-2 py-1 text-xs text-[#9aada8] transition-colors hover:bg-[#e8f3f1]/[0.06] hover:text-[#e8f3f1] sm:px-2.5 sm:text-sm"
-                    initial={reduced ? false : { opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={reduced ? undefined : { opacity: 0, y: 2 }}
-                    transition={
-                      instant ?? {
-                        opacity: {
-                          duration: 0.28,
-                          ease: FLUID_EASE,
-                          delay: 0.1 + i * 0.035,
-                        },
-                        y: {
-                          ...GLASS_SPRING,
-                          delay: 0.08 + i * 0.035,
-                        },
-                      }
-                    }
-                  >
-                    {label}
-                  </motion.a>
-                ))}
-              </motion.nav>
+                <LandingSectionNav activeId={activeId} setActiveId={setActiveId} />
+              </motion.div>
             ) : null}
           </AnimatePresence>
 
