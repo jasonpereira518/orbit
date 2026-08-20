@@ -75,6 +75,16 @@ export function centreY(h: number) {
 }
 
 /**
+ * Vertical centre of the opening pose. The gutter `centreY` reserves exists
+ * for the 6 o'clock step label, and during the hold there are no labels —
+ * so Earth centres in the whole band below the header instead, which is
+ * where the eye expects the only thing on screen to sit.
+ */
+export function heroCentreY(h: number) {
+  return (HEADER_CLEARANCE + h) / 2;
+}
+
+/**
  * Side of the square the ring is drawn in — the largest that still leaves
  * each of the four outward labels inside the frame.
  *
@@ -154,10 +164,14 @@ const DEPART_SHRINK = 0.62;
 export function earthAt(p: number, g: Geom, depart = 0) {
   const cx = g.w / 2;
   const cy = centreY(g.h);
+  const heroCy = heroCentreY(g.h);
 
   // Radius at each of the four anchor poses.
   const orbitR = (g.ringR / RING_RATIO) * EARTH_RATIO;
-  const heroR = Math.min(g.w, g.h) * 0.34;
+  // Sized against the band it sits in rather than the raw frame, so the
+  // opening reads the same on a short window as on a tall one. The width
+  // term only bites on narrow viewports.
+  const heroR = Math.min((g.h - HEADER_CLEARANCE) * 0.46, g.w * 0.34);
   // Just past the frame's corner radius: full-bleed with no margin to spare,
   // and no further. Pushing deeper only magnifies one patch of ocean until it
   // reads as the camera being inside the planet rather than in front of it.
@@ -182,7 +196,7 @@ export function earthAt(p: number, g: Geom, depart = 0) {
   // progress, so they read as one gesture.
   const rise = scrub01(p, ...BEATS.riseOut);
   const r = lerp(lerp(lerp(heroR, orbitR, out), fullR, zin), exitR, rise);
-  const yCentred = lerp(lerp(cy, ringY, out), g.h / 2, zin);
+  const yCentred = lerp(lerp(heroCy, ringY, out), g.h / 2, zin);
   // Ends with the bottom of the globe just above the frame's lower edge —
   // measured off exitR so the limb lands there whatever the pull-back does.
   const yRisen = 0.84 * g.h - exitR;

@@ -1,4 +1,4 @@
-import { BookOpen, LayoutDashboard, NotebookPen } from "lucide-react";
+import { BookOpen, NotebookPen } from "lucide-react";
 import {
   AskVisual,
   ConstellationVisual,
@@ -56,7 +56,6 @@ const FEATURES = [
 ];
 
 const ALSO_IN_ORBIT = [
-  { label: "Dashboard", Icon: LayoutDashboard },
   { label: "Knowledge", Icon: BookOpen },
   { label: "Notes", Icon: NotebookPen },
 ];
