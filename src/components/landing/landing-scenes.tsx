@@ -138,7 +138,7 @@ export function SceneFinale({
             </p>
           </Reveal>
           <Reveal className="reveal-celestial" delay={200}>
-            <div className="mt-8">
+            <div className="mt-8 hidden sm:block">
               <LandingAuthControls
                 clerkOn={clerkOn}
                 demoMode={demoMode}

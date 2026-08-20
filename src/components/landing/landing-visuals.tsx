@@ -21,7 +21,7 @@ const HeroSolarSystem = dynamic(
     loading: () => (
       <div
         aria-hidden
-        className="aspect-square w-full max-w-[min(100%,560px)] rounded-full bg-[radial-gradient(circle_at_center,rgba(232,243,241,0.08),transparent_65%)] lg:max-w-[580px]"
+        className="aspect-square w-full rounded-full bg-[radial-gradient(circle_at_center,rgba(232,243,241,0.08),transparent_65%)]"
       />
     ),
   }

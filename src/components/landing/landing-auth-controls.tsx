@@ -41,7 +41,7 @@ export function LandingAuthControls({
   const ghost = variant === "header" ? ghostClass : ctaGhostClass;
   const wrapClass =
     variant === "hero"
-      ? "flex w-full flex-col gap-3 sm:w-auto sm:flex-row"
+      ? "hidden sm:flex sm:w-auto sm:flex-row sm:gap-3"
       : "flex items-center gap-2 sm:gap-3";
 
   if (!clerkOn) {

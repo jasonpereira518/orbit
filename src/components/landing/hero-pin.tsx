@@ -168,8 +168,8 @@ export const HeroPin = forwardRef<
          * stay vertically centered where they were when the header lived here. */}
         <div aria-hidden className="shrink-0 h-[4.5rem] md:h-[4.75rem]" />
 
-        <main className="relative z-10 flex flex-1 flex-col justify-center px-6 pb-8 pt-4 md:px-10 md:pb-10">
-          <div className="mx-auto grid w-full max-w-6xl -translate-y-4 items-center gap-10 md:-translate-y-6 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:gap-12">
+        <main className="relative z-10 flex min-h-0 flex-1 flex-col justify-center px-6 pb-6 pt-2 md:px-10 md:pb-10 md:pt-4">
+          <div className="mx-auto grid w-full max-w-6xl -translate-y-1 items-center gap-4 sm:gap-6 sm:-translate-y-2 md:-translate-y-6 md:gap-10 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:gap-12">
             <motion.div
               className="max-w-3xl"
               style={
@@ -183,7 +183,7 @@ export const HeroPin = forwardRef<
 
             <motion.div
               ref={camWrapRef}
-              className="relative mx-auto w-full max-w-[min(100%,560px)] lg:mx-0 lg:justify-self-end"
+              className="relative mx-auto aspect-square w-[min(100%,36svh,240px)] sm:w-[min(100%,40svh,300px)] md:w-[min(100%,44svh,400px)] lg:mx-0 lg:w-full lg:max-w-[min(100%,560px)] lg:justify-self-end"
               style={
                 reduced
                   ? undefined
