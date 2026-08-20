@@ -211,14 +211,50 @@ export function FloatingAskBar() {
   }, []);
 
   useEffect(() => {
-    function onPointer(e: MouseEvent) {
+    function onPointer(e: PointerEvent) {
       if (!wrapRef.current?.contains(e.target as Node)) {
         if (!query.trim() && messages.length === 0) setOpen(false);
       }
     }
-    document.addEventListener("mousedown", onPointer);
-    return () => document.removeEventListener("mousedown", onPointer);
+    document.addEventListener("pointerdown", onPointer);
+    return () => document.removeEventListener("pointerdown", onPointer);
   }, [query, messages.length]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    function syncViewport() {
+      const el = wrapRef.current;
+      if (!el || !vv) return;
+      const keyboardOverlap = Math.max(
+        0,
+        window.innerHeight - vv.height - vv.offsetTop
+      );
+      el.style.setProperty(
+        "--ask-keyboard-inset",
+        `${keyboardOverlap > 40 ? keyboardOverlap : 0}px`
+      );
+      const panelMax = Math.max(
+        10,
+        Math.min(48, ((vv.height - 140) / window.innerHeight) * 100)
+      );
+      el.style.setProperty("--ask-panel-max-vh", `${panelMax}vh`);
+    }
+
+    const wrap = wrapRef.current;
+    syncViewport();
+    vv.addEventListener("resize", syncViewport);
+    vv.addEventListener("scroll", syncViewport);
+    return () => {
+      vv.removeEventListener("resize", syncViewport);
+      vv.removeEventListener("scroll", syncViewport);
+      wrap?.style.removeProperty("--ask-keyboard-inset");
+      wrap?.style.removeProperty("--ask-panel-max-vh");
+    };
+  }, [open]);
 
   useEffect(() => {
     if (open) {
@@ -334,7 +370,7 @@ export function FloatingAskBar() {
       transition={{ duration: DUR.slow, ease: EASE_HOUSE }}
       className={cn(
         "pointer-events-none fixed inset-x-0 z-50 flex justify-center px-4",
-        "bottom-[calc(4.5rem+env(safe-area-inset-bottom))] md:bottom-5",
+        "bottom-[calc(4.5rem+env(safe-area-inset-bottom)+var(--ask-keyboard-inset,0px))] md:bottom-5",
         !visible && "pointer-events-none"
       )}
       aria-hidden={!visible}
@@ -396,7 +432,7 @@ export function FloatingAskBar() {
                 </div>
               </div>
 
-              <div className="max-h-[min(48vh,24rem)] overflow-y-auto">
+              <div className="max-h-[min(var(--ask-panel-max-vh,48vh),24rem)] overflow-y-auto">
                 {messages.length === 0 && !chatPending && hits.length === 0 && (
                   <div className="space-y-2.5 px-3.5 py-3">
                     {query.trim() ? (

@@ -112,7 +112,7 @@ export function NetworkDepthChart({
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Peer connections
           </p>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
             <StatMini label="Contacts" value={totalContacts} />
             <StatMini label="Peer links" value={totalPeerEdges} />
             <StatMini label="Avg links" value={avgPeerDegree} />

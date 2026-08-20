@@ -30,9 +30,10 @@ export function MobileNav({
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
 
-  const moreActive = MOBILE_MORE_NAV.some((item) =>
-    isNavActive(pathname, item.href)
-  );
+  const moreActive =
+    MOBILE_MORE_NAV.some((item) => isNavActive(pathname, item.href)) ||
+    pathname === "/settings" ||
+    pathname.startsWith("/settings/");
 
   return (
     <>
@@ -51,7 +52,7 @@ export function MobileNav({
                     type="button"
                     onClick={() => setMoreOpen(true)}
                     className={cn(
-                      "flex w-full flex-col items-center gap-0.5 rounded-xl px-1 py-2 text-[10px] font-medium transition-colors",
+                      "flex min-h-11 w-full flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-2 text-[10px] font-medium transition-colors",
                       moreActive
                         ? "text-primary"
                         : "text-muted-foreground hover:text-foreground"
@@ -74,7 +75,7 @@ export function MobileNav({
                 <Link
                   href={navItem.href}
                   className={cn(
-                    "flex w-full flex-col items-center gap-0.5 rounded-xl px-1 py-2 text-[10px] font-medium transition-colors",
+                    "flex min-h-11 w-full flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-2 text-[10px] font-medium transition-colors",
                     active
                       ? "text-primary"
                       : "text-muted-foreground hover:text-foreground",

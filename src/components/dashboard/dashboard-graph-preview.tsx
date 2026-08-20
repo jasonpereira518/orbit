@@ -23,8 +23,13 @@ export function DashboardGraphPreview({
           Your network at a glance — closer ties sit nearer the center
         </p>
       </CardHeader>
-      <CardContent className="min-h-0 flex-1 overflow-hidden p-0 px-4 pb-2">
+      <CardContent className="hidden min-h-0 flex-1 overflow-hidden p-0 px-4 pb-2 md:block">
         <NetworkGraphLazy initialData={graphPreview} compact />
+      </CardContent>
+      <CardContent className="md:hidden">
+        <p className="text-sm text-muted-foreground">
+          Explore the full map on a larger screen, or open Constellation now.
+        </p>
       </CardContent>
       <CardFooter className="border-t border-border/60 pt-4">
         <Link

@@ -52,6 +52,7 @@ import {
   monthLabel,
   monthShort,
 } from "@/components/contacts/timeline-date-scrubber";
+import { cn } from "@/lib/utils";
 import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
 
 export type TimelineInteraction = {
@@ -296,7 +297,27 @@ export function ContactTimeline({
             No interactions yet. Add a note or import messages to build history.
           </p>
         ) : (
-          <div className="flex gap-3">
+          <div className="space-y-3">
+            {scrubPoints.length > 1 ? (
+              <div className="flex gap-1.5 overflow-x-auto pb-1 sm:hidden">
+                {scrubPoints.map((point) => (
+                  <button
+                    key={point.monthKey}
+                    type="button"
+                    onClick={() => scrollToMonth(point.monthKey)}
+                    className={cn(
+                      "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                      activeMonth === point.monthKey
+                        ? "border-primary/40 bg-primary/10 text-primary"
+                        : "border-border/70 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    )}
+                  >
+                    {point.shortLabel || point.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <div className="flex gap-3">
             <div
               ref={listRef}
               className="min-h-0 max-h-[28rem] flex-1 overflow-y-auto overscroll-contain pr-1"
@@ -415,6 +436,7 @@ export function ContactTimeline({
               onSelectMonth={scrollToMonth}
               className="hidden sm:flex"
             />
+          </div>
           </div>
         )}
       </CardContent>

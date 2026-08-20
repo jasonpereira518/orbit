@@ -13,7 +13,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { CalendarClock, Trash2 } from "lucide-react";
+import { CalendarClock, MoreHorizontal, Trash2 } from "lucide-react";
 import { DUR_MS } from "@/lib/motion";
 import { toast } from "@/lib/toast";
 import { deleteContact } from "@/actions/contacts";
@@ -32,6 +32,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Popover,
   PopoverContent,
@@ -291,7 +297,7 @@ export function ContactsList({
             <li key={section.letter} className="list-none">
               <div
                 id={`contact-letter-${section.letter}`}
-                className="sticky top-0 z-10 border-b border-border/50 bg-card/95 px-4 py-1.5 backdrop-blur sm:px-5"
+                className="sticky top-14 z-10 border-b border-border/50 bg-card/95 px-4 py-1.5 backdrop-blur sm:px-5 md:top-0"
               >
                 <p className="text-xs font-semibold tracking-wide text-muted-foreground">
                   {section.letter}
@@ -346,7 +352,7 @@ export function ContactsList({
                       <div className="overflow-hidden">
                         <div
                           className={cn(
-                            "flex items-center gap-3 px-4 py-3.5 transition-[background-color,translate] duration-slow ease-house hover:bg-muted/40 sm:px-5",
+                            "flex items-center gap-3 px-4 py-3.5 pr-10 transition-[background-color,translate] duration-slow ease-house hover:bg-muted/40 sm:px-5 sm:pr-5",
                             exiting && "-translate-x-8"
                           )}
                         >
@@ -419,7 +425,7 @@ export function ContactsList({
                                 variant="ghost"
                                 size="icon-sm"
                                 aria-label={`Open ${c.fullName} on LinkedIn`}
-                                className="shrink-0 text-muted-foreground"
+                                className="hidden shrink-0 text-muted-foreground sm:inline-flex"
                                 onClick={(e: MouseEvent<HTMLButtonElement>) => {
                                   e.preventDefault();
                                   e.stopPropagation();
@@ -445,8 +451,59 @@ export function ContactsList({
                             <DeleteRowButton
                               name={c.fullName}
                               disabled={pending || exiting}
+                              className="hidden sm:inline-flex"
                               onClick={() => requestDelete(c.id)}
                             />
+
+                            <DropdownMenu>
+                              <DropdownMenuTrigger
+                                render={
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    className="shrink-0 text-muted-foreground sm:hidden"
+                                    aria-label={`More actions for ${c.fullName}`}
+                                    onClick={(e: MouseEvent<HTMLButtonElement>) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                    }}
+                                  />
+                                }
+                              >
+                                <MoreHorizontal className="size-4" />
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent
+                                align="end"
+                                className="min-w-[10rem]"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {c.linkedinUrl ? (
+                                  <DropdownMenuItem
+                                    className="gap-2"
+                                    onClick={() => {
+                                      window.open(
+                                        buildLinkedInUrl(c.linkedinUrl!),
+                                        "_blank",
+                                        "noopener,noreferrer"
+                                      );
+                                    }}
+                                  >
+                                    <LinkedInIcon className="size-4" />
+                                    LinkedIn
+                                  </DropdownMenuItem>
+                                ) : null}
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  className="gap-2"
+                                  disabled={pending || exiting}
+                                  onClick={() => requestDelete(c.id)}
+                                >
+                                  <Trash2 className="size-4" />
+                                  Delete
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         </div>
                       </div>
@@ -593,7 +650,7 @@ function AlphabetScrubber({
         role="navigation"
         aria-label="Jump to letter"
         className={cn(
-          "pointer-events-auto relative flex h-[min(70vh,32rem)] w-9 cursor-ns-resize select-none flex-col items-center justify-between rounded-2xl border border-border/70 bg-card/95 py-2.5 shadow-md backdrop-blur",
+          "pointer-events-auto relative flex h-[min(70vh,32rem)] w-6 cursor-ns-resize select-none flex-col items-center justify-between rounded-2xl border border-border/70 bg-card/95 py-2 shadow-md backdrop-blur sm:w-9 sm:py-2.5",
           "touch-none ring-1 ring-foreground/5"
         )}
         onPointerDown={onPointerDown}
@@ -781,10 +838,12 @@ function DeleteRowButton({
   name,
   disabled,
   onClick,
+  className,
 }: {
   name: string;
   disabled?: boolean;
   onClick: () => void;
+  className?: string;
 }) {
   return (
     <Button
@@ -801,7 +860,8 @@ function DeleteRowButton({
       className={cn(
         "shrink-0 text-muted-foreground",
         "hover:bg-destructive/10 hover:text-destructive",
-        "focus-visible:bg-destructive/10 focus-visible:text-destructive"
+        "focus-visible:bg-destructive/10 focus-visible:text-destructive",
+        className
       )}
     >
       <Trash2 className="size-4" />

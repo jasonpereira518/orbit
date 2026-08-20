@@ -349,12 +349,18 @@ export function BulkNotesPanel({
           <div>
             <Label htmlFor="bulk-notes">Paste or upload notes</Label>
             {!compact && (
-              <p className="mt-1 text-sm text-muted-foreground">
-                Drop in notes about one person or many — text, voice, photos,
-                calendar invites, or email forwards. Orbit splits profiles out,
-                keeps shared event/group context attached to each, and you
-                review one card at a time.
-              </p>
+              <>
+                <p className="mt-1 text-sm text-muted-foreground sm:hidden">
+                  Paste notes about one or many people — text, voice, or photos.
+                  Review each profile before saving.
+                </p>
+                <p className="mt-1 hidden text-sm text-muted-foreground sm:block">
+                  Drop in notes about one person or many — text, voice, photos,
+                  calendar invites, or email forwards. Orbit splits profiles out,
+                  keeps shared event/group context attached to each, and you
+                  review one card at a time.
+                </p>
+              </>
             )}
             {compact && (
               <p className="mt-1 text-xs text-muted-foreground">
@@ -364,11 +370,14 @@ export function BulkNotesPanel({
             )}
             <Textarea
               id="bulk-notes"
-              className={cn("mt-2", compact ? "min-h-[140px]" : "min-h-[220px]")}
+              className={cn(
+                "mt-2",
+                compact ? "min-h-[140px]" : "min-h-[160px] sm:min-h-[220px]"
+              )}
               placeholder={
                 compact
                   ? `Met Sarah Chen at AWS Summit — Codex partnerships at OpenAI...\n\nMarcus Lee (Stripe) offered an intro...`
-                  : `AWS Summit afterparty — talked with a few people over drinks about AI tooling.\n\nMet Sarah Chen — she leads Codex partnerships at OpenAI...\n\nAlso caught up with Marcus Lee (Stripe, recruiting). He offered an intro to their AI infra team...\n\nQuick note on Priya Nair from the same night — still at Notion, exploring agent workflows.`
+                  : `Met Sarah Chen at AWS Summit — Codex at OpenAI…\n\nMarcus Lee (Stripe) offered an intro…\n\nPriya Nair — still at Notion, exploring agents.`
               }
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
@@ -581,8 +590,9 @@ export function BulkNotesPanel({
           <div
             className={cn(
               "grid grid-cols-2 gap-2",
-              compact &&
-                "sticky bottom-0 -mx-1 border-t border-border/60 bg-card pt-3"
+              compact
+                ? "sticky bottom-0 -mx-1 border-t border-border/60 bg-card pt-3"
+                : "sticky bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-10 -mx-1 border-t border-border/60 bg-card/95 px-1 pt-3 pb-2 backdrop-blur md:bottom-0"
             )}
           >
             <Button

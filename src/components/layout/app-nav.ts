@@ -107,6 +107,7 @@ export const MOBILE_MORE_NAV = [
   CONSTELLATION,
   OUTREACH,
   KNOWLEDGE,
+  APP_NAV_SETTINGS,
 ];
 
 export function isNavActive(pathname: string, href: string) {

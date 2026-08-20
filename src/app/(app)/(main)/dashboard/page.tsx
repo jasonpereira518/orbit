@@ -26,36 +26,25 @@ export default function DashboardPage() {
   const outreachSummary = getOutreachPerformanceSummary();
 
   return (
-    <div className="space-y-8">
+    <div className="flex flex-col gap-8">
       <DashboardHeader />
 
       <Suspense fallback={<DashboardStatRowSkeleton />}>
         <StatsSection bundle={bundle} />
       </Suspense>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Suspense
-          fallback={
-            <>
-              <DashboardCardSkeleton className="h-80" />
-              <DashboardCardSkeleton className="h-80" />
-            </>
-          }
-        >
-          <ChartsSection bundle={bundle} />
-        </Suspense>
-      </div>
-
-      <div className="grid items-stretch gap-6 lg:grid-cols-2">
+      <div className="order-1 grid items-stretch gap-6 lg:order-3 lg:grid-cols-2">
         <Suspense fallback={<DashboardCardSkeleton className="h-64" />}>
           <SuggestedOutreachSection bundle={bundle} />
         </Suspense>
         <Suspense fallback={<DashboardCardSkeleton className="h-64" />}>
-          <OutreachPerformanceSection summary={outreachSummary} />
+          <div className="hidden h-full lg:block">
+            <OutreachPerformanceSection summary={outreachSummary} />
+          </div>
         </Suspense>
       </div>
 
-      <div className="grid items-start gap-6 lg:grid-cols-2">
+      <div className="order-2 grid items-start gap-6 lg:order-4 lg:grid-cols-2">
         <Suspense
           fallback={
             <>
@@ -71,9 +60,30 @@ export default function DashboardPage() {
         </Suspense>
       </div>
 
-      <Suspense fallback={<DashboardCardSkeleton className="h-64" />}>
-        <TailSection bundle={bundle} />
-      </Suspense>
+      <div className="order-3 grid gap-6 lg:order-2 lg:grid-cols-2">
+        <Suspense
+          fallback={
+            <>
+              <DashboardCardSkeleton className="h-80" />
+              <DashboardCardSkeleton className="h-80" />
+            </>
+          }
+        >
+          <ChartsSection bundle={bundle} />
+        </Suspense>
+      </div>
+
+      <div className="order-4 lg:hidden">
+        <Suspense fallback={<DashboardCardSkeleton className="h-64" />}>
+          <OutreachPerformanceSection summary={outreachSummary} />
+        </Suspense>
+      </div>
+
+      <div className="order-5 lg:order-5">
+        <Suspense fallback={<DashboardCardSkeleton className="h-64" />}>
+          <TailSection bundle={bundle} />
+        </Suspense>
+      </div>
     </div>
   );
 }

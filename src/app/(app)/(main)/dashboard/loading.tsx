@@ -10,22 +10,23 @@ import {
  */
 export default function DashboardLoading() {
   return (
-    <div className="space-y-8">
+    <div className="flex flex-col gap-8">
       <DashboardHeader />
       <DashboardStatRowSkeleton />
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="order-1 grid gap-6 lg:order-3 lg:grid-cols-2">
+        <DashboardCardSkeleton className="h-64" />
+        <DashboardCardSkeleton className="hidden h-64 lg:block" />
+      </div>
+      <div className="order-2 grid gap-6 lg:order-4 lg:grid-cols-2">
+        <DashboardCardSkeleton className="h-64" />
+        <DashboardCardSkeleton className="h-64" />
+      </div>
+      <div className="order-3 grid gap-6 lg:order-2 lg:grid-cols-2">
         <DashboardCardSkeleton className="h-80" />
         <DashboardCardSkeleton className="h-80" />
       </div>
-      <div className="grid gap-6 lg:grid-cols-2">
-        <DashboardCardSkeleton className="h-64" />
-        <DashboardCardSkeleton className="h-64" />
-      </div>
-      <div className="grid gap-6 lg:grid-cols-2">
-        <DashboardCardSkeleton className="h-64" />
-        <DashboardCardSkeleton className="h-64" />
-      </div>
-      <DashboardCardSkeleton className="h-64" />
+      <DashboardCardSkeleton className="order-4 h-64 lg:hidden" />
+      <DashboardCardSkeleton className="order-5 h-64" />
     </div>
   );
 }

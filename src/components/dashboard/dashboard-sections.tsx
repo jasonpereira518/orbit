@@ -198,28 +198,11 @@ export async function RemindersAndFollowUpsSection({
   return (
     <>
       <div className="reveal-mount min-w-0" style={revealDelay(240)}>
-        <RemindersDashboardCard
-          items={data.reminders.map((r) => ({
-            id: r.id,
-            title: r.title,
-            description: r.description,
-            dueDate: r.dueDate,
-            reminderType: r.reminderType,
-            actionKind: r.actionKind,
-            contactId: r.contactId,
-            contactName: r.contactId
-              ? data.contactNameById.get(r.contactId) ?? null
-              : null,
-          }))}
-        />
-      </div>
-
-      <div className="reveal-mount min-w-0" style={revealDelay(240)}>
-        <Card id="due-follow-ups" className="border-border/70 shadow-none scroll-mt-8">
-          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+        <Card id="due-follow-ups" className="scroll-mt-8 border-border/70 shadow-none">
+          <CardHeader className="flex flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
             <CardTitle className="text-base">Due follow-ups</CardTitle>
             {data.dueFollowUps.length > 0 && (
-              <div className="flex items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <GenerateFollowUpsButton limit={8} />
                 <Link
                   href="/contacts?followUp=due"
@@ -252,6 +235,23 @@ export async function RemindersAndFollowUpsSection({
             )}
           </CardContent>
         </Card>
+      </div>
+
+      <div className="reveal-mount min-w-0" style={revealDelay(240)}>
+        <RemindersDashboardCard
+          items={data.reminders.map((r) => ({
+            id: r.id,
+            title: r.title,
+            description: r.description,
+            dueDate: r.dueDate,
+            reminderType: r.reminderType,
+            actionKind: r.actionKind,
+            contactId: r.contactId,
+            contactName: r.contactId
+              ? data.contactNameById.get(r.contactId) ?? null
+              : null,
+          }))}
+        />
       </div>
     </>
   );

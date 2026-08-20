@@ -38,13 +38,18 @@ export function AppShell({
   const pathname = usePathname();
   const isOnboarding = pathname === "/onboarding";
   const isChat = pathname === "/chat";
+  const isCapture = pathname === "/capture" || pathname.startsWith("/capture/");
   const isSettings =
     pathname === "/settings" || pathname.startsWith("/settings/");
   const isConstellation =
     pathname === "/graph" || pathname.startsWith("/graph/");
   const isViewportLocked = isChat || isConstellation;
   const showAskBar =
-    !isOnboarding && !isChat && !isSettings && !isConstellation;
+    !isOnboarding &&
+    !isChat &&
+    !isCapture &&
+    !isSettings &&
+    !isConstellation;
 
   if (isOnboarding) {
     return (
@@ -89,7 +94,7 @@ export function AppShell({
           )}
         >
           <header
-            className="z-30 flex shrink-0 items-center justify-between border-b border-border/70 bg-background/95 px-4 py-3 backdrop-blur md:hidden"
+            className="sticky top-0 z-30 flex shrink-0 items-center justify-between border-b border-border/70 bg-background/95 px-4 py-3 backdrop-blur md:hidden"
             style={{ viewTransitionName: "app-mobile-header" }}
           >
             <Link
@@ -114,7 +119,7 @@ export function AppShell({
               "mx-auto flex w-full max-w-6xl flex-col px-4 py-6 md:px-10 md:py-8",
               isViewportLocked
                 ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-8"
-                : isSettings
+                : isSettings || isCapture
                   ? "flex-1 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-8"
                   : "flex-1 pb-[calc(9.5rem+env(safe-area-inset-bottom))] md:pb-24",
               isConstellation && "py-4 md:py-5",
