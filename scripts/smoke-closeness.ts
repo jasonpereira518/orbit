@@ -1,0 +1,365 @@
+/**
+ * Exercises the closeness formula and its cohort normalization. No DB, no network.
+ * Run: npx tsx scripts/smoke-closeness.ts
+ */
+
+import {
+  applyClosenessCohort,
+  buildClosenessCohort,
+  closenessTier,
+  cohortPercentile,
+  computeClosenessForAll,
+  computeRawCloseness,
+  type ClosenessContact,
+} from "../src/lib/closeness";
+
+function check(label: string, condition: boolean, detail?: string) {
+  if (!condition) {
+    throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
+  }
+  console.log(`  ok  ${label}`);
+}
+
+const DAY = 24 * 60 * 60 * 1000;
+const daysAgoDate = (d: number) => new Date(Date.now() - d * DAY);
+
+function person(
+  over: Partial<ClosenessContact> & { id?: string } = {}
+): ClosenessContact & { id: string } {
+  return {
+    id: "c0",
+    relationshipScore: 3,
+    lastInteractionAt: daysAgoDate(30),
+    createdAt: daysAgoDate(400),
+    company: "Acme",
+    title: "Engineer",
+    industry: null,
+    howMet: null,
+    notes: null,
+    aiSummary: null,
+    keyFacts: null,
+    sharedInterests: null,
+    tags: null,
+    ...over,
+  };
+}
+
+/** The pre-change formula, kept here purely to compare distributions. */
+function legacyCloseness(c: ClosenessContact, goals: string[] = []) {
+  const s = Math.min(5, Math.max(1, c.relationshipScore || 2)) / 5;
+  const ref = c.lastInteractionAt || c.createdAt;
+  const days = ref
+    ? Math.floor((Date.now() - new Date(ref).getTime()) / DAY)
+    : null;
+  const recency = days === null ? 0.15 : days <= 0 ? 1 : Math.exp(-days / 45);
+  return Math.min(1, Math.max(0, 0.4 * s + 0.4 * recency + 0.2 * (goals.length ? 0 : 0)));
+}
+
+console.log("\n1. Component monotonicity");
+{
+  const base = person();
+  const raw = (over: Partial<ClosenessContact>, touches = 0) =>
+    computeRawCloseness({ ...base, ...over }, [], touches).raw;
+
+  check(
+    "more recent scores higher",
+    raw({ lastInteractionAt: daysAgoDate(5) }) >
+      raw({ lastInteractionAt: daysAgoDate(200) })
+  );
+  check(
+    "more frequent scores higher",
+    raw({}, 10) > raw({}, 1),
+    `${raw({}, 10)} vs ${raw({}, 1)}`
+  );
+  check(
+    "higher strength scores higher",
+    raw({ relationshipScore: 5 }) > raw({ relationshipScore: 1 })
+  );
+  check(
+    "cadence has diminishing returns",
+    raw({}, 2) - raw({}, 1) > raw({}, 12) - raw({}, 11)
+  );
+}
+
+console.log("\n2. The long tail stays separable");
+{
+  const a = computeRawCloseness(
+    person({ lastInteractionAt: daysAgoDate(400) }),
+    [],
+    0
+  ).raw;
+  const b = computeRawCloseness(
+    person({ lastInteractionAt: daysAgoDate(700) }),
+    [],
+    0
+  ).raw;
+  check("400d and 700d idle still rank apart", a > b, `${a} vs ${b}`);
+  check(
+    "the gap survives float rounding",
+    a - b > 1e-6,
+    `gap ${(a - b).toExponential(2)}`
+  );
+
+  // The specific regression this replaced: exp(-d/45) has flattened out here,
+  // so the old scores differ only far below anything the UI could show.
+  const legacyHi = legacyCloseness(person({ lastInteractionAt: daysAgoDate(400) }));
+  const legacyLo = legacyCloseness(person({ lastInteractionAt: daysAgoDate(700) }));
+  const legacyGap = legacyHi - legacyLo;
+  check(
+    "old formula rendered them as the same percentage",
+    Math.round(legacyHi * 100) === Math.round(legacyLo * 100),
+    `${Math.round(legacyHi * 100)}% vs ${Math.round(legacyLo * 100)}%`
+  );
+  check(
+    "new formula separates them by orders of magnitude more",
+    a - b > legacyGap * 100,
+    `new ${(a - b).toExponential(2)} vs old ${legacyGap.toExponential(2)}`
+  );
+}
+
+console.log("\n3. Cold start falls back to absolute scoring");
+{
+  const five = Array.from({ length: 5 }, (_, i) =>
+    person({ id: `c${i}`, relationshipScore: ((i % 5) + 1) as number })
+  );
+  const scored = computeClosenessForAll(five, []);
+  for (const c of five) {
+    const got = scored.get(c.id)!;
+    const raw = computeRawCloseness(c, [], 0).raw;
+    check(
+      `  N=5 contact ${c.id} is pure absolute`,
+      Math.abs(got.closeness - raw) < 1e-12
+    );
+  }
+
+  const cohort = buildClosenessCohort(five.map((c) => computeRawCloseness(c, [], 0).raw));
+  check("  relative weight is 0 below 8 contacts", cohort.relativeWeight === 0);
+
+  const many = Array.from({ length: 60 }, (_, i) =>
+    person({ id: `c${i}`, relationshipScore: (i % 5) + 1 })
+  );
+  const bigCohort = buildClosenessCohort(
+    many.map((c) => computeRawCloseness(c, [], 0).raw)
+  );
+  check(
+    "  relative weight reaches 0.5 at 40+",
+    Math.abs(bigCohort.relativeWeight - 0.5) < 1e-12
+  );
+
+  const mid = buildClosenessCohort(new Array(24).fill(0.5));
+  check(
+    "  relative weight ramps in between",
+    mid.relativeWeight > 0 && mid.relativeWeight < 0.5,
+    String(mid.relativeWeight)
+  );
+}
+
+console.log("\n4. Rings honour their quotas");
+{
+  const n = 200;
+  const people = Array.from({ length: n }, (_, i) =>
+    person({
+      id: `c${i}`,
+      relationshipScore: (i % 5) + 1,
+      lastInteractionAt: daysAgoDate((i * 7) % 600),
+    })
+  );
+  const scored = computeClosenessForAll(people, [], new Map(
+    people.map((p, i) => [p.id, i % 9])
+  ));
+
+  const counts = [0, 0, 0, 0, 0, 0];
+  for (const b of scored.values()) counts[b.orbitScore] += 1;
+
+  const expected = { 5: 0.08, 4: 0.14, 3: 0.22, 2: 0.26, 1: 0.3 };
+  for (const ring of [5, 4, 3, 2, 1] as const) {
+    const share = counts[ring] / n;
+    check(
+      `  ring ${ring} ≈ ${Math.round(expected[ring] * 100)}% (got ${Math.round(share * 100)}%)`,
+      Math.abs(share - expected[ring]) <= 0.03
+    );
+  }
+  check("  every ring is populated", counts.slice(1).every((c) => c > 0));
+}
+
+console.log("\n5. Spread beats the old formula");
+{
+  // A realistic orbit: most people are idle, a few are active.
+  const n = 300;
+  const people = Array.from({ length: n }, (_, i) => {
+    const idle = i < n * 0.7 ? 90 + ((i * 13) % 500) : (i * 3) % 60;
+    return person({
+      id: `c${i}`,
+      relationshipScore: (i % 5) + 1,
+      lastInteractionAt: daysAgoDate(idle),
+    });
+  });
+  const touches = new Map(people.map((p, i) => [p.id, i < n * 0.7 ? i % 3 : 4 + (i % 8)]));
+  const scored = computeClosenessForAll(people, [], touches);
+
+  const iqr = (xs: number[]) => {
+    const s = [...xs].sort((a, b) => a - b);
+    const q = (f: number) => s[Math.floor(f * (s.length - 1))];
+    return q(0.75) - q(0.25);
+  };
+
+  const newVals = [...scored.values()].map((b) => b.closeness);
+  const oldVals = people.map((p) => legacyCloseness(p));
+
+  const histogram = (xs: number[], label: string) => {
+    const bins = new Array(10).fill(0);
+    for (const x of xs) bins[Math.min(9, Math.floor(x * 10))] += 1;
+    console.log(`\n  ${label}`);
+    bins.forEach((count, i) => {
+      const bar = "█".repeat(Math.round((count / xs.length) * 60));
+      console.log(
+        `    ${String(i * 10).padStart(3)}–${String(i * 10 + 10).padStart(3)}% ${bar} ${count}`
+      );
+    });
+  };
+
+  histogram(oldVals, "old formula");
+  histogram(newVals, "new formula");
+
+  console.log(
+    `\n  IQR: old ${iqr(oldVals).toFixed(3)} → new ${iqr(newVals).toFixed(3)}`
+  );
+  check("  spread is materially wider", iqr(newVals) > iqr(oldVals) * 1.5);
+  check("  the top of the scale is reachable", Math.max(...newVals) > 0.8);
+  check(
+    "  nothing pins to 0 or 1",
+    Math.min(...newVals) > 0 && Math.max(...newVals) < 1
+  );
+}
+
+console.log("\n6. No active goals renormalizes instead of penalizing");
+{
+  const best = person({
+    relationshipScore: 5,
+    lastInteractionAt: new Date(),
+  });
+  const noGoals = computeRawCloseness(best, [], 50).raw;
+  check(
+    "  a perfect contact reaches 1.0 with no goals set",
+    Math.abs(noGoals - 1) < 1e-9,
+    String(noGoals)
+  );
+
+  const withGoals = computeRawCloseness(best, ["acme integrations"], 50).raw;
+  check("  and still reaches 1.0 when the goal matches", Math.abs(withGoals - 1) < 1e-9);
+
+  // Ordering between contacts must not depend on whether goals exist.
+  const pair = [
+    person({ id: "a", relationshipScore: 5, lastInteractionAt: daysAgoDate(3) }),
+    person({ id: "b", relationshipScore: 2, lastInteractionAt: daysAgoDate(200) }),
+  ];
+  const orderNoGoals =
+    computeRawCloseness(pair[0], [], 5).raw > computeRawCloseness(pair[1], [], 1).raw;
+  const orderGoals =
+    computeRawCloseness(pair[0], ["zzz unrelated"], 5).raw >
+    computeRawCloseness(pair[1], ["zzz unrelated"], 1).raw;
+  check("  relative ordering is unchanged by goals", orderNoGoals === orderGoals);
+}
+
+console.log("\n7. Ties resolve identically");
+{
+  const twins = [
+    person({ id: "t1", relationshipScore: 4, lastInteractionAt: daysAgoDate(10) }),
+    person({ id: "t2", relationshipScore: 4, lastInteractionAt: daysAgoDate(10) }),
+  ];
+  const others = Array.from({ length: 40 }, (_, i) =>
+    person({ id: `o${i}`, relationshipScore: (i % 5) + 1, lastInteractionAt: daysAgoDate(i * 5) })
+  );
+  const scored = computeClosenessForAll([...twins, ...others], [], new Map());
+  const a = scored.get("t1")!;
+  const b = scored.get("t2")!;
+  check("  identical contacts share a percentile", a.percentile === b.percentile);
+  check("  identical contacts share a ring", a.orbitScore === b.orbitScore);
+  check("  identical contacts share a tier", a.tier === b.tier);
+
+  // [0.2, 0.4, 0.4, 0.4, 0.9] — the tie block spans indices 1..3, so its
+  // midrank sits at index 2 of 5.
+  const cohort = buildClosenessCohort([0.2, 0.4, 0.4, 0.4, 0.9]);
+  check(
+    "  midrank puts a 3-way tie at its centre",
+    Math.abs(cohortPercentile(0.4, cohort) - 0.5) < 1e-12,
+    String(cohortPercentile(0.4, cohort))
+  );
+  check(
+    "  nobody lands on an exact 0 or 1",
+    cohortPercentile(0.2, cohort) > 0 && cohortPercentile(0.9, cohort) < 1
+  );
+}
+
+console.log("\n8. Absolute tier still tracks network health");
+{
+  // The dashboard counts inner ties by raw score, so a cold network must show it.
+  const healthy = Array.from({ length: 50 }, (_, i) =>
+    person({ id: `h${i}`, relationshipScore: 4, lastInteractionAt: daysAgoDate(i % 20) })
+  );
+  const cold = Array.from({ length: 50 }, (_, i) =>
+    person({ id: `c${i}`, relationshipScore: 2, lastInteractionAt: daysAgoDate(300 + i) })
+  );
+
+  const rawInner = (people: Array<ClosenessContact & { id: string }>, touches: number) =>
+    people.filter(
+      (p) => closenessTier(computeRawCloseness(p, [], touches).raw) === "inner"
+    ).length;
+
+  check(
+    "  healthy network has inner ties",
+    rawInner(healthy, 8) > 0,
+    String(rawInner(healthy, 8))
+  );
+  check(
+    "  cold network has none",
+    rawInner(cold, 0) === 0,
+    String(rawInner(cold, 0))
+  );
+
+  // Quota tiers, by contrast, are a fixed share — which is why the dashboard
+  // must not count those.
+  const quotaInner = [...computeClosenessForAll(cold, []).values()].filter(
+    (b) => b.tier === "inner"
+  ).length;
+  check(
+    "  quota tiers still fill in a cold network",
+    quotaInner > 0,
+    String(quotaInner)
+  );
+}
+
+console.log("\n9. Cohort application is self-consistent");
+{
+  const people = Array.from({ length: 30 }, (_, i) =>
+    person({ id: `c${i}`, relationshipScore: (i % 5) + 1, lastInteractionAt: daysAgoDate(i * 11) })
+  );
+  const raws = people.map((p) => computeRawCloseness(p, [], 0));
+  const cohort = buildClosenessCohort(raws.map((r) => r.raw));
+
+  const byBatch = computeClosenessForAll(people, []);
+  people.forEach((p, i) => {
+    const direct = applyClosenessCohort(raws[i], cohort);
+    const batch = byBatch.get(p.id)!;
+    check(
+      `  batch matches direct for ${p.id}`,
+      Math.abs(direct.closeness - batch.closeness) < 1e-12 &&
+        direct.orbitScore === batch.orbitScore
+    );
+  });
+
+  // Rank order must survive the blend.
+  const sorted = [...byBatch.entries()].sort(
+    (a, b) => b[1].closeness - a[1].closeness
+  );
+  for (let i = 1; i < sorted.length; i++) {
+    const hi = sorted[i - 1][1];
+    const lo = sorted[i][1];
+    check(
+      `  ring is monotonic at position ${i}`,
+      hi.orbitScore >= lo.orbitScore
+    );
+  }
+}
+
+console.log("\nAll closeness smoke checks passed.\n");

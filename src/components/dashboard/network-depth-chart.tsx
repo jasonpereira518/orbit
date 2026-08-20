@@ -104,7 +104,7 @@ export function NetworkDepthChart({
             })}
           </div>
           <p className="text-xs text-muted-foreground">
-            Strength, recency, and goal alignment combined
+            Strength, recency, cadence, and goal alignment combined
           </p>
         </div>
 

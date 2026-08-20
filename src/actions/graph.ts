@@ -3,9 +3,10 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, userSettings } from "@/db/schema";
-import { listActiveGoalTexts, listGoals } from "@/actions/goals";
+import { listGoals } from "@/actions/goals";
 import { requireUserId, getCurrentUserProfile } from "@/lib/auth";
-import { computeCloseness } from "@/lib/closeness";
+import { closenessTier } from "@/lib/closeness";
+import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { isCometContact } from "@/lib/comet";
 import { rebuildContactEmbedding } from "@/lib/search";
 import {
@@ -36,7 +37,10 @@ export async function getGraphData() {
   const profile = await getCurrentUserProfile();
   const db = await getDb();
 
-  const [rows, goalTexts, goals, settings] = await Promise.all([
+  // Promise.resolve pins a single execution: a drizzle query builder is a lazy
+  // thenable that re-runs on every await, so handing the bare builder to the
+  // cohort would quietly issue the same scan twice.
+  const contactRowsPromise = Promise.resolve(
     db.query.contacts.findMany({
       where: eq(contacts.userId, userId),
       columns: {
@@ -66,17 +70,22 @@ export async function getGraphData() {
         industry: true,
       },
       with: { contactTags: { with: { tag: true } } },
-    }),
-    listActiveGoalTexts(),
+    })
+  );
+
+  const [rows, goals, settings, closenessCohort] = await Promise.all([
+    contactRowsPromise,
     listGoals(),
     db.query.userSettings.findFirst({
       where: eq(userSettings.userId, userId),
     }),
+    // Donates the scan above rather than repeating it.
+    getClosenessCohort(userId, contactRowsPromise),
   ]);
 
   const graphContacts = rows.map((c) => {
     const tags = c.contactTags.map((ct) => ct.tag.name);
-    const breakdown = computeCloseness({ ...c, notes: null, tags }, goalTexts);
+    const breakdown = closenessCohort.byId.get(c.id);
     const dormant = isCometContact(c.lastInteractionAt);
     return {
       id: c.id,
@@ -86,9 +95,9 @@ export async function getGraphData() {
       school: c.school,
       title: c.title,
       relationshipScore: c.relationshipScore,
-      closeness: breakdown.closeness,
-      closenessTier: breakdown.tier,
-      orbitScore: breakdown.orbitScore,
+      closeness: breakdown?.closeness ?? 0,
+      closenessTier: breakdown?.tier ?? ("outer" as const),
+      orbitScore: breakdown?.orbitScore ?? 1,
       lastInteractionAt: c.lastInteractionAt,
       nextFollowUpAt: c.nextFollowUpAt,
       tags,
@@ -130,9 +139,15 @@ export async function getGraphData() {
   const scoreCounts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
   let dormantCount = 0;
   let overdueCount = 0;
+  // Counted from the absolute score, not from the rings above: rings are quota
+  // shares, so ring 4 + ring 5 is a fixed 22% of any network and would report
+  // the same "strong ties" number however warm or cold things actually are.
+  let strongTies = 0;
   for (const c of graphContacts) {
     const s = Math.min(5, Math.max(1, (c.orbitScore ?? c.relationshipScore) || 2));
     scoreCounts[s] = (scoreCounts[s] || 0) + 1;
+    const raw = closenessCohort.byId.get(c.id)?.raw;
+    if (raw != null && closenessTier(raw) !== "outer") strongTies += 1;
     if (c.dormant) dormantCount += 1;
     if (c.nextFollowUpAt && new Date(c.nextFollowUpAt).getTime() < Date.now()) {
       overdueCount += 1;
@@ -152,6 +167,7 @@ export async function getGraphData() {
       total: rows.length,
       companyCount: companies.length,
       scoreCounts,
+      strongTies,
       dormantCount,
       overdueCount,
       userName: profile?.name || "You",

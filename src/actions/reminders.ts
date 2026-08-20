@@ -61,6 +61,7 @@ export async function fetchDashboard() {
   const contactRows = [...data.contactById.values()];
   const networkStats = await getNetworkStats(userId, {
     contacts: contactRows.map((c) => ({
+      id: c.id,
       relationshipScore: c.relationshipScore,
       lastInteractionAt: c.lastInteractionAt,
       createdAt: c.createdAt,
@@ -85,7 +86,6 @@ export async function fetchDashboard() {
             }))
           : []),
     })),
-    goalTexts: data.goals.map((g) => g.text),
   });
 
   return { data, networkStats };

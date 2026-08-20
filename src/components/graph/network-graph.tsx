@@ -1148,6 +1148,7 @@ function GraphCanvasInner({
             total: data.summary.total,
             companyCount: data.summary.companyCount,
             scoreCounts,
+            strongTies: data.summary.strongTies,
             dormantCount: data.summary.dormantCount,
             overdueCount: data.summary.overdueCount,
             userImageUrl: data.summary.userImageUrl,

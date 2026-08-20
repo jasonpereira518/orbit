@@ -11,7 +11,7 @@ import { createPortal } from "react-dom";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import {
-  closenessPercentChipClass,
+  closenessTierChipClass,
 } from "@/lib/closeness";
 import { companyBrandColor } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
@@ -193,7 +193,9 @@ export function ContactAvatarPreview({
                   <span
                     className={cn(
                       "rounded-md px-1.5 py-0.5 text-[11px] font-medium tabular-nums",
-                      closenessPercentChipClass(contact.closeness)
+                      contact.closenessTier
+                        ? closenessTierChipClass(contact.closenessTier)
+                        : "bg-muted text-muted-foreground"
                     )}
                   >
                     {Math.round(contact.closeness * 100)}%

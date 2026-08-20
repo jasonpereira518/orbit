@@ -44,7 +44,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  closenessPercentChipClass,
+  closenessTierChipClass,
 } from "@/lib/closeness";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { cn } from "@/lib/utils";
@@ -658,10 +658,9 @@ function ClosenessChip({
       ? `${Math.round(closeness * 100)}%`
       : `Score ${relationshipScore}`;
 
-  const chipClass =
-    typeof closeness === "number"
-      ? closenessPercentChipClass(closeness)
-      : "bg-muted text-muted-foreground";
+  const chipClass = closenessTier
+    ? closenessTierChipClass(closenessTier)
+    : "bg-muted text-muted-foreground";
 
   const tierHint = closenessTier ? ` (${TIER_TOOLTIP[closenessTier]})` : "";
 
@@ -683,8 +682,8 @@ function ClosenessChip({
       </TooltipTrigger>
       <TooltipContent side="top" className="max-w-[240px] text-left leading-snug">
         Closeness combines relationship strength, how recently you’ve
-        interacted, and fit with your goals. Higher means a stronger orbit
-        {tierHint}.
+        interacted, how often you’re in touch, and fit with your goals — scored
+        relative to everyone else in your orbit{tierHint}.
       </TooltipContent>
     </Tooltip>
   );

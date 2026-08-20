@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { contacts, interactions, reminders } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { computeCloseness } from "@/lib/closeness";
+import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { listActiveGoalTexts } from "@/actions/goals";
 import { type CompanyResolver } from "@/lib/companies";
 import {
@@ -61,7 +61,10 @@ export async function listContacts(filters?: {
   const userId = await requireUserId();
   const db = await getDb();
 
-  const [allRows, goals] = await Promise.all([
+  // Promise.resolve pins a single execution: a drizzle query builder is a lazy
+  // thenable that re-runs on every await, so handing the bare builder to the
+  // cohort would quietly issue the same scan twice.
+  const contactRowsPromise = Promise.resolve(
     db.query.contacts.findMany({
       where: eq(contacts.userId, userId),
       columns: {
@@ -100,8 +103,13 @@ export async function listContacts(filters?: {
       },
       with: { contactTags: { with: { tag: true } } },
       orderBy: [desc(contacts.updatedAt)],
-    }),
-    listActiveGoalTexts(),
+    })
+  );
+
+  const [allRows, closenessCohort] = await Promise.all([
+    contactRowsPromise,
+    // Donates the scan above rather than repeating it.
+    getClosenessCohort(userId, contactRowsPromise),
   ]);
 
   let rows = allRows;
@@ -148,15 +156,17 @@ export async function listContacts(filters?: {
 
   const mapped = rows.map((c) => {
     const tags = c.contactTags.map((ct) => ct.tag.name);
-    const closeness = computeCloseness({ ...c, tags }, goals);
+    // Scored against the whole orbit, not this filtered page — a search result
+    // must not change how close someone is.
+    const closeness = closenessCohort.byId.get(c.id);
     return {
       ...c,
       // Never ship base64 data URLs in list payloads.
       profileImageUrl: clientContactAvatarUrl(c.id, c.profileImageUrl),
       tags,
-      closeness: closeness.closeness,
-      closenessTier: closeness.tier,
-      orbitScore: closeness.orbitScore,
+      closeness: closeness?.closeness ?? 0,
+      closenessTier: closeness?.tier ?? ("outer" as const),
+      orbitScore: closeness?.orbitScore ?? 1,
     };
   });
 

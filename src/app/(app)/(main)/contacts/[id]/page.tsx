@@ -5,7 +5,6 @@ import {
   listRelatedContacts,
   listMutualContacts,
 } from "@/actions/contacts";
-import { listActiveGoalTexts } from "@/actions/goals";
 import { ContactFollowUpSection } from "@/components/contacts/contact-follow-up-section";
 import { ContactProfileHero } from "@/components/contacts/contact-profile-hero";
 import { ContactProfileOverview } from "@/components/contacts/contact-profile-overview";
@@ -16,10 +15,9 @@ import { ContactStatPills } from "@/components/contacts/contact-stat-pills";
 import { ContactTimeline } from "@/components/contacts/contact-timeline";
 import { Reveal } from "@/components/motion/reveal";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  computeCloseness,
-  formatInteractionFrequency,
-} from "@/lib/closeness";
+import { computeCloseness, formatInteractionFrequency } from "@/lib/closeness";
+import { getClosenessCohort } from "@/lib/closeness-cohort";
+import { requireUserId } from "@/lib/auth";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { notFound } from "next/navigation";
 
@@ -38,31 +36,44 @@ export default async function ContactDetailPage({
   const sendOptionsPromise = getContactFollowUpSendOptions(id).catch(() => null);
   const relatedPromise = listRelatedContacts(id, 6).catch(() => []);
   const mutualsPromise = listMutualContacts(id, 6).catch(() => []);
-  // listActiveGoalTexts resolves the user internally as of the goals rework.
-  const goalsPromise = listActiveGoalTexts();
+  // Closeness is relative, so even a single-contact page needs the whole
+  // orbit's distribution. Cached per request, and shared with any other
+  // surface on this page that scores contacts.
+  const cohortPromise = requireUserId().then((userId) =>
+    getClosenessCohort(userId)
+  );
 
   // notFound() must fire BEFORE any Suspense boundary renders so the route
   // still returns a real 404 status.
-  const [contact, goals] = await Promise.all([getContact(id), goalsPromise]);
+  const [contact, closenessCohort] = await Promise.all([
+    getContact(id),
+    cohortPromise,
+  ]);
   if (!contact) notFound();
 
-  const closeness = computeCloseness(
-    {
-      relationshipScore: contact.relationshipScore,
-      lastInteractionAt: contact.lastInteractionAt,
-      createdAt: contact.createdAt,
-      company: contact.company,
-      title: contact.title,
-      industry: contact.industry,
-      howMet: contact.howMet,
-      notes: contact.notes,
-      aiSummary: contact.aiSummary,
-      keyFacts: contact.keyFacts,
-      sharedInterests: contact.sharedInterests,
-      tags: contact.tags,
-    },
-    goals
-  );
+  const closeness =
+    closenessCohort.byId.get(contact.id) ??
+    // Only reachable if the contact was created after the cohort query ran.
+    computeCloseness(
+      {
+        relationshipScore: contact.relationshipScore,
+        lastInteractionAt: contact.lastInteractionAt,
+        createdAt: contact.createdAt,
+        company: contact.company,
+        title: contact.title,
+        industry: contact.industry,
+        howMet: contact.howMet,
+        aiSummary: contact.aiSummary,
+        keyFacts: contact.keyFacts,
+        sharedInterests: contact.sharedInterests,
+        tags: contact.tags,
+      },
+      closenessCohort.goals,
+      {
+        cohort: closenessCohort.cohort,
+        touchCount: closenessCohort.touchCounts.get(contact.id) ?? 0,
+      }
+    );
 
   const howMetSummary = formatHowMetSummary({
     metContext: contact.metContext,

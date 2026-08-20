@@ -370,7 +370,7 @@ export function ContactForm({
         </Field>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Closeness (1–5)">
+        <Field label="Strength (1–5)">
           <Input
             type="number"
             min={1}
