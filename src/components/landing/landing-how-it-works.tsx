@@ -485,7 +485,7 @@ export function LandingHowItWorks() {
   return (
     <section
       aria-labelledby="landing-how-heading"
-      className="landing-scene scene-how relative z-10 border-t border-[#e8f3f1]/[0.07]"
+      className="landing-scene scene-how relative z-10"
     >
       <div
         id="landing-how"

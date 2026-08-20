@@ -11,8 +11,10 @@ const solidClass =
   "rounded-full bg-[#e8f3f1] px-4 py-2 text-sm font-medium text-[#0f3d3e] transition-colors hover:bg-white";
 const ctaSolidClass =
   "inline-flex items-center justify-center rounded-full bg-[#e8f3f1] px-6 py-3 text-sm font-medium text-[#0f3d3e] transition-colors hover:bg-white";
+// Pill, to match the solid CTA it always sits beside. (The header's ghost
+// stays square-ish — it is a bare text link, so its radius never shows.)
 const ctaGhostClass =
-  "inline-flex items-center justify-center rounded-lg border border-white/20 bg-white/5 px-6 py-3 text-sm text-[#e8f3f1] transition-colors hover:border-white/35 hover:bg-white/10";
+  "inline-flex items-center justify-center rounded-full border border-white/20 bg-white/5 px-6 py-3 text-sm text-[#e8f3f1] transition-colors hover:border-white/35 hover:bg-white/10";
 
 /**
  * Auth state is resolved server-side (see (marketing)/page.tsx), so the

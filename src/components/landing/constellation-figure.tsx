@@ -123,9 +123,12 @@ export function ConstellationFigure({ className }: { className?: string }) {
   const [figureHovered, setFigureHovered] = useState(false);
   const [hoveredStar, setHoveredStar] = useState<string | null>(null);
 
+  // Completes with the figure's centre a third of the way up the viewport
+  // rather than at the midpoint — the draw kept finishing while there was
+  // still a good deal of the scene left to scroll past.
   const { scrollYProgress } = useScroll({
     target: ref,
-    offset: ["start 0.78", "center 0.5"],
+    offset: ["start 0.78", "center 0.3"],
   });
 
   const chainProgress = [
