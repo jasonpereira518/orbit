@@ -56,6 +56,13 @@ export type ContactInput = {
   industry?: string;
   metContext?: string;
   dateMet?: string | null;
+  /**
+   * Overrides the computed first-interaction timestamp (normally derived from
+   * `dateMet`). Used by importers that know the real relationship age — e.g.
+   * a LinkedIn "Connected On" date — so that age-based scoring isn't blind to
+   * imported history.
+   */
+  firstInteractionAt?: string | Date | null;
   howMet?: string;
   notes?: string;
   aiSummary?: string;
@@ -188,6 +195,10 @@ function contactInsertValues(
   now: Date
 ) {
   const metAt = safeTimestamp(input.dateMet);
+  const firstInteractionAt =
+    input.firstInteractionAt !== undefined
+      ? safeTimestamp(input.firstInteractionAt)
+      : metAt;
   return {
     userId,
     fullName: input.fullName,
@@ -216,7 +227,7 @@ function contactInsertValues(
     keyFacts: input.keyFacts ?? [],
     sharedInterests: input.sharedInterests ?? [],
     opportunities: input.opportunities ?? [],
-    firstInteractionAt: metAt ?? now,
+    firstInteractionAt: firstInteractionAt ?? now,
     lastInteractionAt: metAt ?? now,
     nextFollowUpAt: safeTimestamp(input.nextFollowUpAt),
   };

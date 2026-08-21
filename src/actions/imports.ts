@@ -399,7 +399,11 @@ export async function confirmLinkedInImport(
             email: row.email || undefined,
             linkedinUrl: row.url || undefined,
             source: "linkedin",
-            relationshipScore: 2,
+            // No statedCloseness: nobody has rated these people, and saying
+            // "2 out of 5" about two thousand strangers is exactly the
+            // assumption this change removes. The column default keeps
+            // relationshipScore at 2 for legacy readers.
+            firstInteractionAt: connectedOn ?? undefined,
             dateMet: connectedOn,
             howMet: "LinkedIn connection",
             metContext: "online",
