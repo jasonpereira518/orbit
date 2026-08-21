@@ -6,6 +6,9 @@ import { useEffect, useState, useTransition, ViewTransition } from "react";
 import { motion } from "motion/react";
 import { DUR, EASE_HOUSE, SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
+import { FeatureLock } from "@/components/plan/plan-logo";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { includedInLabel } from "@/lib/plan-limits";
 import {
   clearPeopleNavInBrowser,
   directionForPeopleNav,
@@ -20,9 +23,11 @@ const OPTIONS = [
 function PeopleViewToggle({
   visual,
   onNavigate,
+  recruitersLocked,
 }: {
   visual: "contacts" | "recruiters";
   onNavigate: (key: "contacts" | "recruiters", href: string) => void;
+  recruitersLocked: boolean;
 }) {
   return (
     <div
@@ -57,7 +62,17 @@ function PeopleViewToggle({
                 transition={SPRING_PILL}
               />
             )}
-            <span className="relative">{opt.label}</span>
+            {opt.key === "recruiters" && recruitersLocked ? (
+              <FeatureLock
+                includedIn={includedInLabel("recruiters")}
+                label="Recruiter tracking"
+                className="w-full justify-center"
+              >
+                <span className="relative w-full text-center">{opt.label}</span>
+              </FeatureLock>
+            ) : (
+              <span className="relative">{opt.label}</span>
+            )}
           </Link>
         );
       })}
@@ -71,12 +86,15 @@ export function PeopleListShell({
   subtitle,
   actions,
   children,
+  recruitersLocked = false,
 }: {
   active: "contacts" | "recruiters";
   title: string;
   subtitle: React.ReactNode;
   actions?: React.ReactNode;
   children: React.ReactNode;
+  /** Recruiter tracking is a paid feature; the tab still navigates to its explainer. */
+  recruitersLocked?: boolean;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -133,7 +151,13 @@ export function PeopleListShell({
         <div className="flex flex-wrap items-center justify-end gap-2">
           {actions}
           {/* Always rightmost so it stays in the same screen position on both pages */}
-          <PeopleViewToggle visual={visual} onNavigate={navigateTo} />
+          <TooltipProvider>
+            <PeopleViewToggle
+              visual={visual}
+              onNavigate={navigateTo}
+              recruitersLocked={recruitersLocked}
+            />
+          </TooltipProvider>
         </div>
       </div>
 

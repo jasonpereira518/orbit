@@ -17,15 +17,20 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { Lock } from "lucide-react";
+import { FEATURE_FLAG, includedInLabel } from "@/lib/plan-limits";
+import type { Entitlements } from "@/lib/entitlements";
 import { cn } from "@/lib/utils";
 import { clerkAppearance } from "@/lib/clerk-appearance";
 
 export function MobileNav({
   clerkOn,
   demoMode,
+  entitlements,
 }: {
   clerkOn: boolean;
   demoMode: boolean;
+  entitlements: Entitlements;
 }) {
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
@@ -111,6 +116,9 @@ export function MobileNav({
             {MOBILE_MORE_NAV.map((item) => {
               const active = isNavActive(pathname, item.href);
               const Icon = item.icon;
+              const locked =
+                Boolean(item.feature) &&
+                entitlements[FEATURE_FLAG[item.feature!]] !== true;
               return (
                 <Link
                   key={item.href}
@@ -123,8 +131,30 @@ export function MobileNav({
                       : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"
                   )}
                 >
-                  <Icon className="h-5 w-5 shrink-0" />
-                  {item.label}
+                  {/* No tooltip here: hover does not exist on touch, so the plan that
+                      unlocks this is stated inline instead. Tapping still opens the
+                      feature page, which explains it in full. */}
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "flex items-center gap-3",
+                      locked && "opacity-55 blur-[1.1px]"
+                    )}
+                  >
+                    <Icon className="h-5 w-5 shrink-0" />
+                    {item.label}
+                  </span>
+                  <span className="sr-only">
+                    {locked
+                      ? `${item.label} — included in ${includedInLabel(item.feature!)}`
+                      : item.label}
+                  </span>
+                  {locked && (
+                    <span className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Lock className="size-3.5" aria-hidden="true" />
+                      {includedInLabel(item.feature!).split(" and ")[0]}
+                    </span>
+                  )}
                 </Link>
               );
             })}

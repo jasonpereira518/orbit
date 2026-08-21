@@ -11,7 +11,9 @@ import {
   isNavActive,
   type AppNavItem,
 } from "@/components/layout/app-nav";
-import { OrbitLogo } from "@/components/orbit-logo";
+import { FeatureLock, PlanLogo } from "@/components/plan/plan-logo";
+import { FEATURE_FLAG, includedInLabel } from "@/lib/plan-limits";
+import type { Entitlements } from "@/lib/entitlements";
 import { SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
@@ -21,16 +23,28 @@ import { clerkAppearance } from "@/lib/clerk-appearance";
 function SidebarNavLink({
   item,
   pathname,
+  locked,
 }: {
   item: AppNavItem;
   pathname: string;
+  locked?: boolean;
 }) {
   const active = isNavActive(pathname, item.href);
   const Icon = item.icon;
+
+  const body = (
+    <>
+      <Icon className="relative z-10 h-4 w-4 shrink-0" />
+      <span className="relative z-10 hidden lg:inline">{item.label}</span>
+    </>
+  );
+
   return (
     <Link
       href={item.href}
-      title={item.label}
+      // Locked entries stay clickable on purpose: the destination renders the
+      // upgrade explainer, which is more useful than a dead end.
+      title={locked ? undefined : item.label}
       className={cn(
         "relative flex items-center justify-center gap-2.5 rounded-xl px-2 py-2.5 text-sm transition-colors lg:justify-start lg:px-3 lg:py-2",
         active
@@ -45,8 +59,18 @@ function SidebarNavLink({
           transition={SPRING_PILL}
         />
       )}
-      <Icon className="relative z-10 h-4 w-4 shrink-0" />
-      <span className="relative z-10 hidden lg:inline">{item.label}</span>
+      {locked && item.feature ? (
+        <FeatureLock
+          includedIn={includedInLabel(item.feature)}
+          label={item.label}
+          className="w-full justify-center lg:justify-start"
+          lockClassName="justify-center lg:left-[3px] lg:justify-start"
+        >
+          {body}
+        </FeatureLock>
+      ) : (
+        body
+      )}
     </Link>
   );
 }
@@ -55,11 +79,16 @@ export function AppSidebar({
   pathname,
   clerkOn,
   demoMode,
+  entitlements,
 }: {
   pathname: string;
   clerkOn: boolean;
   demoMode: boolean;
+  entitlements: Entitlements;
 }) {
+  const isLocked = (item: AppNavItem) =>
+    Boolean(item.feature) && entitlements[FEATURE_FLAG[item.feature!]] !== true;
+
   return (
     <aside className="liquid-glass flex h-full w-[4.5rem] flex-col text-sidebar-foreground lg:w-60">
       <div className="flex items-center justify-between gap-2 px-3 py-5 lg:px-5 lg:py-6">
@@ -68,7 +97,7 @@ export function AppSidebar({
           className="flex min-w-0 flex-1 items-center justify-center gap-2.5 lg:justify-start"
           title="Back to landing page"
         >
-          <OrbitLogo size="md" />
+          <PlanLogo plan={entitlements.plan} size="md" />
           <div className="hidden min-w-0 lg:block">
             <p className="font-[family-name:var(--font-display)] text-lg leading-none tracking-tight text-sidebar-primary">
               Orbit
@@ -102,6 +131,7 @@ export function AppSidebar({
             key={item.href}
             item={item}
             pathname={pathname}
+            locked={isLocked(item)}
           />
         ))}
 
@@ -118,6 +148,7 @@ export function AppSidebar({
             key={item.href}
             item={item}
             pathname={pathname}
+            locked={isLocked(item)}
           />
         ))}
 

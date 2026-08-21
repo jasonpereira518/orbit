@@ -5,8 +5,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { MotionConfig } from "motion/react";
 import { AppSidebar } from "@/components/layout/app-sidebar";
+import { PlanLogo } from "@/components/plan/plan-logo";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import type { Entitlements } from "@/lib/entitlements";
 import { MobileNav } from "@/components/layout/mobile-nav";
-import { OrbitLogo } from "@/components/orbit-logo";
 import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
 import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
@@ -29,11 +31,13 @@ export function AppShell({
   clerkOn,
   demoMode,
   theme,
+  entitlements,
 }: {
   children: React.ReactNode;
   clerkOn: boolean;
   demoMode: boolean;
   theme: ThemePreference | null;
+  entitlements: Entitlements;
 }) {
   const pathname = usePathname();
   const isOnboarding = pathname === "/onboarding";
@@ -59,6 +63,7 @@ export function AppShell({
 
   return (
     <MotionConfig reducedMotion="user">
+     <TooltipProvider>
       <div
         className={cn(
           "flex bg-background",
@@ -78,6 +83,7 @@ export function AppShell({
             pathname={pathname}
             clerkOn={clerkOn}
             demoMode={demoMode}
+            entitlements={entitlements}
           />
         </div>
         <main
@@ -97,7 +103,7 @@ export function AppShell({
               className="flex items-center gap-2.5"
               title="Back to landing page"
             >
-              <OrbitLogo size="md" />
+              <PlanLogo plan={entitlements.plan} size="md" />
               <span className="font-[family-name:var(--font-display)] text-lg leading-none text-primary">
                 Orbit
               </span>
@@ -124,9 +130,14 @@ export function AppShell({
           </div>
 
           {showAskBar && <FloatingAskBar />}
-          <MobileNav clerkOn={clerkOn} demoMode={demoMode} />
+          <MobileNav
+            clerkOn={clerkOn}
+            demoMode={demoMode}
+            entitlements={entitlements}
+          />
         </main>
       </div>
+     </TooltipProvider>
     </MotionConfig>
   );
 }

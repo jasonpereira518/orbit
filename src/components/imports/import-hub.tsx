@@ -18,6 +18,9 @@ import { ImportProgress } from "@/components/imports/import-utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cancelImportJob, useImportJob } from "@/lib/import-job-runner";
 import { LockedFeature } from "@/components/locked-feature";
+import { FeatureLock } from "@/components/plan/plan-logo";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { includedInLabel } from "@/lib/plan-limits";
 import { SPRING_PILL } from "@/lib/motion";
 import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
 import { cn } from "@/lib/utils";
@@ -155,6 +158,7 @@ export function ImportHub({
     job?.status === "running" && job.progress ? job.progress : null;
 
   return (
+   <TooltipProvider>
     <div className="space-y-8">
       {runningProgress ? (
         <ImportProgress
@@ -195,16 +199,29 @@ export function ImportHub({
                   transition={SPRING_PILL}
                 />
               ) : null}
-              <Icon
-                className={cn(
-                  "relative z-10 h-3.5 w-3.5",
-                  !active && "text-muted-foreground/70",
-                )}
-              />
-              <span className="relative z-10">
-                {t.label}
-                {job?.status === "running" && job.kind === t.id ? " ·…" : ""}
-              </span>
+              {t.id === "calendar" && !canUseSync ? (
+                <FeatureLock
+                  includedIn={includedInLabel("sync")}
+                  label="Calendar sync"
+                  className="relative z-10 justify-center"
+                >
+                  <Icon className="h-3.5 w-3.5 text-muted-foreground/70" />
+                  <span>{t.label}</span>
+                </FeatureLock>
+              ) : (
+                <>
+                  <Icon
+                    className={cn(
+                      "relative z-10 h-3.5 w-3.5",
+                      !active && "text-muted-foreground/70",
+                    )}
+                  />
+                  <span className="relative z-10">
+                    {t.label}
+                    {job?.status === "running" && job.kind === t.id ? " ·…" : ""}
+                  </span>
+                </>
+              )}
             </button>
           );
         })}
@@ -280,5 +297,6 @@ export function ImportHub({
 
       <ImportHistory history={history} />
     </div>
+   </TooltipProvider>
   );
 }

@@ -7,6 +7,7 @@ import {
   isDemoMode,
 } from "@/lib/auth";
 import { resolveThemePreference } from "@/lib/theme";
+import { getEntitlements } from "@/lib/entitlements";
 
 export default async function AppLayout({
   children,
@@ -31,9 +32,15 @@ export default async function AppLayout({
 
   const settings = await bootstrapAuthenticatedUser(userId);
   const theme = resolveThemePreference(settings.theme);
+  const entitlements = await getEntitlements(userId);
 
   return (
-    <AppShell clerkOn={clerkOn} demoMode={demoMode} theme={theme}>
+    <AppShell
+      clerkOn={clerkOn}
+      demoMode={demoMode}
+      theme={theme}
+      entitlements={entitlements}
+    >
       {children}
     </AppShell>
   );

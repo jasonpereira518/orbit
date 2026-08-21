@@ -34,6 +34,7 @@ export default async function ContactsPage({
   return (
     <PeopleListShell
       active="contacts"
+      recruitersLocked={!planOverview.entitlements.canUseRecruiters}
       title="Contacts"
       subtitle={`${contacts.length} people in your network`}
       actions={

@@ -1,4 +1,5 @@
 import type { LucideIcon } from "lucide-react";
+import type { FeatureKey } from "@/lib/plan-limits";
 import {
   LayoutDashboard,
   Users,
@@ -17,6 +18,11 @@ export type AppNavItem = {
   href: string;
   label: string;
   icon: LucideIcon;
+  /**
+   * Plan feature this destination needs. Present means the entry renders locked for
+   * plans that lack it — the page itself still enforces the real gate.
+   */
+  feature?: FeatureKey;
 };
 
 const DASHBOARD: AppNavItem = {
@@ -58,6 +64,7 @@ const OUTREACH: AppNavItem = {
   href: "/outreach",
   label: "Outreach",
   icon: Send,
+  feature: "outreach",
 };
 const KNOWLEDGE: AppNavItem = {
   href: "/knowledge",

@@ -5,6 +5,9 @@ import {
   LIFETIME_SEAT_LIMIT,
   ORBIT_PLAN_SLUG,
   PLAN_LABELS,
+  FEATURE_FLAG,
+  planIncludes,
+  type FeatureKey,
   type Plan,
 } from "@/lib/plan-limits";
 
@@ -15,6 +18,7 @@ export {
   LIFETIME_SEAT_LIMIT,
   ORBIT_PLAN_SLUG,
   PLAN_LABELS,
+  type FeatureKey,
   type Plan,
 };
 
@@ -40,14 +44,6 @@ export type Entitlements = {
   canUseSync: boolean;
   canUseExtension: boolean;
 };
-
-/** Feature keys that `requireEntitlement` can gate on. */
-export type FeatureKey =
-  | "outreach"
-  | "hostedSends"
-  | "recruiters"
-  | "sync"
-  | "extension";
 
 /**
  * Thrown when a user's plan does not cover an action. Carries enough structure for the
@@ -120,16 +116,17 @@ export function entitlementsForPlan(
   source: PlanSource,
   opts: { hostedSends?: boolean } = {}
 ): Entitlements {
-  const paid = plan !== "free";
+  // Derived from FEATURE_PLANS rather than a local `paid` flag, so the gate and the
+  // "Included in …" copy shown on locked UI can never disagree.
   return {
     plan,
     source,
-    contactLimit: paid ? null : FREE_CONTACT_LIMIT,
-    canUseOutreach: paid,
-    canUseHostedSends: opts.hostedSends ?? plan === "orbit",
-    canUseRecruiters: paid,
-    canUseSync: paid,
-    canUseExtension: paid,
+    contactLimit: plan === "free" ? FREE_CONTACT_LIMIT : null,
+    canUseOutreach: planIncludes(plan, "outreach"),
+    canUseHostedSends: opts.hostedSends ?? planIncludes(plan, "hostedSends"),
+    canUseRecruiters: planIncludes(plan, "recruiters"),
+    canUseSync: planIncludes(plan, "sync"),
+    canUseExtension: planIncludes(plan, "extension"),
   };
 }
 
@@ -161,14 +158,6 @@ const FEATURE_DENIAL: Record<FeatureKey, string> = {
   recruiters: "Recruiter tracking is available on Orbit Pro and Orbit Lifetime.",
   sync: "Mailbox and calendar sync are available on Orbit Pro and Orbit Lifetime.",
   extension: "The Orbit extension is available on Orbit Pro and Orbit Lifetime.",
-};
-
-const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
-  outreach: "canUseOutreach",
-  hostedSends: "canUseHostedSends",
-  recruiters: "canUseRecruiters",
-  sync: "canUseSync",
-  extension: "canUseExtension",
 };
 
 /** Throws `PaywallError` unless the user's plan covers `feature`. */
