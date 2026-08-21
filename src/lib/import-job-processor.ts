@@ -169,8 +169,10 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
               source: "linkedin",
               // No statedCloseness: nobody has rated these people, and saying
               // "2 out of 5" about two thousand strangers is exactly the
-              // assumption this change removes. The column default keeps
-              // relationshipScore at 2 for legacy readers.
+              // assumption this change removes. `contactInsertValues` coalesces
+              // `input.relationshipScore ?? 2`, so the legacy column still reads
+              // 2 — which is precisely why `resolveStatedStrength` refuses to
+              // treat a 2 as an assessment.
               firstInteractionAt: connectedOn ?? undefined,
               dateMet: connectedOn,
               howMet: "LinkedIn connection",

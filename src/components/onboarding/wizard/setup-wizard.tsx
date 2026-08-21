@@ -81,7 +81,20 @@ export function SetupWizard({
 
   const goTo = useCallback((next: WizardStep) => {
     setStep(next);
-    void saveWizardStep(next);
+    // Fire-and-forget, but not silently. The only thing a failed save costs is
+    // resuming at the wrong step after a refresh, so blocking a transition the
+    // user has already made would be worse than the bug. It is worth a console
+    // error though: this call returned `{ok: false}` for the entire `triage`
+    // step for as long as that step existed, and nothing anywhere said so.
+    void saveWizardStep(next)
+      .then((res) => {
+        if (!res.ok) {
+          console.error(`Wizard step "${next}" was rejected by the server.`);
+        }
+      })
+      .catch((err) => {
+        console.error(`Failed to persist wizard step "${next}"`, err);
+      });
   }, []);
 
   const addResult = useCallback((result: WizardResult) => {

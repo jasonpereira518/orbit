@@ -461,9 +461,10 @@ const MAX_STATED_CLOSENESS = 5;
  *
  * Deliberately goes through `updateContactForUser` (the same shared write
  * path `updateContact` wraps) rather than writing `statedCloseness` /
- * `relationshipScore` directly — that mirroring invariant lives in exactly
- * one place (see the comment on `relationshipScore` in
- * `updateContactForUser`), and a second writer is how it would drift.
+ * `relationshipScore` directly — see the comment on `relationshipScore` in
+ * `updateContactForUser` for the mirroring rule. There is one other writer,
+ * `acceptScoreBump` in `@/actions/reminders` (it mirrors too), and two
+ * is already one more than the invariant wants; a third is how it drifts.
  *
  * Runs one `updateContactForUser` call per rating rather than a single bulk
  * query, since that's what keeps this one writer instead of two. To keep a

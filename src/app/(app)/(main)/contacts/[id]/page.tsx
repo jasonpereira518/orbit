@@ -137,6 +137,10 @@ export default async function ContactDetailPage({
     industry: contact.industry || "",
     sharedInterests: contact.sharedInterests || [],
     relationshipScore: contact.relationshipScore,
+    // Not for display — the Strength field renders `relationshipScore`. This is
+    // how the form knows whether that number is an actual assessment or just
+    // the import default, so it can avoid re-asserting a rating nobody made.
+    statedCloseness: contact.statedCloseness,
     priorityLevel: contact.priorityLevel,
     tagNames: contact.tags,
   };
