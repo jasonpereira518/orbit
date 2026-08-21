@@ -133,8 +133,15 @@ export function SceneFinale({
           </Reveal>
           <Reveal className="reveal-celestial" delay={100}>
             <p className={BODY}>
-              Free to start. Connect LinkedIn and Gmail once, and Orbit runs the
-              follow-up loop while you keep interviewing.
+              Free for your first 100 contacts. Connect LinkedIn and Gmail once,
+              and Orbit runs the follow-up loop while you keep interviewing.{" "}
+              <Link
+                href="/pricing"
+                className="underline underline-offset-4 transition-opacity hover:opacity-80"
+              >
+                See pricing
+              </Link>
+              .
             </p>
           </Reveal>
           <Reveal className="reveal-celestial" delay={200}>
@@ -202,16 +209,16 @@ export function SceneFinale({
         </Link>
         <div className="flex items-center gap-6">
           <Link
+            href="/pricing"
+            className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
+          >
+            Pricing
+          </Link>
+          <Link
             href="/privacy"
             className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
           >
             Privacy
-          </Link>
-          <Link
-            href="/terms"
-            className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
-          >
-            Terms
           </Link>
           <Link
             href="/contact"

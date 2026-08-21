@@ -1,4 +1,4 @@
-import { getSettings } from "@/actions/settings";
+import { getPlanOverview, getSettings } from "@/actions/settings";
 import { listGoals } from "@/actions/goals";
 import { getCurrentUserProfile, isClerkConfigured } from "@/lib/auth";
 import { AiSettings } from "@/components/settings/ai-settings";
@@ -10,6 +10,7 @@ import { KnowledgeSettings } from "@/components/settings/knowledge-settings";
 import { NotificationSettings } from "@/components/settings/notification-settings";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
 import { OutreachSettings } from "@/components/settings/outreach-settings";
+import { PlanSettings } from "@/components/settings/plan-settings";
 import { ProfileSettings } from "@/components/settings/profile-settings";
 import { SettingsSectionNav } from "@/components/settings/settings-section-nav";
 import type { SettingsSectionId } from "@/components/settings/sections";
@@ -30,11 +31,13 @@ function Section({
 }
 
 export default async function SettingsPage() {
-  const [initialSettings, initialGoals, profile] = await Promise.all([
-    getSettings(),
-    listGoals(),
-    getCurrentUserProfile(),
-  ]);
+  const [initialSettings, initialGoals, profile, planOverview] =
+    await Promise.all([
+      getSettings(),
+      listGoals(),
+      getCurrentUserProfile(),
+      getPlanOverview(),
+    ]);
 
   return (
     <div className="mx-auto max-w-2xl space-y-8">
@@ -51,6 +54,13 @@ export default async function SettingsPage() {
           profile={profile}
           clerkEnabled={isClerkConfigured()}
           initialSocialLinks={initialSettings.socialLinks}
+        />
+      </Section>
+      <Section id="settings-plan">
+        <PlanSettings
+          entitlements={planOverview.entitlements}
+          usage={planOverview.usage}
+          remainingLifetimeSeats={planOverview.remainingLifetimeSeats}
         />
       </Section>
       <Section id="settings-goals">

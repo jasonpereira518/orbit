@@ -8,6 +8,7 @@ import {
   type NormalizedProspect,
   type OutreachSearchSource,
 } from "@/lib/outreach-types";
+import { getEntitlements } from "@/lib/entitlements";
 
 const APOLLO_SEARCH_URL = "https://api.apollo.io/api/v1/mixed_people/search";
 const APOLLO_MATCH_URL = "https://api.apollo.io/api/v1/people/match";
@@ -116,7 +117,14 @@ export async function getApolloApiKey(userId: string): Promise<string | null> {
   const settings = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
   });
-  return decryptKey(settings?.apolloApiKeyEncrypted) || process.env.APOLLO_API_KEY || null;
+  const personal = decryptKey(settings?.apolloApiKeyEncrypted);
+  if (personal) return personal;
+
+  // Apollo credits are metered like Resend/Twilio, so Orbit's shared key is
+  // subscription-only. Lifetime users add their own key in Settings.
+  const { canUseHostedSends } = await getEntitlements(userId);
+  if (!canUseHostedSends) return null;
+  return process.env.APOLLO_API_KEY || null;
 }
 
 export async function userHasApolloKey(userId: string): Promise<boolean> {

@@ -45,6 +45,9 @@ async function scheduleContinuation(importId: string) {
 
 type PendingRow = typeof importJobRows.$inferSelect;
 
+/** Row-level reason recorded when the plan's contact limit refused an otherwise-valid row. */
+export const PLAN_LIMIT_ROW_REASON = "Contact limit reached on your plan";
+
 async function markRowsDone(rowIds: string[], contactIdByRowId: Map<string, string>) {
   if (rowIds.length === 0) return;
   const db = await getDb();
@@ -97,6 +100,7 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
   let duplicatesFound = importRow.duplicatesFound ?? 0;
   let rowsProcessed = importRow.rowsProcessed ?? 0;
   let skippedTotal = importRow.stats?.skipped ?? 0;
+  let blockedByPlanTotal = importRow.stats?.blockedByPlan ?? 0;
   const allTouchedContactIds = new Set<string>();
 
   try {
@@ -180,6 +184,14 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
       const touchedContactIds: string[] = [];
       const contactIdByRowId = new Map<string, string>();
 
+      // `createContactsBulk` admits only what the plan's contact headroom allows, taking
+      // from the front, so anything past `created.length` was refused by the cap rather
+      // than failed. These rows must reach a terminal status: the loop re-queries pending
+      // rows every pass, so leaving them pending would spin until the time budget and then
+      // reschedule forever. They are marked `skipped` with a reason, and counted under
+      // `blockedByPlan` so the UI can offer an upgrade instead of reporting an error.
+      let planBlockedRows: PendingRow[] = [];
+
       if (toCreate.length > 0) {
         const created = await createContactsBulk(
           toCreate.map((item) => item.input),
@@ -192,6 +204,13 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
           touchedContactIds.push(contact.id);
         });
         contactsCreated += created.length;
+
+        if (created.length < toCreate.length) {
+          planBlockedRows = toCreate
+            .slice(created.length)
+            .map((item) => item.row);
+          blockedByPlanTotal += planBlockedRows.length;
+        }
       }
 
       for (const item of toUpdate) {
@@ -210,8 +229,25 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
         for (const id of touchedContactIds) allTouchedContactIds.add(id);
       }
 
+      const blockedRowIds = new Set(planBlockedRows.map((row) => row.id));
+      if (blockedRowIds.size > 0) {
+        await db
+          .update(importJobRows)
+          .set({
+            status: "skipped",
+            errorMessage: PLAN_LIMIT_ROW_REASON,
+            updatedAt: new Date(),
+          })
+          .where(inArray(importJobRows.id, [...blockedRowIds]));
+      }
+
       await markRowsDone(
-        [...toCreate.map((item) => item.row.id), ...toUpdate.map((item) => item.row.id)],
+        [
+          ...toCreate
+            .map((item) => item.row.id)
+            .filter((id) => !blockedRowIds.has(id)),
+          ...toUpdate.map((item) => item.row.id),
+        ],
         contactIdByRowId
       );
 
@@ -232,7 +268,11 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
           contactsCreated,
           contactsUpdated,
           duplicatesFound,
-          stats: { ...(current.stats ?? {}), skipped: skippedTotal },
+          stats: {
+            ...(current.stats ?? {}),
+            skipped: skippedTotal,
+            blockedByPlan: blockedByPlanTotal,
+          },
           errorMessage: null,
           updatedAt: new Date(),
         })

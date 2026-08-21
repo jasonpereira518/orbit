@@ -10,6 +10,7 @@ import {
 } from "@/db/schema";
 import { decrypt } from "@/lib/crypto";
 import { DAILY_SEND_LIMIT, type OutreachChannel } from "@/lib/outreach-types";
+import { getEntitlements } from "@/lib/entitlements";
 
 function decryptKey(encrypted?: string | null) {
   if (!encrypted) return null;
@@ -26,23 +27,26 @@ export async function getOutreachSendConfig(userId: string) {
     where: eq(userSettings.userId, userId),
   });
 
+  // Orbit's own Resend/Twilio credits are metered, so they are reachable only on the
+  // recurring plan. Lifetime is a one-time payment and must never buy an open-ended
+  // metered liability, so it falls through to the user's own keys — which Settings
+  // already stores per-user. `hosted` gates the env fallback, never the personal key.
+  const { canUseHostedSends: hosted } = await getEntitlements(userId);
+  const envKey = (value: string | undefined) => (hosted ? value || null : null);
+
   return {
     resendApiKey:
       decryptKey(settings?.resendApiKeyEncrypted) ||
-      process.env.RESEND_API_KEY ||
-      null,
+      envKey(process.env.RESEND_API_KEY),
     twilioAccountSid:
       decryptKey(settings?.twilioAccountSidEncrypted) ||
-      process.env.TWILIO_ACCOUNT_SID ||
-      null,
+      envKey(process.env.TWILIO_ACCOUNT_SID),
     twilioAuthToken:
       decryptKey(settings?.twilioAuthTokenEncrypted) ||
-      process.env.TWILIO_AUTH_TOKEN ||
-      null,
+      envKey(process.env.TWILIO_AUTH_TOKEN),
     twilioFromNumber:
       settings?.twilioFromNumber?.trim() ||
-      process.env.TWILIO_FROM_NUMBER ||
-      null,
+      envKey(process.env.TWILIO_FROM_NUMBER),
     fromEmail: process.env.RESEND_FROM_EMAIL || "outreach@orbit.local",
   };
 }

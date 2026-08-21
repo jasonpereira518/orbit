@@ -1,7 +1,12 @@
 import { verifyWebhook } from "@clerk/nextjs/webhooks";
 import type { NextRequest } from "next/server";
 import { purgeUserData } from "@/lib/user-data";
-import { ensureUserSettings, setUserEmail } from "@/lib/user-settings";
+import {
+  ensureUserSettings,
+  setSubscriptionState,
+  setUserEmail,
+} from "@/lib/user-settings";
+import { ORBIT_PLAN_SLUG } from "@/lib/entitlements";
 
 type ClerkEmailAddress = { id?: string; email_address?: string };
 
@@ -14,6 +19,34 @@ function primaryEmail(data: {
   const primary =
     list.find((e) => e.id && e.id === data.primary_email_address_id) ?? list[0];
   return primary?.email_address?.toLowerCase() ?? null;
+}
+
+/**
+ * Maps a Clerk subscription-item status onto what Orbit stores.
+ *
+ * `upcoming` is a scheduled future item, not an entitlement, so it is ignored entirely.
+ * Terminal states clear the plan. `canceled` is kept rather than cleared because the user
+ * has paid through `period_end` — `resolvePlan` honours that remaining time.
+ */
+function mirrorForStatus(
+  status: string,
+  periodEnd: number | null
+): { plan: "orbit" | null; status: "active" | "past_due" | "canceled" | null; periodEnd: number | null } | null {
+  switch (status) {
+    case "active":
+      return { plan: "orbit", status: "active", periodEnd };
+    case "past_due":
+      return { plan: "orbit", status: "past_due", periodEnd };
+    case "canceled":
+      return { plan: "orbit", status: "canceled", periodEnd };
+    case "ended":
+    case "expired":
+    case "abandoned":
+    case "incomplete":
+      return { plan: null, status: null, periodEnd: null };
+    default:
+      return null;
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -34,6 +67,27 @@ export async function POST(req: NextRequest) {
     if (userId) {
       await ensureUserSettings(userId);
       await setUserEmail(userId, primaryEmail(evt.data));
+    }
+  }
+
+  // Billing. Clerk sells the $5/mo plan; these events mirror it into user_settings so
+  // that `getEntitlements` — and therefore every gate, including ones in background jobs
+  // — resolves from the database alone.
+  if (evt.type.startsWith("subscriptionItem.")) {
+    const data = evt.data as {
+      status?: string;
+      period_end?: number | null;
+      plan?: { slug?: string } | null;
+      payer?: { user_id?: string };
+    };
+    const userId = data.payer?.user_id;
+    const slug = data.plan?.slug;
+
+    // Ignore items for any other plan, so a second product can be added later without
+    // this handler silently granting Orbit.
+    if (userId && slug === ORBIT_PLAN_SLUG && data.status) {
+      const mirror = mirrorForStatus(data.status, data.period_end ?? null);
+      if (mirror) await setSubscriptionState(userId, mirror);
     }
   }
 

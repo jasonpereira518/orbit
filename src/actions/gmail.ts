@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { gmailConnections } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { requireSyncUser } from "@/lib/plan-guards";
 import { logRecruiter } from "@/actions/recruiters";
 import {
   buildGmailAuthUrl,
@@ -55,7 +56,7 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
 export async function startGmailOAuth(
   returnTo?: string
 ): Promise<{ url: string }> {
-  const userId = await requireUserId();
+  const userId = await requireSyncUser();
   const summary = getGmailOAuthConfigSummary();
   if (!summary.configured) {
     const hint = summary.redirectUriError
@@ -96,7 +97,7 @@ export async function disconnectGmail() {
 }
 
 export async function scanGmailRecruiters(): Promise<GmailRecruiterCandidate[]> {
-  const userId = await requireUserId();
+  const userId = await requireSyncUser();
   return scanGmailForRecruiters(userId);
 }
 
@@ -108,7 +109,7 @@ export async function confirmGmailRecruiterImports(
     linkedinUrl?: string | null;
   }>
 ) {
-  const userId = await requireUserId();
+  const userId = await requireSyncUser();
   void userId;
   let imported = 0;
   for (const c of candidates) {
