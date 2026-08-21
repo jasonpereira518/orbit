@@ -11,8 +11,8 @@ export type ParsedCalendarEvent = {
 
 /**
  * First connect: reach much further back. A new user's orbit is cold precisely
- * because Orbit has no history, and a year of past meetings is the cheapest
- * real evidence available.
+ * because Orbit has no history, and two years of past meetings is the
+ * cheapest real evidence available.
  */
 export const CALENDAR_BACKFILL_DAYS = 730;
 

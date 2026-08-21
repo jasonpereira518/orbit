@@ -80,13 +80,24 @@ export const MAX_RING_WITHOUT_EVIDENCE = 3;
 export const PRIOR_MIN = 0.3;
 export const PRIOR_MAX = 0.6;
 
-/** Contributions to the prior, normalised against their own total. */
+/**
+ * Contributions to the prior, normalised against their own total.
+ *
+ * `age` dominates on purpose: a bare import (the worst case — nothing known
+ * but a connection date) has every other term at zero, so whatever share
+ * `age` does not carry is simply never spent. At the old 0.3 share, a pure
+ * cold import collapsed into a single ~9-point band of the already-narrow
+ * PRIOR_MIN..PRIOR_MAX range — see scripts/smoke-closeness.ts §14's
+ * histogram. Weighting age this heavily is what lets connection recency alone
+ * spread a day-one orbit across rings 1-3 instead of piling everyone into one
+ * bin.
+ */
 const PRIOR_WEIGHTS = {
-  age: 0.3,
-  emailDomain: 0.3,
-  companyConcentration: 0.2,
-  schoolConcentration: 0.1,
-  goalRelevance: 0.1,
+  age: 0.7,
+  emailDomain: 0.15,
+  companyConcentration: 0.08,
+  schoolConcentration: 0.04,
+  goalRelevance: 0.03,
 } as const;
 
 /** Connection age at which the age term is effectively maxed, in days (~5 years). */

@@ -34,6 +34,19 @@ function check(label: string, condition: boolean, detail?: string) {
 const DAY = 24 * 60 * 60 * 1000;
 const daysAgoDate = (d: number) => new Date(Date.now() - d * DAY);
 
+/** Prints a 10-bin distribution histogram of values in [0,1]. */
+function histogram(xs: number[], label: string) {
+  const bins = new Array(10).fill(0);
+  for (const x of xs) bins[Math.min(9, Math.floor(x * 10))] += 1;
+  console.log(`\n  ${label}`);
+  bins.forEach((count, i) => {
+    const bar = "█".repeat(Math.round((count / xs.length) * 60));
+    console.log(
+      `    ${String(i * 10).padStart(3)}–${String(i * 10 + 10).padStart(3)}% ${bar} ${count}`
+    );
+  });
+}
+
 function person(
   over: Partial<ClosenessContact> & { id?: string } = {}
 ): ClosenessContact & { id: string } {
@@ -241,18 +254,6 @@ console.log("\n5. Spread beats the old formula");
 
   const newVals = [...scored.values()].map((b) => b.closeness);
   const oldVals = people.map((p) => legacyCloseness(p));
-
-  const histogram = (xs: number[], label: string) => {
-    const bins = new Array(10).fill(0);
-    for (const x of xs) bins[Math.min(9, Math.floor(x * 10))] += 1;
-    console.log(`\n  ${label}`);
-    bins.forEach((count, i) => {
-      const bar = "█".repeat(Math.round((count / xs.length) * 60));
-      console.log(
-        `    ${String(i * 10).padStart(3)}–${String(i * 10 + 10).padStart(3)}% ${bar} ${count}`
-      );
-    });
-  };
 
   histogram(oldVals, "old formula");
   histogram(newVals, "new formula");
@@ -639,6 +640,16 @@ console.log("\n14. Guesses cannot reach the inner rings");
     "  but the orbit is not one undifferentiated blob",
     rings.slice(1, 4).filter((c) => c > 0).length >= 2,
     rings.join(",")
+  );
+
+  // Not merely asserted: print the shape so a day-one orbit can be inspected
+  // directly, not just checked against a threshold.
+  histogram(
+    [...scored.values()].map((b) => b.closeness),
+    "cold orbit (2,000 contacts, no evidence)"
+  );
+  console.log(
+    `\n  rings: 1=${rings[1]} 2=${rings[2]} 3=${rings[3]} 4=${rings[4]} 5=${rings[5]}`
   );
 }
 
