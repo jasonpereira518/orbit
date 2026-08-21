@@ -18,7 +18,7 @@ export default async function NewContactPage() {
           title={`You've reached ${usage.limit} contacts`}
           description="Every contact you already have stays right where it is — fully visible and editable. Upgrading lifts the limit so you can keep adding people."
           highlights={[
-            "Unlimited contacts on Orbit and Lifetime",
+            "Unlimited contacts on Orbit Pro and Orbit Lifetime",
             "Nothing is ever hidden or deleted at the limit",
             "Your existing notes, reminders, and history are untouched",
           ]}

@@ -98,7 +98,7 @@ export function PlanSettings({
           </Link>
           {remainingLifetimeSeats > 0 && (
             <span className="text-sm text-muted-foreground">
-              {remainingLifetimeSeats} Lifetime{" "}
+              {remainingLifetimeSeats} Orbit Lifetime{" "}
               {remainingLifetimeSeats === 1 ? "spot" : "spots"} left at $19.
             </span>
           )}

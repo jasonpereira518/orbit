@@ -254,7 +254,7 @@ export function ImportHub({
                 "New people from invites land in your contacts",
                 "Follow-up reminders created automatically",
               ]}
-              note="Included in Orbit and Lifetime. LinkedIn imports stay free on every plan."
+              note="Included in Orbit Pro and Orbit Lifetime. LinkedIn imports stay free on every plan."
             />
           )}
         </div>

@@ -116,7 +116,7 @@ export default async function PricingPage() {
                       href="/settings#settings-plan"
                       className={cn(buttonVariants({ size: "sm" }), "w-full")}
                     >
-                      Choose Orbit
+                      Choose Orbit Pro
                     </Link>
                   )}
 
@@ -133,7 +133,7 @@ export default async function PricingPage() {
                       </span>
                       <p className="text-center text-xs text-muted-foreground">
                         {soldOut
-                          ? "All Lifetime spots have been claimed."
+                          ? "All Orbit Lifetime spots have been claimed."
                           : `${remainingSeats} of ${LIFETIME_SEAT_LIMIT} spots remaining.`}
                       </p>
                     </div>

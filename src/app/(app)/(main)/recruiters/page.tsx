@@ -36,7 +36,7 @@ export default async function RecruitersPage({
           "Pull recruiter threads straight out of Gmail",
           "See who has gone quiet and who is worth a nudge",
         ]}
-        note="Included in Orbit and Lifetime."
+        note="Included in Orbit Pro and Orbit Lifetime."
       />
     );
   }

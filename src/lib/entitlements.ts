@@ -4,7 +4,7 @@ import { ensureUserSettings } from "@/lib/user-settings";
 export type Plan = "free" | "orbit" | "lifetime";
 
 /**
- * Where a user's plan came from. Purely informational for UI ("Comped", "Lifetime"),
+ * Where a user's plan came from. Purely informational for UI ("Comped", "Orbit Lifetime"),
  * but also the tiebreaker documented in `resolvePlan` below.
  */
 export type PlanSource = "comp" | "lifetime" | "subscription" | "free";
@@ -47,8 +47,8 @@ export const LIFETIME_SEAT_LIMIT = 100;
 
 export const PLAN_LABELS: Record<Plan, string> = {
   free: "Free",
-  orbit: "Orbit",
-  lifetime: "Lifetime",
+  orbit: "Orbit Pro",
+  lifetime: "Orbit Lifetime",
 };
 
 /**
@@ -157,12 +157,12 @@ export const getEntitlements = cache(
 );
 
 const FEATURE_DENIAL: Record<FeatureKey, string> = {
-  outreach: "Outreach is available on Orbit and Lifetime.",
+  outreach: "Outreach is available on Orbit Pro and Orbit Lifetime.",
   hostedSends:
-    "Sending on Orbit's email/SMS credits requires the Orbit plan. On Lifetime, add your own Resend or Twilio key in Settings.",
-  recruiters: "Recruiter tracking is available on Orbit and Lifetime.",
-  sync: "Mailbox and calendar sync are available on Orbit and Lifetime.",
-  extension: "The Orbit extension is available on Orbit and Lifetime.",
+    "Sending on Orbit's email/SMS credits requires Orbit Pro. On Orbit Lifetime, add your own Resend or Twilio key in Settings.",
+  recruiters: "Recruiter tracking is available on Orbit Pro and Orbit Lifetime.",
+  sync: "Mailbox and calendar sync are available on Orbit Pro and Orbit Lifetime.",
+  extension: "The Orbit extension is available on Orbit Pro and Orbit Lifetime.",
 };
 
 const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {

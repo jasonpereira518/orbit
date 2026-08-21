@@ -7,6 +7,11 @@ import { FREE_CONTACT_LIMIT, type Plan } from "@/lib/entitlements";
  *
  * Prices are display copy. The amounts actually charged live in the Clerk plan and the
  * Stripe price; changing a string here does not change what anyone pays.
+ *
+ * Display names and internal ids are deliberately decoupled: the tiers are shown as
+ * "Orbit Pro" and "Orbit Lifetime", but the ids stay `orbit` / `lifetime` because they
+ * are persisted in `user_settings` and matched against the Clerk plan slug. Rename the
+ * copy freely; renaming an id is a data migration.
  */
 export type PlanCopy = {
   id: Plan;
@@ -40,7 +45,7 @@ export const PLAN_COPY: PlanCopy[] = [
   },
   {
     id: "orbit",
-    name: "Orbit",
+    name: "Orbit Pro",
     price: "$5",
     cadence: "per month",
     tagline: "For a real network, with the connected pieces running.",
@@ -55,7 +60,7 @@ export const PLAN_COPY: PlanCopy[] = [
   },
   {
     id: "lifetime",
-    name: "Lifetime",
+    name: "Orbit Lifetime",
     price: "$19",
     cadence: "once",
     tagline: "Early adopters only. Pay once, keep it.",
