@@ -39,6 +39,7 @@ import { refreshOutreachSuggestions } from "@/lib/reminders";
 import {
   mapCalendarCsvRow,
   parseIcsEvents,
+  windowCalendarEvents,
   type ParsedCalendarEvent,
 } from "@/lib/calendar-import";
 import { upsertContactEmbedding } from "@/lib/search";
@@ -891,13 +892,9 @@ export async function previewCalendarImport(payload: {
     });
   }
 
-  // Focus on past 180 days through next 14 days
-  const now = Date.now();
-  const windowed = events.filter((e) => {
-    if (!e.start) return true;
-    const t = e.start.getTime();
-    return t >= now - 180 * 86400000 && t <= now + 14 * 86400000;
-  });
+  // One-time calendar upload: reach back CALENDAR_BACKFILL_DAYS, not just
+  // the ongoing-sync CALENDAR_SYNC_DAYS window.
+  const windowed = windowCalendarEvents(events, { backfill: true });
 
   const preview = windowed.slice(0, 40).map((event) => {
     const people = peopleFromEvent(event);
@@ -995,11 +992,9 @@ export async function confirmCalendarImport(payload: {
     }
 
     const now = Date.now();
-    const windowed = events.filter((e) => {
-      if (!e.start) return true;
-      const t = e.start.getTime();
-      return t >= now - 180 * 86400000 && t <= now + 14 * 86400000;
-    });
+    // Same one-time-upload backfill window as previewCalendarImport, so a
+    // confirm always processes exactly what the preview showed.
+    const windowed = windowCalendarEvents(events, { backfill: true });
 
     const chunkEvents = payload.chunk
       ? windowed.slice(
