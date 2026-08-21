@@ -15,7 +15,11 @@ import {
 } from "../src/lib/closeness";
 import {
   computeEvidence,
+  computePrior,
   EVIDENCE_FLOOR,
+  PRIOR_MAX,
+  PRIOR_MIN,
+  publicEmailDomain,
 } from "../src/lib/closeness-evidence";
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -441,6 +445,40 @@ console.log("\n11. Evidence reflects what we actually know");
           computeEvidence({ touchCount: arr[i - 1], hasLoggedInteraction: true })
     )
   );
+}
+
+console.log("\n12. The prior orders without over-claiming");
+{
+  const bare = computePrior({});
+  check(
+    "  a bare contact sits inside the compressed band",
+    bare >= PRIOR_MIN && bare <= PRIOR_MAX,
+    String(bare)
+  );
+
+  const best = computePrior({
+    firstInteractionAt: daysAgoDate(3000),
+    emailDomainMatchesUser: true,
+    companyConcentration: 1,
+    schoolConcentration: 1,
+    goalRelevance: 1,
+  });
+  check(
+    "  even a maximal prior cannot exceed the band",
+    best <= PRIOR_MAX,
+    String(best)
+  );
+  check("  a maximal prior still beats a bare one", best > bare);
+
+  const colleague = computePrior({ emailDomainMatchesUser: true });
+  check("  a shared work domain is affinity", colleague > bare);
+
+  const older = computePrior({ firstInteractionAt: daysAgoDate(2000) });
+  const newer = computePrior({ firstInteractionAt: daysAgoDate(30) });
+  check("  a longstanding connection outranks a brand-new one", older > newer);
+
+  check("  gmail.com is not a shared workplace", publicEmailDomain("gmail.com"));
+  check("  a company domain is", !publicEmailDomain("acme.io"));
 }
 
 console.log("\nAll closeness smoke checks passed.\n");
