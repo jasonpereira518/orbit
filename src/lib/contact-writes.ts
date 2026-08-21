@@ -52,11 +52,27 @@ export type ContactInput = {
   website?: string;
   profileImageUrl?: string | null;
   relationshipScore?: number;
+  /**
+   * Set this ONLY from a flow where the user themselves supplied the rating
+   * (the contact-form slider, the AI-capture review step) — never from an
+   * importer default. Unlike `relationshipScore`, `contactInsertValues` does
+   * NOT fall back to a default here: an omitted value stays `null` on create,
+   * which is what keeps imported contacts unrated. See `strengthComponent` in
+   * `@/lib/closeness` for why the distinction matters.
+   */
+  statedCloseness?: number | null;
   priorityLevel?: number;
   source?: string;
   industry?: string;
   metContext?: string;
   dateMet?: string | null;
+  /**
+   * Overrides the computed first-interaction timestamp (normally derived from
+   * `dateMet`). Used by importers that know the real relationship age — e.g.
+   * a LinkedIn "Connected On" date — so that age-based scoring isn't blind to
+   * imported history.
+   */
+  firstInteractionAt?: string | Date | null;
   howMet?: string;
   notes?: string;
   aiSummary?: string;
@@ -189,6 +205,10 @@ function contactInsertValues(
   now: Date
 ) {
   const metAt = safeTimestamp(input.dateMet);
+  const firstInteractionAt =
+    input.firstInteractionAt !== undefined
+      ? safeTimestamp(input.firstInteractionAt)
+      : metAt;
   return {
     userId,
     fullName: input.fullName,
@@ -206,6 +226,12 @@ function contactInsertValues(
     website: input.website,
     profileImageUrl: input.profileImageUrl ?? null,
     relationshipScore: input.relationshipScore ?? 2,
+    // Deliberately NOT `input.statedCloseness ?? input.relationshipScore` —
+    // that would resurrect the exact leak this field exists to prevent, since
+    // several importers pass relationshipScore explicitly. Only a caller that
+    // set statedCloseness itself (a real user rating) reaches this column;
+    // everyone else gets null, same as before this field existed.
+    statedCloseness: input.statedCloseness ?? null,
     priorityLevel: input.priorityLevel ?? 0,
     source: input.source ?? "manual",
     industry: input.industry,
@@ -217,7 +243,7 @@ function contactInsertValues(
     keyFacts: input.keyFacts ?? [],
     sharedInterests: input.sharedInterests ?? [],
     opportunities: input.opportunities ?? [],
-    firstInteractionAt: metAt ?? now,
+    firstInteractionAt: firstInteractionAt ?? now,
     lastInteractionAt: metAt ?? now,
     nextFollowUpAt: safeTimestamp(input.nextFollowUpAt),
   };
@@ -397,8 +423,19 @@ export async function updateContactForUser(
       ...(input.profileImageUrl !== undefined
         ? { profileImageUrl: input.profileImageUrl }
         : {}),
+      // A user moving this slider (contact-form.tsx, or the AI-capture review
+      // step) is the strongest closeness signal the app ever gets, and it is
+      // what lifts a contact above EVIDENCE_FLOOR. Mirror it here — but only
+      // here, not on create — because no importer's update payload includes
+      // relationshipScore (verified: LinkedIn/Google/Outlook/messages imports
+      // only ever *create* with a default score, never *update* one). Create
+      // paths still coalesce `input.relationshipScore ?? 2`, which is
+      // indistinguishable from a real rating of 2, so they must never mirror.
       ...(input.relationshipScore !== undefined
-        ? { relationshipScore: input.relationshipScore }
+        ? {
+            relationshipScore: input.relationshipScore,
+            statedCloseness: input.relationshipScore,
+          }
         : {}),
       ...(input.priorityLevel !== undefined
         ? { priorityLevel: input.priorityLevel }

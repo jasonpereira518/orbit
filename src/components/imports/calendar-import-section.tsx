@@ -8,6 +8,7 @@ import {
   previewCalendarImport,
   confirmCalendarImport,
 } from "@/actions/imports";
+import { CALENDAR_BACKFILL_DAYS } from "@/lib/calendar-import";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CalendarSubscribePanel } from "@/components/imports/calendar-subscribe-panel";
@@ -227,7 +228,8 @@ export function CalendarImportSection({
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
               {calendarPreview.totalEvents} events ·{" "}
-              {calendarPreview.windowedEvents} in last 180 days / next 14 ·{" "}
+              {calendarPreview.windowedEvents} in last{" "}
+              {Math.round(CALENDAR_BACKFILL_DAYS / 365)} years / next 14 ·{" "}
               {calendarPreview.matchedEventCount} with contact matches
             </p>
             <div className="max-h-80 overflow-auto rounded-xl border border-border/60">

@@ -474,6 +474,7 @@ export async function confirmCapture(input: {
       sharedInterests: parsed.shared_interests,
       opportunities: parsed.opportunities,
       relationshipScore: input.relationshipScore,
+      statedCloseness: input.relationshipScore,
       tagNames: input.tagNames,
       nextFollowUpAt: followUpDate?.toISOString() ?? undefined,
     });
@@ -492,6 +493,9 @@ export async function confirmCapture(input: {
       sharedInterests: parsed.shared_interests,
       opportunities: parsed.opportunities,
       relationshipScore: input.relationshipScore,
+      // The user set this in the capture review UI's "Closeness" field
+      // (bulk-notes-panel.tsx) — a real rating, unlike an importer default.
+      statedCloseness: input.relationshipScore,
       tagNames: input.tagNames,
       source: "ai_capture",
       notes: input.notes,

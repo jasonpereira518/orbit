@@ -58,6 +58,26 @@ async function main() {
     process.exit(1);
   }
 
+  // contacts.stated_closeness distinguishes an unrated contact from one
+  // deliberately scored 2 — every closeness-scoring task depends on it
+  // existing, so a fresh environment must fail loudly if it's missing.
+  const contactColumns = await db.execute<{ column_name: string }>(sql`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'contacts'
+  `);
+  const columnNames = (
+    Array.isArray(contactColumns)
+      ? contactColumns
+      : ((contactColumns as { rows?: { column_name: string }[] }).rows ?? [])
+  ).map((r) => (typeof r === "string" ? r : r.column_name));
+  if (!columnNames.includes("stated_closeness")) {
+    console.error(
+      "Missing column: contacts.stated_closeness (run scripts/migrate-stated-closeness.ts)"
+    );
+    process.exit(1);
+  }
+
   // Smoke write/read against user_settings
   const userId = `setup-check-${Date.now()}`;
   await db.insert(schema.userSettings).values({ userId });

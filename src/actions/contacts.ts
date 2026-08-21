@@ -21,6 +21,10 @@ import {
 import { generateAndStorePersonSummary } from "@/lib/person-summary";
 import { rebuildContactEmbedding } from "@/lib/search";
 import {
+  selectTriageCandidates,
+  type TriageCandidate,
+} from "@/lib/triage-candidates";
+import {
   enrichPeopleFromLinkedIn,
   getApolloApiKey,
   type LinkedInProfileEnrichment,
@@ -87,11 +91,13 @@ export async function listContacts(filters?: {
         // Omit raw profileImageUrl blob — rewritten via clientContactAvatarUrl.
         profileImageUrl: true,
         relationshipScore: true,
+        statedCloseness: true,
         priorityLevel: true,
         source: true,
         industry: true,
         metContext: true,
         dateMet: true,
+        firstInteractionAt: true,
         howMet: true,
         // Heavy text fields not needed for list UI — keep short summary only.
         notes: false,
@@ -181,6 +187,95 @@ export async function listContacts(filters?: {
   });
 
   return mapped;
+}
+
+export type TriageDisplayCandidate = {
+  id: string;
+  fullName: string;
+  firstName: string | null;
+  company: string | null;
+  title: string | null;
+  profileImageUrl: string | null;
+  linkedinUrl: string | null;
+};
+
+/**
+ * Contacts to ask the user about in the setup wizard's triage step.
+ *
+ * Chosen for information gain, not current closeness — see
+ * `selectTriageCandidates` in `@/lib/triage-candidates` for why. This pulls
+ * the same column set `listContacts` donates to `getClosenessCohort` (plus a
+ * few display-only fields) so evidence/prior here agree with every other
+ * surface that shows closeness.
+ */
+export async function getTriageCandidates(): Promise<TriageDisplayCandidate[]> {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const contactRowsPromise = Promise.resolve(
+    db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+      columns: {
+        id: true,
+        fullName: true,
+        firstName: true,
+        company: true,
+        title: true,
+        profileImageUrl: true,
+        linkedinUrl: true,
+        relationshipScore: true,
+        statedCloseness: true,
+        lastInteractionAt: true,
+        firstInteractionAt: true,
+        dateMet: true,
+        createdAt: true,
+        email: true,
+        school: true,
+        industry: true,
+        howMet: true,
+        aiSummary: true,
+        keyFacts: true,
+        sharedInterests: true,
+      },
+      with: { contactTags: { with: { tag: true } } },
+    })
+  );
+
+  const [rows, cohort] = await Promise.all([
+    contactRowsPromise,
+    getClosenessCohort(userId, contactRowsPromise),
+  ]);
+
+  const pool: TriageCandidate[] = rows.map((c) => {
+    const breakdown = cohort.byId.get(c.id);
+    return {
+      id: c.id,
+      fullName: c.fullName,
+      company: c.company,
+      evidence: breakdown?.evidence ?? 0,
+      prior: breakdown?.prior ?? 0,
+      statedCloseness: c.statedCloseness,
+    };
+  });
+
+  const selected = selectTriageCandidates(pool);
+  const byId = new Map(rows.map((c) => [c.id, c]));
+
+  return selected.flatMap((c) => {
+    const row = byId.get(c.id);
+    if (!row) return [];
+    return [
+      {
+        id: row.id,
+        fullName: row.fullName,
+        firstName: row.firstName,
+        company: row.company,
+        title: row.title,
+        profileImageUrl: row.profileImageUrl,
+        linkedinUrl: row.linkedinUrl,
+      },
+    ];
+  });
 }
 
 function lastNameSortKey(lastName: string | null | undefined, fullName: string) {
@@ -376,6 +471,72 @@ export async function updateContact(
   options?: ContactWriteOptions
 ) {
   return updateContactForUser(await requireUserId(), id, input, options);
+}
+
+/** Valid range for a user-supplied closeness rating (matches the 1–5 scale used throughout, e.g. contact-form.tsx's "Strength" field). */
+const MIN_STATED_CLOSENESS = 1;
+const MAX_STATED_CLOSENESS = 5;
+
+/**
+ * Bulk-save closeness ratings from the setup wizard's triage step.
+ *
+ * Deliberately goes through `updateContactForUser` (the same shared write
+ * path `updateContact` wraps) rather than writing `statedCloseness` /
+ * `relationshipScore` directly — see the comment on `relationshipScore` in
+ * `updateContactForUser` for the mirroring rule. There is one other writer,
+ * `acceptScoreBump` in `@/actions/reminders` (it mirrors too), and two
+ * is already one more than the invariant wants; a third is how it drifts.
+ *
+ * Runs one `updateContactForUser` call per rating rather than a single bulk
+ * query, since that's what keeps this one writer instead of two. To keep a
+ * screen's worth of ratings (eight) fast, each call skips the embedding
+ * rebuild — `relationshipScore` isn't part of the embedded text (see
+ * `buildContactEmbeddingContent` in `@/lib/search`) — and per-row
+ * revalidation, paths are revalidated once after the loop instead.
+ *
+ * `updateContactForUser` returns `undefined` rather than throwing when its
+ * ownership-scoped WHERE matches no row (deleted contact, ownership race) —
+ * so `failedContactIds` is how a caller distinguishes "saved" from "silently
+ * matched nothing," instead of trusting a bare count. A per-row `try/catch`
+ * means one broken id can't abort the rest of the screen's ratings either.
+ */
+export async function rateContacts(
+  ratings: Array<{ contactId: string; closeness: number }>
+): Promise<{ updated: number; failedContactIds: string[] }> {
+  const userId = await requireUserId();
+  let updated = 0;
+  const failedContactIds: string[] = [];
+
+  for (const { contactId, closeness } of ratings) {
+    const value = Math.min(
+      MAX_STATED_CLOSENESS,
+      Math.max(MIN_STATED_CLOSENESS, Math.round(closeness))
+    );
+    try {
+      const contact = await updateContactForUser(
+        userId,
+        contactId,
+        { relationshipScore: value },
+        { skipEmbedding: true, skipSummary: true, skipRevalidate: true }
+      );
+      if (contact) {
+        updated++;
+      } else {
+        failedContactIds.push(contactId);
+      }
+    } catch {
+      failedContactIds.push(contactId);
+    }
+  }
+
+  if (updated > 0) {
+    revalidatePath("/");
+    revalidatePath("/contacts");
+    revalidatePath("/graph");
+    revalidatePath("/dashboard");
+  }
+
+  return { updated, failedContactIds };
 }
 
 export async function deleteContact(id: string) {

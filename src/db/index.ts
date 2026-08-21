@@ -537,6 +537,7 @@ async function migratePglite(client: PGlite) {
     "calendar_feed_last_fetched_at",
     "timestamptz"
   );
+  await ensureColumn(client, "contacts", "stated_closeness", "integer");
 
   try {
     await client.exec(
@@ -728,6 +729,7 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token_created_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_last_fetched_at timestamptz`,
     `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
+    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   ];
 
   for (const statement of alters) {
