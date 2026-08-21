@@ -1,18 +1,10 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { PUBLIC_ROUTES } from "@/lib/public-routes";
 
-const isPublicRoute = createRouteMatcher([
-  "/",
-  "/privacy",
-  "/terms",
-  "/contact",
-  "/sign-in(.*)",
-  "/sign-up(.*)",
-  "/api/webhooks(.*)",
-  // Calendar clients (Google, Apple, Outlook) cannot complete a Clerk session. The feed
-  // is authenticated by the opaque token in its path instead.
-  "/api/calendar/(.*)",
-]);
+// The list lives in `@/lib/public-routes` so a smoke test can assert it against the
+// filesystem — a marketing page missing from it 404s for exactly the people it is for.
+const isPublicRoute = createRouteMatcher([...PUBLIC_ROUTES]);
 
 const configured = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
