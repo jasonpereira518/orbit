@@ -54,10 +54,32 @@ export default async function ContactDetailPage({
   const closeness =
     closenessCohort.byId.get(contact.id) ??
     // Only reachable if the contact was created after the cohort query ran.
+    //
+    // This is a deliberately approximate fallback, not a second scoring path
+    // pretending to be the real one. `statedCloseness`, `firstInteractionAt`
+    // and `dateMet` are per-contact columns already sitting on `contact`
+    // (getContact() has no `columns` restriction), so they're passed straight
+    // through — no reason to score a rated contact as if unrated just because
+    // it missed the cohort by a race.
+    //
+    // The four affinity fields (`emailDomainMatchesUser`, `companyConcentration`,
+    // `schoolConcentration`, `coveredByConnectedSource`) are NOT reproduced here.
+    // They are orbit-relative — computed in closeness-cohort.ts from every one
+    // of the user's contacts (max company/school share across the whole orbit,
+    // the user's own email domain, whether Gmail/Outlook is connected) — so
+    // getting them right for one contact means re-running that whole scan, at
+    // which point this "fallback" is just `getClosenessCohort` again with extra
+    // steps. Left at their default (falsy/0), this contact's `prior` is a bit
+    // more conservative than its peers until the next request rebuilds the
+    // cohort and it takes its real place. An honestly-approximate fallback
+    // beats one that silently claims full fidelity.
     computeCloseness(
       {
         relationshipScore: contact.relationshipScore,
+        statedCloseness: contact.statedCloseness,
         lastInteractionAt: contact.lastInteractionAt,
+        firstInteractionAt: contact.firstInteractionAt,
+        dateMet: contact.dateMet,
         createdAt: contact.createdAt,
         company: contact.company,
         title: contact.title,
