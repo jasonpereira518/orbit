@@ -892,9 +892,8 @@ export async function previewCalendarImport(payload: {
     });
   }
 
-  // One-time calendar upload: reach back CALENDAR_BACKFILL_DAYS, not just
-  // the ongoing-sync CALENDAR_SYNC_DAYS window.
-  const windowed = windowCalendarEvents(events, { backfill: true });
+  // One-time calendar upload: reach back CALENDAR_BACKFILL_DAYS.
+  const windowed = windowCalendarEvents(events);
 
   const preview = windowed.slice(0, 40).map((event) => {
     const people = peopleFromEvent(event);
@@ -994,7 +993,7 @@ export async function confirmCalendarImport(payload: {
     const now = Date.now();
     // Same one-time-upload backfill window as previewCalendarImport, so a
     // confirm always processes exactly what the preview showed.
-    const windowed = windowCalendarEvents(events, { backfill: true });
+    const windowed = windowCalendarEvents(events);
 
     const chunkEvents = payload.chunk
       ? windowed.slice(

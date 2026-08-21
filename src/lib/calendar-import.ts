@@ -9,8 +9,6 @@ export type ParsedCalendarEvent = {
   organizer: { name: string; email: string } | null;
 };
 
-/** Ongoing sync: recent past plus near future. */
-export const CALENDAR_SYNC_DAYS = 180;
 /**
  * First connect: reach much further back. A new user's orbit is cold precisely
  * because Orbit has no history, and a year of past meetings is the cheapest
@@ -19,26 +17,29 @@ export const CALENDAR_SYNC_DAYS = 180;
 export const CALENDAR_BACKFILL_DAYS = 730;
 
 /**
- * Windows calendar events to a lookback of `CALENDAR_BACKFILL_DAYS` (initial
- * one-time calendar upload) or `CALENDAR_SYNC_DAYS` (ongoing sync) through the
- * next 14 days.
+ * Windows calendar events to a lookback of `CALENDAR_BACKFILL_DAYS` through
+ * the next 14 days, for the one-time calendar upload
+ * (`previewCalendarImport` / `confirmCalendarImport`).
+ *
+ * This window is specific to that one-time backfill. If an ongoing-sync
+ * consumer is ever added, it must pass its own (shorter) lookback explicitly
+ * rather than reusing this function unchanged — otherwise it silently
+ * inherits a two-year window instead of a recent one.
  *
  * Lives outside `src/actions/imports.ts` (a `"use server"` file) because a
  * `"use server"` module may only export async functions — plain constant
  * exports there throw at build time.
  */
 export function windowCalendarEvents(
-  events: ParsedCalendarEvent[],
-  options?: { backfill?: boolean }
+  events: ParsedCalendarEvent[]
 ): ParsedCalendarEvent[] {
-  const pastDays = options?.backfill
-    ? CALENDAR_BACKFILL_DAYS
-    : CALENDAR_SYNC_DAYS;
   const now = Date.now();
   return events.filter((e) => {
     if (!e.start) return true;
     const t = e.start.getTime();
-    return t >= now - pastDays * 86400000 && t <= now + 14 * 86400000;
+    return (
+      t >= now - CALENDAR_BACKFILL_DAYS * 86400000 && t <= now + 14 * 86400000
+    );
   });
 }
 
