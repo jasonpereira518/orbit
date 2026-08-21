@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, gmailConnections, interactions, outlookConnections, userGoals, userSettings } from "@/db/schema";
 import {
@@ -46,8 +46,6 @@ export type ClosenessCohortResult = {
   averageRaw: number;
   goals: string[];
   touchCounts: Map<string, number>;
-  /** Share of contacts whose evidence cleared the floor. See `ClosenessCohort.coverage`. */
-  coverage: number;
 };
 
 /**
@@ -122,18 +120,23 @@ async function buildCohortResult(
       where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
       columns: { text: true },
     }),
+    // Two numbers from one scan. `recent` is cadence — touches inside the
+    // trailing window. `total` answers a different question: has this contact
+    // *ever* been interacted with? That is what the evidence layer needs, and
+    // the cadence window is far too narrow to stand in for it — a friend you
+    // last saw two years ago is someone we know about, not someone we have no
+    // data on. It cannot come from `contacts.last_interaction_at` either: that
+    // column is stamped `metAt ?? now` on every create, so it is non-null for
+    // every imported contact. Hence no date predicate in the WHERE, and the
+    // window applied as a FILTER instead.
     db
       .select({
         contactId: interactions.contactId,
-        count: sql<number>`count(*)::int`,
+        recent: sql<number>`count(*) filter (where ${interactions.interactionDate} >= ${since})::int`,
+        total: sql<number>`count(*)::int`,
       })
       .from(interactions)
-      .where(
-        and(
-          eq(interactions.userId, userId),
-          gte(interactions.interactionDate, since)
-        )
-      )
+      .where(eq(interactions.userId, userId))
       .groupBy(interactions.contactId),
     db.query.userSettings.findFirst({
       where: eq(userSettings.userId, userId),
@@ -156,7 +159,10 @@ async function buildCohortResult(
 
   const goals = goalRows.map((g) => g.text);
   const touchCounts = new Map<string, number>(
-    touchRows.map((r) => [r.contactId, Number(r.count) || 0])
+    touchRows.map((r) => [r.contactId, Number(r.recent) || 0])
+  );
+  const everInteracted = new Set<string>(
+    touchRows.filter((r) => Number(r.total) > 0).map((r) => r.contactId)
   );
 
   // Orbit-relative affinity. Orbit stores no company or school for the user
@@ -195,6 +201,7 @@ async function buildCohortResult(
         ...c,
         notes: null,
         tags: c.contactTags.map((ct) => ct.tag.name),
+        hasLoggedInteraction: everInteracted.has(c.id),
         emailDomainMatchesUser:
           !!userDomain && !!contactDomain && contactDomain === userDomain,
         companyConcentration: c.company
@@ -221,5 +228,5 @@ async function buildCohortResult(
     ? raws.reduce((sum, r) => sum + r.raw, 0) / raws.length
     : 0;
 
-  return { cohort, byId, averageRaw, goals, touchCounts, coverage: cohort.coverage };
+  return { cohort, byId, averageRaw, goals, touchCounts };
 }

@@ -78,6 +78,11 @@ export default async function ContactDetailPage({
         relationshipScore: contact.relationshipScore,
         statedCloseness: contact.statedCloseness,
         lastInteractionAt: contact.lastInteractionAt,
+        // `getContact` loads this contact's interaction rows unfiltered, so
+        // this is the same has-ever-interacted fact the cohort builder derives
+        // from the interactions table — not the `lastInteractionAt` stamp,
+        // which every create path writes.
+        hasLoggedInteraction: contact.interactions.length > 0,
         firstInteractionAt: contact.firstInteractionAt,
         dateMet: contact.dateMet,
         createdAt: contact.createdAt,

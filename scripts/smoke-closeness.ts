@@ -11,6 +11,7 @@ import {
   cohortPercentile,
   computeClosenessForAll,
   computeRawCloseness,
+  NO_INTERACTION_RECENCY,
   recencyComponent,
   type ClosenessContact,
   type RawClosenessBreakdown,
@@ -51,7 +52,7 @@ function histogram(xs: number[], label: string) {
 function person(
   over: Partial<ClosenessContact> & { id?: string } = {}
 ): ClosenessContact & { id: string } {
-  return {
+  const base = {
     id: "c0",
     relationshipScore: 3,
     statedCloseness: 3,
@@ -70,6 +71,68 @@ function person(
     sharedInterests: null,
     tags: null,
     ...over,
+  };
+  return {
+    ...base,
+    // A fixture that sets `lastInteractionAt` means "we have actually spoken to
+    // this person", so an interactions row exists. The case where the column is
+    // set but nothing was ever logged is what an *import* looks like, and that
+    // has its own builder — `importedContact` below.
+    hasLoggedInteraction: over.hasLoggedInteraction ?? !!base.lastInteractionAt,
+  };
+}
+
+/**
+ * A contact exactly as `contactInsertValues` (src/lib/contact-writes.ts) writes
+ * one on a bulk import. Every field here is copied from that function, not
+ * chosen for convenience:
+ *
+ *   relationshipScore  `input.relationshipScore ?? 2`   — every importer passes 2
+ *   statedCloseness    `input.statedCloseness ?? null`  — importers pass none
+ *   dateMet            parsed `Connected On`, or null
+ *   firstInteractionAt `dateMet ?? now`
+ *   lastInteractionAt  `metAt ?? now`   <-- non-null for EVERY imported contact
+ *
+ * That last line is the whole reason this builder exists. A fixture that sets
+ * `lastInteractionAt: null` describes a row no write path in this codebase
+ * produces, and any assertion built on one is testing a shape that cannot
+ * occur. `hasLoggedInteraction` is false because no `interactions` row is
+ * written by any contacts import — only the LinkedIn *messages* import and the
+ * calendar/mail syncs create those.
+ */
+function importedContact(over: {
+  id: string;
+  /** Parsed `Connected On`; null models Google/Outlook Contacts, which pass no date. */
+  connectedDaysAgo: number | null;
+  statedCloseness?: number | null;
+  hasEmail?: boolean;
+  mailConnected?: boolean;
+  companyConcentration?: number;
+}): ClosenessContact & { id: string } {
+  const now = new Date();
+  const metAt = over.connectedDaysAgo == null ? null : daysAgoDate(over.connectedDaysAgo);
+  return {
+    id: over.id,
+    relationshipScore: 2,
+    statedCloseness: over.statedCloseness ?? null,
+    dateMet: metAt,
+    firstInteractionAt: metAt ?? now,
+    lastInteractionAt: metAt ?? now,
+    hasLoggedInteraction: false,
+    createdAt: now,
+    coveredByConnectedSource: !!over.mailConnected && (over.hasEmail ?? false),
+    company: "Acme",
+    title: "Engineer",
+    industry: null,
+    howMet: null,
+    notes: null,
+    aiSummary: null,
+    keyFacts: null,
+    sharedInterests: null,
+    tags: null,
+    emailDomainMatchesUser: false,
+    companyConcentration: over.companyConcentration ?? 1,
+    schoolConcentration: 0,
   };
 }
 
@@ -172,7 +235,10 @@ console.log("\n3. Cold start falls back to absolute scoring");
   }
 
   const cohort = buildClosenessCohort(five.map((c) => computeRawCloseness(c, [], 0)));
-  check("  relative weight is 0 below 8 contacts", cohort.relativeWeight === 0);
+  check(
+    "  relative weight is 0 below 8 evidenced contacts",
+    cohort.relativeWeight === 0
+  );
 
   const many = Array.from({ length: 60 }, (_, i) =>
     person({ id: `c${i}`, relationshipScore: (i % 5) + 1 })
@@ -328,6 +394,7 @@ console.log("\n7. Ties resolve identically");
     evidence: 1,
     prior: raw,
     evidenced: raw,
+    knownWeightShare: 1,
   });
   const cohort = buildClosenessCohort(
     [0.2, 0.4, 0.4, 0.4, 0.9].map(asFullyEvidenced)
@@ -448,7 +515,7 @@ console.log("\n11. Evidence reflects what we actually know");
   const none = computeEvidence({});
   check("  a bare import has no evidence", none === 0, String(none));
 
-  const rated = computeEvidence({ statedCloseness: 4 });
+  const rated = computeEvidence({ hasStatedCloseness: true });
   check(
     "  a user rating clears the floor on its own",
     rated >= EVIDENCE_FLOOR,
@@ -471,8 +538,23 @@ console.log("\n11. Evidence reflects what we actually know");
     String(coverageOnly)
   );
 
+  // The regression that made every other cold-start assertion vacuous:
+  // evidence was derived from `!!lastInteractionAt`, a column
+  // `contactInsertValues` stamps on every create. Every imported contact
+  // therefore claimed interaction evidence it had never earned.
+  const importArtifact = computeRawCloseness(
+    importedContact({ id: "art", connectedDaysAgo: null, hasEmail: true, mailConnected: true }),
+    [],
+    0
+  );
+  check(
+    "  a stamped lastInteractionAt is not an interaction",
+    importArtifact.evidence < EVIDENCE_FLOOR,
+    String(importArtifact.evidence)
+  );
+
   const everything = computeEvidence({
-    statedCloseness: 5,
+    hasStatedCloseness: true,
     touchCount: 30,
     hasLoggedInteraction: true,
     coveredByConnectedSource: true,
@@ -585,9 +667,11 @@ console.log("\n13. The blend decays toward real evidence");
   );
   check("  and evidence really is 1", Math.abs(blended.evidence - 1) < 1e-9);
 
-  // Cold contact: the prior should dominate.
+  // Cold contact: the prior should dominate. `relationshipScore: 2` is what
+  // the write path leaves on an unrated contact, and it must not read as an
+  // assessment — see `resolveStatedStrength`.
   const cold = computeRawCloseness(
-    person({ statedCloseness: null, lastInteractionAt: null }),
+    person({ statedCloseness: null, relationshipScore: 2, lastInteractionAt: null }),
     [],
     0
   );
@@ -598,39 +682,96 @@ console.log("\n13. The blend decays toward real evidence");
     `${cold.raw} vs ${cold.prior}`
   );
 
-  // Monotone decay: as touches accumulate, the prior's influence shrinks.
-  const priorShare = (touches: number) => {
+  // Monotone decay: as interactions accumulate, the prior's influence shrinks.
+  // Measured two ways, because they are two different numbers now — `evidence`
+  // gates the ring ceiling, `knownWeightShare` is what actually mixes the
+  // prior into `raw`.
+  const shares = (touches: number) => {
     const b = computeRawCloseness(
-      person({ statedCloseness: null, lastInteractionAt: daysAgoDate(20) }),
+      person({
+        statedCloseness: null,
+        relationshipScore: 2,
+        // Zero touches means no interaction row has ever been written, which
+        // is also what leaves `lastInteractionAt` an import artifact.
+        lastInteractionAt: touches > 0 ? daysAgoDate(20) : null,
+        hasLoggedInteraction: touches > 0,
+      }),
       [],
       touches
     );
-    return 1 - b.evidence;
+    return { byEvidence: 1 - b.evidence, byWeight: 1 - b.knownWeightShare };
   };
-  const shares = [0, 1, 3, 8, 20].map(priorShare);
+  const decay = [0, 1, 3, 8, 20].map(shares);
   check(
     "  the prior's weight falls monotonically as evidence arrives",
-    shares.every((s, i) => i === 0 || s <= shares[i - 1]),
-    shares.map((s) => s.toFixed(3)).join(" → ")
+    decay.every((s, i) => i === 0 || s.byEvidence <= decay[i - 1].byEvidence),
+    decay.map((s) => s.byEvidence.toFixed(3)).join(" → ")
+  );
+  check(
+    "  and so does its actual share of the blend",
+    decay.every((s, i) => i === 0 || s.byWeight <= decay[i - 1].byWeight),
+    decay.map((s) => s.byWeight.toFixed(3)).join(" → ")
+  );
+  check(
+    "  an unblended contact starts at a pure prior",
+    Math.abs(decay[0].byWeight - 1) < 1e-9,
+    String(decay[0].byWeight)
+  );
+  const fullyKnown = computeRawCloseness(
+    person({ statedCloseness: 4, lastInteractionAt: daysAgoDate(5) }),
+    [],
+    9
+  );
+  check(
+    "  and reaches zero once every component is measured",
+    Math.abs(fullyKnown.knownWeightShare - 1) < 1e-9,
+    String(fullyKnown.knownWeightShare)
   );
 }
 
 console.log("\n14. Guesses cannot reach the inner rings");
 {
-  // 2000 contacts, nothing known about any of them.
+  // 2,000 contacts as a real bulk import writes them — see `importedContact`.
+  // Note what this fixture does NOT do: it does not set
+  // `lastInteractionAt: null`. No write path in this codebase produces that on
+  // a create, and an earlier version of this section asserted against exactly
+  // that impossible shape, which is why it stayed green while an imported
+  // orbit was in fact filling the Inner and Core rings.
+  //
+  // 30% carry no connection date, which is every Google Contacts and Outlook
+  // Contacts import (neither passes `dateMet`) plus LinkedIn rows whose
+  // `Connected On` failed to parse. Those get `lastInteractionAt = now`.
+  // 80% carry an email address, and the mailbox is connected — the
+  // configuration that previously handed the whole orbit evidence 0.2581 and
+  // put 440 unevidenced strangers into Inner and Core.
   const coldOrbit = Array.from({ length: 2000 }, (_, i) =>
-    person({
+    importedContact({
       id: `x${i}`,
-      statedCloseness: null,
-      relationshipScore: 2,
-      lastInteractionAt: null,
-      createdAt: daysAgoDate(1),
-      dateMet: daysAgoDate((i * 37) % 2500),
+      connectedDaysAgo: i % 10 >= 7 ? null : (i * 37) % 2500,
+      hasEmail: i % 5 !== 0,
+      mailConnected: true,
     })
   );
   const scored = computeClosenessForAll(coldOrbit, []);
   const rings = [0, 0, 0, 0, 0, 0];
   for (const b of scored.values()) rings[b.orbitScore] += 1;
+
+  const raws = coldOrbit.map((c) => computeRawCloseness(c, [], 0));
+  check(
+    "  a mail-connected cold import leaves everybody under the evidence floor",
+    raws.every((r) => r.evidence < EVIDENCE_FLOOR),
+    `max evidence ${Math.max(...raws.map((r) => r.evidence)).toFixed(4)}`
+  );
+  check(
+    "  and nobody's recency reads as a fresh conversation",
+    raws.every((r) => r.recency <= NO_INTERACTION_RECENCY),
+    `max recency ${Math.max(...raws.map((r) => r.recency)).toFixed(4)}`
+  );
+  check(
+    "  so the ranking distribution is empty rather than confidently wrong",
+    buildClosenessCohort(raws).evidencedN === 0,
+    String(buildClosenessCohort(raws).evidencedN)
+  );
 
   check(
     "  a pure cold import places nobody in Core or Inner",
@@ -656,22 +797,22 @@ console.log("\n14. Guesses cannot reach the inner rings");
 
 console.log("\n15. Coverage does not masquerade as closeness");
 {
-  // 200 contacts with real Gmail-style history, 1800 with nothing.
+  // 200 contacts with real Gmail-style history, 1800 imported and untouched.
   const covered = Array.from({ length: 200 }, (_, i) =>
     person({
       id: `k${i}`,
       statedCloseness: null,
+      relationshipScore: 2, // unrated, as the write path leaves them
       lastInteractionAt: daysAgoDate((i * 3) % 200),
       dateMet: daysAgoDate(800),
       coveredByConnectedSource: true,
     })
   );
   const uncovered = Array.from({ length: 1800 }, (_, i) =>
-    person({
+    importedContact({
       id: `u${i}`,
-      statedCloseness: null,
-      lastInteractionAt: null,
-      dateMet: daysAgoDate((i * 29) % 2500),
+      connectedDaysAgo: (i * 29) % 2500,
+      companyConcentration: 0, // matches the covered group's, so only coverage differs
     })
   );
   const touches = new Map<string, number>([
@@ -705,9 +846,9 @@ console.log("\n16. Ranking uses the people we actually know");
       3
     )
   );
-  const unknown = Array.from({ length: 1988 }, () =>
+  const unknown = Array.from({ length: 1988 }, (_, i) =>
     computeRawCloseness(
-      person({ statedCloseness: null, lastInteractionAt: null }),
+      importedContact({ id: `u${i}`, connectedDaysAgo: (i * 17) % 2000 }),
       [],
       0
     )
@@ -823,6 +964,7 @@ console.log("\n18. Real affinity signal still counts for evidence-poor contacts"
   const stranger = computeRawCloseness(
     person({
       statedCloseness: null,
+      relationshipScore: 2,
       lastInteractionAt: null,
       dateMet: daysAgoDate(SAME_AGE_DAYS),
     }),
@@ -832,6 +974,7 @@ console.log("\n18. Real affinity signal still counts for evidence-poor contacts"
   const colleague = computeRawCloseness(
     person({
       statedCloseness: null,
+      relationshipScore: 2,
       lastInteractionAt: null,
       dateMet: daysAgoDate(SAME_AGE_DAYS),
       emailDomainMatchesUser: true,
@@ -874,6 +1017,139 @@ console.log("\n18. Real affinity signal still counts for evidence-poor contacts"
     "  that gap moves a just-added colleague a full ring above a same-age stranger",
     colleagueRing > strangerRing,
     `stranger ring ${strangerRing} vs colleague ring ${colleagueRing}`
+  );
+}
+
+console.log("\n19. Triage pays off: a rating outranks everything it replaces");
+{
+  // The section the spec asked for and the plan omitted. Everything else in
+  // this file measures the system's guesses; this measures what happens when
+  // the user finally tells it something — which is the payoff the whole
+  // wizard step exists to deliver. Without it, a blend that *demoted* rated
+  // contacts (raw = (1-evidence)*prior + evidence*evidenced, where `evidenced`
+  // at zero touch data sat below the prior's band) shipped green.
+  //
+  // Fixture is a real 2,000-row import with a connected mailbox — the
+  // hardest case, because that is the one where coverage had been quietly
+  // outscoring judgement.
+  const RATED_COUNT = 40; // one full pass of the wizard's shortlist
+  const RATINGS = [5, 4, 5, 3, 4];
+
+  const orbit = Array.from({ length: 2000 }, (_, i) =>
+    importedContact({
+      id: `p${i}`,
+      connectedDaysAgo: i % 10 >= 7 ? null : (i * 37) % 2500,
+      hasEmail: i % 5 !== 0,
+      mailConnected: true,
+    })
+  );
+  const ratedIds = new Set<string>();
+  for (let i = 0; i < RATED_COUNT; i++) {
+    const idx = i * 47;
+    orbit[idx] = { ...orbit[idx], statedCloseness: RATINGS[i % RATINGS.length] };
+    ratedIds.add(orbit[idx].id);
+  }
+
+  const scored = computeClosenessForAll(orbit, []);
+  const ranked = [...scored.entries()].sort(
+    (a, b) => b[1].closeness - a[1].closeness
+  );
+  const inner = ranked.filter(([, b]) => b.orbitScore >= 4);
+  console.log(
+    `\n  after one triage pass: ${inner.length} contacts in Inner/Core, ` +
+      `${inner.filter(([id]) => ratedIds.has(id)).length} of them rated`
+  );
+  const ratedTop40 = ranked
+    .slice(0, RATED_COUNT)
+    .filter(([id]) => ratedIds.has(id)).length;
+  console.log(
+    `  of the top ${RATED_COUNT} by closeness, ${ratedTop40} are rated (base rate ${RATED_COUNT}/${orbit.length})`
+  );
+
+  check(
+    "  the top two rings are populated at all",
+    inner.length > 0,
+    String(inner.length)
+  );
+  check(
+    "  and hold nobody but the people the user actually rated",
+    inner.every(([id]) => ratedIds.has(id)),
+    `${inner.filter(([id]) => !ratedIds.has(id)).length} unrated intruders`
+  );
+  // Not "all 40 rated contacts outrank all 1,960 guesses" — that would be the
+  // wrong assertion. A 3/5 says "middling", and the prior's guess for a
+  // six-year-old connection is also middling, so the two legitimately
+  // interleave. What must hold is that a rating moves you by an order of
+  // magnitude relative to being one of the crowd.
+  const MIN_TRIAGE_LIFT = 10; // × the base rate
+  const baseRate = RATED_COUNT / orbit.length;
+  check(
+    `  a rating lifts you at least ${MIN_TRIAGE_LIFT}× above the base rate`,
+    ratedTop40 / RATED_COUNT >= MIN_TRIAGE_LIFT * baseRate,
+    `${ratedTop40}/${RATED_COUNT} = ${((ratedTop40 / RATED_COUNT) / baseRate).toFixed(1)}× base rate`
+  );
+
+  const ratedRings = [...ratedIds].map((id) => scored.get(id)!.orbitScore);
+  check(
+    "  and a 5/5 never lands in the outermost ring",
+    [...ratedIds]
+      .filter((id) => orbit.find((c) => c.id === id)!.statedCloseness === 5)
+      .every((id) => scored.get(id)!.orbitScore > 1),
+    `rated rings ${[...new Set(ratedRings)].sort().join(",")}`
+  );
+
+  // Monotonicity of the payoff: rating someone must never make them worse off
+  // than leaving them alone, at any relationship age. This is the table the
+  // whole-branch review used to catch the inverted blend.
+  console.log("\n  rating the same contact, no logged interactions:");
+  console.log("    age(days)  unrated   1/5       3/5       5/5");
+  for (const days of [0, 400, 900, 1825, 2500]) {
+    const base = importedContact({
+      id: "t",
+      connectedDaysAgo: days === 0 ? null : days,
+      hasEmail: true,
+      mailConnected: true,
+    });
+    const at = (stated: number | null) =>
+      computeRawCloseness({ ...base, statedCloseness: stated }, [], 0).raw;
+    const [unrated, one, three, five] = [null, 1, 3, 5].map(at);
+    console.log(
+      `    ${String(days).padStart(9)}  ${unrated.toFixed(4)}    ${one.toFixed(4)}    ${three.toFixed(4)}    ${five.toFixed(4)}`
+    );
+    check(
+      `  a 5/5 beats no rating at ${days}d`,
+      five > unrated,
+      `${five} vs ${unrated}`
+    );
+    check(
+      `  a 1/5 is a demotion at ${days}d`,
+      one < unrated,
+      `${one} vs ${unrated}`
+    );
+    check(
+      `  ratings are ordered at ${days}d`,
+      one < three && three < five,
+      `${one} / ${three} / ${five}`
+    );
+  }
+
+  // And the mirror image of the trap: an email address on a connected mailbox
+  // must not move the score at all. It moves `evidence` — which is a claim
+  // about our reach, not about the relationship — and nothing else.
+  const noEmail = computeRawCloseness(
+    importedContact({ id: "n", connectedDaysAgo: 900, hasEmail: false, mailConnected: true }),
+    [],
+    0
+  ).raw;
+  const withEmail = computeRawCloseness(
+    importedContact({ id: "e", connectedDaysAgo: 900, hasEmail: true, mailConnected: true }),
+    [],
+    0
+  ).raw;
+  check(
+    "  being reachable is worth exactly zero closeness",
+    Math.abs(withEmail - noEmail) < 1e-12,
+    `${withEmail} vs ${noEmail}`
   );
 }
 

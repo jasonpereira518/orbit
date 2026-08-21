@@ -31,11 +31,25 @@ export const EVIDENCE_FLOOR = 0.25;
 const INTERACTION_SATURATION = 12;
 
 export type EvidenceInput = {
-  /** 1–5 if the user has rated this contact; null/undefined means never rated. */
-  statedCloseness?: number | null;
+  /**
+   * The user has assessed this contact — see `resolveStatedStrength` in
+   * `@/lib/closeness` for what counts. A boolean rather than the raw column
+   * because "has been rated" and "was rated a 2" are different questions and
+   * only the first one is evidence.
+   */
+  hasStatedCloseness?: boolean;
   /** Interactions in the trailing cadence window. */
   touchCount?: number | null;
-  /** Any logged interaction ever, including outside the cadence window. */
+  /**
+   * Whether an `interactions` row exists for this contact at all, including
+   * outside the cadence window.
+   *
+   * This MUST come from the interactions table. It is deliberately not derived
+   * from `contacts.last_interaction_at`: every create path stamps that column
+   * (`lastInteractionAt: metAt ?? now` in `contactInsertValues`), so it is
+   * non-null for every imported contact and would hand a whole cold import
+   * evidence it has not earned.
+   */
   hasLoggedInteraction?: boolean;
   /** e.g. contact has an email address and Gmail is connected. */
   coveredByConnectedSource?: boolean;
@@ -48,7 +62,7 @@ function clamp01(n: number) {
 export function computeEvidence(input: EvidenceInput): number {
   let evidence = 0;
 
-  if (input.statedCloseness != null) {
+  if (input.hasStatedCloseness) {
     evidence += EVIDENCE_WEIGHTS.stated;
   }
 

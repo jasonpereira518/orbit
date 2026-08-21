@@ -11,6 +11,16 @@ export type ClosenessContact = {
   /** 1–5 if the user rated them; null means never rated. See closeness-evidence.ts. */
   statedCloseness?: number | null;
   lastInteractionAt?: Date | string | null;
+  /**
+   * Whether an `interactions` row exists for this contact at all. Supplied by
+   * the cohort builder from the interactions table — never inferred from
+   * `lastInteractionAt`, which `contactInsertValues` stamps on every create
+   * (`metAt ?? now`) and which is therefore non-null for every import.
+   *
+   * When false, recency and cadence are treated as *unknown* rather than
+   * measured, and their weight is redistributed to the prior.
+   */
+  hasLoggedInteraction?: boolean;
   firstInteractionAt?: Date | string | null;
   dateMet?: Date | string | null;
   createdAt?: Date | string | null;
@@ -41,8 +51,17 @@ export type RawClosenessBreakdown = {
   evidence: number;
   /** The compressed weak-signal estimate. */
   prior: number;
-  /** The behaviour-driven score, before blending. Equals `raw` at full evidence. */
+  /**
+   * The score over the components we actually measured, normalised against
+   * their own weight. Equals `raw` when every component is known; falls back
+   * to `prior` when none is.
+   */
   evidenced: number;
+  /**
+   * Share of the scoring weight backed by a real measurement, 0–1. `raw` is
+   * `evidenced` and `prior` mixed in exactly this proportion.
+   */
+  knownWeightShare: number;
 };
 
 export type ClosenessBreakdown = RawClosenessBreakdown & {
@@ -81,13 +100,24 @@ export const CADENCE_WINDOW_DAYS = 365;
 export const NO_INTERACTION_RECENCY = 0.15;
 
 /**
- * Strength for a contact with neither a stated rating nor a legacy
- * relationshipScore. Deliberately the midpoint, not the old 2/5 default —
- * asserting "somewhat distant" about someone nobody has assessed is exactly
- * the bias this constant removes. The evidence layer is what stops this
- * neutral value from carrying weight.
+ * Display value for a contact nobody has assessed. Deliberately the midpoint,
+ * not the old 2/5 default — asserting "somewhat distant" about someone nobody
+ * has assessed is exactly the bias this constant removes.
+ *
+ * It is a *display* value only: `computeRawCloseness` never scores it, because
+ * an unrated contact's strength weight is redistributed to the prior rather
+ * than filled in with a guess. Anything that renders a breakdown's `strength`
+ * for an unrated contact shows this.
  */
 export const NEUTRAL_STRENGTH = 0.5;
+
+/**
+ * The value `contacts.relationship_score` carries when nobody has rated the
+ * contact. The column is `.default(2).notNull()` and every create path
+ * coalesces `input.relationshipScore ?? 2`, so a 2 is indistinguishable from
+ * silence and must never be read as an assessment.
+ */
+export const IMPORT_DEFAULT_RELATIONSHIP_SCORE = 2;
 
 const WEIGHTS = {
   strength: 0.3,
@@ -136,19 +166,45 @@ function clamp01(n: number) {
 }
 
 /**
- * Stated closeness, 1–5, as a 0–1 term.
+ * The user's own assessment as a 0–1 term, or `null` when nobody has made one.
  *
- * Falls back to `relationshipScore` for contacts written before
- * `stated_closeness` existed. An unrated contact returns `NEUTRAL_STRENGTH`
- * rather than the old default of 2/5 — see that constant's docstring.
+ * `statedCloseness` is the real signal. `relationshipScore` is consulted only
+ * as a back-compat fallback for rows written before `stated_closeness` existed
+ * and not yet touched by `scripts/migrate-stated-closeness.ts` — and only when
+ * it differs from `IMPORT_DEFAULT_RELATIONSHIP_SCORE`, since a 2 is what every
+ * importer writes. That is the same heuristic the backfill uses, deliberately:
+ * a value other than the default is the only trace a human left.
+ *
+ * Returning `null` rather than a neutral number is the point. It is what lets
+ * `computeRawCloseness` redistribute the unrated contact's strength weight
+ * instead of asserting a middling closeness nobody claimed.
+ */
+export function resolveStatedStrength(
+  statedCloseness?: number | null,
+  relationshipScore?: number | null
+): number | null {
+  if (statedCloseness != null) {
+    return Math.min(5, Math.max(1, statedCloseness)) / 5;
+  }
+  if (
+    relationshipScore != null &&
+    relationshipScore !== IMPORT_DEFAULT_RELATIONSHIP_SCORE
+  ) {
+    return Math.min(5, Math.max(1, relationshipScore)) / 5;
+  }
+  return null;
+}
+
+/**
+ * Stated closeness, 1–5, as a 0–1 term, with `NEUTRAL_STRENGTH` standing in
+ * for an unrated contact. For display; the blend uses
+ * `resolveStatedStrength` so it can tell "unrated" from "rated middling".
  */
 export function strengthComponent(
   statedCloseness?: number | null,
   relationshipScore?: number | null
 ) {
-  const stated = statedCloseness ?? relationshipScore;
-  if (stated == null) return NEUTRAL_STRENGTH;
-  return Math.min(5, Math.max(1, stated)) / 5;
+  return resolveStatedStrength(statedCloseness, relationshipScore) ?? NEUTRAL_STRENGTH;
 }
 
 /**
@@ -224,9 +280,35 @@ export function goalRelevanceComponent(
 /**
  * Absolute score: 30% strength, 30% recency, 25% cadence, 15% goal fit.
  *
- * With no active goals the goal weight is redistributed across the others
- * rather than scored as zero — otherwise having no goals silently docks every
- * contact 15 points and the scale can never reach 1.
+ * **Unknown components do not score zero, and they do not score a guess
+ * either — their weight is redistributed.** The existing `hasGoals` branch has
+ * always done this for goal relevance (scoring 0 there would silently dock
+ * every contact 15 points when no goals are set, and the scale could never
+ * reach 1). Strength, recency and cadence now work the same way, and the
+ * *prior* is what the redistributed weight buys:
+ *
+ *     raw = (knownWeight * evidenced + unknownWeight * prior) / applicableWeight
+ *
+ * That is the blend the design calls for, expressed so the prior and the
+ * evidenced score are commensurate by construction rather than by two
+ * hand-tuned ranges kept in sync. It gives, for free, the two properties the
+ * feature rests on:
+ *
+ *   - Everything known  → `unknownWeight` is 0 → `raw === evidenced` exactly,
+ *     so this whole change is a no-op for an established orbit.
+ *   - Nothing known     → `knownWeight` is 0 → `raw === prior` exactly.
+ *
+ * And it removes the perverse gradient the earlier `(1 - evidence) * prior +
+ * evidence * evidenced` form had: because `evidenced` at zero behavioural data
+ * lived *below* the prior's band, every increment of evidence that was not a
+ * real touch — a user rating, a connected mailbox — pushed the contact *down*.
+ * Rating a long-standing connection 5/5 demoted them. Here, acquiring a
+ * measurement can only replace the prior's share with that measurement, so a
+ * high rating raises and a low rating lowers, which is what the user meant.
+ *
+ * `evidence` (see closeness-evidence.ts) is still computed and returned: it
+ * gates the ring ceiling and the cohort's evidenced-only distribution. It is
+ * simply no longer the mixing coefficient.
  */
 export function computeRawCloseness(
   contact: ClosenessContact,
@@ -236,32 +318,48 @@ export function computeRawCloseness(
   const goals = activeGoals.map((g) => g.trim()).filter(Boolean);
   const hasGoals = goals.length > 0;
 
-  const strength = strengthComponent(
+  const stated = resolveStatedStrength(
     contact.statedCloseness,
     contact.relationshipScore
   );
-  const recency = recencyComponent(contact.lastInteractionAt);
-  const cadence = cadenceComponent(touchCount);
+  const hasStated = stated !== null;
+  const strength = stated ?? NEUTRAL_STRENGTH;
+
+  // A logged interaction is what makes recency and cadence measurements rather
+  // than artifacts. Without one, `lastInteractionAt` is just the import's
+  // timestamp and `touchCount` is zero because nothing was ever recorded — not
+  // because the relationship went quiet.
+  const knowsBehaviour =
+    !!contact.hasLoggedInteraction && !!contact.lastInteractionAt;
+  const recency = knowsBehaviour
+    ? recencyComponent(contact.lastInteractionAt)
+    : NO_INTERACTION_RECENCY;
+  const cadence = knowsBehaviour ? cadenceComponent(touchCount) : 0;
   const goalRelevance = hasGoals ? goalRelevanceComponent(contact, goals) : 0;
 
-  const weighted =
-    WEIGHTS.strength * strength +
-    WEIGHTS.recency * recency +
-    WEIGHTS.cadence * cadence +
+  const knownWeighted =
+    (hasStated ? WEIGHTS.strength * strength : 0) +
+    (knowsBehaviour ? WEIGHTS.recency * recency + WEIGHTS.cadence * cadence : 0) +
     (hasGoals ? WEIGHTS.goalRelevance * goalRelevance : 0);
 
-  const totalWeight =
+  const knownWeight =
+    (hasStated ? WEIGHTS.strength : 0) +
+    (knowsBehaviour ? WEIGHTS.recency + WEIGHTS.cadence : 0) +
+    (hasGoals ? WEIGHTS.goalRelevance : 0);
+
+  // Goal relevance drops out of the denominator entirely when no goals are
+  // set — it is not unknown, it is not applicable, so the prior must not be
+  // paid for it either.
+  const applicableWeight =
     WEIGHTS.strength +
     WEIGHTS.recency +
     WEIGHTS.cadence +
     (hasGoals ? WEIGHTS.goalRelevance : 0);
 
-  const evidenced = clamp01(weighted / totalWeight);
-
   const evidence = computeEvidence({
-    statedCloseness: contact.statedCloseness,
+    hasStatedCloseness: hasStated,
     touchCount,
-    hasLoggedInteraction: !!contact.lastInteractionAt,
+    hasLoggedInteraction: !!contact.hasLoggedInteraction,
     coveredByConnectedSource: contact.coveredByConnectedSource,
   });
 
@@ -275,11 +373,27 @@ export function computeRawCloseness(
     goalRelevance,
   });
 
-  // The whole design in one line: what we measured, weighted by how much we
-  // actually measured, against a deliberately timid guess for the rest.
-  const raw = clamp01((1 - evidence) * prior + evidence * evidenced);
+  // Nothing measured: there is no evidenced score to report, and the prior is
+  // the whole answer.
+  const evidenced =
+    knownWeight > 0 ? clamp01(knownWeighted / knownWeight) : prior;
 
-  return { raw, strength, recency, cadence, goalRelevance, evidence, prior, evidenced };
+  const knownWeightShare = knownWeight / applicableWeight;
+  const raw = clamp01(
+    knownWeightShare * evidenced + (1 - knownWeightShare) * prior
+  );
+
+  return {
+    raw,
+    strength,
+    recency,
+    cadence,
+    goalRelevance,
+    evidence,
+    prior,
+    evidenced,
+    knownWeightShare,
+  };
 }
 
 /**
@@ -409,7 +523,8 @@ export function orbitScoreFromPercentile(percentile: number) {
 /**
  * Blend the absolute score with the contact's rank inside their own orbit.
  * Without a cohort this is pure absolute scoring, which is also what a
- * very small network gets (`relativeWeight` is 0 below 8 contacts).
+ * poorly-covered network gets: `relativeWeight` is 0 below `RELATIVE_MIN_N`
+ * *evidenced* contacts (8), or below `RELATIVE_MIN_COVERAGE` of the orbit.
  */
 export function applyClosenessCohort(
   raw: RawClosenessBreakdown,
