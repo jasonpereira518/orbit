@@ -75,6 +75,15 @@ export const CADENCE_WINDOW_DAYS = 365;
 /** Recency for a contact with no logged interaction. Low, not zero. */
 export const NO_INTERACTION_RECENCY = 0.15;
 
+/**
+ * Strength for a contact with neither a stated rating nor a legacy
+ * relationshipScore. Deliberately the midpoint, not the old 2/5 default —
+ * asserting "somewhat distant" about someone nobody has assessed is exactly
+ * the bias this constant removes. The evidence layer is what stops this
+ * neutral value from carrying weight.
+ */
+export const NEUTRAL_STRENGTH = 0.5;
+
 const WEIGHTS = {
   strength: 0.3,
   recency: 0.3,
@@ -121,17 +130,15 @@ function clamp01(n: number) {
  * Stated closeness, 1–5, as a 0–1 term.
  *
  * Falls back to `relationshipScore` for contacts written before
- * `stated_closeness` existed. An unrated contact returns the neutral midpoint
- * rather than the old default of 2/5 — asserting "somewhat distant" about
- * someone nobody has assessed is exactly the bias this change removes. The
- * evidence layer is what stops that neutral value from carrying weight.
+ * `stated_closeness` existed. An unrated contact returns `NEUTRAL_STRENGTH`
+ * rather than the old default of 2/5 — see that constant's docstring.
  */
 export function strengthComponent(
   statedCloseness?: number | null,
   relationshipScore?: number | null
 ) {
   const stated = statedCloseness ?? relationshipScore;
-  if (stated == null) return 0.5;
+  if (stated == null) return NEUTRAL_STRENGTH;
   return Math.min(5, Math.max(1, stated)) / 5;
 }
 

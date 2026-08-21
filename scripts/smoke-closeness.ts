@@ -92,6 +92,13 @@ console.log("\n1. Component monotonicity");
     raw({ statedCloseness: 5 }) > raw({ statedCloseness: 1 })
   );
   check(
+    // The legacy fallback: contacts written before stated_closeness existed
+    // have statedCloseness null and must still rank by relationshipScore.
+    "legacy contacts still rank by relationshipScore",
+    raw({ statedCloseness: null, relationshipScore: 5 }) >
+      raw({ statedCloseness: null, relationshipScore: 1 })
+  );
+  check(
     "cadence has diminishing returns",
     raw({}, 2) - raw({}, 1) > raw({}, 12) - raw({}, 11)
   );
