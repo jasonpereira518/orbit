@@ -1,155 +1,235 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Check } from "lucide-react";
+import { auth } from "@clerk/nextjs/server";
+import { Eye, KeyRound, RotateCcw } from "lucide-react";
 import { OrbitLogo } from "@/components/orbit-logo";
-import { PLAN_COPY } from "@/lib/plan-copy";
-import { LIFETIME_SEAT_LIMIT } from "@/lib/entitlements";
+import { Reveal } from "@/components/motion/reveal";
+import { LandingStarfield } from "@/components/landing/landing-visuals";
+import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
+import { BackControl } from "@/components/pricing/back-control";
+import { PlanComparison } from "@/components/pricing/plan-comparison";
+import { PricingFaq } from "@/components/pricing/pricing-faq";
+import { PricingTiers } from "@/components/pricing/pricing-tiers";
+import { getEntitlements } from "@/lib/entitlements";
+import {
+  FREE_CONTACT_LIMIT,
+  LIFETIME_SEAT_LIMIT,
+  type Plan,
+} from "@/lib/plan-limits";
 import { countLifetimePurchases } from "@/lib/user-settings";
-import { buttonVariants } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { isClerkConfigured, isDemoMode } from "@/lib/auth";
 
 export const metadata: Metadata = {
   title: "Pricing — Orbit",
-  description:
-    "Orbit is free for up to 100 contacts. $5/month for unlimited, or $19 once for early adopters.",
+  description: `Orbit is free for your first ${FREE_CONTACT_LIMIT} contacts. $5 a month for unlimited, or $19 once for the first ${LIFETIME_SEAT_LIMIT} early adopters.`,
 };
 
+const HEADING =
+  "font-[family-name:var(--font-display)] font-normal leading-[1.12] tracking-[-0.025em] text-[#e8f3f1]";
+
+const TRUST = [
+  {
+    icon: RotateCcw,
+    title: "Cancel any time",
+    body: "You keep Orbit Pro until the period you paid for ends, then drop back to Free.",
+  },
+  {
+    icon: Eye,
+    title: "Nothing is ever hidden",
+    body: "Reaching a limit only stops new contacts. Everything already in your orbit stays visible and editable.",
+  },
+  {
+    icon: KeyRound,
+    title: "No markup on AI",
+    body: "Every plan runs on your own provider key, billed to you at cost. We never resell tokens.",
+  },
+];
+
 export default async function PricingPage() {
-  const sold = await countLifetimePurchases().catch(() => 0);
-  const remainingSeats = Math.max(0, LIFETIME_SEAT_LIMIT - sold);
+  const clerkOn = isClerkConfigured();
+  const demoMode = isDemoMode();
+
+  // Public page: resolve auth optionally and never call requireUserId, which throws for
+  // signed-out visitors. Entitlements are only read when there is somebody to read them for.
+  //
+  // Plan awareness keys off a real Clerk user, never the demo user: without Clerk keys
+  // `LandingAuthControls` always renders the signed-out header, so crediting demo-user
+  // with a plan would put "Your current plan" under a "Get Started" button.
+  const { userId } = clerkOn ? await auth() : { userId: null };
+  const signedIn = Boolean(userId);
+
+  const [currentPlan, sold] = await Promise.all([
+    (async (): Promise<Plan | null> => {
+      if (!userId) return null;
+      try {
+        return (await getEntitlements(userId)).plan;
+      } catch {
+        return null;
+      }
+    })(),
+    countLifetimePurchases().catch(() => 0),
+  ]);
+
+  const seatsLeft = Math.max(0, LIFETIME_SEAT_LIMIT - sold);
+  const authProps = { clerkOn, demoMode, signedIn };
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className="mx-auto flex w-full max-w-5xl items-center justify-between px-6 py-5 md:px-8">
-        <Link
-          href="/"
-          className="flex items-center gap-2.5 transition-opacity hover:opacity-80"
-        >
+    // `landing-root` is load-bearing: globals.css paints the body deep-space while it is
+    // mounted, which is what stops a light strip appearing on overscroll. The starfield
+    // renders position:fixed, so this root must stay free of transform/filter.
+    <div className="landing-root relative overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
+      <LandingStarfield />
+
+      <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-6 py-6 md:px-10">
+        <div className="flex items-center gap-4">
+          <BackControl />
+          <Link
+            href="/"
+            className="flex items-center gap-2.5 transition-opacity hover:opacity-80"
+            aria-label="Orbit home"
+          >
+            <OrbitLogo size="sm" />
+            <span className="font-[family-name:var(--font-display)] text-[17px] tracking-tight text-[#e8f3f1]">
+              Orbit
+            </span>
+          </Link>
+        </div>
+        <LandingAuthControls {...authProps} variant="header" />
+      </header>
+
+      <main className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-24 md:px-10">
+        <section className="pt-10 text-center md:pt-16">
+          <Reveal className="reveal-celestial">
+            <h1 className={`${HEADING} text-[clamp(32px,5vw,56px)]`}>
+              Free for your first {FREE_CONTACT_LIMIT} people.
+            </h1>
+          </Reveal>
+          <Reveal className="reveal-celestial" delay={90}>
+            <p className="mx-auto mt-5 max-w-[46ch] text-base leading-relaxed text-[#9aada8] sm:text-lg">
+              Past that, five dollars a month keeps every contact, follow-up,
+              and warm intro in one place. AI always runs on your own key, at
+              cost — we never mark it up.
+            </p>
+          </Reveal>
+        </section>
+
+        <Reveal className="reveal-celestial mt-14 block md:mt-20" delay={140}>
+          <PricingTiers
+            currentPlan={currentPlan}
+            signedIn={signedIn}
+            seatsLeft={seatsLeft}
+          />
+        </Reveal>
+
+        <Reveal className="reveal-celestial mt-20 block">
+          <ul className="grid gap-6 sm:grid-cols-3">
+            {TRUST.map(({ icon: Icon, title, body }) => (
+              <li key={title} className="flex gap-3.5">
+                <Icon
+                  className="mt-0.5 size-[18px] shrink-0 text-[#f2c14e]"
+                  aria-hidden="true"
+                />
+                <div>
+                  <h3 className="text-sm font-medium text-[#e8f3f1]">{title}</h3>
+                  <p className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">
+                    {body}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Reveal>
+
+        <section className="mt-24 md:mt-32" aria-labelledby="pricing-compare">
+          <Reveal className="reveal-celestial">
+            <h2
+              id="pricing-compare"
+              className={`${HEADING} text-[clamp(26px,3.4vw,38px)]`}
+            >
+              Line by line.
+            </h2>
+          </Reveal>
+          <Reveal className="reveal-celestial mt-8 block" delay={80}>
+            <PlanComparison />
+          </Reveal>
+        </section>
+
+        <section className="mt-24 md:mt-32" aria-labelledby="pricing-faq">
+          <Reveal className="reveal-celestial">
+            <h2
+              id="pricing-faq"
+              className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}
+            >
+              The things worth asking.
+            </h2>
+          </Reveal>
+          <Reveal className="reveal-celestial mt-10 block" delay={80}>
+            <PricingFaq />
+          </Reveal>
+        </section>
+
+        <section className="relative mt-24 text-center md:mt-32">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-[720px] w-[720px] -translate-x-1/2 -translate-y-1/2 rounded-full"
+            style={{
+              background:
+                "radial-gradient(circle, rgba(242,193,78,0.13), transparent 62%)",
+            }}
+          />
+          <Reveal className="reveal-celestial">
+            <h2 className={`${HEADING} text-[clamp(28px,3.8vw,42px)]`}>
+              Start free. Decide later.
+            </h2>
+          </Reveal>
+          <Reveal className="reveal-celestial" delay={90}>
+            <p className="mx-auto mt-4 max-w-[42ch] text-base leading-relaxed text-[#9aada8]">
+              Bring in your connections, see the map, and find out whether Orbit
+              earns a place in your week before you pay anything.
+            </p>
+          </Reveal>
+          <Reveal className="reveal-celestial mt-8 flex justify-center" delay={170}>
+            <LandingAuthControls {...authProps} variant="hero" />
+          </Reveal>
+        </section>
+      </main>
+
+      <footer className="relative z-10 mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-4 px-6 py-12 md:px-10">
+        <Link href="/" className="flex items-center gap-2.5" aria-label="Orbit home">
           <OrbitLogo size="sm" />
-          <span className="font-[family-name:var(--font-display)] text-xl tracking-tight text-primary">
+          <span className="font-[family-name:var(--font-display)] text-[17px] tracking-tight text-[#e8f3f1]">
             Orbit
           </span>
         </Link>
-        <Link
-          href="/sign-in"
-          className="text-sm text-muted-foreground transition-colors hover:text-foreground"
-        >
-          Sign in
-        </Link>
-      </header>
-
-      <main className="mx-auto w-full max-w-5xl px-6 pb-20 md:px-8">
-        <header className="space-y-3 text-center">
-          <h1 className="font-[family-name:var(--font-display)] text-4xl tracking-tight text-primary sm:text-5xl">
+        <div className="flex items-center gap-6">
+          <Link
+            href="/pricing"
+            className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
+          >
             Pricing
-          </h1>
-          <p className="mx-auto max-w-2xl text-base leading-relaxed text-muted-foreground">
-            Orbit runs on your own AI key on every plan, so you are never paying
-            us a markup on tokens. Paid plans cover the parts that cost real
-            money to run.
-          </p>
-        </header>
-
-        <div className="mt-12 grid gap-6 lg:grid-cols-3">
-          {PLAN_COPY.map((plan) => {
-            const featured = plan.id === "orbit";
-            const isLifetime = plan.id === "lifetime";
-            const soldOut = isLifetime && remainingSeats === 0;
-
-            return (
-              <section
-                key={plan.id}
-                className={cn(
-                  "flex flex-col rounded-2xl border p-6",
-                  featured
-                    ? "border-primary/60 bg-card shadow-sm"
-                    : "border-border/70 bg-card"
-                )}
-              >
-                <div className="space-y-1">
-                  <h2 className="text-lg font-medium text-primary">
-                    {plan.name}
-                  </h2>
-                  <p className="flex items-baseline gap-1.5">
-                    <span className="font-[family-name:var(--font-display)] text-3xl text-primary">
-                      {plan.price}
-                    </span>
-                    <span className="text-sm text-muted-foreground">
-                      {plan.cadence}
-                    </span>
-                  </p>
-                  <p className="pt-1 text-sm text-muted-foreground">
-                    {plan.tagline}
-                  </p>
-                </div>
-
-                <ul className="mt-5 flex-1 space-y-2.5">
-                  {plan.features.map((feature) => (
-                    <li key={feature} className="flex gap-2.5 text-sm">
-                      <Check className="mt-0.5 size-4 shrink-0 text-primary" />
-                      <span>{feature}</span>
-                    </li>
-                  ))}
-                </ul>
-
-                {plan.caveat && (
-                  <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
-                    {plan.caveat}
-                  </p>
-                )}
-
-                <div className="mt-6">
-                  {plan.id === "free" && (
-                    <Link
-                      href="/sign-up"
-                      className={cn(
-                        buttonVariants({ variant: "outline", size: "sm" }),
-                        "w-full"
-                      )}
-                    >
-                      Start free
-                    </Link>
-                  )}
-
-                  {plan.id === "orbit" && (
-                    <Link
-                      href="/settings#settings-plan"
-                      className={cn(buttonVariants({ size: "sm" }), "w-full")}
-                    >
-                      Choose Orbit Pro
-                    </Link>
-                  )}
-
-                  {isLifetime && (
-                    <div className="space-y-2">
-                      <span
-                        className={cn(
-                          buttonVariants({ variant: "outline", size: "sm" }),
-                          "pointer-events-none w-full opacity-60"
-                        )}
-                        aria-disabled="true"
-                      >
-                        {soldOut ? "Sold out" : "Coming soon"}
-                      </span>
-                      <p className="text-center text-xs text-muted-foreground">
-                        {soldOut
-                          ? "All Orbit Lifetime spots have been claimed."
-                          : `${remainingSeats} of ${LIFETIME_SEAT_LIMIT} spots remaining.`}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </section>
-            );
-          })}
+          </Link>
+          <Link
+            href="/privacy"
+            className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
+          >
+            Privacy
+          </Link>
+          <Link
+            href="/contact"
+            className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
+          >
+            Contact
+          </Link>
         </div>
-
-        <p className="mx-auto mt-10 max-w-2xl text-center text-sm text-muted-foreground">
-          Reaching a plan limit never hides anything. Everything already in your
-          orbit stays visible and editable — a limit only stops new contacts
-          being added.
-        </p>
-      </main>
+        <a
+          href="https://jasonpereira.live/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="landing-credit-shimmer text-sm"
+        >
+          By Jason Pereira
+        </a>
+      </footer>
     </div>
   );
 }

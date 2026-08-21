@@ -209,16 +209,16 @@ export function SceneFinale({
         </Link>
         <div className="flex items-center gap-6">
           <Link
+            href="/pricing"
+            className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
+          >
+            Pricing
+          </Link>
+          <Link
             href="/privacy"
             className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
           >
             Privacy
-          </Link>
-          <Link
-            href="/terms"
-            className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
-          >
-            Terms
           </Link>
           <Link
             href="/contact"

@@ -1,7 +1,22 @@
 import { cache } from "react";
 import { ensureUserSettings } from "@/lib/user-settings";
+import {
+  FREE_CONTACT_LIMIT,
+  LIFETIME_SEAT_LIMIT,
+  ORBIT_PLAN_SLUG,
+  PLAN_LABELS,
+  type Plan,
+} from "@/lib/plan-limits";
 
-export type Plan = "free" | "orbit" | "lifetime";
+// Re-exported so server code keeps importing plan identity from this module, while
+// client components can reach `plan-limits` directly without pulling in the database.
+export {
+  FREE_CONTACT_LIMIT,
+  LIFETIME_SEAT_LIMIT,
+  ORBIT_PLAN_SLUG,
+  PLAN_LABELS,
+  type Plan,
+};
 
 /**
  * Where a user's plan came from. Purely informational for UI ("Comped", "Orbit Lifetime"),
@@ -33,23 +48,6 @@ export type FeatureKey =
   | "recruiters"
   | "sync"
   | "extension";
-
-/**
- * Slug of the recurring plan in the Clerk Dashboard. Overridable so a differently named
- * plan (or a staging instance) does not require a code change.
- */
-export const ORBIT_PLAN_SLUG = process.env.CLERK_ORBIT_PLAN_SLUG || "orbit";
-
-export const FREE_CONTACT_LIMIT = 100;
-
-/** Lifetime is an early-adopter tier; past this many purchases it retires. */
-export const LIFETIME_SEAT_LIMIT = 100;
-
-export const PLAN_LABELS: Record<Plan, string> = {
-  free: "Free",
-  orbit: "Orbit Pro",
-  lifetime: "Orbit Lifetime",
-};
 
 /**
  * Thrown when a user's plan does not cover an action. Carries enough structure for the
