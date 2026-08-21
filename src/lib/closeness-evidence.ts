@@ -42,7 +42,7 @@ export type EvidenceInput = {
 };
 
 function clamp01(n: number) {
-  return Math.min(1, Math.max(0, n));
+  return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0;
 }
 
 export function computeEvidence(input: EvidenceInput): number {

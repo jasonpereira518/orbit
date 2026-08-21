@@ -445,6 +445,23 @@ console.log("\n11. Evidence reflects what we actually know");
           computeEvidence({ touchCount: arr[i - 1], hasLoggedInteraction: true })
     )
   );
+
+  const nanTouches = computeEvidence({ touchCount: NaN, hasLoggedInteraction: true });
+  check(
+    "  a NaN touch count does not escape [0,1]",
+    nanTouches >= 0 && nanTouches <= 1,
+    String(nanTouches)
+  );
+
+  const infiniteTouches = computeEvidence({
+    touchCount: Infinity,
+    hasLoggedInteraction: true,
+  });
+  check(
+    "  an infinite touch count does not escape [0,1]",
+    infiniteTouches >= 0 && infiniteTouches <= 1,
+    String(infiniteTouches)
+  );
 }
 
 console.log("\n12. The prior orders without over-claiming");
@@ -479,6 +496,34 @@ console.log("\n12. The prior orders without over-claiming");
 
   check("  gmail.com is not a shared workplace", publicEmailDomain("gmail.com"));
   check("  a company domain is", !publicEmailDomain("acme.io"));
+
+  const nanCompany = computePrior({ companyConcentration: NaN });
+  check(
+    "  a NaN company concentration does not escape the band",
+    nanCompany >= PRIOR_MIN && nanCompany <= PRIOR_MAX,
+    String(nanCompany)
+  );
+
+  const nanSchool = computePrior({ schoolConcentration: NaN });
+  check(
+    "  a NaN school concentration does not escape the band",
+    nanSchool >= PRIOR_MIN && nanSchool <= PRIOR_MAX,
+    String(nanSchool)
+  );
+
+  const nanGoal = computePrior({ goalRelevance: NaN });
+  check(
+    "  a NaN goal relevance does not escape the band",
+    nanGoal >= PRIOR_MIN && nanGoal <= PRIOR_MAX,
+    String(nanGoal)
+  );
+
+  const infiniteCompany = computePrior({ companyConcentration: Infinity });
+  check(
+    "  an infinite company concentration does not escape the band",
+    infiniteCompany >= PRIOR_MIN && infiniteCompany <= PRIOR_MAX,
+    String(infiniteCompany)
+  );
 }
 
 console.log("\nAll closeness smoke checks passed.\n");
