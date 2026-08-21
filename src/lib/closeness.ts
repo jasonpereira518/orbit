@@ -1,9 +1,24 @@
 import { daysAgo } from "@/lib/duplicates";
+import {
+  computeEvidence,
+  computePrior,
+  EVIDENCE_FLOOR,
+  MAX_RING_WITHOUT_EVIDENCE,
+} from "@/lib/closeness-evidence";
 
 export type ClosenessContact = {
   relationshipScore?: number | null;
+  /** 1–5 if the user rated them; null means never rated. See closeness-evidence.ts. */
+  statedCloseness?: number | null;
   lastInteractionAt?: Date | string | null;
+  firstInteractionAt?: Date | string | null;
+  dateMet?: Date | string | null;
   createdAt?: Date | string | null;
+  /** Orbit-relative affinity signals, supplied by the cohort builder. */
+  emailDomainMatchesUser?: boolean;
+  companyConcentration?: number;
+  schoolConcentration?: number;
+  coveredByConnectedSource?: boolean;
   company?: string | null;
   title?: string | null;
   industry?: string | null;
@@ -22,6 +37,12 @@ export type RawClosenessBreakdown = {
   recency: number;
   cadence: number;
   goalRelevance: number;
+  /** How much we know, 0–1. See closeness-evidence.ts. */
+  evidence: number;
+  /** The compressed weak-signal estimate. */
+  prior: number;
+  /** The behaviour-driven score, before blending. Equals `raw` at full evidence. */
+  evidenced: number;
 };
 
 export type ClosenessBreakdown = RawClosenessBreakdown & {
@@ -96,9 +117,22 @@ function clamp01(n: number) {
   return Math.min(1, Math.max(0, n));
 }
 
-export function strengthComponent(relationshipScore?: number | null) {
-  const s = Math.min(5, Math.max(1, relationshipScore || 2));
-  return s / 5;
+/**
+ * Stated closeness, 1–5, as a 0–1 term.
+ *
+ * Falls back to `relationshipScore` for contacts written before
+ * `stated_closeness` existed. An unrated contact returns the neutral midpoint
+ * rather than the old default of 2/5 — asserting "somewhat distant" about
+ * someone nobody has assessed is exactly the bias this change removes. The
+ * evidence layer is what stops that neutral value from carrying weight.
+ */
+export function strengthComponent(
+  statedCloseness?: number | null,
+  relationshipScore?: number | null
+) {
+  const stated = statedCloseness ?? relationshipScore;
+  if (stated == null) return 0.5;
+  return Math.min(5, Math.max(1, stated)) / 5;
 }
 
 /**
@@ -186,7 +220,10 @@ export function computeRawCloseness(
   const goals = activeGoals.map((g) => g.trim()).filter(Boolean);
   const hasGoals = goals.length > 0;
 
-  const strength = strengthComponent(contact.relationshipScore);
+  const strength = strengthComponent(
+    contact.statedCloseness,
+    contact.relationshipScore
+  );
   const recency = recencyComponent(contact.lastInteractionAt);
   const cadence = cadenceComponent(touchCount);
   const goalRelevance = hasGoals ? goalRelevanceComponent(contact, goals) : 0;
@@ -203,13 +240,30 @@ export function computeRawCloseness(
     WEIGHTS.cadence +
     (hasGoals ? WEIGHTS.goalRelevance : 0);
 
-  return {
-    raw: clamp01(weighted / totalWeight),
-    strength,
-    recency,
-    cadence,
+  const evidenced = clamp01(weighted / totalWeight);
+
+  const evidence = computeEvidence({
+    statedCloseness: contact.statedCloseness,
+    touchCount,
+    hasLoggedInteraction: !!contact.lastInteractionAt,
+    coveredByConnectedSource: contact.coveredByConnectedSource,
+  });
+
+  const prior = computePrior({
+    firstInteractionAt: contact.firstInteractionAt,
+    dateMet: contact.dateMet,
+    createdAt: contact.createdAt,
+    emailDomainMatchesUser: contact.emailDomainMatchesUser,
+    companyConcentration: contact.companyConcentration,
+    schoolConcentration: contact.schoolConcentration,
     goalRelevance,
-  };
+  });
+
+  // The whole design in one line: what we measured, weighted by how much we
+  // actually measured, against a deliberately timid guess for the rest.
+  const raw = clamp01((1 - evidence) * prior + evidence * evidenced);
+
+  return { raw, strength, recency, cadence, goalRelevance, evidence, prior, evidenced };
 }
 
 export function buildClosenessCohort(rawScores: number[]): ClosenessCohort {
@@ -320,15 +374,27 @@ export function applyClosenessCohort(
   const closeness = clamp01((1 - w) * raw.raw + w * percentile);
   const useQuota = !!cohort && cohort.n >= QUOTA_MIN_N;
 
-  return {
-    ...raw,
-    closeness,
-    percentile,
-    orbitScore: useQuota
-      ? orbitScoreFromPercentile(percentile)
-      : closenessToOrbitScore(closeness),
-    tier: useQuota ? tierFromPercentile(percentile) : closenessTier(closeness),
-  };
+  const assignedRing = useQuota
+    ? orbitScoreFromPercentile(percentile)
+    : closenessToOrbitScore(closeness);
+
+  // Quotas always fill, so without this a cold orbit would hand out a Core ring
+  // to whoever happened to sort highest among equally unknown people. Inner and
+  // Core are claims about the relationship, and they have to be earned.
+  const orbitScore =
+    raw.evidence < EVIDENCE_FLOOR
+      ? Math.min(assignedRing, MAX_RING_WITHOUT_EVIDENCE)
+      : assignedRing;
+
+  const assignedTier = useQuota
+    ? tierFromPercentile(percentile)
+    : closenessTier(closeness);
+  const tier =
+    raw.evidence < EVIDENCE_FLOOR && assignedTier === "inner"
+      ? "mid"
+      : assignedTier;
+
+  return { ...raw, closeness, percentile, orbitScore, tier };
 }
 
 export function computeCloseness(

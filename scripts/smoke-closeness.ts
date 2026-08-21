@@ -38,8 +38,12 @@ function person(
   return {
     id: "c0",
     relationshipScore: 3,
+    statedCloseness: 3,
     lastInteractionAt: daysAgoDate(30),
     createdAt: daysAgoDate(400),
+    dateMet: null,
+    firstInteractionAt: null,
+    coveredByConnectedSource: false,
     company: "Acme",
     title: "Engineer",
     industry: null,
@@ -81,8 +85,11 @@ console.log("\n1. Component monotonicity");
     `${raw({}, 10)} vs ${raw({}, 1)}`
   );
   check(
+    // strengthComponent now prefers statedCloseness over relationshipScore
+    // (Task 5); the fixture's fixed statedCloseness default means overriding
+    // relationshipScore alone no longer moves this component.
     "higher strength scores higher",
-    raw({ relationshipScore: 5 }) > raw({ relationshipScore: 1 })
+    raw({ statedCloseness: 5 }) > raw({ statedCloseness: 1 })
   );
   check(
     "cadence has diminishing returns",
@@ -244,6 +251,7 @@ console.log("\n5. Spread beats the old formula");
 console.log("\n6. No active goals renormalizes instead of penalizing");
 {
   const best = person({
+    statedCloseness: 5,
     relationshipScore: 5,
     lastInteractionAt: new Date(),
   });
@@ -523,6 +531,123 @@ console.log("\n12. The prior orders without over-claiming");
     "  an infinite company concentration does not escape the band",
     infiniteCompany >= PRIOR_MIN && infiniteCompany <= PRIOR_MAX,
     String(infiniteCompany)
+  );
+}
+
+console.log("\n13. The blend decays toward real evidence");
+{
+  // Warm-orbit regression: at full evidence the blend must be a no-op.
+  const warm = person({
+    statedCloseness: 5,
+    relationshipScore: 5,
+    lastInteractionAt: daysAgoDate(2),
+  });
+  const blended = computeRawCloseness(warm, [], 30);
+  check(
+    "  full evidence reproduces the evidenced score exactly",
+    Math.abs(blended.raw - blended.evidenced) < 1e-9,
+    `${blended.raw} vs ${blended.evidenced}`
+  );
+  check("  and evidence really is 1", Math.abs(blended.evidence - 1) < 1e-9);
+
+  // Cold contact: the prior should dominate.
+  const cold = computeRawCloseness(
+    person({ statedCloseness: null, lastInteractionAt: null }),
+    [],
+    0
+  );
+  check("  a bare contact has no evidence", cold.evidence === 0, String(cold.evidence));
+  check(
+    "  so its score is exactly its prior",
+    Math.abs(cold.raw - cold.prior) < 1e-9,
+    `${cold.raw} vs ${cold.prior}`
+  );
+
+  // Monotone decay: as touches accumulate, the prior's influence shrinks.
+  const priorShare = (touches: number) => {
+    const b = computeRawCloseness(
+      person({ statedCloseness: null, lastInteractionAt: daysAgoDate(20) }),
+      [],
+      touches
+    );
+    return 1 - b.evidence;
+  };
+  const shares = [0, 1, 3, 8, 20].map(priorShare);
+  check(
+    "  the prior's weight falls monotonically as evidence arrives",
+    shares.every((s, i) => i === 0 || s <= shares[i - 1]),
+    shares.map((s) => s.toFixed(3)).join(" → ")
+  );
+}
+
+console.log("\n14. Guesses cannot reach the inner rings");
+{
+  // 2000 contacts, nothing known about any of them.
+  const coldOrbit = Array.from({ length: 2000 }, (_, i) =>
+    person({
+      id: `x${i}`,
+      statedCloseness: null,
+      relationshipScore: 2,
+      lastInteractionAt: null,
+      createdAt: daysAgoDate(1),
+      dateMet: daysAgoDate((i * 37) % 2500),
+    })
+  );
+  const scored = computeClosenessForAll(coldOrbit, []);
+  const rings = [0, 0, 0, 0, 0, 0];
+  for (const b of scored.values()) rings[b.orbitScore] += 1;
+
+  check(
+    "  a pure cold import places nobody in Core or Inner",
+    rings[5] === 0 && rings[4] === 0,
+    `ring5=${rings[5]} ring4=${rings[4]}`
+  );
+  check(
+    "  but the orbit is not one undifferentiated blob",
+    rings.slice(1, 4).filter((c) => c > 0).length >= 2,
+    rings.join(",")
+  );
+}
+
+console.log("\n15. Coverage does not masquerade as closeness");
+{
+  // 200 contacts with real Gmail-style history, 1800 with nothing.
+  const covered = Array.from({ length: 200 }, (_, i) =>
+    person({
+      id: `k${i}`,
+      statedCloseness: null,
+      lastInteractionAt: daysAgoDate((i * 3) % 200),
+      dateMet: daysAgoDate(800),
+      coveredByConnectedSource: true,
+    })
+  );
+  const uncovered = Array.from({ length: 1800 }, (_, i) =>
+    person({
+      id: `u${i}`,
+      statedCloseness: null,
+      lastInteractionAt: null,
+      dateMet: daysAgoDate((i * 29) % 2500),
+    })
+  );
+  const touches = new Map<string, number>([
+    ...covered.map((c, i) => [c.id, 1 + (i % 6)] as [string, number]),
+    ...uncovered.map((c) => [c.id, 0] as [string, number]),
+  ]);
+  const scored = computeClosenessForAll([...covered, ...uncovered], [], touches);
+
+  const uncoveredScores = uncovered.map((c) => scored.get(c.id)!.closeness);
+  const spread = Math.max(...uncoveredScores) - Math.min(...uncoveredScores);
+  check(
+    "  the uncovered 1800 are not all identical",
+    spread > 0.01,
+    `spread ${spread.toFixed(4)}`
+  );
+
+  const coveredRings = covered.map((c) => scored.get(c.id)!.orbitScore);
+  check(
+    "  covered contacts can earn inner rings",
+    coveredRings.some((r) => r >= 4),
+    `max ring ${Math.max(...coveredRings)}`
   );
 }
 
