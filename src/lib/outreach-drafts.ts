@@ -96,6 +96,7 @@ export async function generateOutreachDraft(
     : "";
 
   const content = await completeJson(userId, {
+    operation: "outreach.draft",
     temperature: 0.55,
     system: `You write personalized outreach optimized for a successful reply.
 Primary campaign intent (must drive the message): ${input.messageIntent}

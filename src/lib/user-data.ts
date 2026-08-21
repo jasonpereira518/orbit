@@ -15,12 +15,21 @@ import {
   reminderLists,
   reminders,
   tags,
+  usageEvents,
   userGoals,
   userRecruiterLinks,
   userSettings,
 } from "@/db/schema";
 
-/** Delete all Orbit data for a user (does not delete the Clerk account). */
+/**
+ * Delete all Orbit data for a user (does not delete the Clerk account).
+ *
+ * Deliberate exception: `admin_audit_log` rows referencing this user are NOT deleted.
+ * That table is the operator's own record of privileged actions he took — chiefly comping
+ * a plan, which outranks every real billing signal and has no other trace. Purging it here
+ * would mean deleting an account erases the evidence that it was ever comped or inspected.
+ * A Clerk id is inert once the account is gone.
+ */
 export async function purgeUserData(userId: string) {
   const db = await getDb();
 
@@ -35,6 +44,7 @@ export async function purgeUserData(userId: string) {
   await db.delete(chatThreads).where(eq(chatThreads.userId, userId));
   await db.delete(userRecruiterLinks).where(eq(userRecruiterLinks.userId, userId));
   await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
+  await db.delete(usageEvents).where(eq(usageEvents.userId, userId));
 
   await db.delete(outreachCampaigns).where(eq(outreachCampaigns.userId, userId));
 

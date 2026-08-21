@@ -1,7 +1,17 @@
 import { cache } from "react";
-import { count, eq, isNotNull } from "drizzle-orm";
+import { and, count, eq, isNotNull, isNull, lt, or } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
+
+/**
+ * How stale `last_active_at` must be before a request refreshes it.
+ *
+ * `ensureUserSettings` runs on *every* authenticated request via
+ * `bootstrapAuthenticatedUser`, so an unconditional UPDATE here would add a database
+ * round trip to the critical path of every page load. This throttle is what makes the
+ * column affordable.
+ */
+const ACTIVITY_THROTTLE_MS = 15 * 60 * 1000;
 
 /** Ensure a per-user settings row exists (idempotent). Cached per request. */
 export const ensureUserSettings = cache(async (userId: string) => {
@@ -9,14 +19,69 @@ export const ensureUserSettings = cache(async (userId: string) => {
   const existing = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
   });
-  if (existing) return existing;
+  if (existing) return await touchLastActive(existing);
 
   const [created] = await db
     .insert(userSettings)
-    .values({ userId })
+    .values({ userId, lastActiveAt: new Date() })
     .returning();
   return created;
 });
+
+/**
+ * Refreshes `last_active_at`, at most once per user per `ACTIVITY_THROTTLE_MS`.
+ *
+ * Awaited rather than deferred, which is worth explaining because deferring looks more
+ * attractive than it is. Both obvious ways to defer are traps:
+ *
+ *  - `after()` means importing `next/server` into this module. `user-settings.ts` sits near
+ *    the bottom of the import graph — every script and background job pulls it in — and
+ *    that import alone keeps the Node event loop alive, hanging any script that exits by
+ *    draining rather than calling `process.exit` (`scripts/smoke-entitlements.ts` does).
+ *  - A bare un-awaited promise has the same effect: a pending PGlite write also holds the
+ *    loop open.
+ *
+ * Awaiting costs one extra UPDATE per user per 15 minutes — `ensureUserSettings` is
+ * `cache()`d per request, so a single page load can trigger it at most once, and only when
+ * the stamp has actually gone stale. That is a fair price for a chokepoint this widely
+ * imported staying free of runtime-specific dependencies.
+ *
+ * The staleness decision uses the row already fetched, so it costs zero extra reads, and
+ * the WHERE clause re-checks it so concurrent requests cannot double-write. It deliberately
+ * does NOT touch `updated_at`, which means "settings changed" and would be poisoned for
+ * every other use if it also meant "user was online".
+ */
+async function touchLastActive<T extends { userId: string; lastActiveAt: Date | null }>(
+  row: T
+): Promise<T> {
+  const now = Date.now();
+  if (row.lastActiveAt && now - row.lastActiveAt.getTime() < ACTIVITY_THROTTLE_MS) {
+    return row;
+  }
+
+  const stale = new Date(now - ACTIVITY_THROTTLE_MS);
+  const stampedAt = new Date();
+
+  try {
+    const db = await getDb();
+    await db
+      .update(userSettings)
+      .set({ lastActiveAt: stampedAt })
+      .where(
+        and(
+          eq(userSettings.userId, row.userId),
+          or(
+            isNull(userSettings.lastActiveAt),
+            lt(userSettings.lastActiveAt, stale)
+          )
+        )
+      );
+    return { ...row, lastActiveAt: stampedAt };
+  } catch {
+    // An activity stamp is never worth failing a request over.
+    return row;
+  }
+}
 
 /**
  * Mirrors the user's own email from Clerk into the DB, so background work (which has no
@@ -109,4 +174,58 @@ export async function countLifetimePurchases() {
     .from(userSettings)
     .where(isNotNull(userSettings.lifetimePurchasedAt));
   return row?.value ?? 0;
+}
+
+/**
+ * The only writer of `comped_plan` anywhere in the codebase.
+ *
+ * `resolvePlan` treats this column as outranking lifetime, subscription and everything
+ * else — permanently, with no expiry and no webhook that would ever correct it. Both
+ * `scripts/grant-plan.ts` and the admin console route through here so the CLI and the UI
+ * cannot drift apart.
+ *
+ * Returns the updated row so callers can resolve the new plan from it directly. Do NOT
+ * call `getEntitlements` after this in the same request: it is a React `cache()` memo and
+ * may still hold the pre-write value for this user.
+ */
+export async function setCompedPlan(
+  userId: string,
+  plan: "orbit" | "lifetime" | null,
+  opts: { note?: string | null; adminUserId?: string | null } = {}
+) {
+  await ensureUserSettings(userId);
+  const db = await getDb();
+
+  const [row] = await db
+    .update(userSettings)
+    .set({
+      compedPlan: plan,
+      // Clearing a comp clears its provenance too, so a later grant never inherits a
+      // stale reason from the previous one.
+      compedNote: plan ? (opts.note?.trim() || null) : null,
+      compedAt: plan ? new Date() : null,
+      compedBy: plan ? (opts.adminUserId ?? null) : null,
+      updatedAt: new Date(),
+    })
+    .where(eq(userSettings.userId, userId))
+    .returning();
+
+  return row;
+}
+
+/**
+ * Accounts matching an email, for the admin comp lookup.
+ *
+ * Returns every match rather than the first: `user_settings.email` has no unique
+ * constraint on purpose (two accounts may legitimately transit the same address), so
+ * auto-picking would eventually comp the wrong account.
+ */
+export async function findUsersByEmail(email: string) {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return [];
+
+  const db = await getDb();
+  return db.query.userSettings.findMany({
+    where: eq(userSettings.email, normalized),
+  });
 }

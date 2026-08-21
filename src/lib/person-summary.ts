@@ -139,6 +139,7 @@ export async function generateAndStorePersonSummary(
   try {
     await getAiConfig(userId);
     const content = await completeJson(userId, {
+    operation: "contact.summary",
       temperature: 0.3,
       user: `Profile:\n${profileBlock}\n\nInteractions (newest first):\n${transcript}`,
       system: `You write concise relationship memory for a personal networking CRM called Orbit.

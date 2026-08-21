@@ -529,6 +529,7 @@ export async function parseAudienceToFilters(
 ): Promise<AudienceFilters> {
   const { completeJson } = await import("@/lib/ai");
   const content = await completeJson(userId, {
+    operation: "outreach.apollo",
     temperature: 0.1,
     system: `Extract structured Apollo people-search filters from a natural language audience description.
 Return JSON:

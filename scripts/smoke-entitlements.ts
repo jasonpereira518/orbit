@@ -195,7 +195,14 @@ async function main() {
   console.log("\nAll paywall checks passed.");
 }
 
-main().catch((e) => {
-  console.error("\nFAILED:", e);
-  process.exit(1);
-});
+main()
+  .then(() => {
+    // The pooled DB connection keeps the event loop alive; exit explicitly. Without this
+    // the script hangs after printing its results as soon as anything in the code under
+    // test performs an extra write — the same reason every sibling script does this.
+    process.exit(0);
+  })
+  .catch((e) => {
+    console.error("\nFAILED:", e);
+    process.exit(1);
+  });

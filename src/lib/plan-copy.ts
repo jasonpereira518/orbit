@@ -45,7 +45,8 @@ export type PlanCopy = {
  * annual only pays off if they would otherwise churn before roughly month eleven. It is
  * a retention and cash-flow instrument here, not a fee saving.
  */
-const MONTHLY_AMOUNT = 5;
+/** Exported so the admin MRR figure reads the same number the pricing page charges. */
+export const MONTHLY_AMOUNT = 5;
 const ANNUAL_AMOUNT = 50;
 
 export const ANNUAL_SAVING_PERCENT = Math.round(

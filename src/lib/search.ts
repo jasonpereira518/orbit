@@ -1,5 +1,5 @@
 import { eq, and, inArray, sql } from "drizzle-orm";
-import { getDb, isPgvectorAvailable } from "@/db";
+import { getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import { contactEmbeddings, contacts } from "@/db/schema";
 import { metContextLabel } from "@/lib/met-context";
 import { createEmbedding, createEmbeddingsBatch, cosineSimilarity } from "@/lib/ai";
@@ -98,10 +98,7 @@ export async function pgvectorSearchContacts(
     LIMIT ${limit}
   `);
 
-  const rows = Array.isArray(result)
-    ? result
-    : ((result as { rows?: { contact_id: string; similarity: number }[] }).rows ??
-      []);
+  const rows = rowsOf<{ contact_id: string; similarity: number }>(result);
 
   return rows.map((row) => ({
     contactId: row.contact_id,
