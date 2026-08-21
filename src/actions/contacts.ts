@@ -471,25 +471,40 @@ const MAX_STATED_CLOSENESS = 5;
  * rebuild — `relationshipScore` isn't part of the embedded text (see
  * `buildContactEmbeddingContent` in `@/lib/search`) — and per-row
  * revalidation, paths are revalidated once after the loop instead.
+ *
+ * `updateContactForUser` returns `undefined` rather than throwing when its
+ * ownership-scoped WHERE matches no row (deleted contact, ownership race) —
+ * so `failedContactIds` is how a caller distinguishes "saved" from "silently
+ * matched nothing," instead of trusting a bare count. A per-row `try/catch`
+ * means one broken id can't abort the rest of the screen's ratings either.
  */
 export async function rateContacts(
   ratings: Array<{ contactId: string; closeness: number }>
-): Promise<{ updated: number }> {
+): Promise<{ updated: number; failedContactIds: string[] }> {
   const userId = await requireUserId();
   let updated = 0;
+  const failedContactIds: string[] = [];
 
   for (const { contactId, closeness } of ratings) {
     const value = Math.min(
       MAX_STATED_CLOSENESS,
       Math.max(MIN_STATED_CLOSENESS, Math.round(closeness))
     );
-    const contact = await updateContactForUser(
-      userId,
-      contactId,
-      { relationshipScore: value },
-      { skipEmbedding: true, skipSummary: true, skipRevalidate: true }
-    );
-    if (contact) updated++;
+    try {
+      const contact = await updateContactForUser(
+        userId,
+        contactId,
+        { relationshipScore: value },
+        { skipEmbedding: true, skipSummary: true, skipRevalidate: true }
+      );
+      if (contact) {
+        updated++;
+      } else {
+        failedContactIds.push(contactId);
+      }
+    } catch {
+      failedContactIds.push(contactId);
+    }
   }
 
   if (updated > 0) {
@@ -499,7 +514,7 @@ export async function rateContacts(
     revalidatePath("/dashboard");
   }
 
-  return { updated };
+  return { updated, failedContactIds };
 }
 
 export async function deleteContact(id: string) {

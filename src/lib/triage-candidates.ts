@@ -86,9 +86,18 @@ export function selectTriageCandidates(
     }
     depth++;
   }
-  take(roundRobin, limit - picked.length);
+  // Bounded by its own named share rather than "whatever's left" — otherwise
+  // the constant would only describe the default 0.35/0.45/0.2 split by
+  // coincidence, and would silently stop meaning anything the moment those
+  // two are retuned to not sum to 0.8.
+  const diversityCount = Math.max(
+    0,
+    Math.min(limit - picked.length, Math.round(limit * POOL_SHARES.diversity))
+  );
+  take(roundRobin, diversityCount);
 
-  // Backfill if a pool ran dry, so a small orbit still gets a full shortlist.
+  // Backfill if a pool ran dry (or the shares above didn't sum to the whole
+  // limit), so a small orbit still gets a full shortlist.
   take([...highPrior, ...highEvidence], limit - picked.length);
 
   return picked.slice(0, limit);

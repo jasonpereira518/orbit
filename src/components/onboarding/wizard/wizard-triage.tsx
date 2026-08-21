@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import {
   getTriageCandidates,
   rateContacts,
@@ -9,6 +9,7 @@ import {
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
 /** Shown a screen at a time so the wizard never dumps the whole shortlist on one page. */
@@ -20,26 +21,53 @@ const RATING_VALUES = [1, 2, 3, 4, 5] as const;
 export function WizardTriage({ onDone }: { onDone: () => void }) {
   const [pending, start] = useTransition();
   const [loading, setLoading] = useState(true);
+  // Distinct from "candidates is empty": a failed fetch must never render as
+  // the same "nothing to rate" state a genuinely empty orbit would show, or
+  // a broken request looks identical to having nobody left to ask about.
+  const [loadError, setLoadError] = useState(false);
   const [candidates, setCandidates] = useState<TriageDisplayCandidate[]>([]);
   const [screen, setScreen] = useState(0);
-  // Only holds *this screen's* answers, submitted then discarded on advance —
-  // once `rateContacts` saves them the person drops out of a re-fetched
-  // shortlist anyway (see getTriageCandidates), so there's nothing to keep.
+  // Holds this screen's answers until `rateContacts` confirms they saved —
+  // see submitScreenAndAdvance, which keeps whatever didn't save instead of
+  // discarding it.
   const [ratings, setRatings] = useState<Record<string, number>>({});
+
+  // No synchronous setState here — only the async .then/.catch/.finally
+  // callbacks touch state, which is what keeps the mount-time effect below
+  // from calling setState synchronously during render. `isCancelled` lets
+  // each call site (the mount effect, the retry button) supply its own
+  // "am I still relevant" check via a plain closure instead of a shared ref.
+  const fetchCandidates = useCallback((isCancelled: () => boolean) => {
+    getTriageCandidates()
+      .then((data) => {
+        if (!isCancelled()) setCandidates(data);
+      })
+      .catch(() => {
+        if (!isCancelled()) setLoadError(true);
+      })
+      .finally(() => {
+        if (!isCancelled()) setLoading(false);
+      });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
-    getTriageCandidates()
-      .then((data) => {
-        if (!cancelled) setCandidates(data);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    fetchCandidates(() => cancelled);
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [fetchCandidates]);
+
+  // The retry button's own click handler, not an effect — safe to flip
+  // loading/error state synchronously here before kicking off a fresh fetch.
+  // No cancellation guard needed beyond that: unlike the mount effect, this
+  // path can't re-run out from under itself, so there's only ever one
+  // in-flight request from here at a time.
+  const retry = useCallback(() => {
+    setLoading(true);
+    setLoadError(false);
+    fetchCandidates(() => false);
+  }, [fetchCandidates]);
 
   const screens = Math.max(1, Math.ceil(candidates.length / SCREEN_SIZE));
   const pageItems = candidates.slice(
@@ -71,7 +99,36 @@ export function WizardTriage({ onDone }: { onDone: () => void }) {
 
     start(async () => {
       if (screenRatings.length > 0) {
-        await rateContacts(screenRatings);
+        let result: { updated: number; failedContactIds: string[] };
+        try {
+          result = await rateContacts(screenRatings);
+        } catch {
+          // Nothing saved — keep every local rating so "Next" can be
+          // retried, and say so instead of silently advancing as if it had.
+          toast.error("Couldn't save these ratings. Try again.");
+          return;
+        }
+        if (result.failedContactIds.length > 0) {
+          const failed = new Set(result.failedContactIds);
+          // Drop only the ones that actually saved — a retry shouldn't
+          // resubmit a rating that already landed.
+          setRatings((r) => {
+            const next = { ...r };
+            for (const { contactId } of screenRatings) {
+              if (!failed.has(contactId)) delete next[contactId];
+            }
+            return next;
+          });
+          toast.error(
+            result.failedContactIds.length === 1
+              ? "1 rating didn't save. Try again."
+              : `${result.failedContactIds.length} ratings didn't save. Try again.`
+          );
+          // Stay on this screen — advancing would make the failure
+          // indistinguishable from success, and a lost rating is exactly the
+          // contact that stays stuck below the evidence floor.
+          return;
+        }
       }
       setRatings({});
       if (isLastScreen) {
@@ -88,6 +145,29 @@ export function WizardTriage({ onDone }: { onDone: () => void }) {
         <Skeleton className="h-20 w-full rounded-2xl" />
         <Skeleton className="h-20 w-full rounded-2xl" />
         <Skeleton className="h-20 w-full rounded-2xl" />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+          Couldn&apos;t load anyone to rate. This is a loading problem, not an
+          empty orbit — try again.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
+            onClick={retry}
+          >
+            Try again
+          </Button>
+          <Button type="button" variant="outline" onClick={onDone}>
+            Skip this step
+          </Button>
+        </div>
       </div>
     );
   }
@@ -174,6 +254,7 @@ export function WizardTriage({ onDone }: { onDone: () => void }) {
               <button
                 type="button"
                 disabled={pending}
+                aria-label={`Skip ${c.fullName}`}
                 onClick={() => clearRating(c.id)}
                 className="ml-1 rounded-full px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
               >

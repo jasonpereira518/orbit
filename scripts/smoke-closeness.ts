@@ -739,10 +739,24 @@ console.log("\n17. Triage asks about the people we cannot guess");
     company: string | null = "Acme"
   ) => ({ id, fullName: id, company, evidence, prior, statedCloseness: stated });
 
+  // MegaCorp dominates raw headcount (300 people, prior 0.5) — exactly the
+  // "whichever company dominates the orbit" case the diversity pass exists to
+  // stop the shortlist collapsing onto. Each SoloCo holds exactly one person,
+  // at a *lower* prior (0.45) than MegaCorp — so a plain prior-sort would
+  // never reach any of them while 300 higher-ranked MegaCorp people remain.
+  // If the fixture gave every candidate the same company (as an earlier
+  // version of this test did), the diversity round-robin would run against a
+  // single company and this test could pass even with that pass deleted.
+  const SOLO_COMPANY_COUNT = 6;
+
   const pool = [
     ...Array.from({ length: 20 }, (_, i) => candidate(`known${i}`, 0.9, 0.4)),
-    ...Array.from({ length: 20 }, (_, i) => candidate(`strong${i}`, 0, 0.58)),
-    ...Array.from({ length: 200 }, (_, i) => candidate(`weak${i}`, 0, 0.31)),
+    ...Array.from({ length: 300 }, (_, i) =>
+      candidate(`mega${i}`, 0, 0.5, null, "MegaCorp")
+    ),
+    ...Array.from({ length: SOLO_COMPANY_COUNT }, (_, i) =>
+      candidate(`solo${i}`, 0, 0.45, null, `SoloCo${i}`)
+    ),
     ...Array.from({ length: 20 }, (_, i) => candidate(`rated${i}`, 0.9, 0.4, 4)),
   ];
 
@@ -754,7 +768,7 @@ console.log("\n17. Triage asks about the people we cannot guess");
   );
   check(
     "  high-prior unknowns are represented",
-    picked.some((c) => c.id.startsWith("strong"))
+    picked.some((c) => c.id.startsWith("mega"))
   );
   check(
     "  high-evidence unrated contacts are represented",
@@ -766,6 +780,20 @@ console.log("\n17. Triage asks about the people we cannot guess");
     `${picked.filter((c) => c.evidence >= EVIDENCE_FLOOR).length}/${picked.length}`
   );
   check("  no duplicates", new Set(picked.map((c) => c.id)).size === picked.length);
+
+  // The diversity pass's entire reason to exist: every single-person company
+  // must show up, not just the 300-person employer that would otherwise fill
+  // every remaining slot on prior alone. Without the round-robin this is 0/6
+  // — confirmed by temporarily removing the diversity block and watching this
+  // go red (see task-12-report.md).
+  const soloCompaniesPicked = new Set(
+    picked.filter((c) => c.id.startsWith("solo")).map((c) => c.id)
+  );
+  check(
+    "  diversity reaches every single-person company, not just the dominant employer",
+    soloCompaniesPicked.size === SOLO_COMPANY_COUNT,
+    `${soloCompaniesPicked.size}/${SOLO_COMPANY_COUNT}`
+  );
 }
 
 console.log("\nAll closeness smoke checks passed.\n");
