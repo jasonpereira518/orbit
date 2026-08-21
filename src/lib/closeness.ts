@@ -51,6 +51,9 @@ const RECENCY_HALFLIFE_DAYS = 45;
 const CADENCE_SATURATION_TOUCHES = 12;
 export const CADENCE_WINDOW_DAYS = 365;
 
+/** Recency for a contact with no logged interaction. Low, not zero. */
+export const NO_INTERACTION_RECENCY = 0.15;
+
 const WEIGHTS = {
   strength: 0.3,
   recency: 0.3,
@@ -98,13 +101,20 @@ export function strengthComponent(relationshipScore?: number | null) {
   return s / 5;
 }
 
-export function recencyComponent(
-  lastInteractionAt?: Date | string | null,
-  createdAt?: Date | string | null
-) {
-  const ref = lastInteractionAt || createdAt;
-  if (!ref) return 0.15;
-  const days = daysAgo(ref);
+/**
+ * Time decay on the last real touch.
+ *
+ * There is deliberately no `createdAt` fallback: a contact you have never
+ * spoken to has *unknown* recency, not perfect recency. Falling back to
+ * creation time meant a fresh two-thousand-row import scored as though every
+ * one of those people had been contacted today, then decayed in lockstep —
+ * which is what made cold orbits both flat and wrong. Unknown recency returns
+ * the same low constant as a missing reference and lets the evidence layer
+ * decide how much to trust the rest of the score.
+ */
+export function recencyComponent(lastInteractionAt?: Date | string | null) {
+  if (!lastInteractionAt) return NO_INTERACTION_RECENCY;
+  const days = daysAgo(lastInteractionAt);
   if (!Number.isFinite(days)) return 0;
   if (days <= 0) return 1;
   return 1 / (1 + days / RECENCY_HALFLIFE_DAYS);
@@ -177,7 +187,7 @@ export function computeRawCloseness(
   const hasGoals = goals.length > 0;
 
   const strength = strengthComponent(contact.relationshipScore);
-  const recency = recencyComponent(contact.lastInteractionAt, contact.createdAt);
+  const recency = recencyComponent(contact.lastInteractionAt);
   const cadence = cadenceComponent(touchCount);
   const goalRelevance = hasGoals ? goalRelevanceComponent(contact, goals) : 0;
 

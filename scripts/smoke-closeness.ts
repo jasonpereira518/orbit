@@ -10,6 +10,7 @@ import {
   cohortPercentile,
   computeClosenessForAll,
   computeRawCloseness,
+  recencyComponent,
   type ClosenessContact,
 } from "../src/lib/closeness";
 
@@ -360,6 +361,35 @@ console.log("\n9. Cohort application is self-consistent");
       hi.orbitScore >= lo.orbitScore
     );
   }
+}
+
+console.log("\n10. Creation time is not a conversation");
+{
+  const justImported = person({
+    lastInteractionAt: null,
+    createdAt: new Date(),
+  });
+  const r = recencyComponent(justImported.lastInteractionAt);
+  check(
+    "  a never-contacted import does not score as fresh",
+    r < 0.2,
+    String(r)
+  );
+
+  // Two contacts imported in the same batch, one of whom you have actually
+  // spoken to. The spoken-to one must win decisively.
+  const spoken = computeRawCloseness(
+    person({ lastInteractionAt: daysAgoDate(10), createdAt: new Date() }),
+    [],
+    3
+  ).raw;
+  const silent = computeRawCloseness(
+    person({ lastInteractionAt: null, createdAt: new Date() }),
+    [],
+    0
+  ).raw;
+  check("  a real touch beats a fresh import", spoken > silent, `${spoken} vs ${silent}`);
+  check("  and by a visible margin", spoken - silent > 0.2, String(spoken - silent));
 }
 
 console.log("\nAll closeness smoke checks passed.\n");
