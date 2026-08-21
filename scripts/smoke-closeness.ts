@@ -13,6 +13,10 @@ import {
   recencyComponent,
   type ClosenessContact,
 } from "../src/lib/closeness";
+import {
+  computeEvidence,
+  EVIDENCE_FLOOR,
+} from "../src/lib/closeness-evidence";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) {
@@ -390,6 +394,53 @@ console.log("\n10. Creation time is not a conversation");
   ).raw;
   check("  a real touch beats a fresh import", spoken > silent, `${spoken} vs ${silent}`);
   check("  and by a visible margin", spoken - silent > 0.2, String(spoken - silent));
+}
+
+console.log("\n11. Evidence reflects what we actually know");
+{
+  const none = computeEvidence({});
+  check("  a bare import has no evidence", none === 0, String(none));
+
+  const rated = computeEvidence({ statedCloseness: 4 });
+  check(
+    "  a user rating clears the floor on its own",
+    rated >= EVIDENCE_FLOOR,
+    String(rated)
+  );
+
+  const oneTouch = computeEvidence({ touchCount: 1, hasLoggedInteraction: true });
+  const manyTouches = computeEvidence({ touchCount: 20, hasLoggedInteraction: true });
+  check("  interactions accumulate evidence", manyTouches > oneTouch);
+  check(
+    "  interaction evidence saturates below 1",
+    manyTouches < 1,
+    String(manyTouches)
+  );
+
+  const coverageOnly = computeEvidence({ coveredByConnectedSource: true });
+  check(
+    "  mere source coverage does not clear the floor",
+    coverageOnly < EVIDENCE_FLOOR,
+    String(coverageOnly)
+  );
+
+  const everything = computeEvidence({
+    statedCloseness: 5,
+    touchCount: 30,
+    hasLoggedInteraction: true,
+    coveredByConnectedSource: true,
+  });
+  check("  full evidence reaches 1", Math.abs(everything - 1) < 1e-9, String(everything));
+
+  check(
+    "  evidence is monotonic in touches",
+    [0, 1, 3, 8, 20].every((n, i, arr) =>
+      i === 0
+        ? true
+        : computeEvidence({ touchCount: n, hasLoggedInteraction: true }) >=
+          computeEvidence({ touchCount: arr[i - 1], hasLoggedInteraction: true })
+    )
+  );
 }
 
 console.log("\nAll closeness smoke checks passed.\n");
