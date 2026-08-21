@@ -37,7 +37,13 @@ async function main() {
         WHERE stated_closeness IS NULL
           AND relationship_score <> ${IMPORT_DEFAULT_RELATIONSHIP_SCORE}`
   );
-  console.log("backfilled rows:", result.rowCount ?? 0);
+  // `db.execute()` returns a union of PGlite's `Results` and Neon's
+  // `NeonHttpQueryResult`. Only the Neon shape has `rowCount`; PGlite reports
+  // the same thing under `affectedRows` instead. Narrow on the property's
+  // presence rather than casting, so both backends report a real count.
+  const backfilled =
+    "rowCount" in result ? result.rowCount : (result.affectedRows ?? 0);
+  console.log("backfilled rows:", backfilled);
 }
 
 main()
