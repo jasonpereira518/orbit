@@ -7,6 +7,7 @@ import {
   applyClosenessCohort,
   buildClosenessCohort,
   closenessTier,
+  closenessToOrbitScore,
   cohortPercentile,
   computeClosenessForAll,
   computeRawCloseness,
@@ -804,6 +805,75 @@ console.log("\n17. Triage asks about the people we cannot guess");
     "  diversity reaches every single-person company, not just the dominant employer",
     soloCompaniesPicked.size === SOLO_COMPANY_COUNT,
     `${soloCompaniesPicked.size}/${SOLO_COMPANY_COUNT}`
+  );
+}
+
+console.log("\n18. Real affinity signal still counts for evidence-poor contacts");
+{
+  // The retune in §14 made `age` dominant in PRIOR_WEIGHTS so a bare cold
+  // import spreads across rings instead of piling into one bin. That gives
+  // age most of the prior's weight — which raises the question this section
+  // guards: does a genuine colleague (same email domain, same company) still
+  // rank meaningfully above a total stranger of the *same* connection age,
+  // or did age's weight crowd out real affinity signal? Same age is the
+  // control: it cancels the age term exactly, so any gap here is entirely
+  // the email + company terms, not a re-measurement of age.
+  const SAME_AGE_DAYS = 30; // a colleague added recently, before any interaction
+
+  const stranger = computeRawCloseness(
+    person({
+      statedCloseness: null,
+      lastInteractionAt: null,
+      dateMet: daysAgoDate(SAME_AGE_DAYS),
+    }),
+    [],
+    0
+  );
+  const colleague = computeRawCloseness(
+    person({
+      statedCloseness: null,
+      lastInteractionAt: null,
+      dateMet: daysAgoDate(SAME_AGE_DAYS),
+      emailDomainMatchesUser: true,
+      companyConcentration: 1,
+    }),
+    [],
+    0
+  );
+
+  check(
+    "  both are evidence-poor (apples-to-apples control)",
+    stranger.evidence === 0 && colleague.evidence === 0,
+    `${stranger.evidence} vs ${colleague.evidence}`
+  );
+  check(
+    "  a same-age colleague with real affinity outranks a same-age stranger",
+    colleague.raw > stranger.raw,
+    `${colleague.raw} vs ${stranger.raw}`
+  );
+
+  // The gap is exactly 0.3 * (emailDomain + companyConcentration) weight
+  // share and provably age-independent (the age term is identical on both
+  // sides and cancels). This constant is the floor below which we've decided
+  // that gap has stopped being meaningful. Rebalance PRIOR_WEIGHTS, not this
+  // threshold, if a future retune brings the real gap under it.
+  const MIN_MEANINGFUL_AFFINITY_GAP = 0.06;
+  const gap = colleague.raw - stranger.raw;
+  check(
+    "  the gap clears a defensible floor — about a fifth of the whole compressed prior band",
+    gap >= MIN_MEANINGFUL_AFFINITY_GAP,
+    `gap ${gap.toFixed(4)} (floor ${MIN_MEANINGFUL_AFFINITY_GAP})`
+  );
+
+  // Concretely: for a just-added colleague (recency near zero), that gap is
+  // enough to place them a whole ring above a same-age stranger, even though
+  // neither has logged a single interaction yet.
+  const strangerRing = closenessToOrbitScore(stranger.raw);
+  const colleagueRing = closenessToOrbitScore(colleague.raw);
+  check(
+    "  that gap moves a just-added colleague a full ring above a same-age stranger",
+    colleagueRing > strangerRing,
+    `stranger ring ${strangerRing} vs colleague ring ${colleagueRing}`
   );
 }
 

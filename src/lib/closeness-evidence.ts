@@ -91,6 +91,16 @@ export const PRIOR_MAX = 0.6;
  * histogram. Weighting age this heavily is what lets connection recency alone
  * spread a day-one orbit across rings 1-3 instead of piling everyone into one
  * bin.
+ *
+ * That comes at a real cost, though: raising `age` here necessarily lowers
+ * `emailDomain` + `companyConcentration` + `schoolConcentration`, so a
+ * genuinely evidence-poor contact who *does* carry real affinity (a same-
+ * domain, same-company colleague added the day you started a job, before any
+ * interaction is logged) gets less credit for it than before. §18 of the
+ * harness pins a floor under that gap — a real colleague must still
+ * meaningfully outrank a same-age stranger — precisely so a future retune of
+ * `age` can't silently erode it further. If you raise `age` again, re-check
+ * that section, not just the cold-orbit histogram.
  */
 const PRIOR_WEIGHTS = {
   age: 0.7,
