@@ -17,6 +17,7 @@ import {
   type Plan,
 } from "@/lib/plan-limits";
 import { countLifetimePurchases } from "@/lib/user-settings";
+import { isStripeConfigured } from "@/lib/stripe";
 import { isClerkConfigured, isDemoMode } from "@/lib/auth";
 
 export const metadata: Metadata = {
@@ -71,6 +72,8 @@ export default async function PricingPage() {
   ]);
 
   const seatsLeft = Math.max(0, LIFETIME_SEAT_LIMIT - sold);
+  // Only offer checkout when Stripe can actually take the payment and a seat remains.
+  const lifetimePurchasable = isStripeConfigured() && seatsLeft > 0;
   const authProps = { clerkOn, demoMode, signedIn };
 
   return (
@@ -118,6 +121,7 @@ export default async function PricingPage() {
             currentPlan={currentPlan}
             signedIn={signedIn}
             seatsLeft={seatsLeft}
+            lifetimePurchasable={lifetimePurchasable}
           />
         </Reveal>
 

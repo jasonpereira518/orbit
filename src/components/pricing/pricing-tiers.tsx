@@ -4,13 +4,14 @@ import { useId, useState } from "react";
 import Link from "next/link";
 import { motion } from "motion/react";
 import { Check } from "lucide-react";
+import { LifetimeCheckoutButton } from "@/components/pricing/lifetime-checkout-button";
 import { cn } from "@/lib/utils";
 import {
   ANNUAL_SAVING_PERCENT,
   PLAN_COPY,
   type BillingPeriod,
 } from "@/lib/plan-copy";
-import type { Plan } from "@/lib/plan-limits";
+import { LIFETIME_SEAT_LIMIT, type Plan } from "@/lib/plan-limits";
 
 function BillingToggle({
   period,
@@ -79,11 +80,14 @@ function TierCta({
   currentPlan,
   signedIn,
   seatsLeft,
+  lifetimePurchasable,
 }: {
   planId: Plan;
   currentPlan: Plan | null;
   signedIn: boolean;
   seatsLeft: number;
+  /** Stripe is configured and seats remain, so checkout can actually complete. */
+  lifetimePurchasable: boolean;
 }) {
   const base =
     "flex w-full items-center justify-center rounded-xl px-4 py-3 text-sm font-medium transition-opacity";
@@ -102,20 +106,55 @@ function TierCta({
   }
 
   if (planId === "lifetime") {
-    // Deliberately not a disabled <button>: there is no action to attempt, and a dead
-    // control reads as a broken product. A stated queue reads as scarcity.
+    if (!lifetimePurchasable) {
+      // Deliberately not a disabled <button>: with no checkout to attempt, a dead control
+      // reads as a broken product, while a stated queue reads as scarcity.
+      return (
+        <div className="space-y-2">
+          <p
+            className={cn(
+              base,
+              "border border-dashed border-[#f2c14e]/35 text-[#f2c14e]"
+            )}
+          >
+            {seatsLeft > 0 ? `Opens to the first ${seatsLeft}` : "Sold out"}
+          </p>
+          <p className="text-center text-xs text-[#6d807c]">
+            {seatsLeft > 0
+              ? "Not on sale yet — it unlocks when checkout opens."
+              : "Every Orbit Lifetime spot has been claimed."}
+          </p>
+        </div>
+      );
+    }
+
+    if (!signedIn) {
+      // Checkout needs an account to attribute the purchase to, so send them to sign up
+      // rather than into a Stripe session with nobody to grant the plan to.
+      return (
+        <div className="space-y-2">
+          <Link
+            href="/sign-up"
+            className={cn(
+              base,
+              "bg-[#f2c14e] font-medium text-[#241a00] hover:opacity-90"
+            )}
+          >
+            Create an account to claim
+          </Link>
+          <p className="text-center text-xs text-[#6d807c]">
+            {seatsLeft} of {seatsLeft === 1 ? "1 spot" : "spots"} left.
+          </p>
+        </div>
+      );
+    }
+
     return (
       <div className="space-y-2">
-        <p
-          className={cn(
-            base,
-            "border border-dashed border-[#f2c14e]/35 text-[#f2c14e]"
-          )}
-        >
-          Opens to the first {seatsLeft}
-        </p>
+        <LifetimeCheckoutButton />
         <p className="text-center text-xs text-[#6d807c]">
-          Not on sale yet — it unlocks when checkout opens.
+          {seatsLeft} {seatsLeft === 1 ? "spot" : "spots"} left of{" "}
+          {LIFETIME_SEAT_LIMIT}.
         </p>
       </div>
     );
@@ -152,10 +191,12 @@ export function PricingTiers({
   currentPlan,
   signedIn,
   seatsLeft,
+  lifetimePurchasable,
 }: {
   currentPlan: Plan | null;
   signedIn: boolean;
   seatsLeft: number;
+  lifetimePurchasable: boolean;
 }) {
   const [period, setPeriod] = useState<BillingPeriod>("monthly");
 
@@ -258,6 +299,7 @@ export function PricingTiers({
                   currentPlan={currentPlan}
                   signedIn={signedIn}
                   seatsLeft={seatsLeft}
+                  lifetimePurchasable={lifetimePurchasable}
                 />
               </div>
             </section>
