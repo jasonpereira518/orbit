@@ -86,11 +86,13 @@ export async function listContacts(filters?: {
         // Omit raw profileImageUrl blob — rewritten via clientContactAvatarUrl.
         profileImageUrl: true,
         relationshipScore: true,
+        statedCloseness: true,
         priorityLevel: true,
         source: true,
         industry: true,
         metContext: true,
         dateMet: true,
+        firstInteractionAt: true,
         howMet: true,
         // Heavy text fields not needed for list UI — keep short summary only.
         notes: false,
