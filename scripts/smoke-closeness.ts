@@ -12,6 +12,7 @@ import {
   computeRawCloseness,
   recencyComponent,
   type ClosenessContact,
+  type RawClosenessBreakdown,
 } from "../src/lib/closeness";
 import {
   computeEvidence,
@@ -155,21 +156,32 @@ console.log("\n3. Cold start falls back to absolute scoring");
     );
   }
 
-  const cohort = buildClosenessCohort(five.map((c) => computeRawCloseness(c, [], 0).raw));
+  const cohort = buildClosenessCohort(five.map((c) => computeRawCloseness(c, [], 0)));
   check("  relative weight is 0 below 8 contacts", cohort.relativeWeight === 0);
 
   const many = Array.from({ length: 60 }, (_, i) =>
     person({ id: `c${i}`, relationshipScore: (i % 5) + 1 })
   );
   const bigCohort = buildClosenessCohort(
-    many.map((c) => computeRawCloseness(c, [], 0).raw)
+    many.map((c) => computeRawCloseness(c, [], 0))
   );
   check(
     "  relative weight reaches 0.5 at 40+",
     Math.abs(bigCohort.relativeWeight - 0.5) < 1e-12
   );
 
-  const mid = buildClosenessCohort(new Array(24).fill(0.5));
+  const midContacts = Array.from({ length: 24 }, (_, i) =>
+    computeRawCloseness(
+      person({
+        id: `m${i}`,
+        statedCloseness: (i % 5) + 1,
+        lastInteractionAt: daysAgoDate(i * 5),
+      }),
+      [],
+      2
+    )
+  );
+  const mid = buildClosenessCohort(midContacts);
   check(
     "  relative weight ramps in between",
     mid.relativeWeight > 0 && mid.relativeWeight < 0.5,
@@ -302,8 +314,21 @@ console.log("\n7. Ties resolve identically");
   check("  identical contacts share a tier", a.tier === b.tier);
 
   // [0.2, 0.4, 0.4, 0.4, 0.9] — the tie block spans indices 1..3, so its
-  // midrank sits at index 2 of 5.
-  const cohort = buildClosenessCohort([0.2, 0.4, 0.4, 0.4, 0.9]);
+  // midrank sits at index 2 of 5. Fully evidenced so all five clear the floor
+  // and land in the distribution unchanged.
+  const asFullyEvidenced = (raw: number): RawClosenessBreakdown => ({
+    raw,
+    strength: raw,
+    recency: raw,
+    cadence: raw,
+    goalRelevance: 0,
+    evidence: 1,
+    prior: raw,
+    evidenced: raw,
+  });
+  const cohort = buildClosenessCohort(
+    [0.2, 0.4, 0.4, 0.4, 0.9].map(asFullyEvidenced)
+  );
   check(
     "  midrank puts a 3-way tie at its centre",
     Math.abs(cohortPercentile(0.4, cohort) - 0.5) < 1e-12,
@@ -359,7 +384,7 @@ console.log("\n9. Cohort application is self-consistent");
     person({ id: `c${i}`, relationshipScore: (i % 5) + 1, lastInteractionAt: daysAgoDate(i * 11) })
   );
   const raws = people.map((p) => computeRawCloseness(p, [], 0));
-  const cohort = buildClosenessCohort(raws.map((r) => r.raw));
+  const cohort = buildClosenessCohort(raws);
 
   const byBatch = computeClosenessForAll(people, []);
   people.forEach((p, i) => {
@@ -656,6 +681,51 @@ console.log("\n15. Coverage does not masquerade as closeness");
     coveredRings.some((r) => r >= 4),
     `max ring ${Math.max(...coveredRings)}`
   );
+}
+
+console.log("\n16. Ranking uses the people we actually know");
+{
+  const known = Array.from({ length: 12 }, (_, i) =>
+    computeRawCloseness(
+      person({ id: `k${i}`, statedCloseness: (i % 5) + 1, lastInteractionAt: daysAgoDate(i * 4) }),
+      [],
+      3
+    )
+  );
+  const unknown = Array.from({ length: 1988 }, () =>
+    computeRawCloseness(
+      person({ statedCloseness: null, lastInteractionAt: null }),
+      [],
+      0
+    )
+  );
+
+  const cohort = buildClosenessCohort([...known, ...unknown]);
+  check(
+    "  the distribution holds only evidenced contacts",
+    cohort.sortedRaw.length === 12,
+    String(cohort.sortedRaw.length)
+  );
+  check(
+    "  low coverage suppresses relative weighting",
+    cohort.relativeWeight < 0.1,
+    String(cohort.relativeWeight)
+  );
+
+  const allKnown = Array.from({ length: 60 }, (_, i) =>
+    computeRawCloseness(
+      person({ id: `a${i}`, statedCloseness: (i % 5) + 1, lastInteractionAt: daysAgoDate(i * 3) }),
+      [],
+      4
+    )
+  );
+  const warmCohort = buildClosenessCohort(allKnown);
+  check(
+    "  full coverage restores relative weighting",
+    Math.abs(warmCohort.relativeWeight - 0.5) < 1e-9,
+    String(warmCohort.relativeWeight)
+  );
+  check("  and coverage reports as 1", Math.abs(warmCohort.coverage - 1) < 1e-9);
 }
 
 console.log("\nAll closeness smoke checks passed.\n");

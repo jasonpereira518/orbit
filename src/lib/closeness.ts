@@ -59,8 +59,13 @@ export type ClosenessBreakdown = RawClosenessBreakdown & {
  * shared by every contact so the same person cannot rank differently on two pages.
  */
 export type ClosenessCohort = {
+  /** Total contacts scored. */
   n: number;
-  /** ascending */
+  /** Contacts whose evidence clears the floor — the ones the distribution is built from. */
+  evidencedN: number;
+  /** evidencedN / n. The axis relative weighting fades in on. */
+  coverage: number;
+  /** ascending, evidenced contacts only */
   sortedRaw: number[];
   relativeWeight: number;
 };
@@ -95,6 +100,10 @@ const WEIGHTS = {
 const RELATIVE_MIN_N = 8;
 const RELATIVE_FULL_N = 40;
 const RELATIVE_MAX_WEIGHT = 0.5;
+
+/** Coverage below this makes rank meaningless; above RELATIVE_FULL_COVERAGE it is fully trusted. */
+const RELATIVE_MIN_COVERAGE = 0.1;
+const RELATIVE_FULL_COVERAGE = 0.6;
 
 /** Below this, ring/tier fall back to absolute cutoffs so a 3-person orbit has no "Core". */
 const QUOTA_MIN_N = 5;
@@ -273,13 +282,44 @@ export function computeRawCloseness(
   return { raw, strength, recency, cadence, goalRelevance, evidence, prior, evidenced };
 }
 
-export function buildClosenessCohort(rawScores: number[]): ClosenessCohort {
-  const sortedRaw = [...rawScores].sort((a, b) => a - b);
-  const n = sortedRaw.length;
-  const relativeWeight =
-    RELATIVE_MAX_WEIGHT *
-    clamp01((n - RELATIVE_MIN_N) / (RELATIVE_FULL_N - RELATIVE_MIN_N));
-  return { n, sortedRaw, relativeWeight };
+/**
+ * Build the distribution contacts are ranked against.
+ *
+ * Only evidenced contacts contribute. Ranking someone against a tied mass of
+ * people we know nothing about tells us nothing — and worse, it lets a large
+ * import of strangers push a genuinely close friend down the percentile scale
+ * purely by arriving.
+ *
+ * The fade is on coverage rather than headcount for the same reason: 2,000
+ * contacts of whom 12 are known is a *less* reliable ranking than 30 contacts
+ * of whom 25 are known, though the old count-based fade rated it higher.
+ */
+export function buildClosenessCohort(
+  raws: RawClosenessBreakdown[]
+): ClosenessCohort {
+  const n = raws.length;
+  const evidenced = raws.filter((r) => r.evidence >= EVIDENCE_FLOOR);
+  const sortedRaw = evidenced.map((r) => r.raw).sort((a, b) => a - b);
+  const evidencedN = sortedRaw.length;
+  const coverage = n === 0 ? 0 : evidencedN / n;
+
+  // Rank still needs a floor of absolute headcount: five known people do not
+  // make a distribution however complete their coverage.
+  const countGate = clamp01(
+    (evidencedN - RELATIVE_MIN_N) / (RELATIVE_FULL_N - RELATIVE_MIN_N)
+  );
+  const coverageGate = clamp01(
+    (coverage - RELATIVE_MIN_COVERAGE) /
+      (RELATIVE_FULL_COVERAGE - RELATIVE_MIN_COVERAGE)
+  );
+
+  return {
+    n,
+    evidencedN,
+    coverage,
+    sortedRaw,
+    relativeWeight: RELATIVE_MAX_WEIGHT * Math.min(countGate, coverageGate),
+  };
 }
 
 /** First index whose value is >= target. */
@@ -311,10 +351,10 @@ function upperBound(sorted: number[], target: number) {
  * (your closest contact being "100% close" would be meaningless).
  */
 export function cohortPercentile(raw: number, cohort: ClosenessCohort) {
-  if (cohort.n === 0) return 0.5;
+  if (cohort.sortedRaw.length === 0) return 0.5;
   const below = lowerBound(cohort.sortedRaw, raw);
   const equal = upperBound(cohort.sortedRaw, raw) - below;
-  return (below + 0.5 * equal) / cohort.n;
+  return (below + 0.5 * equal) / cohort.sortedRaw.length;
 }
 
 export function closenessTier(closeness: number): ClosenessBreakdown["tier"] {
@@ -379,7 +419,7 @@ export function applyClosenessCohort(
   const percentile = cohort ? cohortPercentile(raw.raw, cohort) : raw.raw;
   const w = cohort ? cohort.relativeWeight : 0;
   const closeness = clamp01((1 - w) * raw.raw + w * percentile);
-  const useQuota = !!cohort && cohort.n >= QUOTA_MIN_N;
+  const useQuota = !!cohort && cohort.evidencedN >= QUOTA_MIN_N;
 
   const assignedRing = useQuota
     ? orbitScoreFromPercentile(percentile)
@@ -427,7 +467,7 @@ export function computeClosenessForAll<
   const raws = contacts.map((c) =>
     computeRawCloseness(c, activeGoals, touchCounts?.get(c.id) ?? 0)
   );
-  const cohort = buildClosenessCohort(raws.map((r) => r.raw));
+  const cohort = buildClosenessCohort(raws);
 
   const byId = new Map<string, ClosenessBreakdown>();
   contacts.forEach((c, i) => {

@@ -141,7 +141,7 @@ async function buildCohortResult(
     )
   );
 
-  const cohort = buildClosenessCohort(raws.map((r) => r.raw));
+  const cohort = buildClosenessCohort(raws);
 
   const byId = new Map<string, ClosenessBreakdown>();
   rows.forEach((c, i) => {
