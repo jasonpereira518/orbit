@@ -22,6 +22,7 @@ import {
   PRIOR_MIN,
   publicEmailDomain,
 } from "../src/lib/closeness-evidence";
+import { selectTriageCandidates } from "../src/lib/triage-candidates";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) {
@@ -726,6 +727,45 @@ console.log("\n16. Ranking uses the people we actually know");
     String(warmCohort.relativeWeight)
   );
   check("  and coverage reports as 1", Math.abs(warmCohort.coverage - 1) < 1e-9);
+}
+
+console.log("\n17. Triage asks about the people we cannot guess");
+{
+  const candidate = (
+    id: string,
+    evidence: number,
+    prior: number,
+    stated: number | null = null,
+    company: string | null = "Acme"
+  ) => ({ id, fullName: id, company, evidence, prior, statedCloseness: stated });
+
+  const pool = [
+    ...Array.from({ length: 20 }, (_, i) => candidate(`known${i}`, 0.9, 0.4)),
+    ...Array.from({ length: 20 }, (_, i) => candidate(`strong${i}`, 0, 0.58)),
+    ...Array.from({ length: 200 }, (_, i) => candidate(`weak${i}`, 0, 0.31)),
+    ...Array.from({ length: 20 }, (_, i) => candidate(`rated${i}`, 0.9, 0.4, 4)),
+  ];
+
+  const picked = selectTriageCandidates(pool, 40);
+  check("  the shortlist is capped", picked.length === 40, String(picked.length));
+  check(
+    "  already-rated contacts are never asked about again",
+    picked.every((c) => c.statedCloseness == null)
+  );
+  check(
+    "  high-prior unknowns are represented",
+    picked.some((c) => c.id.startsWith("strong"))
+  );
+  check(
+    "  high-evidence unrated contacts are represented",
+    picked.some((c) => c.id.startsWith("known"))
+  );
+  check(
+    "  the shortlist is not purely whoever we already know",
+    picked.filter((c) => c.evidence >= EVIDENCE_FLOOR).length < picked.length,
+    `${picked.filter((c) => c.evidence >= EVIDENCE_FLOOR).length}/${picked.length}`
+  );
+  check("  no duplicates", new Set(picked.map((c) => c.id)).size === picked.length);
 }
 
 console.log("\nAll closeness smoke checks passed.\n");
