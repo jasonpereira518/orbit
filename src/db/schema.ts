@@ -105,6 +105,13 @@ export const contacts = pgTable(
     website: text("website"),
     profileImageUrl: text("profile_image_url"),
     relationshipScore: integer("relationship_score").default(2).notNull(),
+    /**
+     * Closeness the user actually asserted, 1–5. NULL means never rated —
+     * which `relationshipScore` cannot express, because its default of 2 is
+     * indistinguishable from a deliberate 2. Evidence weighting depends on
+     * telling those apart. Kept in sync with `relationshipScore` on write.
+     */
+    statedCloseness: integer("stated_closeness"),
     priorityLevel: integer("priority_level").default(0).notNull(),
     source: text("source"),
     industry: text("industry"),
