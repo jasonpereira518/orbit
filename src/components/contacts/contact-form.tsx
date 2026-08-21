@@ -201,6 +201,10 @@ export function ContactForm({
                 .map((t) => t.trim())
                 .filter(Boolean),
               relationshipScore: Number(form.relationshipScore),
+              // The user set this slider themselves (whether creating or
+              // editing), unlike an importer's silent default — see
+              // ContactInput.statedCloseness in contact-writes.ts.
+              statedCloseness: Number(form.relationshipScore),
               priorityLevel: Number(form.priorityLevel),
               tagNames: form.tagNames
                 .split(",")

@@ -51,6 +51,15 @@ export type ContactInput = {
   website?: string;
   profileImageUrl?: string | null;
   relationshipScore?: number;
+  /**
+   * Set this ONLY from a flow where the user themselves supplied the rating
+   * (the contact-form slider, the AI-capture review step) — never from an
+   * importer default. Unlike `relationshipScore`, `contactInsertValues` does
+   * NOT fall back to a default here: an omitted value stays `null` on create,
+   * which is what keeps imported contacts unrated. See `strengthComponent` in
+   * `@/lib/closeness` for why the distinction matters.
+   */
+  statedCloseness?: number | null;
   priorityLevel?: number;
   source?: string;
   industry?: string;
@@ -216,6 +225,12 @@ function contactInsertValues(
     website: input.website,
     profileImageUrl: input.profileImageUrl ?? null,
     relationshipScore: input.relationshipScore ?? 2,
+    // Deliberately NOT `input.statedCloseness ?? input.relationshipScore` —
+    // that would resurrect the exact leak this field exists to prevent, since
+    // several importers pass relationshipScore explicitly. Only a caller that
+    // set statedCloseness itself (a real user rating) reaches this column;
+    // everyone else gets null, same as before this field existed.
+    statedCloseness: input.statedCloseness ?? null,
     priorityLevel: input.priorityLevel ?? 0,
     source: input.source ?? "manual",
     industry: input.industry,
