@@ -17,6 +17,7 @@ import {
 import { findDuplicateCandidates, daysAgo } from "@/lib/duplicates";
 import { upsertContactEmbedding } from "@/lib/search";
 import { refreshOutreachSuggestions } from "@/lib/reminders";
+import { contactHeadroomForUser } from "@/lib/contact-writes";
 
 const SYNC_WINDOW_PAST_MS = 90 * 86400000;
 const SYNC_WINDOW_FUTURE_MS = 60 * 86400000;
@@ -83,12 +84,19 @@ function icsFetchErrorMessage(url: string, status: number) {
   return `Calendar feed returned ${status}`;
 }
 
+/**
+ * Returns `contact: null` when the plan's contact cap leaves no headroom for a new person.
+ *
+ * Sync is a paid feature and paid plans are uncapped, so in practice this never binds —
+ * it exists so this path (the one contact insert that does not go through
+ * `createContactForUser`) can never silently become a way around the cap.
+ */
 async function resolveOrCreateContact(
   userId: string,
   existing: Contact[],
   person: { name: string; email: string },
   titleHint: string | null
-): Promise<{ contact: Contact; created: boolean; list: Contact[] }> {
+): Promise<{ contact: Contact | null; created: boolean; list: Contact[] }> {
   const db = await getDb();
   const fullName = person.name || titleHint || person.email.split("@")[0] || "Calendar contact";
 
@@ -109,6 +117,11 @@ async function resolveOrCreateContact(
       return { contact: updated, created: false, list };
     }
     return { contact, created: false, list: existing };
+  }
+
+  const headroom = await contactHeadroomForUser(userId);
+  if (headroom !== null && headroom < 1) {
+    return { contact: null, created: false, list: existing };
   }
 
   const parts = fullName.trim().split(/\s+/);
@@ -215,6 +228,7 @@ export async function applyNetworkingEvents(
       if (resolved.created) stats.contactsCreated++;
 
       const contact = resolved.contact;
+      if (!contact) continue;
       const externalId = externalIdFor(event.uid, contact.id);
 
       const prior = await db.query.interactions.findFirst({

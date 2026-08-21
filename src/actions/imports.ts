@@ -21,7 +21,7 @@ import {
   daysAgo,
   findDuplicateCandidates,
 } from "@/lib/duplicates";
-import { createContact, updateContact } from "@/actions/contacts";
+import { createContactIfRoom, updateContact } from "@/actions/contacts";
 import { runLinkedInImportJob } from "@/lib/import-job-processor";
 import {
   parseConnectedOn,
@@ -55,6 +55,7 @@ function mergeStats(
   const base = prev ?? {};
   return {
     skipped: (base.skipped ?? 0) + (next.skipped ?? 0),
+    blockedByPlan: (base.blockedByPlan ?? 0) + (next.blockedByPlan ?? 0),
     messagesImported:
       (base.messagesImported ?? 0) + (next.messagesImported ?? 0),
     meetingsLogged: (base.meetingsLogged ?? 0) + (next.meetingsLogged ?? 0),
@@ -340,6 +341,7 @@ export async function confirmLinkedInImport(
         : new Set(selectedIds);
 
     let created = 0;
+    let blockedByPlan = 0;
     let updated = 0;
     let duplicates = 0;
     let skipped = 0;
@@ -389,7 +391,7 @@ export async function confirmLinkedInImport(
         );
         updated++;
       } else {
-        const contact = await createContact(
+        const contact = await createContactIfRoom(
           {
             fullName,
             firstName: row.firstName,
@@ -407,8 +409,12 @@ export async function confirmLinkedInImport(
           },
           writeOpts
         );
-        existing.push(contact as (typeof existing)[number]);
-        created++;
+        if (!contact) {
+          blockedByPlan++;
+        } else {
+          existing.push(contact as (typeof existing)[number]);
+          created++;
+        }
       }
     }
 
@@ -416,7 +422,7 @@ export async function confirmLinkedInImport(
     const contactsUpdated = (importRow.contactsUpdated ?? 0) + updated;
     const duplicatesFound = (importRow.duplicatesFound ?? 0) + duplicates;
     const rowsProcessed = (importRow.rowsProcessed ?? 0) + processed;
-    const stats = mergeStats(importRow.stats, { skipped });
+    const stats = mergeStats(importRow.stats, { skipped, blockedByPlan });
 
     await db
       .update(imports)
@@ -448,6 +454,7 @@ export async function confirmLinkedInImport(
       contactsUpdated,
       duplicatesFound,
       skipped,
+      blockedByPlan: stats.blockedByPlan ?? 0,
       chunkCreated: created,
       chunkUpdated: updated,
     };
@@ -547,6 +554,7 @@ export async function confirmLinkedInMessagesImport(
     }
 
     let created = 0;
+    let blockedByPlan = 0;
     let updated = 0;
     let duplicates = 0;
     let messagesImported = 0;
@@ -566,7 +574,7 @@ export async function confirmLinkedInMessagesImport(
           continue;
         }
 
-        const contact = await createContact(
+        const contact = await createContactIfRoom(
           {
             fullName: identity.fullName,
             firstName: identity.firstName,
@@ -580,6 +588,10 @@ export async function confirmLinkedInMessagesImport(
           },
           writeOpts
         );
+        if (!contact) {
+          blockedByPlan++;
+          continue;
+        }
         contactId = contact.id;
         existing = [...existing, contact as (typeof existing)[number]];
         created++;
@@ -745,6 +757,7 @@ export async function confirmLinkedInMessagesImport(
     ]);
     let stats = mergeStats(importRow.stats, {
       skipped,
+      blockedByPlan,
       messagesImported,
     });
     stats = {
@@ -1313,6 +1326,7 @@ export async function confirmGoogleContactsImport(selectedIds: string[]) {
   });
 
   let created = 0;
+  let blockedByPlan = 0;
   let updated = 0;
 
   for (const row of rows) {
@@ -1341,7 +1355,7 @@ export async function confirmGoogleContactsImport(selectedIds: string[]) {
       );
       updated++;
     } else {
-      const contact = await createContact(
+      const contact = await createContactIfRoom(
         {
           fullName: row.fullName,
           firstName: row.firstName || undefined,
@@ -1359,8 +1373,12 @@ export async function confirmGoogleContactsImport(selectedIds: string[]) {
         },
         writeOpts
       );
-      existing.push(contact as (typeof existing)[number]);
-      created++;
+      if (!contact) {
+        blockedByPlan++;
+      } else {
+        existing.push(contact as (typeof existing)[number]);
+        created++;
+      }
     }
   }
 
@@ -1373,6 +1391,7 @@ export async function confirmGoogleContactsImport(selectedIds: string[]) {
     contactsCreated: created,
     contactsUpdated: updated,
     duplicatesFound: updated,
+    stats: { blockedByPlan },
   });
 
   try {
@@ -1386,7 +1405,7 @@ export async function confirmGoogleContactsImport(selectedIds: string[]) {
   revalidatePath("/imports");
   revalidatePath("/graph");
 
-  return { created, updated };
+  return { created, updated, blockedByPlan };
 }
 
 export type OutlookContactPerson = {
@@ -1470,6 +1489,7 @@ export async function confirmOutlookContactsImport(selectedIds: string[]) {
   });
 
   let created = 0;
+  let blockedByPlan = 0;
   let updated = 0;
 
   for (const row of rows) {
@@ -1497,7 +1517,7 @@ export async function confirmOutlookContactsImport(selectedIds: string[]) {
       );
       updated++;
     } else {
-      const contact = await createContact(
+      const contact = await createContactIfRoom(
         {
           fullName: row.fullName,
           firstName: row.firstName || undefined,
@@ -1514,8 +1534,12 @@ export async function confirmOutlookContactsImport(selectedIds: string[]) {
         },
         writeOpts
       );
-      existing.push(contact as (typeof existing)[number]);
-      created++;
+      if (!contact) {
+        blockedByPlan++;
+      } else {
+        existing.push(contact as (typeof existing)[number]);
+        created++;
+      }
     }
   }
 
@@ -1528,6 +1552,7 @@ export async function confirmOutlookContactsImport(selectedIds: string[]) {
     contactsCreated: created,
     contactsUpdated: updated,
     duplicatesFound: updated,
+    stats: { blockedByPlan },
   });
 
   try {
@@ -1541,5 +1566,5 @@ export async function confirmOutlookContactsImport(selectedIds: string[]) {
   revalidatePath("/imports");
   revalidatePath("/graph");
 
-  return { created, updated };
+  return { created, updated, blockedByPlan };
 }

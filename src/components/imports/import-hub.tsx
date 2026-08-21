@@ -17,6 +17,7 @@ import {
 import { ImportProgress } from "@/components/imports/import-utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cancelImportJob, useImportJob } from "@/lib/import-job-runner";
+import { LockedFeature } from "@/components/locked-feature";
 import { SPRING_PILL } from "@/lib/motion";
 import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
 import { cn } from "@/lib/utils";
@@ -118,9 +119,12 @@ const CalendarImportSection = dynamic(
 export function ImportHub({
   history,
   calendarSubscriptions = [],
+  canUseSync = true,
 }: {
   history: ImportHistoryItem[];
   calendarSubscriptions?: CalendarSub[];
+  /** Calendar sync is a paid feature; LinkedIn import stays free on every plan. */
+  canUseSync?: boolean;
 }) {
   const job = useImportJob();
   const [tab, setTab] = useState<ImportTab>("connections");
@@ -236,9 +240,23 @@ export function ImportHub({
           aria-labelledby="import-tab-calendar"
           hidden={tab !== "calendar"}
         >
-          <CalendarImportSection
-            calendarSubscriptions={calendarSubscriptions}
-          />
+          {canUseSync ? (
+            <CalendarImportSection
+              calendarSubscriptions={calendarSubscriptions}
+            />
+          ) : (
+            <LockedFeature
+              title="Calendar sync"
+              description="Point Orbit at your calendar and it turns meetings into logged interactions, so your follow-ups stay current without any typing."
+              highlights={[
+                "Subscribe to a calendar once and keep it in sync",
+                "Networking meetings become logged interactions",
+                "New people from invites land in your contacts",
+                "Follow-up reminders created automatically",
+              ]}
+              note="Included in Orbit and Lifetime. LinkedIn imports stay free on every plan."
+            />
+          )}
         </div>
       )}
 

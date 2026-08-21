@@ -1,5 +1,6 @@
 import { getContact } from "@/actions/contacts";
-import { getSettings } from "@/actions/settings";
+import { getPlanOverview, getSettings } from "@/actions/settings";
+import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import { CaptureFormLazy } from "@/components/capture/capture-form-lazy";
 
 export default async function CapturePage({
@@ -15,6 +16,7 @@ export default async function CapturePage({
       : null;
 
   const settingsPromise = getSettings();
+  const planPromise = getPlanOverview();
 
   let contactId: string | null = null;
   let contactName: string | null = null;
@@ -27,6 +29,7 @@ export default async function CapturePage({
   }
 
   const settings = await settingsPromise;
+  const { usage } = await planPromise;
   const defaultMode = modeParam || (contactId ? "structured" : "messy");
 
   return (
@@ -41,6 +44,11 @@ export default async function CapturePage({
             : "Paste notes about one person or many, review each profile, then save."}
         </p>
       </div>
+      {/* Capture creates contacts, so the same cap applies. Logging an interaction with
+          an existing contact is never blocked — only creating new people is. */}
+      {!contactId && (
+        <ContactQuotaNotice used={usage.used} limit={usage.limit} />
+      )}
       <CaptureFormLazy
         initialContactId={contactId}
         initialContactName={contactName}

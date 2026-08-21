@@ -63,6 +63,23 @@ export const userSettings = pgTable("user_settings", {
   calendarFeedLastFetchedAt: timestamp("calendar_feed_last_fetched_at", {
     withTimezone: true,
   }),
+  /**
+   * Billing. Entitlements are resolved exclusively from these columns by
+   * `src/lib/entitlements.ts` — never by calling Clerk's `has()` or Stripe at a gate.
+   * Clerk sells the monthly plan and Stripe sells the one-time Lifetime, but both are
+   * mirrored here so that background jobs (which have no request context, and so cannot
+   * call `has()`) resolve the same plan the UI does. Same rationale as `email` above.
+   */
+  compedPlan: text("comped_plan").$type<"orbit" | "lifetime">(),
+  lifetimePurchasedAt: timestamp("lifetime_purchased_at", { withTimezone: true }),
+  stripeCustomerId: text("stripe_customer_id"),
+  subscriptionPlan: text("subscription_plan").$type<"orbit">(),
+  subscriptionStatus: text("subscription_status").$type<
+    "active" | "past_due" | "canceled"
+  >(),
+  subscriptionPeriodEnd: timestamp("subscription_period_end", {
+    withTimezone: true,
+  }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -316,6 +333,12 @@ export const suggestedReminders = pgTable(
 
 export type ImportStats = {
   skipped?: number;
+  /**
+   * Rows that parsed fine but could not be saved because the user's plan contact limit
+   * was already full. Distinct from `skipped` (malformed/unusable rows) so the UI can
+   * offer an upgrade rather than an error.
+   */
+  blockedByPlan?: number;
   messagesImported?: number;
   meetingsLogged?: number;
   remindersCreated?: number;

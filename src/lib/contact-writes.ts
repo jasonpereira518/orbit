@@ -11,10 +11,11 @@
  * `src/lib/search.ts`, which already take `userId` as their first argument.
  */
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, count, eq, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { contactTags, contacts, interactions, tags } from "@/db/schema";
+import { PaywallError, getEntitlements } from "@/lib/entitlements";
 import {
   companyFieldsForWrite,
   companyFieldsForWriteCached,
@@ -222,11 +223,59 @@ function contactInsertValues(
   };
 }
 
+/**
+ * How many more contacts this user may create, or `null` for unlimited.
+ *
+ * The plan cap gates *creation only*. Reads, edits, and interaction logging are never
+ * gated, so a lapsed subscriber sitting above the cap keeps full access to everything
+ * already in their orbit — nothing is ever hidden behind the paywall.
+ */
+export async function contactHeadroomForUser(userId: string) {
+  const { contactLimit } = await getEntitlements(userId);
+  if (contactLimit === null) return null;
+
+  const db = await getDb();
+  const [row] = await db
+    .select({ value: count() })
+    .from(contacts)
+    .where(eq(contacts.userId, userId));
+
+  return Math.max(0, contactLimit - (row?.value ?? 0));
+}
+
+/** Current usage for the contacts-page counter. `limit: null` means unlimited. */
+export async function contactUsageForUser(userId: string) {
+  const { contactLimit, plan } = await getEntitlements(userId);
+  const db = await getDb();
+  const [row] = await db
+    .select({ value: count() })
+    .from(contacts)
+    .where(eq(contacts.userId, userId));
+
+  const used = row?.value ?? 0;
+  return {
+    used,
+    limit: contactLimit,
+    plan,
+    remaining: contactLimit === null ? null : Math.max(0, contactLimit - used),
+  };
+}
+
 export async function createContactForUser(
   userId: string,
   input: ContactInput,
   options?: ContactWriteOptions
 ) {
+  const headroom = await contactHeadroomForUser(userId);
+  if (headroom !== null && headroom < 1) {
+    const { plan, contactLimit } = await getEntitlements(userId);
+    throw new PaywallError(
+      "contacts",
+      plan,
+      `You've reached the ${contactLimit}-contact limit on the free plan. Upgrade to add more people to your orbit.`
+    );
+  }
+
   const db = await getDb();
   const now = new Date();
   const companyFields = await companyFieldsForWrite(userId, input.company);
@@ -264,16 +313,24 @@ export async function createContactsBulkForUser(
 ) {
   if (inputs.length === 0) return [];
 
+  // Take what fits rather than failing the whole batch: a free user importing 847
+  // LinkedIn connections should still get their first 100, and the caller reports the
+  // shortfall by comparing `created.length` against what it passed in.
+  const headroom = await contactHeadroomForUser(userId);
+  if (headroom !== null && headroom < 1) return [];
+  const admitted =
+    headroom === null ? inputs : inputs.slice(0, headroom);
+
   const db = await getDb();
   const now = new Date();
 
   const companyFieldsList = await Promise.all(
-    inputs.map((input) =>
+    admitted.map((input) =>
       companyFieldsForWriteCached(companyResolve, input.company)
     )
   );
 
-  const values = inputs.map((input, i) =>
+  const values = admitted.map((input, i) =>
     contactInsertValues(userId, input, companyFieldsList[i], now)
   );
 
@@ -283,7 +340,7 @@ export async function createContactsBulkForUser(
     userId,
     created.map((contact, i) => ({
       contactId: contact.id,
-      tagNames: inputs[i].tagNames,
+      tagNames: admitted[i].tagNames,
     }))
   );
 

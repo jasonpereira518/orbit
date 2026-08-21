@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { listContacts } from "@/actions/contacts";
+import { getPlanOverview } from "@/actions/settings";
 import { buttonVariants } from "@/components/ui/button";
+import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import { ContactsFilters } from "@/components/contacts/contacts-filters";
 import { ContactsList } from "@/components/contacts/contacts-list";
 import { PeopleListShell } from "@/components/contacts/people-list-shell";
@@ -19,12 +21,15 @@ export default async function ContactsPage({
   }>;
 }) {
   const params = await searchParams;
-  const contacts = await listContacts({
-    q: params.q,
-    company: params.company,
-    minScore: params.minScore ? Number(params.minScore) : undefined,
-    followUp: params.followUp === "due" ? "due" : undefined,
-  });
+  const [contacts, planOverview] = await Promise.all([
+    listContacts({
+      q: params.q,
+      company: params.company,
+      minScore: params.minScore ? Number(params.minScore) : undefined,
+      followUp: params.followUp === "due" ? "due" : undefined,
+    }),
+    getPlanOverview(),
+  ]);
 
   return (
     <PeopleListShell
@@ -53,6 +58,10 @@ export default async function ContactsPage({
         </>
       }
       >
+        <ContactQuotaNotice
+          used={planOverview.usage.used}
+          limit={planOverview.usage.limit}
+        />
         <ContactsFilters
           key={[params.q, params.company, params.minScore, params.followUp].join("|")}
           initialQ={params.q || ""}

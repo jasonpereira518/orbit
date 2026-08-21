@@ -1,12 +1,33 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { listCampaigns } from "@/actions/outreach";
+import { requireUserId } from "@/lib/auth";
+import { getEntitlements } from "@/lib/entitlements";
+import { LockedFeature } from "@/components/locked-feature";
 import { OutreachCampaignCard } from "@/components/outreach/outreach-campaign-card";
 import { buttonVariants } from "@/components/ui/button";
 import { formatReplyRate } from "@/lib/outreach-metrics";
 import { cn } from "@/lib/utils";
 
 export default async function OutreachPage() {
+  const { canUseOutreach } = await getEntitlements(await requireUserId());
+
+  if (!canUseOutreach) {
+    return (
+      <LockedFeature
+        title="Outreach"
+        description="Find the right people, draft messages that sound like you, and track what actually gets replies — without leaving Orbit."
+        highlights={[
+          "Search prospects by role, company, and seniority",
+          "Personalized email and SMS drafts from your own notes",
+          "Reply tracking and per-campaign quality scores",
+          "Sequenced follow-ups that stop when someone replies",
+        ]}
+        note="Included in Orbit and Lifetime. On Lifetime you supply your own Apollo, Resend, and Twilio keys."
+      />
+    );
+  }
+
   const campaigns = await listCampaigns();
 
   const totals = campaigns.reduce(
