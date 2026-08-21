@@ -1,7 +1,7 @@
 import { cache } from "react";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts, gmailConnections, interactions, userGoals, userSettings } from "@/db/schema";
+import { contacts, gmailConnections, interactions, outlookConnections, userGoals, userSettings } from "@/db/schema";
 import {
   applyClosenessCohort,
   buildClosenessCohort,
@@ -92,7 +92,7 @@ async function buildCohortResult(
     Date.now() - CADENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000
   );
 
-  const [rows, goalRows, touchRows, settings, mailConnection] = await Promise.all([
+  const [rows, goalRows, touchRows, settings, gmailConnection, outlookConnection] = await Promise.all([
     preloadedRows ??
       db.query.contacts.findMany({
         where: eq(contacts.userId, userId),
@@ -142,8 +142,14 @@ async function buildCohortResult(
     // Whether a mail source is genuinely connected. NOT `userSettings.email`,
     // which is set for every account and would mark the entire orbit as
     // covered — inflating evidence for people we have never actually observed.
+    // Gmail and Outlook are both equally wired integrations, so either one
+    // connected counts.
     db.query.gmailConnections.findFirst({
       where: eq(gmailConnections.userId, userId),
+      columns: { id: true },
+    }),
+    db.query.outlookConnections.findFirst({
+      where: eq(outlookConnections.userId, userId),
       columns: { id: true },
     }),
   ]);
@@ -176,7 +182,7 @@ async function buildCohortResult(
     return domain;
   })();
 
-  const mailConnected = !!mailConnection;
+  const mailConnected = !!gmailConnection || !!outlookConnection;
 
   // The goal haystack intentionally omits `notes`: keeping it would mean
   // pulling every note body on every request, and the list payload already
