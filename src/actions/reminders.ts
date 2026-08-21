@@ -911,9 +911,16 @@ export async function acceptScoreBump(suggestionId: string) {
     throw new Error("Could not parse suggested score");
   }
 
+  // Accepting a suggested score bump is a genuine user rating, same as moving
+  // the slider on the contact form — mirror into statedCloseness so this
+  // write agrees with contact-writes.ts's updateContactForUser.
   await db
     .update(contacts)
-    .set({ relationshipScore: newScore, updatedAt: new Date() })
+    .set({
+      relationshipScore: newScore,
+      statedCloseness: newScore,
+      updatedAt: new Date(),
+    })
     .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
 
   await dismissSuggestion(suggestionId);

@@ -351,8 +351,19 @@ export async function updateContactForUser(
       ...(input.profileImageUrl !== undefined
         ? { profileImageUrl: input.profileImageUrl }
         : {}),
+      // A user moving this slider (contact-form.tsx, or the AI-capture review
+      // step) is the strongest closeness signal the app ever gets, and it is
+      // what lifts a contact above EVIDENCE_FLOOR. Mirror it here — but only
+      // here, not on create — because no importer's update payload includes
+      // relationshipScore (verified: LinkedIn/Google/Outlook/messages imports
+      // only ever *create* with a default score, never *update* one). Create
+      // paths still coalesce `input.relationshipScore ?? 2`, which is
+      // indistinguishable from a real rating of 2, so they must never mirror.
       ...(input.relationshipScore !== undefined
-        ? { relationshipScore: input.relationshipScore }
+        ? {
+            relationshipScore: input.relationshipScore,
+            statedCloseness: input.relationshipScore,
+          }
         : {}),
       ...(input.priorityLevel !== undefined
         ? { priorityLevel: input.priorityLevel }
