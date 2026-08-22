@@ -2,9 +2,12 @@
 
 import { desc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { getDb } from "@/db";
 import { adminAuditLog, contacts, userSettings } from "@/db/schema";
 import { requireAdminUserId } from "@/lib/admin";
+import * as ops from "@/lib/admin-operations";
+import { recordAdminAction } from "@/lib/admin-operations";
 import { resolvePlan } from "@/lib/entitlements";
 import { setCompedPlan } from "@/lib/user-settings";
 
@@ -16,27 +19,6 @@ import { setCompedPlan } from "@/lib/user-settings";
  * the same lesson `src/lib/plan-guards.ts` documents for the paywall — the real boundary
  * is the function, not the hidden nav item.
  */
-
-async function recordAdminAction(input: {
-  adminUserId: string;
-  action: string;
-  targetUserId?: string | null;
-  resourceType?: string | null;
-  resourceId?: string | null;
-  detail?: Record<string, unknown>;
-  reason?: string | null;
-}) {
-  const db = await getDb();
-  await db.insert(adminAuditLog).values({
-    adminUserId: input.adminUserId,
-    action: input.action,
-    targetUserId: input.targetUserId ?? null,
-    resourceType: input.resourceType ?? null,
-    resourceId: input.resourceId ?? null,
-    detail: input.detail ?? {},
-    reason: input.reason?.trim() || null,
-  });
-}
 
 export type CompResult = {
   ok: true;
@@ -172,4 +154,149 @@ export async function getAuditTrail(targetUserId: string) {
     orderBy: [desc(adminAuditLog.createdAt)],
     limit: 25,
   });
+}
+
+/* ======================================================================================
+ * Operator actions
+ *
+ * Thin by design. Each one resolves the operator, delegates to `src/lib/admin-operations.ts`
+ * and revalidates — the same split every other domain in this repo uses, and the reason the
+ * guards inside those operations are reachable from `scripts/smoke-admin-actions.ts` at all.
+ *
+ * `requireAdminUserId()` is the first statement in every one of them. That is not
+ * belt-and-braces on top of the layout gate: layouts do not re-run for Server Action POSTs,
+ * and these are reachable by direct POST rather than only through Orbit's own UI.
+ * ================================================================================== */
+
+/** Paths that show account state. Any operator write invalidates all of them. */
+function revalidateAdmin(targetUserId?: string) {
+  revalidatePath("/admin");
+  revalidatePath("/admin/users");
+  revalidatePath("/admin/health");
+  revalidatePath("/admin/billing");
+  if (targetUserId) revalidatePath(`/admin/users/${targetUserId}`);
+}
+
+export type RevealGrantResult = { ok: true; grantId: string; expiresAt: string };
+
+/**
+ * Unmask one account's contact and interaction content for a short window.
+ *
+ * `revealContactAction` above remains the one-record path. This is the "the import mangled
+ * rows 300–400" tool, not a replacement for it.
+ */
+export async function grantRevealAction(input: {
+  targetUserId: string;
+  reason: string;
+}): Promise<RevealGrantResult> {
+  const adminUserId = await requireAdminUserId();
+  const grant = await ops.grantReveal(adminUserId, input);
+  revalidatePath(`/admin/users/${input.targetUserId}`);
+  return {
+    ok: true,
+    grantId: grant.grantId,
+    expiresAt: grant.expiresAt.toISOString(),
+  };
+}
+
+/** Re-mask now, without waiting for the grant to age out. */
+export async function revokeRevealAction(input: {
+  targetUserId: string;
+}): Promise<{ ok: true; revoked: number }> {
+  const adminUserId = await requireAdminUserId();
+  const revoked = await ops.revokeReveal(adminUserId, input);
+  revalidatePath(`/admin/users/${input.targetUserId}`);
+  return { ok: true, revoked };
+}
+
+export async function retryImportAction(input: {
+  targetUserId: string;
+  importId: string;
+  reason: string;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  const { importId } = await ops.retryImport(adminUserId, input);
+
+  // Not awaited: the processor is time-boxed with self-continuation and can outlive any
+  // reasonable action. `after()` needs a request scope, which is why it is here rather
+  // than in the operation.
+  after(() => ops.runImportJob(importId));
+
+  revalidateAdmin(input.targetUserId);
+  revalidatePath("/imports");
+  return { ok: true };
+}
+
+export async function cancelImportAction(input: {
+  targetUserId: string;
+  importId: string;
+  reason: string;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await ops.cancelImport(adminUserId, input);
+  revalidateAdmin(input.targetUserId);
+  revalidatePath("/imports");
+  return { ok: true };
+}
+
+export async function resetOnboardingAction(input: {
+  targetUserId: string;
+  scope: "onboarding" | "wizard" | "both";
+  reason: string;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await ops.resetOnboarding(adminUserId, input);
+  revalidateAdmin(input.targetUserId);
+  return { ok: true };
+}
+
+export async function disconnectIntegrationAction(input: {
+  targetUserId: string;
+  provider: "gmail" | "outlook";
+  reason: string;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await ops.disconnectIntegration(adminUserId, input);
+  revalidateAdmin(input.targetUserId);
+  return { ok: true };
+}
+
+export async function setCalendarFeedEnabledAction(input: {
+  targetUserId: string;
+  subscriptionId: string;
+  enabled: boolean;
+  reason: string;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await ops.setCalendarFeedEnabled(adminUserId, input);
+  revalidateAdmin(input.targetUserId);
+  return { ok: true };
+}
+
+export async function setAccountSuspendedAction(input: {
+  targetUserId: string;
+  suspended: boolean;
+  reason: string;
+}): Promise<{ ok: true; suspendedAt: string | null }> {
+  const adminUserId = await requireAdminUserId();
+  const result = await ops.setAccountSuspended(adminUserId, input);
+  revalidateAdmin(input.targetUserId);
+  return { ok: true, suspendedAt: result.suspendedAt?.toISOString() ?? null };
+}
+
+export async function deleteAccountAction(input: {
+  targetUserId: string;
+  confirmEmail: string;
+  reason: string;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await ops.deleteAccount(adminUserId, input);
+  revalidateAdmin();
+  return { ok: true };
+}
+
+/** Banner state for the inspector. Never returns a grant object. */
+export async function getActiveRevealGrant(targetUserId: string) {
+  const adminUserId = await requireAdminUserId();
+  return ops.getActiveRevealGrantFor(adminUserId, targetUserId);
 }
