@@ -60,7 +60,6 @@ export default async function SettingsPage() {
         <PlanSettings
           entitlements={planOverview.entitlements}
           usage={planOverview.usage}
-          remainingLifetimeSeats={planOverview.remainingLifetimeSeats}
         />
       </Section>
       <Section id="settings-goals">

@@ -8,8 +8,8 @@ import { cn } from "@/lib/utils";
 /**
  * Sends the buyer to Stripe Checkout.
  *
- * The action returns a URL rather than redirecting so refusals (sold out, already owned)
- * can be shown right here, next to the button that caused them.
+ * The action returns a URL rather than redirecting so refusals (already owned, not on
+ * sale) can be shown right here, next to the button that caused them.
  */
 export function LifetimeCheckoutButton({ className }: { className?: string }) {
   const [pending, start] = useTransition();
@@ -38,7 +38,7 @@ export function LifetimeCheckoutButton({ className }: { className?: string }) {
         )}
       >
         {pending && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
-        {pending ? "Opening checkout…" : "Claim your spot — $19"}
+        {pending ? "Opening checkout…" : "Get Orbit Lifetime — $25"}
       </button>
       {error && (
         <p role="alert" className="text-center text-xs text-[#f2c14e]">

@@ -166,7 +166,7 @@ export async function setLifetimePurchase(
     .where(eq(userSettings.userId, userId));
 }
 
-/** How many Lifetime seats have been sold, for the early-adopter cap. */
+/** How many one-time Lifetime purchases have been made. Reported in /admin. */
 export async function countLifetimePurchases() {
   const db = await getDb();
   const [row] = await db

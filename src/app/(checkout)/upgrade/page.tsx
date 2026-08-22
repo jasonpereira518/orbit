@@ -9,13 +9,12 @@ import { OrbitProCheckout } from "@/components/checkout/orbit-pro-checkout";
 import { getLifetimeAvailability } from "@/actions/billing";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements, ORBIT_PLAN_SLUG } from "@/lib/entitlements";
-import { LIFETIME_SEAT_LIMIT } from "@/lib/plan-limits";
 import { planCopy } from "@/lib/plan-copy";
 import { isClerkConfigured } from "@/lib/auth";
 
 export const metadata: Metadata = {
   title: "Upgrade — Orbit",
-  description: "Move to Orbit Pro, or claim one of the Orbit Lifetime spots.",
+  description: "Move to Orbit Pro, or buy Orbit Lifetime once.",
 };
 
 const HEADING =
@@ -107,8 +106,8 @@ export default async function UpgradePage({
             ) : hasLifetime ? (
               <p className="rounded-2xl border border-[#e8f3f1]/[0.10] bg-[#05070f]/60 p-5 text-sm leading-relaxed text-[#9aada8]">
                 Orbit Lifetime already covers everything Orbit Pro does, minus
-                sending on Orbit&apos;s credits. Subscribing as well would only
-                add hosted email and SMS.
+                contact enrichment on Orbit&apos;s credits. Subscribing as well
+                would only add that.
               </p>
             ) : isClerkConfigured() ? (
               <OrbitProCheckout highlightedPlan={ORBIT_PLAN_SLUG} />
@@ -139,30 +138,24 @@ export default async function UpgradePage({
                 <>
                   <p className="flex items-baseline gap-1.5">
                     <span className="font-[family-name:var(--font-display)] text-[34px] leading-none tracking-tight text-[#e8f3f1]">
-                      $19
+                      $25
                     </span>
                     <span className="text-sm text-[#9aada8]">once</span>
                   </p>
                   <p className="mt-3 max-w-[58ch] text-sm leading-relaxed text-[#9aada8]">
-                    Unlimited contacts, recruiter tracking, mailbox and calendar
-                    sync, and the extension — permanently. Outreach runs on your
-                    own Apollo, Resend, and Twilio keys rather than Orbit&apos;s
-                    credits, which is what keeps a one-time price honest.
+                    Unlimited contacts, outreach with email and SMS sending,
+                    recruiter tracking, mailbox and calendar sync, and the
+                    extension — permanently. Contact enrichment runs on your own
+                    Apollo key rather than Orbit&apos;s credits, which is what
+                    keeps a one-time price honest.
                   </p>
 
                   <div className="mt-5">
-                    {lifetime.purchasable && lifetime.seatsLeft > 0 ? (
-                      <>
-                        <LifetimeCheckoutButton />
-                        <p className="mt-2 text-center text-xs text-[#6d807c]">
-                          {lifetime.seatsLeft} of {LIFETIME_SEAT_LIMIT} spots left.
-                        </p>
-                      </>
+                    {lifetime.purchasable ? (
+                      <LifetimeCheckoutButton />
                     ) : (
                       <p className="rounded-xl border border-dashed border-[#f2c14e]/35 px-4 py-3 text-center text-sm text-[#f2c14e]">
-                        {lifetime.seatsLeft === 0
-                          ? "Every Orbit Lifetime spot has been claimed."
-                          : `Opens to the first ${lifetime.seatsLeft}`}
+                        Not on sale yet
                       </p>
                     )}
                   </div>

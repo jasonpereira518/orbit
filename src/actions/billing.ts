@@ -2,8 +2,6 @@
 
 import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
-import { LIFETIME_SEAT_LIMIT } from "@/lib/plan-limits";
-import { countLifetimePurchases } from "@/lib/user-settings";
 import {
   LIFETIME_METADATA_KEY,
   LIFETIME_METADATA_VALUE,
@@ -18,8 +16,8 @@ export type CheckoutResult = { url: string } | { error: string };
 /**
  * Opens a Stripe Checkout Session for the one-time Orbit Lifetime purchase.
  *
- * Returns the URL rather than redirecting, so the caller can surface a refusal (sold out,
- * already owned) inline instead of bouncing the user to a page that explains it.
+ * Returns the URL rather than redirecting, so the caller can surface a refusal (already
+ * owned, not on sale) inline instead of bouncing the user to a page that explains it.
  */
 export async function startLifetimeCheckout(): Promise<CheckoutResult> {
   const userId = await requireUserId();
@@ -31,15 +29,6 @@ export async function startLifetimeCheckout(): Promise<CheckoutResult> {
   const entitlements = await getEntitlements(userId);
   if (entitlements.plan === "lifetime") {
     return { error: "You already have Orbit Lifetime." };
-  }
-
-  // The cap is checked before a session is created, not at fulfilment, so two people
-  // checking out simultaneously on the last seat can both succeed. At 100 seats that
-  // risks selling a small handful extra, which is cheaper than holding inventory —
-  // tighten this with a reservation row if it ever matters.
-  const sold = await countLifetimePurchases();
-  if (sold >= LIFETIME_SEAT_LIMIT) {
-    return { error: "All Orbit Lifetime spots have been claimed." };
   }
 
   const baseUrl = getAppBaseUrl();
@@ -69,11 +58,13 @@ export async function startLifetimeCheckout(): Promise<CheckoutResult> {
   }
 }
 
-/** Seat availability for the pricing page, without exposing Stripe details to the client. */
+/**
+ * Whether Lifetime can actually be bought, without exposing Stripe details to the client.
+ *
+ * Lifetime is sold open-endedly, so this is purely a configuration question: false means
+ * the deployment has no Stripe keys, and the caller should state that rather than render a
+ * button that fails on click.
+ */
 export async function getLifetimeAvailability() {
-  const sold = await countLifetimePurchases().catch(() => 0);
-  return {
-    seatsLeft: Math.max(0, LIFETIME_SEAT_LIMIT - sold),
-    purchasable: isStripeConfigured(),
-  };
+  return { purchasable: isStripeConfigured() };
 }
