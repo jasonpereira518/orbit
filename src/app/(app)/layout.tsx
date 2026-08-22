@@ -8,6 +8,16 @@ import {
 } from "@/lib/auth";
 import { resolveThemePreference } from "@/lib/theme";
 
+/**
+ * No route in this group can be statically prerendered: every one of them resolves a
+ * session, and the layout below redirects anyone without one. Without this, Next treats
+ * pages that take no params as static candidates and prerenders them at build time, where
+ * `requireUserId()` throws `UnauthorizedError` and fails the whole build rather than the
+ * request — which is exactly what /contacts/new started doing once it began reading the
+ * plan. Same reason `(admin)` and `(checkout)` set it.
+ */
+export const dynamic = "force-dynamic";
+
 export default async function AppLayout({
   children,
 }: {
