@@ -18,7 +18,9 @@ const STATES = [
   { value: "all", label: "Any state" },
   { value: "no-key", label: "No AI key" },
   { value: "past-due", label: "Past due" },
+  { value: "failing-ai", label: "AI failing" },
   { value: "inactive", label: "No contacts" },
+  { value: "suspended", label: "Suspended" },
 ];
 
 /** Filter state lives in the URL, so any view is linkable and the back button works. */
@@ -27,20 +29,25 @@ export function UsersFilterBar({
   plan,
   state,
   sort,
+  dir,
 }: {
   q: string;
   plan: string;
   state: string;
   sort: string;
+  dir?: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
   const push = (next: Record<string, string>) => {
-    const params = new URLSearchParams({ q, plan, state, sort, ...next });
+    const params = new URLSearchParams({ q, plan, state, sort, dir: dir ?? "", ...next });
     for (const [key, value] of [...params.entries()]) {
       if (!value || value === "all") params.delete(key);
     }
+    // Any change to the filters invalidates the current page number: staying on page 4 of a
+    // result set that just shrank to one page shows an empty table and reads as "no matches".
+    params.delete("page");
     const query = params.toString();
     startTransition(() => router.push(`/admin/users${query ? `?${query}` : ""}`));
   };
