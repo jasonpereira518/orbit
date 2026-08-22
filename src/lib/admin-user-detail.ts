@@ -77,6 +77,9 @@ export type AdminIdentity = {
   onboardingStep: string | null;
   wizardCompletedAt: Date | null;
   theme: string | null;
+  suspendedAt: Date | null;
+  suspendedReason: string | null;
+  suspendedBy: string | null;
 };
 
 export type AdminBilling = {
@@ -553,6 +556,9 @@ export async function getAdminUserDetail(
       onboardingStep: settings.onboardingStep,
       wizardCompletedAt: settings.wizardCompletedAt,
       theme: settings.theme,
+      suspendedAt: settings.suspendedAt,
+      suspendedReason: settings.suspendedReason,
+      suspendedBy: settings.suspendedBy,
     },
     billing: {
       plan,

@@ -1,5 +1,12 @@
 import Link from "next/link";
-import { AlertTriangle, CircleAlert, Mail, Calendar, Upload } from "lucide-react";
+import {
+  AlertTriangle,
+  Calendar,
+  CircleAlert,
+  Download,
+  Mail,
+  Upload,
+} from "lucide-react";
 import {
   AdminPageHeader,
   AdminPanel,
@@ -61,6 +68,15 @@ export default async function AdminHealthPage() {
               {totalBroken === 1 ? "" : "s"} need attention across all accounts
             </>
           )
+        }
+        action={
+          <a
+            href="/api/admin/export?dataset=health&format=csv"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-fast hover:text-foreground"
+          >
+            <Download className="size-3" aria-hidden />
+            Export CSV
+          </a>
         }
       />
 

@@ -15,8 +15,24 @@ import {
 } from "@/components/admin/primitives";
 import { CompPlanButton } from "@/components/admin/comp-plan-dialog";
 import { RevealContactButton } from "@/components/admin/reveal-contact";
+import {
+  RevealAccountButton,
+  RevealBanner,
+} from "@/components/admin/reveal-grant";
+import { AccountDangerZone } from "@/components/admin/account-actions";
+import { Pager } from "@/components/admin/pager";
 import { getAuditTrail } from "@/actions/admin";
-import { getAdminUserDetail } from "@/lib/admin-user-detail";
+import { requireAdminUserId } from "@/lib/admin";
+import {
+  activeRevealGrant,
+  describeActiveGrant,
+} from "@/lib/admin-reveal";
+import {
+  ADMIN_CONTACTS_PAGE_SIZE,
+  getAdminUserDetail,
+  listAdminContacts,
+} from "@/lib/admin-user-detail";
+import { loadAdminTimeline } from "@/lib/admin-timeline";
 import { formatCostMicros } from "@/lib/ai-pricing";
 import { cn } from "@/lib/utils";
 
@@ -32,6 +48,7 @@ const SECTIONS = [
   { id: "timeline", label: "Timeline" },
   { id: "contacts", label: "Contacts" },
   { id: "audit", label: "Audit trail" },
+  { id: "actions", label: "Danger zone" },
 ];
 
 /**
@@ -44,17 +61,48 @@ const SECTIONS = [
  */
 export default async function AdminUserDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ userId: string }>;
+  searchParams: Promise<{ contactsPage?: string; before?: string }>;
 }) {
   const { userId } = await params;
+  const query = await searchParams;
   const decoded = decodeURIComponent(userId);
+
+  const adminUserId = await requireAdminUserId();
 
   const detail = await getAdminUserDetail(decoded);
   if (!detail) notFound();
 
-  const audit = await getAuditTrail(decoded).catch(() => []);
+  // Resolved once, here, and threaded into every read below. Nothing further down decides
+  // for itself whether it may see content — `grantCovers` re-checks the target at each use.
+  const [grant, grantSummary] = await Promise.all([
+    activeRevealGrant(adminUserId, decoded),
+    describeActiveGrant(adminUserId, decoded),
+  ]);
+
+  const contactsPage = Math.max(
+    Number.parseInt(query.contactsPage ?? "1", 10) || 1,
+    1
+  );
+  const before = query.before ? new Date(query.before) : null;
+
+  const [audit, contactPage, timeline] = await Promise.all([
+    getAuditTrail(decoded).catch(() => []),
+    listAdminContacts(decoded, {
+      page: contactsPage,
+      pageSize: ADMIN_CONTACTS_PAGE_SIZE,
+      grant,
+    }),
+    loadAdminTimeline(decoded, {
+      grant,
+      before: before && !Number.isNaN(before.getTime()) ? before : null,
+    }),
+  ]);
+
   const { identity, billing, configuration, footprint, health, usage } = detail;
+  const unmasked = grantSummary != null;
 
   const ent = billing.entitlements;
   const entitlementFlags: Array<[string, boolean]> = [
@@ -77,20 +125,46 @@ export default async function AdminUserDetailPage({
       <AdminPageHeader
         title={identity.email ?? "Account"}
         subtitle={
-          <span className="font-mono text-xs">{identity.userId}</span>
+          <>
+            <span className="font-mono text-xs">{identity.userId}</span>
+            {identity.suspendedAt && (
+              <span className="ml-2 rounded-md bg-destructive/10 px-1.5 py-0.5 text-xs text-destructive">
+                suspended
+              </span>
+            )}
+          </>
         }
         action={
-          <CompPlanButton
-            targetUserId={identity.userId}
-            email={identity.email}
-            currentPlan={billing.plan}
-            currentSource={billing.source}
-            contactCount={footprint.contacts}
-            compedNote={billing.compedNote}
-            variant="button"
-          />
+          <span className="flex items-center gap-2">
+            <RevealAccountButton
+              targetUserId={identity.userId}
+              email={identity.email}
+              contactCount={footprint.contacts}
+            />
+            <CompPlanButton
+              targetUserId={identity.userId}
+              email={identity.email}
+              currentPlan={billing.plan}
+              currentSource={billing.source}
+              contactCount={footprint.contacts}
+              compedNote={billing.compedNote}
+              variant="button"
+            />
+          </span>
         }
       />
+
+      {/* The banner's absence is what makes "this is masked" trustworthy rather than
+          assumed, so it sits above everything it applies to. */}
+      {grantSummary && (
+        <div className="mb-4">
+          <RevealBanner
+            targetUserId={identity.userId}
+            reason={grantSummary.reason}
+            expiresAt={grantSummary.expiresAt.toISOString()}
+          />
+        </div>
+      )}
 
       <div className="flex gap-8">
         <nav
@@ -517,75 +591,164 @@ export default async function AdminUserDetailPage({
           </section>
 
           <section id="timeline" className="scroll-mt-20">
-            <AdminPanel title="Activity timeline">
-              {detail.timeline.length === 0 ? (
+            <AdminPanel
+              title="Activity timeline"
+              action={
+                <span className="text-xs text-muted-foreground">
+                  {unmasked ? "unmasked" : "structural labels only"}
+                </span>
+              }
+            >
+              {timeline.entries.length === 0 ? (
                 <EmptyState>No recorded activity.</EmptyState>
               ) : (
-                <ul className="space-y-1 text-sm">
-                  {detail.timeline.map((entry, i) => (
-                    <li
-                      key={i}
-                      className="flex items-baseline justify-between gap-4 border-b border-border/40 py-1 last:border-b-0"
+                <>
+                  <ul className="space-y-1 text-sm">
+                    {timeline.entries.map((entry, i) => (
+                      <li
+                        key={`${entry.resourceId ?? i}-${entry.kind}`}
+                        className="flex items-baseline justify-between gap-4 border-b border-border/40 py-1 last:border-b-0"
+                      >
+                        <span className="min-w-0">
+                          <span
+                            className={cn(
+                              "mr-2 inline-block w-20 shrink-0 text-xs",
+                              entry.kind === "admin"
+                                ? "text-accent-foreground"
+                                : "text-muted-foreground"
+                            )}
+                          >
+                            {entry.kind}
+                          </span>
+                          {entry.label}
+                          {/* System output only — import and sync errors, never prose. */}
+                          {entry.detail && (
+                            <span className="ml-2 text-xs text-destructive">
+                              {entry.detail}
+                            </span>
+                          )}
+                        </span>
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          <RelativeTime date={entry.at} /> ago
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  {/* Keyset, not OFFSET: the feed grows at the head while you page. */}
+                  {timeline.hasMore && (
+                    <Link
+                      href={`/admin/users/${encodeURIComponent(identity.userId)}?before=${encodeURIComponent(
+                        timeline.entries[timeline.entries.length - 1].at.toISOString()
+                      )}#timeline`}
+                      className="mt-3 block border-t border-border/40 pt-2 text-xs text-muted-foreground hover:text-primary"
                     >
-                      {/* Structural label only — never a contact name or a message body. */}
-                      <span>{entry.label}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        <RelativeTime date={entry.at} /> ago
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                      Older activity →
+                    </Link>
+                  )}
+                  {before && (
+                    <Link
+                      href={`/admin/users/${encodeURIComponent(identity.userId)}#timeline`}
+                      className="mt-1 block text-xs text-muted-foreground hover:text-primary"
+                    >
+                      ← Back to the latest
+                    </Link>
+                  )}
+                </>
               )}
             </AdminPanel>
           </section>
 
           <section id="contacts" className="scroll-mt-20">
             <AdminPanel
-              title={`Contacts (${detail.contactTotal})`}
+              title={`Contacts (${contactPage.total})`}
               action={
                 <span className="text-xs text-muted-foreground">
-                  names masked · reveal is logged
+                  {unmasked
+                    ? "unmasked · this view is logged"
+                    : "names masked · reveal is logged"}
                 </span>
               }
             >
-              {detail.contacts.length === 0 ? (
+              {contactPage.rows.length === 0 ? (
                 <EmptyState>No contacts.</EmptyState>
               ) : (
-                <AdminTable
-                  head={
-                    <>
-                      <Th>Contact</Th>
-                      <Th>Company</Th>
-                      <Th>Title</Th>
-                      <Th numeric>Logged</Th>
-                      <Th numeric>Added</Th>
-                      <Th />
-                    </>
-                  }
-                >
-                  {detail.contacts.map((contact) => (
-                    <tr
-                      key={contact.id}
-                      className="border-b border-border/40 last:border-b-0"
-                    >
-                      <Td className="font-mono text-xs text-muted-foreground">
-                        {contact.maskedName}
-                      </Td>
-                      <Td>{contact.company ?? "—"}</Td>
-                      <Td>{contact.title ?? "—"}</Td>
-                      <Td numeric>{contact.interactionCount}</Td>
-                      <Td numeric>
-                        <RelativeTime date={contact.createdAt} />
-                      </Td>
-                      <Td className="text-right">
-                        <RevealContactButton
-                          targetUserId={identity.userId}
-                          contactId={contact.id}
-                        />
-                      </Td>
-                    </tr>
-                  ))}
-                </AdminTable>
+                <>
+                  <AdminTable
+                    head={
+                      <>
+                        <Th>Contact</Th>
+                        <Th>Company</Th>
+                        <Th>Title</Th>
+                        {unmasked && <Th>Email</Th>}
+                        <Th numeric>Logged</Th>
+                        <Th numeric>Added</Th>
+                        <Th />
+                      </>
+                    }
+                  >
+                    {contactPage.rows.map((contact) => (
+                      <tr
+                        key={contact.id}
+                        className="border-b border-border/40 last:border-b-0 hover:bg-muted/40"
+                      >
+                        <Td
+                          className={
+                            contact.revealed
+                              ? undefined
+                              : "font-mono text-xs text-muted-foreground"
+                          }
+                        >
+                          <Link
+                            href={`/admin/users/${encodeURIComponent(identity.userId)}/contacts/${contact.id}`}
+                            className="hover:text-primary"
+                          >
+                            {contact.maskedName}
+                          </Link>
+                        </Td>
+                        <Td>{contact.company ?? "—"}</Td>
+                        <Td>{contact.title ?? "—"}</Td>
+                        {/* `revealed` is null on every masked path by construction, which is
+                            why grepping for it finds every possible leak site. */}
+                        {unmasked && (
+                          <Td className="max-w-48">
+                            <span className="block truncate">
+                              {contact.revealed?.email ?? "—"}
+                            </span>
+                          </Td>
+                        )}
+                        <Td numeric>{contact.interactionCount}</Td>
+                        <Td numeric>
+                          <RelativeTime date={contact.createdAt} />
+                        </Td>
+                        <Td className="text-right">
+                          {!unmasked && (
+                            <RevealContactButton
+                              targetUserId={identity.userId}
+                              contactId={contact.id}
+                            />
+                          )}
+                        </Td>
+                      </tr>
+                    ))}
+                  </AdminTable>
+
+                  <div className="mt-3">
+                    <Pager
+                      page={contactPage.page}
+                      pageCount={Math.max(
+                        1,
+                        Math.ceil(contactPage.total / contactPage.pageSize)
+                      )}
+                      total={contactPage.total}
+                      pageSize={contactPage.pageSize}
+                      label="contacts"
+                      hrefFor={(target) =>
+                        `/admin/users/${encodeURIComponent(identity.userId)}?contactsPage=${target}#contacts`
+                      }
+                    />
+                  </div>
+                </>
               )}
             </AdminPanel>
           </section>
@@ -617,6 +780,16 @@ export default async function AdminUserDetailPage({
                 </ul>
               )}
             </AdminPanel>
+          </section>
+
+          <section id="actions" className="scroll-mt-20">
+            <AccountDangerZone
+              targetUserId={identity.userId}
+              email={identity.email}
+              suspendedAt={identity.suspendedAt}
+              suspendedReason={identity.suspendedReason}
+              contactCount={footprint.contacts}
+            />
           </section>
         </div>
       </div>

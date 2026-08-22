@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Download } from "lucide-react";
 import {
   AdminPageHeader,
   AdminPanel,
@@ -71,6 +72,15 @@ export default async function AdminAuditPage({
             {log.total === 1 ? "" : "s"}
             {action ? ` matching ${action}` : ""}
           </>
+        }
+        action={
+          <a
+            href="/api/admin/export?dataset=audit&format=csv"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-fast hover:text-foreground"
+          >
+            <Download className="size-3" aria-hidden />
+            Export CSV
+          </a>
         }
       />
 
