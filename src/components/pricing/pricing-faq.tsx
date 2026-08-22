@@ -20,7 +20,7 @@ const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: "Can I cancel?",
-    a: "Any time, and you keep Orbit Pro until the period you already paid for runs out. After that your account returns to Free — still holding every contact you added while subscribed, even if that is well past the free limit.",
+    a: "Any time, and you keep Orbit Pro until the period you already paid for runs out. After that your account returns to the Free Plan — still holding every contact you added while subscribed, even if that is well past the free limit.",
   },
   {
     q: "What happens to my data if I stop paying?",

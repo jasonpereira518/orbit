@@ -55,7 +55,7 @@ export const ANNUAL_SAVING_PERCENT = Math.round(
 export const PLAN_COPY: PlanCopy[] = [
   {
     id: "free",
-    name: "Free",
+    name: "Free Plan",
     tagline: "The whole core product, for a network you can hold in your head.",
     price: {
       monthly: { amount: "$0", cadence: "forever" },
@@ -86,7 +86,7 @@ export const PLAN_COPY: PlanCopy[] = [
       },
     },
     features: [
-      "Everything in Free, uncapped",
+      "Everything in the Free Plan, uncapped",
       "Unlimited contacts",
       "Outreach campaigns on Orbit's sending credits",
       "Recruiter tracking",

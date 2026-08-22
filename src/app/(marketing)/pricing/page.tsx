@@ -32,7 +32,7 @@ const TRUST = [
   {
     icon: RotateCcw,
     title: "Cancel any time",
-    body: "You keep Orbit Pro until the period you paid for ends, then drop back to Free.",
+    body: "You keep Orbit Pro until the period you paid for ends, then drop back to the Free Plan.",
   },
   {
     icon: Eye,
@@ -104,7 +104,10 @@ export default async function PricingPage() {
         <section className="pt-10 text-center md:pt-16">
           <Reveal className="reveal-celestial">
             <h1 className={`${HEADING} text-[clamp(32px,5vw,56px)]`}>
-              Free for your first {FREE_CONTACT_LIMIT} people.
+              {/* Fraunces' true italic, declared in the root layout — the word that
+                  carries the offer is the word that leans. */}
+              <em className="italic">Free</em> for your first {FREE_CONTACT_LIMIT}{" "}
+              contacts.
             </h1>
           </Reveal>
           <Reveal className="reveal-celestial" delay={90}>
@@ -148,9 +151,9 @@ export default async function PricingPage() {
           <Reveal className="reveal-celestial">
             <h2
               id="pricing-compare"
-              className={`${HEADING} text-[clamp(26px,3.4vw,38px)]`}
+              className={`${HEADING} text-center text-[clamp(26px,3.4vw,38px)]`}
             >
-              Line by line.
+              Compare Plans
             </h2>
           </Reveal>
           <Reveal className="reveal-celestial mt-8 block" delay={80}>

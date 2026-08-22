@@ -25,7 +25,7 @@ export const FREE_CONTACT_LIMIT = 100;
 export const LIFETIME_SEAT_LIMIT = 100;
 
 export const PLAN_LABELS: Record<Plan, string> = {
-  free: "Free",
+  free: "Free Plan",
   orbit: "Orbit Pro",
   lifetime: "Orbit Lifetime",
 };
