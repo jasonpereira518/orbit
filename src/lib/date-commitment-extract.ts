@@ -393,6 +393,7 @@ export async function extractDatedCommitments(
   // Today is repeated in the user turn because Gemini takes systemInstruction as a
   // separate config field, where it carries less weight than inline content.
   const content = await completeJson(userId, {
+    operation: "capture.dates",
     temperature: 0.1,
     maxOutputTokens: 2048,
     system: buildSystemPrompt(todayIso, todayWeekday),

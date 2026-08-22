@@ -29,6 +29,12 @@ export default configured
           status: 503,
         });
       }
+      // Defense in depth for the admin console. Without Clerk keys this is demo mode, where
+      // `requireUserId()` succeeds as the shared "demo-user" — so the route must be gone
+      // entirely, not merely unauthorized. `src/lib/admin.ts` denies it independently.
+      if (new URL(req.url).pathname.startsWith("/admin")) {
+        return new NextResponse(null, { status: 404 });
+      }
       return withPathname(req);
     };
 

@@ -6,7 +6,7 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 config();
 
-import { getDb, schema } from "../src/db";
+import { getDb, rowsOf, schema } from "../src/db";
 import { sql } from "drizzle-orm";
 
   const EXPECTED_TABLES = [
@@ -28,6 +28,14 @@ import { sql } from "drizzle-orm";
   "outreach_messages",
   "chat_threads",
   "chat_messages",
+  "reminder_lists",
+  "import_job_rows",
+  "recruiters",
+  "user_recruiter_links",
+  "gmail_connections",
+  "outlook_connections",
+  "usage_events",
+  "admin_audit_log",
 ] as const;
 
 async function main() {
@@ -43,12 +51,9 @@ async function main() {
     ORDER BY table_name
   `);
 
-  // drizzle-orm execute return shape differs by driver — normalize
-  const tables = (
-    Array.isArray(rows)
-      ? rows
-      : ((rows as { rows?: { table_name: string }[] }).rows ?? [])
-  ).map((r) => (typeof r === "string" ? r : r.table_name));
+  const tables = rowsOf<{ table_name: string }>(rows).map((r) =>
+    typeof r === "string" ? r : r.table_name
+  );
 
   console.log("tables:", tables.join(", ") || "(none)");
 

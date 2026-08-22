@@ -83,3 +83,29 @@ export function aiProviderErrorMessage(err: unknown, provider: string): string {
 
   return base.length > 240 ? `${base.slice(0, 237)}…` : base;
 }
+
+/**
+ * Stable machine code for an AI provider failure.
+ *
+ * Mirrors `aiProviderErrorMessage`'s branches, but yields a low-cardinality token instead
+ * of prose. `usage_events.error_kind` stores this: the user-facing string embeds provider
+ * names, model names and truncated upstream text, which is unqueryable in aggregate.
+ */
+export type AiErrorKind =
+  | "auth"
+  | "rate_limit"
+  | "timeout"
+  | "model_unavailable"
+  | "empty_response"
+  | "other";
+
+export function classifyAiError(err: unknown): AiErrorKind {
+  const base = toUserFacingError(err, "request failed").message;
+
+  if (/^Empty AI response$/i.test(base)) return "empty_response";
+  if (/api key|unauthorized|401|invalid.*key/i.test(base)) return "auth";
+  if (/rate limit|429|quota|resource.?exhausted/i.test(base)) return "rate_limit";
+  if (/timeout|timed out|ETIMEDOUT|AbortError/i.test(base)) return "timeout";
+  if (/model|not found|404/i.test(base)) return "model_unavailable";
+  return "other";
+}
