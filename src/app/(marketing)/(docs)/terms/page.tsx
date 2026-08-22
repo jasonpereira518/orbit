@@ -8,10 +8,10 @@ import {
   DocHero,
   DocHighlights,
   DocSection,
-  MarketingDocShell,
   type Highlight,
 } from "@/components/marketing/marketing-doc";
 import type { TocItem } from "@/components/marketing/doc-toc";
+import { FREE_CONTACT_LIMIT, LIFETIME_SEAT_LIMIT } from "@/lib/plan-limits";
 
 export const metadata: Metadata = {
   title: "Terms of Service — Orbit",
@@ -30,8 +30,8 @@ const HIGHLIGHTS: readonly Highlight[] = [
   },
   {
     icon: Wallet,
-    title: "Free during early access",
-    body: "There's no charge for Orbit itself today. If that changes, you get notice before it applies to you.",
+    title: "Limits gate adding, not access",
+    body: `Passing ${FREE_CONTACT_LIMIT} contacts stops you adding new ones. Nothing already in your orbit is hidden or deleted.`,
   },
   {
     icon: Sparkles,
@@ -55,7 +55,7 @@ const TOC: readonly TocItem[] = [
   { id: "keys", label: "Third-party services" },
   { id: "ai", label: "AI features" },
   { id: "availability", label: "Availability" },
-  { id: "fees", label: "Fees" },
+  { id: "plans", label: "Plans and payment" },
   { id: "ip", label: "Orbit's IP" },
   { id: "termination", label: "Termination" },
   { id: "disclaimers", label: "Disclaimers" },
@@ -68,7 +68,7 @@ const TOC: readonly TocItem[] = [
 
 export default function TermsPage() {
   return (
-    <MarketingDocShell active="/terms">
+    <>
       <DocHero
         eyebrow="Terms of Service"
         title="The deal between you and Orbit."
@@ -86,10 +86,10 @@ export default function TermsPage() {
         <DocSection id="agreement" index={1} title="The agreement">
           <p>
             These Terms of Service (the <strong>Terms</strong>) are an agreement
-            between you and {OPERATOR}, who operates Orbit (
-            <strong>we</strong>, <strong>us</strong>). By creating an account,
-            joining the waitlist, or otherwise using Orbit, you agree to them.
-            If you don&apos;t agree, don&apos;t use the product.
+            between you and {OPERATOR}, who operates Orbit (<strong>we</strong>,{" "}
+            <strong>us</strong>). By creating an account, joining the waitlist,
+            or otherwise using Orbit, you agree to them. If you don&apos;t
+            agree, don&apos;t use the product.
           </p>
           <p>
             The <Link href="/privacy">Privacy Policy</Link> is part of this
@@ -215,20 +215,21 @@ export default function TermsPage() {
           title="Third-party services and your API keys"
         >
           <p>
-            Orbit integrates with services including Clerk, hosted Postgres, AI
-            providers (Google Gemini, OpenAI, Anthropic), Apollo, Resend,
-            Twilio, calendar providers, and LinkedIn CSV exports. Each has its
-            own terms and privacy policy, and your use of them through Orbit is
-            also subject to those.
+            Orbit integrates with services including Clerk, hosted Postgres,
+            Vercel, Stripe, AI providers (Google Gemini, OpenAI, Anthropic),
+            Apollo, Resend, Twilio, Google and Microsoft mail and calendar, and
+            LinkedIn CSV exports. Each has its own terms and privacy policy, and
+            your use of them through Orbit is also subject to those.
           </p>
           <p>
             Where you supply your own API keys, you are contracting directly
             with that provider: their usage limits, costs, and content rules
-            apply to you, and any charges they bill are yours to pay. We are not
-            responsible for a third-party service changing, degrading,
-            rate-limiting, or discontinuing what it offers, and any given
-            integration may be removed from Orbit if it becomes impractical to
-            maintain.
+            apply to you, and any charges they bill are yours to pay. Orbit adds
+            no markup to what your providers charge, and equally takes no
+            responsibility for it. We are not responsible for a third-party
+            service changing, degrading, rate-limiting, or discontinuing what it
+            offers, and any given integration may be removed from Orbit if it
+            becomes impractical to maintain.
           </p>
         </DocSection>
 
@@ -236,7 +237,8 @@ export default function TermsPage() {
           <p>
             AI features are optional and off until you configure them. When you
             use one, relevant content from your Orbit data is sent to the
-            provider you selected so it can generate a response.
+            provider you selected so it can generate a response, billed to your
+            own key.
           </p>
           <p>
             AI output is probabilistic. It can be inaccurate, outdated,
@@ -262,13 +264,45 @@ export default function TermsPage() {
           </p>
         </DocSection>
 
-        <DocSection id="fees" index={10} title="Fees">
+        <DocSection id="plans" index={10} title="Plans and payment">
           <p>
-            Orbit is free to use during early access. If paid plans are
-            introduced later, we will give reasonable notice before any charge
-            applies to your account, and you will be able to stop using the
-            product instead of paying. Costs you incur directly with third-party
-            providers through your own API keys are always yours.
+            The Free Plan covers up to {FREE_CONTACT_LIMIT} contacts and costs
+            nothing. Paid plans — Orbit Pro, billed monthly or annually, and
+            Orbit Lifetime, a one-time purchase limited to the first{" "}
+            {LIFETIME_SEAT_LIMIT} buyers — lift that cap. Current prices are on
+            the <Link href="/pricing">pricing page</Link> and apply from the
+            moment you subscribe.
+          </p>
+          <ul>
+            <li>
+              <strong>Reaching a limit only stops you adding people.</strong>{" "}
+              Everything already in your account stays visible, editable, and
+              exportable — including contacts added while you were subscribed,
+              if you later drop back to Free.
+            </li>
+            <li>
+              <strong>Cancel whenever you like.</strong> Orbit Pro runs to the
+              end of the period you have already paid for, then your account
+              returns to the Free Plan. Cancelling part-way through a period
+              does not trigger a pro-rated refund.
+            </li>
+            <li>
+              <strong>Payments are handled by our providers.</strong>{" "}
+              Subscriptions run through Clerk&apos;s billing and the one-time
+              tier through Stripe. Their terms govern the transaction itself,
+              and taxes are added where the law requires.
+            </li>
+            <li>
+              <strong>AI, enrichment, and sending costs are separate.</strong>{" "}
+              Where a feature runs on your own provider key, that provider bills
+              you directly and no Orbit plan covers it.
+            </li>
+          </ul>
+          <p>
+            Prices may change. Existing subscribers get notice before a change
+            takes effect and can cancel instead of accepting it. If something
+            goes wrong with a charge, write to us — a solo product would rather
+            fix a billing mistake than argue about it.
           </p>
         </DocSection>
 
@@ -277,8 +311,7 @@ export default function TermsPage() {
             The Orbit software, interface, design, and name belong to us or our
             licensors. These Terms grant you a personal, non-transferable,
             revocable right to use the product as offered — nothing more. You
-            may not copy the product, use its branding, or present it as your
-            own.
+            may not use its branding or present the product as your own.
           </p>
           <p>
             If you send us feedback or ideas, we may use them freely to improve
@@ -331,8 +364,7 @@ export default function TermsPage() {
           <p>
             Our total liability for all claims relating to Orbit is limited to
             the greater of the amount you paid us for the product in the twelve
-            months before the claim, or one hundred US dollars. Since Orbit is
-            currently free, that will usually be one hundred US dollars.
+            months before the claim, or one hundred US dollars.
           </p>
           <p>
             Nothing here limits liability that cannot be limited by law,
@@ -393,8 +425,8 @@ export default function TermsPage() {
         title="Still have a question about the fine print?"
         body="Orbit is small enough that you can ask the person who built it and get an actual answer."
         primary={{ href: "/contact", label: "Get in touch" }}
-        secondary={{ href: "/privacy", label: "Read the privacy policy" }}
+        secondary={{ href: "/pricing", label: "See what it costs" }}
       />
-    </MarketingDocShell>
+    </>
   );
 }

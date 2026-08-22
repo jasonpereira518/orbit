@@ -1,104 +1,98 @@
 import Link from "next/link";
 import type { ComponentType, JSX, ReactNode } from "react";
-import { LandingFooter } from "@/components/landing/landing-footer";
+import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
+import { DocSwitcher } from "@/components/marketing/doc-switcher";
 import { DocToc, type TocItem } from "@/components/marketing/doc-toc";
+import { Reveal } from "@/components/motion/reveal";
 import { OrbitLogo } from "@/components/orbit-logo";
+import { BackControl } from "@/components/pricing/back-control";
 import { cn } from "@/lib/utils";
 
-const DOC_NAV = [
-  { href: "/privacy", label: "Privacy" },
-  { href: "/terms", label: "Terms" },
-  { href: "/contact", label: "Contact" },
-] as const;
-
-export type DocRoute = (typeof DOC_NAV)[number]["href"];
-
 /**
- * Page chrome for /privacy, /terms and /contact. These pages deliberately
- * inherit the landing page's dark space canvas (not the themed app shell) so
- * the marketing surface reads as one continuous site.
+ * Chrome for /privacy, /terms and /contact. These pages inherit the landing
+ * page's deep-space canvas rather than the themed app shell, so the whole
+ * marketing surface reads as one site.
+ *
+ * Rendered from `(docs)/layout.tsx` so it survives navigation between the
+ * three documents — the switcher's bubble animation depends on that.
  */
 export function MarketingDocShell({
-  active,
+  clerkOn,
+  demoMode,
+  signedIn,
   children,
 }: {
-  active: DocRoute;
+  clerkOn: boolean;
+  demoMode: boolean;
+  signedIn: boolean;
   children: ReactNode;
 }): JSX.Element {
+  const authProps = { clerkOn, demoMode, signedIn };
+
   return (
-    <div
-      className="relative flex min-h-screen flex-col overflow-hidden bg-[#05070f] text-[#e8f3f1]"
-      style={{ backgroundImage: "var(--landing-page-gradient)" }}
-    >
+    // `landing-root` is load-bearing: globals.css paints the body deep-space while it
+    // is mounted, which is what stops a light strip appearing on overscroll. The
+    // starfield renders position:fixed, so this root must stay free of transform/filter.
+    <div className="landing-root relative overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
       <LandingStarfield />
 
-      <header className="relative z-20 border-b border-[#e8f3f1]/[0.07]">
-        <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-6 py-4 md:px-10 md:py-5">
+      <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-6 py-6 sm:gap-4 md:px-10">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-4">
+          <BackControl />
           <Link
             href="/"
-            className="flex items-center gap-2.5 transition-opacity hover:opacity-85"
+            className="flex items-center gap-2.5 transition-opacity hover:opacity-80"
             aria-label="Orbit home"
           >
-            <OrbitLogo size="md" priority />
-            <span className="font-[family-name:var(--font-display)] text-xl tracking-tight text-[#e8f3f1]">
+            <OrbitLogo size="sm" />
+            {/* Below sm the wordmark is what pushes the auth controls into
+                wrapping — the logo alone still identifies the link. */}
+            <span className="hidden font-[family-name:var(--font-display)] text-[17px] tracking-tight text-[#e8f3f1] sm:inline">
               Orbit
             </span>
           </Link>
-
-          <div className="flex items-center gap-2 sm:gap-3">
-            <Link
-              href="/"
-              className="hidden rounded-lg px-3 py-2 text-sm text-[#9aada8] transition-colors hover:text-[#e8f3f1] sm:inline-flex"
-            >
-              Back to home
-            </Link>
-            <Link
-              href="/sign-in"
-              className="rounded-lg bg-[#e8f3f1] px-3.5 py-2 text-sm font-medium text-[#0f3d3e] transition-colors hover:bg-white"
-            >
-              Sign in
-            </Link>
-          </div>
         </div>
+        <LandingAuthControls {...authProps} variant="header" />
       </header>
 
-      <main className="relative z-10 flex-1">
-        <DocNav active={active} />
-        {children}
-      </main>
+      <div className="relative z-10 mx-auto w-full max-w-6xl px-6 md:px-10">
+        <DocSwitcher />
+      </div>
 
-      <LandingFooter />
-    </div>
-  );
-}
+      <main className="relative z-10">{children}</main>
 
-function DocNav({ active }: { active: DocRoute }) {
-  return (
-    <div className="mx-auto w-full max-w-6xl px-6 pt-8 md:px-10 md:pt-10">
-      <nav
-        aria-label="Legal and contact"
-        className="flex w-fit max-w-full flex-wrap items-center gap-1 rounded-full border border-[#e8f3f1]/[0.09] bg-[#e8f3f1]/[0.025] p-1"
-      >
-        {DOC_NAV.map((item) => {
-          const isActive = item.href === active;
-          return (
+      <footer className="relative z-10 mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-4 px-6 py-12 md:px-10">
+        <Link href="/" className="flex items-center gap-2.5" aria-label="Orbit home">
+          <OrbitLogo size="sm" />
+          <span className="font-[family-name:var(--font-display)] text-[17px] tracking-tight text-[#e8f3f1]">
+            Orbit
+          </span>
+        </Link>
+        <div className="flex items-center gap-6">
+          {[
+            { href: "/pricing", label: "Pricing" },
+            { href: "/privacy", label: "Privacy" },
+            { href: "/contact", label: "Contact" },
+          ].map((link) => (
             <Link
-              key={item.href}
-              href={item.href}
-              aria-current={isActive ? "page" : undefined}
-              className={cn(
-                "rounded-full px-4 py-1.5 text-sm transition-colors",
-                isActive
-                  ? "bg-[#e8f3f1]/[0.1] text-[#e8f3f1]"
-                  : "text-[#9aada8] hover:text-[#e8f3f1]"
-              )}
+              key={link.href}
+              href={link.href}
+              className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
             >
-              {item.label}
+              {link.label}
             </Link>
-          );
-        })}
-      </nav>
+          ))}
+        </div>
+        <a
+          href="https://jasonpereira.live/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="landing-credit-shimmer text-sm"
+        >
+          By Jason Pereira
+        </a>
+      </footer>
     </div>
   );
 }
@@ -125,19 +119,23 @@ export function DocHero({
         }}
       />
 
-      <div className="landing-fade motion-reduce:translate-y-0 motion-reduce:opacity-100">
+      <Reveal className="reveal-celestial">
         <p className="text-xs uppercase tracking-[0.18em] text-landing-accent">
           {eyebrow}
         </p>
-        <h1 className="mt-4 max-w-[17ch] font-[family-name:var(--font-display)] text-[clamp(40px,6.6vw,74px)] font-normal leading-[1.03] tracking-[-0.03em] text-[#e8f3f1]">
+        <h1 className="mt-4 max-w-[17ch] font-[family-name:var(--font-display)] text-[clamp(38px,6.4vw,72px)] font-normal leading-[1.04] tracking-[-0.03em] text-[#e8f3f1]">
           {title}
         </h1>
         <p className="mt-6 max-w-[54ch] text-base leading-[1.75] text-[#9aada8] sm:text-lg">
           {lede}
         </p>
+      </Reveal>
 
-        {meta && meta.length > 0 && (
-          <dl className="mt-8 flex flex-wrap gap-x-10 gap-y-4 border-t border-[#e8f3f1]/[0.07] pt-6">
+      {meta && meta.length > 0 && (
+        <Reveal className="reveal-celestial" delay={90}>
+          {/* A grid rather than a wrapping flex row: at 390px the third entry
+              would otherwise drop to its own line and lose the shared baseline. */}
+          <dl className="mt-8 grid grid-cols-2 gap-x-8 gap-y-5 border-t border-[#e8f3f1]/[0.07] pt-6 sm:flex sm:flex-wrap sm:gap-x-12">
             {meta.map((entry) => (
               <div key={entry.label}>
                 <dt className="text-[11px] uppercase tracking-[0.16em] text-[#6d807c]">
@@ -147,8 +145,8 @@ export function DocHero({
               </div>
             ))}
           </dl>
-        )}
-      </div>
+        </Reveal>
+      )}
     </section>
   );
 }
@@ -168,13 +166,19 @@ export function DocHighlights({
   items: readonly Highlight[];
 }): JSX.Element {
   return (
-    <section className="landing-reveal mx-auto w-full max-w-6xl px-6 pb-16 md:px-10 md:pb-20">
-      <p className="text-xs uppercase tracking-[0.18em] text-[#6d807c]">
-        {kicker}
-      </p>
+    <section className="mx-auto w-full max-w-6xl px-6 pb-16 md:px-10 md:pb-20">
+      <Reveal className="reveal-celestial">
+        <p className="text-xs uppercase tracking-[0.18em] text-[#6d807c]">
+          {kicker}
+        </p>
+      </Reveal>
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {items.map(({ icon: Icon, title, body }) => (
-          <div key={title} className="landing-glass rounded-2xl p-5">
+        {items.map(({ icon: Icon, title, body }, index) => (
+          <Reveal
+            key={title}
+            className="reveal-celestial landing-glass rounded-2xl p-5"
+            delay={index * 60}
+          >
             <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#f2c14e]/25 bg-[#f2c14e]/[0.08]">
               <Icon className="h-[18px] w-[18px] text-landing-accent" />
             </span>
@@ -182,7 +186,7 @@ export function DocHighlights({
             <p className="mt-1.5 text-sm leading-[1.65] text-[#9aada8]">
               {body}
             </p>
-          </div>
+          </Reveal>
         ))}
       </div>
     </section>
@@ -198,7 +202,7 @@ export function DocBody({
   children: ReactNode;
 }): JSX.Element {
   return (
-    <div className="mx-auto w-full max-w-6xl px-6 pb-20 md:px-10 md:pb-28">
+    <div className="mx-auto w-full max-w-6xl px-6 pb-20 md:px-10 md:pb-24">
       <div className="grid gap-10 lg:grid-cols-[196px_minmax(0,1fr)] lg:gap-16">
         <DocToc items={toc} />
         <div className="min-w-0 space-y-14">{children}</div>
@@ -219,7 +223,11 @@ export function DocSection({
   children: ReactNode;
 }): JSX.Element {
   return (
-    <section id={id} className="landing-reveal scroll-mt-24">
+    <Reveal as="section" className="reveal-celestial scroll-mt-24">
+      {/* The anchor is a zero-height sibling rather than an id on the Reveal
+          itself: <Reveal> hides pending sections, and an id inside a hidden
+          element still scrolls, but a TOC click would land on nothing. */}
+      <span id={id} className="block scroll-mt-24" />
       <div className="flex items-baseline gap-3.5">
         <span
           aria-hidden="true"
@@ -232,7 +240,7 @@ export function DocSection({
         </h2>
       </div>
       <div className="doc-prose mt-4 max-w-[68ch]">{children}</div>
-    </section>
+    </Reveal>
   );
 }
 
@@ -312,13 +320,13 @@ export function DocFooterCta({
   secondary?: { href: string; label: string };
 }): JSX.Element {
   const primaryClass =
-    "inline-flex items-center justify-center rounded-xl bg-[#e8f3f1] px-5 py-3 text-sm font-medium text-[#0f3d3e] transition-colors hover:bg-white";
+    "inline-flex items-center justify-center rounded-full bg-[#e8f3f1] px-5 py-3 text-sm font-medium text-[#0f3d3e] transition-colors hover:bg-white";
   const secondaryClass =
-    "inline-flex items-center justify-center rounded-xl border border-[#e8f3f1]/20 bg-[#e8f3f1]/[0.04] px-5 py-3 text-sm text-[#e8f3f1] transition-colors hover:border-[#e8f3f1]/35 hover:bg-[#e8f3f1]/[0.08]";
+    "inline-flex items-center justify-center rounded-full border border-[#e8f3f1]/20 bg-[#e8f3f1]/[0.04] px-5 py-3 text-sm text-[#e8f3f1] transition-colors hover:border-[#e8f3f1]/35 hover:bg-[#e8f3f1]/[0.08]";
 
   return (
-    <section className="landing-reveal mx-auto w-full max-w-6xl px-6 pb-20 md:px-10 md:pb-24">
-      <div className="landing-glass flex flex-col gap-6 rounded-3xl p-8 sm:p-10 lg:flex-row lg:items-center lg:justify-between">
+    <section className="mx-auto w-full max-w-6xl px-6 pb-8 md:px-10">
+      <Reveal className="reveal-celestial landing-glass flex flex-col gap-6 rounded-3xl p-8 sm:p-10 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h2 className="max-w-[20ch] font-[family-name:var(--font-display)] text-[clamp(24px,3.2vw,34px)] font-normal leading-[1.15] tracking-tight text-[#e8f3f1]">
             {title}
@@ -348,7 +356,7 @@ export function DocFooterCta({
             </Link>
           )}
         </div>
-      </div>
+      </Reveal>
     </section>
   );
 }

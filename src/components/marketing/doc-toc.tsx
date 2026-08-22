@@ -1,27 +1,33 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type TocItem = { id: string; label: string };
 
 /**
- * Sticky "on this page" rail for the long legal documents. Renders as a
- * collapsed disclosure below lg, where there is no room for a side rail.
+ * Sticky "on this page" rail for the long legal documents. Below lg, where
+ * there is no room for a side rail, it collapses into a disclosure.
  */
 export function DocToc({ items }: { items: readonly TocItem[] }) {
   const [active, setActive] = useState<string>(items[0]?.id ?? "");
+  const detailsRef = useRef<HTMLDetailsElement>(null);
 
   useEffect(() => {
+    // Anchors are zero-height spans; spy on the section that owns each one so
+    // the highlight tracks a real block instead of a single crossing line.
     const sections = items
-      .map((item) => document.getElementById(item.id))
-      .filter((el): el is HTMLElement => el !== null);
+      .map((item) => document.getElementById(item.id)?.closest("section"))
+      .filter((el): el is HTMLElement => el instanceof HTMLElement);
     if (sections.length === 0) return;
 
-    // The bottom inset keeps the highlight on the section occupying the top
-    // of the viewport rather than jumping to whatever is barely visible at
-    // the fold.
+    const idFor = new Map(
+      sections.map((section, i) => [section, items[i].id] as const)
+    );
+
+    // The bottom inset keeps the highlight on the section occupying the top of
+    // the viewport rather than jumping to whatever is barely visible at the fold.
     const observer = new IntersectionObserver(
       (entries) => {
         const topMost = entries
@@ -29,7 +35,8 @@ export function DocToc({ items }: { items: readonly TocItem[] }) {
           .sort(
             (a, b) => a.boundingClientRect.top - b.boundingClientRect.top
           )[0];
-        if (topMost) setActive(topMost.target.id);
+        const id = topMost && idFor.get(topMost.target as HTMLElement);
+        if (id) setActive(id);
       },
       { rootMargin: "-88px 0px -68% 0px", threshold: 0 }
     );
@@ -47,6 +54,11 @@ export function DocToc({ items }: { items: readonly TocItem[] }) {
             <a
               href={`#${item.id}`}
               aria-current={isActive ? "true" : undefined}
+              // Collapse the mobile disclosure on pick, so the jump lands on
+              // content rather than on a list that is still covering it.
+              onClick={() => {
+                if (detailsRef.current) detailsRef.current.open = false;
+              }}
               className={cn(
                 "group flex items-start gap-2.5 rounded-lg py-1.5 pl-2.5 pr-2 text-[13px] leading-snug transition-colors",
                 isActive
@@ -73,7 +85,10 @@ export function DocToc({ items }: { items: readonly TocItem[] }) {
 
   return (
     <>
-      <details className="landing-glass doc-faq rounded-2xl px-4 py-3 lg:hidden">
+      <details
+        ref={detailsRef}
+        className="landing-glass doc-faq rounded-2xl px-4 py-3 lg:hidden"
+      >
         <summary className="flex items-center justify-between text-sm text-[#e8f3f1]">
           On this page
           <ChevronDown
@@ -86,7 +101,7 @@ export function DocToc({ items }: { items: readonly TocItem[] }) {
 
       <nav
         aria-label="On this page"
-        className="hidden lg:block lg:self-start lg:sticky lg:top-24"
+        className="hidden lg:sticky lg:top-8 lg:block lg:self-start"
       >
         <p className="mb-3 pl-2.5 text-[11px] uppercase tracking-[0.18em] text-[#6d807c]">
           On this page
