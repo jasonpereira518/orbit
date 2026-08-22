@@ -13,10 +13,15 @@ import {
   imports,
   interactions,
   outlookConnections,
+  outreachCampaigns,
+  outreachMessages,
+  outreachProspects,
   reminders,
+  suggestedReminders,
   tags,
   usageEvents,
   userGoals,
+  userRecruiterLinks,
   userSettings,
 } from "@/db/schema";
 import { entitlementsForPlan, resolvePlan } from "@/lib/entitlements";
@@ -121,12 +126,18 @@ export type AdminFootprint = {
   companies: number;
   interactions: number;
   reminders: number;
+  remindersPending: number;
   tags: number;
   chatThreads: number;
   chatMessages: number;
   imports: number;
   embeddings: number;
   suggestions: number;
+  suggestedReminders: number;
+  outreachCampaigns: number;
+  outreachProspects: number;
+  outreachMessagesSent: number;
+  recruiterLinks: number;
   firstContactAt: Date | null;
   lastWriteAt: Date | null;
 };
@@ -452,6 +463,40 @@ export async function getAdminUserDetail(
     interactionCounts.map((r) => [r.contactId, r.n])
   );
 
+  /**
+   * The rest of the footprint, as scalar subqueries in one statement.
+   *
+   * Deliberately not eight more entries in the `Promise.all` above: on Neon HTTP every
+   * entry is its own round trip, and this page already makes nineteen. One statement that
+   * the planner runs as eight index lookups is the same work with a tenth of the latency.
+   */
+  const [extra] = await db
+    .select({
+      remindersPending: sql<number>`(
+        SELECT count(*)::int FROM ${reminders}
+        WHERE ${reminders.userId} = ${userId} AND ${reminders.status} = 'pending')`,
+      suggestedReminders: sql<number>`(
+        SELECT count(*)::int FROM ${suggestedReminders}
+        WHERE ${suggestedReminders.userId} = ${userId})`,
+      outreachCampaigns: sql<number>`(
+        SELECT count(*)::int FROM ${outreachCampaigns}
+        WHERE ${outreachCampaigns.userId} = ${userId})`,
+      outreachProspects: sql<number>`(
+        SELECT count(*)::int FROM ${outreachProspects} p
+        JOIN ${outreachCampaigns} c ON c.id = p.campaign_id
+        WHERE c.user_id = ${userId})`,
+      outreachMessagesSent: sql<number>`(
+        SELECT count(*)::int FROM ${outreachMessages} m
+        JOIN ${outreachProspects} p ON p.id = m.prospect_id
+        JOIN ${outreachCampaigns} c ON c.id = p.campaign_id
+        WHERE c.user_id = ${userId} AND m.status = 'sent')`,
+      recruiterLinks: sql<number>`(
+        SELECT count(*)::int FROM ${userRecruiterLinks}
+        WHERE ${userRecruiterLinks.userId} = ${userId})`,
+    })
+    .from(userSettings)
+    .where(eq(userSettings.userId, userId));
+
   const health: AdminHealthItem[] = [];
 
   for (const job of importRows) {
@@ -588,12 +633,18 @@ export async function getAdminUserDetail(
       companies: companyAgg[0]?.n ?? 0,
       interactions: interactionAgg[0]?.n ?? 0,
       reminders: reminderAgg[0]?.n ?? 0,
+      remindersPending: extra?.remindersPending ?? 0,
       tags: tagAgg[0]?.n ?? 0,
       chatThreads: threadAgg[0]?.n ?? 0,
       chatMessages: messageAgg[0]?.n ?? 0,
       imports: importRows.length,
       embeddings: embeddingAgg[0]?.n ?? 0,
       suggestions: suggestionAgg[0]?.n ?? 0,
+      suggestedReminders: extra?.suggestedReminders ?? 0,
+      outreachCampaigns: extra?.outreachCampaigns ?? 0,
+      outreachProspects: extra?.outreachProspects ?? 0,
+      outreachMessagesSent: extra?.outreachMessagesSent ?? 0,
+      recruiterLinks: extra?.recruiterLinks ?? 0,
       firstContactAt: toDate(contactAgg[0]?.firstAt),
       lastWriteAt: maxDate(
         contactAgg[0]?.lastAt,

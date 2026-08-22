@@ -411,7 +411,14 @@ export default async function AdminUserDetailPage({
                 <DefinitionRow label="Interactions">
                   {footprint.interactions}
                 </DefinitionRow>
-                <DefinitionRow label="Reminders">{footprint.reminders}</DefinitionRow>
+                <DefinitionRow label="Reminders">
+                  {footprint.reminders}
+                  {footprint.remindersPending > 0 &&
+                    ` (${footprint.remindersPending} pending)`}
+                </DefinitionRow>
+                <DefinitionRow label="Suggested reminders">
+                  {footprint.suggestedReminders}
+                </DefinitionRow>
                 <DefinitionRow label="Tags">{footprint.tags}</DefinitionRow>
                 <DefinitionRow label="Chat threads">
                   {footprint.chatThreads}
@@ -425,6 +432,19 @@ export default async function AdminUserDetailPage({
                 </DefinitionRow>
                 <DefinitionRow label="Suggestions">
                   {footprint.suggestions}
+                </DefinitionRow>
+                <DefinitionRow label="Outreach campaigns">
+                  {footprint.outreachCampaigns}
+                  {footprint.outreachProspects > 0 &&
+                    ` · ${footprint.outreachProspects} prospects`}
+                </DefinitionRow>
+                {/* Hosted sends run on Orbit's own Resend and Twilio credits, so this is
+                    the one footprint number that costs money. */}
+                <DefinitionRow label="Outreach sent">
+                  {footprint.outreachMessagesSent}
+                </DefinitionRow>
+                <DefinitionRow label="Recruiter links">
+                  {footprint.recruiterLinks}
                 </DefinitionRow>
                 <DefinitionRow label="First contact">
                   {footprint.firstContactAt ? (
