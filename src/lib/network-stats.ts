@@ -1,12 +1,8 @@
 import { count, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import {
-  companies,
-  contacts,
-  interactions,
-  userGoals,
-} from "@/db/schema";
-import { computeCloseness } from "@/lib/closeness";
+import { companies, contacts, interactions } from "@/db/schema";
+import { closenessTier } from "@/lib/closeness";
+import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { daysAgo } from "@/lib/duplicates";
 
 export type NetworkStatItem = {
@@ -77,59 +73,74 @@ function pickHeadline(input: {
   };
 }
 
-export async function getNetworkStats(userId: string): Promise<NetworkStats> {
+export async function getNetworkStats(
+  userId: string,
+  preloaded?: {
+    contacts: Array<{
+      id: string;
+      relationshipScore: number | null;
+      lastInteractionAt: Date | string | null;
+      createdAt: Date | string;
+      company: string | null;
+      title: string | null;
+      industry: string | null;
+      howMet: string | null;
+      notes: string | null;
+      aiSummary: string | null;
+      keyFacts: string[] | null;
+      sharedInterests: string[] | null;
+      nextFollowUpAt: Date | string | null;
+      contactTags: Array<{ tag: { name: string } }>;
+    }>;
+    interactionCount?: number;
+    companyCount?: number;
+  }
+): Promise<NetworkStats> {
   const db = await getDb();
 
-  const [allContacts, interactionCountRows, companyCountRows, allGoals] =
-    await Promise.all([
-      db.query.contacts.findMany({
-        where: eq(contacts.userId, userId),
-        with: { contactTags: { with: { tag: true } } },
-      }),
-      db
-        .select({ value: count() })
-        .from(interactions)
-        .where(eq(interactions.userId, userId)),
-      db
-        .select({ value: count() })
-        .from(companies)
-        .where(eq(companies.userId, userId)),
-      db.query.userGoals.findMany({ where: eq(userGoals.userId, userId) }),
-    ]);
+  const [
+    allContacts,
+    interactionCountRows,
+    companyCountRows,
+    closenessCohort,
+  ] = await Promise.all([
+    preloaded?.contacts
+      ? Promise.resolve(preloaded.contacts)
+      : db.query.contacts.findMany({
+          where: eq(contacts.userId, userId),
+          with: { contactTags: { with: { tag: true } } },
+        }),
+    preloaded?.interactionCount != null
+      ? Promise.resolve([{ value: preloaded.interactionCount }])
+      : db
+          .select({ value: count() })
+          .from(interactions)
+          .where(eq(interactions.userId, userId)),
+    preloaded?.companyCount != null
+      ? Promise.resolve([{ value: preloaded.companyCount }])
+      : db
+          .select({ value: count() })
+          .from(companies)
+          .where(eq(companies.userId, userId)),
+    getClosenessCohort(userId),
+  ]);
 
   const interactionCount = interactionCountRows[0]?.value ?? 0;
   const companyCount = companyCountRows[0]?.value ?? 0;
 
   const now = new Date();
-  const activeGoals = allGoals.filter((g) => g.active).map((g) => g.text);
-
   let innerCircle = 0;
-  let closenessSum = 0;
   let dormant30 = 0;
   let overdueFollowUps = 0;
   let oldestContactAt: Date | null = null;
 
   for (const c of allContacts) {
-    const breakdown = computeCloseness(
-      {
-        relationshipScore: c.relationshipScore,
-        lastInteractionAt: c.lastInteractionAt,
-        createdAt: c.createdAt,
-        company: c.company,
-        title: c.title,
-        industry: c.industry,
-        howMet: c.howMet,
-        notes: c.notes,
-        aiSummary: c.aiSummary,
-        keyFacts: c.keyFacts,
-        sharedInterests: c.sharedInterests,
-        tags: c.contactTags.map((ct) => ct.tag.name),
-      },
-      activeGoals
-    );
+    const breakdown = closenessCohort.byId.get(c.id);
 
-    closenessSum += breakdown.closeness;
-    if (breakdown.tier === "inner") innerCircle++;
+    // Counted by absolute score rather than the displayed tier: inner/mid/outer
+    // are quota shares, so counting those would report a fixed fraction of the
+    // network as "closest ties" however cold everything got.
+    if (breakdown && closenessTier(breakdown.raw) === "inner") innerCircle++;
 
     if (c.lastInteractionAt && daysAgo(c.lastInteractionAt) >= 30) {
       dormant30++;
@@ -150,10 +161,10 @@ export async function getNetworkStats(userId: string): Promise<NetworkStats> {
       )
     : 0;
 
-  const avgCloseness =
-    allContacts.length > 0
-      ? Math.round((closenessSum / allContacts.length) * 100)
-      : 0;
+  // Deliberately the mean of the *absolute* scores. The blended score is half
+  // percentile, whose mean is 0.5 by construction, so averaging that would park
+  // this stat near 50% and stop it reacting to the network going cold.
+  const avgCloseness = Math.round(closenessCohort.averageRaw * 100);
 
   const { headline, subheadline } = pickHeadline({
     contacts: allContacts.length,

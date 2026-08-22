@@ -230,6 +230,20 @@ export function clusterBrandColor(
   return companyBrandColor(name);
 }
 
+/** Lerp a hex color toward white (0 = unchanged, 1 = pure white). */
+export function mixWithWhite(hex: string, whiteRatio: number): string {
+  const raw = hex.replace("#", "");
+  if (raw.length !== 6) return hex;
+  const t = Math.min(1, Math.max(0, whiteRatio));
+  const channel = (i: number) => {
+    const v = parseInt(raw.slice(i, i + 2), 16);
+    return Math.round(v + (255 - v) * t)
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return `#${channel(0)}${channel(2)}${channel(4)}`;
+}
+
 export function withAlpha(hex: string, alpha: number): string {
   const raw = hex.replace("#", "");
   if (raw.length !== 6) return hex;

@@ -15,6 +15,8 @@ import {
   toNamedGraphClusters,
 } from "@/lib/constellation-clusters";
 import { computeNetworkMetrics } from "@/lib/network-metrics";
+import { getClosenessCohort } from "@/lib/closeness-cohort";
+import { clientContactAvatarUrl } from "@/lib/contact-avatar-url";
 
 const AUTO_SUGGESTION_TYPES = [
   "dormant_high_value",
@@ -289,7 +291,7 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
 
 const SUGGESTION_REFRESH_TTL_MS = 30 * 60 * 1000;
 
-async function maybeRefreshOutreachSuggestions(userId: string) {
+export async function maybeRefreshOutreachSuggestions(userId: string) {
   const db = await getDb();
   const latest = await db.query.aiSuggestions.findFirst({
     where: and(
@@ -311,38 +313,54 @@ async function maybeRefreshOutreachSuggestions(userId: string) {
 
 export async function getDashboardData(
   userId: string,
-  options?: { userName?: string }
+  // userName may be a promise so the Clerk profile fetch can run concurrently
+  // with the DB queries below (its only consumer is graphPreview.summary).
+  options?: { userName?: string | Promise<string | undefined> }
 ) {
   const db = await getDb();
-  await maybeRefreshOutreachSuggestions(userId);
 
-  const [allContactRows, pendingReminders, suggestions, goals, goalTexts] =
-    await Promise.all([
-      db.query.contacts.findMany({
-        where: eq(contacts.userId, userId),
-        orderBy: (c, { desc }) => [desc(c.updatedAt)],
-        with: { contactTags: { with: { tag: true } } },
-      }),
-      db.query.reminders.findMany({
-        where: and(
-          eq(reminders.userId, userId),
-          eq(reminders.status, "pending")
-        ),
-        orderBy: (r, { asc }) => [asc(r.dueDate)],
-      }),
-      db.query.aiSuggestions.findMany({
-        where: and(
-          eq(aiSuggestions.userId, userId),
-          eq(aiSuggestions.status, "pending")
-        ),
-        orderBy: (s, { desc }) => [desc(s.confidenceScore)],
-      }),
-      db.query.userGoals.findMany({
-        where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
-        orderBy: (g, { desc }) => [desc(g.createdAt)],
-      }),
-      listActiveGoalTexts(),
-    ]);
+  // Promise.resolve pins a single execution: a drizzle query builder is a lazy
+  // thenable that re-runs on every await, so handing the bare builder to the
+  // cohort would quietly issue the same scan twice.
+  const contactRowsPromise = Promise.resolve(
+    db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+      orderBy: (c, { desc }) => [desc(c.updatedAt)],
+      with: { contactTags: { with: { tag: true } } },
+    })
+  );
+
+  const [
+    allContactRows,
+    pendingReminders,
+    suggestions,
+    goals,
+    goalTexts,
+    closenessCohort,
+  ] = await Promise.all([
+    contactRowsPromise,
+    db.query.reminders.findMany({
+      where: and(
+        eq(reminders.userId, userId),
+        eq(reminders.status, "pending")
+      ),
+      orderBy: (r, { asc }) => [asc(r.dueDate)],
+    }),
+    db.query.aiSuggestions.findMany({
+      where: and(
+        eq(aiSuggestions.userId, userId),
+        eq(aiSuggestions.status, "pending")
+      ),
+      orderBy: (s, { desc }) => [desc(s.confidenceScore)],
+    }),
+    db.query.userGoals.findMany({
+      where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
+      orderBy: (g, { desc }) => [desc(g.createdAt)],
+    }),
+    listActiveGoalTexts(),
+    // Donates the scan above rather than repeating it.
+    getClosenessCohort(userId, contactRowsPromise),
+  ]);
 
   const enrichedContacts = allContactRows.map((c) => {
     const tags = c.contactTags.map((ct) => ct.tag.name);
@@ -350,7 +368,11 @@ export async function getDashboardData(
   });
 
   const { metrics: networkMetrics, contactsWithNetwork } =
-    computeNetworkMetrics(enrichedContacts, goalTexts);
+    computeNetworkMetrics(
+      enrichedContacts,
+      goalTexts,
+      closenessCohort.byId
+    );
 
   const closenessById = new Map(
     contactsWithNetwork.map((c) => [c.id, c])
@@ -393,12 +415,12 @@ export async function getDashboardData(
       phone: c.phone ?? null,
       linkedinUrl: c.linkedinUrl ?? null,
       website: c.website ?? null,
-      profileImageUrl: c.profileImageUrl ?? null,
+      profileImageUrl: clientContactAvatarUrl(c.id, c.profileImageUrl),
       dormant,
     };
   });
 
-  const userName = options?.userName || "You";
+  const userName = (await options?.userName) || "You";
 
   const { clusters: builtClusters } = buildConstellationClusters(graphContacts);
   const clusters = toNamedGraphClusters(builtClusters);
@@ -524,6 +546,9 @@ export async function getDashboardData(
         total: allContactRows.length,
         companyCount: companies.length,
         scoreCounts,
+        // Absolute-tier count, matching /graph — see the note there on why the
+        // quota rings above cannot be used for this.
+        strongTies,
         dormantCount,
         overdueCount,
         userName,

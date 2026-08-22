@@ -153,7 +153,9 @@ export function ContactProfileOverview({
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground">Recency</p>
+                  {/* Both lines feed the score: recency and cadence are
+                      separate components of closeness. */}
+                  <p className="text-xs text-muted-foreground">Activity</p>
                   <p className="mt-0.5 text-sm text-primary">
                     Last interaction {recencyLabel}
                   </p>

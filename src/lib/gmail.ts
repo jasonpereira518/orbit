@@ -427,19 +427,51 @@ export async function scanGmailForRecruiters(
   }
 
   const listData = (await listRes.json()) as { messages?: GmailMessageMeta[] };
-  const messages = listData.messages || [];
+  const messages = (listData.messages || []).slice(0, maxMessages);
   const byEmail = new Map<string, GmailRecruiterCandidate>();
 
-  for (const msg of messages.slice(0, maxMessages)) {
-    const detailRes = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-    if (!detailRes.ok) continue;
-    const detail = (await detailRes.json()) as {
-      snippet?: string;
-      payload?: { headers?: Array<{ name: string; value: string }> };
-    };
+  type MessageDetail = {
+    snippet?: string;
+    payload?: { headers?: Array<{ name: string; value: string }> };
+  };
+
+  const GMAIL_DETAIL_CONCURRENCY = 8;
+  const GMAIL_DETAIL_TIMEOUT_MS = 10_000;
+  const details: (MessageDetail | null)[] = new Array(messages.length);
+  let nextIndex = 0;
+
+  async function fetchDetail(msg: GmailMessageMeta): Promise<MessageDetail | null> {
+    try {
+      const detailRes = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          signal: AbortSignal.timeout(GMAIL_DETAIL_TIMEOUT_MS),
+        }
+      );
+      if (!detailRes.ok) return null;
+      return (await detailRes.json()) as MessageDetail;
+    } catch {
+      return null;
+    }
+  }
+
+  async function worker() {
+    while (nextIndex < messages.length) {
+      const current = nextIndex++;
+      details[current] = await fetchDetail(messages[current]);
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(GMAIL_DETAIL_CONCURRENCY, messages.length) },
+      () => worker()
+    )
+  );
+
+  for (const detail of details) {
+    if (!detail) continue;
     const headers = detail.payload?.headers || [];
     const from =
       headers.find((h) => h.name.toLowerCase() === "from")?.value || "";

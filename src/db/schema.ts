@@ -42,6 +42,67 @@ export const userSettings = pgTable("user_settings", {
       website?: string;
     }>()
     .default({}),
+  /**
+   * The user's own email, mirrored from Clerk via the webhook. Clerk owns identity;
+   * this copy exists so background jobs (which have no request context) can reach the
+   * user without a Clerk API hop. No unique constraint — two accounts may legitimately
+   * transit the same address.
+   */
+  email: text("email"),
+  /**
+   * Opaque bearer token for the read-only ICS reminder feed. Stored in plaintext
+   * deliberately: the URL must stay re-displayable when the user adds a second device,
+   * and `crypto.ts` uses a random IV per call so ciphertext could not be indexed for
+   * lookup. Same sensitivity class as `calendar_subscriptions.ics_url`, which already
+   * holds the user's Google secret iCal URL in plaintext.
+   */
+  calendarFeedToken: text("calendar_feed_token"),
+  calendarFeedTokenCreatedAt: timestamp("calendar_feed_token_created_at", {
+    withTimezone: true,
+  }),
+  calendarFeedLastFetchedAt: timestamp("calendar_feed_last_fetched_at", {
+    withTimezone: true,
+  }),
+  /**
+   * Billing. Entitlements are resolved exclusively from these columns by
+   * `src/lib/entitlements.ts` — never by calling Clerk's `has()` or Stripe at a gate.
+   * Clerk sells the monthly plan and Stripe sells the one-time Lifetime, but both are
+   * mirrored here so that background jobs (which have no request context, and so cannot
+   * call `has()`) resolve the same plan the UI does. Same rationale as `email` above.
+   */
+  compedPlan: text("comped_plan").$type<"orbit" | "lifetime">(),
+  lifetimePurchasedAt: timestamp("lifetime_purchased_at", { withTimezone: true }),
+  stripeCustomerId: text("stripe_customer_id"),
+  subscriptionPlan: text("subscription_plan").$type<"orbit">(),
+  subscriptionStatus: text("subscription_status").$type<
+    "active" | "past_due" | "canceled"
+  >(),
+  subscriptionPeriodEnd: timestamp("subscription_period_end", {
+    withTimezone: true,
+  }),
+  /**
+   * Provenance for a comped plan. `compedPlan` alone is a fact with no story, and it
+   * outranks every real billing signal in `resolvePlan` permanently — so six months later
+   * "why is this account on Lifetime?" has to be answerable from the row itself.
+   *
+   * Deliberately no `compedUntil`: an expiry that no scheduled job enforces is a lie, and
+   * enforcing one would mean `resolvePlan` has to consider time for comps, changing a
+   * function every gate in the app depends on. `resolvePlan` already takes `now`, so this
+   * stays cheap to add later.
+   */
+  compedNote: text("comped_note"),
+  compedAt: timestamp("comped_at", { withTimezone: true }),
+  compedBy: text("comped_by"),
+  /**
+   * Last authenticated request, written from `ensureUserSettings` at most once every
+   * 15 minutes (see `touchLastActive`). Distinct from `updatedAt`, which means "settings
+   * changed" and is bumped by a dozen unrelated writers — conflating the two would poison
+   * `updatedAt` for every future use.
+   *
+   * Null for every account that predates this column; admin surfaces fall back to a
+   * derived last-write timestamp, so the roster is useful without a warm-up period.
+   */
+  lastActiveAt: timestamp("last_active_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -84,6 +145,13 @@ export const contacts = pgTable(
     website: text("website"),
     profileImageUrl: text("profile_image_url"),
     relationshipScore: integer("relationship_score").default(2).notNull(),
+    /**
+     * Closeness the user actually asserted, 1–5. NULL means never rated —
+     * which `relationshipScore` cannot express, because its default of 2 is
+     * indistinguishable from a deliberate 2. Evidence weighting depends on
+     * telling those apart. Kept in sync with `relationshipScore` on write.
+     */
+    statedCloseness: integer("stated_closeness"),
     priorityLevel: integer("priority_level").default(0).notNull(),
     source: text("source"),
     industry: text("industry"),
@@ -172,6 +240,13 @@ export const interactions = pgTable(
   (t) => [
     index("interactions_contact_idx").on(t.contactId),
     index("interactions_user_idx").on(t.userId),
+    index("interactions_user_type_idx").on(t.userId, t.interactionType),
+    index("interactions_user_contact_type_date_idx").on(
+      t.userId,
+      t.contactId,
+      t.interactionType,
+      t.interactionDate
+    ),
     // Soft unique for import dedupe; NULLs allowed (manual notes have no externalId).
     uniqueIndex("interactions_user_external_uidx").on(t.userId, t.externalId),
   ]
@@ -231,8 +306,69 @@ export const reminders = pgTable(
   ]
 );
 
+/**
+ * Dated commitments the AI pulled out of captured notes, staged for review.
+ *
+ * These are deliberately NOT rows in `reminders`: an unconfirmed extraction must never
+ * reach `listDueNotificationItems`, which fires OS desktop notifications. Confirming a
+ * row here inserts into `reminders` and back-links via `reminderId`.
+ */
+export const suggestedReminders = pgTable(
+  "suggested_reminders",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** Set null rather than cascade — a deleted contact shouldn't silently drop the item. */
+    contactId: uuid("contact_id").references(() => contacts.id, {
+      onDelete: "set null",
+    }),
+    /** Groups everything extracted from one capture submission. */
+    captureBatchId: uuid("capture_batch_id").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    /** The date text verbatim as written in the note, e.g. "Sept 2". */
+    rawDatePhrase: text("raw_date_phrase").notNull(),
+    /** Resolved absolute date, pinned to local noon. Never null — absolute dates only. */
+    dueDate: timestamp("due_date", { withTimezone: true }).notNull(),
+    /** 1 when the note stated no year and we inferred the nearest future one. */
+    yearInferred: integer("year_inferred").default(0).notNull(),
+    /** The sentence the commitment came from — this is what makes it auditable. */
+    sourceExcerpt: text("source_excerpt").notNull(),
+    /** sha256 of the normalized source note, so a re-paste is recognized. */
+    sourceHash: text("source_hash").notNull(),
+    /** sha256(sourceHash|isoDate|normalizedTitle) — the per-item dedupe key. */
+    itemHash: text("item_hash").notNull(),
+    actionKind: text("action_kind")
+      .$type<ReminderActionKind>()
+      .default("task")
+      .notNull(),
+    /** 0-100, matching aiSuggestions.confidenceScore's scale. */
+    confidenceScore: integer("confidence_score"),
+    /** pending | confirmed | discarded */
+    status: text("status").default("pending").notNull(),
+    reminderId: uuid("reminder_id").references(() => reminders.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("suggested_reminders_user_status_idx").on(t.userId, t.status),
+    index("suggested_reminders_batch_idx").on(t.captureBatchId),
+    uniqueIndex("suggested_reminders_user_item_uidx").on(t.userId, t.itemHash),
+  ]
+);
+
 export type ImportStats = {
   skipped?: number;
+  /**
+   * Rows that parsed fine but could not be saved because the user's plan contact limit
+   * was already full. Distinct from `skipped` (malformed/unusable rows) so the UI can
+   * offer an upgrade rather than an error.
+   */
+  blockedByPlan?: number;
   messagesImported?: number;
   meetingsLogged?: number;
   remindersCreated?: number;
@@ -605,6 +741,85 @@ export const chatMessages = pgTable(
   ]
 );
 
+/**
+ * One row per AI provider call, written fire-and-forget from `src/lib/ai.ts`.
+ *
+ * Production is strictly BYOK (`allowEnvProviderKeys()` returns `!process.env.VERCEL`), so
+ * this is not primarily a cost ledger — the spend is the user's. Its real jobs are showing
+ * which accounts are actually using the product, and which ones are failing.
+ *
+ * Booleans are integers to match the house convention (`enabled`, `active`, `year_inferred`).
+ * There is no FK on `user_id`: nothing in this schema has one, because it is a Clerk id.
+ */
+export const usageEvents = pgTable(
+  "usage_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** Dotted call-site id, e.g. "capture.parse", "chat.answer", "search.embed". */
+    operation: text("operation").notNull(),
+    provider: text("provider").$type<"gemini" | "openai" | "anthropic">().notNull(),
+    model: text("model").notNull(),
+    kind: text("kind")
+      .$type<"completion" | "multimodal" | "embedding" | "transcription">()
+      .notNull(),
+    /**
+     * Null means the provider did not report a count — Whisper bills per second of audio
+     * and Gemini's embed endpoint returns no usage metadata. Null is information; a
+     * fabricated zero is a lie that would get summed.
+     */
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    cachedInputTokens: integer("cached_input_tokens"),
+    /**
+     * USD × 1e6. Integers because floats accumulate error across SUM and `numeric` comes
+     * back as a string anyway. Null when the model is absent from the price table — a
+     * blank cell beats a confidently wrong dollar figure.
+     */
+    estimatedCostMicros: integer("estimated_cost_micros"),
+    /** Whose key paid for it. "orbit" only ever happens off-Vercel (local dev). */
+    keyOwner: text("key_owner").$type<"user" | "orbit">().notNull(),
+    success: integer("success").notNull().default(1),
+    /** Stable machine code, not the user-facing message — that is unqueryably high-cardinality. */
+    errorKind: text("error_kind"),
+    durationMs: integer("duration_ms"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("usage_events_user_created_idx").on(t.userId, t.createdAt),
+    index("usage_events_created_idx").on(t.createdAt),
+    index("usage_events_model_idx").on(t.provider, t.model),
+  ]
+);
+
+/**
+ * Privileged admin actions. Small by construction — the admin console performs exactly two
+ * kinds of write: comping a plan, and revealing one redacted record.
+ *
+ * Comps are why this exists. `comped_plan` outranks every real billing signal in
+ * `resolvePlan`, has no expiry, and no webhook will ever correct it; `updated_at` is bumped
+ * by a dozen unrelated writers, so without this table there is no record a comp happened.
+ */
+export const adminAuditLog = pgTable(
+  "admin_audit_log",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    adminUserId: text("admin_user_id").notNull(),
+    /** e.g. "comp.grant", "comp.revoke", "record.reveal". */
+    action: text("action").notNull(),
+    targetUserId: text("target_user_id"),
+    resourceType: text("resource_type"),
+    resourceId: text("resource_id"),
+    detail: jsonb("detail").$type<Record<string, unknown>>().default({}),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("admin_audit_log_created_idx").on(t.createdAt),
+    index("admin_audit_log_target_idx").on(t.targetUserId),
+  ]
+);
+
 export const contactsRelations = relations(contacts, ({ many }) => ({
   interactions: many(interactions),
   reminders: many(reminders),
@@ -648,6 +863,16 @@ export const remindersRelations = relations(reminders, ({ one }) => ({
     references: [reminderLists.id],
   }),
 }));
+
+export const suggestedRemindersRelations = relations(
+  suggestedReminders,
+  ({ one }) => ({
+    contact: one(contacts, {
+      fields: [suggestedReminders.contactId],
+      references: [contacts.id],
+    }),
+  })
+);
 
 export const contactEmbeddingsRelations = relations(
   contactEmbeddings,
@@ -725,6 +950,7 @@ export type NewContact = typeof contacts.$inferInsert;
 export type Interaction = typeof interactions.$inferSelect;
 export type Reminder = typeof reminders.$inferSelect;
 export type ReminderList = typeof reminderLists.$inferSelect;
+export type SuggestedReminder = typeof suggestedReminders.$inferSelect;
 export type Tag = typeof tags.$inferSelect;
 export type AiSuggestion = typeof aiSuggestions.$inferSelect;
 export type ImportRecord = typeof imports.$inferSelect;
@@ -739,3 +965,6 @@ export type ChatMessage = typeof chatMessages.$inferSelect;
 export type Recruiter = typeof recruiters.$inferSelect;
 export type UserRecruiterLink = typeof userRecruiterLinks.$inferSelect;
 export type GmailConnection = typeof gmailConnections.$inferSelect;
+export type UsageEvent = typeof usageEvents.$inferSelect;
+export type NewUsageEvent = typeof usageEvents.$inferInsert;
+export type AdminAuditEntry = typeof adminAuditLog.$inferSelect;

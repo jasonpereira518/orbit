@@ -3,24 +3,27 @@
 import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
-import {
-  contactTags,
-  contacts,
-  interactions,
-  reminders,
-  tags,
-} from "@/db/schema";
+import { contacts, interactions, reminders } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { computeCloseness } from "@/lib/closeness";
+import { isPaywallError } from "@/lib/entitlements";
+import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { listActiveGoalTexts } from "@/actions/goals";
+import { type CompanyResolver } from "@/lib/companies";
 import {
-  companyFieldsForWrite,
-  companyFieldsForWriteCached,
-  type CompanyResolver,
-} from "@/lib/companies";
-import { isMetContext } from "@/lib/met-context";
+  createContactForUser,
+  createContactsBulkForUser,
+  logInteractionForUser,
+  updateContactForUser,
+  type ContactInput,
+  type ContactWriteOptions,
+  type LogInteractionInput,
+} from "@/lib/contact-writes";
 import { generateAndStorePersonSummary } from "@/lib/person-summary";
-import { rebuildContactEmbedding, rebuildContactEmbeddingsBatch } from "@/lib/search";
+import { rebuildContactEmbedding } from "@/lib/search";
+import {
+  selectTriageCandidates,
+  type TriageCandidate,
+} from "@/lib/triage-candidates";
 import {
   enrichPeopleFromLinkedIn,
   getApolloApiKey,
@@ -30,11 +33,16 @@ import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import {
   AVATAR_BACKFILL_BATCH_SIZE,
-  downloadImageAsDataUrl,
-  fetchLinkedInPhotoDataUrl,
+  AvatarStorageError,
+  downloadAndPersistAvatar,
+  fetchLinkedInPhotoUrl,
   isUnusableAvatarUrl,
   MicrolinkRateLimitError,
 } from "@/lib/contact-avatar";
+import {
+  clientContactAvatarUrl,
+  isDurableAvatarUrl,
+} from "@/lib/contact-avatar-url";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
 import {
   findRelatedContacts,
@@ -45,135 +53,10 @@ import {
   sendOutreachMessage,
 } from "@/lib/outreach-send";
 
-export type ContactWriteOptions = {
-  /** Skip path revalidation during bulk imports. */
-  skipRevalidate?: boolean;
-  /** Skip the synchronous embedding API call; caller will rebuild embeddings in a batch. */
-  skipEmbedding?: boolean;
-};
-
-export type ContactInput = {
-  fullName: string;
-  firstName?: string;
-  lastName?: string;
-  preferredName?: string;
-  company?: string;
-  title?: string;
-  location?: string;
-  school?: string;
-  email?: string;
-  phone?: string;
-  linkedinUrl?: string;
-  website?: string;
-  profileImageUrl?: string | null;
-  relationshipScore?: number;
-  priorityLevel?: number;
-  source?: string;
-  industry?: string;
-  metContext?: string;
-  dateMet?: string | null;
-  howMet?: string;
-  notes?: string;
-  aiSummary?: string;
-  keyFacts?: string[];
-  sharedInterests?: string[];
-  opportunities?: string[];
-  nextFollowUpAt?: string | null;
-  tagNames?: string[];
-};
-
-function normalizeMetContext(value?: string | null) {
-  if (!value?.trim()) return null;
-  return isMetContext(value) ? value : null;
-}
-
-/** Coerce date inputs into a Postgres-safe timestamptz, or null. */
-function safeTimestamp(value?: string | Date | null): Date | null {
-  if (value == null || value === "") return null;
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  const year = date.getUTCFullYear();
-  // Reject JS misparses (e.g. Excel serial "46198" → year 46198) that
-  // Postgres refuses with "time zone displacement out of range".
-  if (year < 1970 || year > 2100) return null;
-  return date;
-}
-
-async function syncTags(
-  userId: string,
-  contactId: string,
-  tagNames: string[] = []
-) {
-  const db = await getDb();
-  await db.delete(contactTags).where(eq(contactTags.contactId, contactId));
-
-  const names = [
-    ...new Set(tagNames.map((raw) => raw.trim()).filter(Boolean)),
-  ];
-  if (names.length === 0) return;
-
-  const existing = await db.query.tags.findMany({
-    where: and(eq(tags.userId, userId), inArray(tags.name, names)),
-  });
-  const byName = new Map(existing.map((tag) => [tag.name, tag]));
-
-  const missing = names.filter((name) => !byName.has(name));
-  if (missing.length > 0) {
-    const created = await db
-      .insert(tags)
-      .values(missing.map((name) => ({ userId, name })))
-      .returning();
-    for (const tag of created) {
-      byName.set(tag.name, tag);
-    }
-  }
-
-  await db.insert(contactTags).values(
-    names.map((name) => ({
-      contactId,
-      tagId: byName.get(name)!.id,
-    }))
-  );
-}
-
-/** Bulk variant of `syncTags` for freshly-created contacts (no existing tags to delete). */
-async function syncTagsBulk(
-  userId: string,
-  items: { contactId: string; tagNames?: string[] }[]
-) {
-  const perContactNames = items.map((item) => [
-    ...new Set((item.tagNames || []).map((raw) => raw.trim()).filter(Boolean)),
-  ]);
-  const allNames = [...new Set(perContactNames.flat())];
-  if (allNames.length === 0) return;
-
-  const db = await getDb();
-  const existing = await db.query.tags.findMany({
-    where: and(eq(tags.userId, userId), inArray(tags.name, allNames)),
-  });
-  const byName = new Map(existing.map((tag) => [tag.name, tag]));
-
-  const missing = allNames.filter((name) => !byName.has(name));
-  if (missing.length > 0) {
-    const created = await db
-      .insert(tags)
-      .values(missing.map((name) => ({ userId, name })))
-      .returning();
-    for (const tag of created) {
-      byName.set(tag.name, tag);
-    }
-  }
-
-  const rows = items.flatMap((item, i) =>
-    perContactNames[i].map((name) => ({
-      contactId: item.contactId,
-      tagId: byName.get(name)!.id,
-    }))
-  );
-  if (rows.length > 0) {
-    await db.insert(contactTags).values(rows);
-  }
-}
+export type {
+  ContactInput,
+  ContactWriteOptions,
+} from "@/lib/contact-writes";
 
 export async function listContacts(filters?: {
   q?: string;
@@ -184,13 +67,57 @@ export async function listContacts(filters?: {
   const userId = await requireUserId();
   const db = await getDb();
 
-  const [allRows, goals] = await Promise.all([
+  // Promise.resolve pins a single execution: a drizzle query builder is a lazy
+  // thenable that re-runs on every await, so handing the bare builder to the
+  // cohort would quietly issue the same scan twice.
+  const contactRowsPromise = Promise.resolve(
     db.query.contacts.findMany({
       where: eq(contacts.userId, userId),
+      columns: {
+        id: true,
+        userId: true,
+        fullName: true,
+        firstName: true,
+        lastName: true,
+        preferredName: true,
+        company: true,
+        title: true,
+        location: true,
+        school: true,
+        email: true,
+        phone: true,
+        linkedinUrl: true,
+        website: true,
+        // Omit raw profileImageUrl blob — rewritten via clientContactAvatarUrl.
+        profileImageUrl: true,
+        relationshipScore: true,
+        statedCloseness: true,
+        priorityLevel: true,
+        source: true,
+        industry: true,
+        metContext: true,
+        dateMet: true,
+        firstInteractionAt: true,
+        howMet: true,
+        // Heavy text fields not needed for list UI — keep short summary only.
+        notes: false,
+        aiSummary: true,
+        keyFacts: true,
+        sharedInterests: true,
+        nextFollowUpAt: true,
+        lastInteractionAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
       with: { contactTags: { with: { tag: true } } },
       orderBy: [desc(contacts.updatedAt)],
-    }),
-    listActiveGoalTexts(),
+    })
+  );
+
+  const [allRows, closenessCohort] = await Promise.all([
+    contactRowsPromise,
+    // Donates the scan above rather than repeating it.
+    getClosenessCohort(userId, contactRowsPromise),
   ]);
 
   let rows = allRows;
@@ -212,7 +139,8 @@ export async function listContacts(filters?: {
         c.howMet,
         c.website,
         c.aiSummary,
-        c.notes,
+        // notes intentionally excluded — no longer selected (payload slimming);
+        // list search matches the AI summary instead of raw note text.
       ]
         .filter(Boolean)
         .some((v) => v!.toLowerCase().includes(q))
@@ -236,13 +164,17 @@ export async function listContacts(filters?: {
 
   const mapped = rows.map((c) => {
     const tags = c.contactTags.map((ct) => ct.tag.name);
-    const closeness = computeCloseness({ ...c, tags }, goals);
+    // Scored against the whole orbit, not this filtered page — a search result
+    // must not change how close someone is.
+    const closeness = closenessCohort.byId.get(c.id);
     return {
       ...c,
+      // Never ship base64 data URLs in list payloads.
+      profileImageUrl: clientContactAvatarUrl(c.id, c.profileImageUrl),
       tags,
-      closeness: closeness.closeness,
-      closenessTier: closeness.tier,
-      orbitScore: closeness.orbitScore,
+      closeness: closeness?.closeness ?? 0,
+      closenessTier: closeness?.tier ?? ("outer" as const),
+      orbitScore: closeness?.orbitScore ?? 1,
     };
   });
 
@@ -255,6 +187,95 @@ export async function listContacts(filters?: {
   });
 
   return mapped;
+}
+
+export type TriageDisplayCandidate = {
+  id: string;
+  fullName: string;
+  firstName: string | null;
+  company: string | null;
+  title: string | null;
+  profileImageUrl: string | null;
+  linkedinUrl: string | null;
+};
+
+/**
+ * Contacts to ask the user about in the setup wizard's triage step.
+ *
+ * Chosen for information gain, not current closeness — see
+ * `selectTriageCandidates` in `@/lib/triage-candidates` for why. This pulls
+ * the same column set `listContacts` donates to `getClosenessCohort` (plus a
+ * few display-only fields) so evidence/prior here agree with every other
+ * surface that shows closeness.
+ */
+export async function getTriageCandidates(): Promise<TriageDisplayCandidate[]> {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const contactRowsPromise = Promise.resolve(
+    db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+      columns: {
+        id: true,
+        fullName: true,
+        firstName: true,
+        company: true,
+        title: true,
+        profileImageUrl: true,
+        linkedinUrl: true,
+        relationshipScore: true,
+        statedCloseness: true,
+        lastInteractionAt: true,
+        firstInteractionAt: true,
+        dateMet: true,
+        createdAt: true,
+        email: true,
+        school: true,
+        industry: true,
+        howMet: true,
+        aiSummary: true,
+        keyFacts: true,
+        sharedInterests: true,
+      },
+      with: { contactTags: { with: { tag: true } } },
+    })
+  );
+
+  const [rows, cohort] = await Promise.all([
+    contactRowsPromise,
+    getClosenessCohort(userId, contactRowsPromise),
+  ]);
+
+  const pool: TriageCandidate[] = rows.map((c) => {
+    const breakdown = cohort.byId.get(c.id);
+    return {
+      id: c.id,
+      fullName: c.fullName,
+      company: c.company,
+      evidence: breakdown?.evidence ?? 0,
+      prior: breakdown?.prior ?? 0,
+      statedCloseness: c.statedCloseness,
+    };
+  });
+
+  const selected = selectTriageCandidates(pool);
+  const byId = new Map(rows.map((c) => [c.id, c]));
+
+  return selected.flatMap((c) => {
+    const row = byId.get(c.id);
+    if (!row) return [];
+    return [
+      {
+        id: row.id,
+        fullName: row.fullName,
+        firstName: row.firstName,
+        company: row.company,
+        title: row.title,
+        profileImageUrl: row.profileImageUrl,
+        linkedinUrl: row.linkedinUrl,
+      },
+    ];
+  });
 }
 
 function lastNameSortKey(lastName: string | null | undefined, fullName: string) {
@@ -402,61 +423,27 @@ export async function createContact(
   input: ContactInput,
   options?: ContactWriteOptions
 ) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const now = new Date();
-  const companyFields = await companyFieldsForWrite(userId, input.company);
-  const metAt = safeTimestamp(input.dateMet);
-  const followUpAt = safeTimestamp(input.nextFollowUpAt);
+  return createContactForUser(await requireUserId(), input, options);
+}
 
-  const [contact] = await db
-    .insert(contacts)
-    .values({
-      userId,
-      fullName: input.fullName,
-      firstName: input.firstName,
-      lastName: input.lastName,
-      preferredName: input.preferredName,
-      company: companyFields.company,
-      companyId: companyFields.companyId,
-      title: input.title,
-      location: input.location,
-      school: input.school,
-      email: input.email,
-      phone: input.phone,
-      linkedinUrl: input.linkedinUrl,
-      website: input.website,
-      profileImageUrl: input.profileImageUrl ?? null,
-      relationshipScore: input.relationshipScore ?? 2,
-      priorityLevel: input.priorityLevel ?? 0,
-      source: input.source ?? "manual",
-      industry: input.industry,
-      metContext: normalizeMetContext(input.metContext),
-      dateMet: metAt,
-      howMet: input.howMet,
-      notes: input.notes,
-      aiSummary: input.aiSummary,
-      keyFacts: input.keyFacts ?? [],
-      sharedInterests: input.sharedInterests ?? [],
-      opportunities: input.opportunities ?? [],
-      firstInteractionAt: metAt ?? now,
-      lastInteractionAt: metAt ?? now,
-      nextFollowUpAt: followUpAt,
-    })
-    .returning();
-
-  await syncTags(userId, contact.id, input.tagNames);
-  if (!options?.skipEmbedding) {
-    await rebuildContactEmbedding(userId, contact.id);
+/**
+ * Like `createContact`, but returns `null` instead of throwing when the plan's contact
+ * limit is full.
+ *
+ * Import loops use this: a free user importing 300 rows should keep everything that fits
+ * and get a count of what did not, rather than having the whole import abort partway with
+ * a paywall error.
+ */
+export async function createContactIfRoom(
+  input: ContactInput,
+  options?: ContactWriteOptions
+) {
+  try {
+    return await createContactForUser(await requireUserId(), input, options);
+  } catch (err) {
+    if (isPaywallError(err)) return null;
+    throw err;
   }
-
-  if (!options?.skipRevalidate) {
-    revalidatePath("/");
-    revalidatePath("/contacts");
-    revalidatePath("/graph");
-  }
-
-  return contact;
 }
 
 /**
@@ -470,78 +457,12 @@ export async function createContactsBulk(
   companyResolve: CompanyResolver,
   options?: ContactWriteOptions
 ) {
-  if (inputs.length === 0) return [];
-
-  const userId = await requireUserId();
-  const db = await getDb();
-  const now = new Date();
-
-  const companyFieldsList = await Promise.all(
-    inputs.map((input) => companyFieldsForWriteCached(companyResolve, input.company))
+  return createContactsBulkForUser(
+    await requireUserId(),
+    inputs,
+    companyResolve,
+    options
   );
-
-  const values = inputs.map((input, i) => {
-    const companyFields = companyFieldsList[i];
-    const metAt = safeTimestamp(input.dateMet);
-    const followUpAt = safeTimestamp(input.nextFollowUpAt);
-    return {
-      userId,
-      fullName: input.fullName,
-      firstName: input.firstName,
-      lastName: input.lastName,
-      preferredName: input.preferredName,
-      company: companyFields.company,
-      companyId: companyFields.companyId,
-      title: input.title,
-      location: input.location,
-      school: input.school,
-      email: input.email,
-      phone: input.phone,
-      linkedinUrl: input.linkedinUrl,
-      website: input.website,
-      profileImageUrl: input.profileImageUrl ?? null,
-      relationshipScore: input.relationshipScore ?? 2,
-      priorityLevel: input.priorityLevel ?? 0,
-      source: input.source ?? "manual",
-      industry: input.industry,
-      metContext: normalizeMetContext(input.metContext),
-      dateMet: metAt,
-      howMet: input.howMet,
-      notes: input.notes,
-      aiSummary: input.aiSummary,
-      keyFacts: input.keyFacts ?? [],
-      sharedInterests: input.sharedInterests ?? [],
-      opportunities: input.opportunities ?? [],
-      firstInteractionAt: metAt ?? now,
-      lastInteractionAt: metAt ?? now,
-      nextFollowUpAt: followUpAt,
-    };
-  });
-
-  const created = await db.insert(contacts).values(values).returning();
-
-  await syncTagsBulk(
-    userId,
-    created.map((contact, i) => ({
-      contactId: contact.id,
-      tagNames: inputs[i].tagNames,
-    }))
-  );
-
-  if (!options?.skipEmbedding) {
-    await rebuildContactEmbeddingsBatch(
-      userId,
-      created.map((contact) => contact.id)
-    );
-  }
-
-  if (!options?.skipRevalidate) {
-    revalidatePath("/");
-    revalidatePath("/contacts");
-    revalidatePath("/graph");
-  }
-
-  return created;
 }
 
 export async function updateContact(
@@ -549,102 +470,73 @@ export async function updateContact(
   input: Partial<ContactInput>,
   options?: ContactWriteOptions
 ) {
+  return updateContactForUser(await requireUserId(), id, input, options);
+}
+
+/** Valid range for a user-supplied closeness rating (matches the 1–5 scale used throughout, e.g. contact-form.tsx's "Strength" field). */
+const MIN_STATED_CLOSENESS = 1;
+const MAX_STATED_CLOSENESS = 5;
+
+/**
+ * Bulk-save closeness ratings from the setup wizard's triage step.
+ *
+ * Deliberately goes through `updateContactForUser` (the same shared write
+ * path `updateContact` wraps) rather than writing `statedCloseness` /
+ * `relationshipScore` directly — see the comment on `relationshipScore` in
+ * `updateContactForUser` for the mirroring rule. There is one other writer,
+ * `acceptScoreBump` in `@/actions/reminders` (it mirrors too), and two
+ * is already one more than the invariant wants; a third is how it drifts.
+ *
+ * Runs one `updateContactForUser` call per rating rather than a single bulk
+ * query, since that's what keeps this one writer instead of two. To keep a
+ * screen's worth of ratings (eight) fast, each call skips the embedding
+ * rebuild — `relationshipScore` isn't part of the embedded text (see
+ * `buildContactEmbeddingContent` in `@/lib/search`) — and per-row
+ * revalidation, paths are revalidated once after the loop instead.
+ *
+ * `updateContactForUser` returns `undefined` rather than throwing when its
+ * ownership-scoped WHERE matches no row (deleted contact, ownership race) —
+ * so `failedContactIds` is how a caller distinguishes "saved" from "silently
+ * matched nothing," instead of trusting a bare count. A per-row `try/catch`
+ * means one broken id can't abort the rest of the screen's ratings either.
+ */
+export async function rateContacts(
+  ratings: Array<{ contactId: string; closeness: number }>
+): Promise<{ updated: number; failedContactIds: string[] }> {
   const userId = await requireUserId();
-  const db = await getDb();
+  let updated = 0;
+  const failedContactIds: string[] = [];
 
-  const companyPatch =
-    input.company !== undefined
-      ? await companyFieldsForWrite(userId, input.company)
-      : null;
-
-  const [contact] = await db
-    .update(contacts)
-    .set({
-      ...(input.fullName !== undefined ? { fullName: input.fullName } : {}),
-      ...(input.firstName !== undefined ? { firstName: input.firstName } : {}),
-      ...(input.lastName !== undefined ? { lastName: input.lastName } : {}),
-      ...(input.preferredName !== undefined
-        ? { preferredName: input.preferredName }
-        : {}),
-      ...(companyPatch
-        ? { company: companyPatch.company, companyId: companyPatch.companyId }
-        : {}),
-      ...(input.title !== undefined ? { title: input.title } : {}),
-      ...(input.location !== undefined ? { location: input.location } : {}),
-      ...(input.school !== undefined ? { school: input.school } : {}),
-      ...(input.email !== undefined ? { email: input.email } : {}),
-      ...(input.phone !== undefined ? { phone: input.phone } : {}),
-      ...(input.linkedinUrl !== undefined
-        ? { linkedinUrl: input.linkedinUrl }
-        : {}),
-      ...(input.website !== undefined ? { website: input.website } : {}),
-      ...(input.profileImageUrl !== undefined
-        ? { profileImageUrl: input.profileImageUrl }
-        : {}),
-      ...(input.relationshipScore !== undefined
-        ? { relationshipScore: input.relationshipScore }
-        : {}),
-      ...(input.priorityLevel !== undefined
-        ? { priorityLevel: input.priorityLevel }
-        : {}),
-      ...(input.source !== undefined ? { source: input.source } : {}),
-      ...(input.industry !== undefined ? { industry: input.industry } : {}),
-      ...(input.metContext !== undefined
-        ? { metContext: normalizeMetContext(input.metContext) }
-        : {}),
-      ...(input.dateMet !== undefined
-        ? { dateMet: safeTimestamp(input.dateMet) }
-        : {}),
-      ...(input.howMet !== undefined ? { howMet: input.howMet } : {}),
-      ...(input.notes !== undefined ? { notes: input.notes } : {}),
-      ...(input.aiSummary !== undefined ? { aiSummary: input.aiSummary } : {}),
-      ...(input.keyFacts !== undefined ? { keyFacts: input.keyFacts } : {}),
-      ...(input.sharedInterests !== undefined
-        ? { sharedInterests: input.sharedInterests }
-        : {}),
-      ...(input.opportunities !== undefined
-        ? { opportunities: input.opportunities }
-        : {}),
-      ...(input.nextFollowUpAt !== undefined
-        ? { nextFollowUpAt: safeTimestamp(input.nextFollowUpAt) }
-        : {}),
-      updatedAt: new Date(),
-    })
-    .where(and(eq(contacts.id, id), eq(contacts.userId, userId)))
-    .returning();
-
-  if (input.tagNames) {
-    await syncTags(userId, id, input.tagNames);
+  for (const { contactId, closeness } of ratings) {
+    const value = Math.min(
+      MAX_STATED_CLOSENESS,
+      Math.max(MIN_STATED_CLOSENESS, Math.round(closeness))
+    );
+    try {
+      const contact = await updateContactForUser(
+        userId,
+        contactId,
+        { relationshipScore: value },
+        { skipEmbedding: true, skipSummary: true, skipRevalidate: true }
+      );
+      if (contact) {
+        updated++;
+      } else {
+        failedContactIds.push(contactId);
+      }
+    } catch {
+      failedContactIds.push(contactId);
+    }
   }
 
-  if (!options?.skipEmbedding) {
-    await rebuildContactEmbedding(userId, id);
-  }
-
-  const significant =
-    input.fullName !== undefined ||
-    input.preferredName !== undefined ||
-    input.title !== undefined ||
-    input.company !== undefined ||
-    input.industry !== undefined ||
-    input.howMet !== undefined ||
-    input.metContext !== undefined ||
-    input.notes !== undefined ||
-    input.keyFacts !== undefined ||
-    input.sharedInterests !== undefined;
-
-  if (significant && !options?.skipRevalidate) {
-    void generateAndStorePersonSummary(userId, id).catch(() => null);
-  }
-
-  if (!options?.skipRevalidate) {
+  if (updated > 0) {
     revalidatePath("/");
     revalidatePath("/contacts");
-    revalidatePath(`/contacts/${id}`);
     revalidatePath("/graph");
+    revalidatePath("/dashboard");
   }
 
-  return contact;
+  return { updated, failedContactIds };
 }
 
 export async function deleteContact(id: string) {
@@ -658,75 +550,8 @@ export async function deleteContact(id: string) {
   revalidatePath("/graph");
 }
 
-export async function logInteraction(input: {
-  contactId: string;
-  rawNotes?: string;
-  aiSummary?: string;
-  topics?: string[];
-  actionItems?: string[];
-  interactionType?: string;
-  source?: string;
-  interactionDate?: string | Date;
-  /** When true, parse a date from rawNotes if interactionDate is omitted. */
-  parseDateFromNotes?: boolean;
-}) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const { parseInteractionDateFromNotes } = await import(
-    "@/lib/interaction-date"
-  );
-
-  const parsedDate =
-    input.interactionDate instanceof Date
-      ? input.interactionDate
-      : input.interactionDate
-        ? new Date(
-            input.interactionDate.length <= 10
-              ? `${input.interactionDate}T12:00:00`
-              : input.interactionDate
-          )
-        : null;
-  let when =
-    parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : null;
-
-  if (!when && input.parseDateFromNotes) {
-    when = parseInteractionDateFromNotes(input.rawNotes, new Date());
-  }
-  if (!when) when = new Date();
-
-  const [row] = await db
-    .insert(interactions)
-    .values({
-      userId,
-      contactId: input.contactId,
-      rawNotes: input.rawNotes,
-      aiSummary: input.aiSummary,
-      topics: input.topics ?? [],
-      actionItems: input.actionItems ?? [],
-      interactionType: input.interactionType ?? "note",
-      source: input.source,
-      interactionDate: when,
-      sameDayOrder: 0,
-    })
-    .returning();
-
-  await db
-    .update(contacts)
-    .set({ lastInteractionAt: when, updatedAt: new Date() })
-    .where(and(eq(contacts.id, input.contactId), eq(contacts.userId, userId)));
-
-  if (input.rawNotes || input.aiSummary) {
-    await rebuildContactEmbedding(userId, input.contactId);
-  }
-
-  // Significant change: refresh stored person summary
-  void generateAndStorePersonSummary(userId, input.contactId).catch(() => null);
-
-  revalidatePath(`/contacts/${input.contactId}`);
-  revalidatePath("/");
-  revalidatePath("/dashboard");
-  revalidatePath("/graph");
-  return row;
+export async function logInteraction(input: LogInteractionInput) {
+  return logInteractionForUser(await requireUserId(), input);
 }
 
 export async function updateInteraction(
@@ -899,9 +724,22 @@ export async function listLinkedInRefreshTargets(): Promise<{
 
 export type AvatarBackfillResult = {
   saved: number;
+  savedIds: string[];
+  /**
+   * Contacts we tried and couldn't resolve. Pass them back as `skipIds` so the
+   * next batch moves past them instead of retrying the same few forever.
+   */
+  failedIds: string[];
   pending: number;
   failed: number;
   rateLimitedUntil: number | null;
+  /** Set when the photo store itself is broken — the whole run should stop. */
+  storageError: string | null;
+};
+
+export type AvatarBackfillOptions = {
+  limit?: number;
+  skipIds?: string[];
 };
 
 /**
@@ -910,13 +748,15 @@ export type AvatarBackfillResult = {
  * when the client should retry after the rate-limit reset.
  */
 export async function backfillContactAvatars(
-  limit = AVATAR_BACKFILL_BATCH_SIZE
+  options: AvatarBackfillOptions = {}
 ): Promise<AvatarBackfillResult> {
   const userId = await requireUserId();
+  const limit = options.limit ?? AVATAR_BACKFILL_BATCH_SIZE;
   const batchSize = Math.min(
     Math.max(1, Math.floor(limit) || AVATAR_BACKFILL_BATCH_SIZE),
     AVATAR_BACKFILL_BATCH_SIZE
   );
+  const skip = new Set(options.skipIds ?? []);
   const db = await getDb();
 
   const rows = await db.query.contacts.findMany({
@@ -930,63 +770,75 @@ export async function backfillContactAvatars(
 
   const needsWork = rows
     .filter((r) => {
+      if (skip.has(r.id)) return false;
       const linkedin = r.linkedinUrl?.trim();
       const stored = r.profileImageUrl?.trim() || "";
       if (!linkedin && (!stored || isUnusableAvatarUrl(stored))) return false;
       // Need LinkedIn resolution when missing/unusable.
       if (linkedin && isUnusableAvatarUrl(stored)) return true;
-      // Also durably cache remote URLs that aren't data URLs yet.
+      // Also durably cache remote URLs that aren't in Blob storage yet.
       if (
         stored &&
         !isUnusableAvatarUrl(stored) &&
-        !stored.startsWith("data:image/")
+        !isDurableAvatarUrl(stored)
       ) {
         return true;
       }
       return false;
     })
-    // Prefer free remote→data-URL work before spending Microlink quota.
+    // Prefer free remote→Blob caching work before spending Microlink quota.
     .sort((a, b) => {
       const aRemote =
         Boolean(a.profileImageUrl?.trim()) &&
         !isUnusableAvatarUrl(a.profileImageUrl) &&
-        !a.profileImageUrl!.startsWith("data:image/")
+        !isDurableAvatarUrl(a.profileImageUrl)
           ? 0
           : 1;
       const bRemote =
         Boolean(b.profileImageUrl?.trim()) &&
         !isUnusableAvatarUrl(b.profileImageUrl) &&
-        !b.profileImageUrl!.startsWith("data:image/")
+        !isDurableAvatarUrl(b.profileImageUrl)
           ? 0
           : 1;
       return aRemote - bRemote;
     });
 
   if (needsWork.length === 0) {
-    return { saved: 0, pending: 0, failed: 0, rateLimitedUntil: null };
+    return {
+      saved: 0,
+      savedIds: [],
+      failedIds: [],
+      pending: 0,
+      failed: 0,
+      rateLimitedUntil: null,
+      storageError: null,
+    };
   }
 
   let saved = 0;
+  const savedIds: string[] = [];
+  const failedIds: string[] = [];
   let failed = 0;
   let rateLimitedUntil: number | null = null;
+  let storageError: string | null = null;
   const batch = needsWork.slice(0, batchSize);
 
   for (const contact of batch) {
     const stored = contact.profileImageUrl?.trim() || "";
     try {
-      let dataUrl: string | null = null;
+      let photoUrl: string | null = null;
 
-      if (stored && !isUnusableAvatarUrl(stored) && !stored.startsWith("data:image/")) {
-        dataUrl = await downloadImageAsDataUrl(stored);
+      if (stored && !isUnusableAvatarUrl(stored) && !isDurableAvatarUrl(stored)) {
+        photoUrl = await downloadAndPersistAvatar(contact.id, stored);
       }
 
-      if (!dataUrl && contact.linkedinUrl?.trim()) {
+      if (!photoUrl && contact.linkedinUrl?.trim()) {
         try {
-          dataUrl = await fetchLinkedInPhotoDataUrl(contact.linkedinUrl);
+          photoUrl = await fetchLinkedInPhotoUrl(contact.id, contact.linkedinUrl);
         } catch (err) {
           if (err instanceof MicrolinkRateLimitError) {
             rateLimitedUntil = err.resetAt;
-            // Unavatar was already tried inside fetchLinkedInPhotoDataUrl.
+            // Unavatar was already tried inside fetchLinkedInPhotoUrl.
             failed += 1;
             continue;
           }
@@ -994,26 +846,34 @@ export async function backfillContactAvatars(
         }
       }
 
-      if (!dataUrl) {
+      if (!photoUrl) {
         failed += 1;
+        failedIds.push(contact.id);
         continue;
       }
 
       await db
         .update(contacts)
-        .set({ profileImageUrl: dataUrl, updatedAt: new Date() })
+        .set({ profileImageUrl: photoUrl, updatedAt: new Date() })
         .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
       saved += 1;
+      savedIds.push(contact.id);
     } catch (err) {
       if (err instanceof MicrolinkRateLimitError) {
         rateLimitedUntil = err.resetAt;
         break;
       }
+      if (err instanceof AvatarStorageError) {
+        // Every remaining contact would fail the same way — stop the run.
+        storageError = err.message;
+        break;
+      }
       failed += 1;
+      failedIds.push(contact.id);
     }
   }
 
-  const pending = Math.max(0, needsWork.length - saved);
+  const pending = Math.max(0, needsWork.length - saved - failedIds.length);
   if (saved > 0) {
     revalidatePath("/contacts");
     revalidatePath("/");
@@ -1022,9 +882,12 @@ export async function backfillContactAvatars(
 
   return {
     saved,
+    savedIds,
+    failedIds,
     pending,
     failed,
     rateLimitedUntil,
+    storageError,
   };
 }
 
@@ -1158,11 +1021,17 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
       // Prefer Apollo photo when present; otherwise resolve via LinkedIn.
       let profileImageUrl: string | null = null;
       if (profile?.profileImageUrl) {
-        profileImageUrl = await downloadImageAsDataUrl(profile.profileImageUrl);
+        profileImageUrl = await downloadAndPersistAvatar(
+          contact.id,
+          profile.profileImageUrl
+        );
       }
       if (!profileImageUrl && contact.linkedinUrl) {
         try {
-          profileImageUrl = await fetchLinkedInPhotoDataUrl(contact.linkedinUrl);
+          profileImageUrl = await fetchLinkedInPhotoUrl(
+            contact.id,
+            contact.linkedinUrl
+          );
         } catch (err) {
           if (err instanceof MicrolinkRateLimitError) {
             rateLimited = true;

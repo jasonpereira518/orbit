@@ -13,7 +13,7 @@ import {
   TOUR_STEPS,
   type TourNavKey,
 } from "@/components/onboarding/tour-config";
-import { usePrefersReducedMotion } from "@/components/onboarding/use-prefers-reduced-motion";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { WelcomePreview } from "@/components/onboarding/previews/welcome-preview";
 import { ContactsPreview } from "@/components/onboarding/previews/contacts-preview";
 import { CapturePreview } from "@/components/onboarding/previews/capture-preview";
@@ -168,10 +168,7 @@ export function OnboardingFlow({
   return (
     <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-4xl flex-col justify-center gap-6 py-6">
       <div className="flex gap-4">
-        <TourSidebar
-          activeKey={step.navKey}
-          reducedMotion={reducedMotion}
-        />
+        <TourSidebar activeKey={step.navKey} />
 
         <div className="flex min-w-0 flex-1 flex-col gap-4">
           <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
@@ -263,7 +260,7 @@ export function OnboardingFlow({
                     goTo(i);
                   }}
                   className={cn(
-                    "h-1.5 rounded-full transition-all",
+                    "h-1.5 rounded-full transition-[width,background-color]",
                     i === stepIndex
                       ? "w-6 bg-primary"
                       : "w-1.5 bg-muted-foreground/35 hover:bg-muted-foreground/60"

@@ -9,6 +9,40 @@ export type ParsedCalendarEvent = {
   organizer: { name: string; email: string } | null;
 };
 
+/**
+ * First connect: reach much further back. A new user's orbit is cold precisely
+ * because Orbit has no history, and two years of past meetings is the
+ * cheapest real evidence available.
+ */
+export const CALENDAR_BACKFILL_DAYS = 730;
+
+/**
+ * Windows calendar events to a lookback of `CALENDAR_BACKFILL_DAYS` through
+ * the next 14 days, for the one-time calendar upload
+ * (`previewCalendarImport` / `confirmCalendarImport`).
+ *
+ * This window is specific to that one-time backfill. If an ongoing-sync
+ * consumer is ever added, it must pass its own (shorter) lookback explicitly
+ * rather than reusing this function unchanged — otherwise it silently
+ * inherits a two-year window instead of a recent one.
+ *
+ * Lives outside `src/actions/imports.ts` (a `"use server"` file) because a
+ * `"use server"` module may only export async functions — plain constant
+ * exports there throw at build time.
+ */
+export function windowCalendarEvents(
+  events: ParsedCalendarEvent[]
+): ParsedCalendarEvent[] {
+  const now = Date.now();
+  return events.filter((e) => {
+    if (!e.start) return true;
+    const t = e.start.getTime();
+    return (
+      t >= now - CALENDAR_BACKFILL_DAYS * 86400000 && t <= now + 14 * 86400000
+    );
+  });
+}
+
 function unfoldIcs(text: string) {
   return text.replace(/\r\n[ \t]/g, "").replace(/\n[ \t]/g, "");
 }

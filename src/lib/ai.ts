@@ -6,6 +6,13 @@ import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { decrypt } from "@/lib/crypto";
 import { z } from "zod";
+import {
+  withUsage,
+  tokensFromGemini,
+  tokensFromOpenAi,
+  tokensFromAnthropic,
+  type TokenCounts,
+} from "@/lib/usage-events";
 import { aiProviderErrorMessage } from "@/lib/errors";
 import {
   AI_PROVIDERS,
@@ -103,7 +110,7 @@ export const multiPersonNoteParseSchema = z.object({
         .string()
         .nullish()
         .transform((v) => v?.trim() || ""),
-    })
+    }),
   ),
 });
 
@@ -136,7 +143,7 @@ const personDetailBatchSchema = z.object({
         .string()
         .nullish()
         .transform((v) => v?.trim() || ""),
-    })
+    }),
   ),
 });
 
@@ -189,7 +196,7 @@ function getEnvProviderKey(provider: AiProvider): string | null {
 
 function hasPersonalProviderKey(
   provider: AiProvider,
-  settings?: ProviderKeySettings | null
+  settings?: ProviderKeySettings | null,
 ) {
   if (provider === "gemini") return Boolean(settings?.geminiApiKeyEncrypted);
   if (provider === "openai") return Boolean(settings?.openaiApiKeyEncrypted);
@@ -198,7 +205,7 @@ function hasPersonalProviderKey(
 
 export function getProviderApiKey(
   provider: AiProvider,
-  settings?: ProviderKeySettings | null
+  settings?: ProviderKeySettings | null,
 ): string | null {
   const personal =
     provider === "gemini"
@@ -213,7 +220,7 @@ export function getProviderApiKey(
 
 export function usingEnvKey(
   provider: AiProvider,
-  settings?: ProviderKeySettings | null
+  settings?: ProviderKeySettings | null,
 ) {
   if (hasPersonalProviderKey(provider, settings)) return false;
   return Boolean(getEnvProviderKey(provider));
@@ -228,49 +235,65 @@ export async function getAiConfig(userId: string) {
   if (!apiKey) {
     const meta = AI_PROVIDERS.find((p) => p.id === provider)!;
     throw new Error(
-      `No ${meta.label} API key configured. Add your own key in Settings.`
+      `No ${meta.label} API key configured. Add your own key in Settings.`,
     );
   }
 
-  return { provider, model, apiKey, settings };
+  // Whose key pays. On Vercel `getEnvProviderKey` always returns null, so this is "user"
+  // in production by construction; "orbit" only happens in local development.
+  const keyOwner: "user" | "orbit" = usingEnvKey(provider, settings)
+    ? "orbit"
+    : "user";
+
+  return { provider, model, apiKey, settings, keyOwner };
 }
 
 /** Resolve which embedding API to use for semantic search. */
-export async function resolveEmbeddingBackend(
-  userId: string
-): Promise<{ backend: EmbeddingBackend; apiKey: string }> {
+export async function resolveEmbeddingBackend(userId: string): Promise<{
+  backend: EmbeddingBackend;
+  apiKey: string;
+  keyOwner: "user" | "orbit";
+}> {
   const settings = await loadSettings(userId);
   const provider = resolveAiProvider(settings?.aiProvider);
+  // Whose key pays, resolved per backend since the fallback chain below can land on a
+  // different provider than the user's configured one.
+  const owner = (p: AiProvider): "user" | "orbit" =>
+    usingEnvKey(p, settings) ? "orbit" : "user";
 
   if (provider === "openai") {
     const apiKey = getProviderApiKey("openai", settings);
     if (!apiKey) {
       throw new Error(
-        "No OpenAI API key configured for embeddings. Add your own key in Settings."
+        "No OpenAI API key configured for embeddings. Add your own key in Settings.",
       );
     }
-    return { backend: "openai", apiKey };
+    return { backend: "openai", apiKey, keyOwner: owner("openai") };
   }
 
   if (provider === "gemini") {
     const apiKey = getProviderApiKey("gemini", settings);
     if (!apiKey) {
       throw new Error(
-        "No Gemini API key configured for embeddings. Add your own key in Settings."
+        "No Gemini API key configured for embeddings. Add your own key in Settings.",
       );
     }
-    return { backend: "gemini", apiKey };
+    return { backend: "gemini", apiKey, keyOwner: owner("gemini") };
   }
 
   // Anthropic has no embeddings API — prefer OpenAI, then Gemini.
   const openaiKey = getProviderApiKey("openai", settings);
-  if (openaiKey) return { backend: "openai", apiKey: openaiKey };
+  if (openaiKey) {
+    return { backend: "openai", apiKey: openaiKey, keyOwner: owner("openai") };
+  }
 
   const geminiKey = getProviderApiKey("gemini", settings);
-  if (geminiKey) return { backend: "gemini", apiKey: geminiKey };
+  if (geminiKey) {
+    return { backend: "gemini", apiKey: geminiKey, keyOwner: owner("gemini") };
+  }
 
   throw new Error(
-    "Anthropic has no embeddings API. Add an OpenAI or Gemini key in Settings for search embeddings."
+    "Anthropic has no embeddings API. Add an OpenAI or Gemini key in Settings for search embeddings.",
   );
 }
 
@@ -406,90 +429,132 @@ export async function completeJson(
     user: string;
     temperature?: number;
     maxOutputTokens?: number;
-  }
+    /** Call-site label for usage telemetry, e.g. "capture.parse". */
+    operation?: string;
+  },
 ): Promise<string> {
-  const { provider, model, apiKey } = await getAiConfig(userId);
+  const { provider, model, apiKey, keyOwner } = await getAiConfig(userId);
   const temperature = input.temperature ?? 0.2;
   const maxOutputTokens = input.maxOutputTokens ?? 4096;
   const system = `${input.system}\n\nRespond with valid JSON only. No markdown fences.`;
 
-  try {
-    if (provider === "gemini") {
-      const client = new GoogleGenAI({ apiKey });
-      const response = await client.models.generateContent({
-        model,
-        contents: input.user,
-        config: {
-          temperature,
-          maxOutputTokens,
-          responseMimeType: "application/json",
-          systemInstruction: system,
-        },
-      });
-      const content = response.text;
-      if (!content) throw new Error("Empty AI response");
-      return normalizeJsonResponse(content);
-    }
-
-    if (provider === "openai") {
-      const client = new OpenAI({ apiKey });
-      const response = await client.chat.completions.create({
-        model,
-        temperature,
-        max_tokens: maxOutputTokens,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: input.user },
-        ],
-      });
-      const content = response.choices[0]?.message?.content;
-      if (!content) throw new Error("Empty AI response");
-      return normalizeJsonResponse(content);
-    }
-
-    const client = new Anthropic({ apiKey });
-    const response = await client.messages.create({
+  return withUsage(
+    {
+      userId,
+      operation: input.operation ?? "completeJson",
+      provider,
       model,
-      max_tokens: maxOutputTokens,
-      temperature,
-      system,
-      messages: [{ role: "user", content: input.user }],
-    });
-    const block = response.content.find((b) => b.type === "text");
-    if (!block || block.type !== "text" || !block.text) {
-      throw new Error("Empty AI response");
-    }
-    return normalizeJsonResponse(block.text);
-  } catch (err) {
-    if (err instanceof Error && err.message === "Empty AI response") throw err;
-    if (
-      err instanceof Error &&
-      err.message.startsWith("Failed to parse AI JSON")
-    ) {
-      throw new Error("AI returned an incomplete response. Try again.");
-    }
-    const label =
-      provider === "gemini"
-        ? "Gemini"
-        : provider === "openai"
-          ? "OpenAI"
-          : "Anthropic";
-    throw new Error(aiProviderErrorMessage(err, label));
-  }
+      kind: "completion",
+      keyOwner,
+    },
+    async (report) => {
+      try {
+        if (provider === "gemini") {
+          const client = new GoogleGenAI({ apiKey });
+          const response = await client.models.generateContent({
+            model,
+            contents: input.user,
+            config: {
+              temperature,
+              maxOutputTokens,
+              responseMimeType: "application/json",
+              systemInstruction: system,
+            },
+          });
+          report(tokensFromGemini(response));
+          const content = response.text;
+          if (!content) throw new Error("Empty AI response");
+          return normalizeJsonResponse(content);
+        }
+
+        if (provider === "openai") {
+          const client = new OpenAI({ apiKey });
+          const response = await client.chat.completions.create({
+            model,
+            temperature,
+            max_tokens: maxOutputTokens,
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: input.user },
+            ],
+          });
+          report(tokensFromOpenAi(response));
+          const content = response.choices[0]?.message?.content;
+          if (!content) throw new Error("Empty AI response");
+          return normalizeJsonResponse(content);
+        }
+
+        const client = new Anthropic({ apiKey });
+        const response = await client.messages.create({
+          model,
+          max_tokens: maxOutputTokens,
+          temperature,
+          system,
+          messages: [{ role: "user", content: input.user }],
+        });
+        report(tokensFromAnthropic(response));
+        const block = response.content.find((b) => b.type === "text");
+        if (!block || block.type !== "text" || !block.text) {
+          throw new Error("Empty AI response");
+        }
+        return normalizeJsonResponse(block.text);
+      } catch (err) {
+        if (err instanceof Error && err.message === "Empty AI response")
+          throw err;
+        if (
+          err instanceof Error &&
+          err.message.startsWith("Failed to parse AI JSON")
+        ) {
+          throw new Error("AI returned an incomplete response. Try again.");
+        }
+        const label =
+          provider === "gemini"
+            ? "Gemini"
+            : provider === "openai"
+              ? "OpenAI"
+              : "Anthropic";
+        throw new Error(aiProviderErrorMessage(err, label));
+      }
+    },
+  );
 }
 
 /** Multimodal JSON completion for vision OCR / image+text prompts. */
 export async function completeMultimodalJson(
   userId: string,
-  input: {
-    system: string;
-    parts: MultimodalPart[];
-    temperature?: number;
-    maxOutputTokens?: number;
-  }
+  input: MultimodalInput,
 ): Promise<string> {
-  const { provider, model, apiKey } = await getAiConfig(userId);
+  const cfg = await getAiConfig(userId);
+  return withUsage(
+    {
+      userId,
+      operation: input.operation ?? "completeMultimodalJson",
+      provider: cfg.provider,
+      model: cfg.model,
+      kind: "multimodal",
+      keyOwner: cfg.keyOwner,
+    },
+    (report) => completeMultimodalJsonInner(cfg, input, report),
+  );
+}
+
+type MultimodalInput = {
+  system: string;
+  parts: MultimodalPart[];
+  temperature?: number;
+  maxOutputTokens?: number;
+  /** Call-site label for usage telemetry. */
+  operation?: string;
+};
+
+/** Body split out so `completeMultimodalJson` stays a thin instrumented wrapper. */
+async function completeMultimodalJsonInner(
+  cfg: Awaited<ReturnType<typeof getAiConfig>>,
+  input: MultimodalInput,
+  report: (tokens: TokenCounts) => void,
+): Promise<string> {
+  const { provider, model, apiKey } = cfg;
   const temperature = input.temperature ?? 0.2;
   const maxOutputTokens = input.maxOutputTokens ?? 4096;
   const system = `${input.system}\n\nRespond with valid JSON only. No markdown fences.`;
@@ -521,6 +586,7 @@ export async function completeMultimodalJson(
           systemInstruction: system,
         },
       });
+      report(tokensFromGemini(response));
       const content = response.text;
       if (!content) throw new Error("Empty AI response");
       return normalizeJsonResponse(content);
@@ -529,12 +595,10 @@ export async function completeMultimodalJson(
     if (provider === "openai") {
       const client = new OpenAI({ apiKey });
       const content: OpenAI.Chat.ChatCompletionContentPart[] = [
-        ...textParts.map(
-          (p): OpenAI.Chat.ChatCompletionContentPart => ({
-            type: "text",
-            text: p.text,
-          })
-        ),
+        ...textParts.map((p): OpenAI.Chat.ChatCompletionContentPart => ({
+          type: "text",
+          text: p.text,
+        })),
         ...mediaParts.map((p) => {
           if (p.type === "image") {
             return {
@@ -562,6 +626,7 @@ export async function completeMultimodalJson(
           { role: "user", content },
         ],
       });
+      report(tokensFromOpenAi(response));
       const out = response.choices[0]?.message?.content;
       if (!out) throw new Error("Empty AI response");
       return normalizeJsonResponse(out);
@@ -580,7 +645,7 @@ export async function completeMultimodalJson(
       if (p.type === "image") {
         const mediaType = (
           ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(
-            p.mimeType
+            p.mimeType,
           )
             ? p.mimeType
             : "image/jpeg"
@@ -607,6 +672,7 @@ export async function completeMultimodalJson(
       system,
       messages: [{ role: "user", content }],
     });
+    report(tokensFromAnthropic(response));
     const block = response.content.find((b) => b.type === "text");
     if (!block || block.type !== "text" || !block.text) {
       throw new Error("Empty AI response");
@@ -633,7 +699,7 @@ export async function completeMultimodalJson(
 /** Speech-to-text using OpenAI Whisper, or Gemini audio understanding as fallback. */
 export async function transcribeAudioWithAI(
   userId: string,
-  input: { mimeType: string; base64: string; filename?: string }
+  input: { mimeType: string; base64: string; filename?: string },
 ): Promise<string> {
   const settings = await loadSettings(userId);
   const openaiKey = getProviderApiKey("openai", settings);
@@ -643,55 +709,83 @@ export async function transcribeAudioWithAI(
     const file = new File(
       [bytes],
       input.filename || guessAudioFilename(input.mimeType),
-      { type: input.mimeType || "audio/webm" }
+      { type: input.mimeType || "audio/webm" },
     );
-    const result = await client.audio.transcriptions.create({
-      file,
-      model: "whisper-1",
-    });
-    const text = result.text?.trim();
-    if (!text) throw new Error("Empty transcription");
-    return text;
+    return withUsage(
+      {
+        userId,
+        operation: "capture.transcribe.audio",
+        provider: "openai",
+        model: "whisper-1",
+        kind: "transcription",
+        keyOwner: usingEnvKey("openai", settings) ? "orbit" : "user",
+      },
+      async () => {
+        const result = await client.audio.transcriptions.create({
+          file,
+          model: "whisper-1",
+        });
+        // Whisper bills per second of audio and returns no usage object, so this row
+        // stores null tokens and counts as volume only. A fabricated zero would be a lie
+        // that got summed.
+        const text = result.text?.trim();
+        if (!text) throw new Error("Empty transcription");
+        return text;
+      },
+    );
   }
 
   const geminiKey = getProviderApiKey("gemini", settings);
   if (geminiKey) {
     const client = new GoogleGenAI({ apiKey: geminiKey });
     const model = resolveAiModel("gemini", settings?.aiModel);
-    const response = await client.models.generateContent({
-      model,
-      contents: [
-        {
-          role: "user",
-          parts: [
+    return withUsage(
+      {
+        userId,
+        operation: "capture.transcribe.audio",
+        provider: "gemini",
+        model,
+        kind: "transcription",
+        keyOwner: usingEnvKey("gemini", settings) ? "orbit" : "user",
+      },
+      async (report) => {
+        const response = await client.models.generateContent({
+          model,
+          contents: [
             {
-              text: "Transcribe this audio verbatim. Return JSON: {\"text\": string}. If unintelligible, use an empty string.",
-            },
-            {
-              inlineData: {
-                mimeType: input.mimeType || "audio/webm",
-                data: input.base64,
-              },
+              role: "user",
+              parts: [
+                {
+                  text: 'Transcribe this audio verbatim. Return JSON: {"text": string}. If unintelligible, use an empty string.',
+                },
+                {
+                  inlineData: {
+                    mimeType: input.mimeType || "audio/webm",
+                    data: input.base64,
+                  },
+                },
+              ],
             },
           ],
-        },
-      ],
-      config: {
-        temperature: 0.1,
-        maxOutputTokens: 4096,
-        responseMimeType: "application/json",
+          config: {
+            temperature: 0.1,
+            maxOutputTokens: 4096,
+            responseMimeType: "application/json",
+          },
+        });
+        report(tokensFromGemini(response));
+        const raw = response.text;
+        if (!raw) throw new Error("Empty transcription");
+        const parsed = parseAiJson<{ text?: string }>(raw);
+        const text = parsed.text?.trim();
+        if (!text) throw new Error("Empty transcription");
+        return text;
       },
-    });
-    const raw = response.text;
-    if (!raw) throw new Error("Empty transcription");
-    const parsed = parseAiJson<{ text?: string }>(raw);
-    const text = parsed.text?.trim();
-    if (!text) throw new Error("Empty transcription");
-    return text;
+    );
   }
 
   throw new Error(
-    "Voice capture needs an OpenAI or Gemini API key in Settings for transcription."
+    "Voice capture needs an OpenAI or Gemini API key in Settings for transcription.",
   );
 }
 
@@ -706,10 +800,11 @@ function guessAudioFilename(mimeType: string) {
 /** OCR / note transcription from one or more images. */
 export async function transcribeImagesWithAI(
   userId: string,
-  images: Array<{ mimeType: string; base64: string }>
+  images: Array<{ mimeType: string; base64: string }>,
 ): Promise<string> {
   if (!images.length) return "";
   const content = await completeMultimodalJson(userId, {
+    operation: "capture.transcribe.images",
     temperature: 0.1,
     maxOutputTokens: 8192,
     system: `You transcribe networking / meeting notes from photos (handwritten, whiteboard, typed screenshots, business cards).
@@ -725,13 +820,11 @@ Rules:
         type: "text",
         text: `Transcribe ${images.length} note image(s) into plain text for contact capture.`,
       },
-      ...images.map(
-        (img): MultimodalPart => ({
-          type: "image",
-          mimeType: img.mimeType,
-          base64: img.base64,
-        })
-      ),
+      ...images.map((img): MultimodalPart => ({
+        type: "image",
+        mimeType: img.mimeType,
+        base64: img.base64,
+      })),
     ],
   });
   const parsed = parseAiJson<{ text?: string }>(content);
@@ -789,7 +882,7 @@ function hintsPreamble(hints?: CaptureParseHints | null) {
 
 function normalizeSharedNotes(
   shared: SharedNoteContext[],
-  peopleNames: string[]
+  peopleNames: string[],
 ): SharedNoteContext[] {
   const nameSet = new Set(peopleNames.map((n) => n.trim().toLowerCase()));
   return shared
@@ -814,9 +907,10 @@ function normalizeSharedNotes(
 async function parseMultiPersonSinglePass(
   userId: string,
   notes: string,
-  hints?: CaptureParseHints | null
+  hints?: CaptureParseHints | null,
 ): Promise<ParsedMultiPersonNotes> {
   const content = await completeJson(userId, {
+    operation: "capture.parse",
     temperature: 0.2,
     maxOutputTokens: CAPTURE_MAX_OUTPUT_TOKENS,
     user: notes.slice(0, 100_000) + hintsPreamble(hints),
@@ -857,7 +951,7 @@ Rules:
   const people = parsed.people.filter((p) => p.name?.trim());
   const shared_notes = normalizeSharedNotes(
     parsed.shared_notes || [],
-    people.map((p) => p.name!.trim())
+    people.map((p) => p.name!.trim()),
   );
 
   const defaultDate =
@@ -877,10 +971,11 @@ Rules:
 async function parseMultiPersonTwoPass(
   userId: string,
   notes: string,
-  hints?: CaptureParseHints | null
+  hints?: CaptureParseHints | null,
 ): Promise<ParsedMultiPersonNotes> {
   const sliced = notes.slice(0, 100_000);
   const identityRaw = await completeJson(userId, {
+    operation: "capture.parse.identify",
     temperature: 0.2,
     maxOutputTokens: 4096,
     user: sliced + hintsPreamble(hints),
@@ -925,10 +1020,7 @@ Rules:
         ) {
           return true;
         }
-        if (
-          seedEmail &&
-          p.email?.trim().toLowerCase() === seedEmail
-        ) {
+        if (seedEmail && p.email?.trim().toLowerCase() === seedEmail) {
           return true;
         }
         return false;
@@ -950,7 +1042,7 @@ Rules:
 
   const shared_notes = normalizeSharedNotes(
     identity.shared_notes || [],
-    peopleIds.map((p) => p.name.trim())
+    peopleIds.map((p) => p.name.trim()),
   );
   const defaultDate =
     identity.interaction_date || hints?.eventDate?.trim() || null;
@@ -962,12 +1054,13 @@ Rules:
   for (let i = 0; i < peopleIds.length; i += DETAIL_BATCH_SIZE) {
     const batch = peopleIds.slice(i, i + DETAIL_BATCH_SIZE);
     const batchRaw = await completeJson(userId, {
+      operation: "capture.parse.details",
       temperature: 0.2,
       maxOutputTokens: CAPTURE_MAX_OUTPUT_TOKENS,
       user: `FULL NOTES:\n${sliced}\n\nSHARED CONTEXT (do not copy wholesale into every source_excerpt):\n${sharedBlock || "(none)"}\n\nEXTRACT FULL DETAILS FOR THESE PEOPLE ONLY:\n${batch
         .map(
           (p, idx) =>
-            `${idx + 1}. ${p.name}${p.email ? ` <${p.email}>` : ""}${p.company ? ` @ ${p.company}` : ""}${p.role ? ` — ${p.role}` : ""}`
+            `${idx + 1}. ${p.name}${p.email ? ` <${p.email}>` : ""}${p.company ? ` @ ${p.company}` : ""}${p.role ? ` — ${p.role}` : ""}`,
         )
         .join("\n")}${hintsPreamble(hints)}`,
       system: `You extract structured contact fields for a batch of people from networking notes.
@@ -995,7 +1088,7 @@ Rules:
         batchParsed.people.find(
           (p) =>
             p.name?.trim().toLowerCase() ===
-            requested.name.trim().toLowerCase()
+            requested.name.trim().toLowerCase(),
         ) || batchParsed.people[j];
 
       const merged: ParsedPersonNote = {
@@ -1028,6 +1121,7 @@ Rules:
       if (!merged.source_excerpt.trim() && peopleIds.length > 1) {
         try {
           const retryRaw = await completeJson(userId, {
+            operation: "capture.parse.excerpt-retry",
             temperature: 0.1,
             maxOutputTokens: 2048,
             user: `NOTES:\n${sliced}\n\nPerson: ${merged.name}\nReturn JSON { "source_excerpt": string } with ONLY this person's specific slice of the notes.`,
@@ -1057,7 +1151,7 @@ Rules:
 export async function parseMultiPersonNotesWithAI(
   userId: string,
   notes: string,
-  hints?: CaptureParseHints | null
+  hints?: CaptureParseHints | null,
 ): Promise<ParsedMultiPersonNotes> {
   const useTwoPass =
     notes.length >= TWO_PASS_CHAR_THRESHOLD ||
@@ -1076,65 +1170,98 @@ export async function parseMultiPersonNotesWithAI(
 }
 
 export async function createEmbedding(userId: string, text: string) {
-  const { backend, apiKey } = await resolveEmbeddingBackend(userId);
+  const { backend, apiKey, keyOwner } = await resolveEmbeddingBackend(userId);
   const input = text.slice(0, 8000);
+  const model =
+    backend === "openai" ? OPENAI_EMBEDDING_MODEL : GEMINI_EMBEDDING_MODEL;
 
-  if (backend === "openai") {
-    const client = new OpenAI({ apiKey });
-    const res = await client.embeddings.create({
-      model: OPENAI_EMBEDDING_MODEL,
-      input,
-    });
-    const values = res.data[0]?.embedding;
-    if (!values?.length) throw new Error("Empty embedding response");
-    return values;
-  }
+  return withUsage(
+    {
+      userId,
+      operation: "search.embed",
+      provider: backend,
+      model,
+      kind: "embedding",
+      keyOwner,
+    },
+    async (report) => {
+      if (backend === "openai") {
+        const client = new OpenAI({ apiKey });
+        const res = await client.embeddings.create({
+          model: OPENAI_EMBEDDING_MODEL,
+          input,
+        });
+        report(tokensFromOpenAi(res));
+        const values = res.data[0]?.embedding;
+        if (!values?.length) throw new Error("Empty embedding response");
+        return values;
+      }
 
-  const client = new GoogleGenAI({ apiKey });
-  const res = await client.models.embedContent({
-    model: GEMINI_EMBEDDING_MODEL,
-    contents: input,
-  });
-  const values = res.embeddings?.[0]?.values;
-  if (!values?.length) throw new Error("Empty embedding response");
-  return values;
+      const client = new GoogleGenAI({ apiKey });
+      const res = await client.models.embedContent({
+        model: GEMINI_EMBEDDING_MODEL,
+        contents: input,
+      });
+      // Gemini's embed endpoint reports no usage metadata — the row stores null tokens
+      // rather than a fabricated zero, and counts as volume.
+      const values = res.embeddings?.[0]?.values;
+      if (!values?.length) throw new Error("Empty embedding response");
+      return values;
+    },
+  );
 }
 
 /** Embed many texts in as few network round trips as possible, preserving input order. */
 export async function createEmbeddingsBatch(
   userId: string,
-  texts: string[]
+  texts: string[],
 ): Promise<number[][]> {
   if (texts.length === 0) return [];
-  const { backend, apiKey } = await resolveEmbeddingBackend(userId);
+  const { backend, apiKey, keyOwner } = await resolveEmbeddingBackend(userId);
   const inputs = texts.map((text) => text.slice(0, 8000));
+  const model =
+    backend === "openai" ? OPENAI_EMBEDDING_MODEL : GEMINI_EMBEDDING_MODEL;
 
-  if (backend === "openai") {
-    const client = new OpenAI({ apiKey });
-    const res = await client.embeddings.create({
-      model: OPENAI_EMBEDDING_MODEL,
-      input: inputs,
-    });
-    const values = res.data
-      .slice()
-      .sort((a, b) => a.index - b.index)
-      .map((d) => d.embedding);
-    if (values.length !== inputs.length || values.some((v) => !v?.length)) {
-      throw new Error("Incomplete embedding batch response");
-    }
-    return values;
-  }
+  return withUsage(
+    {
+      userId,
+      operation: "search.embed.batch",
+      provider: backend,
+      model,
+      kind: "embedding",
+      keyOwner,
+    },
+    async (report) => {
+      if (backend === "openai") {
+        const client = new OpenAI({ apiKey });
+        const res = await client.embeddings.create({
+          model: OPENAI_EMBEDDING_MODEL,
+          input: inputs,
+        });
+        report(tokensFromOpenAi(res));
+        const values = res.data
+          .slice()
+          .sort((a, b) => a.index - b.index)
+          .map((d) => d.embedding);
+        if (values.length !== inputs.length || values.some((v) => !v?.length)) {
+          throw new Error("Incomplete embedding batch response");
+        }
+        return values;
+      }
 
-  const client = new GoogleGenAI({ apiKey });
-  const res = await client.models.embedContent({
-    model: GEMINI_EMBEDDING_MODEL,
-    contents: inputs,
-  });
-  const values = res.embeddings?.map((e) => e.values ?? []) ?? [];
-  if (values.length !== inputs.length || values.some((v) => !v.length)) {
-    throw new Error("Incomplete embedding batch response");
-  }
-  return values;
+      const client = new GoogleGenAI({ apiKey });
+      const res = await client.models.embedContent({
+        model: GEMINI_EMBEDDING_MODEL,
+        contents: inputs,
+      });
+      // No usage metadata from Gemini embeddings; see createEmbedding.
+      const values = res.embeddings?.map((e) => e.values ?? []) ?? [];
+      if (values.length !== inputs.length || values.some((v) => !v.length)) {
+        throw new Error("Incomplete embedding batch response");
+      }
+      return values;
+    },
+  );
 }
 
 export function cosineSimilarity(a: number[], b: number[]) {
@@ -1180,7 +1307,7 @@ export async function chatWithNetwork(
     notes: string | null;
     piiUnlocked: boolean;
     relevance: number;
-  }> = []
+  }> = [],
 ) {
   const contextBlock = contactsContext
     .map((c, i) => {
@@ -1216,13 +1343,16 @@ export async function chatWithNetwork(
   const historyBlock =
     priorTurns.length > 0
       ? priorTurns
-          .map((t) => `${t.role === "user" ? "User" : "Assistant"}: ${t.content}`)
+          .map(
+            (t) => `${t.role === "user" ? "User" : "Assistant"}: ${t.content}`,
+          )
           .join("\n\n")
       : "";
 
   const hasRecruiters = recruitersContext.length > 0;
 
   const content = await completeJson(userId, {
+    operation: "chat.answer",
     temperature: 0.3,
     user: `${historyBlock ? `Prior conversation:\n${historyBlock}\n\n` : ""}Question: ${question}\n\nContacts:\n${contextBlock || "(no contacts found)"}${hasRecruiters ? `\n\nRecruiters:\n${recruitersBlock}` : ""}`,
     system: `You are Orbit, a personal networking assistant.

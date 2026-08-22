@@ -76,7 +76,7 @@ export function NetworkDepthChart({
               return (
                 <div
                   key={t.key}
-                  className={cn(t.color, "transition-all")}
+                  className={cn(t.color, "transition-[width] duration-slow ease-house")}
                   style={{ width: `${width}%` }}
                   title={`${t.label}: ${tierCounts[t.key]}`}
                 />
@@ -104,7 +104,7 @@ export function NetworkDepthChart({
             })}
           </div>
           <p className="text-xs text-muted-foreground">
-            Strength, recency, and goal alignment combined
+            Strength, recency, cadence, and goal alignment combined
           </p>
         </div>
 

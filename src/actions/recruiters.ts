@@ -10,6 +10,7 @@ import {
   type RecruiterLinkStatus,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { requireRecruitersUser } from "@/lib/plan-guards";
 import {
   communityScore,
   ensureUserLink,
@@ -27,7 +28,7 @@ function revalidateRecruiterPaths(id?: string) {
 }
 
 export async function searchRecruiters(q?: string): Promise<PublicRecruiter[]> {
-  const userId = await requireUserId();
+  const userId = await requireRecruitersUser();
   const db = await getDb();
   const rows = await searchCanonicalRecruiters({ q, limit: 50 });
   const links = await db.query.userRecruiterLinks.findMany({
@@ -80,7 +81,7 @@ export type LogRecruiterInput = {
 };
 
 export async function logRecruiter(input: LogRecruiterInput) {
-  const userId = await requireUserId();
+  const userId = await requireRecruitersUser();
   const fullName = input.fullName?.trim();
   if (!fullName && !input.recruiterId) {
     throw new Error("Recruiter name is required");
@@ -148,7 +149,7 @@ export async function updateMyLink(
     personalRating?: number | null;
   }
 ) {
-  const userId = await requireUserId();
+  const userId = await requireRecruitersUser();
   const db = await getDb();
   const link = await db.query.userRecruiterLinks.findFirst({
     where: and(

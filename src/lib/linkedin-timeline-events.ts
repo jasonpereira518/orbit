@@ -92,6 +92,7 @@ export async function extractLinkedInTimelineEvents(
 
   try {
     const content = await completeJson(userId, {
+    operation: "import.linkedin.timeline",
       temperature: 0.1,
       system: `You extract relationship timeline events from a LinkedIn DM thread.
 Return strict JSON:

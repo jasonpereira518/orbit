@@ -9,6 +9,7 @@ import {
   type ImportJobRowPayload,
 } from "@/db/schema";
 import { createContactsBulk, updateContact, type ContactInput } from "@/actions/contacts";
+import { getAppBaseUrl } from "@/lib/app-url";
 import { createCompanyResolver } from "@/lib/companies";
 import {
   DUPLICATE_MERGE_CONFIDENCE,
@@ -29,12 +30,6 @@ function rowFullName(payload: ImportJobRowPayload) {
   return `${payload.firstName} ${payload.lastName}`.trim();
 }
 
-function getAppBaseUrl() {
-  if (process.env.APP_BASE_URL) return process.env.APP_BASE_URL;
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  return `http://localhost:${process.env.PORT || 3000}`;
-}
-
 /** Kick a self-continuation request so remaining rows keep processing in a fresh invocation. */
 async function scheduleContinuation(importId: string) {
   const secret = process.env.CRON_SECRET;
@@ -49,6 +44,9 @@ async function scheduleContinuation(importId: string) {
 }
 
 type PendingRow = typeof importJobRows.$inferSelect;
+
+/** Row-level reason recorded when the plan's contact limit refused an otherwise-valid row. */
+export const PLAN_LIMIT_ROW_REASON = "Contact limit reached on your plan";
 
 async function markRowsDone(rowIds: string[], contactIdByRowId: Map<string, string>) {
   if (rowIds.length === 0) return;
@@ -102,6 +100,8 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
   let duplicatesFound = importRow.duplicatesFound ?? 0;
   let rowsProcessed = importRow.rowsProcessed ?? 0;
   let skippedTotal = importRow.stats?.skipped ?? 0;
+  let blockedByPlanTotal = importRow.stats?.blockedByPlan ?? 0;
+  const allTouchedContactIds = new Set<string>();
 
   try {
     while (true) {
@@ -171,7 +171,13 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
               email: payload.email || undefined,
               linkedinUrl: payload.url || undefined,
               source: "linkedin",
-              relationshipScore: 2,
+              // No statedCloseness: nobody has rated these people, and saying
+              // "2 out of 5" about two thousand strangers is exactly the
+              // assumption this change removes. `contactInsertValues` coalesces
+              // `input.relationshipScore ?? 2`, so the legacy column still reads
+              // 2 — which is precisely why `resolveStatedStrength` refuses to
+              // treat a 2 as an assessment.
+              firstInteractionAt: connectedOn ?? undefined,
               dateMet: connectedOn,
               howMet: "LinkedIn connection",
               metContext: "online",
@@ -183,6 +189,14 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
 
       const touchedContactIds: string[] = [];
       const contactIdByRowId = new Map<string, string>();
+
+      // `createContactsBulk` admits only what the plan's contact headroom allows, taking
+      // from the front, so anything past `created.length` was refused by the cap rather
+      // than failed. These rows must reach a terminal status: the loop re-queries pending
+      // rows every pass, so leaving them pending would spin until the time budget and then
+      // reschedule forever. They are marked `skipped` with a reason, and counted under
+      // `blockedByPlan` so the UI can offer an upgrade instead of reporting an error.
+      let planBlockedRows: PendingRow[] = [];
 
       if (toCreate.length > 0) {
         const created = await createContactsBulk(
@@ -196,6 +210,13 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
           touchedContactIds.push(contact.id);
         });
         contactsCreated += created.length;
+
+        if (created.length < toCreate.length) {
+          planBlockedRows = toCreate
+            .slice(created.length)
+            .map((item) => item.row);
+          blockedByPlanTotal += planBlockedRows.length;
+        }
       }
 
       for (const item of toUpdate) {
@@ -211,10 +232,28 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
 
       if (touchedContactIds.length > 0) {
         await rebuildContactEmbeddingsBatch(userId, touchedContactIds);
+        for (const id of touchedContactIds) allTouchedContactIds.add(id);
+      }
+
+      const blockedRowIds = new Set(planBlockedRows.map((row) => row.id));
+      if (blockedRowIds.size > 0) {
+        await db
+          .update(importJobRows)
+          .set({
+            status: "skipped",
+            errorMessage: PLAN_LIMIT_ROW_REASON,
+            updatedAt: new Date(),
+          })
+          .where(inArray(importJobRows.id, [...blockedRowIds]));
       }
 
       await markRowsDone(
-        [...toCreate.map((item) => item.row.id), ...toUpdate.map((item) => item.row.id)],
+        [
+          ...toCreate
+            .map((item) => item.row.id)
+            .filter((id) => !blockedRowIds.has(id)),
+          ...toUpdate.map((item) => item.row.id),
+        ],
         contactIdByRowId
       );
 
@@ -235,7 +274,11 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
           contactsCreated,
           contactsUpdated,
           duplicatesFound,
-          stats: { ...(current.stats ?? {}), skipped: skippedTotal },
+          stats: {
+            ...(current.stats ?? {}),
+            skipped: skippedTotal,
+            blockedByPlan: blockedByPlanTotal,
+          },
           errorMessage: null,
           updatedAt: new Date(),
         })
@@ -257,6 +300,7 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
   revalidatePath("/graph");
   revalidatePath("/knowledge");
   revalidatePath("/chat");
+  for (const id of allTouchedContactIds) revalidatePath(`/contacts/${id}`);
 }
 
 async function failImport(importId: string, err: unknown) {

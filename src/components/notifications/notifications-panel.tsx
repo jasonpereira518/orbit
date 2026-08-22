@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState, useTransition } from "react";
 import { formatDistanceToNow } from "date-fns";
 import {
   Bell,
+  CalendarClock,
   Check,
   CheckCircle2,
   Clock,
@@ -22,6 +23,10 @@ import {
   markReminderDone,
   snoozeReminderAction,
 } from "@/actions/reminders";
+import {
+  confirmSuggestedReminder,
+  discardSuggestedReminder,
+} from "@/actions/suggested-reminders";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ExpandableText } from "@/components/ui/expandable-text";
 import {
@@ -229,7 +234,20 @@ export function NotificationsPanelButton() {
                       key={item.id}
                       item={item}
                       pending={pending}
+                      onDone={() => {
+                        if (item.suggestedReminderId) {
+                          runAction("Reminder added", () =>
+                            confirmSuggestedReminder(item.suggestedReminderId!)
+                          );
+                        }
+                      }}
                       onDismiss={() => {
+                        if (item.suggestedReminderId) {
+                          runAction("Dismissed", () =>
+                            discardSuggestedReminder(item.suggestedReminderId!)
+                          );
+                          return;
+                        }
                         if (item.suggestionId) {
                           runAction("Dismissed", () =>
                             dismissSuggestion(item.suggestionId!)
@@ -380,7 +398,9 @@ function NotificationRow({
       ? Bell
       : item.kind === "follow_up"
         ? UserRound
-        : Sparkles;
+        : item.kind === "suggested_reminder"
+          ? CalendarClock
+          : Sparkles;
 
   return (
     <div
@@ -409,7 +429,9 @@ function NotificationRow({
               ? formatDistanceToNow(new Date(item.dueAt), { addSuffix: true })
               : item.kind === "suggestion"
                 ? "Outreach tip"
-                : "No due date"}
+                : item.kind === "suggested_reminder"
+                  ? "Found in your notes"
+                  : "No due date"}
           </p>
         </div>
       </div>
@@ -437,17 +459,24 @@ function NotificationRow({
             Snooze
           </Button>
         )}
-        {item.kind === "suggestion" && onDismiss && (
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={pending}
-            onClick={onDismiss}
-          >
-            <X className="h-3.5 w-3.5" />
-            Dismiss
+        {item.kind === "suggested_reminder" && onDone && (
+          <Button size="sm" variant="ghost" disabled={pending} onClick={onDone}>
+            <Check className="h-3.5 w-3.5" />
+            Add reminder
           </Button>
         )}
+        {(item.kind === "suggestion" || item.kind === "suggested_reminder") &&
+          onDismiss && (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={pending}
+              onClick={onDismiss}
+            >
+              <X className="h-3.5 w-3.5" />
+              Dismiss
+            </Button>
+          )}
         <Link
           href={item.url}
           onClick={onNavigate}

@@ -1,10 +1,10 @@
+import { Suspense } from "react";
 import {
   getContact,
   getContactFollowUpSendOptions,
   listRelatedContacts,
   listMutualContacts,
 } from "@/actions/contacts";
-import { listActiveGoalTexts } from "@/actions/goals";
 import { ContactFollowUpSection } from "@/components/contacts/contact-follow-up-section";
 import { ContactProfileHero } from "@/components/contacts/contact-profile-hero";
 import { ContactProfileOverview } from "@/components/contacts/contact-profile-overview";
@@ -13,12 +13,12 @@ import { ContactMutualPeople } from "@/components/contacts/contact-mutual-people
 import { ContactRemindersSection } from "@/components/contacts/contact-reminders-section";
 import { ContactStatPills } from "@/components/contacts/contact-stat-pills";
 import { ContactTimeline } from "@/components/contacts/contact-timeline";
-import {
-  computeCloseness,
-  formatInteractionFrequency,
-} from "@/lib/closeness";
-import { formatHowMetSummary } from "@/lib/met-context";
+import { Reveal } from "@/components/motion/reveal";
+import { Skeleton } from "@/components/ui/skeleton";
+import { computeCloseness, formatInteractionFrequency } from "@/lib/closeness";
+import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { requireUserId } from "@/lib/auth";
+import { formatHowMetSummary } from "@/lib/met-context";
 import { notFound } from "next/navigation";
 
 export default async function ContactDetailPage({
@@ -27,34 +27,80 @@ export default async function ContactDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [contact, userId] = await Promise.all([getContact(id), requireUserId()]);
+
+  // Every side query needs only the route param — start them all before the
+  // first await so nothing serializes behind getContact. The .catch wrappers
+  // keep an eagerly-started promise from surfacing an unhandled rejection
+  // (or racing notFound() into the error boundary on a bogus id); on
+  // failure the section simply doesn't render.
+  const sendOptionsPromise = getContactFollowUpSendOptions(id).catch(() => null);
+  const relatedPromise = listRelatedContacts(id, 6).catch(() => []);
+  const mutualsPromise = listMutualContacts(id, 6).catch(() => []);
+  // Closeness is relative, so even a single-contact page needs the whole
+  // orbit's distribution. Cached per request, and shared with any other
+  // surface on this page that scores contacts.
+  const cohortPromise = requireUserId().then((userId) =>
+    getClosenessCohort(userId)
+  );
+
+  // notFound() must fire BEFORE any Suspense boundary renders so the route
+  // still returns a real 404 status.
+  const [contact, closenessCohort] = await Promise.all([
+    getContact(id),
+    cohortPromise,
+  ]);
   if (!contact) notFound();
 
-  const [goals, relatedPeople, mutualPeople, sendOptions] =
-    await Promise.all([
-    listActiveGoalTexts(),
-    listRelatedContacts(contact.id, 6),
-    listMutualContacts(contact.id, 6),
-    getContactFollowUpSendOptions(contact.id),
-  ]);
-
-  const closeness = computeCloseness(
-    {
-      relationshipScore: contact.relationshipScore,
-      lastInteractionAt: contact.lastInteractionAt,
-      createdAt: contact.createdAt,
-      company: contact.company,
-      title: contact.title,
-      industry: contact.industry,
-      howMet: contact.howMet,
-      notes: contact.notes,
-      aiSummary: contact.aiSummary,
-      keyFacts: contact.keyFacts,
-      sharedInterests: contact.sharedInterests,
-      tags: contact.tags,
-    },
-    goals
-  );
+  const closeness =
+    closenessCohort.byId.get(contact.id) ??
+    // Only reachable if the contact was created after the cohort query ran.
+    //
+    // This is a deliberately approximate fallback, not a second scoring path
+    // pretending to be the real one. `statedCloseness`, `firstInteractionAt`
+    // and `dateMet` are per-contact columns already sitting on `contact`
+    // (getContact() has no `columns` restriction), so they're passed straight
+    // through — no reason to score a rated contact as if unrated just because
+    // it missed the cohort by a race.
+    //
+    // The four affinity fields (`emailDomainMatchesUser`, `companyConcentration`,
+    // `schoolConcentration`, `coveredByConnectedSource`) are NOT reproduced here.
+    // They are orbit-relative — computed in closeness-cohort.ts from every one
+    // of the user's contacts (max company/school share across the whole orbit,
+    // the user's own email domain, whether Gmail/Outlook is connected) — so
+    // getting them right for one contact means re-running that whole scan, at
+    // which point this "fallback" is just `getClosenessCohort` again with extra
+    // steps. Left at their default (falsy/0), this contact's `prior` is a bit
+    // more conservative than its peers until the next request rebuilds the
+    // cohort and it takes its real place. An honestly-approximate fallback
+    // beats one that silently claims full fidelity.
+    computeCloseness(
+      {
+        relationshipScore: contact.relationshipScore,
+        statedCloseness: contact.statedCloseness,
+        lastInteractionAt: contact.lastInteractionAt,
+        // `getContact` loads this contact's interaction rows unfiltered, so
+        // this is the same has-ever-interacted fact the cohort builder derives
+        // from the interactions table — not the `lastInteractionAt` stamp,
+        // which every create path writes.
+        hasLoggedInteraction: contact.interactions.length > 0,
+        firstInteractionAt: contact.firstInteractionAt,
+        dateMet: contact.dateMet,
+        createdAt: contact.createdAt,
+        company: contact.company,
+        title: contact.title,
+        industry: contact.industry,
+        howMet: contact.howMet,
+        aiSummary: contact.aiSummary,
+        keyFacts: contact.keyFacts,
+        sharedInterests: contact.sharedInterests,
+        tags: contact.tags,
+      },
+      closenessCohort.goals,
+      {
+        cohort: closenessCohort.cohort,
+        touchCount: closenessCohort.touchCounts.get(contact.id) ?? 0,
+      }
+    );
 
   const howMetSummary = formatHowMetSummary({
     metContext: contact.metContext,
@@ -91,6 +137,10 @@ export default async function ContactDetailPage({
     industry: contact.industry || "",
     sharedInterests: contact.sharedInterests || [],
     relationshipScore: contact.relationshipScore,
+    // Not for display — the Strength field renders `relationshipScore`. This is
+    // how the form knows whether that number is an actual assessment or just
+    // the import default, so it can avoid re-asserting a rating nobody made.
+    statedCloseness: contact.statedCloseness,
     priorityLevel: contact.priorityLevel,
     tagNames: contact.tags,
   };
@@ -104,62 +154,139 @@ export default async function ContactDetailPage({
 
   return (
     <div className="space-y-6 pb-8">
-      <ContactProfileHero
-        contactId={contact.id}
-        displayName={displayName}
-        fullName={contact.fullName}
-        preferredName={contact.preferredName}
-        firstName={contact.firstName}
-        title={contact.title}
-        company={contact.company}
-        school={contact.school}
-        location={contact.location}
-        profileImageUrl={contact.profileImageUrl}
-        linkedinUrl={contact.linkedinUrl}
-        channels={channels}
-        formInitial={formInitial}
-      />
+      <div className="reveal-mount">
+        <ContactProfileHero
+          contactId={contact.id}
+          displayName={displayName}
+          fullName={contact.fullName}
+          preferredName={contact.preferredName}
+          firstName={contact.firstName}
+          title={contact.title}
+          company={contact.company}
+          school={contact.school}
+          location={contact.location}
+          profileImageUrl={contact.profileImageUrl}
+          linkedinUrl={contact.linkedinUrl}
+          channels={channels}
+          formInitial={formInitial}
+        />
+      </div>
 
-      <ContactStatPills closeness={closeness} lastTouchAt={lastTouchAt} />
+      <div
+        className="reveal-mount"
+        style={{ "--reveal-delay": "60ms" } as React.CSSProperties}
+      >
+        <ContactStatPills closeness={closeness} lastTouchAt={lastTouchAt} />
+      </div>
 
-      <ContactProfileOverview
-        contactId={contact.id}
-        aiSummary={contact.aiSummary}
-        keyFacts={contact.keyFacts || []}
-        sharedInterests={contact.sharedInterests || []}
-        industry={contact.industry}
-        closeness={closeness}
-        lastTouchAt={lastTouchAt}
-        frequencyLabel={frequencyLabel}
-        howMetSummary={howMetSummary}
-      />
+      <div
+        className="reveal-mount"
+        style={{ "--reveal-delay": "120ms" } as React.CSSProperties}
+      >
+        <ContactProfileOverview
+          contactId={contact.id}
+          aiSummary={contact.aiSummary}
+          keyFacts={contact.keyFacts || []}
+          sharedInterests={contact.sharedInterests || []}
+          industry={contact.industry}
+          closeness={closeness}
+          lastTouchAt={lastTouchAt}
+          frequencyLabel={frequencyLabel}
+          howMetSummary={howMetSummary}
+        />
+      </div>
 
-      <ContactFollowUpSection
-        contactId={contact.id}
-        contactName={displayName}
-        nextFollowUpAt={contact.nextFollowUpAt}
-        sendOptions={sendOptions}
-        phone={contact.phone}
-      />
+      <Suspense fallback={<Skeleton className="h-40 w-full rounded-2xl" />}>
+        <StreamedFollowUp
+          sendOptions={sendOptionsPromise}
+          contactId={contact.id}
+          contactName={displayName}
+          nextFollowUpAt={contact.nextFollowUpAt}
+          phone={contact.phone}
+        />
+      </Suspense>
 
-      <ContactTimeline
-        contactId={contact.id}
-        interactions={contact.interactions.map((i) => ({
-          id: i.id,
-          interactionType: i.interactionType,
-          interactionDate: i.interactionDate,
-          sameDayOrder: i.sameDayOrder,
-          rawNotes: i.rawNotes,
-          aiSummary: i.aiSummary,
-          actionItems: i.actionItems,
-        }))}
-      />
+      <Reveal>
+        <ContactTimeline
+          contactId={contact.id}
+          interactions={contact.interactions.map((i) => ({
+            id: i.id,
+            interactionType: i.interactionType,
+            interactionDate: i.interactionDate,
+            sameDayOrder: i.sameDayOrder,
+            rawNotes: i.rawNotes,
+            aiSummary: i.aiSummary,
+            actionItems: i.actionItems,
+          }))}
+        />
+      </Reveal>
 
-      <ContactRemindersSection reminders={contact.reminders ?? []} />
+      <Reveal>
+        <ContactRemindersSection reminders={contact.reminders ?? []} />
+      </Reveal>
 
-      <ContactMutualPeople mutuals={mutualPeople} subjectName={displayName} />
+      {/* No fallbacks here: these sections render nothing when empty, and a
+          skeleton that can collapse into nothing reads as a glitch. */}
+      <Suspense fallback={null}>
+        <StreamedMutuals mutuals={mutualsPromise} subjectName={displayName} />
+      </Suspense>
 
-      <ContactRelatedPeople people={relatedPeople} subjectName={displayName} />
+      <Suspense fallback={null}>
+        <StreamedRelated people={relatedPromise} subjectName={displayName} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function StreamedFollowUp({
+  sendOptions,
+  ...rest
+}: {
+  sendOptions: Promise<Awaited<
+    ReturnType<typeof getContactFollowUpSendOptions>
+  > | null>;
+  contactId: string;
+  contactName: string;
+  nextFollowUpAt: Date | string | null;
+  phone: string | null;
+}) {
+  const resolved = await sendOptions;
+  if (!resolved) return null;
+  return (
+    <div className="reveal-mount">
+      <ContactFollowUpSection {...rest} sendOptions={resolved} />
+    </div>
+  );
+}
+
+async function StreamedMutuals({
+  mutuals,
+  subjectName,
+}: {
+  mutuals: ReturnType<typeof listMutualContacts>;
+  subjectName: string;
+}) {
+  const resolved = await mutuals;
+  if (resolved.length === 0) return null;
+  return (
+    <div className="reveal-mount">
+      <ContactMutualPeople mutuals={resolved} subjectName={subjectName} />
+    </div>
+  );
+}
+
+async function StreamedRelated({
+  people,
+  subjectName,
+}: {
+  people: ReturnType<typeof listRelatedContacts>;
+  subjectName: string;
+}) {
+  const resolved = await people;
+  if (resolved.length === 0) return null;
+  return (
+    <div className="reveal-mount">
+      <ContactRelatedPeople people={resolved} subjectName={subjectName} />
     </div>
   );
 }

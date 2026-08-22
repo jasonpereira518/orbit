@@ -1,13 +1,10 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { PUBLIC_ROUTES } from "@/lib/public-routes";
 
-const isPublicRoute = createRouteMatcher([
-  "/",
-  "/privacy",
-  "/sign-in(.*)",
-  "/sign-up(.*)",
-  "/api/webhooks(.*)",
-]);
+// The list lives in `@/lib/public-routes` so a smoke test can assert it against the
+// filesystem — a marketing page missing from it 404s for exactly the people it is for.
+const isPublicRoute = createRouteMatcher([...PUBLIC_ROUTES]);
 
 const configured = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
@@ -31,6 +28,12 @@ export default configured
         return new NextResponse("Authentication is not configured", {
           status: 503,
         });
+      }
+      // Defense in depth for the admin console. Without Clerk keys this is demo mode, where
+      // `requireUserId()` succeeds as the shared "demo-user" — so the route must be gone
+      // entirely, not merely unauthorized. `src/lib/admin.ts` denies it independently.
+      if (new URL(req.url).pathname.startsWith("/admin")) {
+        return new NextResponse(null, { status: 404 });
       }
       return withPathname(req);
     };

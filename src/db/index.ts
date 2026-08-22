@@ -31,6 +31,16 @@ CREATE TABLE IF NOT EXISTS user_settings (
   anthropic_api_key_encrypted text,
   ai_model text DEFAULT 'gemini-3.5-flash',
   onboarding_completed_at timestamptz,
+  comped_plan text,
+  lifetime_purchased_at timestamptz,
+  stripe_customer_id text,
+  subscription_plan text,
+  subscription_status text,
+  subscription_period_end timestamptz,
+  comped_note text,
+  comped_at timestamptz,
+  comped_by text,
+  last_active_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -141,6 +151,29 @@ CREATE TABLE IF NOT EXISTS reminders (
   created_by text NOT NULL DEFAULT 'user',
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS suggested_reminders (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  capture_batch_id uuid NOT NULL,
+  title text NOT NULL,
+  description text,
+  raw_date_phrase text NOT NULL,
+  due_date timestamptz NOT NULL,
+  year_inferred integer NOT NULL DEFAULT 0,
+  source_excerpt text NOT NULL,
+  source_hash text NOT NULL,
+  item_hash text NOT NULL,
+  action_kind text NOT NULL DEFAULT 'task',
+  confidence_score integer,
+  status text NOT NULL DEFAULT 'pending',
+  reminder_id uuid REFERENCES reminders(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  resolved_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS suggested_reminders_user_status_idx ON suggested_reminders(user_id, status);
+CREATE INDEX IF NOT EXISTS suggested_reminders_batch_idx ON suggested_reminders(capture_batch_id);
+CREATE UNIQUE INDEX IF NOT EXISTS suggested_reminders_user_item_uidx ON suggested_reminders(user_id, item_hash);
 CREATE TABLE IF NOT EXISTS imports (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -212,6 +245,8 @@ CREATE INDEX IF NOT EXISTS tags_user_id_idx ON tags(user_id);
 CREATE INDEX IF NOT EXISTS contact_tags_contact_idx ON contact_tags(contact_id);
 CREATE INDEX IF NOT EXISTS interactions_contact_idx ON interactions(contact_id);
 CREATE INDEX IF NOT EXISTS interactions_user_idx ON interactions(user_id);
+CREATE INDEX IF NOT EXISTS interactions_user_type_idx ON interactions(user_id, interaction_type);
+CREATE INDEX IF NOT EXISTS interactions_user_contact_type_date_idx ON interactions(user_id, contact_id, interaction_type, interaction_date);
 CREATE UNIQUE INDEX IF NOT EXISTS interactions_user_external_uidx ON interactions(user_id, external_id) WHERE external_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS reminders_user_status_idx ON reminders(user_id, status);
 CREATE INDEX IF NOT EXISTS reminders_due_idx ON reminders(user_id, due_date);
@@ -363,6 +398,39 @@ CREATE TABLE IF NOT EXISTS outlook_connections (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS outlook_connections_user_idx ON outlook_connections(user_id);
+CREATE TABLE IF NOT EXISTS usage_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  operation text NOT NULL,
+  provider text NOT NULL,
+  model text NOT NULL,
+  kind text NOT NULL,
+  input_tokens integer,
+  output_tokens integer,
+  cached_input_tokens integer,
+  estimated_cost_micros integer,
+  key_owner text NOT NULL DEFAULT 'user',
+  success integer NOT NULL DEFAULT 1,
+  error_kind text,
+  duration_ms integer,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS usage_events_user_created_idx ON usage_events(user_id, created_at);
+CREATE INDEX IF NOT EXISTS usage_events_created_idx ON usage_events(created_at);
+CREATE INDEX IF NOT EXISTS usage_events_model_idx ON usage_events(provider, model);
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  admin_user_id text NOT NULL,
+  action text NOT NULL,
+  target_user_id text,
+  resource_type text,
+  resource_id text,
+  detail jsonb DEFAULT '{}',
+  reason text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS admin_audit_log_created_idx ON admin_audit_log(created_at);
+CREATE INDEX IF NOT EXISTS admin_audit_log_target_idx ON admin_audit_log(target_user_id);
 `;
 
 async function columnExists(client: PGlite, table: string, column: string) {
@@ -492,10 +560,35 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "wizard_offered_at", "timestamptz");
   await ensureColumn(client, "user_settings", "wizard_step", "text");
   await ensureColumn(client, "user_settings", "wizard_completed_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "email", "text");
+  await ensureColumn(client, "user_settings", "calendar_feed_token", "text");
+  await ensureColumn(
+    client,
+    "user_settings",
+    "calendar_feed_token_created_at",
+    "timestamptz"
+  );
+  await ensureColumn(
+    client,
+    "user_settings",
+    "calendar_feed_last_fetched_at",
+    "timestamptz"
+  );
+  await ensureColumn(client, "contacts", "stated_closeness", "integer");
 
   try {
     await client.exec(
       `CREATE INDEX IF NOT EXISTS reminders_list_idx ON reminders(user_id, list_id)`
+    );
+  } catch {
+    // Index may already exist
+  }
+
+  try {
+    await client.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx
+       ON user_settings(calendar_feed_token)
+       WHERE calendar_feed_token IS NOT NULL`
     );
   } catch {
     // Index may already exist
@@ -521,6 +614,45 @@ async function migratePglite(client: PGlite) {
   } catch {
     // Existing duplicate external_ids — app-level dedupe still applies
   }
+
+  try {
+    await client.exec(
+      `CREATE INDEX IF NOT EXISTS interactions_user_type_idx
+       ON interactions(user_id, interaction_type)`
+    );
+    await client.exec(
+      `CREATE INDEX IF NOT EXISTS interactions_user_contact_type_date_idx
+       ON interactions(user_id, contact_id, interaction_type, interaction_date)`
+    );
+  } catch {
+    // Index may already exist
+  }
+
+  // Billing columns. The paywall shipped these in the CREATE TABLE above and in a one-off
+  // script, but `CREATE TABLE IF NOT EXISTS` never adds a column to a database that already
+  // has the table — so a local .data/pglite predating the paywall stays broken until these
+  // run. Cheap and idempotent; keep them rather than relying on the script being remembered.
+  await ensureColumn(client, "user_settings", "comped_plan", "text");
+  await ensureColumn(client, "user_settings", "lifetime_purchased_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "stripe_customer_id", "text");
+  await ensureColumn(client, "user_settings", "subscription_plan", "text");
+  await ensureColumn(client, "user_settings", "subscription_status", "text");
+  await ensureColumn(client, "user_settings", "subscription_period_end", "timestamptz");
+  await ensureColumn(client, "user_settings", "comped_note", "text");
+  await ensureColumn(client, "user_settings", "comped_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "comped_by", "text");
+  await ensureColumn(client, "user_settings", "last_active_at", "timestamptz");
+}
+
+/**
+ * Normalizes a `db.execute()` result into a plain array.
+ *
+ * `drizzle-orm/neon-http` returns the rows directly; `drizzle-orm/pglite` wraps them in
+ * `{ rows }`. Every raw-SQL caller has to handle both, so this is the one place that does.
+ */
+export function rowsOf<T>(result: unknown): T[] {
+  if (Array.isArray(result)) return result as T[];
+  return ((result as { rows?: T[] } | null)?.rows ?? []) as T[];
 }
 
 export function isPgvectorAvailable() {
@@ -615,6 +747,21 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS theme text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS desktop_notified_ids jsonb DEFAULT '[]'`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS social_links jsonb DEFAULT '{}'`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_plan text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lifetime_purchased_at timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS stripe_customer_id text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_plan text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_status text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_period_end timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_note text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_at timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_by text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_active_at timestamptz`,
+    `CREATE INDEX IF NOT EXISTS usage_events_user_created_idx ON usage_events(user_id, created_at)`,
+    `CREATE INDEX IF NOT EXISTS usage_events_created_idx ON usage_events(created_at)`,
+    `CREATE INDEX IF NOT EXISTS usage_events_model_idx ON usage_events(provider, model)`,
+    `CREATE INDEX IF NOT EXISTS admin_audit_log_created_idx ON admin_audit_log(created_at)`,
+    `CREATE INDEX IF NOT EXISTS admin_audit_log_target_idx ON admin_audit_log(target_user_id)`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
     `CREATE INDEX IF NOT EXISTS companies_user_idx ON companies(user_id)`,
@@ -649,6 +796,12 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_offered_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_step text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_completed_at timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token_created_at timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_last_fetched_at timestamptz`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
+    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   ];
 
   for (const statement of alters) {

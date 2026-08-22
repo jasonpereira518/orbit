@@ -1,12 +1,14 @@
 import { redirect } from "next/navigation";
 import { requireUserId } from "@/lib/auth";
 import { needsOnboarding } from "@/lib/onboarding";
-import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 
 /**
  * First-run gate for core product routes.
  * /onboarding and /settings live outside this group so they stay reachable
  * (settings is needed for API keys; onboarding must not redirect to itself).
+ *
+ * AvatarBackfill lives in AppShell (above the remounting template) so nav
+ * does not abort/restart background photo fills.
  */
 /** Floating ask bar + chat actions need longer than the default serverless limit. */
 export const maxDuration = 60;
@@ -23,10 +25,5 @@ export default async function MainAppLayout({
     redirect("/onboarding");
   }
 
-  return (
-    <>
-      <AvatarBackfill />
-      {children}
-    </>
-  );
+  return children;
 }

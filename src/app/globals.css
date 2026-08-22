@@ -24,6 +24,9 @@
   --color-chart-3: var(--chart-3);
   --color-chart-2: var(--chart-2);
   --color-chart-1: var(--chart-1);
+  --color-import-connections: var(--import-connections);
+  --color-import-messages: var(--import-messages);
+  --color-import-calendar: var(--import-calendar);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -47,6 +50,25 @@
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) * 1.4);
+}
+
+/* ── Motion tokens ──
+ * Two-tier personality: interactions are snappy (fast/base), hero moments
+ * are celestial (slow/celestial on the house curve).
+ * TS mirror for motion/react + rAF consumers: src/lib/motion.ts — keep in sync.
+ * Plain @theme (not inline) so the vars land on :root for raw CSS keyframes. */
+@theme {
+  --transition-duration-fast: 120ms; /* hover, press, tooltips, exits */
+  --transition-duration-base: 180ms; /* overlays, toggles, small enters */
+  --transition-duration-slow: 320ms; /* page/section reveals */
+  --transition-duration-celestial: 700ms; /* landing + constellation set-pieces */
+
+  --ease-house: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Retime every bare `transition-*` utility (~100 call sites) onto the
+   * interaction tier in one place. */
+  --default-transition-duration: 120ms;
+  --default-transition-timing-function: cubic-bezier(0, 0, 0.2, 1);
 }
 
 :root {
@@ -73,6 +95,9 @@
   --chart-3: #7aa896;
   --chart-4: #c4a35a;
   --chart-5: #8b5e3c;
+  --import-connections: #5b5fc7;
+  --import-messages: #c2694a;
+  --import-calendar: #b8873a;
   --radius: 0.625rem;
   --sidebar: #f7f8f6;
   --sidebar-foreground: #1a1c1a;
@@ -122,6 +147,9 @@
   --chart-3: #9dc4f1;
   --chart-4: #3d7fc7;
   --chart-5: #b8d4f5;
+  --import-connections: #9b9ff5;
+  --import-messages: #e08a68;
+  --import-calendar: #d9a855;
   --sidebar: #272727;
   --sidebar-foreground: #f0f0f0;
   --sidebar-primary: #599de7;
@@ -140,14 +168,30 @@
   body {
     @apply bg-background text-foreground;
     background-image:
-      radial-gradient(ellipse 80% 50% at 100% -20%, rgba(15, 61, 62, 0.06), transparent),
-      radial-gradient(ellipse 60% 40% at 0% 100%, rgba(196, 163, 90, 0.05), transparent);
+      radial-gradient(
+        ellipse 80% 50% at 100% -20%,
+        rgba(15, 61, 62, 0.06),
+        transparent
+      ),
+      radial-gradient(
+        ellipse 60% 40% at 0% 100%,
+        rgba(196, 163, 90, 0.05),
+        transparent
+      );
     background-attachment: fixed;
   }
   .dark body {
     background-image:
-      radial-gradient(ellipse 80% 50% at 100% -20%, rgba(89, 157, 231, 0.14), transparent),
-      radial-gradient(ellipse 60% 40% at 0% 100%, rgba(53, 53, 53, 0.55), transparent);
+      radial-gradient(
+        ellipse 80% 50% at 100% -20%,
+        rgba(89, 157, 231, 0.14),
+        transparent
+      ),
+      radial-gradient(
+        ellipse 60% 40% at 0% 100%,
+        rgba(53, 53, 53, 0.55),
+        transparent
+      );
   }
 }
 
@@ -158,13 +202,12 @@
   isolation: isolate;
   overflow: hidden;
   border-radius: 1.5rem;
-  background:
-    linear-gradient(
-      165deg,
-      rgba(255, 255, 255, 0.72) 0%,
-      rgba(255, 255, 255, 0.42) 42%,
-      rgba(247, 248, 246, 0.38) 100%
-    );
+  background: linear-gradient(
+    165deg,
+    rgba(255, 255, 255, 0.72) 0%,
+    rgba(255, 255, 255, 0.42) 42%,
+    rgba(247, 248, 246, 0.38) 100%
+  );
   border: 1px solid rgba(255, 255, 255, 0.55);
   box-shadow:
     0 1px 0 0 rgba(255, 255, 255, 0.65) inset,
@@ -173,12 +216,13 @@
     0 2px 8px -2px rgba(26, 28, 26, 0.08);
   backdrop-filter: blur(28px) saturate(1.65);
   -webkit-backdrop-filter: blur(28px) saturate(1.65);
+  /* backdrop-filter is intentionally NOT transitioned — animating a re-blur
+   * of the largest persistent surface is one of the most expensive effects
+   * a browser can run. */
   transition:
-    backdrop-filter 280ms ease,
-    -webkit-backdrop-filter 280ms ease,
-    background 280ms ease,
-    border-color 280ms ease,
-    box-shadow 280ms ease;
+    background var(--transition-duration-base) ease,
+    border-color var(--transition-duration-base) ease,
+    box-shadow var(--transition-duration-base) ease;
 }
 
 .liquid-glass::before {
@@ -200,7 +244,9 @@
       transparent 50%
     );
   opacity: 1;
-  transition: opacity 280ms ease, background 280ms ease;
+  transition:
+    opacity var(--transition-duration-base) ease,
+    background var(--transition-duration-base) ease;
 }
 
 .liquid-glass > * {
@@ -209,21 +255,18 @@
 }
 
 .liquid-glass:hover {
-  background:
-    linear-gradient(
-      165deg,
-      rgba(255, 255, 255, 0.58) 0%,
-      rgba(255, 255, 255, 0.32) 42%,
-      rgba(247, 248, 246, 0.28) 100%
-    );
+  background: linear-gradient(
+    165deg,
+    rgba(255, 255, 255, 0.58) 0%,
+    rgba(255, 255, 255, 0.32) 42%,
+    rgba(247, 248, 246, 0.28) 100%
+  );
   border-color: rgba(255, 255, 255, 0.72);
   box-shadow:
     0 1px 0 0 rgba(255, 255, 255, 0.8) inset,
     0 -1px 0 0 rgba(15, 61, 62, 0.03) inset,
     0 12px 40px -8px rgba(26, 28, 26, 0.22),
     0 4px 14px -2px rgba(26, 28, 26, 0.1);
-  backdrop-filter: blur(44px) saturate(1.9);
-  -webkit-backdrop-filter: blur(44px) saturate(1.9);
 }
 
 .liquid-glass:hover::before {
@@ -241,13 +284,12 @@
 }
 
 .dark .liquid-glass {
-  background:
-    linear-gradient(
-      165deg,
-      rgba(55, 55, 55, 0.72) 0%,
-      rgba(39, 39, 39, 0.55) 45%,
-      rgba(32, 32, 32, 0.48) 100%
-    );
+  background: linear-gradient(
+    165deg,
+    rgba(55, 55, 55, 0.72) 0%,
+    rgba(39, 39, 39, 0.55) 45%,
+    rgba(32, 32, 32, 0.48) 100%
+  );
   border-color: rgba(255, 255, 255, 0.12);
   box-shadow:
     0 1px 0 0 rgba(255, 255, 255, 0.14) inset,
@@ -271,21 +313,18 @@
 }
 
 .dark .liquid-glass:hover {
-  background:
-    linear-gradient(
-      165deg,
-      rgba(60, 60, 60, 0.55) 0%,
-      rgba(39, 39, 39, 0.4) 45%,
-      rgba(28, 28, 28, 0.36) 100%
-    );
+  background: linear-gradient(
+    165deg,
+    rgba(60, 60, 60, 0.55) 0%,
+    rgba(39, 39, 39, 0.4) 45%,
+    rgba(28, 28, 28, 0.36) 100%
+  );
   border-color: rgba(255, 255, 255, 0.18);
   box-shadow:
     0 1px 0 0 rgba(255, 255, 255, 0.2) inset,
     0 -1px 0 0 rgba(0, 0, 0, 0.2) inset,
     0 16px 48px -10px rgba(0, 0, 0, 0.6),
     0 4px 14px -2px rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(44px) saturate(1.85);
-  -webkit-backdrop-filter: blur(44px) saturate(1.85);
 }
 
 .dark .liquid-glass:hover::before {
@@ -302,23 +341,15 @@
     );
 }
 
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+@supports not (
+  (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))
+) {
   .liquid-glass {
     background: color-mix(in oklab, var(--sidebar) 92%, transparent);
   }
 
   .liquid-glass:hover {
     background: color-mix(in oklab, var(--sidebar) 86%, transparent);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .liquid-glass {
-    transition: none;
-  }
-
-  .liquid-glass::before {
-    transition: none;
   }
 }
 
@@ -338,24 +369,14 @@
   }
 }
 
-@keyframes delete-ripple {
-  0% {
-    transform: scale(0.4);
-    opacity: 0.55;
-  }
-  100% {
-    transform: scale(1.8);
-    opacity: 0;
-  }
-}
-
 @keyframes delete-confirm-pulse {
   0%,
   100% {
     box-shadow: 0 0 0 0 color-mix(in oklch, var(--destructive) 35%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 6px color-mix(in oklch, var(--destructive) 0%, transparent);
+    box-shadow: 0 0 0 6px
+      color-mix(in oklch, var(--destructive) 0%, transparent);
   }
 }
 
@@ -389,12 +410,22 @@
   }
 }
 
-@keyframes constellation-ring-spin {
+@keyframes constellation-armglow-breathe {
+  0%,
+  100% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes constellation-ray-in {
   from {
-    transform: rotate(0deg);
+    opacity: 0;
   }
   to {
-    transform: rotate(360deg);
+    opacity: 1;
   }
 }
 
@@ -467,9 +498,12 @@
   animation: constellation-corona 2.6s ease-in-out infinite;
 }
 
-.constellation-rings-spin {
-  animation: constellation-ring-spin 180s linear infinite;
-  transform-origin: center;
+.constellation-arm-glow {
+  animation: constellation-armglow-breathe 11s ease-in-out infinite;
+}
+
+.constellation-ray path {
+  animation: constellation-ray-in 0.24s ease-out both;
 }
 
 .constellation-spotlight-ring {
@@ -477,7 +511,7 @@
 }
 
 .constellation-planet-enter {
-  animation: constellation-planet-enter 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: constellation-planet-enter 0.45s var(--ease-house) both;
 }
 
 .constellation-starfield span {
@@ -606,29 +640,60 @@
   -webkit-backdrop-filter: blur(12px);
 }
 
-@keyframes landing-reveal-in {
-  from {
-    opacity: 0;
-    transform: translateY(22px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+/* Sticky nav pill — more opaque than .dark .liquid-glass so the starfield
+ * doesn't bleed through as much behind logo + auth controls. */
+.landing-header-glass {
+  border-radius: inherit;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid rgba(232, 243, 241, 0.18);
+  background: linear-gradient(
+    165deg,
+    rgba(18, 24, 36, 0.96) 0%,
+    rgba(10, 14, 24, 0.94) 45%,
+    rgba(6, 8, 16, 0.92) 100%
+  );
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 1px 0 0 rgba(255, 255, 255, 0.12) inset,
+    0 -1px 0 0 rgba(0, 0, 0, 0.4) inset,
+    0 16px 48px -12px rgba(0, 0, 0, 0.65),
+    0 4px 14px -4px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
 }
 
-.landing-reveal {
-  animation: landing-reveal-in 0.8s cubic-bezier(0.2, 0.7, 0.3, 1) both;
-  animation-timeline: view();
-  animation-range: entry 8% cover 30%;
+.landing-header-glass::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(
+      120% 80% at 12% -10%,
+      rgba(255, 255, 255, 0.1) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      90% 60% at 100% 100%,
+      rgba(242, 193, 78, 0.07) 0%,
+      transparent 50%
+    );
 }
 
-@supports not (animation-timeline: view()) {
-  .landing-reveal {
-    animation: none;
-    opacity: 1;
-    transform: none;
-  }
+.landing-header-glass > * {
+  position: relative;
+  z-index: 1;
+}
+
+#landing-groups,
+#landing-reminders,
+#landing-how,
+#landing-features,
+#landing-cta {
+  scroll-margin-top: 6rem;
 }
 
 /* ── Landing hero ── */
@@ -656,11 +721,12 @@
 }
 
 .landing-fade {
-  animation: landing-fade 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: landing-fade var(--transition-duration-celestial) var(--ease-house)
+    both;
 }
 
 .landing-solar-enter {
-  animation: landing-solar-enter 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.15s both;
+  animation: landing-solar-enter 0.9s var(--ease-house) 0.15s both;
 }
 
 @keyframes landing-credit-shimmer {
@@ -740,11 +806,7 @@
   position: absolute;
   inset: -18%;
   border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    var(--planet-glow) 0%,
-    transparent 62%
-  );
+  background: radial-gradient(circle, var(--planet-glow) 0%, transparent 62%);
   opacity: 0.35;
   filter: blur(0.2em);
   pointer-events: none;
@@ -838,54 +900,211 @@
   transform: rotate(180deg);
 }
 
-/* ── Page transitions ── */
+/* ── Staged reveals ──
+ * .reveal-mount plays on insertion (page mount OR streamed Suspense swap —
+ * swaps happen pre-hydration, so this must stay pure CSS). Stagger siblings
+ * with --reveal-delay; cap the cascade around 240ms.
+ * [data-reveal] is the scroll-triggered variant driven by <Reveal>. */
 
-@keyframes page-transition-in {
+@keyframes reveal-rise {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(var(--reveal-rise, 10px));
+  }
+}
+
+.reveal-mount {
+  animation: reveal-rise var(--transition-duration-slow) var(--ease-house)
+    var(--reveal-delay, 0ms) both;
+}
+
+[data-reveal="pending"] {
+  opacity: 0;
+}
+
+[data-reveal="in"] {
+  animation: reveal-rise var(--transition-duration-slow) var(--ease-house)
+    var(--reveal-delay, 0ms) both;
+}
+
+/* Landing narrative scenes: set-piece reveals get the celestial tier and a
+ * taller rise; below-fold scenes skip layout/paint until approached. */
+.reveal-celestial {
+  --reveal-rise: 18px;
+}
+
+.reveal-celestial[data-reveal="in"] {
+  animation-duration: var(--transition-duration-celestial);
+}
+
+.landing-scene {
+  content-visibility: auto;
+  /* Placeholder must approximate the real height — a big mismatch makes
+   * scroll anchoring jump PAST the section as it expands. Tall scenes
+   * override via --scene-size. */
+  contain-intrinsic-size: auto var(--scene-size, 800px);
+}
+
+/* Per-scene intrinsic sizes. These live here rather than in inline styles
+ * because every scene is TALLER below lg (cards stack, the orbit map becomes
+ * a vertical timeline) — and under-estimating is the direction that makes
+ * scroll anchoring jump. Re-measure whenever a scene gains or loses content;
+ * the audit snippet is in the plan's verification section. */
+/* This scene is min-h-[90svh], so its size is viewport-driven — declaring it
+ * in svh stays exact at every window height instead of being right at one. */
+.scene-constellations {
+  --scene-size: 90svh;
+}
+.scene-comets {
+  --scene-size: 575px;
+}
+/* The Earth-journey scene opts out of the skip entirely, so it needs no
+ * --scene-size. Its height comes from the pin wrapper's explicit PIN_SVH
+ * (how-it-works-choreography.ts), and contain-intrinsic-size would replace
+ * exactly that with a guess while the section is off screen — the jump-past
+ * hazard the sizes above exist to avoid. The pin only ever paints one
+ * viewport, so there is nothing to save by skipping it. */
+.scene-how {
+  content-visibility: visible;
+}
+.scene-features {
+  --scene-size: 2000px;
+}
+.scene-finale {
+  --scene-size: 560px;
+}
+
+/* Measured at 500x667 and biased up slightly, since narrower viewports wrap
+ * more text. Below lg the constellation scene's content exceeds 90svh, so it
+ * needs a px value rather than the viewport-driven one. */
+@media (width < 64rem) {
+  .scene-constellations {
+    --scene-size: 820px;
+  }
+  .scene-comets {
+    --scene-size: 540px;
+  }
+  .scene-features {
+    --scene-size: 2900px;
+  }
+  .scene-finale {
+    --scene-size: 820px;
+  }
+}
+
+/* Overscroll rubber-banding paints the body behind the page — keep it
+ * space-dark while the landing is mounted instead of the app's light bg.
+ * Matches the deep-space vignette's terminal color (scene-finale), not the
+ * base page color — otherwise overscrolling past the darkened footer
+ * reveals a lighter strip where the body shows through. */
+body:has(.landing-root) {
+  background-color: #00010a;
+}
+
+/* ── View Transitions (route navigation) ── */
+
+@keyframes vt-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Exit fast, enter on the house curve once the exit has cleared. */
+::view-transition-old(.page-exit) {
+  animation: var(--transition-duration-fast) ease-in both vt-fade reverse;
+}
+
+::view-transition-new(.page-enter) {
+  animation: var(--transition-duration-base) var(--ease-house)
+    var(--transition-duration-fast) both vt-fade;
+}
+
+/* Contacts ↔ recruiters directional slide (typed navigations). */
+@keyframes people-slide {
+  from {
+    translate: var(--people-offset) 0;
   }
   to {
-    opacity: 1;
-    transform: translateY(0);
+    translate: 0 0;
   }
 }
 
-.page-transition {
-  animation: page-transition-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+::view-transition-old(.people-fwd) {
+  --people-offset: -36px;
+  animation:
+    var(--transition-duration-fast) ease-in both vt-fade reverse,
+    var(--transition-duration-slow) var(--ease-house) both people-slide reverse;
 }
 
+::view-transition-new(.people-fwd) {
+  --people-offset: 36px;
+  animation:
+    var(--transition-duration-base) ease-out var(--transition-duration-fast)
+      both vt-fade,
+    var(--transition-duration-slow) var(--ease-house) both people-slide;
+}
+
+::view-transition-old(.people-back) {
+  --people-offset: 36px;
+  animation:
+    var(--transition-duration-fast) ease-in both vt-fade reverse,
+    var(--transition-duration-slow) var(--ease-house) both people-slide reverse;
+}
+
+::view-transition-new(.people-back) {
+  --people-offset: -36px;
+  animation:
+    var(--transition-duration-base) ease-out var(--transition-duration-fast)
+      both vt-fade,
+    var(--transition-duration-slow) var(--ease-house) both people-slide;
+}
+
+/* Persistent chrome stays anchored while page content transitions. */
+::view-transition-group(app-sidebar),
+::view-transition-group(app-mobile-header),
+::view-transition-group(app-mobile-nav) {
+  animation: none;
+  z-index: 60;
+}
+
+::view-transition-old(app-sidebar),
+::view-transition-old(app-mobile-header),
+::view-transition-old(app-mobile-nav) {
+  display: none;
+}
+
+::view-transition-new(app-sidebar),
+::view-transition-new(app-mobile-header),
+::view-transition-new(app-mobile-nav) {
+  animation: none;
+}
+
+/* ── Reduced motion: one global clamp ──
+ * 0.01ms instead of `none` so `both`/`forwards` fill modes still land
+ * elements on their end state (entrances finish visible) and animationend
+ * fires. Covers library animations (tw-animate, sonner, spinners, pulses)
+ * and every Tailwind transition — no per-animation allow-list to maintain. */
 @media (prefers-reduced-motion: reduce) {
-  .delete-confirm-btn,
-  .delete-contact-btn,
-  .contact-row,
-  .constellation-corona,
-  .constellation-corona-outer,
-  .constellation-sun-core,
-  .constellation-rings-spin,
-  .constellation-spotlight-ring,
-  .constellation-planet-enter,
-  .constellation-nebula,
-  .constellation-comet,
-  .constellation-starfield span,
-  .constellation-stage .react-flow__edge.animated path,
-  .landing-fade,
-  .landing-solar-enter,
-  .landing-credit-shimmer,
-  .landing-reveal,
-  .page-transition {
-    animation: none !important;
-    transition: none !important;
+  *,
+  ::before,
+  ::after,
+  ::backdrop {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
   }
 
-  .landing-fade,
-  .landing-solar-enter,
-  .landing-reveal,
-  .page-transition {
-    opacity: 1;
-    transform: none;
+  ::view-transition-old(*),
+  ::view-transition-new(*),
+  ::view-transition-group(*) {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
   }
 
+  /* Shimmer needs a static color, not just a frozen gradient frame. */
   .landing-credit-shimmer {
     background: none;
     color: #6d807c;

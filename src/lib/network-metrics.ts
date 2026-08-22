@@ -1,7 +1,12 @@
 import { orderConstellationMembers, type EdgeKind, type GraphContactInput, type LayoutEdge } from "@/lib/graph-layout";
 import { buildConstellationClusters } from "@/lib/constellation-clusters";
 import { assignClusterShapes } from "@/lib/constellation-shapes";
-import { computeCloseness, type ClosenessContact } from "@/lib/closeness";
+import {
+  closenessTier,
+  computeClosenessForAll,
+  type ClosenessBreakdown,
+  type ClosenessContact,
+} from "@/lib/closeness";
 
 export type PeerEdgeReason =
   | "company"
@@ -177,6 +182,12 @@ function addSoftKnowsEdges(
  * Pass `{ metrics: true }` for dashboard counts: all-pairs within
  * company/school clusters plus soft knows (not sparse star paths).
  */
+/**
+ * Peer edges between contacts. Constellation figures are traced by each
+ * cluster's top members only (shapes are capped at FIGURE_STAR_MAX stars via
+ * the shared assignClusterShapes/orderConstellationMembers helpers, keeping
+ * these lines in lockstep with star placement in graph-layout).
+ */
 export function buildPeerEdges(
   contacts: GraphContactInput[],
   options?: {
@@ -303,8 +314,15 @@ export function computeNetworkMetrics(
       sharedInterests?: string[] | null;
     }
   >,
-  activeGoals: string[] = []
+  activeGoals: string[] = [],
+  /**
+   * Pre-scored contacts from the shared request cohort. Omit and the cohort is
+   * built from `contacts` alone — fine for a full list, wrong for a subset.
+   */
+  closenessById?: Map<string, ClosenessBreakdown>
 ): { metrics: NetworkMetrics; contactsWithNetwork: ContactWithNetwork[] } {
+  const scores =
+    closenessById ?? computeClosenessForAll(contacts, activeGoals);
   const graphContacts: GraphContactInput[] = contacts.map((c) => ({
     id: c.id,
     fullName: c.fullName,
@@ -331,8 +349,12 @@ export function computeNetworkMetrics(
   const contactsWithNetwork: ContactWithNetwork[] = [];
 
   for (const c of contacts) {
-    const breakdown = computeCloseness(c, activeGoals);
-    tierCounts[breakdown.tier] += 1;
+    const breakdown = scores.get(c.id);
+    if (!breakdown) continue;
+    // Counted by absolute score, not by the contact's displayed (quota-assigned)
+    // tier — quotas are fixed shares, so counting those would pin this
+    // distribution to the same shape no matter how healthy the network is.
+    tierCounts[closenessTier(breakdown.raw)] += 1;
     const peerDegree = degrees.get(c.id) || 0;
     if (peerDegree === 0) degreeBuckets.none += 1;
     else if (peerDegree <= 2) degreeBuckets.oneToTwo += 1;

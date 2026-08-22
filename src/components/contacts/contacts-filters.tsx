@@ -301,7 +301,7 @@ function SearchPill({
           )}
         >
           <span className="truncate">
-            {closenessActive ? closenessLabel : "Closeness"}
+            {closenessActive ? closenessLabel : "Strength"}
           </span>
           <ChevronDown className="size-3 opacity-60" />
         </DropdownMenuTrigger>

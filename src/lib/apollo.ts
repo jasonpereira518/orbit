@@ -8,9 +8,53 @@ import {
   type NormalizedProspect,
   type OutreachSearchSource,
 } from "@/lib/outreach-types";
+import { getEntitlements } from "@/lib/entitlements";
 
 const APOLLO_SEARCH_URL = "https://api.apollo.io/api/v1/mixed_people/search";
 const APOLLO_MATCH_URL = "https://api.apollo.io/api/v1/people/match";
+const APOLLO_TIMEOUT_MS = 10_000;
+const APOLLO_MAX_ATTEMPTS = 3;
+const APOLLO_BATCH_CONCURRENCY = 3;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function jitteredBackoffMs(attempt: number) {
+  return 300 * 2 ** attempt + Math.floor(Math.random() * 250);
+}
+
+async function apolloFetch(
+  url: string,
+  apiKey: string,
+  body: Record<string, unknown>
+): Promise<Response> {
+  let lastResponse: Response | null = null;
+  for (let attempt = 0; attempt < APOLLO_MAX_ATTEMPTS; attempt++) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
+        "X-Api-Key": apiKey,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(APOLLO_TIMEOUT_MS),
+    });
+    lastResponse = response;
+    const retryable = response.status === 429 || response.status >= 500;
+    if (!retryable || attempt === APOLLO_MAX_ATTEMPTS - 1) {
+      return response;
+    }
+    const retryAfter = Number(response.headers.get("retry-after"));
+    const waitMs =
+      Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(retryAfter * 1000, 8_000)
+        : jitteredBackoffMs(attempt);
+    await sleep(waitMs);
+  }
+  return lastResponse!;
+}
 
 type ApolloEmployment = {
   organization_name?: string | null;
@@ -73,7 +117,14 @@ export async function getApolloApiKey(userId: string): Promise<string | null> {
   const settings = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
   });
-  return decryptKey(settings?.apolloApiKeyEncrypted) || process.env.APOLLO_API_KEY || null;
+  const personal = decryptKey(settings?.apolloApiKeyEncrypted);
+  if (personal) return personal;
+
+  // Apollo credits are metered like Resend/Twilio, so Orbit's shared key is
+  // subscription-only. Lifetime users add their own key in Settings.
+  const { canUseHostedSends } = await getEntitlements(userId);
+  if (!canUseHostedSends) return null;
+  return process.env.APOLLO_API_KEY || null;
 }
 
 export async function userHasApolloKey(userId: string): Promise<boolean> {
@@ -320,15 +371,11 @@ export async function searchPeople(
     };
   }
 
-  const response = await fetch(APOLLO_SEARCH_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-cache",
-      "X-Api-Key": apiKey,
-    },
-    body: JSON.stringify(buildSearchBody(filters, page)),
-  });
+  const response = await apolloFetch(
+    APOLLO_SEARCH_URL,
+    apiKey,
+    buildSearchBody(filters, page)
+  );
 
   if (!response.ok) {
     const text = await response.text();
@@ -366,15 +413,7 @@ export async function enrichPerson(
   if (hints?.linkedinUrl) body.linkedin_url = hints.linkedinUrl;
   if (hints?.fullName) body.name = hints.fullName;
 
-  const response = await fetch(APOLLO_MATCH_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-cache",
-      "X-Api-Key": apiKey,
-    },
-    body: JSON.stringify(body),
-  });
+  const response = await apolloFetch(APOLLO_MATCH_URL, apiKey, body);
 
   if (!response.ok) return null;
 
@@ -403,31 +442,28 @@ export async function enrichPeopleFromLinkedIn(
     );
   }
 
-  const apiKey = await getApolloApiKey(userId);
-  if (!apiKey) {
+  const maybeApiKey = await getApolloApiKey(userId);
+  if (!maybeApiKey) {
     throw new Error(
       "Add an Apollo API key in Settings → Outreach to refresh LinkedIn profiles."
     );
   }
+  // Rebind post-guard so the hoisted matchOne closure sees `string`, not
+  // `string | null`.
+  const apiKey = maybeApiKey;
 
-  const results: (LinkedInProfileEnrichment | null)[] = [];
+  const results: (LinkedInProfileEnrichment | null)[] = new Array(people.length);
+  let nextIndex = 0;
+  let firstError: Error | null = null;
 
-  for (const person of people) {
+  async function matchOne(person: (typeof people)[number]) {
     const body: Record<string, string> = {
       linkedin_url: person.linkedinUrl,
     };
     if (person.fullName?.trim()) body.name = person.fullName.trim();
     if (person.email?.trim()) body.email = person.email.trim();
 
-    const response = await fetch(APOLLO_MATCH_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Cache-Control": "no-cache",
-        "X-Api-Key": apiKey,
-      },
-      body: JSON.stringify(body),
-    });
+    const response = await apolloFetch(APOLLO_MATCH_URL, apiKey, body);
 
     if (!response.ok) {
       const text = await response.text();
@@ -442,11 +478,28 @@ export async function enrichPeopleFromLinkedIn(
     }
 
     const data = (await response.json()) as { person?: ApolloPerson | null };
-    results.push(
-      data.person ? normalizeLinkedInProfile(data.person) : null
-    );
+    return data.person ? normalizeLinkedInProfile(data.person) : null;
   }
 
+  async function worker() {
+    while (nextIndex < people.length) {
+      const current = nextIndex++;
+      if (firstError) return;
+      try {
+        results[current] = await matchOne(people[current]);
+      } catch (err) {
+        firstError = err instanceof Error ? err : new Error(String(err));
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(APOLLO_BATCH_CONCURRENCY, people.length) },
+      () => worker()
+    )
+  );
+  if (firstError) throw firstError;
   return results;
 }
 
@@ -476,6 +529,7 @@ export async function parseAudienceToFilters(
 ): Promise<AudienceFilters> {
   const { completeJson } = await import("@/lib/ai");
   const content = await completeJson(userId, {
+    operation: "outreach.apollo",
     temperature: 0.1,
     system: `Extract structured Apollo people-search filters from a natural language audience description.
 Return JSON:

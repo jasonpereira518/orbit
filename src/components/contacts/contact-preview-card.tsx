@@ -11,7 +11,7 @@ import { createPortal } from "react-dom";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import {
-  closenessPercentChipClass,
+  closenessTierChipClass,
 } from "@/lib/closeness";
 import { companyBrandColor } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
@@ -60,14 +60,19 @@ export function ContactAvatarPreview({
   className?: string;
 }) {
   const [visible, setVisible] = useState(false);
-  const [pos, setPos] = useState({ x: 0, y: 0 });
   const [mounted, setMounted] = useState(false);
   const openTimer = useRef<number | null>(null);
+  // Cursor-following position lives in refs and is written straight to the
+  // card's transform — a React render per pointermove is wasted work.
+  const posRef = useRef({ x: 0, y: 0 });
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const frameRef = useRef<number | null>(null);
 
   useEffect(() => {
     setMounted(true);
     return () => {
       if (openTimer.current) window.clearTimeout(openTimer.current);
+      if (frameRef.current != null) cancelAnimationFrame(frameRef.current);
     };
   }, []);
 
@@ -78,18 +83,28 @@ export function ContactAvatarPreview({
     }
   }
 
-  function onEnter(e: PointerEvent) {
-    setPos(
-      clampToViewport(e.clientX + CURSOR_OFFSET, e.clientY + CURSOR_OFFSET)
-    );
-    clearOpenTimer();
-    openTimer.current = window.setTimeout(() => setVisible(true), OPEN_DELAY_MS);
+  function applyPos() {
+    frameRef.current = null;
+    const card = cardRef.current;
+    if (card) {
+      card.style.transform = `translate3d(${posRef.current.x}px, ${posRef.current.y}px, 0)`;
+    }
   }
 
-  function onMove(e: PointerEvent) {
-    setPos(
-      clampToViewport(e.clientX + CURSOR_OFFSET, e.clientY + CURSOR_OFFSET)
+  function trackPointer(e: PointerEvent) {
+    posRef.current = clampToViewport(
+      e.clientX + CURSOR_OFFSET,
+      e.clientY + CURSOR_OFFSET
     );
+    if (frameRef.current == null) {
+      frameRef.current = requestAnimationFrame(applyPos);
+    }
+  }
+
+  function onEnter(e: PointerEvent) {
+    trackPointer(e);
+    clearOpenTimer();
+    openTimer.current = window.setTimeout(() => setVisible(true), OPEN_DELAY_MS);
   }
 
   function onLeave() {
@@ -108,7 +123,7 @@ export function ContactAvatarPreview({
       <span
         className={cn("inline-flex shrink-0", className)}
         onPointerEnter={onEnter}
-        onPointerMove={onMove}
+        onPointerMove={trackPointer}
         onPointerLeave={onLeave}
       >
         {children}
@@ -117,12 +132,20 @@ export function ContactAvatarPreview({
         visible &&
         createPortal(
           <div
+            // Callback ref runs at commit (before paint): position the card
+            // from the tracked pointer without reading refs during render.
+            ref={(node) => {
+              cardRef.current = node;
+              if (node) applyPos();
+            }}
             role="tooltip"
             aria-hidden
             className={cn(
-              "pointer-events-none fixed z-[100] w-64 rounded-xl border border-border/70 bg-card p-3 shadow-lg ring-1 ring-foreground/5"
+              // No enter animation: tw-animate keyframes would override the
+              // cursor-position transform (card flies in from 0,0), and the
+              // card should simply appear at the pointer.
+              "pointer-events-none fixed left-0 top-0 z-[100] w-64 rounded-xl border border-border/70 bg-card p-3 shadow-lg ring-1 ring-foreground/5"
             )}
-            style={{ left: pos.x, top: pos.y }}
           >
             <div className="flex items-start gap-2.5">
               <ContactAvatar
@@ -170,7 +193,9 @@ export function ContactAvatarPreview({
                   <span
                     className={cn(
                       "rounded-md px-1.5 py-0.5 text-[11px] font-medium tabular-nums",
-                      closenessPercentChipClass(contact.closeness)
+                      contact.closenessTier
+                        ? closenessTierChipClass(contact.closenessTier)
+                        : "bg-muted text-muted-foreground"
                     )}
                   >
                     {Math.round(contact.closeness * 100)}%

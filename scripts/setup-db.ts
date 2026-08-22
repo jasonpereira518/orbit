@@ -6,7 +6,7 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 config();
 
-import { getDb, schema } from "../src/db";
+import { getDb, rowsOf, schema } from "../src/db";
 import { sql } from "drizzle-orm";
 
   const EXPECTED_TABLES = [
@@ -18,6 +18,7 @@ import { sql } from "drizzle-orm";
   "contact_tags",
   "interactions",
   "reminders",
+  "suggested_reminders",
   "imports",
   "ai_suggestions",
   "contact_embeddings",
@@ -27,6 +28,14 @@ import { sql } from "drizzle-orm";
   "outreach_messages",
   "chat_threads",
   "chat_messages",
+  "reminder_lists",
+  "import_job_rows",
+  "recruiters",
+  "user_recruiter_links",
+  "gmail_connections",
+  "outlook_connections",
+  "usage_events",
+  "admin_audit_log",
 ] as const;
 
 async function main() {
@@ -42,18 +51,35 @@ async function main() {
     ORDER BY table_name
   `);
 
-  // drizzle-orm execute return shape differs by driver — normalize
-  const tables = (
-    Array.isArray(rows)
-      ? rows
-      : ((rows as { rows?: { table_name: string }[] }).rows ?? [])
-  ).map((r) => (typeof r === "string" ? r : r.table_name));
+  const tables = rowsOf<{ table_name: string }>(rows).map((r) =>
+    typeof r === "string" ? r : r.table_name
+  );
 
   console.log("tables:", tables.join(", ") || "(none)");
 
   const missing = EXPECTED_TABLES.filter((t) => !tables.includes(t));
   if (missing.length) {
     console.error("Missing tables:", missing.join(", "));
+    process.exit(1);
+  }
+
+  // contacts.stated_closeness distinguishes an unrated contact from one
+  // deliberately scored 2 — every closeness-scoring task depends on it
+  // existing, so a fresh environment must fail loudly if it's missing.
+  const contactColumns = await db.execute<{ column_name: string }>(sql`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'contacts'
+  `);
+  const columnNames = (
+    Array.isArray(contactColumns)
+      ? contactColumns
+      : ((contactColumns as { rows?: { column_name: string }[] }).rows ?? [])
+  ).map((r) => (typeof r === "string" ? r : r.column_name));
+  if (!columnNames.includes("stated_closeness")) {
+    console.error(
+      "Missing column: contacts.stated_closeness (run scripts/migrate-stated-closeness.ts)"
+    );
     process.exit(1);
   }
 

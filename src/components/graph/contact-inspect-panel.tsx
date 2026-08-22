@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { formatHowMetSummary } from "@/lib/met-context";
-import { closenessPercentChipClass } from "@/lib/closeness";
+import { closenessTierChipClass } from "@/lib/closeness";
 import { RING_LABELS, type GraphNodeData } from "@/lib/graph-layout";
 import type { UserSocialLinks } from "@/actions/graph";
 
@@ -41,6 +41,7 @@ export type InspectSelection =
         total: number;
         companyCount: number;
         scoreCounts: Record<number, number>;
+        strongTies?: number;
         dormantCount?: number;
         overdueCount?: number;
         userImageUrl?: string | null;
@@ -69,9 +70,9 @@ function formatMaybeRelative(value: string | null | undefined) {
   }
 }
 
-function closenessChipClass(closeness: number | undefined) {
-  if (typeof closeness !== "number") return "bg-muted text-muted-foreground";
-  return closenessPercentChipClass(closeness);
+function closenessChipClass(tier: "inner" | "mid" | "outer" | undefined) {
+  if (!tier) return "bg-muted text-muted-foreground";
+  return closenessTierChipClass(tier);
 }
 
 function LinkedInGlyph({ className }: { className?: string }) {
@@ -243,7 +244,7 @@ function YouPanelBody({
           </div>
           <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
             <p className="text-lg font-medium text-primary">
-              {(summary.scoreCounts[4] || 0) + (summary.scoreCounts[5] || 0)}
+              {summary.strongTies ?? 0}
             </p>
             <p className="text-xs text-muted-foreground">strong ties</p>
           </div>
@@ -433,7 +434,7 @@ function ContactPanelBody({
           <span
             className={cn(
               "rounded-full px-2.5 py-1 text-xs font-medium",
-              closenessChipClass(data.closeness)
+              closenessChipClass(data.closenessTier)
             )}
           >
             {RING_LABELS[data.score || 2] || "Orbit"}

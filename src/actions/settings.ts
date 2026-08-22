@@ -16,6 +16,10 @@ import {
 import { requireUserId } from "@/lib/auth";
 import { encrypt } from "@/lib/crypto";
 import { purgeUserData } from "@/lib/user-data";
+import { getEntitlements } from "@/lib/entitlements";
+import { contactUsageForUser } from "@/lib/contact-writes";
+import { countLifetimePurchases } from "@/lib/user-settings";
+import { LIFETIME_SEAT_LIMIT } from "@/lib/entitlements";
 import {
   resolveThemePreference,
   type ThemePreference,
@@ -36,6 +40,8 @@ export async function getSettings() {
   });
 
   const provider = resolveAiProvider(settings?.aiProvider);
+  const entitlements = await getEntitlements(userId);
+  const hostedSends = entitlements.canUseHostedSends;
 
   return {
     aiProvider: provider,
@@ -68,16 +74,39 @@ export async function getSettings() {
             : Boolean(settings?.anthropicApiKeyEncrypted),
       usingEnv: usingEnvKey(p.id, settings),
     })),
+    // Mirrors the plan gate in `getOutreachSendConfig` / `getApolloApiKey`: Orbit's shared
+    // keys only count as configured when the plan actually permits hosted sends, so the
+    // UI never reports a capability the send path will refuse.
     outreach: {
-      apollo: Boolean(settings?.apolloApiKeyEncrypted) || Boolean(process.env.APOLLO_API_KEY),
-      resend: Boolean(settings?.resendApiKeyEncrypted) || Boolean(process.env.RESEND_API_KEY),
+      apollo:
+        Boolean(settings?.apolloApiKeyEncrypted) ||
+        (hostedSends && Boolean(process.env.APOLLO_API_KEY)),
+      resend:
+        Boolean(settings?.resendApiKeyEncrypted) ||
+        (hostedSends && Boolean(process.env.RESEND_API_KEY)),
       twilio:
         (Boolean(settings?.twilioAccountSidEncrypted) ||
-          Boolean(process.env.TWILIO_ACCOUNT_SID)) &&
+          (hostedSends && Boolean(process.env.TWILIO_ACCOUNT_SID))) &&
         (Boolean(settings?.twilioAuthTokenEncrypted) ||
-          Boolean(process.env.TWILIO_AUTH_TOKEN)) &&
-        Boolean(settings?.twilioFromNumber || process.env.TWILIO_FROM_NUMBER),
-      twilioFromNumber: settings?.twilioFromNumber || process.env.TWILIO_FROM_NUMBER || null,
+          (hostedSends && Boolean(process.env.TWILIO_AUTH_TOKEN))) &&
+        Boolean(
+          settings?.twilioFromNumber ||
+            (hostedSends ? process.env.TWILIO_FROM_NUMBER : null)
+        ),
+      twilioFromNumber:
+        settings?.twilioFromNumber ||
+        (hostedSends ? process.env.TWILIO_FROM_NUMBER : null) ||
+        null,
+    },
+    plan: {
+      plan: entitlements.plan,
+      source: entitlements.source,
+      contactLimit: entitlements.contactLimit,
+      canUseOutreach: entitlements.canUseOutreach,
+      canUseHostedSends: entitlements.canUseHostedSends,
+      canUseRecruiters: entitlements.canUseRecruiters,
+      canUseSync: entitlements.canUseSync,
+      canUseExtension: entitlements.canUseExtension,
     },
     socialLinks: {
       linkedin: settings?.socialLinks?.linkedin || "",
@@ -343,4 +372,25 @@ export async function deleteAllData() {
   revalidatePath("/contacts");
   revalidatePath("/settings");
   revalidatePath("/outreach");
+}
+
+/**
+ * Everything the settings billing card needs, in one round trip.
+ *
+ * `remainingLifetimeSeats` is surfaced so the early-adopter cap is a real, visible number
+ * rather than decorative scarcity.
+ */
+export async function getPlanOverview() {
+  const userId = await requireUserId();
+  const [entitlements, usage, lifetimeSold] = await Promise.all([
+    getEntitlements(userId),
+    contactUsageForUser(userId),
+    countLifetimePurchases(),
+  ]);
+
+  return {
+    entitlements,
+    usage,
+    remainingLifetimeSeats: Math.max(0, LIFETIME_SEAT_LIMIT - lifetimeSold),
+  };
 }
