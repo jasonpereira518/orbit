@@ -82,6 +82,7 @@ function TierCta({
   signedIn,
   seatsLeft,
   lifetimePurchasable,
+  period,
 }: {
   planId: Plan;
   currentPlan: Plan | null;
@@ -89,6 +90,7 @@ function TierCta({
   seatsLeft: number;
   /** Stripe is configured and seats remain, so checkout can actually complete. */
   lifetimePurchasable: boolean;
+  period: BillingPeriod;
 }) {
   const base =
     "flex w-full items-center justify-center rounded-xl px-4 py-3 text-sm font-medium transition-opacity";
@@ -175,9 +177,14 @@ function TierCta({
     );
   }
 
+  // The chosen period rides along in the URL. Clerk's PricingTable has no prop to
+  // preselect it, so /upgrade states it in copy rather than pretending it carried over.
+  const upgradeHref =
+    period === "annual" ? "/upgrade?period=annual" : "/upgrade";
+
   return (
     <Link
-      href={signedIn ? "/settings#settings-plan" : "/sign-up"}
+      href={signedIn ? upgradeHref : "/sign-up"}
       className={cn(
         base,
         "bg-[#eef7f4] text-[#0f2e28] hover:opacity-90"
@@ -333,6 +340,7 @@ export function PricingTiers({
                   signedIn={signedIn}
                   seatsLeft={seatsLeft}
                   lifetimePurchasable={lifetimePurchasable}
+                  period={period}
                 />
               </div>
             </section>
