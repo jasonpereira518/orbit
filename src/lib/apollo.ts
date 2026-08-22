@@ -171,11 +171,6 @@ function normalizeLinkedInProfile(
   const photo = person.photo_url?.trim() || null;
   const firstName = person.first_name?.trim() || null;
   const lastName = person.last_name?.trim() || null;
-  const phone =
-    person.phone_numbers?.find((p) => p.sanitized_number || p.raw_number)
-      ?.sanitized_number ||
-    person.phone_numbers?.find((p) => p.raw_number)?.raw_number ||
-    null;
 
   return {
     firstName,
