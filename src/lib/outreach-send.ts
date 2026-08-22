@@ -8,18 +8,9 @@ import {
   outreachProspects,
   userSettings,
 } from "@/db/schema";
-import { decrypt } from "@/lib/crypto";
+import { decryptOrNull } from "@/lib/crypto";
 import { DAILY_SEND_LIMIT, type OutreachChannel } from "@/lib/outreach-types";
 import { getEntitlements } from "@/lib/entitlements";
-
-function decryptKey(encrypted?: string | null) {
-  if (!encrypted) return null;
-  try {
-    return decrypt(encrypted);
-  } catch {
-    return null;
-  }
-}
 
 export async function getOutreachSendConfig(userId: string) {
   const db = await getDb();
@@ -36,13 +27,13 @@ export async function getOutreachSendConfig(userId: string) {
 
   return {
     resendApiKey:
-      decryptKey(settings?.resendApiKeyEncrypted) ||
+      decryptOrNull(settings?.resendApiKeyEncrypted) ||
       envKey(process.env.RESEND_API_KEY),
     twilioAccountSid:
-      decryptKey(settings?.twilioAccountSidEncrypted) ||
+      decryptOrNull(settings?.twilioAccountSidEncrypted) ||
       envKey(process.env.TWILIO_ACCOUNT_SID),
     twilioAuthToken:
-      decryptKey(settings?.twilioAuthTokenEncrypted) ||
+      decryptOrNull(settings?.twilioAuthTokenEncrypted) ||
       envKey(process.env.TWILIO_AUTH_TOKEN),
     twilioFromNumber:
       settings?.twilioFromNumber?.trim() ||

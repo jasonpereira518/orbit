@@ -463,7 +463,7 @@ export default async function AdminUserDetailPage({
           <section id="config" className="scroll-mt-20">
             <AdminPanel title="Configuration">
               {/*
-                Booleans only. Never call decryptKey() in admin code — not behind a reveal,
+                Booleans only. Never call decryptOrNull() in admin code — not behind a reveal,
                 not in a log line. If a key is broken, the error message diagnoses it.
               */}
               <dl>

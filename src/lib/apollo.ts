@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
-import { decrypt } from "@/lib/crypto";
+import { decryptOrNull } from "@/lib/crypto";
 import {
   LINKEDIN_REFRESH_BATCH_SIZE,
   type AudienceFilters,
@@ -103,21 +103,12 @@ export type LinkedInProfileEnrichment = {
   linkedinUrl: string | null;
 };
 
-function decryptKey(encrypted?: string | null) {
-  if (!encrypted) return null;
-  try {
-    return decrypt(encrypted);
-  } catch {
-    return null;
-  }
-}
-
 export async function getApolloApiKey(userId: string): Promise<string | null> {
   const db = await getDb();
   const settings = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
   });
-  const personal = decryptKey(settings?.apolloApiKeyEncrypted);
+  const personal = decryptOrNull(settings?.apolloApiKeyEncrypted);
   if (personal) return personal;
 
   // Apollo credits are metered like Resend/Twilio, so Orbit's shared key is

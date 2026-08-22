@@ -1,6 +1,7 @@
 import Papa from "papaparse";
 import type { Contact } from "@/db/schema";
 import { findDuplicateCandidates, linkedinSlug } from "@/lib/duplicates";
+import { csvGet } from "@/lib/linkedin-connections";
 
 export type LinkedInMessageRow = {
   conversationId: string;
@@ -17,16 +18,6 @@ export type LinkedInMessageRow = {
 export type ParsedLinkedInMessage = LinkedInMessageRow & {
   parsedDate: Date | null;
 };
-
-function csvGet(row: Record<string, string>, ...keys: string[]) {
-  for (const k of keys) {
-    const found = Object.entries(row).find(
-      ([key]) => key.trim().toLowerCase() === k.toLowerCase()
-    );
-    if (found?.[1]) return found[1].trim();
-  }
-  return "";
-}
 
 /** Keep only real LinkedIn profile URLs (linkedin.com/in/…). */
 export function extractProfileUrls(raw: string): string[] {
