@@ -90,11 +90,19 @@ export function PlanSettings({
 
       {isFree && (
         <div className="flex flex-wrap items-center gap-3">
+          {/* Points at the transaction page, not back at /pricing — that round trip was a
+              loop with no way to actually pay at either end. */}
           <Link
-            href="/pricing"
+            href="/upgrade"
             className={cn(buttonVariants({ size: "sm" }))}
           >
-            See plans
+            Upgrade
+          </Link>
+          <Link
+            href="/pricing"
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          >
+            Compare plans
           </Link>
           {remainingLifetimeSeats > 0 && (
             <span className="text-sm text-muted-foreground">
