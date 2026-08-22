@@ -103,6 +103,17 @@ export const userSettings = pgTable("user_settings", {
    * derived last-write timestamp, so the roster is useful without a warm-up period.
    */
   lastActiveAt: timestamp("last_active_at", { withTimezone: true }),
+  /**
+   * Operator suspension. Enforced in `requireUserId()` (`src/lib/auth.ts`) rather than in a
+   * layout: actions are reachable by direct POST, so the gate has to sit at the one function
+   * every page *and* every server action already calls.
+   *
+   * Deliberately a timestamp rather than a boolean — "when did this happen" is the first
+   * question asked about a suspension, and `admin_audit_log` is the only other record.
+   */
+  suspendedAt: timestamp("suspended_at", { withTimezone: true }),
+  suspendedReason: text("suspended_reason"),
+  suspendedBy: text("suspended_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -799,13 +810,21 @@ export const usageEvents = pgTable(
  * Comps are why this exists. `comped_plan` outranks every real billing signal in
  * `resolvePlan`, has no expiry, and no webhook will ever correct it; `updated_at` is bumped
  * by a dozen unrelated writers, so without this table there is no record a comp happened.
+ *
+ * Action names, all written by `src/actions/admin.ts`:
+ *   comp.grant · comp.revoke
+ *   record.reveal · reveal.grant · reveal.revoke
+ *   import.retry · import.cancel
+ *   onboarding.reset · integration.disconnect · calendar.enable · calendar.disable
+ *   account.suspend · account.unsuspend · account.delete
+ *   export.download
  */
 export const adminAuditLog = pgTable(
   "admin_audit_log",
   {
     id: uuid("id").defaultRandom().primaryKey(),
     adminUserId: text("admin_user_id").notNull(),
-    /** e.g. "comp.grant", "comp.revoke", "record.reveal". */
+    /** One of the names listed in this table's doc comment. */
     action: text("action").notNull(),
     targetUserId: text("target_user_id"),
     resourceType: text("resource_type"),
@@ -817,6 +836,41 @@ export const adminAuditLog = pgTable(
   (t) => [
     index("admin_audit_log_created_idx").on(t.createdAt),
     index("admin_audit_log_target_idx").on(t.targetUserId),
+    index("admin_audit_log_action_idx").on(t.action, t.createdAt),
+  ]
+);
+
+/**
+ * Short-lived permission to read one account's contact and interaction *content*.
+ *
+ * The admin inspector masks contact names and never selects notes, emails or phone numbers
+ * (see the header of `src/lib/admin-user-detail.ts`). A row here is what lifts that, and
+ * only for the single `target_user_id` named, only until `expires_at`.
+ *
+ * A grant is a licence to look, not a mode the console sits in: it is scoped to one account,
+ * expires on its own without anything having to remember to revoke it, and every issue and
+ * revocation also writes an `admin_audit_log` row. Nothing here can ever reach
+ * `chat_messages.content`, which is unreachable by any code path.
+ */
+export const adminRevealGrants = pgTable(
+  "admin_reveal_grants",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    adminUserId: text("admin_user_id").notNull(),
+    targetUserId: text("target_user_id").notNull(),
+    /** Required, never null — the whole point is that unmasking is explainable later. */
+    reason: text("reason").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("admin_reveal_grants_lookup_idx").on(
+      t.adminUserId,
+      t.targetUserId,
+      t.expiresAt
+    ),
+    index("admin_reveal_grants_target_idx").on(t.targetUserId),
   ]
 );
 
@@ -968,3 +1022,4 @@ export type GmailConnection = typeof gmailConnections.$inferSelect;
 export type UsageEvent = typeof usageEvents.$inferSelect;
 export type NewUsageEvent = typeof usageEvents.$inferInsert;
 export type AdminAuditEntry = typeof adminAuditLog.$inferSelect;
+export type AdminRevealGrantRow = typeof adminRevealGrants.$inferSelect;

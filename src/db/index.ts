@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS user_settings (
   comped_at timestamptz,
   comped_by text,
   last_active_at timestamptz,
+  suspended_at timestamptz,
+  suspended_reason text,
+  suspended_by text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -431,7 +434,24 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
 );
 CREATE INDEX IF NOT EXISTS admin_audit_log_created_idx ON admin_audit_log(created_at);
 CREATE INDEX IF NOT EXISTS admin_audit_log_target_idx ON admin_audit_log(target_user_id);
+CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action, created_at);
+CREATE TABLE IF NOT EXISTS admin_reveal_grants (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  admin_user_id text NOT NULL,
+  target_user_id text NOT NULL,
+  reason text NOT NULL,
+  expires_at timestamptz NOT NULL,
+  revoked_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 `;
+
+// NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
+// them cover columns (`user_settings.email`, `last_active_at`) that the template's CREATE
+// TABLE does not declare — they only exist after the column migrations below run, so an
+// index here fails the whole bootstrap on a fresh database. They live in
+// ADMIN_V2_STATEMENTS instead, which both engines run after their column pass.
+
 
 async function columnExists(client: PGlite, table: string, column: string) {
   const result = await client.query<{ exists: boolean }>(
@@ -642,7 +662,54 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "comped_at", "timestamptz");
   await ensureColumn(client, "user_settings", "comped_by", "text");
   await ensureColumn(client, "user_settings", "last_active_at", "timestamptz");
+
+  // Admin console v2: operator suspension, plus the reveal-grant table and the indexes the
+  // cross-user roster/trend queries need. Same reasoning as the block above — the DDL
+  // template only helps a database that does not have `user_settings` yet.
+  await ensureColumn(client, "user_settings", "suspended_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "suspended_reason", "text");
+  await ensureColumn(client, "user_settings", "suspended_by", "text");
+
+  for (const statement of ADMIN_V2_STATEMENTS) {
+    try {
+      await client.exec(statement);
+    } catch {
+      // Already exists.
+    }
+  }
 }
+
+/**
+ * Shared by both engines so the two migration paths cannot drift.
+ *
+ * `imports` had no `user_id` index at all, which made the admin roster fan-out a sequential
+ * scan; the rest are `(user_id, created_at)` composites for the time-bucketed trend queries.
+ * The `usage_events` one is partial — failures are a small fraction of the table, and the
+ * error-triage screen only ever reads that slice.
+ */
+const ADMIN_V2_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS admin_reveal_grants (
+     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+     admin_user_id text NOT NULL,
+     target_user_id text NOT NULL,
+     reason text NOT NULL,
+     expires_at timestamptz NOT NULL,
+     revoked_at timestamptz,
+     created_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS admin_reveal_grants_lookup_idx ON admin_reveal_grants(admin_user_id, target_user_id, expires_at)`,
+  `CREATE INDEX IF NOT EXISTS admin_reveal_grants_target_idx ON admin_reveal_grants(target_user_id)`,
+  `CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action, created_at)`,
+  `CREATE INDEX IF NOT EXISTS imports_user_created_idx ON imports(user_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS imports_status_updated_idx ON imports(status, updated_at)`,
+  `CREATE INDEX IF NOT EXISTS contacts_user_created_idx ON contacts(user_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS interactions_user_created_idx ON interactions(user_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS chat_messages_user_created_idx ON chat_messages(user_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS user_settings_created_idx ON user_settings(created_at)`,
+  `CREATE INDEX IF NOT EXISTS user_settings_email_idx ON user_settings(email)`,
+  `CREATE INDEX IF NOT EXISTS user_settings_last_active_idx ON user_settings(last_active_at)`,
+  `CREATE INDEX IF NOT EXISTS usage_events_failures_idx ON usage_events(user_id, created_at) WHERE success = 0`,
+];
 
 /**
  * Normalizes a `db.execute()` result into a plain array.
@@ -802,6 +869,10 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_last_fetched_at timestamptz`,
     `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_at timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_reason text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_by text`,
+    ...ADMIN_V2_STATEMENTS,
   ];
 
   for (const statement of alters) {
