@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   adminAuditLog,
@@ -461,4 +461,109 @@ export async function deleteAccount(adminUserId: string, input: {
 
   await purgeUserData(input.targetUserId);
 
+}
+
+/* ---------------------------------------------------------------------- the audit trail */
+
+export type AuditQuery = {
+  action?: string;
+  targetUserId?: string;
+  page?: number;
+  pageSize?: number;
+};
+
+export type AuditPage = {
+  rows: Array<{
+    id: string;
+    adminUserId: string;
+    action: string;
+    targetUserId: string | null;
+    targetEmail: string | null;
+    resourceType: string | null;
+    resourceId: string | null;
+    detail: Record<string, unknown>;
+    reason: string | null;
+    createdAt: Date;
+  }>;
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+  /** Distinct action names present, for the filter bar. */
+  actions: string[];
+};
+
+/**
+ * The whole audit log, paginated and filterable.
+ *
+ * `getAuditTrail` in the actions module returns 25 rows for one account, which was right
+ * when the console could perform two kinds of write. With fourteen, a per-account window
+ * stops being a record you can answer questions from.
+ *
+ * The target email is LEFT JOINed rather than stored on the row: an account can be deleted,
+ * and `purgeUserData` deliberately spares these rows, so the join simply yields null and the
+ * entry survives as "some account that no longer exists" — which is the honest rendering.
+ */
+/** `and()` needs at least one operand; this is the always-true seed. */
+function sqlTrue() {
+  return sql`true`;
+}
+
+export async function loadAuditLog(query: AuditQuery = {}): Promise<AuditPage> {
+  const db = await getDb();
+  const pageSize = Math.min(Math.max(query.pageSize ?? 50, 1), 200);
+  const page = Math.max(query.page ?? 1, 1);
+
+  const filters = [sqlTrue()];
+  if (query.action) filters.push(eq(adminAuditLog.action, query.action));
+  if (query.targetUserId) {
+    filters.push(eq(adminAuditLog.targetUserId, query.targetUserId));
+  }
+  const where = and(...filters);
+
+  const [rows, totalAgg, actionRows] = await Promise.all([
+    db
+      .select({
+        id: adminAuditLog.id,
+        adminUserId: adminAuditLog.adminUserId,
+        action: adminAuditLog.action,
+        targetUserId: adminAuditLog.targetUserId,
+        targetEmail: userSettings.email,
+        resourceType: adminAuditLog.resourceType,
+        resourceId: adminAuditLog.resourceId,
+        detail: adminAuditLog.detail,
+        reason: adminAuditLog.reason,
+        createdAt: adminAuditLog.createdAt,
+      })
+      .from(adminAuditLog)
+      .leftJoin(userSettings, eq(userSettings.userId, adminAuditLog.targetUserId))
+      .where(where)
+      .orderBy(desc(adminAuditLog.createdAt))
+      .limit(pageSize)
+      .offset((page - 1) * pageSize),
+
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(adminAuditLog)
+      .where(where),
+
+    db
+      .selectDistinct({ action: adminAuditLog.action })
+      .from(adminAuditLog)
+      .orderBy(adminAuditLog.action),
+  ]);
+
+  const total = totalAgg[0]?.n ?? 0;
+
+  return {
+    rows: rows.map((r) => ({
+      ...r,
+      detail: (r.detail ?? {}) as Record<string, unknown>,
+    })),
+    total,
+    page,
+    pageSize,
+    pageCount: Math.max(1, Math.ceil(total / pageSize)),
+    actions: actionRows.map((r) => r.action),
+  };
 }

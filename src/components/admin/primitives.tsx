@@ -172,6 +172,80 @@ export function MiniBars({
   );
 }
 
+/**
+ * A trend, as one labelled bar per bucket.
+ *
+ * Deliberately not a sparkline. The overview's rule against them was written against
+ * smoothed shapes with no labels, and it is right: 0,1,0,0,2,1,0 drawn as a squiggle is
+ * noise rendered as a shape. The same seven numbers printed next to seven bars is a
+ * countable column — the reader gets the integers, and the bars only rank them.
+ *
+ * `secondary` overlays a second series inside the same bar (failures within calls), which
+ * only reads honestly when it is a strict subset of `count`.
+ */
+export function TrendBars({
+  rows,
+  emptyLabel = "Nothing in this window yet.",
+}: {
+  rows: Array<{
+    label: string;
+    count: number;
+    secondary?: number;
+    secondaryLabel?: string;
+    href?: string;
+  }>;
+  emptyLabel?: string;
+}) {
+  if (rows.length === 0) return <EmptyState>{emptyLabel}</EmptyState>;
+
+  // Against the max rather than the sum: the question is "which period was busiest",
+  // and a zero-height bar for an empty period is the honest answer for that period.
+  const max = Math.max(1, ...rows.map((r) => r.count));
+
+  return (
+    <ol className="space-y-1">
+      {rows.map((row) => {
+        const pct = (row.count / max) * 100;
+        const secondaryPct = row.secondary ? (row.secondary / max) * 100 : 0;
+        return (
+          <li key={row.label} className="flex items-center gap-3 text-sm">
+            <span className="w-24 shrink-0 truncate text-xs text-muted-foreground tabular-nums">
+              {row.label}
+            </span>
+            <span className="w-10 shrink-0 text-right tabular-nums">{row.count}</span>
+            {row.secondary != null && (
+              <span
+                className={cn(
+                  "w-10 shrink-0 text-right text-xs tabular-nums",
+                  row.secondary > 0 ? "text-destructive" : "text-muted-foreground/50"
+                )}
+                title={row.secondaryLabel}
+              >
+                {row.secondary > 0 ? row.secondary : "—"}
+              </span>
+            )}
+            <span
+              aria-hidden
+              className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-muted"
+            >
+              <span
+                className="absolute inset-y-0 left-0 rounded-full bg-primary/70 transition-[width] duration-slow ease-house"
+                style={{ width: `${pct}%` }}
+              />
+              {secondaryPct > 0 && (
+                <span
+                  className="absolute inset-y-0 left-0 rounded-full bg-destructive/80"
+                  style={{ width: `${secondaryPct}%` }}
+                />
+              )}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 /* ---------------------------------------------------------------- plan badge -------- */
 
 const SOURCE_LABEL: Record<PlanSource, string> = {
