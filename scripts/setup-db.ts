@@ -36,6 +36,9 @@ import { sql } from "drizzle-orm";
   "outlook_connections",
   "usage_events",
   "admin_audit_log",
+  "cron_runs",
+  "webhook_deliveries",
+  "error_events",
 ] as const;
 
 async function main() {

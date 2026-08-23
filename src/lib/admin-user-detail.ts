@@ -443,23 +443,22 @@ export async function getAdminUserDetail(
     ["Outlook", outlookRow],
   ] as const) {
     if (!conn) continue;
-    if (conn.status && conn.status !== "active") {
+    // `needs_reauth` is now genuinely written (see getValidAccessToken in gmail.ts /
+    // outlook.ts). Until that landed this branch was dead code — the column was only ever
+    // set to "active" — so this check never once fired.
+    if (conn.status !== "active") {
       health.push({
         kind: "connection",
         severity: "error",
-        label: `${name} connection is ${conn.status}`,
+        label: `${name} needs reconnecting`,
         detail: conn.emailAddress,
         at: conn.updatedAt,
       });
-    } else if (conn.tokenExpiresAt && conn.tokenExpiresAt.getTime() < Date.now()) {
-      health.push({
-        kind: "connection",
-        severity: "warn",
-        label: `${name} token expired`,
-        detail: conn.emailAddress,
-        at: conn.tokenExpiresAt,
-      });
     }
+    // Deliberately NO `tokenExpiresAt < now` branch. An expired access token alongside a
+    // valid refresh token is perfectly healthy — getValidAccessToken refreshes it
+    // transparently — so that warning was a false positive by construction, and it was the
+    // only connection branch that ever fired.
   }
 
   const hasSelectedProviderKey =

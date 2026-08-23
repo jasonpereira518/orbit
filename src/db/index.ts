@@ -431,6 +431,49 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
 );
 CREATE INDEX IF NOT EXISTS admin_audit_log_created_idx ON admin_audit_log(created_at);
 CREATE INDEX IF NOT EXISTS admin_audit_log_target_idx ON admin_audit_log(target_user_id);
+CREATE TABLE IF NOT EXISTS cron_runs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  job text NOT NULL,
+  status text NOT NULL DEFAULT 'running',
+  trigger text NOT NULL DEFAULT 'schedule',
+  started_at timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz,
+  duration_ms integer,
+  stats jsonb NOT NULL DEFAULT '{}',
+  error text
+);
+CREATE INDEX IF NOT EXISTS cron_runs_job_started_idx ON cron_runs(job, started_at);
+CREATE INDEX IF NOT EXISTS cron_runs_started_idx ON cron_runs(started_at);
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  source text NOT NULL DEFAULT 'clerk',
+  event_id text,
+  event_type text,
+  outcome text NOT NULL,
+  reason text,
+  target_user_id text,
+  resource_id text,
+  detail jsonb NOT NULL DEFAULT '{}',
+  error text,
+  duration_ms integer,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS webhook_deliveries_created_idx ON webhook_deliveries(created_at);
+CREATE INDEX IF NOT EXISTS webhook_deliveries_event_idx ON webhook_deliveries(event_id);
+CREATE INDEX IF NOT EXISTS webhook_deliveries_target_idx ON webhook_deliveries(target_user_id);
+CREATE INDEX IF NOT EXISTS webhook_deliveries_type_created_idx ON webhook_deliveries(event_type, created_at);
+CREATE TABLE IF NOT EXISTS error_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  source text NOT NULL,
+  kind text NOT NULL,
+  user_id text,
+  message text,
+  context jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS error_events_created_idx ON error_events(created_at);
+CREATE INDEX IF NOT EXISTS error_events_source_created_idx ON error_events(source, created_at);
+CREATE INDEX IF NOT EXISTS error_events_user_created_idx ON error_events(user_id, created_at);
 `;
 
 async function columnExists(client: PGlite, table: string, column: string) {
@@ -761,6 +804,17 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `CREATE INDEX IF NOT EXISTS usage_events_model_idx ON usage_events(provider, model)`,
     `CREATE INDEX IF NOT EXISTS admin_audit_log_created_idx ON admin_audit_log(created_at)`,
     `CREATE INDEX IF NOT EXISTS admin_audit_log_target_idx ON admin_audit_log(target_user_id)`,
+    // Instrumentation tables. The CREATE TABLEs in DDL above land on a fresh database;
+    // these repair an existing one, which is why the indexes appear in both places.
+    `CREATE INDEX IF NOT EXISTS cron_runs_job_started_idx ON cron_runs(job, started_at)`,
+    `CREATE INDEX IF NOT EXISTS cron_runs_started_idx ON cron_runs(started_at)`,
+    `CREATE INDEX IF NOT EXISTS webhook_deliveries_created_idx ON webhook_deliveries(created_at)`,
+    `CREATE INDEX IF NOT EXISTS webhook_deliveries_event_idx ON webhook_deliveries(event_id)`,
+    `CREATE INDEX IF NOT EXISTS webhook_deliveries_target_idx ON webhook_deliveries(target_user_id)`,
+    `CREATE INDEX IF NOT EXISTS webhook_deliveries_type_created_idx ON webhook_deliveries(event_type, created_at)`,
+    `CREATE INDEX IF NOT EXISTS error_events_created_idx ON error_events(created_at)`,
+    `CREATE INDEX IF NOT EXISTS error_events_source_created_idx ON error_events(source, created_at)`,
+    `CREATE INDEX IF NOT EXISTS error_events_user_created_idx ON error_events(user_id, created_at)`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
     `CREATE INDEX IF NOT EXISTS companies_user_idx ON companies(user_id)`,

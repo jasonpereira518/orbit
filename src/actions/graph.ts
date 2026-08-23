@@ -1,6 +1,7 @@
 "use server";
 
 import { eq } from "drizzle-orm";
+import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getDb } from "@/db";
 import { contacts, userSettings } from "@/db/schema";
 import { listGoals } from "@/actions/goals";
@@ -202,13 +203,33 @@ export async function refreshConstellationBatch(input?: {
   const slice = rows.slice(offset, offset + limit);
 
   let processed = offset;
+  let failed = 0;
+  let firstError: unknown = null;
+  let firstFailedId: string | null = null;
   for (const row of slice) {
     try {
       await rebuildContactEmbedding(userId, row.id);
     } catch (err) {
       console.error("Embedding rebuild failed", row.id, err);
+      failed += 1;
+      if (!firstError) {
+        firstError = err;
+        firstFailedId = row.id;
+      }
     }
     processed += 1;
+  }
+
+  // One row per batch, never per contact — per-item error rows are how a diagnostic
+  // table becomes a log firehose.
+  if (failed > 0) {
+    await recordErrorEvent({
+      source: ERROR_SOURCES.graphRebuildEmbeddings,
+      kind: "batch_partial_failure",
+      userId,
+      message: firstError,
+      context: { failed, batchSize: slice.length, total, sampleContactId: firstFailedId },
+    });
   }
 
   const done = processed >= total;

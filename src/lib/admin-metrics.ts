@@ -366,6 +366,24 @@ export function buildAlerts(
       });
     }
 
+    // Billing drift, detected without a single Clerk API call. An active subscription
+    // always receives a renewal event pushing `period_end` forward, so a live status with
+    // a past-dated period means a webhook was dropped — and nothing else in the system
+    // would ever notice. `webhook_deliveries` shows which one; this shows that it happened.
+    if (
+      row.subscriptionStatus === "active" &&
+      row.subscriptionPeriodEnd &&
+      row.subscriptionPeriodEnd.getTime() < ts
+    ) {
+      alerts.push({
+        ...who,
+        severity: "warn",
+        message: `Subscription says active but paid through ${row.subscriptionPeriodEnd
+          .toISOString()
+          .slice(0, 10)} — a Clerk webhook was probably missed`,
+      });
+    }
+
     // The highest-value signal in the console. Production is strictly BYOK, so an account
     // with no key for its selected provider hits a hard error on its first capture. This
     // is a conversion bug, surfaced as a metric.

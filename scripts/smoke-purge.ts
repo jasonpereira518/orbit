@@ -180,6 +180,13 @@ async function seed() {
     content: "a private question about my network",
   });
 
+  await db.insert(schema.errorEvents).values({
+    userId: USER,
+    source: "oauth.gmail.callback",
+    kind: "token_exchange_failed",
+    message: "system error text",
+  });
+
   await db.insert(schema.usageEvents).values({
     userId: USER,
     operation: "capture.parse",

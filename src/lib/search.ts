@@ -4,6 +4,11 @@ import { contactEmbeddings, contacts } from "@/db/schema";
 import { metContextLabel } from "@/lib/met-context";
 import { createEmbedding, createEmbeddingsBatch, cosineSimilarity } from "@/lib/ai";
 import { formatVectorLiteral } from "@/lib/pgvector";
+import {
+  ERROR_SOURCES,
+  recordErrorEvent,
+  shouldRecordThrottled,
+} from "@/lib/error-events";
 
 async function persistEmbeddingVector(rowId: string, embedding: number[]) {
   if (!isPgvectorAvailable()) return;
@@ -153,8 +158,18 @@ export async function semanticSearchContacts(
         for (const hit of pgHits) {
           scoreByContact.set(hit.contactId, hit.similarity);
         }
-      } catch {
-        // pgvector query can fail on Neon (extension/dim); fall back below
+      } catch (err) {
+        // pgvector query can fail on Neon (extension/dim); fall back below.
+        // Throttled: this fires per search, so a broken index would otherwise write a
+        // row for every query.
+        if (shouldRecordThrottled(ERROR_SOURCES.searchPgvector)) {
+          await recordErrorEvent({
+            source: ERROR_SOURCES.searchPgvector,
+            kind: "query_failed",
+            userId,
+            message: err,
+          });
+        }
       }
     }
 
