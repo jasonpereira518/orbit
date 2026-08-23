@@ -37,6 +37,12 @@ CREATE TABLE IF NOT EXISTS user_settings (
   first_name text,
   last_name text,
   profile_image_url text,
+  signup_referrer text,
+  signup_utm_source text,
+  signup_utm_medium text,
+  signup_utm_campaign text,
+  signup_landing_path text,
+  signup_attributed_at timestamptz,
   comped_plan text,
   lifetime_purchased_at timestamptz,
   stripe_customer_id text,
@@ -483,6 +489,54 @@ CREATE TABLE IF NOT EXISTS error_events (
 CREATE INDEX IF NOT EXISTS error_events_created_idx ON error_events(created_at);
 CREATE INDEX IF NOT EXISTS error_events_source_created_idx ON error_events(source, created_at);
 CREATE INDEX IF NOT EXISTS error_events_user_created_idx ON error_events(user_id, created_at);
+CREATE TABLE IF NOT EXISTS feedback (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  kind text NOT NULL,
+  score integer,
+  text text,
+  context jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS feedback_kind_created_idx ON feedback(kind, created_at);
+CREATE INDEX IF NOT EXISTS feedback_user_created_idx ON feedback(user_id, created_at);
+CREATE TABLE IF NOT EXISTS billing_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  source text NOT NULL,
+  event_id text NOT NULL,
+  kind text NOT NULL,
+  user_id text,
+  amount_cents integer NOT NULL DEFAULT 0,
+  mrr_delta_cents integer NOT NULL DEFAULT 0,
+  effective_at timestamptz NOT NULL,
+  detail jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS billing_events_source_event_uidx ON billing_events(source, event_id);
+CREATE INDEX IF NOT EXISTS billing_events_effective_idx ON billing_events(effective_at);
+CREATE INDEX IF NOT EXISTS billing_events_user_effective_idx ON billing_events(user_id, effective_at);
+CREATE INDEX IF NOT EXISTS billing_events_kind_effective_idx ON billing_events(kind, effective_at);
+CREATE TABLE IF NOT EXISTS infra_costs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  provider text NOT NULL,
+  period_month timestamptz NOT NULL,
+  amount_cents integer NOT NULL,
+  note text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS infra_costs_provider_month_uidx ON infra_costs(provider, period_month);
+CREATE INDEX IF NOT EXISTS infra_costs_month_idx ON infra_costs(period_month);
+CREATE TABLE IF NOT EXISTS gate_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  feature text NOT NULL,
+  plan text NOT NULL,
+  context jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS gate_events_feature_created_idx ON gate_events(feature, created_at);
+CREATE INDEX IF NOT EXISTS gate_events_user_created_idx ON gate_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action, created_at);
 `;
 
@@ -506,7 +560,7 @@ CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action,
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -979,6 +1033,15 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "last_name", "text");
   await ensureColumn(client, "user_settings", "profile_image_url", "text");
 
+  // Acquisition attribution. Columns rather than a table for the same reason as the
+  // identity mirror: they ride along on every query that already reads `user_settings`.
+  await ensureColumn(client, "user_settings", "signup_referrer", "text");
+  await ensureColumn(client, "user_settings", "signup_utm_source", "text");
+  await ensureColumn(client, "user_settings", "signup_utm_medium", "text");
+  await ensureColumn(client, "user_settings", "signup_utm_campaign", "text");
+  await ensureColumn(client, "user_settings", "signup_landing_path", "text");
+  await ensureColumn(client, "user_settings", "signup_attributed_at", "timestamptz");
+
   // `query` rather than `exec`: it returns `{ rows }`, which `rowsOf` understands, so the
   // schema-version SELECT reads the same on both drivers. Every statement here is a single
   // command, which is what `query` requires.
@@ -1164,6 +1227,12 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS first_name text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_name text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS profile_image_url text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_referrer text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_utm_source text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_utm_medium text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_utm_campaign text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_landing_path text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_attributed_at timestamptz`,
     `CREATE INDEX IF NOT EXISTS usage_events_user_created_idx ON usage_events(user_id, created_at)`,
     `CREATE INDEX IF NOT EXISTS usage_events_created_idx ON usage_events(created_at)`,
     `CREATE INDEX IF NOT EXISTS usage_events_model_idx ON usage_events(provider, model)`,

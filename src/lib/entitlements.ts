@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { recordGateHit } from "@/lib/gate-events";
 import { ensureUserSettings } from "@/lib/user-settings";
 import {
   FREE_CONTACT_LIMIT,
@@ -183,10 +184,18 @@ const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
   extension: "canUseExtension",
 };
 
-/** Throws `PaywallError` unless the user's plan covers `feature`. */
+/**
+ * Throws `PaywallError` unless the user's plan covers `feature`.
+ *
+ * The refusal is recorded before it is thrown. This is the only place demand for a gated
+ * feature can be observed — `usage_events` records what happened and by construction never
+ * what someone wanted and could not reach — so the pricing question depends entirely on it.
+ * `recordGateHit` swallows its own failures, so this cannot turn a paywall into a 500.
+ */
 export async function requireEntitlement(userId: string, feature: FeatureKey) {
   const ent = await getEntitlements(userId);
   if (ent[FEATURE_FLAG[feature]] !== true) {
+    await recordGateHit({ userId, feature, plan: ent.plan });
     throw new PaywallError(feature, ent.plan, FEATURE_DENIAL[feature]);
   }
   return ent;
