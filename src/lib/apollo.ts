@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
-import { decrypt } from "@/lib/crypto";
+import { decryptOrNull } from "@/lib/crypto";
 import {
   LINKEDIN_REFRESH_BATCH_SIZE,
   type AudienceFilters,
@@ -114,21 +114,12 @@ export type LinkedInProfileEnrichment = {
   linkedinUrl: string | null;
 };
 
-function decryptKey(encrypted?: string | null) {
-  if (!encrypted) return null;
-  try {
-    return decrypt(encrypted);
-  } catch {
-    return null;
-  }
-}
-
 export async function getApolloApiKey(userId: string): Promise<string | null> {
   const db = await getDb();
   const settings = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
   });
-  const personal = decryptKey(settings?.apolloApiKeyEncrypted);
+  const personal = decryptOrNull(settings?.apolloApiKeyEncrypted);
   if (personal) return personal;
 
   // Enrichment has no quota anywhere in the product — unlike sending, which every plan
@@ -184,11 +175,6 @@ function normalizeLinkedInProfile(
   const photo = person.photo_url?.trim() || null;
   const firstName = person.first_name?.trim() || null;
   const lastName = person.last_name?.trim() || null;
-  const phone =
-    person.phone_numbers?.find((p) => p.sanitized_number || p.raw_number)
-      ?.sanitized_number ||
-    person.phone_numbers?.find((p) => p.raw_number)?.raw_number ||
-    null;
 
   return {
     firstName,
