@@ -18,8 +18,6 @@ import { encrypt } from "@/lib/crypto";
 import { purgeUserData } from "@/lib/user-data";
 import { getEntitlements } from "@/lib/entitlements";
 import { contactUsageForUser } from "@/lib/contact-writes";
-import { countLifetimePurchases } from "@/lib/user-settings";
-import { LIFETIME_SEAT_LIMIT } from "@/lib/entitlements";
 import {
   resolveThemePreference,
   type ThemePreference,
@@ -41,7 +39,11 @@ export async function getSettings() {
 
   const provider = resolveAiProvider(settings?.aiProvider);
   const entitlements = await getEntitlements(userId);
-  const hostedSends = entitlements.canUseHostedSends;
+  // Mirrors the two runtime resolvers so this card states what would actually be used:
+  // `sending` follows the env fallback in `getOutreachSendConfig`, `enrichment` follows
+  // the one in `getApolloApiKey`. They diverge on Lifetime, so they cannot share a flag.
+  const hostedSending = entitlements.canUseHostedSending;
+  const hostedEnrichment = entitlements.canUseHostedEnrichment;
 
   return {
     aiProvider: provider,
@@ -80,22 +82,22 @@ export async function getSettings() {
     outreach: {
       apollo:
         Boolean(settings?.apolloApiKeyEncrypted) ||
-        (hostedSends && Boolean(process.env.APOLLO_API_KEY)),
+        (hostedEnrichment && Boolean(process.env.APOLLO_API_KEY)),
       resend:
         Boolean(settings?.resendApiKeyEncrypted) ||
-        (hostedSends && Boolean(process.env.RESEND_API_KEY)),
+        (hostedSending && Boolean(process.env.RESEND_API_KEY)),
       twilio:
         (Boolean(settings?.twilioAccountSidEncrypted) ||
-          (hostedSends && Boolean(process.env.TWILIO_ACCOUNT_SID))) &&
+          (hostedSending && Boolean(process.env.TWILIO_ACCOUNT_SID))) &&
         (Boolean(settings?.twilioAuthTokenEncrypted) ||
-          (hostedSends && Boolean(process.env.TWILIO_AUTH_TOKEN))) &&
+          (hostedSending && Boolean(process.env.TWILIO_AUTH_TOKEN))) &&
         Boolean(
           settings?.twilioFromNumber ||
-            (hostedSends ? process.env.TWILIO_FROM_NUMBER : null)
+            (hostedSending ? process.env.TWILIO_FROM_NUMBER : null)
         ),
       twilioFromNumber:
         settings?.twilioFromNumber ||
-        (hostedSends ? process.env.TWILIO_FROM_NUMBER : null) ||
+        (hostedSending ? process.env.TWILIO_FROM_NUMBER : null) ||
         null,
     },
     plan: {
@@ -103,7 +105,8 @@ export async function getSettings() {
       source: entitlements.source,
       contactLimit: entitlements.contactLimit,
       canUseOutreach: entitlements.canUseOutreach,
-      canUseHostedSends: entitlements.canUseHostedSends,
+      canUseHostedSending: entitlements.canUseHostedSending,
+      canUseHostedEnrichment: entitlements.canUseHostedEnrichment,
       canUseRecruiters: entitlements.canUseRecruiters,
       canUseSync: entitlements.canUseSync,
       canUseExtension: entitlements.canUseExtension,
@@ -374,23 +377,13 @@ export async function deleteAllData() {
   revalidatePath("/outreach");
 }
 
-/**
- * Everything the settings billing card needs, in one round trip.
- *
- * `remainingLifetimeSeats` is surfaced so the early-adopter cap is a real, visible number
- * rather than decorative scarcity.
- */
+/** Everything the settings billing card needs, in one round trip. */
 export async function getPlanOverview() {
   const userId = await requireUserId();
-  const [entitlements, usage, lifetimeSold] = await Promise.all([
+  const [entitlements, usage] = await Promise.all([
     getEntitlements(userId),
     contactUsageForUser(userId),
-    countLifetimePurchases(),
   ]);
 
-  return {
-    entitlements,
-    usage,
-    remainingLifetimeSeats: Math.max(0, LIFETIME_SEAT_LIMIT - lifetimeSold),
-  };
+  return { entitlements, usage };
 }

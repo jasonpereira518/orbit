@@ -135,7 +135,8 @@ async function main() {
 
   const ent = await getEntitlements(USER);
   check("entitlements resolve to lifetime", ent.plan === "lifetime", ent.plan);
-  check("hosted sends still gated on lifetime", ent.canUseHostedSends === false);
+  check("hosted sending unlocked on lifetime", ent.canUseHostedSending === true);
+  check("hosted enrichment still gated on lifetime", ent.canUseHostedEnrichment === false);
   check("contacts uncapped", ent.contactLimit === null);
 
   const db = await getDb();

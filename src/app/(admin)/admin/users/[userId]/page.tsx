@@ -107,7 +107,8 @@ export default async function AdminUserDetailPage({
   const ent = billing.entitlements;
   const entitlementFlags: Array<[string, boolean]> = [
     ["outreach", ent.canUseOutreach],
-    ["hosted sends", ent.canUseHostedSends],
+    ["hosted sending", ent.canUseHostedSending],
+    ["hosted enrichment", ent.canUseHostedEnrichment],
     ["recruiters", ent.canUseRecruiters],
     ["sync", ent.canUseSync],
     ["extension", ent.canUseExtension],
@@ -351,11 +352,11 @@ export default async function AdminUserDetailPage({
                     </span>
                   ))}
                 </div>
-                {ent.canUseHostedSends && (
+                {ent.canUseHostedEnrichment && (
                   <p className="mt-2 flex items-center gap-1.5 text-xs text-destructive">
                     <AlertTriangle className="size-3" aria-hidden />
-                    Hosted sends are on — outreach from this account bills Orbit&apos;s
-                    Resend/Twilio credits.
+                    Hosted enrichment is on — this account bills Orbit&apos;s Apollo
+                    credits, and enrichment has no per-day ceiling.
                   </p>
                 )}
               </div>

@@ -425,7 +425,9 @@ export async function getAdminUserDetail(
   ]);
 
   const { plan, source } = resolvePlan(settings);
-  const hostedSends =
+  // Mirrors the union in `getEntitlements`: a Lifetime holder who also subscribes keeps
+  // hosted enrichment while that subscription is live.
+  const hostedEnrichment =
     plan === "orbit" ||
     (settings.subscriptionPlan === "orbit" &&
       (settings.subscriptionStatus === "active" ||
@@ -608,7 +610,7 @@ export async function getAdminUserDetail(
     billing: {
       plan,
       source,
-      entitlements: entitlementsForPlan(plan, source, { hostedSends }),
+      entitlements: entitlementsForPlan(plan, source, { hostedEnrichment }),
       compedPlan: settings.compedPlan ?? null,
       compedNote: settings.compedNote,
       compedAt: settings.compedAt,

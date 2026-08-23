@@ -11,18 +11,13 @@ import { PlanComparison } from "@/components/pricing/plan-comparison";
 import { PricingFaq } from "@/components/pricing/pricing-faq";
 import { PricingTiers } from "@/components/pricing/pricing-tiers";
 import { getEntitlements } from "@/lib/entitlements";
-import {
-  FREE_CONTACT_LIMIT,
-  LIFETIME_SEAT_LIMIT,
-  type Plan,
-} from "@/lib/plan-limits";
-import { countLifetimePurchases } from "@/lib/user-settings";
+import { FREE_CONTACT_LIMIT, type Plan } from "@/lib/plan-limits";
 import { isStripeConfigured } from "@/lib/stripe";
 import { isClerkConfigured, isDemoMode } from "@/lib/auth";
 
 export const metadata: Metadata = {
   title: "Pricing — Orbit",
-  description: `Orbit is free for your first ${FREE_CONTACT_LIMIT} contacts. $5 a month for unlimited, or $19 once for the first ${LIFETIME_SEAT_LIMIT} early adopters.`,
+  description: `Orbit is free for your first ${FREE_CONTACT_LIMIT} contacts. $5 a month for unlimited, or $25 once for Orbit Lifetime.`,
 };
 
 const HEADING =
@@ -59,21 +54,17 @@ export default async function PricingPage() {
   const { userId } = clerkOn ? await auth() : { userId: null };
   const signedIn = Boolean(userId);
 
-  const [currentPlan, sold] = await Promise.all([
-    (async (): Promise<Plan | null> => {
-      if (!userId) return null;
-      try {
-        return (await getEntitlements(userId)).plan;
-      } catch {
-        return null;
-      }
-    })(),
-    countLifetimePurchases().catch(() => 0),
-  ]);
+  const currentPlan = await (async (): Promise<Plan | null> => {
+    if (!userId) return null;
+    try {
+      return (await getEntitlements(userId)).plan;
+    } catch {
+      return null;
+    }
+  })();
 
-  const seatsLeft = Math.max(0, LIFETIME_SEAT_LIMIT - sold);
-  // Only offer checkout when Stripe can actually take the payment and a seat remains.
-  const lifetimePurchasable = isStripeConfigured() && seatsLeft > 0;
+  // Only offer checkout when Stripe can actually take the payment.
+  const lifetimePurchasable = isStripeConfigured();
   const authProps = { clerkOn, demoMode, signedIn };
 
   return (
@@ -123,7 +114,6 @@ export default async function PricingPage() {
           <PricingTiers
             currentPlan={currentPlan}
             signedIn={signedIn}
-            seatsLeft={seatsLeft}
             lifetimePurchasable={lifetimePurchasable}
           />
         </Reveal>
