@@ -4,13 +4,15 @@ import { auth } from "@clerk/nextjs/server";
 import {
   ArrowUpRight,
   Bug,
-  ChevronDown,
   Globe,
   Lightbulb,
   MessageSquare,
   ShieldCheck,
 } from "lucide-react";
+import { isContactFormEnabled } from "@/actions/contact";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
+import { ContactForm } from "@/components/marketing/contact-form";
+import { FaqList, type FaqItem } from "@/components/marketing/faq-list";
 import { DocHero } from "@/components/marketing/marketing-doc";
 import { Reveal } from "@/components/motion/reveal";
 import { isClerkConfigured, isDemoMode } from "@/lib/auth";
@@ -19,7 +21,7 @@ import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
 export const metadata: Metadata = {
   title: "Contact — Orbit",
   description:
-    "Reach the person who builds Orbit: bug reports, feature requests, privacy questions, and everything else.",
+    "Send a message to the person who builds Orbit: bug reports, feature requests, privacy questions, and everything else.",
 };
 
 const PERSONAL_SITE = "https://jasonpereira.live/";
@@ -32,9 +34,9 @@ const HEADING =
 const CHANNELS = [
   {
     icon: Globe,
-    label: "Start here",
+    label: "Elsewhere",
     title: "jasonpereira.live",
-    body: "The main way in. Contact details live on the site, and messages land with the person who writes the code.",
+    body: "The rest of what Jason works on, and every other way to get hold of him.",
     href: PERSONAL_SITE,
     cta: "Open the site",
     external: true,
@@ -63,7 +65,7 @@ const TOPICS = [
   {
     icon: Bug,
     title: "Something is broken",
-    body: "Say what you did, what happened, and what you expected. A screenshot and roughly when it happened is usually enough to find it in the logs.",
+    body: "Say what you did, what happened, and what you expected. Roughly when it happened is usually enough to find it in the logs.",
   },
   {
     icon: Lightbulb,
@@ -73,16 +75,16 @@ const TOPICS = [
   {
     icon: ShieldCheck,
     title: "A privacy or data question",
-    body: "Ask about anything in the privacy policy, or about a record you want corrected or removed. Mention the account email you use.",
+    body: "Ask about anything in the privacy policy, or about a record you want corrected or removed.",
   },
   {
     icon: MessageSquare,
-    title: "Everything else",
-    body: "Press, partnerships, a question about the stack, or just telling me the landing page renders badly on your phone — all welcome.",
+    title: "Something else",
+    body: "Press, partnerships, a question about the stack, or just telling me the landing page renders badly on your phone.",
   },
 ] as const;
 
-const FAQ = [
+const FAQ: readonly FaqItem[] = [
   {
     q: "How do I export my data?",
     a: (
@@ -163,7 +165,7 @@ const FAQ = [
       </>
     ),
   },
-] as const;
+];
 
 export default async function ContactPage() {
   const clerkOn = isClerkConfigured();
@@ -174,6 +176,9 @@ export default async function ContactPage() {
     demoMode: isDemoMode(),
     signedIn: Boolean(userId),
   };
+  // No mail credentials, no form: a contact form that always fails is worse
+  // than sending people to the links below.
+  const formEnabled = await isContactFormEnabled();
 
   return (
     <>
@@ -189,9 +194,50 @@ export default async function ContactPage() {
       />
 
       <section className="mx-auto w-full max-w-6xl px-6 pb-16 md:px-10 md:pb-20">
+        <div className="grid gap-10 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:gap-14">
+          <Reveal className="reveal-celestial">
+            <p className="text-xs uppercase tracking-[0.18em] text-[#6d807c]">
+              {formEnabled ? "Write to Jason" : "What to write about"}
+            </p>
+            <h2 className={`${HEADING} mt-3 max-w-[16ch] text-[clamp(26px,3.6vw,40px)]`}>
+              A little context goes a long way.
+            </h2>
+            <p className="mt-4 max-w-[42ch] text-base leading-[1.7] text-[#9aada8]">
+              {formEnabled
+                ? "Nothing here is required beyond a reply address. These are just the details that turn a message into a fix."
+                : "There's no form to fill in and no required format. These are just the details that turn a message into a fix."}
+            </p>
+
+            <ul className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-1">
+              {TOPICS.map(({ icon: Icon, title, body }) => (
+                <li key={title} className="flex gap-3.5">
+                  <Icon
+                    className="mt-0.5 size-[18px] shrink-0 text-landing-accent"
+                    aria-hidden="true"
+                  />
+                  <div>
+                    <p className="text-[15px] text-[#e8f3f1]">{title}</p>
+                    <p className="mt-1 max-w-[40ch] text-sm leading-[1.65] text-[#9aada8]">
+                      {body}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </Reveal>
+
+          {formEnabled && (
+            <Reveal className="reveal-celestial" delay={90}>
+              <ContactForm />
+            </Reveal>
+          )}
+        </div>
+      </section>
+
+      <section className="mx-auto w-full max-w-6xl border-t border-[#e8f3f1]/[0.07] px-6 py-16 md:px-10 md:py-20">
         <Reveal className="reveal-celestial">
           <p className="text-xs uppercase tracking-[0.18em] text-[#6d807c]">
-            Ways to reach Orbit
+            {formEnabled ? "Other ways to reach Orbit" : "Ways to reach Orbit"}
           </p>
         </Reveal>
         <div className="mt-6 grid gap-4 lg:grid-cols-3">
@@ -220,60 +266,31 @@ export default async function ContactPage() {
             );
 
             const className =
-              "landing-glass group flex flex-col rounded-3xl p-6 transition-colors hover:border-[#f2c14e]/30 sm:p-7";
+              "landing-glass group flex w-full flex-col rounded-3xl p-6 transition-colors hover:border-[#f2c14e]/30 sm:p-7";
 
             return (
-              <Reveal key={channel.title} className="reveal-celestial flex" delay={index * 70}>
+              <Reveal
+                key={channel.title}
+                className="reveal-celestial flex"
+                delay={index * 70}
+              >
                 {channel.external ? (
                   <a
                     href={channel.href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className={`${className} w-full`}
+                    className={className}
                   >
                     {inner}
                   </a>
                 ) : (
-                  <Link href={channel.href} className={`${className} w-full`}>
+                  <Link href={channel.href} className={className}>
                     {inner}
                   </Link>
                 )}
               </Reveal>
             );
           })}
-        </div>
-      </section>
-
-      <section className="mx-auto w-full max-w-6xl border-t border-[#e8f3f1]/[0.07] px-6 py-16 md:px-10 md:py-20">
-        <div className="grid gap-10 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] lg:gap-16">
-          <Reveal className="reveal-celestial">
-            <p className="text-xs uppercase tracking-[0.18em] text-[#6d807c]">
-              What to write about
-            </p>
-            <h2 className={`${HEADING} mt-3 max-w-[16ch] text-[clamp(26px,3.6vw,40px)]`}>
-              A little context goes a long way.
-            </h2>
-            <p className="mt-4 max-w-[42ch] text-base leading-[1.7] text-[#9aada8]">
-              There&apos;s no form to fill in and no required format. These are
-              just the details that turn a message into a fix.
-            </p>
-          </Reveal>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            {TOPICS.map(({ icon: Icon, title, body }, index) => (
-              <Reveal
-                key={title}
-                className="reveal-celestial landing-glass rounded-2xl p-5"
-                delay={index * 60}
-              >
-                <Icon className="h-5 w-5 text-landing-accent" />
-                <p className="mt-4 text-[15px] text-[#e8f3f1]">{title}</p>
-                <p className="mt-1.5 text-sm leading-[1.65] text-[#9aada8]">
-                  {body}
-                </p>
-              </Reveal>
-            ))}
-          </div>
         </div>
       </section>
 
@@ -287,29 +304,9 @@ export default async function ContactPage() {
           </h2>
         </Reveal>
 
-        <div className="mt-8 grid gap-3 lg:grid-cols-2">
-          {FAQ.map((item, index) => (
-            <Reveal
-              key={item.q}
-              as="div"
-              className="reveal-celestial h-fit"
-              delay={Math.min(index, 3) * 50}
-            >
-              <details className="landing-glass doc-faq rounded-2xl px-5 py-4">
-                <summary className="flex items-start justify-between gap-4 text-[15px] text-[#e8f3f1]">
-                  {item.q}
-                  <ChevronDown
-                    aria-hidden="true"
-                    className="doc-faq-chevron mt-1 h-4 w-4 shrink-0 text-[#6d807c] transition-transform"
-                  />
-                </summary>
-                <div className="doc-prose mt-3 border-t border-[#e8f3f1]/[0.07] pt-3 text-sm">
-                  <p>{item.a}</p>
-                </div>
-              </details>
-            </Reveal>
-          ))}
-        </div>
+        <Reveal className="reveal-celestial mt-8 block" delay={80}>
+          <FaqList items={FAQ} />
+        </Reveal>
       </section>
 
       <section className="relative mx-auto w-full max-w-6xl px-6 pb-8 pt-4 text-center md:px-10">
