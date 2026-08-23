@@ -103,6 +103,17 @@ export const userSettings = pgTable("user_settings", {
    * derived last-write timestamp, so the roster is useful without a warm-up period.
    */
   lastActiveAt: timestamp("last_active_at", { withTimezone: true }),
+  /**
+   * Opt-in to the shared recruiter pool. Integer, not boolean, per house convention.
+   *
+   * Defaults to 0 for everyone, including accounts that predate it: the `recruiters`
+   * table was globally readable before any consent existed, so the only defensible
+   * migration is to start the pool empty and let it refill by explicit opt-in.
+   *
+   * The exchange is reciprocal — 0 means you contribute nothing and see only the
+   * recruiters you added yourself. See `isViewerSharing` in `src/lib/recruiters.ts`.
+   */
+  recruiterSharing: integer("recruiter_sharing").default(0).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -376,6 +387,23 @@ export type ImportStats = {
   eventsProcessed?: number;
   /** Contact ids touched during a multi-chunk messages import. */
   touchedContactIds?: string[];
+
+  // --- Gmail recruiter scan ---
+  /** Set once the mailbox sweep has enumerated every candidate sender. */
+  discoveryComplete?: boolean;
+  /**
+   * Gmail pagination cursor, persisted every page so a time-boxed exit resumes where it
+   * stopped instead of re-walking the mailbox from the start.
+   */
+  gmailPageToken?: string | null;
+  /** Messages examined during discovery — the denominator users actually feel. */
+  messagesScanned?: number;
+  /** Senders that survived the heuristic prefilter and became work rows. */
+  candidateSenders?: number;
+  /** Senders the classifier confirmed and wrote to the recruiter tables. */
+  recruitersFound?: number;
+  /** Senders the classifier rejected or scored below the confidence floor. */
+  sendersRejected?: number;
 };
 
 export const imports = pgTable("imports", {
@@ -395,7 +423,10 @@ export const imports = pgTable("imports", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
-export type ImportJobRowPayload = {
+/** One row of a LinkedIn connections CSV. Rows written before the payload became a
+ *  union carry no `kind`, so it stays optional and absence means LinkedIn. */
+export type LinkedInImportRowPayload = {
+  kind?: "linkedin_connection";
   index: number;
   firstName: string;
   lastName: string;
@@ -405,6 +436,30 @@ export type ImportJobRowPayload = {
   position?: string;
   connectedOn?: string;
 };
+
+/**
+ * One candidate sender from a Gmail recruiter scan — the unit of work is the *sender*,
+ * not the message, because classification and summarization both need the whole
+ * conversation with a person to say anything useful.
+ */
+export type GmailSenderRowPayload = {
+  kind: "gmail_sender";
+  email: string;
+  name: string;
+  firm: string | null;
+  /** Capped at scan time; the classifier only reads the most recent few. */
+  messageIds: string[];
+};
+
+export type ImportJobRowPayload =
+  | LinkedInImportRowPayload
+  | GmailSenderRowPayload;
+
+export function isGmailSenderRow(
+  payload: ImportJobRowPayload
+): payload is GmailSenderRowPayload {
+  return payload.kind === "gmail_sender";
+}
 
 export const importJobRows = pgTable(
   "import_job_rows",
@@ -649,6 +704,26 @@ export const userRecruiterLinks = pgTable(
     contactId: uuid("contact_id").references(() => contacts.id, {
       onDelete: "set null",
     }),
+    /**
+     * Per-recruiter exception to the global `user_settings.recruiter_sharing` opt-in.
+     * Only consulted when the global toggle is on, so the default of 1 is inert until
+     * the user opts in — it can never widen visibility on its own.
+     */
+    sharedToPool: integer("shared_to_pool").default(1).notNull(),
+    /**
+     * Private-to-the-owner summary of this relationship, written by the Gmail scan.
+     * Deliberately on the link and never on `recruiters`: the canonical row is shared,
+     * and a summary distilled from someone's inbox carries salary talk, rejections, and
+     * other detail that must never reach the pool. `toPublicRecruiter` never emits it.
+     */
+    aiSummary: text("ai_summary"),
+    companiesMentioned: jsonb("companies_mentioned").$type<string[]>().default([]),
+    rolesDiscussed: jsonb("roles_discussed").$type<string[]>().default([]),
+    firstEmailAt: timestamp("first_email_at", { withTimezone: true }),
+    lastEmailAt: timestamp("last_email_at", { withTimezone: true }),
+    emailCount: integer("email_count").default(0).notNull(),
+    /** Most recent Gmail thread with this recruiter, so replies thread correctly. */
+    gmailThreadId: text("gmail_thread_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -659,6 +734,49 @@ export const userRecruiterLinks = pgTable(
       t.userId,
       t.recruiterId
     ),
+  ]
+);
+
+export type RecruiterMessageIntent =
+  | "set_up_chat"
+  | "route_to_person"
+  | "upcoming_drops"
+  | "interview_resources";
+
+export type RecruiterMessageStatus = "draft" | "queued" | "sent" | "failed";
+
+/**
+ * An outbound email to a recruiter, drafted by the LLM and sent through the user's own
+ * Gmail. Rows persist after sending: they are the send-rate ledger the daily cap counts,
+ * and the record of what was actually said.
+ */
+export const recruiterMessages = pgTable(
+  "recruiter_messages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    recruiterId: uuid("recruiter_id")
+      .notNull()
+      .references(() => recruiters.id, { onDelete: "cascade" }),
+    intent: text("intent").$type<RecruiterMessageIntent>().notNull(),
+    subject: text("subject").notNull(),
+    body: text("body").notNull(),
+    status: text("status")
+      .$type<RecruiterMessageStatus>()
+      .default("draft")
+      .notNull(),
+    gmailMessageId: text("gmail_message_id"),
+    gmailThreadId: text("gmail_thread_id"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("recruiter_messages_user_idx").on(t.userId, t.status),
+    index("recruiter_messages_recruiter_idx").on(t.recruiterId),
+    // Backs the daily send cap, which counts this user's sends since midnight.
+    index("recruiter_messages_sent_idx").on(t.userId, t.sentAt),
   ]
 );
 
@@ -964,6 +1082,7 @@ export type ChatThread = typeof chatThreads.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type Recruiter = typeof recruiters.$inferSelect;
 export type UserRecruiterLink = typeof userRecruiterLinks.$inferSelect;
+export type RecruiterMessage = typeof recruiterMessages.$inferSelect;
 export type GmailConnection = typeof gmailConnections.$inferSelect;
 export type UsageEvent = typeof usageEvents.$inferSelect;
 export type NewUsageEvent = typeof usageEvents.$inferInsert;

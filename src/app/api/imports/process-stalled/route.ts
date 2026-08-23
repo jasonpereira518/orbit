@@ -1,8 +1,11 @@
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq, inArray, lt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { imports, usageEvents } from "@/db/schema";
-import { runLinkedInImportJob } from "@/lib/import-job-processor";
+import {
+  RESUMABLE_IMPORT_TYPES,
+  runImportJobById,
+} from "@/lib/import-job-dispatch";
 
 export const maxDuration = 300;
 
@@ -31,14 +34,16 @@ export async function GET(request: Request) {
   const staleBefore = new Date(Date.now() - STALL_THRESHOLD_MS);
   const stalled = await db.query.imports.findMany({
     where: and(
-      eq(imports.importType, "linkedin_connections"),
+      // Every server-owned job kind, not just LinkedIn — a stalled Gmail scan needs
+      // the same backstop, and it is the longer-running of the two.
+      inArray(imports.importType, [...RESUMABLE_IMPORT_TYPES]),
       eq(imports.status, "processing"),
       lt(imports.updatedAt, staleBefore)
     ),
   });
 
   for (const job of stalled) {
-    await runLinkedInImportJob(job.id).catch(() => {});
+    await runImportJobById(job.id).catch(() => {});
   }
 
   // Housekeeping rides along on the only scheduled invocation Orbit has.

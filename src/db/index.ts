@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   comped_at timestamptz,
   comped_by text,
   last_active_at timestamptz,
+  recruiter_sharing integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -364,12 +365,38 @@ CREATE TABLE IF NOT EXISTS user_recruiter_links (
   notes text,
   source text NOT NULL DEFAULT 'manual',
   contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  shared_to_pool integer NOT NULL DEFAULT 1,
+  ai_summary text,
+  companies_mentioned jsonb DEFAULT '[]',
+  roles_discussed jsonb DEFAULT '[]',
+  first_email_at timestamptz,
+  last_email_at timestamptz,
+  email_count integer NOT NULL DEFAULT 0,
+  gmail_thread_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS user_recruiter_links_user_idx ON user_recruiter_links(user_id);
 CREATE INDEX IF NOT EXISTS user_recruiter_links_recruiter_idx ON user_recruiter_links(recruiter_id);
 CREATE UNIQUE INDEX IF NOT EXISTS user_recruiter_links_user_recruiter_uidx ON user_recruiter_links(user_id, recruiter_id);
+CREATE TABLE IF NOT EXISTS recruiter_messages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  recruiter_id uuid NOT NULL REFERENCES recruiters(id) ON DELETE CASCADE,
+  intent text NOT NULL,
+  subject text NOT NULL,
+  body text NOT NULL,
+  status text NOT NULL DEFAULT 'draft',
+  gmail_message_id text,
+  gmail_thread_id text,
+  sent_at timestamptz,
+  error_message text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS recruiter_messages_user_idx ON recruiter_messages(user_id, status);
+CREATE INDEX IF NOT EXISTS recruiter_messages_recruiter_idx ON recruiter_messages(recruiter_id);
+CREATE INDEX IF NOT EXISTS recruiter_messages_sent_idx ON recruiter_messages(user_id, sent_at);
 CREATE TABLE IF NOT EXISTS gmail_connections (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL UNIQUE,
@@ -575,6 +602,40 @@ async function migratePglite(client: PGlite) {
     "timestamptz"
   );
   await ensureColumn(client, "contacts", "stated_closeness", "integer");
+  await ensureColumn(
+    client,
+    "user_settings",
+    "recruiter_sharing",
+    "integer NOT NULL DEFAULT 0"
+  );
+  await ensureColumn(
+    client,
+    "user_recruiter_links",
+    "shared_to_pool",
+    "integer NOT NULL DEFAULT 1"
+  );
+  await ensureColumn(client, "user_recruiter_links", "ai_summary", "text");
+  await ensureColumn(
+    client,
+    "user_recruiter_links",
+    "companies_mentioned",
+    "jsonb DEFAULT '[]'"
+  );
+  await ensureColumn(
+    client,
+    "user_recruiter_links",
+    "roles_discussed",
+    "jsonb DEFAULT '[]'"
+  );
+  await ensureColumn(client, "user_recruiter_links", "first_email_at", "timestamptz");
+  await ensureColumn(client, "user_recruiter_links", "last_email_at", "timestamptz");
+  await ensureColumn(
+    client,
+    "user_recruiter_links",
+    "email_count",
+    "integer NOT NULL DEFAULT 0"
+  );
+  await ensureColumn(client, "user_recruiter_links", "gmail_thread_id", "text");
 
   try {
     await client.exec(
@@ -802,6 +863,18 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_last_fetched_at timestamptz`,
     `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
+    `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS shared_to_pool integer NOT NULL DEFAULT 1`,
+    `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS ai_summary text`,
+    `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS companies_mentioned jsonb DEFAULT '[]'`,
+    `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS roles_discussed jsonb DEFAULT '[]'`,
+    `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS first_email_at timestamptz`,
+    `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS last_email_at timestamptz`,
+    `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email_count integer NOT NULL DEFAULT 0`,
+    `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS gmail_thread_id text`,
+    `CREATE INDEX IF NOT EXISTS recruiter_messages_user_idx ON recruiter_messages(user_id, status)`,
+    `CREATE INDEX IF NOT EXISTS recruiter_messages_recruiter_idx ON recruiter_messages(recruiter_id)`,
+    `CREATE INDEX IF NOT EXISTS recruiter_messages_sent_idx ON recruiter_messages(user_id, sent_at)`,
   ];
 
   for (const statement of alters) {

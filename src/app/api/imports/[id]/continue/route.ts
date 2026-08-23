@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { after } from "next/server";
-import { runLinkedInImportJob } from "@/lib/import-job-processor";
+import { runImportJobById } from "@/lib/import-job-dispatch";
 
 export const maxDuration = 300;
 
@@ -19,7 +19,7 @@ export async function POST(request: Request, { params }: Params) {
   }
 
   const { id } = await params;
-  after(() => runLinkedInImportJob(id).catch(() => {}));
+  after(() => runImportJobById(id).catch(() => {}));
 
   return NextResponse.json({ ok: true });
 }
