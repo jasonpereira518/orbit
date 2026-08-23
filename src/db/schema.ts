@@ -108,6 +108,24 @@ export const userSettings = pgTable("user_settings", {
    */
   email: text("email"),
   /**
+   * The user's own name and avatar, mirrored from Clerk on the same events as `email`
+   * above and for the same reason: the admin console renders from Postgres alone, and a
+   * roster that had to ask Clerk for a display name would put a network call — and a new
+   * failure mode — on the critical path of a page that currently has neither.
+   *
+   * `profileImageUrl` stores Clerk's CDN URL, not the bytes. It is public, it needs no
+   * auth, and `user.updated` keeps it fresh, so downloading it into Blob storage would buy
+   * nothing. Note that `next.config.ts` declares no `images.remotePatterns`, so this must
+   * be rendered with a plain `<img>` (see `src/components/ui/avatar.tsx`) — `next/image`
+   * would reject the host at runtime.
+   *
+   * Accounts predating this mirror have nulls until `scripts/backfill-clerk-identity.ts`
+   * runs, so every read site needs an email-then-id fallback.
+   */
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  profileImageUrl: text("profile_image_url"),
+  /**
    * Opaque bearer token for the read-only ICS reminder feed. Stored in plaintext
    * deliberately: the URL must stay re-displayable when the user adds a second device,
    * and `crypto.ts` uses a random IV per call so ciphertext could not be indexed for
@@ -152,10 +170,21 @@ export const userSettings = pgTable("user_settings", {
   compedAt: timestamp("comped_at", { withTimezone: true }),
   compedBy: text("comped_by"),
   /**
-   * Last authenticated request, written from `ensureUserSettings` at most once every
-   * 15 minutes (see `touchLastActive`). Distinct from `updatedAt`, which means "settings
-   * changed" and is bumped by a dozen unrelated writers — conflating the two would poison
-   * `updatedAt` for every future use.
+   * The last time this human was present. Two writers, deliberately sharing one column:
+   *
+   *  - `POST /api/presence`, a ~45s heartbeat from every visible tab (`src/lib/presence.ts`).
+   *    This is what makes "active now" answerable at all — a user reading and scrolling one
+   *    open tab issues no server requests, so before the heartbeat they read as idle.
+   *  - `ensureUserSettings` → `touchLastActive`, throttled to 15 minutes, which covers
+   *    non-browser access and any request that arrives with the heartbeat not yet running.
+   *
+   * Keeping them on one column is what stops "last seen" and "active now" from drifting
+   * into two nearly-identical timestamps that every read site has to reconcile. The
+   * heartbeat makes the throttled writer almost always short-circuit, so this got *cheaper*
+   * to maintain, not more expensive.
+   *
+   * Distinct from `updatedAt`, which means "settings changed" and is bumped by a dozen
+   * unrelated writers — conflating the two would poison `updatedAt` for every future use.
    *
    * Null for every account that predates this column; admin surfaces fall back to a
    * derived last-write timestamp, so the roster is useful without a warm-up period.
@@ -1104,40 +1133,6 @@ export const errorEvents = pgTable(
   ]
 );
 
-/**
- * Short-lived permission to read one account's contact and interaction *content*.
- *
- * The admin inspector masks contact names and never selects notes, emails or phone numbers
- * (see the header of `src/lib/admin-user-detail.ts`). A row here is what lifts that, and
- * only for the single `target_user_id` named, only until `expires_at`.
- *
- * A grant is a licence to look, not a mode the console sits in: it is scoped to one account,
- * expires on its own without anything having to remember to revoke it, and every issue and
- * revocation also writes an `admin_audit_log` row. Nothing here can ever reach
- * `chat_messages.content`, which is unreachable by any code path.
- */
-export const adminRevealGrants = pgTable(
-  "admin_reveal_grants",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    adminUserId: text("admin_user_id").notNull(),
-    targetUserId: text("target_user_id").notNull(),
-    /** Required, never null — the whole point is that unmasking is explainable later. */
-    reason: text("reason").notNull(),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    revokedAt: timestamp("revoked_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  },
-  (t) => [
-    index("admin_reveal_grants_lookup_idx").on(
-      t.adminUserId,
-      t.targetUserId,
-      t.expiresAt
-    ),
-    index("admin_reveal_grants_target_idx").on(t.targetUserId),
-  ]
-);
-
 export const contactsRelations = relations(contacts, ({ many }) => ({
   interactions: many(interactions),
   reminders: many(reminders),
@@ -1289,4 +1284,3 @@ export type AdminAuditEntry = typeof adminAuditLog.$inferSelect;
 export type CronRun = typeof cronRuns.$inferSelect;
 export type WebhookDelivery = typeof webhookDeliveries.$inferSelect;
 export type ErrorEvent = typeof errorEvents.$inferSelect;
-export type AdminRevealGrantRow = typeof adminRevealGrants.$inferSelect;

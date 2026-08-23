@@ -2,7 +2,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AlertTriangle, ArrowLeft, CircleAlert } from "lucide-react";
 import {
-  AdminPageHeader,
   AdminPanel,
   AdminTable,
   DefinitionRow,
@@ -14,19 +13,14 @@ import {
   Th,
 } from "@/components/admin/primitives";
 import { CompPlanButton } from "@/components/admin/comp-plan-dialog";
-import { RevealContactButton } from "@/components/admin/reveal-contact";
-import {
-  RevealAccountButton,
-  RevealBanner,
-} from "@/components/admin/reveal-grant";
+import { CopyId } from "@/components/admin/copy-id";
 import { AccountDangerZone } from "@/components/admin/account-actions";
 import { Pager } from "@/components/admin/pager";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getAuditTrail } from "@/actions/admin";
 import { requireAdminUserId } from "@/lib/admin";
-import {
-  activeRevealGrant,
-  describeActiveGrant,
-} from "@/lib/admin-reveal";
+import { displayName, fullName, initialsFor } from "@/lib/admin-metrics";
+import { recordAccountView } from "@/lib/admin-operations";
 import {
   ADMIN_CONTACTS_PAGE_SIZE,
   getAdminUserDetail,
@@ -75,12 +69,10 @@ export default async function AdminUserDetailPage({
   const detail = await getAdminUserDetail(decoded);
   if (!detail) notFound();
 
-  // Resolved once, here, and threaded into every read below. Nothing further down decides
-  // for itself whether it may see content — `grantCovers` re-checks the target at each use.
-  const [grant, grantSummary] = await Promise.all([
-    activeRevealGrant(adminUserId, decoded),
-    describeActiveGrant(adminUserId, decoded),
-  ]);
+  // Opening an account is itself a recorded act. This is what remains of the reveal gate:
+  // the operator no longer justifies a look, but the look is still on the record. Throttled
+  // to one row an hour inside `recordAccountView`, and it never throws.
+  await recordAccountView(adminUserId, decoded);
 
   const contactsPage = Math.max(
     Number.parseInt(query.contactsPage ?? "1", 10) || 1,
@@ -93,16 +85,14 @@ export default async function AdminUserDetailPage({
     listAdminContacts(decoded, {
       page: contactsPage,
       pageSize: ADMIN_CONTACTS_PAGE_SIZE,
-      grant,
     }),
     loadAdminTimeline(decoded, {
-      grant,
       before: before && !Number.isNaN(before.getTime()) ? before : null,
     }),
   ]);
 
   const { identity, billing, configuration, footprint, health, usage } = detail;
-  const unmasked = grantSummary != null;
+  const name = fullName(identity);
 
   const ent = billing.entitlements;
   const entitlementFlags: Array<[string, boolean]> = [
@@ -123,49 +113,49 @@ export default async function AdminUserDetailPage({
         <ArrowLeft className="size-3" aria-hidden /> All users
       </Link>
 
-      <AdminPageHeader
-        title={identity.email ?? "Account"}
-        subtitle={
-          <>
-            <span className="font-mono text-xs">{identity.userId}</span>
-            {identity.suspendedAt && (
-              <span className="ml-2 rounded-md bg-destructive/10 px-1.5 py-0.5 text-xs text-destructive">
-                suspended
-              </span>
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-3">
+          {/* Clerk's CDN host is not in `images.remotePatterns`, so this is a plain <img>
+              via the Avatar primitive rather than next/image. The fallback carries the
+              weight for every account that predates the identity mirror. */}
+          <Avatar size="lg" className="shrink-0">
+            {identity.imageUrl && (
+              <AvatarImage
+                src={identity.imageUrl}
+                alt=""
+                referrerPolicy="no-referrer"
+              />
             )}
-          </>
-        }
-        action={
-          <span className="flex items-center gap-2">
-            <RevealAccountButton
-              targetUserId={identity.userId}
-              email={identity.email}
-              contactCount={footprint.contacts}
-            />
-            <CompPlanButton
-              targetUserId={identity.userId}
-              email={identity.email}
-              currentPlan={billing.plan}
-              currentSource={billing.source}
-              contactCount={footprint.contacts}
-              compedNote={billing.compedNote}
-              variant="button"
-            />
-          </span>
-        }
-      />
+            <AvatarFallback>{initialsFor(identity)}</AvatarFallback>
+          </Avatar>
 
-      {/* The banner's absence is what makes "this is masked" trustworthy rather than
-          assumed, so it sits above everything it applies to. */}
-      {grantSummary && (
-        <div className="mb-4">
-          <RevealBanner
-            targetUserId={identity.userId}
-            reason={grantSummary.reason}
-            expiresAt={grantSummary.expiresAt.toISOString()}
-          />
+          <div className="min-w-0">
+            <h1 className="truncate font-[family-name:var(--font-display)] text-2xl text-primary">
+              {displayName(identity)}
+            </h1>
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+              {/* Only when the title is already the name — otherwise this repeats it. */}
+              {name && identity.email && <span>{identity.email}</span>}
+              <CopyId value={identity.userId} />
+              {identity.suspendedAt && (
+                <span className="rounded-md bg-destructive/10 px-1.5 py-0.5 text-destructive">
+                  suspended
+                </span>
+              )}
+            </div>
+          </div>
         </div>
-      )}
+
+        <CompPlanButton
+          targetUserId={identity.userId}
+          email={identity.email}
+          currentPlan={billing.plan}
+          currentSource={billing.source}
+          contactCount={footprint.contacts}
+          compedNote={billing.compedNote}
+          variant="button"
+        />
+      </div>
 
       <div className="flex gap-8">
         <nav
@@ -612,14 +602,7 @@ export default async function AdminUserDetailPage({
           </section>
 
           <section id="timeline" className="scroll-mt-20">
-            <AdminPanel
-              title="Activity timeline"
-              action={
-                <span className="text-xs text-muted-foreground">
-                  {unmasked ? "unmasked" : "structural labels only"}
-                </span>
-              }
-            >
+            <AdminPanel title="Activity timeline">
               {timeline.entries.length === 0 ? (
                 <EmptyState>No recorded activity.</EmptyState>
               ) : (
@@ -685,9 +668,7 @@ export default async function AdminUserDetailPage({
               title={`Contacts (${contactPage.total})`}
               action={
                 <span className="text-xs text-muted-foreground">
-                  {unmasked
-                    ? "unmasked · this view is logged"
-                    : "names masked · reveal is logged"}
+                  this view is logged
                 </span>
               }
             >
@@ -699,12 +680,11 @@ export default async function AdminUserDetailPage({
                     head={
                       <>
                         <Th>Contact</Th>
+                        <Th>Email</Th>
                         <Th>Company</Th>
                         <Th>Title</Th>
-                        {unmasked && <Th>Email</Th>}
                         <Th numeric>Logged</Th>
                         <Th numeric>Added</Th>
-                        <Th />
                       </>
                     }
                   >
@@ -713,42 +693,24 @@ export default async function AdminUserDetailPage({
                         key={contact.id}
                         className="border-b border-border/40 last:border-b-0 hover:bg-muted/40"
                       >
-                        <Td
-                          className={
-                            contact.revealed
-                              ? undefined
-                              : "font-mono text-xs text-muted-foreground"
-                          }
-                        >
+                        <Td>
                           <Link
                             href={`/admin/users/${encodeURIComponent(identity.userId)}/contacts/${contact.id}`}
                             className="hover:text-primary"
                           >
-                            {contact.maskedName}
+                            {contact.name}
                           </Link>
+                        </Td>
+                        <Td className="max-w-48">
+                          <span className="block truncate">
+                            {contact.email ?? "—"}
+                          </span>
                         </Td>
                         <Td>{contact.company ?? "—"}</Td>
                         <Td>{contact.title ?? "—"}</Td>
-                        {/* `revealed` is null on every masked path by construction, which is
-                            why grepping for it finds every possible leak site. */}
-                        {unmasked && (
-                          <Td className="max-w-48">
-                            <span className="block truncate">
-                              {contact.revealed?.email ?? "—"}
-                            </span>
-                          </Td>
-                        )}
                         <Td numeric>{contact.interactionCount}</Td>
                         <Td numeric>
                           <RelativeTime date={contact.createdAt} />
-                        </Td>
-                        <Td className="text-right">
-                          {!unmasked && (
-                            <RevealContactButton
-                              targetUserId={identity.userId}
-                              contactId={contact.id}
-                            />
-                          )}
                         </Td>
                       </tr>
                     ))}

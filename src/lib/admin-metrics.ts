@@ -28,6 +28,14 @@ import {
 export type AdminUserRow = {
   userId: string;
   email: string | null;
+  /**
+   * Mirrored from Clerk (`user_settings.first_name` / `last_name` / `profile_image_url`).
+   * Null for any account that has not been through the webhook or the backfill script, so
+   * every render site needs the name → email → id fallback that `displayName()` applies.
+   */
+  firstName: string | null;
+  lastName: string | null;
+  imageUrl: string | null;
   plan: Plan;
   planSource: PlanSource;
   compedNote: string | null;
@@ -65,6 +73,54 @@ export type AdminUserRow = {
   /** First contact ever created — the activation clock. */
   firstContactAt: Date | null;
 };
+
+/** The name Clerk knows this account by, or null if the mirror has not filled in yet. */
+export function fullName(row: {
+  firstName?: string | null;
+  lastName?: string | null;
+}): string | null {
+  const name = [row.firstName, row.lastName]
+    .map((part) => part?.trim())
+    .filter(Boolean)
+    .join(" ");
+  return name || null;
+}
+
+/**
+ * What to print for an account, in descending order of how much it tells you: real name,
+ * then email, then the raw Clerk id.
+ *
+ * The id fallback matters more than it looks — accounts that predate the identity mirror
+ * have no name *and* may have no email (the address is itself only mirrored from Clerk), so
+ * without a terminal fallback the roster would render blank rows for exactly the oldest
+ * accounts.
+ */
+export function displayName(row: {
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+  userId: string;
+}): string {
+  return fullName(row) ?? row.email ?? row.userId;
+}
+
+/** Two letters for an avatar fallback, derived from whatever identity we actually have. */
+export function initialsFor(row: {
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+  userId: string;
+}): string {
+  const first = row.firstName?.trim();
+  const last = row.lastName?.trim();
+  if (first || last) {
+    return `${first?.[0] ?? ""}${last?.[0] ?? ""}`.toUpperCase();
+  }
+  const email = row.email?.trim();
+  if (email) return email.slice(0, 2).toUpperCase();
+  // `user_2abc…` — the prefix is identical for everyone, so skip it.
+  return row.userId.replace(/^user_/, "").slice(0, 2).toUpperCase();
+}
 
 /** `count(*)::int` comes back as a number. */
 export const countInt = sql<number>`count(*)::int`;
@@ -124,6 +180,9 @@ export async function loadAdminUserRows(): Promise<AdminUserRow[]> {
         .select({
           userId: userSettings.userId,
           email: userSettings.email,
+          firstName: userSettings.firstName,
+          lastName: userSettings.lastName,
+          imageUrl: userSettings.profileImageUrl,
           createdAt: userSettings.createdAt,
           lastActiveAt: userSettings.lastActiveAt,
           onboardingCompletedAt: userSettings.onboardingCompletedAt,
@@ -241,6 +300,9 @@ export async function loadAdminUserRows(): Promise<AdminUserRow[]> {
     return {
       userId: row.userId,
       email: row.email,
+      firstName: row.firstName,
+      lastName: row.lastName,
+      imageUrl: row.imageUrl,
       plan,
       planSource: source,
       compedNote: row.compedNote,

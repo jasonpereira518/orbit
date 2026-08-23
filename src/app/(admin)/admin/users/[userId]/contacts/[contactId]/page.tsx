@@ -12,10 +12,9 @@ import {
   Td,
   Th,
 } from "@/components/admin/primitives";
-import { RevealBanner } from "@/components/admin/reveal-grant";
-import { RevealContactButton } from "@/components/admin/reveal-contact";
+import { CopyId } from "@/components/admin/copy-id";
 import { requireAdminUserId } from "@/lib/admin";
-import { activeRevealGrant, describeActiveGrant } from "@/lib/admin-reveal";
+import { recordAccountView } from "@/lib/admin-operations";
 import { getAdminContactDetail } from "@/lib/admin-user-detail";
 
 export const metadata = { title: "Admin · Contact" };
@@ -23,11 +22,11 @@ export const metadata = { title: "Admin · Contact" };
 /**
  * One contact record, for when the account-level view is not enough.
  *
- * The masked view is built entirely from presence and counts — "notes on 12 of 14
- * interactions" answers the question a support ticket actually asks (did the capture write
- * anything, did the import land) without reading a word of what was written. Those booleans
- * come from SQL predicates rather than from the row, because the masked query does not
- * select the columns they describe.
+ * Alongside the prose, each interaction still shows presence and counts — "notes on 12 of
+ * 14 interactions". That survived the removal of the reveal gate because it was never
+ * really about redaction: it is the fastest answer to what a support ticket actually asks
+ * (did the capture write anything, did the import land), and it is computed across every
+ * interaction rather than the fifty rendered below.
  */
 export default async function AdminContactDetailPage({
   params,
@@ -38,16 +37,13 @@ export default async function AdminContactDetailPage({
   const decoded = decodeURIComponent(userId);
 
   const adminUserId = await requireAdminUserId();
-  const [grant, grantSummary] = await Promise.all([
-    activeRevealGrant(adminUserId, decoded),
-    describeActiveGrant(adminUserId, decoded),
-  ]);
+  await recordAccountView(adminUserId, decoded);
 
-  const detail = await getAdminContactDetail(decoded, contactId, { grant });
+  const detail = await getAdminContactDetail(decoded, contactId);
   if (!detail) notFound();
 
   const { contact, interactions } = detail;
-  const revealed = contact.revealed;
+  const fields = contact.detail;
   const withNotes = interactions.filter((i) => i.hasRawNotes).length;
 
   return (
@@ -60,29 +56,17 @@ export default async function AdminContactDetailPage({
       </Link>
 
       <AdminPageHeader
-        title={contact.maskedName}
+        title={contact.name}
         subtitle={
-          <span className="font-mono text-xs">
-            {[contact.title, contact.company].filter(Boolean).join(" · ") ||
-              contactId}
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>
+              {[contact.title, contact.company].filter(Boolean).join(" · ") ||
+                "No title or company"}
+            </span>
+            <CopyId value={contactId} label="contact ID" />
           </span>
         }
-        action={
-          !revealed ? (
-            <RevealContactButton targetUserId={decoded} contactId={contactId} />
-          ) : undefined
-        }
       />
-
-      {grantSummary && (
-        <div className="mb-4">
-          <RevealBanner
-            targetUserId={decoded}
-            reason={grantSummary.reason}
-            expiresAt={grantSummary.expiresAt.toISOString()}
-          />
-        </div>
-      )}
 
       <div className="space-y-6">
         <AdminPanel title="Record">
@@ -119,32 +103,30 @@ export default async function AdminContactDetailPage({
           </dl>
         </AdminPanel>
 
-        {/* Masked: what exists. Unmasked: what it says. Same section either way, so the
-            difference between the two views is obvious rather than inferred. */}
-        <AdminPanel title={revealed ? "Contact details" : "What this record holds"}>
-          {revealed ? (
+        <AdminPanel title="Contact details">
+          {fields ? (
             <dl className="space-y-0">
-              <DefinitionRow label="Full name">{revealed.fullName}</DefinitionRow>
-              <DefinitionRow label="Email">{revealed.email ?? "—"}</DefinitionRow>
-              <DefinitionRow label="Phone">{revealed.phone ?? "—"}</DefinitionRow>
-              <DefinitionRow label="Location">{revealed.location ?? "—"}</DefinitionRow>
-              <DefinitionRow label="School">{revealed.school ?? "—"}</DefinitionRow>
+              <DefinitionRow label="Full name">{fields.fullName}</DefinitionRow>
+              <DefinitionRow label="Email">{fields.email ?? "—"}</DefinitionRow>
+              <DefinitionRow label="Phone">{fields.phone ?? "—"}</DefinitionRow>
+              <DefinitionRow label="Location">{fields.location ?? "—"}</DefinitionRow>
+              <DefinitionRow label="School">{fields.school ?? "—"}</DefinitionRow>
               <DefinitionRow label="LinkedIn">
-                {revealed.linkedinUrl ?? "—"}
+                {fields.linkedinUrl ?? "—"}
               </DefinitionRow>
               <DefinitionRow label="How they met">
-                {revealed.howMet ?? revealed.metContext ?? "—"}
+                {fields.howMet ?? fields.metContext ?? "—"}
               </DefinitionRow>
               <DefinitionRow label="AI summary">
-                {revealed.aiSummary ?? "—"}
+                {fields.aiSummary ?? "—"}
               </DefinitionRow>
               <DefinitionRow label="Notes">
-                <span className="whitespace-pre-wrap">{revealed.notes ?? "—"}</span>
+                <span className="whitespace-pre-wrap">{fields.notes ?? "—"}</span>
               </DefinitionRow>
               <DefinitionRow label="Key facts">
-                {revealed.keyFacts.length > 0 ? (
+                {fields.keyFacts.length > 0 ? (
                   <ul className="list-inside list-disc">
-                    {revealed.keyFacts.map((f, i) => (
+                    {fields.keyFacts.map((f: string, i: number) => (
                       <li key={i}>{f}</li>
                     ))}
                   </ul>
@@ -153,9 +135,9 @@ export default async function AdminContactDetailPage({
                 )}
               </DefinitionRow>
               <DefinitionRow label="Opportunities">
-                {revealed.opportunities.length > 0 ? (
+                {fields.opportunities.length > 0 ? (
                   <ul className="list-inside list-disc">
-                    {revealed.opportunities.map((o, i) => (
+                    {fields.opportunities.map((o: string, i: number) => (
                       <li key={i}>{o}</li>
                     ))}
                   </ul>
@@ -163,19 +145,15 @@ export default async function AdminContactDetailPage({
                   "—"
                 )}
               </DefinitionRow>
+              <DefinitionRow label="Interactions">
+                {interactions.length} logged, {withNotes} with notes
+              </DefinitionRow>
             </dl>
           ) : (
-            <>
-              <p className="mb-3 text-xs text-muted-foreground">
-                This person never signed up for Orbit. Reading what someone wrote about
-                them needs a reason, and the reason is logged.
-              </p>
-              <dl className="space-y-0">
-                <DefinitionRow label="Interactions">
-                  {interactions.length} logged, {withNotes} with notes
-                </DefinitionRow>
-              </dl>
-            </>
+            // Unreachable from this page — `getAdminContactDetail` always populates
+            // `detail` — but the type allows null because the account-level summary read
+            // shares the row shape.
+            <EmptyState>Record unavailable.</EmptyState>
           )}
         </AdminPanel>
 
@@ -189,7 +167,7 @@ export default async function AdminContactDetailPage({
                   <Th>Type</Th>
                   <Th>Source</Th>
                   <Th numeric>When</Th>
-                  {revealed ? <Th>Notes</Th> : <Th>Content</Th>}
+                  <Th>Notes</Th>
                 </>
               }
             >
@@ -204,15 +182,14 @@ export default async function AdminContactDetailPage({
                     <RelativeTime date={row.interactionDate} /> ago
                   </Td>
                   <Td className="max-w-96">
-                    {row.revealed ? (
+                    {row.detail.rawNotes ?? row.detail.aiSummary ? (
                       <span className="whitespace-pre-wrap text-xs">
-                        {row.revealed.rawNotes ??
-                          row.revealed.aiSummary ??
-                          "—"}
+                        {row.detail.rawNotes ?? row.detail.aiSummary}
                       </span>
                     ) : (
-                      // Presence, not content: computed from SQL predicates, because the
-                      // masked query never selects the columns they describe.
+                      // Nothing written. Say which of the two is missing rather than
+                      // printing an em dash — "no notes, no summary, 3 topics" is a
+                      // diagnosis; "—" is a shrug.
                       <span className="flex flex-wrap items-center gap-2 text-xs">
                         <span className="flex items-center gap-1">
                           <span className="text-muted-foreground">notes</span>

@@ -16,6 +16,7 @@ const PLANS = [
 
 const STATES = [
   { value: "all", label: "Any state" },
+  { value: "live", label: "Active now" },
   { value: "no-key", label: "No AI key" },
   { value: "past-due", label: "Past due" },
   { value: "failing-ai", label: "AI failing" },
@@ -67,7 +68,7 @@ export function UsersFilterBar({
         <Input
           type="search"
           defaultValue={q}
-          placeholder="Search email or user id…"
+          placeholder="Search name, email or user id…"
           aria-label="Search accounts"
           className="h-8 pl-8 text-sm"
           onKeyDown={(e) => {

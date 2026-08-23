@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
+import { PresenceHeartbeat } from "@/components/layout/presence-heartbeat";
 import {
   bootstrapAuthenticatedUser,
   isClerkConfigured,
@@ -50,6 +51,9 @@ export default async function AppLayout({
 
   return (
     <AppShell clerkOn={clerkOn} demoMode={demoMode} theme={theme}>
+      {/* Renders nothing; keeps `last_active_at` fresh enough for the admin roster to
+          answer "active now". One per tab, not one per route. */}
+      <PresenceHeartbeat />
       {children}
     </AppShell>
   );

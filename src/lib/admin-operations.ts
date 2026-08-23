@@ -9,11 +9,6 @@ import {
   userSettings,
 } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
-import {
-  createRevealGrant,
-  describeActiveGrant,
-  revokeRevealGrants,
-} from "@/lib/admin-reveal";
 import { runLinkedInImportJob } from "@/lib/import-job-processor";
 import { purgeUserData } from "@/lib/user-data";
 
@@ -99,69 +94,60 @@ async function requireAccount(targetUserId: string) {
   return row;
 }
 
-/* ------------------------------------------------------------------------- reveal grants */
-
-export type RevealGrantResult = {
-  ok: true;
-  grantId: string;
-  expiresAt: string;
-};
+/* -------------------------------------------------------------------------- account view */
 
 /**
- * Unmask one account's contact and interaction content for a short window.
- *
- * The grant is what widens the query layer's column allowlist; see `src/lib/admin-reveal.ts`
- * for why it is a branded capability rather than a flag. `record.reveal` remains for the
- * one-record case — this is the "the import mangled rows 300-400" tool, not a replacement.
+ * How long one `account.view` row stands for. A second look inside this window does not
+ * write another.
  */
-export async function grantReveal(adminUserId: string, input: {
-  targetUserId: string;
-  reason: string;
-}): Promise<{ grantId: string; expiresAt: Date }> {
-  const reason = requireReason(input.reason, 8);
-  await requireAccount(input.targetUserId);
+const VIEW_AUDIT_WINDOW_MS = 60 * 60 * 1000;
 
-  const grant = await createRevealGrant({
-    adminUserId,
-    targetUserId: input.targetUserId,
-    reason,
-  });
+/**
+ * Records that the operator opened an account.
+ *
+ * This is what remains of the reveal gate. Contact records used to be masked until the
+ * operator requested a time-boxed grant with a typed reason; the friction was removed
+ * because on a single-operator console it was paid entirely by the person it was meant to
+ * check. The *record* was the part worth keeping — "which accounts did I look at, and
+ * when" stays answerable from `admin_audit_log` — so the ceremony went and the row stayed.
+ *
+ * THROTTLED, and that is load-bearing rather than tidiness. The inspector re-renders on
+ * every mutation that calls `revalidatePath`, on every back-navigation and on every manual
+ * refresh, so an unconditional insert would write dozens of identical rows per support
+ * question and bury the entries that describe an actual change. One row per hour reads as
+ * a session.
+ *
+ * Never throws. An audit row is worth writing, but not worth failing a page render over —
+ * losing the log would otherwise mean losing the console.
+ */
+export async function recordAccountView(
+  adminUserId: string,
+  targetUserId: string,
+  now: Date = new Date()
+): Promise<void> {
+  try {
+    const db = await getDb();
+    const since = new Date(now.getTime() - VIEW_AUDIT_WINDOW_MS);
 
-  await recordAdminAction({
-    adminUserId,
-    action: "reveal.grant",
-    targetUserId: input.targetUserId,
-    resourceType: "reveal_grant",
-    resourceId: grant.id,
-    detail: { expiresAt: grant.expiresAt.toISOString() },
-    reason,
-  });
+    const recent = await db.query.adminAuditLog.findFirst({
+      where: and(
+        eq(adminAuditLog.adminUserId, adminUserId),
+        eq(adminAuditLog.targetUserId, targetUserId),
+        eq(adminAuditLog.action, "account.view"),
+        sql`${adminAuditLog.createdAt} > ${since}`
+      ),
+      columns: { id: true },
+    });
+    if (recent) return;
 
-  return { grantId: grant.id, expiresAt: grant.expiresAt };
-}
-
-/** Re-mask now, without waiting for the grant to age out. */
-export async function revokeReveal(adminUserId: string, input: {
-  targetUserId: string;
-}): Promise<number> {
-  const revoked = await revokeRevealGrants(adminUserId, input.targetUserId);
-
-  // Only log when something was actually open; a no-op revoke is noise in the trail.
-  if (revoked > 0) {
     await recordAdminAction({
       adminUserId,
-      action: "reveal.revoke",
-      targetUserId: input.targetUserId,
-      detail: { revoked },
+      action: "account.view",
+      targetUserId,
     });
+  } catch {
+    // See above: never fail a render over the audit trail.
   }
-
-  return revoked;
-}
-
-/** Banner state for the inspector. Never returns a grant object. */
-export async function getActiveRevealGrantFor(adminUserId: string, targetUserId: string) {
-  return describeActiveGrant(adminUserId, targetUserId);
 }
 
 /* ------------------------------------------------------------------------------ imports */

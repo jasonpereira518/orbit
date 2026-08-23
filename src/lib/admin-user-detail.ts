@@ -27,55 +27,46 @@ import {
 import { entitlementsForPlan, resolvePlan } from "@/lib/entitlements";
 import type { Entitlements, Plan, PlanSource } from "@/lib/entitlements";
 import { assertRevealable } from "@/lib/admin-redaction";
-import { grantCovers, type VerifiedRevealGrant } from "@/lib/admin-reveal";
 
 /**
  * Read-only inspection of one account, for operator support.
  *
- * THE RULE THIS MODULE ENFORCES: masked is the default, and unmasking is a deliberate,
- * time-boxed, audited act — never a mode the console sits in.
+ * Contact records read plainly. This module used to mask them behind a time-boxed,
+ * per-account grant that the operator had to request with a typed reason; that gate was
+ * removed deliberately, because on a single-operator console it was friction paid by the
+ * one person it was protecting against, on every support question. Opening an account
+ * still writes an `account.view` row to `admin_audit_log` — the record of *what was
+ * looked at* survives; only the ceremony is gone.
  *
- * Orbit's data is not primarily about its users — it is about third parties who never
- * signed up for anything and have no way to object. That is why contact names arrive here
- * masked and why nothing on the default path selects a note, an email address or a phone
- * number. Redaction lives in this query layer rather than in components on purpose: it
- * makes the allowlist greppable, and it means no component *can* leak a field it never
- * received.
- *
- * Widening that allowlist requires a `VerifiedRevealGrant` (`src/lib/admin-reveal.ts`),
- * which is branded so it cannot be constructed outside that module and is re-checked
- * against the target account by `grantCovers()` at every use. The sensitive columns are
- * spread into the Drizzle `columns:` object only inside that branch, so the masked path
- * still physically does not SELECT them — the property this module has always had is
- * preserved rather than replaced by a UI-level flag.
- *
- * Revealed values are returned under a single nested `revealed` field, so
- * `grep -rn "\.revealed" src` enumerates every possible leak site in one command.
- *
- * Reveal-able under a grant:
- *   - contacts.full_name / email / phone / notes / key_facts / opportunities
- *     / ai_summary / met_context / how_met / linkedin_url / location / school
- *   - interactions.raw_notes / ai_summary / topics / action_items / sentiment
- *
- * Never selected, under any circumstance, grant or no grant — enforced at runtime by
- * `assertRevealable()` against `NEVER_REVEALABLE` in `src/lib/admin-redaction.ts`:
+ * WHAT IS STILL ABSOLUTE. Redaction lives in this query layer rather than in components,
+ * and the part that matters never depended on the grant at all: a short list of columns is
+ * never SELECTed here under any circumstance, so no component *can* render a value it was
+ * never sent. That list is enforced at runtime by `assertRevealable()` against
+ * `NEVER_REVEALABLE` in `src/lib/admin-redaction.ts`:
  *   - *_api_key_encrypted, twilio_auth_token_encrypted  (never decrypt a foreign user's key)
  *   - calendar_feed_token                               (a live plaintext bearer credential)
  *   - gmail/outlook access + refresh tokens             (same class)
  *   - chat_messages.content                             (the most private data in the app,
  *                                                        and no support question needs it)
+ *
+ * Those are credentials and private correspondence, not support context. Nothing about
+ * answering "why did this user's import fail" needs them, so the denylist stays a hard
+ * runtime assertion rather than a convention — add a column to the reads below that
+ * collides with it and the query throws rather than quietly widening.
+ *
+ * Two tiers remain, but they are now about *cost*, not permission: `getAdminUserDetail`
+ * returns a cheap summary row per contact, and `listAdminContacts` /
+ * `getAdminContactDetail` populate the full `detail` object. A null `detail` means "this
+ * read did not ask for it", never "you are not allowed to see it".
  */
-
-/** Masks a name to a length hint: enough to spot duplicates, not enough to identify. */
-export function maskName(name: string | null | undefined): string {
-  const trimmed = (name ?? "").trim();
-  if (!trimmed) return "—";
-  return `${"▨".repeat(Math.min(trimmed.length, 12))} (${trimmed.length})`;
-}
 
 export type AdminIdentity = {
   userId: string;
   email: string | null;
+  /** Mirrored from Clerk; null on accounts that predate the mirror. */
+  firstName: string | null;
+  lastName: string | null;
+  imageUrl: string | null;
   signupAt: Date;
   lastActiveAt: Date | null;
   onboardingCompletedAt: Date | null;
@@ -172,20 +163,20 @@ export type AdminTimelineEntry = {
 
 export type AdminContactRow = {
   id: string;
-  maskedName: string;
+  name: string;
+  email: string | null;
   company: string | null;
   title: string | null;
   interactionCount: number;
   createdAt: Date;
   /**
-   * Populated only when a grant covers this account. Null on every masked path, so a
-   * component reading `row.revealed?.email` gets `undefined` by construction rather than
-   * by remembering to check a flag.
+   * The full record. Null on the summary read (`getAdminUserDetail`), which does not select
+   * these columns because it does not render them — not because they are withheld.
    */
-  revealed: RevealedContactFields | null;
+  detail: AdminContactFields | null;
 };
 
-export type RevealedContactFields = {
+export type AdminContactFields = {
   fullName: string;
   email: string | null;
   phone: string | null;
@@ -409,18 +400,14 @@ export async function getAdminUserDetail(
       .orderBy(desc(usageEvents.createdAt))
       .limit(10),
 
-    // Column allowlist: no email, phone, notes, summaries, key facts or opportunities.
+    // The summary read — identity and affiliation, no notes, summaries, key facts or
+    // opportunities. Those live behind `getAdminContactDetail`, one contact at a time,
+    // because a page listing twenty contacts has nowhere useful to put them.
     db.query.contacts.findMany({
       where: eq(contacts.userId, userId),
       orderBy: [desc(contacts.createdAt)],
       limit: 20,
-      columns: {
-        id: true,
-        fullName: true,
-        company: true,
-        title: true,
-        createdAt: true,
-      },
+      columns: CONTACT_BASE_COLUMNS,
     }),
   ]);
 
@@ -597,6 +584,9 @@ export async function getAdminUserDetail(
     identity: {
       userId: settings.userId,
       email: settings.email,
+      firstName: settings.firstName,
+      lastName: settings.lastName,
+      imageUrl: settings.profileImageUrl,
       signupAt: settings.createdAt,
       lastActiveAt: settings.lastActiveAt,
       onboardingCompletedAt: settings.onboardingCompletedAt,
@@ -678,17 +668,11 @@ export async function getAdminUserDetail(
       })),
     },
     timeline,
-    // Always masked. `getAdminUserDetail` takes no grant on purpose — the unmaskable read
-    // is `listAdminContacts`, so no existing caller can opt in by accident.
-    contacts: contactRows.map((c) => ({
-      id: c.id,
-      maskedName: maskName(c.fullName),
-      company: c.company,
-      title: c.title,
-      interactionCount: interactionsByContact.get(c.id) ?? 0,
-      createdAt: c.createdAt,
-      revealed: null,
-    })),
+    // `detail: null` here reflects the narrower query above, not a permission — the full
+    // record is one click away at `/admin/users/[userId]/contacts/[contactId]`.
+    contacts: contactRows.map((c) =>
+      toContactRow(c as ContactRecord, interactionsByContact.get(c.id) ?? 0, false)
+    ),
     contactTotal: contactAgg[0]?.n ?? 0,
   };
 }
@@ -696,23 +680,27 @@ export async function getAdminUserDetail(
 /* ------------------------------------------------------------------------------------
  * Two-tier contact reads
  *
- * The masked and unmasked paths differ by exactly one thing: which columns reach the
+ * The summary and detail paths differ by exactly one thing: which columns reach the
  * `columns:` object below. Everything downstream is shared, so the two cannot drift in
- * behaviour — only in what they are allowed to see.
+ * behaviour — only in how much they fetch.
  * --------------------------------------------------------------------------------- */
 
-/** Always selected. `fullName` is here because `maskName()` needs it to size the hint. */
+/** The summary read: enough to list contacts and link into them. */
 const CONTACT_BASE_COLUMNS = {
   id: true,
   fullName: true,
+  email: true,
   company: true,
   title: true,
   createdAt: true,
 } as const;
 
-/** Added only inside a `grantCovers()` branch. */
+/**
+ * Added by the detail reads. Still checked against `NEVER_REVEALABLE` at runtime — this
+ * object is the allowlist, and `CONTACT_SENSITIVE_QUALIFIED` below is its mirror in the
+ * form the denylist check speaks.
+ */
 const CONTACT_SENSITIVE_COLUMNS = {
-  email: true,
   phone: true,
   location: true,
   school: true,
@@ -730,7 +718,6 @@ const CONTACT_SENSITIVE_COLUMNS = {
  * so adding a field to one without the other is visible in a two-line diff.
  */
 const CONTACT_SENSITIVE_QUALIFIED = [
-  "contacts.email",
   "contacts.phone",
   "contacts.location",
   "contacts.school",
@@ -746,10 +733,10 @@ const CONTACT_SENSITIVE_QUALIFIED = [
 type ContactRecord = {
   id: string;
   fullName: string;
+  email: string | null;
   company: string | null;
   title: string | null;
   createdAt: Date;
-  email?: string | null;
   phone?: string | null;
   location?: string | null;
   school?: string | null;
@@ -762,19 +749,25 @@ type ContactRecord = {
   opportunities?: string[] | null;
 };
 
+/**
+ * `withDetail` reflects which column set the caller queried, not whether it is permitted to
+ * look. Passing `true` after a base-columns query would produce a row of nulls, so the two
+ * are set together at each call site.
+ */
 function toContactRow(
   record: ContactRecord,
   interactionCount: number,
-  unmasked: boolean
+  withDetail: boolean
 ): AdminContactRow {
   return {
     id: record.id,
-    maskedName: unmasked ? record.fullName : maskName(record.fullName),
+    name: record.fullName,
+    email: record.email,
     company: record.company,
     title: record.title,
     interactionCount,
     createdAt: record.createdAt,
-    revealed: unmasked
+    detail: withDetail
       ? {
           fullName: record.fullName,
           email: record.email ?? null,
@@ -796,7 +789,7 @@ function toContactRow(
 export const ADMIN_CONTACTS_PAGE_SIZE = 25;
 
 /**
- * One page of an account's contacts, masked unless a grant covers the account.
+ * One page of an account's contacts, in full.
  *
  * The interaction counts are restricted to the visible page with `inArray`. The inspector
  * previously grouped over *every* interaction the user had and then looked up twenty of
@@ -808,20 +801,17 @@ export async function listAdminContacts(
   opts: {
     page?: number;
     pageSize?: number;
-    grant?: VerifiedRevealGrant | null;
-    now?: Date;
   } = {}
 ): Promise<{ rows: AdminContactRow[]; total: number; page: number; pageSize: number }> {
   const db = await getDb();
   const pageSize = Math.min(Math.max(opts.pageSize ?? ADMIN_CONTACTS_PAGE_SIZE, 1), 200);
   const page = Math.max(opts.page ?? 1, 1);
-  const unmasked = grantCovers(opts.grant, userId, opts.now ?? new Date());
 
-  if (unmasked) assertRevealable(CONTACT_SENSITIVE_QUALIFIED);
+  // Still asserted, with no gate left to hide behind: this is the check that fails loudly
+  // if a credential column is ever added to `CONTACT_SENSITIVE_COLUMNS` by mistake.
+  assertRevealable(CONTACT_SENSITIVE_QUALIFIED);
 
-  const columns = unmasked
-    ? { ...CONTACT_BASE_COLUMNS, ...CONTACT_SENSITIVE_COLUMNS }
-    : CONTACT_BASE_COLUMNS;
+  const columns = { ...CONTACT_BASE_COLUMNS, ...CONTACT_SENSITIVE_COLUMNS };
 
   const [records, totalAgg] = await Promise.all([
     db.query.contacts.findMany({
@@ -851,7 +841,7 @@ export async function listAdminContacts(
 
   return {
     rows: records.map((r) =>
-      toContactRow(r as ContactRecord, byContact.get(r.id) ?? 0, unmasked)
+      toContactRow(r as ContactRecord, byContact.get(r.id) ?? 0, true)
     ),
     total: totalAgg[0]?.n ?? 0,
     page,
@@ -865,14 +855,17 @@ export type AdminInteractionRow = {
   source: string | null;
   interactionDate: Date;
   createdAt: Date;
-  /** Presence, not content, on the masked path. */
+  /**
+   * Counted across *all* of the contact's interactions, not just the fifty in `detail`.
+   * "notes on 12 of 14" is the fastest answer to "did the capture actually write anything".
+   */
   hasRawNotes: boolean;
   hasAiSummary: boolean;
   topicCount: number;
-  revealed: RevealedInteractionFields | null;
+  detail: InteractionFields;
 };
 
-export type RevealedInteractionFields = {
+export type InteractionFields = {
   rawNotes: string | null;
   aiSummary: string | null;
   topics: string[];
@@ -926,34 +919,30 @@ const INTERACTION_SENSITIVE_QUALIFIED = [
 /**
  * One contact record and its interactions.
  *
- * Presence booleans (`hasRawNotes`, `topicCount`) are the masked view's whole point: "this
- * contact has notes on 12 of 14 interactions" answers most support questions — did the
- * capture actually write anything — without reading a word of it.
+ * Presence booleans (`hasRawNotes`, `topicCount`) survived the removal of the reveal gate
+ * because they were never really about redaction: "this contact has notes on 12 of 14
+ * interactions" is the answer to *did the capture actually write anything*, and reading it
+ * off a count is faster and clearer than eyeballing fifty rows of prose for blanks.
  *
- * The masked path cannot compute those from columns it does not select, so they come from
- * SQL predicates rather than from the row: `raw_notes is not null` is a boolean, not prose.
+ * They come from SQL predicates rather than from the returned rows so the count covers
+ * every interaction, not just the fifty most recent ones fetched below.
  */
 export async function getAdminContactDetail(
   userId: string,
-  contactId: string,
-  opts: { grant?: VerifiedRevealGrant | null; now?: Date } = {}
+  contactId: string
 ): Promise<AdminContactDetail | null> {
   const db = await getDb();
-  const unmasked = grantCovers(opts.grant, userId, opts.now ?? new Date());
 
-  if (unmasked) {
-    assertRevealable([
-      ...CONTACT_SENSITIVE_QUALIFIED,
-      ...INTERACTION_SENSITIVE_QUALIFIED,
-    ]);
-  }
+  assertRevealable([
+    ...CONTACT_SENSITIVE_QUALIFIED,
+    ...INTERACTION_SENSITIVE_QUALIFIED,
+  ]);
 
   const record = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
     columns: {
-      ...(unmasked
-        ? { ...CONTACT_BASE_COLUMNS, ...CONTACT_SENSITIVE_COLUMNS }
-        : CONTACT_BASE_COLUMNS),
+      ...CONTACT_BASE_COLUMNS,
+      ...CONTACT_SENSITIVE_COLUMNS,
       relationshipScore: true,
       statedCloseness: true,
       priorityLevel: true,
@@ -977,12 +966,10 @@ export async function getAdminContactDetail(
         ),
         orderBy: [desc(interactions.interactionDate)],
         limit: 50,
-        columns: unmasked
-          ? { ...INTERACTION_BASE_COLUMNS, ...INTERACTION_SENSITIVE_COLUMNS }
-          : INTERACTION_BASE_COLUMNS,
+        columns: { ...INTERACTION_BASE_COLUMNS, ...INTERACTION_SENSITIVE_COLUMNS },
       }),
 
-      // Presence as SQL predicates, so the masked path never receives the values.
+      // Counted across every interaction, not just the fifty fetched above.
       db
         .select({
           id: interactions.id,
@@ -1024,7 +1011,7 @@ export async function getAdminContactDetail(
   const presenceById = new Map(presence.map((p) => [p.id, p]));
 
   return {
-    contact: toContactRow(record as ContactRecord, presence.length, unmasked),
+    contact: toContactRow(record as ContactRecord, presence.length, true),
     userId,
     relationshipScore: record.relationshipScore ?? null,
     statedCloseness: record.statedCloseness ?? null,
@@ -1038,7 +1025,7 @@ export async function getAdminContactDetail(
     updatedAt: record.updatedAt,
     interactions: interactionRows.map((row): AdminInteractionRow => {
       const p = presenceById.get(row.id);
-      const r = row as typeof row & Partial<RevealedInteractionFields>;
+      const r = row as typeof row & Partial<InteractionFields>;
       return {
         id: row.id,
         interactionType: row.interactionType,
@@ -1048,15 +1035,13 @@ export async function getAdminContactDetail(
         hasRawNotes: Boolean(p?.hasRawNotes),
         hasAiSummary: Boolean(p?.hasAiSummary),
         topicCount: p?.topicCount ?? 0,
-        revealed: unmasked
-          ? {
-              rawNotes: r.rawNotes ?? null,
-              aiSummary: r.aiSummary ?? null,
-              topics: r.topics ?? [],
-              actionItems: r.actionItems ?? [],
-              sentiment: r.sentiment ?? null,
-            }
-          : null,
+        detail: {
+          rawNotes: r.rawNotes ?? null,
+          aiSummary: r.aiSummary ?? null,
+          topics: r.topics ?? [],
+          actionItems: r.actionItems ?? [],
+          sentiment: r.sentiment ?? null,
+        },
       };
     }),
     reminderCount: reminderAgg[0]?.n ?? 0,

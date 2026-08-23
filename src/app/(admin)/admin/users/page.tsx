@@ -5,7 +5,6 @@ import {
   AdminPanel,
   AdminTable,
   EmptyState,
-  PlanBadge,
   RelativeTime,
   Td,
   Th,
@@ -13,6 +12,10 @@ import {
 import { Pager } from "@/components/admin/pager";
 import { UsersFilterBar } from "@/components/admin/users-filter-bar";
 import { CompPlanButton } from "@/components/admin/comp-plan-dialog";
+import { CopyId } from "@/components/admin/copy-id";
+import { LiveCount, LiveDot, PresenceProvider } from "@/components/admin/presence";
+import { displayName, fullName } from "@/lib/admin-metrics";
+import { liveUserIds } from "@/lib/presence";
 import {
   isRosterSort,
   loadAdminRoster,
@@ -57,15 +60,20 @@ export default async function AdminUsersPage({
   const dir = params.dir === "asc" ? "asc" : params.dir === "desc" ? "desc" : undefined;
   const page = Math.max(Number.parseInt(params.page ?? "1", 10) || 1, 1);
 
-  const result = await loadAdminRoster({
-    q,
-    plan,
-    state,
-    sort,
-    dir,
-    page,
-    pageSize: ROSTER_PAGE_SIZE,
-  });
+  // Server-rendered so the first paint already has the dots right; the client poller takes
+  // over from there. One extra indexed query, run in parallel with the roster itself.
+  const [result, live] = await Promise.all([
+    loadAdminRoster({
+      q,
+      plan,
+      state,
+      sort,
+      dir,
+      page,
+      pageSize: ROSTER_PAGE_SIZE,
+    }),
+    liveUserIds(),
+  ]);
 
   const hrefWith = (next: Record<string, string | undefined>) => {
     const search = new URLSearchParams();
@@ -107,17 +115,20 @@ export default async function AdminUsersPage({
   const filtered = q !== "" || plan !== "all" || state !== "all";
 
   return (
-    <>
+    <PresenceProvider initialLive={live}>
       <AdminPageHeader
         title="Users"
         subtitle={
-          filtered
-            ? `${result.total} matching account${result.total === 1 ? "" : "s"}`
-            : `${result.total} account${result.total === 1 ? "" : "s"}`
+          <>
+            {filtered
+              ? `${result.total} matching account${result.total === 1 ? "" : "s"}`
+              : `${result.total} account${result.total === 1 ? "" : "s"}`}
+            <LiveCount userIds={result.rows.map((r) => r.userId)} />
+          </>
         }
         action={
           // Exports the current filter, not just this page — and account-level columns
-          // only. No contact data leaves through here, grant or no grant.
+          // only. No contact data leaves through here.
           <a
             href={`/api/admin/export?dataset=roster&format=csv&${new URLSearchParams(
               Object.entries({ q, plan, state, sort }).filter(
@@ -144,92 +155,103 @@ export default async function AdminUsersPage({
                 head={
                   <>
                     <Th>{sortLink("email", "Account")}</Th>
+                    <Th>ID</Th>
                     <Th>Plan</Th>
+                    <Th>{sortLink("active", "Status")}</Th>
                     <Th numeric>{sortLink("contacts", "Contacts")}</Th>
                     <Th numeric>{sortLink("interactions", "Logged")}</Th>
                     <Th numeric>{sortLink("ai", "AI calls")}</Th>
-                    <Th numeric>{sortLink("active", "Last seen")}</Th>
                     <Th numeric>{sortLink("signup", "Joined")}</Th>
-                    <Th />
                   </>
                 }
               >
-                {result.rows.map((row) => (
-                  <tr
-                    key={row.userId}
-                    className="border-b border-border/40 last:border-b-0 hover:bg-muted/40"
-                  >
-                    <Td>
-                      <Link
-                        href={`/admin/users/${encodeURIComponent(row.userId)}`}
-                        className="flex items-center gap-2 hover:text-primary"
-                      >
-                        <span
-                          className={
-                            row.suspendedAt
-                              ? "truncate text-muted-foreground line-through"
-                              : "truncate"
-                          }
+                {result.rows.map((row) => {
+                  const name = fullName(row);
+                  return (
+                    <tr
+                      key={row.userId}
+                      className="border-b border-border/40 last:border-b-0 hover:bg-muted/40"
+                    >
+                      <Td>
+                        <Link
+                          href={`/admin/users/${encodeURIComponent(row.userId)}`}
+                          className="flex items-center gap-2 hover:text-primary"
                         >
-                          {row.email ?? row.userId}
-                        </span>
-                        {row.suspendedAt && (
-                          <Ban
-                            className="size-3.5 shrink-0 text-destructive"
-                            aria-label="Suspended"
-                          />
+                          <span className="min-w-0">
+                            <span
+                              className={
+                                row.suspendedAt
+                                  ? "block truncate text-muted-foreground line-through"
+                                  : "block truncate"
+                              }
+                            >
+                              {displayName(row)}
+                            </span>
+                            {/* Only when the line above is the name — otherwise this
+                                repeats the email back at itself. */}
+                            {name && row.email && (
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {row.email}
+                              </span>
+                            )}
+                          </span>
+                          {row.suspendedAt && (
+                            <Ban
+                              className="size-3.5 shrink-0 text-destructive"
+                              aria-label="Suspended"
+                            />
+                          )}
+                          {!row.hasProviderKey && (
+                            <CircleAlert
+                              className="size-3.5 shrink-0 text-destructive"
+                              aria-label="No AI key configured"
+                            />
+                          )}
+                        </Link>
+                      </Td>
+                      <Td>
+                        <CopyId value={row.userId} />
+                      </Td>
+                      <Td>
+                        {/* The badge is the trigger: the plan is what you are looking at,
+                            so it is also what you click to change. Comps outrank real
+                            billing state, so this works whether or not they ever paid. */}
+                        <CompPlanButton
+                          targetUserId={row.userId}
+                          email={row.email}
+                          currentPlan={row.plan}
+                          currentSource={row.planSource}
+                          contactCount={row.counts.contacts}
+                          compedNote={row.compedNote}
+                          variant="badge"
+                        />
+                      </Td>
+                      <Td>
+                        <LiveDot userId={row.userId}>
+                          <span className="text-muted-foreground">
+                            <RelativeTime date={row.lastSeenAt} />
+                          </span>
+                        </LiveDot>
+                      </Td>
+                      <Td numeric>{row.counts.contacts}</Td>
+                      <Td numeric>{row.counts.interactions}</Td>
+                      <Td numeric>
+                        {row.counts.aiCalls}
+                        {row.counts.aiFailures > 0 && (
+                          <span
+                            className="ml-1 text-destructive"
+                            title={`${row.counts.aiFailures} failed`}
+                          >
+                            ⚠
+                          </span>
                         )}
-                        {!row.hasProviderKey && (
-                          <CircleAlert
-                            className="size-3.5 shrink-0 text-destructive"
-                            aria-label="No AI key configured"
-                          />
-                        )}
-                      </Link>
-                    </Td>
-                    <Td>
-                      <PlanBadge
-                        plan={row.plan}
-                        source={row.planSource}
-                        title={
-                          row.compedNote
-                            ? `Comped${row.compedAt ? ` ${row.compedAt.toISOString().slice(0, 10)}` : ""} — ${row.compedNote}`
-                            : undefined
-                        }
-                      />
-                    </Td>
-                    <Td numeric>{row.counts.contacts}</Td>
-                    <Td numeric>{row.counts.interactions}</Td>
-                    <Td numeric>
-                      {row.counts.aiCalls}
-                      {row.counts.aiFailures > 0 && (
-                        <span
-                          className="ml-1 text-destructive"
-                          title={`${row.counts.aiFailures} failed`}
-                        >
-                          ⚠
-                        </span>
-                      )}
-                    </Td>
-                    <Td numeric>
-                      <RelativeTime date={row.lastSeenAt} />
-                    </Td>
-                    <Td numeric>
-                      <RelativeTime date={row.signupAt} />
-                    </Td>
-                    <Td className="text-right">
-                      <CompPlanButton
-                        targetUserId={row.userId}
-                        email={row.email}
-                        currentPlan={row.plan}
-                        currentSource={row.planSource}
-                        contactCount={row.counts.contacts}
-                        compedNote={row.compedNote}
-                        variant="menu"
-                      />
-                    </Td>
-                  </tr>
-                ))}
+                      </Td>
+                      <Td numeric>
+                        <RelativeTime date={row.signupAt} />
+                      </Td>
+                    </tr>
+                  );
+                })}
               </AdminTable>
 
               <div className="mt-3">
@@ -245,7 +267,7 @@ export default async function AdminUsersPage({
           )}
         </AdminPanel>
       </div>
-    </>
+    </PresenceProvider>
   );
 }
 
