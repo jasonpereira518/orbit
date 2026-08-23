@@ -40,6 +40,12 @@ export default async function AppLayout({
   }
 
   const settings = await bootstrapAuthenticatedUser(userId);
+
+  // The real gate is `requireUserId()`, which throws `AccountSuspendedError` and covers
+  // Server Action POSTs that never re-run this layout. This is only the friendly surface:
+  // without it a suspended user would hit an error boundary instead of an explanation.
+  if (settings.suspendedAt) redirect("/suspended");
+
   const theme = resolveThemePreference(settings.theme);
 
   return (

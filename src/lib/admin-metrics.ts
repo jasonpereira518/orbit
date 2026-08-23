@@ -49,6 +49,8 @@ export type AdminUserRow = {
   aiModel: string | null;
   /** Whether a personal key exists for the provider the user actually selected. */
   hasProviderKey: boolean;
+  /** Set by `setAccountSuspendedAction`; blocks the account in `requireUserId()`. */
+  suspendedAt: Date | null;
   counts: {
     contacts: number;
     interactions: number;
@@ -131,6 +133,7 @@ export async function loadAdminUserRows(): Promise<AdminUserRow[]> {
           hasGemini: sql<boolean>`${userSettings.geminiApiKeyEncrypted} is not null`,
           hasOpenai: sql<boolean>`${userSettings.openaiApiKeyEncrypted} is not null`,
           hasAnthropic: sql<boolean>`${userSettings.anthropicApiKeyEncrypted} is not null`,
+          suspendedAt: userSettings.suspendedAt,
           compedPlan: userSettings.compedPlan,
           compedNote: userSettings.compedNote,
           compedAt: userSettings.compedAt,
@@ -252,6 +255,7 @@ export async function loadAdminUserRows(): Promise<AdminUserRow[]> {
       aiProvider: row.aiProvider,
       aiModel: row.aiModel,
       hasProviderKey,
+      suspendedAt: row.suspendedAt,
       counts: {
         contacts: c?.n ?? 0,
         interactions: i?.n ?? 0,
