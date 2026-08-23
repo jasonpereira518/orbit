@@ -34,7 +34,13 @@ export function MarketingDocShell({
     // `landing-root` is load-bearing: globals.css paints the body deep-space while it
     // is mounted, which is what stops a light strip appearing on overscroll. The
     // starfield renders position:fixed, so this root must stay free of transform/filter.
-    <div className="landing-root relative overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
+    //
+    // Clipped on BOTH axes, not just x: the decorative glows are centred on their
+    // sections and overhang them by hundreds of px, and the last one's tail was
+    // adding scrollable dead space below the footer. `clip` rather than `hidden`
+    // so this never becomes a scroll container — the TOC rail sticks to the
+    // viewport, and the fixed starfield keeps the viewport as its containing block.
+    <div className="landing-root relative overflow-clip bg-[#03050c] text-[#e8f3f1]">
       <LandingStarfield />
 
       <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-6 py-6 sm:gap-4 md:px-10">
@@ -62,7 +68,9 @@ export function MarketingDocShell({
 
       <main className="relative z-10">{children}</main>
 
-      <footer className="relative z-10 mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-4 px-6 py-12 md:px-10">
+      {/* Lighter on the bottom than the top: there is nothing after this row,
+          so symmetric padding just reads as a gap at the end of the page. */}
+      <footer className="relative z-10 mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-4 px-6 pb-7 pt-12 md:px-10">
         <Link href="/" className="flex items-center gap-2.5" aria-label="Orbit home">
           <OrbitLogo size="sm" />
           <span className="font-[family-name:var(--font-display)] text-[17px] tracking-tight text-[#e8f3f1]">
