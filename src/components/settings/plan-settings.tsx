@@ -35,7 +35,7 @@ export function PlanSettings({
     <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-medium text-primary">Plan</h2>
+          <h2 className="text-lg font-medium text-primary">Pricing Plan</h2>
           <p className="mt-1 text-sm text-muted-foreground">{copy.tagline}</p>
         </div>
         <span className="inline-flex items-center gap-1.5 rounded-full border border-border/70 px-3 py-1 text-sm font-medium text-primary">

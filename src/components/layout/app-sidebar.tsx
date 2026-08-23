@@ -121,7 +121,7 @@ export function AppSidebar({
           />
         ))}
 
-        <div className="mt-2">
+        <div className="mt-auto">
           <SidebarNavLink
             item={APP_NAV_SETTINGS}
             pathname={pathname}
