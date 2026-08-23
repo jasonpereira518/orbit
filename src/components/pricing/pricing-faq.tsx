@@ -1,5 +1,10 @@
 import { Plus } from "lucide-react";
-import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
+import {
+  FREE_CONTACT_LIMIT,
+  LIFETIME_INTRO_PRICE,
+  LIFETIME_INTRO_SEATS,
+  LIFETIME_STANDARD_PRICE,
+} from "@/lib/plan-limits";
 
 /**
  * Native <details> rather than a scripted accordion: it is keyboard-operable, works
@@ -17,6 +22,10 @@ const FAQ: Array<{ q: string; a: string }> = [
   {
     q: "What is the difference between Orbit Pro and Orbit Lifetime?",
     a: "One thing: contact enrichment. Both are uncapped, both include recruiter tracking, mailbox and calendar sync, the extension, and outreach campaigns that send email and SMS on Orbit's own credits. Orbit Pro also enriches contacts on Orbit's Apollo credits; Lifetime connects your own Apollo key instead. Sending is capped at a fixed number per day on every plan, so a single payment can cover it. Enrichment has no such ceiling, which is the one thing a single payment cannot honestly cover forever.",
+  },
+  {
+    q: `Why is Orbit Lifetime $${LIFETIME_INTRO_PRICE} instead of $${LIFETIME_STANDARD_PRICE}?`,
+    a: `Because you are early. The first ${LIFETIME_INTRO_SEATS} people to buy Lifetime pay $${LIFETIME_INTRO_PRICE}; after that it is $${LIFETIME_STANDARD_PRICE}. To be clear about what that is and is not: Lifetime itself is not limited, does not run out, and will not stop being sold — the only thing that changes at ${LIFETIME_INTRO_SEATS} buyers is the price. If you buy at $${LIFETIME_INTRO_PRICE} you keep everything Lifetime ever includes, at the price you paid, permanently.`,
   },
   {
     q: "Can I cancel?",
