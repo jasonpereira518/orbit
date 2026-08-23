@@ -10,6 +10,7 @@ import {
   RelativeTime,
 } from "@/components/admin/primitives";
 import { getAdminOverview } from "@/lib/admin-metrics";
+import { getOpsHeadlineCount } from "@/lib/admin-ops";
 import { formatCostMicros } from "@/lib/ai-pricing";
 import { LIFETIME_SEAT_LIMIT } from "@/lib/plan-limits";
 import { countLifetimePurchases } from "@/lib/user-settings";
@@ -30,9 +31,12 @@ export const metadata = { title: "Admin · Overview" };
  * change no decision.
  */
 export default async function AdminOverviewPage() {
-  const [overview, lifetimeSold] = await Promise.all([
+  const [overview, lifetimeSold, systemIssues] = await Promise.all([
     getAdminOverview(),
     countLifetimePurchases().catch(() => 0),
+    // A counter, never a list. System problems live on /admin/ops; duplicating them here
+    // would blur the rule that this screen names people and that one names systems.
+    getOpsHeadlineCount(),
   ]);
 
   const { plans, alerts, funnel, rows } = overview;
@@ -56,6 +60,15 @@ export default async function AdminOverviewPage() {
               </span>
             ) : (
               "all healthy"
+            )}
+            {systemIssues > 0 && (
+              <>
+                {" · "}
+                <Link href="/admin/ops" className="text-foreground hover:text-primary">
+                  <span className="tabular-nums">{systemIssues}</span> system issue
+                  {systemIssues === 1 ? "" : "s"} →
+                </Link>
+              </>
             )}
           </>
         }
@@ -102,7 +115,17 @@ export default async function AdminOverviewPage() {
         </AdminPanel>
 
         <div className="grid gap-6 lg:grid-cols-2">
-          <AdminPanel title="Activation">
+          <AdminPanel
+            title="Activation"
+            action={
+              <Link
+                href="/admin/product"
+                className="text-xs text-muted-foreground hover:text-primary"
+              >
+                Full detail →
+              </Link>
+            }
+          >
             <MiniBars rows={funnel.map((s) => ({ label: s.label, count: s.count }))} />
             <p className="mt-3 border-t border-border/40 pt-2 text-xs text-muted-foreground tabular-nums">
               {overview.signups.current} new in the last 30 days (
