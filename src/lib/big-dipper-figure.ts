@@ -31,14 +31,14 @@ export const DIPPER_STARS: DipperStar[] = [
 ];
 
 /**
- * Drawn as three segments so the figure builds in a readable order: the bowl
- * opens, the bowl closes, then the handle runs out to Alkaid. (Pen-up between
- * arrays, same convention as the Virgo figure.)
+ * Drawn as three segments, all running left to right with the reading
+ * direction: the handle comes in from Alkaid, then the bowl opens and closes
+ * behind it. (Pen-up between arrays, same convention as the Virgo figure.)
  */
 export const DIPPER_CHAINS: string[][] = [
-  ["dubhe", "merak", "phecda"],
-  ["phecda", "megrez", "dubhe"],
-  ["megrez", "alioth", "mizar", "alkaid"],
+  ["alkaid", "mizar", "alioth", "megrez"],
+  ["megrez", "phecda", "merak"],
+  ["merak", "dubhe", "megrez"],
 ];
 
 /**
@@ -79,14 +79,14 @@ export function dipperChainPath(chain: string[]): string {
  * on each segment and fire three shimmers at once.
  */
 export const DIPPER_SHIMMER_CHAIN = [
-  "megrez",
-  "dubhe",
-  "merak",
-  "phecda",
-  "megrez",
-  "alioth",
-  "mizar",
   "alkaid",
+  "mizar",
+  "alioth",
+  "megrez",
+  "phecda",
+  "merak",
+  "dubhe",
+  "megrez",
 ];
 
 export const DIPPER_SHIMMER_PATH = dipperChainPath(DIPPER_SHIMMER_CHAIN);
