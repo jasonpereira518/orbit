@@ -13,8 +13,6 @@ import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import {
   DIPPER_CHAINS,
   DIPPER_FIELD_STARS,
-  DIPPER_SHIMMER_LENGTH,
-  DIPPER_SHIMMER_PATH,
   DIPPER_STARS,
   dipperChainPath,
 } from "@/lib/big-dipper-figure";
@@ -55,13 +53,9 @@ const CHAIN_WINDOWS = [
   [0.42, 1],
 ] as const;
 
-/** The travelling shimmer fades in over the last stretch of the draw, and its
- * lit segment is a short slice of the full walk. */
-const SHIMMER_FADE_IN = 0.86;
-const SHIMMER_DASH = DIPPER_SHIMMER_LENGTH * 0.07;
-
 /** Every time a chain stroke reaches a node — junction stars included,
- * and the same star may appear more than once (e.g. eta, gamma). */
+ * and the same star may appear more than once (Megrez closes the bowl and
+ * starts the handle, so it fires three times). */
 const CROSSINGS_BY_STAR: Record<string, number[]> = (() => {
   const map: Record<string, number[]> = {};
   DIPPER_CHAINS.forEach((chain, i) => {
@@ -143,13 +137,6 @@ export function ConstellationFigure({ className }: { className?: string }) {
     ),
   ];
 
-  // The chain draw is scroll-scrubbed, so it freezes the moment the visitor
-  // stops scrolling. Once the figure has finished drawing, a light runs the
-  // whole asterism on its own clock — the figure stays alive at rest.
-  const shimmerOpacity = useTransform(scrollYProgress, (v) =>
-    scrub01(v, SHIMMER_FADE_IN, CHAIN_WINDOWS[2][1])
-  );
-
   function onMove(e: MouseEvent<HTMLDivElement>) {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * VIEW_W;
@@ -196,26 +183,6 @@ export function ConstellationFigure({ className }: { className?: string }) {
             style={reduced ? undefined : { pathLength: chainProgress[i] }}
           />
         ))}
-
-        {reduced ? null : (
-          <motion.path
-            d={DIPPER_SHIMMER_PATH}
-            fill="none"
-            stroke="rgba(196,228,255,0.9)"
-            strokeWidth={1.7}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeDasharray={`${SHIMMER_DASH} ${DIPPER_SHIMMER_LENGTH - SHIMMER_DASH}`}
-            style={{ opacity: shimmerOpacity }}
-            animate={{ strokeDashoffset: [DIPPER_SHIMMER_LENGTH, 0] }}
-            transition={{
-              duration: 5.4,
-              repeat: Infinity,
-              repeatDelay: 1.8,
-              ease: "linear",
-            }}
-          />
-        )}
 
         {DIPPER_STARS.map((star, i) => (
           <motion.circle
