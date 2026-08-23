@@ -40,6 +40,7 @@
     "react-markdown": "^10.1.0",
     "resend": "^6.17.2",
     "shadcn": "^4.13.0",
+    "sharp": "^0.34.5",
     "sonner": "^2.0.7",
     "stripe": "^22.5.0",
     "tailwind-merge": "^3.6.0",
