@@ -126,6 +126,22 @@ export const userSettings = pgTable("user_settings", {
   lastName: text("last_name"),
   profileImageUrl: text("profile_image_url"),
   /**
+   * How this account arrived — captured on FIRST touch of a marketing page and persisted
+   * on the first authenticated request. Write-once: a user who lands via a Reddit link,
+   * browses for a week and finally signs up after a direct visit was acquired by Reddit,
+   * and last-touch would credit the wrong channel every time.
+   *
+   * `signupAttributedAt` is what distinguishes "arrived directly" (attributed, all fields
+   * null) from "predates this mirror" (never attributed). Without it the two are
+   * indistinguishable and every channel rollup silently mixes them.
+   */
+  signupReferrer: text("signup_referrer"),
+  signupUtmSource: text("signup_utm_source"),
+  signupUtmMedium: text("signup_utm_medium"),
+  signupUtmCampaign: text("signup_utm_campaign"),
+  signupLandingPath: text("signup_landing_path"),
+  signupAttributedAt: timestamp("signup_attributed_at", { withTimezone: true }),
+  /**
    * Opaque bearer token for the read-only ICS reminder feed. Stored in plaintext
    * deliberately: the URL must stay re-displayable when the user adds a second device,
    * and `crypto.ts` uses a random IV per call so ciphertext could not be indexed for
@@ -1133,6 +1149,157 @@ export const errorEvents = pgTable(
   ]
 );
 
+/**
+ * What users told us, unaggregated.
+ *
+ * Deliberately one table for three kinds rather than three tables: they are read together
+ * ("what has anyone said lately?"), they share a shape, and at this volume the verbatims
+ * matter far more than any per-kind aggregate. `score` is only meaningful for `pmf`.
+ *
+ * This is the only place in the schema that holds prose written by a user ABOUT ORBIT
+ * rather than about a third party — which makes it the one free-text column an operator
+ * can read without the privacy question that governs `contacts.notes`.
+ */
+export const feedback = pgTable(
+  "feedback",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /**
+     * `pmf` — the Sean Ellis question. `freeform` — unprompted. `churn_reason` — captured
+     * at cancellation, the most valuable and least available of the three.
+     */
+    kind: text("kind").$type<"pmf" | "freeform" | "churn_reason">().notNull(),
+    /** PMF only: 3 very disappointed, 2 somewhat, 1 not. Null for the other kinds. */
+    score: integer("score"),
+    text: text("text"),
+    /** Where they were when they said it — route, plan, contact count. */
+    context: jsonb("context").$type<Record<string, unknown>>().default({}).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("feedback_kind_created_idx").on(t.kind, t.createdAt),
+    index("feedback_user_created_idx").on(t.userId, t.createdAt),
+  ]
+);
+
+/**
+ * Money, as events rather than as a headcount.
+ *
+ * The console previously derived MRR as `subscribers × $5`, which cannot see a mid-month
+ * cancellation, a refund, or a plan change — it reports the same number the day before and
+ * the day after someone leaves. This table records what each billing webhook MEANT
+ * financially; `webhook_deliveries` already records that one arrived.
+ *
+ * `mrrDeltaCents` is signed and is the whole point: summing it over a period gives real
+ * MRR movement. One-time revenue (Lifetime) carries `amountCents` with a zero delta, so it
+ * never inflates a recurring figure.
+ *
+ * UNIQUE ON (source, event_id), unlike `webhook_deliveries` which deliberately has no such
+ * constraint. That table wants the retry count — "this was delivered 6 times" is its best
+ * signal. Here a redelivery would double-count money, and correctness must not depend on
+ * every future reader remembering to deduplicate. The retry information is not lost; it
+ * still lives one table over.
+ */
+export const billingEvents = pgTable(
+  "billing_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    source: text("source").$type<"clerk" | "stripe">().notNull(),
+    /** The provider's delivery id — `svix-id` for Clerk, the event id for Stripe. */
+    eventId: text("event_id").notNull(),
+    kind: text("kind")
+      .$type<
+        | "new"
+        | "expansion"
+        | "contraction"
+        | "churn"
+        | "reactivation"
+        | "lifetime"
+        | "refund"
+        | "payment_failed"
+      >()
+      .notNull(),
+    userId: text("user_id"),
+    /** Cash moved, always positive. Zero for a pure status change. */
+    amountCents: integer("amount_cents").default(0).notNull(),
+    /** Signed change to recurring revenue. Zero for one-time and non-recurring events. */
+    mrrDeltaCents: integer("mrr_delta_cents").default(0).notNull(),
+    /** When it counts, which is not always when it arrived — webhooks lag and retry. */
+    effectiveAt: timestamp("effective_at", { withTimezone: true }).notNull(),
+    detail: jsonb("detail").$type<Record<string, unknown>>().default({}).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("billing_events_source_event_uidx").on(t.source, t.eventId),
+    index("billing_events_effective_idx").on(t.effectiveAt),
+    index("billing_events_user_effective_idx").on(t.userId, t.effectiveAt),
+    index("billing_events_kind_effective_idx").on(t.kind, t.effectiveAt),
+  ]
+);
+
+/**
+ * What Orbit pays to keep the lights on, one row per provider per month.
+ *
+ * Entered by hand rather than pulled from an API. Five numbers a month does not justify a
+ * third-party integration, an auth flow and a new failure mode — and the shape of this
+ * table does not change when it eventually does, so automating later costs nothing now.
+ *
+ * Without this, "money out" is AI spend only, which is mostly the USER's spend (production
+ * is strictly BYOK) — so gross margin was not merely unknown, it was systematically
+ * misleading.
+ */
+export const infraCosts = pgTable(
+  "infra_costs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    provider: text("provider").notNull(),
+    /** First day of the month it covers, so ordering and range queries are plain dates. */
+    periodMonth: timestamp("period_month", { withTimezone: true }).notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("infra_costs_provider_month_uidx").on(t.provider, t.periodMonth),
+    index("infra_costs_month_idx").on(t.periodMonth),
+  ]
+);
+
+/**
+ * Every time a plan gate refused someone.
+ *
+ * NOT an error, and deliberately not stored as one. A free user hitting a paywall is the
+ * product working; filing it under `error_events` would put "someone wanted to pay us" on
+ * the Health screen next to broken OAuth tokens and corrupt the meaning of both.
+ *
+ * This is the only evidence of demand for a feature the user could not reach. A wall
+ * somebody bounces off repeatedly is a feature they would pay for; a wall nobody ever
+ * reaches is in the wrong tier. Neither fact is knowable from `usage_events`, which by
+ * definition only records what did happen.
+ *
+ * `plan` is denormalised on purpose — the point of the row is what their plan was AT THE
+ * TIME, and reading it back off `user_settings` later gives the answer for today instead.
+ */
+export const gateEvents = pgTable(
+  "gate_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** A `FeatureKey` from `@/lib/entitlements`, or "contacts" for the free cap. */
+    feature: text("feature").notNull(),
+    plan: text("plan").$type<"free" | "orbit" | "lifetime">().notNull(),
+    /** Route or action that hit the wall, for locating it in the product. */
+    context: jsonb("context").$type<Record<string, unknown>>().default({}).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("gate_events_feature_created_idx").on(t.feature, t.createdAt),
+    index("gate_events_user_created_idx").on(t.userId, t.createdAt),
+  ]
+);
+
 export const contactsRelations = relations(contacts, ({ many }) => ({
   interactions: many(interactions),
   reminders: many(reminders),
@@ -1284,3 +1451,8 @@ export type AdminAuditEntry = typeof adminAuditLog.$inferSelect;
 export type CronRun = typeof cronRuns.$inferSelect;
 export type WebhookDelivery = typeof webhookDeliveries.$inferSelect;
 export type ErrorEvent = typeof errorEvents.$inferSelect;
+export type FeedbackEntry = typeof feedback.$inferSelect;
+export type BillingEvent = typeof billingEvents.$inferSelect;
+export type NewBillingEvent = typeof billingEvents.$inferInsert;
+export type InfraCost = typeof infraCosts.$inferSelect;
+export type GateEvent = typeof gateEvents.$inferSelect;

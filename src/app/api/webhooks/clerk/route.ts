@@ -9,6 +9,14 @@ import {
 } from "@/lib/user-settings";
 import { ORBIT_PLAN_SLUG } from "@/lib/entitlements";
 import {
+  classifyMovement,
+  monthlyValueCents,
+  recordBillingEvent,
+} from "@/lib/billing-events";
+import { getDb } from "@/db";
+import { userSettings } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import {
   WEBHOOK_REASONS,
   recordWebhookDelivery,
   type WebhookOutcome,
@@ -177,7 +185,53 @@ export async function POST(req: NextRequest) {
             detail,
           };
         } else {
+          // Read the prior recurring value BEFORE the mirror overwrites it. This is the
+          // only moment both sides of the transition are knowable — afterwards there is
+          // just the new state, and "what changed" is unrecoverable. It is also why the
+          // ledger lives here rather than being derived later from `user_settings`.
+          const db = await getDb();
+          const before = await db.query.userSettings.findFirst({
+            where: eq(userSettings.userId, userId),
+            columns: {
+              subscriptionPlan: true,
+              subscriptionStatus: true,
+              subscriptionPeriodEnd: true,
+            },
+          });
+
+          const beforeCents =
+            before?.subscriptionPlan === "orbit"
+              ? monthlyValueCents(
+                  before.subscriptionStatus,
+                  before.subscriptionPeriodEnd
+                )
+              : 0;
+
           await setSubscriptionState(userId, mirror);
+
+          const afterCents = monthlyValueCents(
+            mirror.status,
+            mirror.periodEnd ? new Date(mirror.periodEnd * 1000) : null
+          );
+
+          const movement = classifyMovement(beforeCents, afterCents);
+          // No delivery id means no way to deduplicate, and Svix retries — so recording
+          // would risk counting the same movement several times. A missing ledger row is
+          // recoverable from the mirror; inflated revenue is not recoverable at all.
+          // `verifyWebhook` rejects deliveries without the header, so this is defensive.
+          if (movement && eventId) {
+            await recordBillingEvent({
+              source: "clerk",
+              // The svix delivery id, not the resource id — a resource emits many events
+              // over its life and they must not collapse onto one ledger row.
+              eventId,
+              kind: movement.kind,
+              userId,
+              mrrDeltaCents: movement.deltaCents,
+              detail: { ...detail, beforeCents, afterCents },
+            });
+          }
+
           result = {
             outcome: "handled",
             targetUserId: userId,
@@ -203,13 +257,25 @@ export async function POST(req: NextRequest) {
         },
       };
     } else if (evt.type.startsWith("paymentAttempt.")) {
-      // Also ledger-only. A failed payment is otherwise invisible until the subscription
-      // eventually flips to past_due, which can be days later.
+      // A failed payment is otherwise invisible until the subscription eventually flips to
+      // past_due, which can be days later — and by then the user has already been surprised.
       const data = evt.data as {
         id?: string;
         status?: string;
         payer?: { user_id?: string };
       };
+
+      if (data.status === "failed" && eventId) {
+        await recordBillingEvent({
+          source: "clerk",
+          eventId,
+          kind: "payment_failed",
+          userId: data.payer?.user_id ?? null,
+          // No MRR delta: the subscription has not changed value yet, and booking a
+          // churn here would report revenue lost that may well be collected on retry.
+          detail: { paymentAttemptId: data.id ?? null },
+        });
+      }
       result = {
         outcome: "handled",
         targetUserId: data.payer?.user_id ?? null,

@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { PresenceHeartbeat } from "@/components/layout/presence-heartbeat";
+import { captureAttribution } from "@/lib/attribution-capture";
 import {
   bootstrapAuthenticatedUser,
   isClerkConfigured,
@@ -41,6 +42,10 @@ export default async function AppLayout({
   }
 
   const settings = await bootstrapAuthenticatedUser(userId);
+
+  // Moves the first-touch cookie onto the account, once. A no-op UPDATE after the first
+  // time — the write filters on `signup_attributed_at IS NULL` in SQL.
+  await captureAttribution(userId);
 
   // The real gate is `requireUserId()`, which throws `AccountSuspendedError` and covers
   // Server Action POSTs that never re-run this layout. This is only the friendly surface:

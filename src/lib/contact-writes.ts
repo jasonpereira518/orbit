@@ -17,6 +17,7 @@ import { after } from "next/server";
 import { getDb } from "@/db";
 import { contactTags, contacts, interactions, tags } from "@/db/schema";
 import { PaywallError, getEntitlements } from "@/lib/entitlements";
+import { recordGateHit } from "@/lib/gate-events";
 import {
   companyFieldsForWrite,
   companyFieldsForWriteCached,
@@ -303,6 +304,15 @@ export async function createContactForUser(
   const headroom = await contactHeadroomForUser(userId);
   if (headroom !== null && headroom < 1) {
     const { plan, contactLimit } = await getEntitlements(userId);
+    // The cap is the most direct pricing lever Orbit has, and until now hitting it left no
+    // trace — so "does the 100-contact limit convert, or just annoy?" had no evidence
+    // behind it either way.
+    await recordGateHit({
+      userId,
+      feature: "contacts",
+      plan,
+      context: { contactLimit },
+    });
     throw new PaywallError(
       "contacts",
       plan,
