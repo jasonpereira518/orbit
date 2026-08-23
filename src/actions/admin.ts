@@ -4,7 +4,7 @@ import { desc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getDb } from "@/db";
-import { adminAuditLog, contacts, userSettings } from "@/db/schema";
+import { adminAuditLog, userSettings } from "@/db/schema";
 import { requireAdminUserId } from "@/lib/admin";
 import * as ops from "@/lib/admin-operations";
 import { recordAdminAction } from "@/lib/admin-operations";
@@ -74,76 +74,6 @@ export async function setCompAction(input: {
   return { ok: true, plan: resolvePlan(row).plan };
 }
 
-export type RevealedContact = {
-  fullName: string;
-  email: string | null;
-  phone: string | null;
-  company: string | null;
-  title: string | null;
-  notes: string | null;
-  createdAt: Date;
-};
-
-/**
- * The deliberate escape hatch: reveal ONE contact record, for ONE page view.
- *
- * There is no "reveal all" toggle and no session-wide unmasking, by design. Every call
- * writes an audit row with a typed reason, which is what makes the privacy promise in the
- * inspector something Jason can state truthfully rather than aspirationally.
- */
-export async function revealContactAction(input: {
-  targetUserId: string;
-  contactId: string;
-  reason: string;
-}): Promise<RevealedContact> {
-  const adminUserId = await requireAdminUserId();
-
-  const reason = input.reason.trim();
-  if (reason.length < 4) {
-    throw new Error("Describe why this record needs to be revealed.");
-  }
-
-  const db = await getDb();
-  const row = await db.query.contacts.findFirst({
-    where: eq(contacts.id, input.contactId),
-    columns: {
-      userId: true,
-      fullName: true,
-      email: true,
-      phone: true,
-      company: true,
-      title: true,
-      notes: true,
-      createdAt: true,
-    },
-  });
-
-  if (!row || row.userId !== input.targetUserId) {
-    throw new Error("No such record.");
-  }
-
-  await recordAdminAction({
-    adminUserId,
-    action: "record.reveal",
-    targetUserId: input.targetUserId,
-    resourceType: "contact",
-    resourceId: input.contactId,
-    reason,
-  });
-
-  revalidatePath(`/admin/users/${input.targetUserId}`);
-
-  return {
-    fullName: row.fullName,
-    email: row.email,
-    phone: row.phone,
-    company: row.company,
-    title: row.title,
-    notes: row.notes,
-    createdAt: row.createdAt,
-  };
-}
-
 /** Audit history for one account, shown on their inspector page. */
 export async function getAuditTrail(targetUserId: string) {
   await requireAdminUserId();
@@ -175,38 +105,6 @@ function revalidateAdmin(targetUserId?: string) {
   revalidatePath("/admin/health");
   revalidatePath("/admin/billing");
   if (targetUserId) revalidatePath(`/admin/users/${targetUserId}`);
-}
-
-export type RevealGrantResult = { ok: true; grantId: string; expiresAt: string };
-
-/**
- * Unmask one account's contact and interaction content for a short window.
- *
- * `revealContactAction` above remains the one-record path. This is the "the import mangled
- * rows 300–400" tool, not a replacement for it.
- */
-export async function grantRevealAction(input: {
-  targetUserId: string;
-  reason: string;
-}): Promise<RevealGrantResult> {
-  const adminUserId = await requireAdminUserId();
-  const grant = await ops.grantReveal(adminUserId, input);
-  revalidatePath(`/admin/users/${input.targetUserId}`);
-  return {
-    ok: true,
-    grantId: grant.grantId,
-    expiresAt: grant.expiresAt.toISOString(),
-  };
-}
-
-/** Re-mask now, without waiting for the grant to age out. */
-export async function revokeRevealAction(input: {
-  targetUserId: string;
-}): Promise<{ ok: true; revoked: number }> {
-  const adminUserId = await requireAdminUserId();
-  const revoked = await ops.revokeReveal(adminUserId, input);
-  revalidatePath(`/admin/users/${input.targetUserId}`);
-  return { ok: true, revoked };
 }
 
 export async function retryImportAction(input: {
@@ -293,10 +191,4 @@ export async function deleteAccountAction(input: {
   await ops.deleteAccount(adminUserId, input);
   revalidateAdmin();
   return { ok: true };
-}
-
-/** Banner state for the inspector. Never returns a grant object. */
-export async function getActiveRevealGrant(targetUserId: string) {
-  const adminUserId = await requireAdminUserId();
-  return ops.getActiveRevealGrantFor(adminUserId, targetUserId);
 }

@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS user_settings (
   anthropic_api_key_encrypted text,
   ai_model text DEFAULT 'gemini-3.5-flash',
   onboarding_completed_at timestamptz,
+  first_name text,
+  last_name text,
+  profile_image_url text,
   comped_plan text,
   lifetime_purchased_at timestamptz,
   stripe_customer_id text,
@@ -481,15 +484,6 @@ CREATE INDEX IF NOT EXISTS error_events_created_idx ON error_events(created_at);
 CREATE INDEX IF NOT EXISTS error_events_source_created_idx ON error_events(source, created_at);
 CREATE INDEX IF NOT EXISTS error_events_user_created_idx ON error_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action, created_at);
-CREATE TABLE IF NOT EXISTS admin_reveal_grants (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  admin_user_id text NOT NULL,
-  target_user_id text NOT NULL,
-  reason text NOT NULL,
-  expires_at timestamptz NOT NULL,
-  revoked_at timestamptz,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -978,6 +972,13 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "comped_by", "text");
   await ensureColumn(client, "user_settings", "last_active_at", "timestamptz");
 
+  // Clerk identity mirror. Columns rather than a new table, so they ride along on every
+  // query that already reads `user_settings` — the admin roster gets a display name and an
+  // avatar for zero extra round trips.
+  await ensureColumn(client, "user_settings", "first_name", "text");
+  await ensureColumn(client, "user_settings", "last_name", "text");
+  await ensureColumn(client, "user_settings", "profile_image_url", "text");
+
   // `query` rather than `exec`: it returns `{ rows }`, which `rowsOf` understands, so the
   // schema-version SELECT reads the same on both drivers. Every statement here is a single
   // command, which is what `query` requires.
@@ -986,9 +987,9 @@ async function migratePglite(client: PGlite) {
 
 /**
 
-  // Admin console v2: operator suspension, plus the reveal-grant table and the indexes the
-  // cross-user roster/trend queries need. Same reasoning as the block above — the DDL
-  // template only helps a database that does not have `user_settings` yet.
+  // Admin console v2: operator suspension, plus the indexes the cross-user roster/trend
+  // queries need. Same reasoning as the block above — the DDL template only helps a
+  // database that does not have `user_settings` yet.
   await ensureColumn(client, "user_settings", "suspended_at", "timestamptz");
   await ensureColumn(client, "user_settings", "suspended_reason", "text");
   await ensureColumn(client, "user_settings", "suspended_by", "text");
@@ -1011,17 +1012,6 @@ async function migratePglite(client: PGlite) {
  * error-triage screen only ever reads that slice.
  */
 const ADMIN_V2_STATEMENTS = [
-  `CREATE TABLE IF NOT EXISTS admin_reveal_grants (
-     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-     admin_user_id text NOT NULL,
-     target_user_id text NOT NULL,
-     reason text NOT NULL,
-     expires_at timestamptz NOT NULL,
-     revoked_at timestamptz,
-     created_at timestamptz NOT NULL DEFAULT now()
-   )`,
-  `CREATE INDEX IF NOT EXISTS admin_reveal_grants_lookup_idx ON admin_reveal_grants(admin_user_id, target_user_id, expires_at)`,
-  `CREATE INDEX IF NOT EXISTS admin_reveal_grants_target_idx ON admin_reveal_grants(target_user_id)`,
   `CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action, created_at)`,
   `CREATE INDEX IF NOT EXISTS imports_user_created_idx ON imports(user_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS imports_status_updated_idx ON imports(status, updated_at)`,
@@ -1171,6 +1161,9 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_by text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_active_at timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS first_name text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_name text`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS profile_image_url text`,
     `CREATE INDEX IF NOT EXISTS usage_events_user_created_idx ON usage_events(user_id, created_at)`,
     `CREATE INDEX IF NOT EXISTS usage_events_created_idx ON usage_events(created_at)`,
     `CREATE INDEX IF NOT EXISTS usage_events_model_idx ON usage_events(provider, model)`,

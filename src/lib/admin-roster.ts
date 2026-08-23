@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { resolvePlan, type Plan, type PlanSource } from "@/lib/entitlements";
 import type { AdminUserRow } from "@/lib/admin-metrics";
+import { PRESENCE_WINDOW_MS } from "@/lib/presence-window";
 
 /**
  * The paginated roster query.
@@ -38,6 +39,7 @@ export type RosterPlanFilter = "all" | "free" | "orbit" | "lifetime" | "comped";
 
 export type RosterStateFilter =
   | "all"
+  | "live"
   | "no-key"
   | "past-due"
   | "inactive"
@@ -81,7 +83,10 @@ const ORDER_BY: Record<RosterSort, string> = {
   contacts: "agg.contacts",
   interactions: "agg.interactions",
   ai: "agg.ai_calls",
-  email: "lower(coalesce(s.email, s.user_id))",
+  // Sorts by what the Account column *displays* — name, then email, then id. A sort order
+  // that disagrees with the visible text reads as a bug every single time.
+  email:
+    "lower(coalesce(nullif(btrim(coalesce(s.first_name, '') || ' ' || coalesce(s.last_name, '')), ''), s.email, s.user_id))",
 };
 
 const DEFAULT_SORT_DIR: Record<RosterSort, "asc" | "desc"> = {
@@ -126,6 +131,9 @@ const HAS_PROVIDER_KEY_SQL = `
 type RosterRecord = {
   user_id: string;
   email: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  profile_image_url: string | null;
   created_at: string | Date;
   last_active_at: string | Date | null;
   onboarding_completed_at: string | Date | null;
@@ -199,6 +207,9 @@ function toRow(record: RosterRecord): AdminUserRow {
   return {
     userId: record.user_id,
     email: record.email,
+    firstName: record.first_name,
+    lastName: record.last_name,
+    imageUrl: record.profile_image_url,
     plan,
     planSource: source,
     compedNote: record.comped_note,
@@ -247,7 +258,10 @@ function buildPredicates(query: RosterQuery) {
     // pasting a Clerk id — whole or partial — is the most common way this box gets used.
     const prefix = `${q.toLowerCase()}%`;
     parts.push(
-      sql`(lower(coalesce(s.email, '')) LIKE ${prefix} OR lower(s.user_id) LIKE ${prefix})`
+      sql`(lower(coalesce(s.email, '')) LIKE ${prefix}
+           OR lower(s.user_id) LIKE ${prefix}
+           OR lower(coalesce(s.first_name, '')) LIKE ${prefix}
+           OR lower(coalesce(s.last_name, '')) LIKE ${prefix})`
     );
   }
 
@@ -259,6 +273,14 @@ function buildPredicates(query: RosterQuery) {
   }
 
   switch (query.state ?? "all") {
+    case "live":
+      // Interpolated as an interval rather than compared against a JS `now`: the cutoff has
+      // to be evaluated by the database at query time, or a cached render would filter
+      // against whenever the page was built.
+      parts.push(
+        sql`s.last_active_at > now() - make_interval(secs => ${PRESENCE_WINDOW_MS / 1000})`
+      );
+      break;
     case "no-key":
       parts.push(sql`NOT (${sql.raw(HAS_PROVIDER_KEY_SQL)})`);
       break;
@@ -335,6 +357,7 @@ function rosterSql(query: RosterQuery, limit: number, offset: number) {
     )
     SELECT
       s.user_id, s.email, s.created_at, s.last_active_at,
+      s.first_name, s.last_name, s.profile_image_url,
       s.onboarding_completed_at, s.wizard_completed_at,
       s.ai_provider, s.ai_model,
       (${sql.raw(HAS_PROVIDER_KEY_SQL)}) AS has_provider_key,

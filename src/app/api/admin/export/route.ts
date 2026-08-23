@@ -111,6 +111,8 @@ async function buildDataset(
     const rows = roster.map((r) => ({
       user_id: r.userId,
       email: r.email ?? "",
+      first_name: r.firstName ?? "",
+      last_name: r.lastName ?? "",
       plan: r.plan,
       plan_source: r.planSource,
       suspended_at: iso(r.suspendedAt),

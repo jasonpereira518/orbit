@@ -1,9 +1,10 @@
 /**
  * Guards the one path that takes data *out* of the console.
  *
- * The reveal grant is a licence to look at one account for fifteen minutes. Export is
- * forever and leaves the building, so the two must never meet: the assertion that matters
- * here is that a live grant changes nothing about what an export contains.
+ * Viewing an account is reversible and stays on one screen; an export is forever and
+ * leaves the building. So the export path is account-level only, and the assertion that
+ * matters here is that no third-party contact data can reach it — no matter what the
+ * inspector is willing to render.
  *
  * Run: npx tsx scripts/smoke-admin-export.ts
  */
@@ -17,13 +18,11 @@ import Papa from "papaparse";
 import { getDb } from "../src/db";
 import {
   adminAuditLog,
-  adminRevealGrants,
   contacts,
   interactions,
   userSettings,
 } from "../src/db/schema";
 import { assertNoForbiddenValues } from "../src/lib/admin-redaction";
-import { createRevealGrant } from "../src/lib/admin-reveal";
 import { loadAdminRosterAll } from "../src/lib/admin-roster";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
@@ -49,7 +48,6 @@ async function cleanup() {
   const db = await getDb();
   await db.delete(interactions).where(inArray(interactions.userId, [USER]));
   await db.delete(contacts).where(inArray(contacts.userId, [USER]));
-  await db.delete(adminRevealGrants).where(like(adminRevealGrants.targetUserId, `${PREFIX}%`));
   await db.delete(adminAuditLog).where(like(adminAuditLog.targetUserId, `${PREFIX}%`));
   await db.delete(userSettings).where(inArray(userSettings.userId, [USER, ADMIN]));
 }
@@ -100,19 +98,15 @@ async function main() {
     keys.join(",")
   );
 
-  /* --------------------------------------- a live grant does not change what is exported */
+  /* ----------------------------------------- the export shape carries no contact identity */
 
-  const before = JSON.stringify(await loadAdminRosterAll({ q: PREFIX }));
-  await createRevealGrant({
-    adminUserId: ADMIN,
-    targetUserId: USER,
-    reason: "a grant that must not reach the export path",
-  });
-  const after = JSON.stringify(await loadAdminRosterAll({ q: PREFIX }));
-
-  check("a live reveal grant changes nothing about the export", before === after);
-  assertNoForbiddenValues(JSON.parse(after), FORBIDDEN);
-  console.log("  ok  export stays grant-blind while a grant is live");
+  const exported = await loadAdminRosterAll({ q: PREFIX });
+  assertNoForbiddenValues(exported, FORBIDDEN);
+  check(
+    "the export is account-level: no contact names, emails or phone numbers",
+    !JSON.stringify(exported).toLowerCase().includes("contactname")
+  );
+  console.log("  ok  export carries account columns only");
 
   /* ------------------------------------------------------------- CSV round-trips cleanly */
 

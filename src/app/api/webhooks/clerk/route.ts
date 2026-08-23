@@ -5,6 +5,7 @@ import {
   ensureUserSettings,
   setSubscriptionState,
   setUserEmail,
+  setUserIdentity,
 } from "@/lib/user-settings";
 import { ORBIT_PLAN_SLUG } from "@/lib/entitlements";
 import {
@@ -102,6 +103,14 @@ export async function POST(req: NextRequest) {
       if (userId) {
         await ensureUserSettings(userId);
         await setUserEmail(userId, primaryEmail(evt.data));
+        // Name and avatar arrive in this same payload, so mirroring them costs nothing
+        // beyond the write — and it is what lets the admin roster show a person rather
+        // than a `user_2abc…` id without ever calling the Clerk API.
+        await setUserIdentity(userId, {
+          firstName: evt.data.first_name,
+          lastName: evt.data.last_name,
+          imageUrl: evt.data.image_url,
+        });
         result = { outcome: "handled", targetUserId: userId, resourceId: userId };
       } else {
         result = { outcome: "ignored", reason: WEBHOOK_REASONS.missingUserId };

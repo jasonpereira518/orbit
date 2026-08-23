@@ -19,7 +19,6 @@ import { and, eq, inArray, like } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
   adminAuditLog,
-  adminRevealGrants,
   calendarSubscriptions,
   chatMessages,
   chatThreads,
@@ -80,7 +79,6 @@ async function cleanup() {
   await db.delete(calendarSubscriptions).where(inArray(calendarSubscriptions.userId, IDS));
   await db.delete(gmailConnections).where(inArray(gmailConnections.userId, IDS));
   await db.delete(outlookConnections).where(inArray(outlookConnections.userId, IDS));
-  await db.delete(adminRevealGrants).where(like(adminRevealGrants.targetUserId, `${PREFIX}%`));
   await db.delete(adminAuditLog).where(like(adminAuditLog.targetUserId, `${PREFIX}%`));
   await db.delete(userSettings).where(inArray(userSettings.userId, IDS));
 }
@@ -362,27 +360,30 @@ async function main() {
   );
   check("disable writes an audit row", (await auditRows("calendar.disable")).length === 1);
 
-  /* -------------------------------------------------------------------- reveal grants */
+  /* --------------------------------------------------------------------- account view */
 
-  const grant = await actions.grantReveal(ADMIN, {
-    targetUserId: TARGET,
-    reason: "investigating a mangled import",
-  });
+  // What is left of the reveal gate. The operator no longer justifies a look, but the look
+  // is still recorded — and the throttle is the part worth testing, because the inspector
+  // re-renders on every mutation and an unthrottled insert would bury the audit log in
+  // duplicate view rows.
+  await actions.recordAccountView(ADMIN, TARGET);
+  check("opening an account writes an audit row", (await auditRows("account.view")).length === 1);
+
+  await actions.recordAccountView(ADMIN, TARGET);
   check(
-    "grant returns an id and expiry",
-    Boolean(grant.grantId) && grant.expiresAt instanceof Date
+    "a second view inside the hour writes no second row",
+    (await auditRows("account.view")).length === 1
   );
-  check("grant writes an audit row", (await auditRows("reveal.grant")).length === 1);
 
-  const revoked = await actions.revokeReveal(ADMIN, { targetUserId: TARGET });
-  check("revoke closes the grant", revoked === 1);
-  check("revoke writes an audit row", (await auditRows("reveal.revoke")).length === 1);
-
-  const noop = await actions.revokeReveal(ADMIN, { targetUserId: TARGET });
-  check("revoking nothing is a no-op", noop === 0);
+  // Two hours on, it is a new session rather than the same page being refreshed.
+  await actions.recordAccountView(
+    ADMIN,
+    TARGET,
+    new Date(Date.now() + 2 * 60 * 60 * 1000)
+  );
   check(
-    "a no-op revoke writes no audit row",
-    (await auditRows("reveal.revoke")).length === 1
+    "a view outside the window writes a fresh row",
+    (await auditRows("account.view")).length === 2
   );
 
   /* -------------------------------------------------------------------------- deletion */
