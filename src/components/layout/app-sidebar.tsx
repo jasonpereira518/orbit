@@ -121,7 +121,9 @@ export function AppSidebar({
           />
         ))}
 
-        <div className="mt-2">
+        {/* `mt-auto` drops Settings to the foot of the nav, clear of Extras;
+            `pt-2` keeps a gap when a short viewport leaves no slack to eat. */}
+        <div className="mt-auto pt-2">
           <SidebarNavLink
             item={APP_NAV_SETTINGS}
             pathname={pathname}
