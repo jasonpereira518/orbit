@@ -11,13 +11,24 @@ import { PlanComparison } from "@/components/pricing/plan-comparison";
 import { PricingFaq } from "@/components/pricing/pricing-faq";
 import { PricingTiers } from "@/components/pricing/pricing-tiers";
 import { getEntitlements } from "@/lib/entitlements";
-import { FREE_CONTACT_LIMIT, type Plan } from "@/lib/plan-limits";
+import {
+  FREE_CONTACT_LIMIT,
+  LIFETIME_INTRO_PRICE,
+  LIFETIME_INTRO_SEATS,
+  LIFETIME_STANDARD_PRICE,
+  type Plan,
+} from "@/lib/plan-limits";
+import { MONTHLY_AMOUNT } from "@/lib/plan-copy";
 import { isStripeConfigured } from "@/lib/stripe";
+import { lifetimeOffer } from "@/lib/lifetime-offer";
 import { isClerkConfigured, isDemoMode } from "@/lib/auth";
 
 export const metadata: Metadata = {
   title: "Pricing — Orbit",
-  description: `Orbit is free for your first ${FREE_CONTACT_LIMIT} contacts. $5 a month for unlimited, or $25 once for Orbit Lifetime.`,
+  // Static, so it cannot consult the live sale count. It therefore states the introductory
+  // price as introductory rather than as the price — accurate whichever side of the
+  // threshold a crawler reads it on.
+  description: `Orbit is free for your first ${FREE_CONTACT_LIMIT} contacts. $${MONTHLY_AMOUNT} a month for unlimited, or Orbit Lifetime once — $${LIFETIME_INTRO_PRICE} introductory, $${LIFETIME_STANDARD_PRICE} after the first ${LIFETIME_INTRO_SEATS} buyers.`,
 };
 
 const HEADING =
@@ -53,6 +64,11 @@ export default async function PricingPage() {
   // with a plan would put "Your current plan" under a "Get Started" button.
   const { userId } = clerkOn ? await auth() : { userId: null };
   const signedIn = Boolean(userId);
+
+  // What Lifetime costs today. Read from the sale count rather than hardcoded, so the
+  // struck-through comparison stops being shown the moment it stops being true — a
+  // permanent "was $49" beside a price that is simply $25 is a fake discount.
+  const offer = await lifetimeOffer();
 
   const currentPlan = await (async (): Promise<Plan | null> => {
     if (!userId) return null;
@@ -115,6 +131,10 @@ export default async function PricingPage() {
             currentPlan={currentPlan}
             signedIn={signedIn}
             lifetimePurchasable={lifetimePurchasable}
+            lifetimeOffer={{
+              priceUsd: offer.priceUsd,
+              compareAtUsd: offer.compareAtUsd,
+            }}
           />
         </Reveal>
 

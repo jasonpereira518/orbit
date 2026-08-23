@@ -9,7 +9,7 @@ import { PlanPriceDisplay } from "@/components/pricing/plan-price";
 import { cn } from "@/lib/utils";
 import {
   ANNUAL_SAVING_PERCENT,
-  PLAN_COPY,
+  planCopyWithOffer,
   type BillingPeriod,
 } from "@/lib/plan-copy";
 import { type Plan } from "@/lib/plan-limits";
@@ -81,6 +81,7 @@ function TierCta({
   currentPlan,
   signedIn,
   lifetimePurchasable,
+  lifetimePriceUsd,
   period,
 }: {
   planId: Plan;
@@ -88,6 +89,7 @@ function TierCta({
   signedIn: boolean;
   /** Stripe is configured, so checkout can actually complete. */
   lifetimePurchasable: boolean;
+  lifetimePriceUsd: number;
   period: BillingPeriod;
 }) {
   const base =
@@ -143,7 +145,7 @@ function TierCta({
       );
     }
 
-    return <LifetimeCheckoutButton />;
+    return <LifetimeCheckoutButton priceUsd={lifetimePriceUsd} />;
   }
 
   if (planId === "free") {
@@ -227,19 +229,27 @@ export function PricingTiers({
   currentPlan,
   signedIn,
   lifetimePurchasable,
+  lifetimeOffer,
 }: {
   currentPlan: Plan | null;
   signedIn: boolean;
   lifetimePurchasable: boolean;
+  /**
+   * Resolved on the server from the live sale count, because Lifetime's price rises after
+   * the introductory buyers. Passed in rather than read here so this stays a client
+   * component; the shape is deliberately minimal for the same reason.
+   */
+  lifetimeOffer: { priceUsd: number; compareAtUsd: number | null };
 }) {
   const [period, setPeriod] = useState<BillingPeriod>("monthly");
+  const plans = planCopyWithOffer(lifetimeOffer);
 
   return (
     <div className="space-y-10">
       <BillingToggle period={period} onChange={setPeriod} />
 
       <div className="grid items-start gap-5 lg:grid-cols-3 lg:gap-6">
-        {PLAN_COPY.map((plan) => {
+        {plans.map((plan) => {
           const accent = TIER_ACCENT[plan.id];
           const price = plan.price[period];
 
@@ -320,6 +330,7 @@ export function PricingTiers({
                   currentPlan={currentPlan}
                   signedIn={signedIn}
                   lifetimePurchasable={lifetimePurchasable}
+                  lifetimePriceUsd={lifetimeOffer.priceUsd}
                   period={period}
                 />
               </div>

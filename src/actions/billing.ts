@@ -10,6 +10,7 @@ import {
   isStripeConfigured,
 } from "@/lib/stripe";
 import { getAppBaseUrl } from "@/lib/app-url";
+import { lifetimeOffer } from "@/lib/lifetime-offer";
 
 export type CheckoutResult = { url: string } | { error: string };
 
@@ -26,6 +27,12 @@ export async function startLifetimeCheckout(): Promise<CheckoutResult> {
     return { error: "Lifetime isn't on sale yet. Check back shortly." };
   }
 
+  // The SAME resolution the pricing page renders from. Reading the price id here
+  // independently is what would let the page advertise one number while checkout charges
+  // another — the failure mode worth engineering against, because it is the one that
+  // turns a stale string into a consumer-protection problem.
+  const offer = await lifetimeOffer();
+
   const entitlements = await getEntitlements(userId);
   if (entitlements.plan === "lifetime") {
     return { error: "You already have Orbit Lifetime." };
@@ -37,7 +44,7 @@ export async function startLifetimeCheckout(): Promise<CheckoutResult> {
   try {
     const session = await getStripe().checkout.sessions.create({
       mode: "payment",
-      line_items: [{ price: LIFETIME_PRICE_ID, quantity: 1 }],
+      line_items: [{ price: offer.stripePriceId ?? LIFETIME_PRICE_ID, quantity: 1 }],
       // How the webhook knows who paid. Checkout collects its own email, which need not
       // match the Orbit account, so the Clerk id is the only reliable link.
       client_reference_id: userId,

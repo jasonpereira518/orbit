@@ -10,6 +10,11 @@ import { getLifetimeAvailability } from "@/actions/billing";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements, ORBIT_PLAN_SLUG } from "@/lib/entitlements";
 import { planCopy } from "@/lib/plan-copy";
+import { lifetimeOffer } from "@/lib/lifetime-offer";
+import {
+  LIFETIME_INTRO_SEATS,
+  LIFETIME_STANDARD_PRICE,
+} from "@/lib/plan-limits";
 import { isClerkConfigured } from "@/lib/auth";
 
 export const metadata: Metadata = {
@@ -33,9 +38,12 @@ export default async function UpgradePage({
   // Protected by proxy.ts, but resolved here too so the page never renders without a user
   // to attribute a purchase to.
   const userId = await requireUserId();
-  const [entitlements, lifetime, params] = await Promise.all([
+  const [entitlements, lifetime, offer, params] = await Promise.all([
     getEntitlements(userId),
     getLifetimeAvailability(),
+    // The same resolution `/pricing` and `startLifetimeCheckout` use, so all three name
+    // one price.
+    lifetimeOffer(),
     searchParams,
   ]);
 
@@ -138,10 +146,24 @@ export default async function UpgradePage({
                 <>
                   <p className="flex items-baseline gap-1.5">
                     <span className="font-[family-name:var(--font-display)] text-[34px] leading-none tracking-tight text-[#e8f3f1]">
-                      $25
+                      ${offer.priceUsd}
                     </span>
+                    {/* Shown only while the introductory price is actually in effect. A
+                        permanent "was $49" beside a price that is simply $25 is a fake
+                        discount, not a design flourish. */}
+                    {offer.compareAtUsd && (
+                      <span className="text-base leading-none text-[#9aada8]/70 line-through decoration-[#9aada8]/60">
+                        ${offer.compareAtUsd}
+                      </span>
+                    )}
                     <span className="text-sm text-[#9aada8]">once</span>
                   </p>
+                  {offer.introRemaining !== null && (
+                    <p className="mt-1.5 text-sm text-[#f2c14e]">
+                      Introductory price for the first {LIFETIME_INTRO_SEATS} buyers, then
+                      ${LIFETIME_STANDARD_PRICE}. Lifetime itself never sells out.
+                    </p>
+                  )}
                   <p className="mt-3 max-w-[58ch] text-sm leading-relaxed text-[#9aada8]">
                     Unlimited contacts, outreach with email and SMS sending,
                     recruiter tracking, mailbox and calendar sync, and the
@@ -152,7 +174,7 @@ export default async function UpgradePage({
 
                   <div className="mt-5">
                     {lifetime.purchasable ? (
-                      <LifetimeCheckoutButton />
+                      <LifetimeCheckoutButton priceUsd={offer.priceUsd} />
                     ) : (
                       <p className="rounded-xl border border-dashed border-[#f2c14e]/35 px-4 py-3 text-center text-sm text-[#f2c14e]">
                         Not on sale yet
