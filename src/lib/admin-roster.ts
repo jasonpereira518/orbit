@@ -152,6 +152,7 @@ type RosterRecord = {
   out_tokens: string | number;
   cost_micros: string | number;
   first_interaction_at: string | Date | null;
+  first_contact_at: string | Date | null;
   last_write_at: string | Date | null;
   total_count: string | number;
 };
@@ -227,6 +228,7 @@ function toRow(record: RosterRecord): AdminUserRow {
     aiTokens: { input: num(record.in_tokens), output: num(record.out_tokens) },
     estimatedCostMicros: num(record.cost_micros),
     firstInteractionAt: toDate(record.first_interaction_at),
+    firstContactAt: toDate(record.first_contact_at),
   };
 }
 
@@ -299,24 +301,26 @@ function rosterSql(query: RosterQuery, limit: number, offset: number) {
         max(u.out_tokens)        AS out_tokens,
         max(u.cost_micros)       AS cost_micros,
         max(u.first_interaction_at) AS first_interaction_at,
+        max(u.first_contact_at)  AS first_contact_at,
         max(u.last_write_at)     AS last_write_at
       FROM (
         SELECT user_id, count(*)::int AS contacts, 0 AS interactions, 0 AS imports,
                0 AS chat_messages, 0 AS ai_calls, 0::bigint AS ai_failures,
                0::bigint AS in_tokens, 0::bigint AS out_tokens, 0::bigint AS cost_micros,
-               NULL::timestamptz AS first_interaction_at, max(created_at) AS last_write_at
+               NULL::timestamptz AS first_interaction_at,
+               min(created_at) AS first_contact_at, max(created_at) AS last_write_at
         FROM contacts GROUP BY user_id
         UNION ALL
         SELECT user_id, 0, count(*)::int, 0, 0, 0, 0::bigint, 0::bigint, 0::bigint,
-               0::bigint, min(created_at), max(created_at)
+               0::bigint, min(created_at), NULL::timestamptz, max(created_at)
         FROM interactions GROUP BY user_id
         UNION ALL
         SELECT user_id, 0, 0, count(*)::int, 0, 0, 0::bigint, 0::bigint, 0::bigint,
-               0::bigint, NULL::timestamptz, max(created_at)
+               0::bigint, NULL::timestamptz, NULL::timestamptz, max(created_at)
         FROM imports GROUP BY user_id
         UNION ALL
         SELECT user_id, 0, 0, 0, count(*)::int, 0, 0::bigint, 0::bigint, 0::bigint,
-               0::bigint, NULL::timestamptz, max(created_at)
+               0::bigint, NULL::timestamptz, NULL::timestamptz, max(created_at)
         FROM chat_messages GROUP BY user_id
         UNION ALL
         SELECT user_id, 0, 0, 0, 0, count(*)::int,
@@ -324,7 +328,7 @@ function rosterSql(query: RosterQuery, limit: number, offset: number) {
                coalesce(sum(input_tokens), 0),
                coalesce(sum(output_tokens), 0),
                coalesce(sum(estimated_cost_micros), 0),
-               NULL::timestamptz, max(created_at)
+               NULL::timestamptz, NULL::timestamptz, max(created_at)
         FROM usage_events GROUP BY user_id
       ) u
       GROUP BY u.user_id
@@ -347,6 +351,7 @@ function rosterSql(query: RosterQuery, limit: number, offset: number) {
       coalesce(agg.out_tokens, 0)    AS out_tokens,
       coalesce(agg.cost_micros, 0)   AS cost_micros,
       agg.first_interaction_at,
+      agg.first_contact_at,
       agg.last_write_at,
       count(*) OVER () AS total_count
     FROM user_settings s

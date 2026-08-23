@@ -24,6 +24,15 @@ import {
   RetryImportButton,
 } from "@/components/admin/health-actions";
 import { getAdminHealth } from "@/lib/admin-health";
+import {
+  getBugSignatures,
+  getCronHealth,
+  getErrorEventSummary,
+  getOutreachQueueHealth,
+  getWebhookHealth,
+} from "@/lib/admin-system";
+import { SystemStrip } from "@/components/admin/system-strip";
+import { CodeDetail, MiniBars } from "@/components/admin/primitives";
 
 export const metadata = { title: "Admin · Health" };
 
@@ -38,7 +47,18 @@ export const metadata = { title: "Admin · Health" };
  * fixes it. A triage screen you cannot act on from is a list nobody comes back to.
  */
 export default async function AdminHealthPage() {
-  const health = await getAdminHealth();
+  // `getAdminHealth` answers "what is broken for an account". Everything below answers
+  // "what is broken about Orbit" — no person to name, no button to press, which is
+  // precisely why none of it was visible before. Each degrades independently so this page
+  // still renders if one instrumentation table is missing.
+  const [health, cron, webhooks, errors, outreach, bugs] = await Promise.all([
+    getAdminHealth(),
+    getCronHealth().catch(() => null),
+    getWebhookHealth().catch(() => null),
+    getErrorEventSummary().catch(() => null),
+    getOutreachQueueHealth().catch(() => null),
+    getBugSignatures().catch(() => null),
+  ]);
 
   const inspector = (userId: string) =>
     `/admin/users/${encodeURIComponent(userId)}`;
@@ -78,6 +98,48 @@ export default async function AdminHealthPage() {
             Export CSV
           </a>
         }
+      />
+
+      <SystemStrip
+        items={[
+          {
+            label: "Nightly job",
+            value: !cron?.lastRun
+              ? "no runs recorded"
+              : cron.missed
+                ? "has not run in over a day"
+                : cron.lastRun.state,
+            tone: !cron?.lastRun || cron.missed
+              ? "danger"
+              : cron.lastRun.state === "ok"
+                ? "ok"
+                : "warn",
+          },
+          {
+            label: "Overdue sends",
+            value: outreach ? `${outreach.overdue}` : "—",
+            tone: outreach && outreach.overdue > 0 ? "warn" : "ok",
+          },
+          {
+            label: "Webhooks (7d)",
+            value: webhooks
+              ? webhooks.byOutcome.map((o) => `${o.count} ${o.outcome}`).join(" · ") || "none"
+              : "not instrumented",
+            tone: webhooks?.byOutcome.some(
+              (o) => o.outcome === "invalid" || o.outcome === "error"
+            )
+              ? "danger"
+              : "ok",
+          },
+          {
+            label: "Search index",
+            value:
+              !bugs || bugs.embeddingsMissingVector === null
+                ? "pgvector unavailable"
+                : `${bugs.embeddingsMissingVector} unindexed`,
+            tone: bugs?.embeddingsMissingVector ? "warn" : "ok",
+          },
+        ]}
       />
 
       <div className="space-y-6">
@@ -372,6 +434,207 @@ export default async function AdminHealthPage() {
             </AdminTable>
           )}
         </AdminPanel>
+
+        <div className="grid gap-6 lg:grid-cols-2">
+          <AdminPanel title="Nightly job">
+            {/* Nothing recorded cron runs before this, so "did it fire last night?" had no
+                answer — and the import backstop below silently depends on it. */}
+            {!cron || cron.recent.length === 0 ? (
+              <EmptyState>
+                No runs recorded yet. The ledger starts at the next midnight run.
+              </EmptyState>
+            ) : (
+              <AdminTable
+                head={
+                  <>
+                    <Th>Started</Th>
+                    <Th>State</Th>
+                    <Th numeric>Took</Th>
+                    <Th>Result</Th>
+                  </>
+                }
+              >
+                {cron.recent.map((run) => (
+                  <tr key={run.id} className="border-b border-border/40 last:border-b-0">
+                    <Td className="text-muted-foreground">
+                      <RelativeTime date={run.startedAt} /> ago
+                    </Td>
+                    <Td
+                      className={
+                        run.state === "failed" || run.state === "stale"
+                          ? "text-destructive"
+                          : run.state === "partial"
+                            ? "text-accent-foreground"
+                            : undefined
+                      }
+                    >
+                      {run.state}
+                    </Td>
+                    <Td numeric>
+                      {run.durationMs === null
+                        ? "—"
+                        : `${Math.round(run.durationMs / 1000)}s`}
+                    </Td>
+                    <Td className="text-xs text-muted-foreground">
+                      {run.error ||
+                        Object.entries(run.stats)
+                          .filter(([, v]) => typeof v === "number" && v > 0)
+                          .map(([k, v]) => `${k} ${v}`)
+                          .join(" · ") ||
+                        "nothing to do"}
+                    </Td>
+                  </tr>
+                ))}
+              </AdminTable>
+            )}
+          </AdminPanel>
+
+          <AdminPanel title="Queued work nothing will drain">
+            {!outreach ? (
+              <EmptyState>Not instrumented yet.</EmptyState>
+            ) : (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <MetricTile
+                    label="Overdue sends"
+                    value={outreach.overdue}
+                    tone={outreach.overdue > 0 ? "danger" : "default"}
+                    hint={
+                      outreach.oldestOverdueDays !== null
+                        ? `oldest ${outreach.oldestOverdueDays}d`
+                        : undefined
+                    }
+                  />
+                  <MetricTile
+                    label="Not yet due"
+                    value={outreach.notYetDue}
+                    tone="muted"
+                    hint={`across ${outreach.accounts} account${outreach.accounts === 1 ? "" : "s"}`}
+                  />
+                </div>
+                <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+                  Scheduled outreach has no runner. It drains only when the owning user
+                  opens that campaign, so overdue messages accumulate silently.
+                </p>
+              </>
+            )}
+          </AdminPanel>
+        </div>
+
+        <div className="grid gap-6 lg:grid-cols-2">
+          <AdminPanel title="Failures that used to vanish">
+            {!errors ? (
+              <EmptyState>Not instrumented yet.</EmptyState>
+            ) : errors.grouped.length === 0 ? (
+              <EmptyState>Nothing has failed silently in the last 7 days.</EmptyState>
+            ) : (
+              <>
+                <MiniBars
+                  rows={errors.grouped.map((g) => ({
+                    label: `${g.source} · ${g.kind}`,
+                    count: g.count,
+                  }))}
+                />
+                <div className="mt-4 space-y-2 border-t border-border/60 pt-3">
+                  {errors.recent.slice(0, 5).map((e, i) => (
+                    <div key={i}>
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="font-mono text-xs">
+                          {e.source} · {e.kind}
+                        </span>
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          <RelativeTime date={e.at} /> ago
+                        </span>
+                      </div>
+                      <CodeDetail>{e.message}</CodeDetail>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </AdminPanel>
+
+          <AdminPanel title="Inbound webhooks (7 days)">
+            {!webhooks ? (
+              <EmptyState>Not instrumented yet.</EmptyState>
+            ) : webhooks.byOutcome.length === 0 ? (
+              <EmptyState>No deliveries recorded.</EmptyState>
+            ) : (
+              <>
+                <MiniBars
+                  rows={webhooks.byOutcome.map((o) => ({
+                    label: o.outcome,
+                    count: o.count,
+                  }))}
+                />
+                {webhooks.ignored.length > 0 && (
+                  <div className="mt-3 border-t border-border/60 pt-3">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                      Arrived but ignored
+                    </div>
+                    <ul className="mt-1.5 space-y-1 text-sm">
+                      {webhooks.ignored.map((r, i) => (
+                        <li key={i} className="flex justify-between gap-4">
+                          <span className="font-mono text-xs">
+                            {r.eventType ?? "—"} · {r.reason ?? "—"}
+                          </span>
+                          <span className="tabular-nums">{r.count}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {webhooks.retried.length > 0 && (
+                  <div className="mt-3 border-t border-border/60 pt-3">
+                    {/* Only countable because there is no unique index on the delivery id:
+                        a repeat means the handler kept failing and Svix kept retrying. */}
+                    <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-destructive">
+                      <AlertTriangle className="size-3" aria-hidden />
+                      Redelivered — the handler is failing
+                    </div>
+                    <ul className="mt-1.5 space-y-1 text-xs">
+                      {webhooks.retried.map((r) => (
+                        <li key={r.eventId} className="flex justify-between gap-4">
+                          <span className="truncate font-mono">{r.eventId}</span>
+                          <span className="tabular-nums">×{r.count}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
+            )}
+          </AdminPanel>
+        </div>
+
+        {bugs && (
+          <AdminPanel title="Known bug signatures">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <MetricTile
+                label="Confirmed, no reminder"
+                value={bugs.confirmedWithoutReminder}
+                tone={bugs.confirmedWithoutReminder > 0 ? "danger" : "muted"}
+                hint="a confirm that half-committed"
+              />
+              <MetricTile
+                label="Unindexed embeddings"
+                value={
+                  bugs.embeddingsMissingVector === null
+                    ? "—"
+                    : bugs.embeddingsMissingVector
+                }
+                tone={bugs.embeddingsMissingVector ? "danger" : "muted"}
+                hint="invisible to semantic search"
+              />
+              <MetricTile
+                label="Inlined avatars"
+                value={bugs.inlinedAvatars}
+                tone={bugs.inlinedAvatars > 0 ? "danger" : "muted"}
+                hint="base64 in Postgres — Blob unset"
+              />
+            </div>
+          </AdminPanel>
+        )}
       </div>
     </>
   );

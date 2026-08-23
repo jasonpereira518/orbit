@@ -683,7 +683,17 @@ export const gmailConnections = pgTable(
     refreshTokenEncrypted: text("refresh_token_encrypted"),
     tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
     scopes: text("scopes"),
-    status: text("status").default("active").notNull(),
+    /**
+     * Exactly two values. NOT "expired"/"revoked": disconnecting deletes the row, so a
+     * third value nothing ever writes would recreate the bug this replaced — the column
+     * was previously written only as "active", making every health check on it dead code.
+     *
+     * `needs_reauth` is written only on a token-level rejection (no refresh token, or the
+     * provider returning invalid_grant), never on a transport failure — a provider outage
+     * must not flag every account. Cleared by re-running OAuth, which is the only way back.
+     */
+    status: text("status").$type<"active" | "needs_reauth">().default("active").notNull(),
+    /** Last time this connection produced a usable access token. */
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -701,7 +711,17 @@ export const outlookConnections = pgTable(
     refreshTokenEncrypted: text("refresh_token_encrypted"),
     tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
     scopes: text("scopes"),
-    status: text("status").default("active").notNull(),
+    /**
+     * Exactly two values. NOT "expired"/"revoked": disconnecting deletes the row, so a
+     * third value nothing ever writes would recreate the bug this replaced — the column
+     * was previously written only as "active", making every health check on it dead code.
+     *
+     * `needs_reauth` is written only on a token-level rejection (no refresh token, or the
+     * provider returning invalid_grant), never on a transport failure — a provider outage
+     * must not flag every account. Cleared by re-running OAuth, which is the only way back.
+     */
+    status: text("status").$type<"active" | "needs_reauth">().default("active").notNull(),
+    /** Last time this connection produced a usable access token. */
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -837,6 +857,121 @@ export const adminAuditLog = pgTable(
     index("admin_audit_log_created_idx").on(t.createdAt),
     index("admin_audit_log_target_idx").on(t.targetUserId),
     index("admin_audit_log_action_idx").on(t.action, t.createdAt),
+  ]
+);
+
+/**
+ * One row per scheduled-job invocation.
+ *
+ * The row is written at START, not only at the end. Without that, "the cron never fired"
+ * and "the cron fired and died" are the same observation — no row — and they need
+ * completely different responses. A lambda killed at `maxDuration` never runs its
+ * `finally`, so an end-only write loses precisely the runs worth seeing.
+ *
+ * A crashed run therefore leaves `status='running'` forever; that is resolved on read by
+ * `deriveCronRunState`, not by a second cron watching the first.
+ */
+export const cronRuns = pgTable(
+  "cron_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    /** Dotted job id, same convention as `usage_events.operation`. */
+    job: text("job").notNull(),
+    status: text("status")
+      .$type<"running" | "ok" | "partial" | "failed">()
+      .default("running")
+      .notNull(),
+    trigger: text("trigger")
+      .$type<"schedule" | "manual">()
+      .default("schedule")
+      .notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    durationMs: integer("duration_ms"),
+    /** Job-specific counters. jsonb so a second cron needs no migration. */
+    stats: jsonb("stats").$type<Record<string, number | boolean>>().default({}).notNull(),
+    error: text("error"),
+  },
+  (t) => [
+    index("cron_runs_job_started_idx").on(t.job, t.startedAt),
+    index("cron_runs_started_idx").on(t.startedAt),
+  ]
+);
+
+/**
+ * One row per inbound webhook delivery, including the ones that are rejected or ignored.
+ *
+ * A silently dropped `subscriptionItem.*` event desyncs billing from `user_settings`, which
+ * every entitlement gate reads and nothing ever reconciles — so "an event arrived and
+ * nothing happened" has to be a recordable outcome, not an absence.
+ *
+ * Deliberately NO unique index on (source, event_id). Every handler is already idempotent,
+ * so a unique constraint would buy nothing and would destroy the retry count — and
+ * "this event was delivered six times" is the single most useful thing this table says.
+ */
+export const webhookDeliveries = pgTable(
+  "webhook_deliveries",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    source: text("source").default("clerk").notNull(),
+    /**
+     * The `svix-id` header. Clerk's event body carries no delivery id — `data.id` is the
+     * resource — and this header is stable across retries and readable before signature
+     * verification, which is what makes the rejection path recordable at all.
+     */
+    eventId: text("event_id"),
+    /** Null when verification failed: there is no trustworthy body to read a type from. */
+    eventType: text("event_type"),
+    outcome: text("outcome")
+      .$type<"handled" | "ignored" | "invalid" | "error">()
+      .notNull(),
+    /** Low-cardinality machine code, so this groups cleanly. See WEBHOOK_REASONS. */
+    reason: text("reason"),
+    targetUserId: text("target_user_id"),
+    /** `data.id` — the Clerk resource, not the delivery. */
+    resourceId: text("resource_id"),
+    detail: jsonb("detail").$type<Record<string, unknown>>().default({}).notNull(),
+    error: text("error"),
+    durationMs: integer("duration_ms"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("webhook_deliveries_created_idx").on(t.createdAt),
+    index("webhook_deliveries_event_idx").on(t.eventId),
+    index("webhook_deliveries_target_idx").on(t.targetUserId),
+    index("webhook_deliveries_type_created_idx").on(t.eventType, t.createdAt),
+  ]
+);
+
+/**
+ * Failures that would otherwise vanish into a `catch {}`.
+ *
+ * Scoped deliberately narrowly — see `src/lib/error-events.ts` for the closed list of
+ * call sites and, more importantly, the list of failures that must NOT be recorded here
+ * because they are already captured elsewhere. This is not a logging framework, and the
+ * moment it becomes one it should be replaced by a real one.
+ *
+ * `source` and `kind` are low-cardinality so both group cleanly; `message` is free text
+ * and can only ever appear in a most-recent list, never in a GROUP BY.
+ */
+export const errorEvents = pgTable(
+  "error_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    /** Dotted call-site id, e.g. "oauth.gmail.callback". */
+    source: text("source").notNull(),
+    kind: text("kind").notNull(),
+    /** Null when the failure has no user — config errors, unauthenticated callbacks. */
+    userId: text("user_id"),
+    /** Verbatim system output, truncated. Same class as `imports.error_message`. */
+    message: text("message"),
+    context: jsonb("context").$type<Record<string, unknown>>().default({}).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("error_events_created_idx").on(t.createdAt),
+    index("error_events_source_created_idx").on(t.source, t.createdAt),
+    index("error_events_user_created_idx").on(t.userId, t.createdAt),
   ]
 );
 
@@ -1022,4 +1157,7 @@ export type GmailConnection = typeof gmailConnections.$inferSelect;
 export type UsageEvent = typeof usageEvents.$inferSelect;
 export type NewUsageEvent = typeof usageEvents.$inferInsert;
 export type AdminAuditEntry = typeof adminAuditLog.$inferSelect;
+export type CronRun = typeof cronRuns.$inferSelect;
+export type WebhookDelivery = typeof webhookDeliveries.$inferSelect;
+export type ErrorEvent = typeof errorEvents.$inferSelect;
 export type AdminRevealGrantRow = typeof adminRevealGrants.$inferSelect;

@@ -8,6 +8,7 @@ import {
   contactEmbeddings,
   contactTags,
   contacts,
+  errorEvents,
   gmailConnections,
   imports,
   interactions,
@@ -22,6 +23,7 @@ import {
   userRecruiterLinks,
   userSettings,
 } from "@/db/schema";
+import { recomputeRecruiterRating } from "@/lib/recruiters";
 
 /**
  * Delete all Orbit data for a user (does not delete the Clerk account).
@@ -34,6 +36,16 @@ import {
  * not: both of its foreign keys are `on delete set null`, so its rows outlive the reminders
  * and contacts they point at. `outlook_connections` has no parent at all.
  *
+ * Deliberate exceptions — two operator ledgers are NOT deleted, and both use a column
+ * named something other than `user_id` to keep them out of the user-scoped sweep:
+ *   - `admin_audit_log.target_user_id`: the operator's own record of privileged actions he
+ *     took, chiefly comping a plan — which outranks every real billing signal and has no
+ *     other trace. Purging it would mean deleting an account erases the evidence.
+ *   - `webhook_deliveries.target_user_id`: the record of what Clerk actually sent,
+ *     including the `user.deleted` event driving this very call. Deleting it would erase
+ *     the evidence of the deletion itself.
+ * A Clerk id is inert once the account is gone. `error_events`, by contrast, is data about
+ * the user rather than about the operator, so it IS purged.
  * Deliberate exception: `admin_audit_log` rows referencing this user are NOT deleted.
  * That table is the operator's own record of privileged actions he took — chiefly comping
  * a plan, which outranks every real billing signal and has no other trace. Purging it here
@@ -57,10 +69,27 @@ export async function purgeUserData(userId: string) {
   await db.delete(calendarSubscriptions).where(eq(calendarSubscriptions.userId, userId));
   await db.delete(userGoals).where(eq(userGoals.userId, userId));
   await db.delete(chatThreads).where(eq(chatThreads.userId, userId));
+  // `recruiters.avg_rating` / `rating_count` / `log_count` are denormalized counters over
+  // `user_recruiter_links`, and nothing recomputes them on delete. Without this, every
+  // account deletion permanently inflates those counters on each recruiter the user had
+  // linked — the shared directory would drift further from the truth with each purge.
+  const linkedRecruiterIds = (
+    await db.query.userRecruiterLinks.findMany({
+      where: eq(userRecruiterLinks.userId, userId),
+      columns: { recruiterId: true },
+    })
+  ).map((l) => l.recruiterId);
+
   await db.delete(userRecruiterLinks).where(eq(userRecruiterLinks.userId, userId));
+
+  for (const recruiterId of new Set(linkedRecruiterIds)) {
+    // Best-effort: a stale counter must not block deleting someone's data.
+    await recomputeRecruiterRating(recruiterId).catch(() => {});
+  }
   await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
   await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
   await db.delete(usageEvents).where(eq(usageEvents.userId, userId));
+  await db.delete(errorEvents).where(eq(errorEvents.userId, userId));
 
   await db.delete(outreachCampaigns).where(eq(outreachCampaigns.userId, userId));
 

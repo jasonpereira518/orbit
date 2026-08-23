@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { decrypt } from "@/lib/crypto";
@@ -44,6 +45,16 @@ async function apolloFetch(
     lastResponse = response;
     const retryable = response.status === 429 || response.status >= 500;
     if (!retryable || attempt === APOLLO_MAX_ATTEMPTS - 1) {
+      // Only when retries were actually exhausted — a first-attempt 4xx is the caller's
+      // problem and is already surfaced to them.
+      if (retryable && attempt === APOLLO_MAX_ATTEMPTS - 1) {
+        await recordErrorEvent({
+          source: ERROR_SOURCES.apolloSearch,
+          kind: "retry_exhausted",
+          message: `Apollo returned ${response.status} after ${APOLLO_MAX_ATTEMPTS} attempts`,
+          context: { status: response.status, attempts: APOLLO_MAX_ATTEMPTS },
+        });
+      }
       return response;
     }
     const retryAfter = Number(response.headers.get("retry-after"));

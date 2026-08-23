@@ -3,7 +3,9 @@ import {
   AdminPanel,
   AdminTable,
   EmptyState,
+  MetricTile,
   MiniBars,
+  RelativeTime,
   Td,
   Th,
   TrendBars,
@@ -17,6 +19,13 @@ import {
   signupTrend,
   type Grain,
 } from "@/lib/admin-trends";
+import {
+  getAiOperationAdoption,
+  getArtifacts,
+  getDataQuality,
+  getFunnelParking,
+  getWaitlist,
+} from "@/lib/admin-product-health";
 
 export const metadata = { title: "Admin · Growth" };
 
@@ -41,15 +50,32 @@ export default async function AdminGrowthPage({
   const grain: Grain = params.grain === "month" ? "month" : "week";
   const buckets = grain === "month" ? 12 : 12;
 
-  const [signups, actives, activation, cohorts, adoption, aiVolume] =
-    await Promise.all([
-      signupTrend(grain, buckets),
-      activeTrend(grain, buckets),
-      activationTrend(grain, buckets),
-      retentionCohorts(6),
-      featureAdoption(),
-      aiVolumeTrend(grain, buckets),
-    ]);
+  const [
+    signups,
+    actives,
+    activation,
+    cohorts,
+    adoption,
+    aiVolume,
+    aiOps,
+    artifacts,
+    parking,
+    waitlist,
+    quality,
+  ] = await Promise.all([
+    signupTrend(grain, buckets),
+    activeTrend(grain, buckets),
+    activationTrend(grain, buckets),
+    retentionCohorts(6),
+    featureAdoption(),
+    aiVolumeTrend(grain, buckets),
+    getAiOperationAdoption(),
+    getArtifacts(),
+    getFunnelParking(),
+    // Waitlist rides on the webhook ledger, so it degrades on its own if that is absent.
+    getWaitlist().catch(() => null),
+    getDataQuality(),
+  ]);
 
   const label = (d: Date) =>
     grain === "month"
@@ -217,6 +243,165 @@ export default async function AdminGrowthPage({
             </p>
           </AdminPanel>
         </div>
+
+        <div className="grid gap-6 lg:grid-cols-2">
+          <AdminPanel title="AI operations used">
+            {/* Complements the table-level adoption above: this is per code path, so it can
+                show that nobody has ever run audio transcription or the Apollo enrichment. */}
+            {aiOps.adoption.length === 0 ? (
+              <EmptyState>No AI operations recorded in the last 30 days.</EmptyState>
+            ) : (
+              <AdminTable
+                head={
+                  <>
+                    <Th>Operation</Th>
+                    <Th numeric>Accounts</Th>
+                    <Th numeric>Calls</Th>
+                    <Th numeric>Failed</Th>
+                  </>
+                }
+              >
+                {aiOps.adoption.map((row) => (
+                  <tr key={row.operation} className="border-b border-border/40 last:border-b-0">
+                    <Td className="font-mono text-xs">{row.operation}</Td>
+                    <Td numeric>{row.users}</Td>
+                    <Td numeric className="text-muted-foreground">{row.calls}</Td>
+                    <Td
+                      numeric
+                      className={row.failures > 0 ? "text-destructive" : "text-muted-foreground"}
+                    >
+                      {row.failures}
+                    </Td>
+                  </tr>
+                ))}
+              </AdminTable>
+            )}
+            {aiOps.neverUsed.length > 0 && (
+              <div className="mt-3 border-t border-border/60 pt-3">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Never used
+                </div>
+                <p className="mt-1 font-mono text-xs text-muted-foreground">
+                  {aiOps.neverUsed.join(", ")}
+                </p>
+              </div>
+            )}
+          </AdminPanel>
+
+          <AdminPanel title="Durable artifacts">
+            {/* What usage_events structurally cannot show: reminders, tags and goals leave
+                no AI call behind, so a usage-only view reports them as unused. */}
+            <AdminTable
+              head={
+                <>
+                  <Th>Table</Th>
+                  <Th numeric>Rows</Th>
+                  <Th numeric>Accounts</Th>
+                </>
+              }
+            >
+              {artifacts.map((a) => (
+                <tr key={a.label} className="border-b border-border/40 last:border-b-0">
+                  <Td>{a.label}</Td>
+                  <Td numeric className={a.rows === 0 ? "text-muted-foreground" : undefined}>
+                    {a.rows}
+                  </Td>
+                  <Td numeric className="text-muted-foreground">{a.users || "\u2014"}</Td>
+                </tr>
+              ))}
+            </AdminTable>
+          </AdminPanel>
+        </div>
+
+        <div className="grid gap-6 lg:grid-cols-2">
+          <AdminPanel title="Where incomplete accounts are parked">
+            {parking.onboardingParking.length === 0 && parking.wizardParking.length === 0 ? (
+              <EmptyState>Nobody is mid-onboarding.</EmptyState>
+            ) : (
+              <>
+                {parking.onboardingParking.length > 0 && (
+                  <MiniBars
+                    rows={parking.onboardingParking.map((x) => ({
+                      label: `tour \u00b7 ${x.step}`,
+                      count: x.count,
+                    }))}
+                  />
+                )}
+                {parking.wizardParking.length > 0 && (
+                  <div className="mt-3">
+                    <MiniBars
+                      rows={parking.wizardParking.map((x) => ({
+                        label: `wizard \u00b7 ${x.step}`,
+                        count: x.count,
+                      }))}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+            <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+              The tour auto-advances every 7 seconds, so its step records where the tab was
+              closed rather than what held attention. Wizard steps are validated on write,
+              so those reflect a real choice — the branch taken is the signal worth acting on.
+            </p>
+          </AdminPanel>
+
+          <AdminPanel title="Waitlist">
+            {!waitlist ? (
+              <EmptyState>Not instrumented yet.</EmptyState>
+            ) : waitlist.total === 0 ? (
+              <EmptyState>
+                No signups recorded. These arrive on the Clerk waitlistEntry.created
+                webhook, which must also be enabled on the endpoint in the Clerk Dashboard.
+              </EmptyState>
+            ) : (
+              <>
+                <MetricTile label="Signups" value={waitlist.total} />
+                <ul className="mt-3 space-y-1 border-t border-border/60 pt-3 text-sm">
+                  {waitlist.recent.map((w, i) => (
+                    <li key={i} className="flex justify-between gap-4">
+                      <span className="truncate">{w.email ?? "\u2014"}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        <RelativeTime date={w.at} /> ago
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </AdminPanel>
+        </div>
+
+        <AdminPanel title="Data quality">
+          {/* A section rather than a screen: at this scale it is eight integers and most
+              are zero. Split it out when two rows stay non-zero for a week — at that point
+              they have stopped being checks and become work. */}
+          <AdminTable
+            head={
+              <>
+                <Th>Check</Th>
+                <Th numeric>Affected</Th>
+                <Th>Note</Th>
+              </>
+            }
+          >
+            {quality.map((row) => (
+              <tr key={row.label} className="border-b border-border/40 last:border-b-0">
+                <Td>{row.label}</Td>
+                <Td
+                  numeric
+                  className={row.count > 0 ? "text-destructive" : "text-muted-foreground"}
+                >
+                  {row.count}
+                  {row.total ? (
+                    <span className="text-muted-foreground"> / {row.total}</span>
+                  ) : null}
+                </Td>
+                <Td className="text-xs text-muted-foreground">{row.hint ?? ""}</Td>
+              </tr>
+            ))}
+          </AdminTable>
+        </AdminPanel>
       </div>
     </>
   );

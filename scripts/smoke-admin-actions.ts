@@ -318,7 +318,7 @@ async function main() {
     emailAddress: "target@gmail.test",
     accessTokenEncrypted: "ciphertext-access",
     refreshTokenEncrypted: "ciphertext-refresh",
-    status: "revoked",
+    status: "needs_reauth",
   });
 
   await actions.disconnectIntegration(ADMIN, {

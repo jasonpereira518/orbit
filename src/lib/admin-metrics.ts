@@ -62,10 +62,12 @@ export type AdminUserRow = {
   aiTokens: { input: number; output: number };
   estimatedCostMicros: number;
   firstInteractionAt: Date | null;
+  /** First contact ever created — the activation clock. */
+  firstContactAt: Date | null;
 };
 
 /** `count(*)::int` comes back as a number. */
-const countInt = sql<number>`count(*)::int`;
+export const countInt = sql<number>`count(*)::int`;
 
 /**
  * `sum(int4)` promotes to bigint, which the drivers serialize as a *string* to avoid
@@ -74,7 +76,7 @@ const countInt = sql<number>`count(*)::int`;
  *
  * Deliberately not cast to ::int — token totals will outgrow int4.
  */
-function num(value: string | number | null | undefined): number {
+export function num(value: string | number | null | undefined): number {
   if (value == null) return 0;
   const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) ? n : 0;
@@ -85,7 +87,7 @@ function num(value: string | number | null | undefined): number {
  * comes back as whatever the driver produced — a string on both PGlite and Neon. Every
  * aggregate timestamp goes through here, or `.getTime()` throws at runtime.
  */
-function toDate(value: Date | string | null | undefined): Date | null {
+export function toDate(value: Date | string | null | undefined): Date | null {
   if (value == null) return null;
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
   const parsed = new Date(value);
@@ -150,6 +152,7 @@ export async function loadAdminUserRows(): Promise<AdminUserRow[]> {
         .select({
           userId: contacts.userId,
           n: countInt,
+          firstAt: sql<string | null>`min(${contacts.createdAt})`,
           lastAt: sql<string | null>`max(${contacts.createdAt})`,
         })
         .from(contacts)
@@ -267,6 +270,7 @@ export async function loadAdminUserRows(): Promise<AdminUserRow[]> {
       aiTokens: { input: num(u?.inTok), output: num(u?.outTok) },
       estimatedCostMicros: num(u?.costMicros),
       firstInteractionAt: toDate(i?.firstAt),
+      firstContactAt: toDate(c?.firstAt),
     };
   });
 }
@@ -361,6 +365,20 @@ export function buildAlerts(
 
   for (const row of rows) {
     const who = { userId: row.userId, email: row.email };
+
+    if (
+      row.subscriptionStatus === "active" &&
+      row.subscriptionPeriodEnd &&
+      row.subscriptionPeriodEnd.getTime() < ts
+    ) {
+      alerts.push({
+        ...who,
+        severity: "warn",
+        message: `Subscription says active but paid through ${row.subscriptionPeriodEnd
+          .toISOString()
+          .slice(0, 10)} — a Clerk webhook was probably missed`,
+      });
+    }
 
     if (row.subscriptionStatus === "past_due") {
       alerts.push({
