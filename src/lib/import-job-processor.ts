@@ -1,5 +1,6 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { getDb } from "@/db";
 import {
   contacts,
@@ -48,21 +49,28 @@ type PendingRow = typeof importJobRows.$inferSelect;
 /** Row-level reason recorded when the plan's contact limit refused an otherwise-valid row. */
 export const PLAN_LIMIT_ROW_REASON = "Contact limit reached on your plan";
 
+/**
+ * Mark a chunk's rows done in one statement.
+ *
+ * Each row carries a different `contact_id`, so this cannot be a plain `WHERE id = ANY(...)`
+ * — the values are joined in instead. It used to be one `UPDATE` per row fired through
+ * `Promise.all`, which on `neon-http` is one HTTPS request per row, with no transaction to
+ * make the chunk atomic. A single statement is both faster and all-or-nothing.
+ */
 async function markRowsDone(rowIds: string[], contactIdByRowId: Map<string, string>) {
   if (rowIds.length === 0) return;
   const db = await getDb();
-  await Promise.all(
-    rowIds.map((rowId) =>
-      db
-        .update(importJobRows)
-        .set({
-          status: "done",
-          contactId: contactIdByRowId.get(rowId) ?? null,
-          updatedAt: new Date(),
-        })
-        .where(eq(importJobRows.id, rowId))
-    )
+  const now = new Date();
+  const tuples = rowIds.map(
+    (rowId) =>
+      sql`(${rowId}::uuid, ${contactIdByRowId.get(rowId) ?? null}::uuid)`
   );
+  await db.execute(sql`
+    UPDATE import_job_rows AS r
+    SET status = 'done', contact_id = v.contact_id, updated_at = ${now}
+    FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, contact_id)
+    WHERE r.id = v.id
+  `);
 }
 
 /**
@@ -223,6 +231,10 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
         await updateContact(item.contactId, item.input, {
           skipRevalidate: true,
           skipEmbedding: true,
+          // The whole network is recalibrated when the import finishes. Scoring each
+          // duplicate as it is merged would issue several extra queries per row to reach a
+          // number that is immediately superseded.
+          skipCloseness: true,
         });
         contactIdByRowId.set(item.row.id, item.contactId);
         touchedContactIds.push(item.contactId);
@@ -294,14 +306,30 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
     .set({ status: "completed", updatedAt: new Date() })
     .where(eq(imports.id, importId));
 
+  // Redraw the distribution once, now that every contact this import will ever add is in.
+  // Closeness is cohort-relative, so importing 3,000 people moves where all the existing
+  // ones sit; doing it per chunk would recompute the same thing dozens of times over.
+  await recalibrateCloseness(importRow.userId).catch(() => null);
+
   revalidatePath("/");
   revalidatePath("/contacts");
   revalidatePath("/imports");
   revalidatePath("/graph");
   revalidatePath("/knowledge");
   revalidatePath("/chat");
-  for (const id of allTouchedContactIds) revalidatePath(`/contacts/${id}`);
+  // Not one revalidation per imported contact. Those paths are dynamic and nobody is
+  // holding a cached render of a contact page they have never opened, so a large import
+  // was issuing thousands of calls to invalidate nothing.
+  if (allTouchedContactIds.size <= PER_CONTACT_REVALIDATE_LIMIT) {
+    for (const id of allTouchedContactIds) revalidatePath(`/contacts/${id}`);
+  }
 }
+
+/**
+ * Above this many touched contacts, skip per-contact revalidation entirely — the list and
+ * dashboard paths above already cover what a user can actually be looking at.
+ */
+const PER_CONTACT_REVALIDATE_LIMIT = 50;
 
 async function failImport(importId: string, err: unknown) {
   const message = err instanceof Error ? err.message : "Import failed";

@@ -3,12 +3,70 @@ import {
   text,
   timestamp,
   integer,
+  real,
   jsonb,
   uuid,
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
+
+/** Orbit ring a contact sits in. Mirrors `ClosenessBreakdown["tier"]` in `@/lib/closeness`. */
+export type ClosenessTier = "inner" | "mid" | "outer";
+
+/**
+ * A user's raw-closeness distribution, stored so a single contact can be scored without
+ * re-reading the whole network.
+ *
+ * `quantiles` is a 101-point sketch (p0..p100) of the evidenced raw scores rather than the
+ * full sorted array the in-memory cohort uses. Percentile lookup interpolates between
+ * breakpoints, which costs a little precision at the tails and buys a row that does not
+ * grow with the network. Empty when no contact clears the evidence floor.
+ */
+export type ClosenessCohortSnapshot = {
+  n: number;
+  evidencedN: number;
+  coverage: number;
+  relativeWeight: number;
+  quantiles: number[];
+  /** Mean of the absolute raw scores. Unlike the blended mean it still moves with network health. */
+  averageRaw: number;
+  /**
+   * Network-wide inputs the raw formula needs, carried here so one contact can be scored
+   * without re-reading the network to derive them.
+   *
+   * These are snapshots, so a contact scored between recalibrations is measured against the
+   * shape the orbit had at the last one. That is the same staleness the distribution itself
+   * carries, and it resolves the same way.
+   */
+  maxCompany: number;
+  maxSchool: number;
+  userDomain: string | null;
+  mailConnected: boolean;
+};
+
+/**
+ * Structural mirror of `ClosenessBreakdown` in `@/lib/closeness`.
+ *
+ * Declared here rather than imported so `schema.ts` keeps no dependency on the lib layer —
+ * drizzle-kit loads this file directly and cannot resolve the `@/` alias. A compile-time
+ * assertion in `@/lib/closeness-materialize` keeps the two in step.
+ */
+export type StoredClosenessBreakdown = {
+  raw: number;
+  strength: number;
+  recency: number;
+  cadence: number;
+  goalRelevance: number;
+  evidence: number;
+  prior: number;
+  evidenced: number;
+  knownWeightShare: number;
+  closeness: number;
+  percentile: number;
+  orbitScore: number;
+  tier: ClosenessTier;
+};
 
 export const userSettings = pgTable("user_settings", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -178,6 +236,57 @@ export const contacts = pgTable(
     followUpStatus: text("follow_up_status").default("none"),
     aiSummary: text("ai_summary"),
     notes: text("notes"),
+
+    /**
+     * Materialized closeness. These are written by `src/lib/closeness-materialize.ts`, not
+     * by any normal contact write, and are always the result of applying the user's stored
+     * cohort snapshot to `closenessRaw`.
+     *
+     * They exist because closeness is cohort-relative: a contact's ring is its position in
+     * the distribution formed by the whole network. Computing it on read meant every
+     * surface had to load every contact to render any of them, which is what made the
+     * contacts page O(network size). Storing the applied result is what lets a page of 50
+     * be served without the other 4,950.
+     *
+     * Nullable on purpose — NULL means "never scored", which is how a contact created
+     * before this shipped, or since the last recalibration, asks to be picked up.
+     */
+    closenessRaw: real("closeness_raw"),
+    closeness: integer("closeness"),
+    closenessTier: text("closeness_tier").$type<ClosenessTier>(),
+    orbitScore: integer("orbit_score"),
+    /** Evidence and prior are what `selectTriageCandidates` ranks on. */
+    closenessEvidence: real("closeness_evidence"),
+    closenessPrior: real("closeness_prior"),
+    closenessComputedAt: timestamp("closeness_computed_at", { withTimezone: true }),
+    /*
+     * `closeness_breakdown jsonb` also exists on this table but is deliberately NOT declared
+     * here — see `SCALE_DDL` in `src/db/index.ts`.
+     *
+     * It holds the full breakdown including component scores, and exactly one query needs
+     * it. Declaring it would put it in the default select list of the 27 contact queries
+     * that have no explicit projection, several of which scan the whole table, so every
+     * import dedupe pass and knowledge-base load would start dragging a few hundred bytes
+     * of JSON per contact across the wire to ignore it. Keeping it undeclared makes reading
+     * it an explicit act — `readStoredCohortResult` asks for it in raw SQL.
+     */
+
+    /**
+     * Generated columns. Postgres maintains all three; never write to them.
+     *
+     * `sortKey` is the keyset-pagination ordering column, and the reason contact paging can
+     * be a total order in SQL rather than a `localeCompare` in JavaScript.
+     * `linkedinSlug` replaces a leading-wildcard ILIKE across every user's contacts.
+     * `searchTsv` is the weighted search vector; see `SCALE_DDL` in `src/db/index.ts` for
+     * the weight classes and why the config is 'simple'.
+     */
+    sortKey: text("sort_key").generatedAlwaysAs(
+      sql`lower(coalesce(nullif(trim(last_name), ''), split_part(trim(full_name), ' ', -1)))`
+    ),
+    linkedinSlug: text("linkedin_slug").generatedAlwaysAs(
+      sql`lower(nullif(split_part(split_part(split_part(split_part(coalesce(linkedin_url, ''), '/in/', 2), '?', 1), '#', 1), '/', 1), ''))`
+    ),
+
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -185,8 +294,28 @@ export const contacts = pgTable(
     index("contacts_user_id_idx").on(t.userId),
     index("contacts_company_idx").on(t.userId, t.company),
     index("contacts_follow_up_idx").on(t.userId, t.nextFollowUpAt),
+    index("contacts_user_sort_idx").on(t.userId, t.sortKey, t.fullName, t.id),
+    index("contacts_user_updated_idx").on(t.userId, t.updatedAt),
+    index("contacts_user_closeness_idx").on(t.userId, t.closeness.desc(), t.id.desc()),
+    index("contacts_user_recent_idx").on(t.userId, t.updatedAt.desc(), t.id.desc()),
+    index("contacts_company_id_idx").on(t.companyId),
   ]
 );
+
+/**
+ * The per-user closeness distribution that `contacts.closeness*` was applied against.
+ *
+ * `snapshot` holds a fixed-size quantile sketch rather than the full sorted score array, so
+ * this row stays the same size whether the user has 50 contacts or 50,000. `dirtyAt` is set
+ * by writes that invalidate the distribution and cleared by recalibration.
+ */
+export const closenessCohorts = pgTable("closeness_cohorts", {
+  userId: text("user_id").primaryKey(),
+  snapshot: jsonb("snapshot").$type<ClosenessCohortSnapshot>().default({} as ClosenessCohortSnapshot).notNull(),
+  contactCount: integer("contact_count").default(0).notNull(),
+  computedAt: timestamp("computed_at", { withTimezone: true }).defaultNow().notNull(),
+  dirtyAt: timestamp("dirty_at", { withTimezone: true }),
+});
 
 export const userGoals = pgTable(
   "user_goals",
