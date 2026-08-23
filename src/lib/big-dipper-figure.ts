@@ -1,8 +1,10 @@
 /**
  * The Big Dipper (the Ursa Major asterism), projected from J2000 RA/Dec with
- * RA increasing to the right and scaled by cos(dec) so the bowl keeps its real
- * proportions. Landing constellation scene only — the onboarding graph preview
- * still uses the Virgo figure in src/lib/virgo-figure.ts.
+ * RA increasing to the left and scaled by cos(dec) — standard sky-chart
+ * orientation, same convention as the Virgo figure, so the bowl sits to the
+ * right and the handle sweeps down to the left, keeping its real proportions.
+ * Landing constellation scene only — the onboarding graph preview still uses
+ * the Virgo figure in src/lib/virgo-figure.ts.
  * ViewBox: 0 0 280 220.
  */
 
@@ -19,13 +21,13 @@ export const DIPPER_VIEW = { w: 280, h: 220 };
 
 /** Radii track apparent magnitude — Megrez really is the faint one. */
 export const DIPPER_STARS: DipperStar[] = [
-  { id: "dubhe", x: 30.6, y: 50.0, r: 3.3 },
-  { id: "merak", x: 28.0, y: 101.8, r: 2.7 },
-  { id: "phecda", x: 98.3, y: 127.7, r: 2.6 },
-  { id: "megrez", x: 127.5, y: 95.5, r: 1.9 },
-  { id: "alioth", x: 179.6, y: 105.9, r: 3.4, hotspot: true },
-  { id: "mizar", x: 220.0, y: 115.8, r: 2.8 },
-  { id: "alkaid", x: 252.0, y: 170.0, r: 3.2 },
+  { id: "dubhe", x: 249.4, y: 50.0, r: 3.3 },
+  { id: "merak", x: 252.0, y: 101.8, r: 2.7 },
+  { id: "phecda", x: 181.7, y: 127.7, r: 2.6 },
+  { id: "megrez", x: 152.5, y: 95.5, r: 1.9 },
+  { id: "alioth", x: 100.4, y: 105.9, r: 3.4, hotspot: true },
+  { id: "mizar", x: 60.0, y: 115.8, r: 2.8 },
+  { id: "alkaid", x: 28.0, y: 170.0, r: 3.2 },
 ];
 
 /**
@@ -45,16 +47,16 @@ export const DIPPER_CHAINS: string[][] = [
  * scale instead of a smudge.
  */
 export const DIPPER_FIELD_STARS: Array<[number, number]> = [
-  [227, 108],
-  [64, 38],
-  [112, 62],
-  [70, 178],
-  [152, 168],
-  [196, 46],
-  [242, 62],
-  [166, 30],
-  [204, 186],
-  [38, 148],
+  [53, 108],
+  [216, 38],
+  [168, 62],
+  [210, 178],
+  [128, 168],
+  [84, 46],
+  [38, 62],
+  [114, 30],
+  [76, 186],
+  [242, 148],
 ];
 
 const byId = Object.fromEntries(DIPPER_STARS.map((s) => [s.id, s]));
