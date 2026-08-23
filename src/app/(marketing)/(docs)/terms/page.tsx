@@ -11,7 +11,7 @@ import {
   type Highlight,
 } from "@/components/marketing/marketing-doc";
 import type { TocItem } from "@/components/marketing/doc-toc";
-import { FREE_CONTACT_LIMIT, LIFETIME_SEAT_LIMIT } from "@/lib/plan-limits";
+import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
 
 export const metadata: Metadata = {
   title: "Terms of Service — Orbit",
@@ -268,10 +268,9 @@ export default function TermsPage() {
           <p>
             The Free Plan covers up to {FREE_CONTACT_LIMIT} contacts and costs
             nothing. Paid plans — Orbit Pro, billed monthly or annually, and
-            Orbit Lifetime, a one-time purchase limited to the first{" "}
-            {LIFETIME_SEAT_LIMIT} buyers — lift that cap. Current prices are on
-            the <Link href="/pricing">pricing page</Link> and apply from the
-            moment you subscribe.
+            Orbit Lifetime, a one-time purchase — lift that cap. Current prices
+            are on the <Link href="/pricing">pricing page</Link> and apply from
+            the moment you subscribe.
           </p>
           <ul>
             <li>

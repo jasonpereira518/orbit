@@ -77,19 +77,24 @@ export const requireUserId = cache(async (): Promise<string> => {
     );
   }
 
+  // Scoped to the Clerk call alone: it is the only thing here whose failure means
+  // "not signed in". Everything after it — the settings bootstrap, and so the database —
+  // must be allowed to throw its own error. A catch wrapped around the bootstrap reports
+  // every outage as UnauthorizedError, which is what turned a missing `user_settings`
+  // column into 15 bogus auth failures on /dashboard while the real cause stayed hidden.
+  let userId: string | null = null;
   try {
-    const { userId } = await auth();
-    if (userId) {
-      const settings = await bootstrapAuthenticatedUser(userId);
-      if (settings.suspendedAt) {
-        throw new AccountSuspendedError(settings.suspendedAt);
-      }
-      return userId;
+    ({ userId } = await auth());
+  } catch {
+    // Middleware missing or Clerk runtime fault — indistinguishable from signed out.
+  }
+
+  if (userId) {
+    const settings = await bootstrapAuthenticatedUser(userId);
+    if (settings.suspendedAt) {
+      throw new AccountSuspendedError(settings.suspendedAt);
     }
-  } catch (err) {
-    // Rethrow our own signal: swallowing it here would silently un-suspend the account,
-    // since the catch exists only for a missing middleware or a Clerk runtime fault.
-    if (err instanceof AccountSuspendedError) throw err;
+    return userId;
   }
 
   throw new UnauthorizedError();
