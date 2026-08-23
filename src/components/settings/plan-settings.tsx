@@ -15,11 +15,9 @@ const SOURCE_NOTE: Record<PlanSource, string | null> = {
 export function PlanSettings({
   entitlements,
   usage,
-  remainingLifetimeSeats,
 }: {
   entitlements: Entitlements;
   usage: { used: number; limit: number | null; remaining: number | null };
-  remainingLifetimeSeats: number;
 }) {
   const copy = planCopy(entitlements.plan);
   const note = SOURCE_NOTE[entitlements.source];
@@ -81,27 +79,29 @@ export function PlanSettings({
         </p>
       )}
 
-      {entitlements.plan === "lifetime" && !entitlements.canUseHostedSends && (
+      {!entitlements.canUseHostedEnrichment && entitlements.plan !== "free" && (
         <p className="rounded-xl border border-border/70 bg-muted/40 p-3 text-sm text-muted-foreground">
-          Outreach runs on your own Apollo, Resend, and Twilio keys. Add them in
-          the Outreach section below.
+          Contact enrichment runs on your own Apollo key. Add it in the Outreach
+          section below. Email and SMS sending is included on your plan.
         </p>
       )}
 
       {isFree && (
         <div className="flex flex-wrap items-center gap-3">
+          {/* Points at the transaction page, not back at /pricing — that round trip was a
+              loop with no way to actually pay at either end. */}
           <Link
-            href="/pricing"
+            href="/upgrade"
             className={cn(buttonVariants({ size: "sm" }))}
           >
-            See plans
+            Upgrade
           </Link>
-          {remainingLifetimeSeats > 0 && (
-            <span className="text-sm text-muted-foreground">
-              {remainingLifetimeSeats} Orbit Lifetime{" "}
-              {remainingLifetimeSeats === 1 ? "spot" : "spots"} left at $19.
-            </span>
-          )}
+          <Link
+            href="/pricing"
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          >
+            Compare plans
+          </Link>
         </div>
       )}
     </section>

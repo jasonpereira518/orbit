@@ -2,7 +2,6 @@ import { cache } from "react";
 import { ensureUserSettings } from "@/lib/user-settings";
 import {
   FREE_CONTACT_LIMIT,
-  LIFETIME_SEAT_LIMIT,
   ORBIT_PLAN_SLUG,
   PLAN_LABELS,
   type Plan,
@@ -10,13 +9,7 @@ import {
 
 // Re-exported so server code keeps importing plan identity from this module, while
 // client components can reach `plan-limits` directly without pulling in the database.
-export {
-  FREE_CONTACT_LIMIT,
-  LIFETIME_SEAT_LIMIT,
-  ORBIT_PLAN_SLUG,
-  PLAN_LABELS,
-  type Plan,
-};
+export { FREE_CONTACT_LIMIT, ORBIT_PLAN_SLUG, PLAN_LABELS, type Plan };
 
 /**
  * Where a user's plan came from. Purely informational for UI ("Comped", "Orbit Lifetime"),
@@ -31,11 +24,22 @@ export type Entitlements = {
   contactLimit: number | null;
   canUseOutreach: boolean;
   /**
-   * Whether Orbit's own Resend/Twilio/Apollo keys may be used. False for Lifetime:
-   * a one-time payment must never buy an open-ended metered liability, so Lifetime
-   * users bring their own keys (Settings already supports this per-user).
+   * Whether Orbit's own Resend/Twilio credentials may be used to send email and SMS.
+   * True on both paid tiers. Sending is the one metered cost with a standing ceiling —
+   * `DAILY_SEND_LIMIT` caps every user per day regardless of plan — so a one-time
+   * payment can carry it without buying an unbounded obligation.
    */
-  canUseHostedSends: boolean;
+  canUseHostedSending: boolean;
+  /**
+   * Whether Orbit's own Apollo key may be used for contact enrichment. Orbit Pro only.
+   * Enrichment has no quota anywhere in the product, so it is the single genuinely
+   * open-ended per-user cost, and the one thing a one-time payment cannot fund forever.
+   * Lifetime users add their own Apollo key in Settings, which `getApolloApiKey` prefers
+   * over Orbit's on every plan.
+   *
+   * This is the only entitlement that separates Orbit Pro from Orbit Lifetime.
+   */
+  canUseHostedEnrichment: boolean;
   canUseRecruiters: boolean;
   canUseSync: boolean;
   canUseExtension: boolean;
@@ -44,7 +48,8 @@ export type Entitlements = {
 /** Feature keys that `requireEntitlement` can gate on. */
 export type FeatureKey =
   | "outreach"
-  | "hostedSends"
+  | "hostedSending"
+  | "hostedEnrichment"
   | "recruiters"
   | "sync"
   | "extension";
@@ -99,7 +104,7 @@ function subscriptionIsLive(row: BillingColumns, now: Date) {
  * Comp wins outright so a manually granted account is never downgraded by stale billing
  * state. Lifetime outranks subscription so that someone who bought Lifetime and later also
  * subscribed does not silently lose the Lifetime grant if the subscription lapses — the two
- * are additive in practice (see `getEntitlements`, which unions hosted sends back in).
+ * are additive in practice (see `getEntitlements`, which unions hosted enrichment back in).
  */
 export function resolvePlan(
   row: BillingColumns | null | undefined,
@@ -118,7 +123,7 @@ export function resolvePlan(
 export function entitlementsForPlan(
   plan: Plan,
   source: PlanSource,
-  opts: { hostedSends?: boolean } = {}
+  opts: { hostedEnrichment?: boolean } = {}
 ): Entitlements {
   const paid = plan !== "free";
   return {
@@ -126,7 +131,8 @@ export function entitlementsForPlan(
     source,
     contactLimit: paid ? null : FREE_CONTACT_LIMIT,
     canUseOutreach: paid,
-    canUseHostedSends: opts.hostedSends ?? plan === "orbit",
+    canUseHostedSending: paid,
+    canUseHostedEnrichment: opts.hostedEnrichment ?? plan === "orbit",
     canUseRecruiters: paid,
     canUseSync: paid,
     canUseExtension: paid,
@@ -146,18 +152,23 @@ export const getEntitlements = cache(
   async (userId: string): Promise<Entitlements> => {
     const row = await ensureUserSettings(userId);
     const { plan, source } = resolvePlan(row);
-    // A Lifetime holder who also subscribes gets hosted sends for as long as the
-    // subscription is live, without losing the Lifetime floor when it lapses.
-    const hostedSends =
+    // A Lifetime holder who also subscribes gets hosted enrichment for as long as the
+    // subscription is live, without losing the Lifetime floor when it lapses. Enrichment
+    // is the only flag this can still matter for: `resolvePlan` ranks lifetime above
+    // subscription, so such a user resolves to `lifetime`, which is denied enrichment on
+    // its own. Everything else is already true on both paid tiers.
+    const hostedEnrichment =
       plan === "orbit" || (row ? subscriptionIsLive(row, new Date()) : false);
-    return entitlementsForPlan(plan, source, { hostedSends });
+    return entitlementsForPlan(plan, source, { hostedEnrichment });
   }
 );
 
 const FEATURE_DENIAL: Record<FeatureKey, string> = {
   outreach: "Outreach is available on Orbit Pro and Orbit Lifetime.",
-  hostedSends:
-    "Sending on Orbit's email/SMS credits requires Orbit Pro. On Orbit Lifetime, add your own Resend or Twilio key in Settings.",
+  hostedSending:
+    "Sending email and SMS on Orbit's credits is available on Orbit Pro and Orbit Lifetime.",
+  hostedEnrichment:
+    "Contact enrichment on Orbit's credits requires Orbit Pro. On any other plan, add your own Apollo key in Settings.",
   recruiters: "Recruiter tracking is available on Orbit Pro and Orbit Lifetime.",
   sync: "Mailbox and calendar sync are available on Orbit Pro and Orbit Lifetime.",
   extension: "The Orbit extension is available on Orbit Pro and Orbit Lifetime.",
@@ -165,7 +176,8 @@ const FEATURE_DENIAL: Record<FeatureKey, string> = {
 
 const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
   outreach: "canUseOutreach",
-  hostedSends: "canUseHostedSends",
+  hostedSending: "canUseHostedSending",
+  hostedEnrichment: "canUseHostedEnrichment",
   recruiters: "canUseRecruiters",
   sync: "canUseSync",
   extension: "canUseExtension",

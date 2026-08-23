@@ -56,7 +56,7 @@ export const ANNUAL_SAVING_PERCENT = Math.round(
 export const PLAN_COPY: PlanCopy[] = [
   {
     id: "free",
-    name: "Free",
+    name: "Free Plan",
     tagline: "The whole core product, for a network you can hold in your head.",
     price: {
       monthly: { amount: "$0", cadence: "forever" },
@@ -87,9 +87,10 @@ export const PLAN_COPY: PlanCopy[] = [
       },
     },
     features: [
-      "Everything in Free, uncapped",
+      "Everything in the Free Plan, uncapped",
       "Unlimited contacts",
-      "Outreach campaigns on Orbit's sending credits",
+      "Contact enrichment on Orbit's credits",
+      "Outreach campaigns with email and SMS sending",
       "Recruiter tracking",
       "Gmail, Outlook, and calendar sync",
       "Chrome extension",
@@ -100,18 +101,18 @@ export const PLAN_COPY: PlanCopy[] = [
     name: "Orbit Lifetime",
     tagline: "Pay once. Keep it for as long as Orbit exists.",
     price: {
-      monthly: { amount: "$19", cadence: "once" },
-      annual: { amount: "$19", cadence: "once" },
+      monthly: { amount: "$25", cadence: "once" },
+      annual: { amount: "$25", cadence: "once" },
     },
     features: [
       "Unlimited contacts, forever",
+      "Outreach campaigns with email and SMS sending",
       "Recruiter tracking",
       "Gmail, Outlook, and calendar sync",
       "Chrome extension",
-      "Every feature that costs nothing to run",
     ],
     caveat:
-      "Outreach runs on your own Apollo, Resend, and Twilio keys instead of Orbit's credits. That is what keeps a one-time price honest.",
+      "Contact enrichment runs on your own Apollo key instead of Orbit's credits. Enrichment is the one cost with no ceiling, and that is what keeps a one-time price honest.",
   },
 ];
 

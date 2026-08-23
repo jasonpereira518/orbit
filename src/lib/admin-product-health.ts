@@ -13,16 +13,15 @@ import {
   userSettings,
   webhookDeliveries,
 } from "@/db/schema";
-import { countInt, num, toDate, type AdminUserRow } from "@/lib/admin-metrics";
+import { countInt, num } from "@/lib/admin-metrics";
 
 /**
- * Product-health reads for `/admin/product`: is the product actually being used, and is the
- * data healthy?
+ * Product reads that `/admin/growth` cannot answer from `admin-trends.ts`.
  *
- * Same shape as `admin-metrics.ts` — one `Promise.all` fan-out of GROUP BY aggregates,
- * joined in JS — but a separate module on purpose. `loadAdminUserRows()` is on the critical
- * path of three other screens, and loading it with product aggregates would tax the roster
- * to serve this page.
+ * `admin-trends.ts` already covers adoption, activation cohorts and retention. What it
+ * cannot show is what has NEVER been used (absent rows produce no group), what exists
+ * outside `usage_events` entirely (reminders and tags leave no AI call), where incomplete
+ * accounts are parked, who is on the waitlist, and whether the data itself is sound.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -60,6 +59,54 @@ export type FeatureAdoptionRow = {
   failures: number;
 };
 
+export type AiOperationRow = {
+  operation: string;
+  users: number;
+  calls: number;
+  failures: number;
+};
+
+/**
+ * Adoption of individual AI operations.
+ *
+ * Complementary to `featureAdoption` in `admin-trends.ts`, which counts distinct users per
+ * *table* — that answers "does anyone use chat", this answers "does anyone use the audio
+ * transcription path". Sorted by distinct users rather than call count, because one power
+ * user making 400 chat calls is intensity, not adoption.
+ */
+export async function getAiOperationAdoption(days = 30, now = new Date()) {
+  const db = await getDb();
+  const since = new Date(now.getTime() - days * DAY_MS);
+
+  const rows = await db
+    .select({
+      operation: usageEvents.operation,
+      users: sql<string>`count(distinct ${usageEvents.userId})`,
+      calls: countInt,
+      failures: sql<string>`count(*) filter (where ${usageEvents.success} = 0)`,
+    })
+    .from(usageEvents)
+    .where(gt(usageEvents.createdAt, since))
+    .groupBy(usageEvents.operation);
+
+  const adoption: AiOperationRow[] = rows
+    .map((r) => ({
+      operation: r.operation,
+      users: num(r.users),
+      calls: r.calls,
+      failures: num(r.failures),
+    }))
+    .sort((a, b) => b.users - a.users || b.calls - a.calls);
+
+  const seen = new Set(adoption.map((a) => a.operation));
+  return {
+    adoption,
+    // Absent operations produce no group, so this has to be diffed against the known call
+    // sites rather than read from the data.
+    neverUsed: KNOWN_OPERATIONS.filter((op) => !seen.has(op)),
+  };
+}
+
 export type ArtifactRow = { label: string; rows: number; users: number };
 
 export type FunnelParking = { step: string; count: number };
@@ -90,42 +137,6 @@ export type ProductSnapshot = {
   weekly: TrendRow[];
 };
 
-/**
- * Adoption over the last N days, sorted by DISTINCT USERS rather than call count.
- *
- * One power user making 400 chat calls is intensity, not adoption. Both numbers render;
- * the sort order is the opinion.
- */
-export async function getFeatureAdoption(days = 30, now = new Date()) {
-  const db = await getDb();
-  const since = new Date(now.getTime() - days * DAY_MS);
-
-  const rows = await db
-    .select({
-      operation: usageEvents.operation,
-      users: sql<string>`count(distinct ${usageEvents.userId})`,
-      calls: countInt,
-      failures: sql<string>`count(*) filter (where ${usageEvents.success} = 0)`,
-    })
-    .from(usageEvents)
-    .where(gt(usageEvents.createdAt, since))
-    .groupBy(usageEvents.operation);
-
-  const adoption: FeatureAdoptionRow[] = rows
-    .map((r) => ({
-      operation: r.operation,
-      users: num(r.users),
-      calls: r.calls,
-      failures: num(r.failures),
-    }))
-    .sort((a, b) => b.users - a.users || b.calls - a.calls);
-
-  const seen = new Set(adoption.map((a) => a.operation));
-  return {
-    adoption,
-    neverUsed: KNOWN_OPERATIONS.filter((op) => !seen.has(op)),
-  };
-}
 
 /**
  * Durable artifacts, one round trip.
@@ -365,112 +376,4 @@ export async function getDataQuality(): Promise<DataQualityRow[]> {
   ];
 }
 
-/**
- * Weekly event trends.
- *
- * Trends attach to EVENTS, never to accounts: signups per week at this scale is
- * `0,1,0,0,2,1,0`, which is noise, while AI calls run to hundreds a week even with a dozen
- * users. Rendered as a table rather than a sparkline — a sparkline autoscales, so noise
- * fills the frame and nothing looks small.
- */
-export async function getWeeklyTrends(weeks = 8, now = new Date()): Promise<TrendRow[]> {
-  const db = await getDb();
-  const since = new Date(now.getTime() - weeks * 7 * DAY_MS);
 
-  const bucket = (col: ReturnType<typeof sql>) =>
-    sql<string>`date_trunc('week', ${col})`;
-
-  const [signups, aiCalls, captures, chats, contactRows] = await Promise.all([
-    db
-      .select({ week: bucket(sql`${userSettings.createdAt}`), n: countInt })
-      .from(userSettings)
-      .where(gt(userSettings.createdAt, since))
-      .groupBy(sql`1`),
-    db
-      .select({ week: bucket(sql`${usageEvents.createdAt}`), n: countInt })
-      .from(usageEvents)
-      .where(gt(usageEvents.createdAt, since))
-      .groupBy(sql`1`),
-    db
-      .select({ week: bucket(sql`${usageEvents.createdAt}`), n: countInt })
-      .from(usageEvents)
-      .where(
-        and(gt(usageEvents.createdAt, since), eq(usageEvents.operation, "capture.parse"))
-      )
-      .groupBy(sql`1`),
-    db
-      .select({ week: bucket(sql`${usageEvents.createdAt}`), n: countInt })
-      .from(usageEvents)
-      .where(
-        and(gt(usageEvents.createdAt, since), eq(usageEvents.operation, "chat.answer"))
-      )
-      .groupBy(sql`1`),
-    db
-      .select({ week: bucket(sql`${contacts.createdAt}`), n: countInt })
-      .from(contacts)
-      .where(gt(contacts.createdAt, since))
-      .groupBy(sql`1`),
-  ]);
-
-  // The bucket comes back as a STRING on both drivers, which is exactly why toDate exists.
-  const index = (rows: Array<{ week: string; n: number }>) => {
-    const m = new Map<string, number>();
-    for (const r of rows) {
-      const d = toDate(r.week);
-      if (d) m.set(d.toISOString().slice(0, 10), r.n);
-    }
-    return m;
-  };
-
-  const maps = [signups, aiCalls, captures, chats, contactRows].map(index);
-
-  const out: TrendRow[] = [];
-  for (let i = 0; i < weeks; i++) {
-    const start = new Date(now.getTime() - i * 7 * DAY_MS);
-    // Align to the Monday date_trunc('week') uses.
-    const day = (start.getUTCDay() + 6) % 7;
-    const monday = new Date(start.getTime() - day * DAY_MS);
-    const key = monday.toISOString().slice(0, 10);
-    out.push({ period: key, values: maps.map((m) => m.get(key) ?? 0) });
-  }
-  return out;
-}
-
-/** Time from signup to first contact — the real activation metric. */
-export function timeToFirstContact(rows: AdminUserRow[]) {
-  const buckets = { hour: 0, day: 0, week: 0, later: 0, never: 0 };
-  for (const row of rows) {
-    if (!row.firstContactAt) {
-      buckets.never += 1;
-      continue;
-    }
-    const delta = row.firstContactAt.getTime() - row.signupAt.getTime();
-    if (delta <= 3600_000) buckets.hour += 1;
-    else if (delta <= DAY_MS) buckets.day += 1;
-    else if (delta <= 7 * DAY_MS) buckets.week += 1;
-    else buckets.later += 1;
-  }
-  return buckets;
-}
-
-export async function getProductSnapshot(now = new Date()): Promise<ProductSnapshot> {
-  const [{ adoption, neverUsed }, artifacts, parking, waitlist, dataQuality, weekly] =
-    await Promise.all([
-      getFeatureAdoption(30, now),
-      getArtifacts(),
-      getFunnelParking(),
-      getWaitlist().catch(() => null),
-      getDataQuality(),
-      getWeeklyTrends(8, now),
-    ]);
-
-  return {
-    adoption,
-    neverUsed: [...neverUsed],
-    artifacts,
-    ...parking,
-    waitlist,
-    dataQuality,
-    weekly,
-  };
-}

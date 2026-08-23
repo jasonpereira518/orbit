@@ -16,19 +16,19 @@ const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: "What is the difference between Orbit Pro and Orbit Lifetime?",
-    a: "Everything except sending. Both are uncapped and both include recruiter tracking, mailbox and calendar sync, and the extension. Orbit Pro also sends outreach email and SMS on Orbit's own credits; Lifetime connects your own Apollo, Resend, and Twilio keys instead. Metered sending is the one thing a single payment cannot honestly cover forever.",
+    a: "One thing: contact enrichment. Both are uncapped, both include recruiter tracking, mailbox and calendar sync, the extension, and outreach campaigns that send email and SMS on Orbit's own credits. Orbit Pro also enriches contacts on Orbit's Apollo credits; Lifetime connects your own Apollo key instead. Sending is capped at a fixed number per day on every plan, so a single payment can cover it. Enrichment has no such ceiling, which is the one thing a single payment cannot honestly cover forever.",
   },
   {
     q: "Can I cancel?",
-    a: "Any time, and you keep Orbit Pro until the period you already paid for runs out. After that your account returns to Free — still holding every contact you added while subscribed, even if that is well past the free limit.",
+    a: "Any time, and you keep Orbit Pro until the period you already paid for runs out. After that your account returns to the Free Plan — still holding every contact you added while subscribed, even if that is well past the free limit.",
   },
   {
     q: "What happens to my data if I stop paying?",
     a: "Nothing is deleted and nothing is hidden. You can export everything you have put into Orbit at any point, on any plan, including Free.",
   },
   {
-    q: "Is Orbit Lifetime really limited?",
-    a: "Yes — 100 people, then it retires. It exists because early users take a risk on an unfinished product, and everything it unlocks costs nothing per-user to run. That is what makes a one-time price something we can actually honour.",
+    q: "Why is Orbit Lifetime so much cheaper than subscribing?",
+    a: "Because it asks you to pay before Orbit has proven itself, and that is worth a discount. It is not a trick: Lifetime is the full product, and the one thing it leaves out — enrichment on our Apollo credits — is the only cost that would grow without limit for as long as you keep the account.",
   },
 ];
 

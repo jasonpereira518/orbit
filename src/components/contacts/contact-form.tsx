@@ -84,6 +84,28 @@ export function ContactForm({
     tagNames: (initial?.tagNames || initial?.tags || []).join(", "),
   });
 
+  /**
+   * Whether the user moved the Strength field in *this* session of the form.
+   *
+   * The field renders at `initial?.relationshipScore ?? 2` whether or not
+   * anybody has ever rated this person, so its mere value asserts nothing.
+   * Submitting it unconditionally meant creating a contact here — including
+   * through the wizard's "Add someone manually" path, which renders this form
+   * directly — wrote `stated_closeness = 2` with no input from the user, and
+   * editing an imported contact's phone number marked them rated-2 (via the
+   * `relationshipScore` mirror in `updateContactForUser`), dropping them out of
+   * the compressed prior and making them permanently triage-ineligible.
+   *
+   * So the rating travels only when the user actually produced one. Leaving it
+   * out of the payload is not the same as sending the current value: the update
+   * path skips `undefined` fields, and the create path falls back to the
+   * legacy default for `relationshipScore` while leaving `stated_closeness`
+   * null — which is exactly "nobody has rated this person".
+   */
+  const [strengthRated, setStrengthRated] = useState(
+    initial?.statedCloseness != null
+  );
+
   useEffect(() => {
     let cancelled = false;
     getContactFieldSuggestions()
@@ -200,7 +222,15 @@ export function ContactForm({
                 .split(/[\n,]/)
                 .map((t) => t.trim())
                 .filter(Boolean),
-              relationshipScore: Number(form.relationshipScore),
+              // Only when the user actually produced a rating — see
+              // `strengthRated` above and ContactInput.statedCloseness in
+              // contact-writes.ts.
+              ...(strengthRated
+                ? {
+                    relationshipScore: Number(form.relationshipScore),
+                    statedCloseness: Number(form.relationshipScore),
+                  }
+                : {}),
               priorityLevel: Number(form.priorityLevel),
               tagNames: form.tagNames
                 .split(",")
@@ -376,7 +406,10 @@ export function ContactForm({
             min={1}
             max={5}
             value={form.relationshipScore}
-            onChange={(e) => set("relationshipScore", Number(e.target.value))}
+            onChange={(e) => {
+              setStrengthRated(true);
+              set("relationshipScore", Number(e.target.value));
+            }}
           />
         </Field>
         <Field label="Priority (0–3)">

@@ -4,13 +4,15 @@ import { useId, useState } from "react";
 import Link from "next/link";
 import { motion } from "motion/react";
 import { Check } from "lucide-react";
+import { LifetimeCheckoutButton } from "@/components/pricing/lifetime-checkout-button";
+import { PlanPriceDisplay } from "@/components/pricing/plan-price";
 import { cn } from "@/lib/utils";
 import {
   ANNUAL_SAVING_PERCENT,
   PLAN_COPY,
   type BillingPeriod,
 } from "@/lib/plan-copy";
-import type { Plan } from "@/lib/plan-limits";
+import { type Plan } from "@/lib/plan-limits";
 
 function BillingToggle({
   period,
@@ -78,12 +80,15 @@ function TierCta({
   planId,
   currentPlan,
   signedIn,
-  seatsLeft,
+  lifetimePurchasable,
+  period,
 }: {
   planId: Plan;
   currentPlan: Plan | null;
   signedIn: boolean;
-  seatsLeft: number;
+  /** Stripe is configured, so checkout can actually complete. */
+  lifetimePurchasable: boolean;
+  period: BillingPeriod;
 }) {
   const base =
     "flex w-full items-center justify-center rounded-xl px-4 py-3 text-sm font-medium transition-opacity";
@@ -102,23 +107,43 @@ function TierCta({
   }
 
   if (planId === "lifetime") {
-    // Deliberately not a disabled <button>: there is no action to attempt, and a dead
-    // control reads as a broken product. A stated queue reads as scarcity.
-    return (
-      <div className="space-y-2">
-        <p
+    if (!lifetimePurchasable) {
+      // Deliberately not a disabled <button>: with no checkout to attempt, a dead control
+      // reads as a broken product, while a stated wait reads as a date not yet reached.
+      return (
+        <div className="space-y-2">
+          <p
+            className={cn(
+              base,
+              "border border-dashed border-[#f2c14e]/35 text-[#f2c14e]"
+            )}
+          >
+            Not on sale yet
+          </p>
+          <p className="text-center text-xs text-[#6d807c]">
+            It unlocks when checkout opens.
+          </p>
+        </div>
+      );
+    }
+
+    if (!signedIn) {
+      // Checkout needs an account to attribute the purchase to, so send them to sign up
+      // rather than into a Stripe session with nobody to grant the plan to.
+      return (
+        <Link
+          href="/sign-up"
           className={cn(
             base,
-            "border border-dashed border-[#f2c14e]/35 text-[#f2c14e]"
+            "bg-[#f2c14e] font-medium text-[#241a00] hover:opacity-90"
           )}
         >
-          Opens to the first {seatsLeft}
-        </p>
-        <p className="text-center text-xs text-[#6d807c]">
-          Not on sale yet — it unlocks when checkout opens.
-        </p>
-      </div>
-    );
+          Create an account to buy
+        </Link>
+      );
+    }
+
+    return <LifetimeCheckoutButton />;
   }
 
   if (planId === "free") {
@@ -135,9 +160,14 @@ function TierCta({
     );
   }
 
+  // The chosen period rides along in the URL. Clerk's PricingTable has no prop to
+  // preselect it, so /upgrade states it in copy rather than pretending it carried over.
+  const upgradeHref =
+    period === "annual" ? "/upgrade?period=annual" : "/upgrade";
+
   return (
     <Link
-      href={signedIn ? "/settings#settings-plan" : "/sign-up"}
+      href={signedIn ? upgradeHref : "/sign-up"}
       className={cn(
         base,
         "bg-[#eef7f4] text-[#0f2e28] hover:opacity-90"
@@ -148,14 +178,59 @@ function TierCta({
   );
 }
 
+/**
+ * Each tier owns an accent rather than a single `featured` boolean, because the two paid
+ * tiers now say different things: Orbit Pro is the default path (Orbit's own primary blue,
+ * centred and lifted on wide screens), while Orbit Lifetime is the value play (the gold
+ * accent the rest of the marketing site reserves for offers, plus the only badge).
+ * Free stays deliberately recessed — dimmer border, no glow, muted ticks.
+ */
+const TIER_ACCENT: Record<
+  Plan,
+  {
+    surface: string;
+    tick: string;
+    /** Soft wash behind the card's own translucent background. */
+    glow: string | null;
+    badge: string | null;
+    /** The centre column reads as the recommendation through position alone. */
+    raised: boolean;
+  }
+> = {
+  free: {
+    surface:
+      "border-[#e8f3f1]/[0.10] bg-[#05070f]/60 hover:border-[#e8f3f1]/[0.22]",
+    tick: "text-[#6f8b84]",
+    glow: null,
+    badge: null,
+    raised: false,
+  },
+  orbit: {
+    // #599de7 is `--primary` in the app's dark theme, so the plan that unlocks the
+    // product is outlined in the colour the product itself runs on.
+    surface: "border-[#599de7]/40 bg-[#070b18]/80 hover:border-[#599de7]/75",
+    tick: "text-[#599de7]",
+    glow: "radial-gradient(circle, rgba(89,157,231,0.20), transparent 68%)",
+    badge: null,
+    raised: true,
+  },
+  lifetime: {
+    surface: "border-[#f2c14e]/40 bg-[#070b18]/80 hover:border-[#f2c14e]/75",
+    tick: "text-[#f2c14e]",
+    glow: "radial-gradient(circle, rgba(242,193,78,0.15), transparent 68%)",
+    badge: "Best Value",
+    raised: false,
+  },
+};
+
 export function PricingTiers({
   currentPlan,
   signedIn,
-  seatsLeft,
+  lifetimePurchasable,
 }: {
   currentPlan: Plan | null;
   signedIn: boolean;
-  seatsLeft: number;
+  lifetimePurchasable: boolean;
 }) {
   const [period, setPeriod] = useState<BillingPeriod>("monthly");
 
@@ -165,7 +240,7 @@ export function PricingTiers({
 
       <div className="grid items-start gap-5 lg:grid-cols-3 lg:gap-6">
         {PLAN_COPY.map((plan) => {
-          const featured = plan.id === "orbit";
+          const accent = TIER_ACCENT[plan.id];
           const price = plan.price[period];
 
           return (
@@ -176,25 +251,28 @@ export function PricingTiers({
                 "relative flex h-full flex-col rounded-3xl border p-7 backdrop-blur-sm",
                 // Glass earns its place here: the cards sit over a live starfield, so
                 // the blur is what separates the text from moving points of light.
-                featured
-                  ? "border-[#f2c14e]/35 bg-[#070b18]/80 lg:-mt-4 lg:pb-9 lg:pt-9"
-                  : "border-[#e8f3f1]/[0.10] bg-[#05070f]/60"
+                accent.surface,
+                // A short lift on hover, with the border brightening alongside it so the
+                // movement reads as attention rather than drift. Tailwind v4 compiles
+                // `-translate-y-*` to the `translate` property rather than `transform`, so
+                // that is the property the transition has to name — `transform` would
+                // compile fine and animate nothing.
+                "transition-[translate,border-color] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-1.5",
+                "motion-reduce:transition-none motion-reduce:hover:translate-y-0",
+                accent.raised && "lg:-mt-4 lg:pb-9 lg:pt-9"
               )}
             >
-              {featured && (
-                <>
-                  <div
-                    aria-hidden="true"
-                    className="pointer-events-none absolute left-1/2 top-0 -z-10 h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/3 rounded-full"
-                    style={{
-                      background:
-                        "radial-gradient(circle, rgba(242,193,78,0.18), transparent 68%)",
-                    }}
-                  />
-                  <p className="absolute -top-3 left-7 rounded-full bg-[#f2c14e] px-3 py-1 text-xs font-medium text-[#241a00]">
-                    Most popular
-                  </p>
-                </>
+              {accent.glow && (
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-1/2 top-0 -z-10 h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/3 rounded-full"
+                  style={{ background: accent.glow }}
+                />
+              )}
+              {accent.badge && (
+                <p className="absolute -top-3 left-7 rounded-full bg-[#f2c14e] px-3 py-1 text-xs font-medium text-[#241a00]">
+                  {accent.badge}
+                </p>
               )}
 
               <h2
@@ -207,24 +285,11 @@ export function PricingTiers({
               {/* The price carries no entrance animation on purpose. Anything that starts
                   at opacity 0 and waits for a frame is invisible if frames never come —
                   a backgrounded tab, a throttled device — and a price is the one thing on
-                  this page that must always be readable. The page's motion lives in the
-                  section reveals and the toggle pill instead. */}
+                  this page that must always be readable. PlanPriceDisplay honours that:
+                  it stays static until the visitor toggles the period, and only then
+                  animates the characters that genuinely changed. */}
               <div className="mt-4 min-h-[4.25rem]">
-                <div>
-                  <p className="flex items-baseline gap-1.5">
-                    <span className="font-[family-name:var(--font-display)] text-[42px] leading-none tracking-tight text-[#e8f3f1]">
-                      {price.amount}
-                    </span>
-                    <span className="text-sm text-[#9aada8]">
-                      {price.cadence}
-                    </span>
-                  </p>
-                  {price.footnote && (
-                    <p className="mt-1.5 text-sm text-[#f2c14e]">
-                      {price.footnote}
-                    </p>
-                  )}
-                </div>
+                <PlanPriceDisplay price={price} />
               </div>
 
               <p className="mt-1 text-sm leading-relaxed text-[#9aada8]">
@@ -235,10 +300,7 @@ export function PricingTiers({
                 {plan.features.map((feature) => (
                   <li key={feature} className="flex gap-3 text-sm text-[#cfdcd8]">
                     <Check
-                      className={cn(
-                        "mt-0.5 size-4 shrink-0",
-                        featured ? "text-[#f2c14e]" : "text-[#6f8b84]"
-                      )}
+                      className={cn("mt-0.5 size-4 shrink-0", accent.tick)}
                       aria-hidden="true"
                     />
                     <span>{feature}</span>
@@ -257,7 +319,8 @@ export function PricingTiers({
                   planId={plan.id}
                   currentPlan={currentPlan}
                   signedIn={signedIn}
-                  seatsLeft={seatsLeft}
+                  lifetimePurchasable={lifetimePurchasable}
+                  period={period}
                 />
               </div>
             </section>

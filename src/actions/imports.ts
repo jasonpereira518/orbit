@@ -39,6 +39,7 @@ import { refreshOutreachSuggestions } from "@/lib/reminders";
 import {
   mapCalendarCsvRow,
   parseIcsEvents,
+  windowCalendarEvents,
   type ParsedCalendarEvent,
 } from "@/lib/calendar-import";
 import { upsertContactEmbedding } from "@/lib/search";
@@ -401,7 +402,13 @@ export async function confirmLinkedInImport(
             email: row.email || undefined,
             linkedinUrl: row.url || undefined,
             source: "linkedin",
-            relationshipScore: 2,
+            // No statedCloseness: nobody has rated these people, and saying
+            // "2 out of 5" about two thousand strangers is exactly the
+            // assumption this change removes. `contactInsertValues` coalesces
+            // `input.relationshipScore ?? 2`, so the legacy column still reads
+            // 2 — which is precisely why `resolveStatedStrength` refuses to
+            // treat a 2 as an assessment.
+            firstInteractionAt: connectedOn ?? undefined,
             dateMet: connectedOn,
             howMet: "LinkedIn connection",
             metContext: "online",
@@ -900,13 +907,8 @@ export async function previewCalendarImport(payload: {
     });
   }
 
-  // Focus on past 180 days through next 14 days
-  const now = Date.now();
-  const windowed = events.filter((e) => {
-    if (!e.start) return true;
-    const t = e.start.getTime();
-    return t >= now - 180 * 86400000 && t <= now + 14 * 86400000;
-  });
+  // One-time calendar upload: reach back CALENDAR_BACKFILL_DAYS.
+  const windowed = windowCalendarEvents(events);
 
   const preview = windowed.slice(0, 40).map((event) => {
     const people = peopleFromEvent(event);
@@ -1004,11 +1006,9 @@ export async function confirmCalendarImport(payload: {
     }
 
     const now = Date.now();
-    const windowed = events.filter((e) => {
-      if (!e.start) return true;
-      const t = e.start.getTime();
-      return t >= now - 180 * 86400000 && t <= now + 14 * 86400000;
-    });
+    // Same one-time-upload backfill window as previewCalendarImport, so a
+    // confirm always processes exactly what the preview showed.
+    const windowed = windowCalendarEvents(events);
 
     const chunkEvents = payload.chunk
       ? windowed.slice(

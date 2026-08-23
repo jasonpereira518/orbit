@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { Activity, Gauge, TrendingUp, Users, Wallet } from "lucide-react";
+import { Activity, Gauge, ScrollText, TrendingUp, Users, Wallet } from "lucide-react";
 
 export type AdminNavItem = {
   href: string;
@@ -16,15 +16,16 @@ export type AdminNavItem = {
  */
 export const ADMIN_NAV: AdminNavItem[] = [
   { href: "/admin", label: "Overview", icon: Gauge },
-  // Ops and Product sit ahead of Users and Money deliberately: those two are already one
-  // click from the Overview, while these have no other entry point. Left to right the bar
-  // reads as a zoom-out — right now, what is broken, over time, who, how much.
-  { href: "/admin/ops", label: "Ops", icon: Activity },
-  { href: "/admin/product", label: "Product", icon: TrendingUp },
   { href: "/admin/users", label: "Users", icon: Users },
+  // "What is broken across everyone, right now" — the cross-account view of signals the
+  // inspector only ever showed one account at a time.
+  { href: "/admin/health", label: "Health", icon: Activity },
+  // Trends live here rather than on the overview, which stays triage-only by design.
+  { href: "/admin/growth", label: "Growth", icon: TrendingUp },
   // Route is /admin/billing, but the screen covers money in AND money out — "Billing"
   // alone reads as revenue-only.
   { href: "/admin/billing", label: "Money", icon: Wallet },
+  { href: "/admin/audit", label: "Audit", icon: ScrollText },
 ];
 
 export function isAdminNavActive(pathname: string, href: string) {

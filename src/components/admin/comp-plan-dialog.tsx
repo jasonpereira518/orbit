@@ -31,12 +31,12 @@ type Choice = "lifetime" | "orbit" | "none";
  * The cost asymmetry here is the whole reason this is a dialog rather than a two-item menu,
  * because it runs exactly opposite to intuition:
  *
- *  - Comping LIFETIME is free to Orbit. `entitlementsForPlan` gives it
- *    `canUseHostedSends: false` (a one-time payment must never buy an open-ended metered
- *    liability), and `countLifetimePurchases()` counts `lifetime_purchased_at`, which a
- *    comp never sets — so it does not consume a paid seat either.
- *  - Comping ORBIT PRO costs real money. It sets `canUseHostedSends: true`, unlocking
- *    Orbit's own Resend and Twilio credits, and Jason pays for every send.
+ *  - Comping LIFETIME is nearly free to Orbit. `entitlementsForPlan` gives it
+ *    `canUseHostedEnrichment: false`, so it never touches Orbit's Apollo credits — the one
+ *    metered cost with no ceiling. It does get `canUseHostedSending`, but every plan is
+ *    capped at `DAILY_SEND_LIMIT` a day, so that exposure is bounded and knowable.
+ *  - Comping ORBIT PRO costs real money. It sets `canUseHostedEnrichment: true`, unlocking
+ *    Orbit's own Apollo credits, which nothing in the product rate-limits.
  *
  * "Lifetime sounds more generous" is exactly backwards, so the dialog says so out loud.
  */
@@ -52,8 +52,8 @@ const CHOICES: Array<{
     tag: { label: "recommended", tone: "good" },
     lines: [
       "Everything uncapped, permanently.",
-      "Costs Orbit nothing — they bring their own send keys.",
-      "Does not consume a paid Lifetime seat.",
+      "Enrichment stays on their own Apollo key — the one uncapped cost.",
+      "Sending is included, but capped per day like every plan.",
     ],
   },
   {
@@ -61,8 +61,8 @@ const CHOICES: Array<{
     title: "Orbit Pro",
     tag: { label: "costs you money", tone: "warn" },
     lines: [
-      "Everything in Lifetime, plus outreach on Orbit's own Resend and Twilio credits.",
-      "You pay for every email and SMS they send.",
+      "Everything in Lifetime, plus enrichment on Orbit's own Apollo credits.",
+      "You pay for every prospect search and enrichment they run, with no daily ceiling.",
     ],
   },
   {

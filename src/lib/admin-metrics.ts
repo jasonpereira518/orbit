@@ -49,6 +49,8 @@ export type AdminUserRow = {
   aiModel: string | null;
   /** Whether a personal key exists for the provider the user actually selected. */
   hasProviderKey: boolean;
+  /** Set by `setAccountSuspendedAction`; blocks the account in `requireUserId()`. */
+  suspendedAt: Date | null;
   counts: {
     contacts: number;
     interactions: number;
@@ -133,6 +135,7 @@ export async function loadAdminUserRows(): Promise<AdminUserRow[]> {
           hasGemini: sql<boolean>`${userSettings.geminiApiKeyEncrypted} is not null`,
           hasOpenai: sql<boolean>`${userSettings.openaiApiKeyEncrypted} is not null`,
           hasAnthropic: sql<boolean>`${userSettings.anthropicApiKeyEncrypted} is not null`,
+          suspendedAt: userSettings.suspendedAt,
           compedPlan: userSettings.compedPlan,
           compedNote: userSettings.compedNote,
           compedAt: userSettings.compedAt,
@@ -255,6 +258,7 @@ export async function loadAdminUserRows(): Promise<AdminUserRow[]> {
       aiProvider: row.aiProvider,
       aiModel: row.aiModel,
       hasProviderKey,
+      suspendedAt: row.suspendedAt,
       counts: {
         contacts: c?.n ?? 0,
         interactions: i?.n ?? 0,
@@ -362,18 +366,6 @@ export function buildAlerts(
   for (const row of rows) {
     const who = { userId: row.userId, email: row.email };
 
-    if (row.subscriptionStatus === "past_due") {
-      alerts.push({
-        ...who,
-        severity: "warn",
-        message: "Subscription is past due",
-      });
-    }
-
-    // Billing drift, detected without a single Clerk API call. An active subscription
-    // always receives a renewal event pushing `period_end` forward, so a live status with
-    // a past-dated period means a webhook was dropped — and nothing else in the system
-    // would ever notice. `webhook_deliveries` shows which one; this shows that it happened.
     if (
       row.subscriptionStatus === "active" &&
       row.subscriptionPeriodEnd &&
@@ -385,6 +377,14 @@ export function buildAlerts(
         message: `Subscription says active but paid through ${row.subscriptionPeriodEnd
           .toISOString()
           .slice(0, 10)} — a Clerk webhook was probably missed`,
+      });
+    }
+
+    if (row.subscriptionStatus === "past_due") {
+      alerts.push({
+        ...who,
+        severity: "warn",
+        message: "Subscription is past due",
       });
     }
 

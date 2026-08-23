@@ -46,6 +46,11 @@ import { recomputeRecruiterRating } from "@/lib/recruiters";
  *     the evidence of the deletion itself.
  * A Clerk id is inert once the account is gone. `error_events`, by contrast, is data about
  * the user rather than about the operator, so it IS purged.
+ * Deliberate exception: `admin_audit_log` rows referencing this user are NOT deleted.
+ * That table is the operator's own record of privileged actions he took — chiefly comping
+ * a plan, which outranks every real billing signal and has no other trace. Purging it here
+ * would mean deleting an account erases the evidence that it was ever comped or inspected.
+ * A Clerk id is inert once the account is gone.
  *
  * `scripts/smoke-purge.ts` asserts this leaves nothing behind, table by table.
  */

@@ -1,33 +1,26 @@
-import { and, desc, eq, gt, inArray, isNotNull, isNull, lt, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
 import { getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import {
-  calendarSubscriptions,
   cronRuns,
   errorEvents,
-  gmailConnections,
-  importJobRows,
-  imports,
-  outlookConnections,
   outreachCampaigns,
   outreachMessages,
   outreachProspects,
   suggestedReminders,
   usageEvents,
-  userSettings,
   webhookDeliveries,
 } from "@/db/schema";
 import { countInt, num, toDate } from "@/lib/admin-metrics";
-import { PLAN_LIMIT_ROW_REASON } from "@/lib/import-job-processor";
 import { deriveCronRunState, hasMissedRun, type CronRunState } from "@/lib/cron-runs";
 
 /**
- * System-level reads for `/admin/ops`.
+ * System-level reads that `/admin/health` cannot answer from existing tables.
  *
- * The split this module enforces: **the Overview lists things that name a person; Ops lists
- * things that name a system.** If the fix is "message this user" it belongs in
- * `buildAlerts`; if the fix is "go fix Orbit" it belongs here. Nothing in this file calls
- * `buildAlerts`, and `OpsSignal` deliberately has no top-level `userId`, so a person-alert
- * cannot be rendered on Ops by accident.
+ * `admin-health.ts` covers what is broken *per account* — dead tokens, failing feeds, stuck
+ * imports — and every row there names a person and carries a button that fixes it. This
+ * module covers what is broken *about Orbit itself*: whether the nightly job ran, whether a
+ * Clerk webhook was dropped, what failed silently, and what queued work nothing will drain.
+ * Those name no person and have no button, which is exactly why they were invisible.
  *
  * Almost none of these are `GROUP BY user_id` — they are global counts by status, so their
  * cost is independent of user count.
@@ -39,34 +32,11 @@ import { deriveCronRunState, hasMissedRun, type CronRunState } from "@/lib/cron-
  * will pick this up", this one means "nothing ever will". The two thresholds mark the two
  * ownership classes and must not be reconciled.
  */
-export const WEDGED_IMPORT_MS = 10 * 60 * 1000;
+const WEDGED_IMPORT_MS = 10 * 60 * 1000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export type StuckImport = {
-  id: string;
-  userId: string;
-  email: string | null;
-  importType: string;
-  fileName: string | null;
-  status: string;
-  rowsProcessed: number | null;
-  totalRows: number | null;
-  errorMessage: string | null;
-  updatedAt: Date;
-};
-
-export type OpsImports = {
-  /** Client-driven and abandoned — the cron filters on import_type and will never see these. */
-  wedged: StuckImport[];
-  /** Server-owned; the nightly cron will resume these, but not for up to 24 hours. */
-  awaitingCron: StuckImport[];
-  failed: StuckImport[];
-  /** Rows refused by the plan cap, per import. An upgrade signal, not an error. */
-  planBlockedByImport: Map<string, number>;
-};
-
-export type OpsOutreachQueue = {
+export type OutreachQueueHealth = {
   overdue: number;
   notYetDue: number;
   oldestOverdue: Date | null;
@@ -76,21 +46,7 @@ export type OpsOutreachQueue = {
   accounts: number;
 };
 
-export type OpsConnections = {
-  needsReauth: number;
-  healthy: number;
-  byProvider: Array<{ provider: string; status: string; count: number }>;
-};
-
-export type OpsCalendar = {
-  erroring: number;
-  neverSynced: number;
-  /** Stale feeds, annotated with how long the owner has been gone. */
-  stale: Array<{ userId: string; email: string | null; lastSyncedAt: Date | null; ownerLastSeen: Date | null }>;
-  recentErrors: Array<{ label: string | null; error: string | null; at: Date | null }>;
-};
-
-export type OpsCron = {
+export type CronHealth = {
   lastRun: {
     job: string;
     state: CronRunState;
@@ -110,7 +66,7 @@ export type OpsCron = {
   }>;
 };
 
-export type OpsAiFailures = {
+export type AiFailureTaxonomy = {
   /** Orbit's problem: timeouts, empty responses, unavailable models. */
   ours: Array<{ kind: string; count: number }>;
   /** The user's problem: bad keys, their own rate limits. */
@@ -119,19 +75,19 @@ export type OpsAiFailures = {
   slowest: Array<{ operation: string; maxMs: number }>;
 };
 
-export type OpsErrors = {
+export type ErrorEventSummary = {
   grouped: Array<{ source: string; kind: string; count: number; lastAt: Date | null }>;
   recent: Array<{ source: string; kind: string; message: string | null; at: Date }>;
 };
 
-export type OpsWebhooks = {
+export type WebhookHealth = {
   byOutcome: Array<{ outcome: string; count: number }>;
   ignored: Array<{ eventType: string | null; reason: string | null; count: number }>;
   retried: Array<{ eventId: string; count: number }>;
   recentInvalid: Array<{ eventId: string | null; error: string | null; at: Date }>;
 };
 
-export type OpsBugSignatures = {
+export type BugSignatures = {
   confirmedWithoutReminder: number;
   /** Rows the semantic index cannot see. Null when pgvector is unavailable (local dev). */
   embeddingsMissingVector: number | null;
@@ -141,96 +97,7 @@ export type OpsBugSignatures = {
 /** `usage_events.error_kind` values that mean Orbit broke, not the user's key. */
 const OUR_ERROR_KINDS = new Set(["timeout", "empty_response", "model_unavailable", "other"]);
 
-export async function getOpsImports(now = new Date()): Promise<OpsImports> {
-  const db = await getDb();
-  const wedgedBefore = new Date(now.getTime() - WEDGED_IMPORT_MS);
-  const failedSince = new Date(now.getTime() - 7 * DAY_MS);
-
-  const emails = new Map(
-    (
-      await db
-        .select({ userId: userSettings.userId, email: userSettings.email })
-        .from(userSettings)
-    ).map((r) => [r.userId, r.email])
-  );
-
-  const shape = {
-    id: imports.id,
-    userId: imports.userId,
-    importType: imports.importType,
-    fileName: imports.fileName,
-    status: imports.status,
-    rowsProcessed: imports.rowsProcessed,
-    totalRows: imports.totalRows,
-    errorMessage: imports.errorMessage,
-    updatedAt: imports.updatedAt,
-  };
-
-  // `imports` has no status index. It is a small table and adding one now is premature;
-  // revisit if this page ever gets slow.
-  const [wedgedRows, awaitingRows, failedRows] = await Promise.all([
-    db
-      .select(shape)
-      .from(imports)
-      .where(
-        and(
-          eq(imports.status, "processing"),
-          ne(imports.importType, "linkedin_connections"),
-          lt(imports.updatedAt, wedgedBefore)
-        )
-      )
-      .orderBy(imports.updatedAt)
-      .limit(25),
-    db
-      .select(shape)
-      .from(imports)
-      .where(
-        and(
-          eq(imports.status, "processing"),
-          eq(imports.importType, "linkedin_connections"),
-          lt(imports.updatedAt, wedgedBefore)
-        )
-      )
-      .orderBy(imports.updatedAt)
-      .limit(25),
-    db
-      .select(shape)
-      .from(imports)
-      .where(and(eq(imports.status, "failed"), gt(imports.updatedAt, failedSince)))
-      .orderBy(desc(imports.updatedAt))
-      .limit(25),
-  ]);
-
-  const decorate = (rows: typeof wedgedRows): StuckImport[] =>
-    rows.map((r) => ({ ...r, email: emails.get(r.userId) ?? null }));
-
-  // Row detail ONLY for the imports actually rendered — never a global scan of
-  // import_job_rows, which is the largest table in the database on a big LinkedIn export.
-  const renderedIds = [...wedgedRows, ...awaitingRows, ...failedRows].map((r) => r.id);
-  const planBlockedByImport = new Map<string, number>();
-  if (renderedIds.length > 0) {
-    const blocked = await db
-      .select({ importId: importJobRows.importId, n: countInt })
-      .from(importJobRows)
-      .where(
-        and(
-          inArray(importJobRows.importId, renderedIds),
-          eq(importJobRows.errorMessage, PLAN_LIMIT_ROW_REASON)
-        )
-      )
-      .groupBy(importJobRows.importId);
-    for (const row of blocked) planBlockedByImport.set(row.importId, row.n);
-  }
-
-  return {
-    wedged: decorate(wedgedRows),
-    awaitingCron: decorate(awaitingRows),
-    failed: decorate(failedRows),
-    planBlockedByImport,
-  };
-}
-
-export async function getOpsOutreachQueue(now = new Date()): Promise<OpsOutreachQueue> {
+export async function getOutreachQueueHealth(now = new Date()): Promise<OutreachQueueHealth> {
   const db = await getDb();
 
   // outreach_messages has no user_id: it joins message → prospect → campaign.user_id.
@@ -273,96 +140,7 @@ export async function getOpsOutreachQueue(now = new Date()): Promise<OpsOutreach
   };
 }
 
-export async function getOpsConnections(): Promise<OpsConnections> {
-  const db = await getDb();
-
-  const [gmail, outlook] = await Promise.all([
-    db
-      .select({ status: gmailConnections.status, n: countInt })
-      .from(gmailConnections)
-      .groupBy(gmailConnections.status),
-    db
-      .select({ status: outlookConnections.status, n: countInt })
-      .from(outlookConnections)
-      .groupBy(outlookConnections.status),
-  ]);
-
-  const byProvider = [
-    ...gmail.map((r) => ({ provider: "Gmail", status: r.status, count: r.n })),
-    ...outlook.map((r) => ({ provider: "Outlook", status: r.status, count: r.n })),
-  ];
-
-  return {
-    needsReauth: byProvider
-      .filter((r) => r.status !== "active")
-      .reduce((a, r) => a + r.count, 0),
-    healthy: byProvider
-      .filter((r) => r.status === "active")
-      .reduce((a, r) => a + r.count, 0),
-    byProvider,
-  };
-}
-
-export async function getOpsCalendar(now = new Date()): Promise<OpsCalendar> {
-  const db = await getDb();
-  const staleBefore = new Date(now.getTime() - 7 * DAY_MS);
-
-  const [counts, staleRows, errorRows] = await Promise.all([
-    db
-      .select({
-        erroring: sql<string>`count(*) filter (where ${calendarSubscriptions.lastSyncStatus} = 'error')`,
-        neverSynced: sql<string>`count(*) filter (where ${calendarSubscriptions.enabled} = 1 and ${calendarSubscriptions.lastSyncedAt} is null)`,
-      })
-      .from(calendarSubscriptions),
-    // Joined to the owner's last-seen on purpose: sync only fires when someone loads the
-    // dashboard or imports page, so a stale feed nearly always means an inactive user
-    // rather than a broken feed. Without this the number reads as alarming and isn't.
-    db
-      .select({
-        userId: calendarSubscriptions.userId,
-        email: userSettings.email,
-        lastSyncedAt: calendarSubscriptions.lastSyncedAt,
-        ownerLastSeen: userSettings.lastActiveAt,
-      })
-      .from(calendarSubscriptions)
-      .leftJoin(userSettings, eq(userSettings.userId, calendarSubscriptions.userId))
-      .where(
-        and(
-          eq(calendarSubscriptions.enabled, 1),
-          isNotNull(calendarSubscriptions.lastSyncedAt),
-          lt(calendarSubscriptions.lastSyncedAt, staleBefore)
-        )
-      )
-      .limit(20),
-    db
-      .select({
-        label: calendarSubscriptions.label,
-        error: calendarSubscriptions.lastSyncError,
-        at: calendarSubscriptions.lastSyncedAt,
-      })
-      .from(calendarSubscriptions)
-      .where(eq(calendarSubscriptions.lastSyncStatus, "error"))
-      .limit(10),
-  ]);
-
-  return {
-    erroring: num(counts[0]?.erroring),
-    neverSynced: num(counts[0]?.neverSynced),
-    stale: staleRows.map((r) => ({
-      userId: r.userId,
-      email: r.email ?? null,
-      lastSyncedAt: toDate(r.lastSyncedAt),
-      ownerLastSeen: toDate(r.ownerLastSeen),
-    })),
-    recentErrors: errorRows.map((r) => ({
-      label: r.label,
-      error: r.error,
-      at: toDate(r.at),
-    })),
-  };
-}
-
-export async function getOpsCron(now = new Date()): Promise<OpsCron> {
+export async function getCronHealth(now = new Date()): Promise<CronHealth> {
   const db = await getDb();
   const rows = await db
     .select()
@@ -396,7 +174,7 @@ export async function getOpsCron(now = new Date()): Promise<OpsCron> {
   };
 }
 
-export async function getOpsAiFailures(days = 7, now = new Date()): Promise<OpsAiFailures> {
+export async function getAiFailureTaxonomy(days = 7, now = new Date()): Promise<AiFailureTaxonomy> {
   const db = await getDb();
   const since = new Date(now.getTime() - days * DAY_MS);
 
@@ -440,7 +218,7 @@ export async function getOpsAiFailures(days = 7, now = new Date()): Promise<OpsA
   };
 }
 
-export async function getOpsErrors(days = 7, now = new Date()): Promise<OpsErrors> {
+export async function getErrorEventSummary(days = 7, now = new Date()): Promise<ErrorEventSummary> {
   const db = await getDb();
   const since = new Date(now.getTime() - days * DAY_MS);
 
@@ -481,7 +259,7 @@ export async function getOpsErrors(days = 7, now = new Date()): Promise<OpsError
   };
 }
 
-export async function getOpsWebhooks(days = 7, now = new Date()): Promise<OpsWebhooks> {
+export async function getWebhookHealth(days = 7, now = new Date()): Promise<WebhookHealth> {
   const db = await getDb();
   const since = new Date(now.getTime() - days * DAY_MS);
 
@@ -535,7 +313,7 @@ export async function getOpsWebhooks(days = 7, now = new Date()): Promise<OpsWeb
   };
 }
 
-export async function getOpsBugSignatures(): Promise<OpsBugSignatures> {
+export async function getBugSignatures(): Promise<BugSignatures> {
   const db = await getDb();
 
   const [confirmed, inlined] = await Promise.all([
@@ -585,7 +363,7 @@ export async function getOpsBugSignatures(): Promise<OpsBugSignatures> {
  * Several scalar subqueries in ONE round trip, because this runs on a page that already
  * does its own fan-out and must not pay for nine more queries.
  */
-export async function getOpsHeadlineCount(now = new Date()): Promise<number> {
+export async function getSystemIssueCount(now = new Date()): Promise<number> {
   const db = await getDb();
   const wedgedBefore = new Date(now.getTime() - WEDGED_IMPORT_MS).toISOString();
 

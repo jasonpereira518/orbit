@@ -1,7 +1,7 @@
 import { cache } from "react";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts, interactions, userGoals } from "@/db/schema";
+import { contacts, gmailConnections, interactions, outlookConnections, userGoals, userSettings } from "@/db/schema";
 import {
   applyClosenessCohort,
   buildClosenessCohort,
@@ -10,6 +10,7 @@ import {
   type ClosenessBreakdown,
   type ClosenessCohort,
 } from "@/lib/closeness";
+import { publicEmailDomain } from "@/lib/closeness-evidence";
 
 /**
  * The columns the raw formula reads. A caller that has already loaded its
@@ -21,9 +22,14 @@ import {
 export type ClosenessCohortRow = {
   id: string;
   relationshipScore: number | null;
+  statedCloseness: number | null;
   lastInteractionAt: Date | string | null;
+  firstInteractionAt: Date | string | null;
+  dateMet: Date | string | null;
   createdAt: Date | string;
+  email: string | null;
   company: string | null;
+  school: string | null;
   title: string | null;
   industry: string | null;
   howMet: string | null;
@@ -84,7 +90,7 @@ async function buildCohortResult(
     Date.now() - CADENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000
   );
 
-  const [rows, goalRows, touchRows] = await Promise.all([
+  const [rows, goalRows, touchRows, settings, gmailConnection, outlookConnection] = await Promise.all([
     preloadedRows ??
       db.query.contacts.findMany({
         where: eq(contacts.userId, userId),
@@ -93,9 +99,14 @@ async function buildCohortResult(
         columns: {
           id: true,
           relationshipScore: true,
+          statedCloseness: true,
           lastInteractionAt: true,
+          firstInteractionAt: true,
+          dateMet: true,
           createdAt: true,
+          email: true,
           company: true,
+          school: true,
           title: true,
           industry: true,
           howMet: true,
@@ -109,39 +120,104 @@ async function buildCohortResult(
       where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
       columns: { text: true },
     }),
+    // Two numbers from one scan. `recent` is cadence — touches inside the
+    // trailing window. `total` answers a different question: has this contact
+    // *ever* been interacted with? That is what the evidence layer needs, and
+    // the cadence window is far too narrow to stand in for it — a friend you
+    // last saw two years ago is someone we know about, not someone we have no
+    // data on. It cannot come from `contacts.last_interaction_at` either: that
+    // column is stamped `metAt ?? now` on every create, so it is non-null for
+    // every imported contact. Hence no date predicate in the WHERE, and the
+    // window applied as a FILTER instead.
     db
       .select({
         contactId: interactions.contactId,
-        count: sql<number>`count(*)::int`,
+        recent: sql<number>`count(*) filter (where ${interactions.interactionDate} >= ${since})::int`,
+        total: sql<number>`count(*)::int`,
       })
       .from(interactions)
-      .where(
-        and(
-          eq(interactions.userId, userId),
-          gte(interactions.interactionDate, since)
-        )
-      )
+      .where(eq(interactions.userId, userId))
       .groupBy(interactions.contactId),
+    db.query.userSettings.findFirst({
+      where: eq(userSettings.userId, userId),
+      columns: { email: true },
+    }),
+    // Whether a mail source is genuinely connected. NOT `userSettings.email`,
+    // which is set for every account and would mark the entire orbit as
+    // covered — inflating evidence for people we have never actually observed.
+    // Gmail and Outlook are both equally wired integrations, so either one
+    // connected counts.
+    db.query.gmailConnections.findFirst({
+      where: eq(gmailConnections.userId, userId),
+      columns: { id: true },
+    }),
+    db.query.outlookConnections.findFirst({
+      where: eq(outlookConnections.userId, userId),
+      columns: { id: true },
+    }),
   ]);
 
   const goals = goalRows.map((g) => g.text);
   const touchCounts = new Map<string, number>(
-    touchRows.map((r) => [r.contactId, Number(r.count) || 0])
+    touchRows.map((r) => [r.contactId, Number(r.recent) || 0])
   );
+  const everInteracted = new Set<string>(
+    touchRows.filter((r) => Number(r.total) > 0).map((r) => r.contactId)
+  );
+
+  // Orbit-relative affinity. Orbit stores no company or school for the user
+  // themselves, so "where has this person overlapped with me" is inferred from
+  // the shape of the orbit: an employer holding a large share of your contacts
+  // is somewhere you have been. Computed from the rows already in hand — no
+  // extra query.
+  const companyCounts = new Map<string, number>();
+  const schoolCounts = new Map<string, number>();
+  for (const c of rows) {
+    const co = c.company?.trim().toLowerCase();
+    if (co) companyCounts.set(co, (companyCounts.get(co) ?? 0) + 1);
+    const sc = c.school?.trim().toLowerCase();
+    if (sc) schoolCounts.set(sc, (schoolCounts.get(sc) ?? 0) + 1);
+  }
+  const maxCompany = Math.max(1, ...companyCounts.values());
+  const maxSchool = Math.max(1, ...schoolCounts.values());
+
+  const userDomain = (() => {
+    const email = settings?.email?.trim().toLowerCase();
+    const domain = email?.split("@")[1];
+    if (!domain || publicEmailDomain(domain)) return null;
+    return domain;
+  })();
+
+  const mailConnected = !!gmailConnection || !!outlookConnection;
 
   // The goal haystack intentionally omits `notes`: keeping it would mean
   // pulling every note body on every request, and the list payload already
   // drops notes for slimming — so including it here is what made /graph and
   // /contacts disagree about the same contact's ring.
-  const raws = rows.map((c) =>
-    computeRawCloseness(
-      { ...c, notes: null, tags: c.contactTags.map((ct) => ct.tag.name) },
+  const raws = rows.map((c) => {
+    const contactDomain = c.email?.trim().toLowerCase().split("@")[1] ?? null;
+    return computeRawCloseness(
+      {
+        ...c,
+        notes: null,
+        tags: c.contactTags.map((ct) => ct.tag.name),
+        hasLoggedInteraction: everInteracted.has(c.id),
+        emailDomainMatchesUser:
+          !!userDomain && !!contactDomain && contactDomain === userDomain,
+        companyConcentration: c.company
+          ? (companyCounts.get(c.company.trim().toLowerCase()) ?? 0) / maxCompany
+          : 0,
+        schoolConcentration: c.school
+          ? (schoolCounts.get(c.school.trim().toLowerCase()) ?? 0) / maxSchool
+          : 0,
+        coveredByConnectedSource: mailConnected && !!c.email,
+      },
       goals,
       touchCounts.get(c.id) ?? 0
-    )
-  );
+    );
+  });
 
-  const cohort = buildClosenessCohort(raws.map((r) => r.raw));
+  const cohort = buildClosenessCohort(raws);
 
   const byId = new Map<string, ClosenessBreakdown>();
   rows.forEach((c, i) => {

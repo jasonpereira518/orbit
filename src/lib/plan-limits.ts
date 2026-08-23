@@ -21,11 +21,8 @@ export const ORBIT_PLAN_SLUG = process.env.CLERK_ORBIT_PLAN_SLUG || "orbit";
 
 export const FREE_CONTACT_LIMIT = 100;
 
-/** Lifetime is an early-adopter tier; past this many purchases it retires. */
-export const LIFETIME_SEAT_LIMIT = 100;
-
 export const PLAN_LABELS: Record<Plan, string> = {
-  free: "Free",
+  free: "Free Plan",
   orbit: "Orbit Pro",
   lifetime: "Orbit Lifetime",
 };

@@ -1,18 +1,10 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { PUBLIC_ROUTES } from "@/lib/public-routes";
 
-const isPublicRoute = createRouteMatcher([
-  "/",
-  "/privacy",
-  "/terms",
-  "/contact",
-  "/sign-in(.*)",
-  "/sign-up(.*)",
-  "/api/webhooks(.*)",
-  // Calendar clients (Google, Apple, Outlook) cannot complete a Clerk session. The feed
-  // is authenticated by the opaque token in its path instead.
-  "/api/calendar/(.*)",
-]);
+// The list lives in `@/lib/public-routes` so a smoke test can assert it against the
+// filesystem — a marketing page missing from it 404s for exactly the people it is for.
+const isPublicRoute = createRouteMatcher([...PUBLIC_ROUTES]);
 
 const configured = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
@@ -40,7 +32,11 @@ export default configured
       // Defense in depth for the admin console. Without Clerk keys this is demo mode, where
       // `requireUserId()` succeeds as the shared "demo-user" — so the route must be gone
       // entirely, not merely unauthorized. `src/lib/admin.ts` denies it independently.
-      if (new URL(req.url).pathname.startsWith("/admin")) {
+      //
+      // `/api/admin` is listed separately rather than caught by the same prefix: the export
+      // handler lives under /api and would otherwise fall through this branch entirely.
+      const { pathname } = new URL(req.url);
+      if (pathname.startsWith("/admin") || pathname.startsWith("/api/admin")) {
         return new NextResponse(null, { status: 404 });
       }
       return withPathname(req);

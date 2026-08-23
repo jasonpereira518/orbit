@@ -131,10 +131,12 @@ export async function getApolloApiKey(userId: string): Promise<string | null> {
   const personal = decryptKey(settings?.apolloApiKeyEncrypted);
   if (personal) return personal;
 
-  // Apollo credits are metered like Resend/Twilio, so Orbit's shared key is
-  // subscription-only. Lifetime users add their own key in Settings.
-  const { canUseHostedSends } = await getEntitlements(userId);
-  if (!canUseHostedSends) return null;
+  // Enrichment has no quota anywhere in the product — unlike sending, which every plan
+  // caps at DAILY_SEND_LIMIT a day — so Orbit's shared Apollo key is the one cost a
+  // one-time payment cannot fund forever. It stays subscription-only; Lifetime and Free
+  // users add their own key in Settings, which the short-circuit above already prefers.
+  const { canUseHostedEnrichment } = await getEntitlements(userId);
+  if (!canUseHostedEnrichment) return null;
   return process.env.APOLLO_API_KEY || null;
 }
 
