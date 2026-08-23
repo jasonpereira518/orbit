@@ -8,6 +8,9 @@ import {
   startCronRun,
   type CronRunStatus,
 } from "@/lib/cron-runs";
+import { recalibrateCloseness } from "@/lib/closeness-cohort";
+import { findStaleCohorts } from "@/lib/closeness-materialize";
+import { backfillEmbeddingVectors, neonClient } from "@/db";
 
 export const maxDuration = 300;
 
@@ -26,6 +29,9 @@ export const CRON_STALL_THRESHOLD_MS = 3 * 60 * 1000;
  * any admin view looks at.
  */
 const USAGE_EVENT_RETENTION_DAYS = 180;
+
+/** Networks recalibrated per run. Bounded so one huge orbit cannot eat the invocation. */
+const RECALIBRATE_BATCH = 25;
 
 /**
  * Shorter than usage events, because the two answer different questions: usage feeds cost
@@ -77,6 +83,8 @@ export async function GET(request: Request) {
     resumeFailed: 0,
     usageEventsPruned: 0,
     errorEventsPruned: 0,
+    cohortsRecalibrated: 0,
+    embeddingsBackfilled: 0,
   };
 
   try {
@@ -115,6 +123,33 @@ export async function GET(request: Request) {
       // Housekeeping must never fail the job-resumption backstop this route exists for,
       // but a silent failure here is how a table grows unbounded — so it downgrades the
       // run instead of vanishing.
+      status = "partial";
+    }
+
+    try {
+      // Redraw closeness for users whose ranking has been drifting.
+      //
+      // Ordinary edits score their own contact immediately and flag the distribution
+      // dirty; nothing else redraws it, because doing that on read would hand back the
+      // full-network scan that materializing closeness exists to remove. This is what
+      // eventually settles it. Bounded per run so one enormous orbit cannot use up the
+      // whole invocation.
+      for (const staleUserId of await findStaleCohorts(RECALIBRATE_BATCH)) {
+        await recalibrateCloseness(staleUserId).catch(() => null);
+        stats.cohortsRecalibrated += 1;
+      }
+    } catch {
+      status = "partial";
+    }
+
+    try {
+      // Copy JSONB embeddings into the pgvector column. This used to run on every cold
+      // start, where it could spend up to 500 sequential round trips before the first
+      // request was served. Nothing needs it to be immediate — an uncopied row just misses
+      // vector search until it is picked up here.
+      const neonSql = neonClient();
+      if (neonSql) stats.embeddingsBackfilled = await backfillEmbeddingVectors(neonSql);
+    } catch {
       status = "partial";
     }
 

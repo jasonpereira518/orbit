@@ -1,8 +1,9 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   aiSuggestions,
   calendarSubscriptions,
+  closenessCohorts,
   chatThreads,
   companies,
   contactEmbeddings,
@@ -57,6 +58,7 @@ import { recomputeRecruiterRating } from "@/lib/recruiters";
 export async function purgeUserData(userId: string) {
   const db = await getDb();
 
+  await db.delete(closenessCohorts).where(eq(closenessCohorts.userId, userId));
   await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
   await db.delete(interactions).where(eq(interactions.userId, userId));
   // Before `reminders` and `contacts`: its FKs are `set null`, so deleting those first
@@ -93,12 +95,15 @@ export async function purgeUserData(userId: string) {
 
   await db.delete(outreachCampaigns).where(eq(outreachCampaigns.userId, userId));
 
-  const userContacts = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-  });
-  for (const c of userContacts) {
-    await db.delete(contactTags).where(eq(contactTags.contactId, c.id));
-  }
+  // `contact_tags` has no `user_id` of its own, so it is deleted through its contacts. One
+  // statement with a subquery, not a query for every contact followed by a delete for each —
+  // that shape meant purging a 5,000-contact account took 5,001 round trips.
+  await db.delete(contactTags).where(
+    inArray(
+      contactTags.contactId,
+      db.select({ id: contacts.id }).from(contacts).where(eq(contacts.userId, userId))
+    )
+  );
   await db.delete(contacts).where(eq(contacts.userId, userId));
   await db.delete(companies).where(eq(companies.userId, userId));
   await db.delete(tags).where(eq(tags.userId, userId));

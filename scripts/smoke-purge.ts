@@ -82,6 +82,23 @@ async function seed() {
 
   await db.insert(schema.userGoals).values({ userId: USER, text: "meet more people" });
 
+  await db.insert(schema.closenessCohorts).values({
+    userId: USER,
+    snapshot: {
+      n: 1,
+      evidencedN: 1,
+      coverage: 1,
+      relativeWeight: 0,
+      quantiles: [0.5],
+      averageRaw: 0.5,
+      maxCompany: 1,
+      maxSchool: 1,
+      userDomain: null,
+      mailConnected: false,
+    },
+    contactCount: 1,
+  });
+
   await db.insert(schema.interactions).values({
     userId: USER,
     contactId: contact.id,

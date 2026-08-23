@@ -2,6 +2,7 @@ import { drizzle as drizzleNeon } from "drizzle-orm/neon-http";
 import { neon } from "@neondatabase/serverless";
 import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import { PGlite } from "@electric-sql/pglite";
+import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import * as schema from "./schema";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import path from "node:path";
@@ -16,12 +17,14 @@ const globalForDb = globalThis as unknown as {
   orbitNeonSql?: ReturnType<typeof neon>;
   orbitReady?: Promise<void>;
   orbitPgvector?: boolean;
+  orbitTrigram?: boolean;
+  orbitDrizzle?: Db;
 };
 
 // Resets on HMR so new DDL/columns are applied after schema changes.
 let schemaReconciled: Promise<void> | undefined;
 
-const DDL = `
+export const DDL = `
 CREATE TABLE IF NOT EXISTS user_settings (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL UNIQUE,
@@ -495,6 +498,275 @@ CREATE TABLE IF NOT EXISTS admin_reveal_grants (
 // index here fails the whole bootstrap on a fresh database. They live in
 // ADMIN_V2_STATEMENTS instead, which both engines run after their column pass.
 
+/**
+ * Schema version.
+ *
+ * **Bump this whenever you add DDL** — to the `DDL` template, `SCALE_DDL`, `alters`,
+ * `ADMIN_V2_STATEMENTS`, or the `ensureColumn` calls in `migratePglite`. A database whose
+ * recorded version already matches skips the entire sweep, so new DDL that arrives without
+ * a bump never runs on an instance that has already migrated.
+ *
+ * The gate exists because `getDb()` replayed every one of those statements on the cold
+ * start of each serverless instance — ~165 sequential HTTPS round trips on `neon-http`, all
+ * of them no-ops after the first deploy, blocking the first request. One SELECT confirms a
+ * warm schema instead. A database with no version row (anything migrated before this
+ * shipped) reads as out of date and takes the full pass once.
+ */
+export const SCHEMA_VERSION = 3;
+
+/**
+ * Everything the contacts surface needs to stay constant-time as a network grows past a
+ * few thousand people. Kept apart from `DDL` because these are all `ALTER`/`CREATE INDEX`
+ * statements: `CREATE TABLE IF NOT EXISTS` never adds a column to a table that already
+ * exists, so putting them in the table body above would silently skip every existing
+ * database. One list, run by both drivers, so Neon and PGlite cannot drift.
+ *
+ * Ordering matters: generated columns before the indexes that read them.
+ */
+export const SCALE_DDL: string[] = [
+  // --- Generated columns -----------------------------------------------------------
+  //
+  // Last-name sort key. This is the keyset-pagination ordering column, and it must agree
+  // exactly with what the UI would have computed — `lastNameSortKey` in
+  // `src/actions/contacts.ts` and `lastNameOf` in `contacts-list.tsx` both derived this in
+  // JavaScript, and a page boundary that disagrees with the sort silently drops or repeats
+  // contacts. Both of those are deleted in favour of this column.
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS sort_key text
+     GENERATED ALWAYS AS (
+       lower(coalesce(nullif(trim(last_name), ''), split_part(trim(full_name), ' ', -1)))
+     ) STORED`,
+
+  // Normalized LinkedIn slug — the identity two accounts are matched on, so mutual-contact
+  // lookup can use an index instead of a leading-wildcard ILIKE across every user's contacts.
+  //
+  // Dropped first because a generated column's expression cannot be altered in place, and an
+  // earlier revision of this stopped at the first `/` only. That left the query string on the
+  // slug, so the same person saved as `/in/ada` by one account and `/in/ada?trk=...` by
+  // another would not match. Cheap to redo — the column is derived, so Postgres refills it,
+  // and this only runs when `SCHEMA_VERSION` changes.
+  //
+  // Must stay in step with `extractLinkedinSlug` in `src/actions/contacts.ts`, whose regex
+  // this reproduces: everything after `/in/` up to a `/`, `?` or `#`.
+  `ALTER TABLE contacts DROP COLUMN IF EXISTS linkedin_slug`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS linkedin_slug text
+     GENERATED ALWAYS AS (
+       lower(nullif(
+         split_part(split_part(split_part(split_part(coalesce(linkedin_url, ''), '/in/', 2), '?', 1), '#', 1), '/', 1),
+         ''
+       ))
+     ) STORED`,
+
+  // Weighted search vector. The weight classes mirror FIELD_WEIGHTS in
+  // `src/lib/keyword-search.ts`: name is an A, employer/school/role a B, the contact
+  // details a C, and free text a D. 'simple' rather than 'english' on purpose — names and
+  // companies are not English words and stemming them ("Manning" -> "Man") loses matches.
+  //
+  // Tags are not here: they live in their own table and a generated column may only read
+  // its own row. Tag matches are an EXISTS subquery in the search predicate instead.
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS search_tsv tsvector
+     GENERATED ALWAYS AS (
+       setweight(to_tsvector('simple', coalesce(full_name, '') || ' ' || coalesce(preferred_name, '')), 'A') ||
+       setweight(to_tsvector('simple', coalesce(company, '') || ' ' || coalesce(school, '') || ' ' || coalesce(title, '')), 'B') ||
+       setweight(to_tsvector('simple', coalesce(email, '') || ' ' || coalesce(location, '') || ' ' || coalesce(how_met, '') || ' ' || coalesce(met_context, '') || ' ' || coalesce(industry, '')), 'C') ||
+       setweight(to_tsvector('simple', coalesce(ai_summary, '') || ' ' || coalesce(notes, '')), 'D')
+     ) STORED`,
+
+  // --- Materialized closeness ------------------------------------------------------
+  //
+  // Closeness is cohort-relative: a contact's ring is its position in the distribution
+  // formed by the whole network, which is why every surface used to scan every contact to
+  // render any of them. These columns hold the already-applied result so a page of 50 can
+  // be served without the other 4,950. See `src/lib/closeness-materialize.ts`.
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS closeness_raw real`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS closeness integer`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS closeness_tier text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS orbit_score integer`,
+  // Evidence and prior are what `selectTriageCandidates` ranks on; it read them off the
+  // in-memory breakdown, so they have to survive the move to storage.
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS closeness_evidence real`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS closeness_prior real`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS closeness_computed_at timestamptz`,
+  // The full `ClosenessBreakdown`, including the component scores (strength, recency,
+  // cadence, goal relevance) that the contact-detail explanation renders. The scalar
+  // columns above are what the list page reads and sorts on; this is what the surfaces
+  // that want the whole picture read, so neither has to recompute the cohort.
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS closeness_breakdown jsonb`,
+
+  // The per-user distribution the scores above were applied against. `snapshot` holds a
+  // fixed-size quantile sketch rather than the raw sorted array, so this row stays the
+  // same size whether the user has 50 contacts or 50,000. `dirty_at` is set by writes and
+  // drained by recalibration.
+  `CREATE TABLE IF NOT EXISTS closeness_cohorts (
+     user_id text PRIMARY KEY,
+     snapshot jsonb NOT NULL DEFAULT '{}',
+     contact_count integer NOT NULL DEFAULT 0,
+     computed_at timestamptz NOT NULL DEFAULT now(),
+     dirty_at timestamptz
+   )`,
+
+  // --- Indexes ---------------------------------------------------------------------
+  //
+  // Serves the default keyset page. The trailing full_name and id break ties so the cursor
+  // is total-ordered — without them two people sorting equal can straddle a page boundary.
+  `CREATE INDEX IF NOT EXISTS contacts_user_sort_idx ON contacts(user_id, sort_key, full_name, id)`,
+  `CREATE INDEX IF NOT EXISTS contacts_user_updated_idx ON contacts(user_id, updated_at DESC)`,
+  // Column directions match `orderFor` in `src/actions/contacts.ts` exactly, including the
+  // descending id. The cursor is a row-value comparison, which needs every element ordered
+  // the same way, so the index has to be declared that way to serve it.
+  `CREATE INDEX IF NOT EXISTS contacts_user_closeness_idx ON contacts(user_id, closeness DESC, id DESC)`,
+  `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
+  `CREATE INDEX IF NOT EXISTS contacts_search_gin ON contacts USING gin(search_tsv)`,
+  `CREATE INDEX IF NOT EXISTS contacts_slug_idx ON contacts(linkedin_slug) WHERE linkedin_slug IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS contacts_user_email_idx ON contacts(user_id, email) WHERE email IS NOT NULL`,
+  // Both of these back a foreign key that had no index: deleting a company or a tag was a
+  // full scan of the referencing table.
+  `CREATE INDEX IF NOT EXISTS contacts_company_id_idx ON contacts(company_id)`,
+  `CREATE INDEX IF NOT EXISTS contact_tags_tag_idx ON contact_tags(tag_id)`,
+  // `(user_id, contact_id, ...)` cannot serve a plain user+date ordering, so the knowledge
+  // base and outreach refresh had no usable index for their scans.
+  `CREATE INDEX IF NOT EXISTS interactions_user_date_idx ON interactions(user_id, interaction_date DESC)`,
+  `CREATE INDEX IF NOT EXISTS embeddings_user_src_idx ON contact_embeddings(user_id, source_type, contact_id)`,
+];
+
+/** Runs one SQL statement on whichever driver is active. */
+export type StatementRunner = (statement: string) => Promise<unknown>;
+
+/**
+ * Runs a list of idempotent DDL statements, tolerating the "it was already there" failures
+ * that `IF NOT EXISTS` cannot express (adding a constraint, mostly) while still surfacing
+ * anything genuinely wrong instead of swallowing it.
+ */
+async function runStatements(
+  run: StatementRunner,
+  statements: string[],
+  label: string
+) {
+  for (const statement of statements) {
+    try {
+      await run(statement);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (/already exists|duplicate key|duplicate object/i.test(message)) continue;
+      console.error(
+        `[db] ${label} failed: ${statement.trim().split("\n")[0]}\n`,
+        message
+      );
+    }
+  }
+}
+
+/**
+ * The scale schema, applied identically to Neon and PGlite.
+ *
+ * The two pieces that cannot just live in `SCALE_DDL` are here: `pg_trgm` has to exist
+ * before an index can use `gin_trgm_ops`, and the `contact_tags` uniqueness can only be
+ * added once the duplicate pairs already in the table are gone.
+ */
+export async function applyScaleSchema(run: StatementRunner) {
+  await runStatements(run, SCALE_DDL, "scale DDL");
+
+  // Fuzzy name matching. Available on Neon as an extension and bundled with PGlite (see
+  // `ensureReady`), so local search finally behaves like production — unlike pgvector,
+  // which PGlite has no build of at all. If it is unavailable the index is skipped and
+  // search still works through `search_tsv`; only typo tolerance is lost.
+  try {
+    await run(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+    await run(
+      `CREATE INDEX IF NOT EXISTS contacts_name_trgm
+       ON contacts USING gin(full_name gin_trgm_ops, company gin_trgm_ops)`
+    );
+    globalForDb.orbitTrigram = true;
+  } catch {
+    globalForDb.orbitTrigram = false;
+  }
+
+  // `contact_tags` has a surrogate primary key and no natural uniqueness, so a double write
+  // could leave two rows for the same pair — `syncTags` deletes-then-inserts specifically to
+  // work around that. Drop the existing duplicates before claiming the constraint, or the
+  // CREATE fails and the workaround has to stay forever.
+  try {
+    await run(
+      `DELETE FROM contact_tags a
+       USING contact_tags b
+       WHERE a.ctid > b.ctid
+         AND a.contact_id = b.contact_id
+         AND a.tag_id = b.tag_id`
+    );
+    await run(
+      `CREATE UNIQUE INDEX IF NOT EXISTS contact_tags_pair_uidx
+       ON contact_tags(contact_id, tag_id)`
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/already exists/i.test(message)) {
+      console.error("[db] contact_tags dedupe failed\n", message);
+    }
+  }
+}
+
+/**
+ * Whether the recorded schema version already matches this build.
+ *
+ * One SELECT standing in for the whole DDL sweep. Anything unexpected (no table yet, a
+ * fresh database, a permissions problem) answers "no" and the caller does the full pass —
+ * being wrong here costs a slow boot, never a wrong schema.
+ */
+export async function schemaIsCurrent(run: StatementRunner): Promise<boolean> {
+  try {
+    await run(
+      `CREATE TABLE IF NOT EXISTS schema_migrations (
+         id integer PRIMARY KEY DEFAULT 1,
+         version integer NOT NULL,
+         applied_at timestamptz NOT NULL DEFAULT now(),
+         CONSTRAINT schema_migrations_single_row CHECK (id = 1)
+       )`
+    );
+    const result = await run(
+      `SELECT version FROM schema_migrations WHERE id = 1`
+    );
+    const rows = rowsOf<{ version: number | string }>(result);
+    return Number(rows[0]?.version) === SCHEMA_VERSION;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Establishes which optional extensions this database actually has.
+ *
+ * `isPgvectorAvailable()` reads module state that the migration path normally sets as a
+ * side effect. A boot that skips the migration still has to know, or every search silently
+ * takes the in-JS cosine fallback.
+ */
+async function detectExtensions(run: StatementRunner) {
+  try {
+    const result = await run(
+      `SELECT extname FROM pg_extension WHERE extname IN ('vector', 'pg_trgm')`
+    );
+    const names = new Set(
+      rowsOf<{ extname: string }>(result).map((r) => r.extname)
+    );
+    globalForDb.orbitPgvector = names.has("vector");
+    globalForDb.orbitTrigram = names.has("pg_trgm");
+  } catch {
+    globalForDb.orbitPgvector = false;
+    globalForDb.orbitTrigram = false;
+  }
+}
+
+export async function recordSchemaVersion(run: StatementRunner) {
+  try {
+    await run(
+      `INSERT INTO schema_migrations (id, version, applied_at)
+       VALUES (1, ${SCHEMA_VERSION}, now())
+       ON CONFLICT (id) DO UPDATE
+         SET version = EXCLUDED.version, applied_at = EXCLUDED.applied_at`
+    );
+  } catch (err) {
+    // A boot that cannot record its version just re-runs the idempotent sweep next time.
+    console.error("[db] could not record schema version\n", err);
+  }
+}
 
 async function columnExists(client: PGlite, table: string, column: string) {
   const result = await client.query<{ exists: boolean }>(
@@ -705,6 +977,11 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "comped_at", "timestamptz");
   await ensureColumn(client, "user_settings", "comped_by", "text");
   await ensureColumn(client, "user_settings", "last_active_at", "timestamptz");
+
+  // `query` rather than `exec`: it returns `{ rows }`, which `rowsOf` understands, so the
+  // schema-version SELECT reads the same on both drivers. Every statement here is a single
+  // command, which is what `query` requires.
+  await applyScaleSchema((statement) => client.query(statement));
 }
 
 /**
@@ -772,19 +1049,42 @@ export function isPgvectorAvailable() {
   return Boolean(globalForDb.orbitPgvector);
 }
 
-async function backfillEmbeddingVectors(sql: ReturnType<typeof neon>) {
+/**
+ * The raw Neon client, or null on the PGlite path.
+ *
+ * Only for callers that genuinely need to bypass Drizzle — the pgvector backfill writes a
+ * `::vector` literal, which has no Drizzle column to write through because
+ * `embedding_vector` is created at runtime and is not in `schema.ts`.
+ */
+export function neonClient() {
+  return globalForDb.orbitNeonSql ?? null;
+}
+
+/**
+ * Copies JSONB embeddings into the pgvector column for rows written before it existed.
+ *
+ * Deliberately NOT on the boot path any more. It is one `UPDATE` per row, and on
+ * `neon-http` every statement is its own HTTPS request — so a cold start could spend 500
+ * sequential round trips here before serving its first request. The daily cron drains it
+ * instead; until a row is copied, search just falls back for that row.
+ */
+export async function backfillEmbeddingVectors(
+  sql: ReturnType<typeof neon>,
+  limit = 500
+) {
   const result = await sql.query(
     `SELECT id, embedding
      FROM contact_embeddings
      WHERE embedding_vector IS NULL
        AND embedding IS NOT NULL
-     LIMIT 500`
+     LIMIT ${Number(limit) || 500}`
   );
   const rows = (Array.isArray(result) ? result : []) as Array<{
     id: string;
     embedding: number[];
   }>;
 
+  let copied = 0;
   for (const row of rows) {
     const embedding = row.embedding;
     if (!Array.isArray(embedding) || embedding.length === 0) continue;
@@ -795,7 +1095,9 @@ async function backfillEmbeddingVectors(sql: ReturnType<typeof neon>) {
        WHERE id = $2`,
       [literal, row.id]
     );
+    copied += 1;
   }
+  return copied;
 }
 
 async function migratePgvector(sql: ReturnType<typeof neon>) {
@@ -808,7 +1110,6 @@ async function migratePgvector(sql: ReturnType<typeof neon>) {
       `CREATE INDEX IF NOT EXISTS embeddings_vector_hnsw_idx
        ON contact_embeddings USING hnsw (embedding_vector vector_cosine_ops)`
     );
-    await backfillEmbeddingVectors(sql);
     globalForDb.orbitPgvector = true;
   } catch {
     globalForDb.orbitPgvector = false;
@@ -946,6 +1247,8 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
   }
 
   await migratePgvector(sql);
+
+  await applyScaleSchema((statement) => sql.query(statement));
 }
 
 async function ensureReady(): Promise<void> {
@@ -961,8 +1264,15 @@ async function ensureReady(): Promise<void> {
   if (!globalForDb.orbitPglite) {
     const dataDir = path.join(process.cwd(), ".data", "pglite");
     fs.mkdirSync(dataDir, { recursive: true });
-    // Absolute string path — requires serverExternalPackages for @electric-sql/pglite
-    globalForDb.orbitPglite = await PGlite.create({ dataDir });
+    // Absolute string path — requires serverExternalPackages for @electric-sql/pglite.
+    // `pg_trgm` has to be supplied at construction: PGlite loads extension bundles when the
+    // instance is built, not on demand from `CREATE EXTENSION`. This is what gives local dev
+    // the same fuzzy search as production — pgvector has no PGlite build, so vector search
+    // still degrades locally, but keyword search no longer does.
+    globalForDb.orbitPglite = await PGlite.create({
+      dataDir,
+      extensions: { pg_trgm },
+    });
   }
 
   await globalForDb.orbitPglite.waitReady;
@@ -979,11 +1289,29 @@ export async function getDb(): Promise<Db> {
 
   if (!schemaReconciled) {
     schemaReconciled = (async () => {
-      if (globalForDb.orbitNeonSql) {
-        await migrateNeon(globalForDb.orbitNeonSql!);
+      const neonSql = globalForDb.orbitNeonSql;
+      const run: StatementRunner = neonSql
+        ? (statement) => neonSql.query(statement)
+        : (statement) => globalForDb.orbitPglite!.query(statement);
+
+      // The whole sweep is idempotent, but "idempotent" is not "free": on `neon-http`
+      // every statement is a separate HTTPS request, so replaying ~165 of them is the
+      // single largest cost in a cold start. Confirm the recorded version first and skip
+      // the lot when it already matches. A version mismatch — or any error reading it —
+      // falls through to the full pass, so the worst case is the old behaviour.
+      if (await schemaIsCurrent(run)) {
+        // pgvector/pg_trgm availability lives in module state, not in the database, so it
+        // still has to be established on a boot that skips the DDL.
+        await detectExtensions(run);
+        return;
+      }
+
+      if (neonSql) {
+        await migrateNeon(neonSql);
       } else {
         await migratePglite(globalForDb.orbitPglite!);
       }
+      await recordSchemaVersion(run);
     })().catch((err) => {
       schemaReconciled = undefined;
       throw err;
@@ -991,11 +1319,22 @@ export async function getDb(): Promise<Db> {
   }
   await schemaReconciled;
 
-  // Rebuild the drizzle wrapper each call so schema HMR picks up new relations.
-  if (globalForDb.orbitNeonSql) {
-    return drizzleNeon(globalForDb.orbitNeonSql, { schema }) as Db;
+  // In dev the wrapper is rebuilt per call so schema HMR picks up new relations. In
+  // production the schema cannot change under us, and `getDb()` is called dozens of times
+  // per request — each rebuild reconstructs the relational query metadata from `schema`.
+  if (process.env.NODE_ENV !== "production") {
+    if (globalForDb.orbitNeonSql) {
+      return drizzleNeon(globalForDb.orbitNeonSql, { schema }) as Db;
+    }
+    return drizzlePglite(globalForDb.orbitPglite!, { schema });
   }
-  return drizzlePglite(globalForDb.orbitPglite!, { schema });
+
+  if (!globalForDb.orbitDrizzle) {
+    globalForDb.orbitDrizzle = globalForDb.orbitNeonSql
+      ? (drizzleNeon(globalForDb.orbitNeonSql, { schema }) as Db)
+      : drizzlePglite(globalForDb.orbitPglite!, { schema });
+  }
+  return globalForDb.orbitDrizzle;
 }
 
 export { schema };
