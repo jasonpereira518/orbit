@@ -225,10 +225,12 @@ export function ConstellationFigure({ className }: { className?: string }) {
       })}
 
       {/* Cluster name — the /graph cluster-label treatment: white text over
-          a brand-color copy offset by 0.75px. */}
+          a brand-color copy offset by 0.75px. Sits over the bowl rather than
+          the box's centre line: the tilted figure's high ground is Dubhe on
+          the right, so a box-centred label floated in empty sky. */}
       <div
         className={cn(
-          "pointer-events-none absolute left-1/2 top-[2%] -translate-x-1/2 transition-opacity",
+          "pointer-events-none absolute left-[72%] top-[19%] -translate-x-1/2 transition-opacity",
           figureHovered ? "opacity-100" : "opacity-0"
         )}
         style={FADE}
