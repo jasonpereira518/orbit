@@ -389,7 +389,7 @@ export function PricingPageSkeleton() {
         <section className="mt-24 md:mt-32">
           <Skeleton className="mx-auto h-8 w-64 bg-white/10" />
           <div className="mx-auto mt-10 max-w-3xl divide-y divide-white/[0.08] border-y border-white/[0.08]">
-            {Array.from({ length: 6 }).map((_, i) => (
+            {Array.from({ length: 7 }).map((_, i) => (
               <div key={i} className="flex items-center justify-between gap-6 py-5">
                 <Skeleton className="h-4 w-2/3 max-w-sm bg-white/10" />
                 <Skeleton className="size-4 shrink-0 rounded-full bg-white/5" />

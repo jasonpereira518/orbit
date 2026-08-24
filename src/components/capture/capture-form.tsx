@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import { SPRING_PILL } from "@/lib/motion";
 import { toast } from "@/lib/toast";
-import { listContacts, logInteraction } from "@/actions/contacts";
+import { logInteraction, searchContactsForPicker } from "@/actions/contacts";
 import { scheduleContactFollowUp } from "@/actions/reminders";
 import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";
 import { Button } from "@/components/ui/button";
@@ -82,7 +82,7 @@ export function CaptureForm({
     if (mode !== "structured" || initialContactId) return;
     let cancelled = false;
     setContactsLoading(true);
-    listContacts()
+    searchContactsForPicker()
       .then((rows) => {
         if (cancelled) return;
         setContactOptions(

@@ -484,11 +484,11 @@ export function LandingHowItWorks() {
   // works" pill for the whole pin.
   return (
     <section
-      aria-labelledby="landing-how-heading"
+      aria-labelledby="how-heading"
       className="landing-scene scene-how relative z-10"
     >
       <div
-        id="landing-how"
+        id="how"
         className="mx-auto w-full max-w-6xl px-6 pt-20 md:px-10 md:pt-24"
       >
         <Reveal className="reveal-celestial">
@@ -498,7 +498,7 @@ export function LandingHowItWorks() {
         </Reveal>
         <Reveal className="reveal-celestial" delay={80}>
           <h2
-            id="landing-how-heading"
+            id="how-heading"
             className="mt-3 max-w-[18ch] font-[family-name:var(--font-display)] text-[clamp(30px,4.4vw,50px)] font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]"
           >
             From a conversation to a callback.

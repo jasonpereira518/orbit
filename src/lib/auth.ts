@@ -11,6 +11,20 @@ export class UnauthorizedError extends Error {
   }
 }
 
+/**
+ * Thrown by `requireUserId()` for an account an operator has suspended.
+ *
+ * Distinct from `UnauthorizedError` because the two need opposite handling: unauthorized
+ * means "sign in", suspended means "signing in again will not help". `(app)/layout.tsx`
+ * redirects to /suspended rather than to /sign-in.
+ */
+export class AccountSuspendedError extends Error {
+  constructor(public readonly suspendedAt: Date) {
+    super("Account suspended");
+    this.name = "AccountSuspendedError";
+  }
+}
+
 export function isClerkConfigured() {
   return Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 }
@@ -39,6 +53,18 @@ export async function redirectIfAuthenticated() {
   redirect(await getPostAuthRedirectPath(userId));
 }
 
+/**
+ * The suspension gate.
+ *
+ * This lives here rather than in `(app)/layout.tsx` because a layout is not the boundary:
+ * layouts do not re-run for Server Action POSTs, and actions are reachable by direct POST
+ * rather than only through Orbit's own UI — the same lesson `src/lib/plan-guards.ts` and
+ * `src/lib/admin.ts` both document. `requireUserId` is the one function every page, action
+ * and route handler already funnels through, and it already holds the settings row, so the
+ * check costs nothing extra.
+ *
+ * Demo mode is exempt: `demo-user` is a shared local literal, never a real account.
+ */
 export const requireUserId = cache(async (): Promise<string> => {
   if (isDemoMode()) {
     await bootstrapAuthenticatedUser("demo-user");
@@ -51,14 +77,24 @@ export const requireUserId = cache(async (): Promise<string> => {
     );
   }
 
+  // Scoped to the Clerk call alone: it is the only thing here whose failure means
+  // "not signed in". Everything after it — the settings bootstrap, and so the database —
+  // must be allowed to throw its own error. A catch wrapped around the bootstrap reports
+  // every outage as UnauthorizedError, which is what turned a missing `user_settings`
+  // column into 15 bogus auth failures on /dashboard while the real cause stayed hidden.
+  let userId: string | null = null;
   try {
-    const { userId } = await auth();
-    if (userId) {
-      await bootstrapAuthenticatedUser(userId);
-      return userId;
-    }
+    ({ userId } = await auth());
   } catch {
-    // Middleware missing or Clerk runtime issue
+    // Middleware missing or Clerk runtime fault — indistinguishable from signed out.
+  }
+
+  if (userId) {
+    const settings = await bootstrapAuthenticatedUser(userId);
+    if (settings.suspendedAt) {
+      throw new AccountSuspendedError(settings.suspendedAt);
+    }
+    return userId;
   }
 
   throw new UnauthorizedError();

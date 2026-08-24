@@ -1,6 +1,6 @@
 import { cache } from "react";
 import { and, eq, sql } from "drizzle-orm";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
 import { contacts, gmailConnections, interactions, outlookConnections, userGoals, userSettings } from "@/db/schema";
 import {
   applyClosenessCohort,
@@ -11,6 +11,15 @@ import {
   type ClosenessCohort,
 } from "@/lib/closeness";
 import { publicEmailDomain } from "@/lib/closeness-evidence";
+import {
+  buildSnapshot,
+  cohortFromSnapshot,
+  countUnscoredContacts,
+  isUsableSnapshot,
+  persistClosenessScores,
+  readCohortRow,
+  saveCohortSnapshot,
+} from "@/lib/closeness-materialize";
 
 /**
  * The columns the raw formula reads. A caller that has already loaded its
@@ -39,6 +48,17 @@ export type ClosenessCohortRow = {
   contactTags: Array<{ tag: { name: string } }>;
 };
 
+/**
+ * Network-wide inputs the raw formula reads. Derived from the whole orbit, so they are
+ * snapshotted rather than recomputed whenever a single contact needs scoring.
+ */
+export type ClosenessCohortInputs = {
+  maxCompany: number;
+  maxSchool: number;
+  userDomain: string | null;
+  mailConnected: boolean;
+};
+
 export type ClosenessCohortResult = {
   cohort: ClosenessCohort;
   byId: Map<string, ClosenessBreakdown>;
@@ -46,6 +66,7 @@ export type ClosenessCohortResult = {
   averageRaw: number;
   goals: string[];
   touchCounts: Map<string, number>;
+  inputs: ClosenessCohortInputs;
 };
 
 /**
@@ -76,9 +97,121 @@ export function getClosenessCohort(
   const existing = store.get(userId);
   if (existing) return existing;
 
-  const pending = buildCohortResult(userId, preloadedRows);
+  const pending = resolveCohortResult(userId, preloadedRows);
   store.set(userId, pending);
   return pending;
+}
+
+/**
+ * Read the scores this user already has, or compute them if there are none worth reading.
+ *
+ * Staleness is not a reason to recompute here — a ranking that is one debounce window
+ * behind is exactly the tradeoff materialization buys, and recalibrating on read would hand
+ * the full scan straight back. What does force a recompute is an absent distribution or a
+ * contact that has never been scored, because those render as a closeness of zero, which is
+ * wrong rather than merely out of date.
+ */
+async function resolveCohortResult(
+  userId: string,
+  preloadedRows?: ClosenessCohortRow[] | Promise<ClosenessCohortRow[]>
+): Promise<ClosenessCohortResult> {
+  const cohortRow = await readCohortRow(userId);
+
+  if (cohortRow && isUsableSnapshot(cohortRow.snapshot)) {
+    const unscored = await countUnscoredContacts(userId);
+    if (unscored === 0) {
+      return readStoredCohortResult(userId, cohortRow.snapshot);
+    }
+  }
+
+  const result = await buildCohortResult(userId, preloadedRows);
+  await persistCohortResult(userId, result);
+  return result;
+}
+
+/** Assemble the same result shape from stored columns, doing no scoring at all. */
+async function readStoredCohortResult(
+  userId: string,
+  snapshot: NonNullable<Awaited<ReturnType<typeof readCohortRow>>>["snapshot"]
+): Promise<ClosenessCohortResult> {
+  const db = await getDb();
+  const since = new Date(
+    Date.now() - CADENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000
+  );
+
+  // Goals and touch counts are not derived from the cohort — the contact-detail page reads
+  // them to explain a single score — so they are still fetched live. Both are cheap: one
+  // tiny table, and one grouped count that `interactions_user_date_idx` now covers.
+  const [scored, goalRows, touchRows] = await Promise.all([
+    // Raw SQL because `closeness_breakdown` is deliberately absent from the Drizzle schema
+    // (see the note on the `contacts` table) — this is the one place that wants it.
+    db.execute(sql`
+      select id, closeness_breakdown as breakdown
+      from contacts
+      where user_id = ${userId} and closeness_breakdown is not null
+    `),
+    db.query.userGoals.findMany({
+      where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
+      columns: { text: true },
+    }),
+    db
+      .select({
+        contactId: interactions.contactId,
+        recent: sql<number>`count(*) filter (where ${interactions.interactionDate} >= ${since})::int`,
+      })
+      .from(interactions)
+      .where(eq(interactions.userId, userId))
+      .groupBy(interactions.contactId),
+  ]);
+
+  const byId = new Map<string, ClosenessBreakdown>();
+  for (const row of rowsOf<{ id: string; breakdown: ClosenessBreakdown | null }>(scored)) {
+    if (row.breakdown) byId.set(row.id, row.breakdown);
+  }
+
+  return {
+    cohort: cohortFromSnapshot(snapshot),
+    byId,
+    averageRaw: snapshot.averageRaw ?? 0,
+    goals: goalRows.map((g) => g.text),
+    touchCounts: new Map(
+      touchRows.map((r) => [r.contactId, Number(r.recent) || 0])
+    ),
+    inputs: {
+      maxCompany: snapshot.maxCompany ?? 1,
+      maxSchool: snapshot.maxSchool ?? 1,
+      userDomain: snapshot.userDomain ?? null,
+      mailConnected: snapshot.mailConnected ?? false,
+    },
+  };
+}
+
+async function persistCohortResult(
+  userId: string,
+  result: ClosenessCohortResult
+) {
+  await persistClosenessScores(
+    userId,
+    [...result.byId.entries()].map(([id, breakdown]) => ({ id, breakdown }))
+  );
+  await saveCohortSnapshot(
+    userId,
+    buildSnapshot(result.cohort, result.averageRaw, result.inputs)
+  );
+}
+
+/**
+ * Recompute a user's whole distribution and write it down.
+ *
+ * The expensive path, and the only one that should ever run outside a request: after a bulk
+ * import, or from the cron that drains cohorts left dirty by ordinary edits.
+ */
+export async function recalibrateCloseness(
+  userId: string
+): Promise<ClosenessCohortResult> {
+  const result = await buildCohortResult(userId);
+  await persistCohortResult(userId, result);
+  return result;
 }
 
 async function buildCohortResult(
@@ -228,5 +361,12 @@ async function buildCohortResult(
     ? raws.reduce((sum, r) => sum + r.raw, 0) / raws.length
     : 0;
 
-  return { cohort, byId, averageRaw, goals, touchCounts };
+  return {
+    cohort,
+    byId,
+    averageRaw,
+    goals,
+    touchCounts,
+    inputs: { maxCompany, maxSchool, userDomain, mailConnected },
+  };
 }

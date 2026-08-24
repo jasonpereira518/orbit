@@ -4,7 +4,7 @@ import OpenAI from "openai";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
-import { decrypt } from "@/lib/crypto";
+import { decryptOrNull } from "@/lib/crypto";
 import { z } from "zod";
 import {
   withUsage,
@@ -173,15 +173,6 @@ async function loadSettings(userId: string) {
   });
 }
 
-function decryptKey(encrypted?: string | null) {
-  if (!encrypted) return null;
-  try {
-    return decrypt(encrypted);
-  } catch {
-    return null;
-  }
-}
-
 /** Local-dev env fallback only. On Vercel, every user must bring their own key. */
 function allowEnvProviderKeys() {
   return !process.env.VERCEL;
@@ -209,10 +200,10 @@ export function getProviderApiKey(
 ): string | null {
   const personal =
     provider === "gemini"
-      ? decryptKey(settings?.geminiApiKeyEncrypted)
+      ? decryptOrNull(settings?.geminiApiKeyEncrypted)
       : provider === "openai"
-        ? decryptKey(settings?.openaiApiKeyEncrypted)
-        : decryptKey(settings?.anthropicApiKeyEncrypted);
+        ? decryptOrNull(settings?.openaiApiKeyEncrypted)
+        : decryptOrNull(settings?.anthropicApiKeyEncrypted);
 
   if (personal) return personal;
   return getEnvProviderKey(provider);

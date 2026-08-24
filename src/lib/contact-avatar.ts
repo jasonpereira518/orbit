@@ -1,4 +1,5 @@
 import { put } from "@vercel/blob";
+import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { linkedinSlug } from "@/lib/duplicates";
 import { isDurableAvatarUrl, isUnusableAvatarUrl } from "@/lib/contact-avatar-url";
 
@@ -75,6 +76,14 @@ function noteMicrolinkRateLimit(resetAtMs: number) {
   const until = Math.max(resetAtMs, Date.now() + 60_000);
   if (until > microlinkCooldownUntil) {
     microlinkCooldownUntil = until;
+    // The cooldown itself is per-lambda module state and invisible to any dashboard;
+    // this is the only durable trace that Microlink quota was hit. Bounded by the
+    // cooldown, so it cannot spam.
+    void recordErrorEvent({
+      source: ERROR_SOURCES.avatarMicrolink,
+      kind: "rate_limited",
+      context: { cooldownUntil: new Date(until).toISOString() },
+    });
   }
 }
 

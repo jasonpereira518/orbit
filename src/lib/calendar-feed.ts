@@ -65,9 +65,20 @@ export async function findUserByFeedToken(rawToken: string) {
   const db = await getDb();
   const row = await db.query.userSettings.findFirst({
     where: eq(userSettings.calendarFeedToken, token),
-    columns: { userId: true, calendarFeedLastFetchedAt: true },
+    columns: {
+      userId: true,
+      calendarFeedLastFetchedAt: true,
+      suspendedAt: true,
+    },
   });
-  return row ?? null;
+  if (!row) return null;
+
+  // This route is authenticated by the token alone and never calls `requireUserId()`, so
+  // the suspension gate there does not cover it. Returning null makes the route's existing
+  // 404 handle it — a suspended account's feed goes quiet rather than announcing why.
+  if (row.suspendedAt) return null;
+
+  return row;
 }
 
 /** Throttled so a polling calendar client doesn't cause a write per request. */

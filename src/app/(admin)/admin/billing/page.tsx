@@ -17,7 +17,7 @@ import {
   subscriptionsNeedingAttention,
 } from "@/lib/admin-metrics";
 import { formatCostMicros } from "@/lib/ai-pricing";
-import { LIFETIME_SEAT_LIMIT, PLAN_LABELS } from "@/lib/plan-limits";
+import { PLAN_LABELS } from "@/lib/plan-limits";
 import { MONTHLY_AMOUNT } from "@/lib/plan-copy";
 import { countLifetimePurchases } from "@/lib/user-settings";
 import { cn } from "@/lib/utils";
@@ -69,9 +69,9 @@ export default async function AdminBillingPage() {
                 hint={`${plans.subscribed} × $${MONTHLY_AMOUNT}/mo`}
               />
               <MetricTile
-                label="Lifetime seats"
-                value={`${lifetimeSold}/${LIFETIME_SEAT_LIMIT}`}
-                hint={`${Math.max(0, LIFETIME_SEAT_LIMIT - lifetimeSold)} left`}
+                label="Lifetime sold"
+                value={lifetimeSold}
+                hint="one-time purchases"
               />
             </div>
             <dl className="mt-3 space-y-1 border-t border-border/60 pt-3 text-sm">
