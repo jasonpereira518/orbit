@@ -9,7 +9,10 @@ import {
   contactEmbeddings,
   contactTags,
   contacts,
+  billingEvents,
   errorEvents,
+  feedback,
+  gateEvents,
   gmailConnections,
   imports,
   interactions,
@@ -92,6 +95,29 @@ export async function purgeUserData(userId: string) {
   await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
   await db.delete(usageEvents).where(eq(usageEvents.userId, userId));
   await db.delete(errorEvents).where(eq(errorEvents.userId, userId));
+
+  // What they told us, and which walls they hit. Both are personal — one is literally
+  // their own words — so erasure means erasure, even though the churn reasons are the
+  // most valuable feedback Orbit gets and they are exactly the ones that leave with the
+  // account. That trade is the right way round; keeping them would mean a user who asked
+  // to be deleted still has their opinion on file.
+  await db.delete(feedback).where(eq(feedback.userId, userId));
+  await db.delete(gateEvents).where(eq(gateEvents.userId, userId));
+
+  // ANONYMISED, NOT DELETED — the one deliberate exception in this function.
+  //
+  // `billing_events` is Orbit's accounting record: what was charged, refunded and earned.
+  // Financial records have to survive a customer leaving, and deleting them would also
+  // silently rewrite revenue history, so a month that has already been reported would
+  // change months later. Nulling `user_id` severs the link to the person while leaving the
+  // money intact, which is what "no longer identifiable" asks for.
+  //
+  // `scripts/smoke-purge.ts` counts rows `WHERE user_id = ...`, so this satisfies its
+  // no-leak assertion honestly rather than by exemption.
+  await db
+    .update(billingEvents)
+    .set({ userId: null })
+    .where(eq(billingEvents.userId, userId));
 
   await db.delete(outreachCampaigns).where(eq(outreachCampaigns.userId, userId));
 

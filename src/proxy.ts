@@ -1,6 +1,13 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { PUBLIC_ROUTES } from "@/lib/public-routes";
+import {
+  ATTRIBUTION_COOKIE,
+  ATTRIBUTION_MAX_AGE_S,
+  attributionFromUrl,
+  hasSignal,
+  serializeAttribution,
+} from "@/lib/attribution-parse";
 
 // The list lives in `@/lib/public-routes` so a smoke test can assert it against the
 // filesystem — a marketing page missing from it 404s for exactly the people it is for.
@@ -10,10 +17,54 @@ const configured = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
 function withPathname(req: Request) {
   const requestHeaders = new Headers(req.headers);
-  requestHeaders.set("x-pathname", new URL(req.url).pathname);
-  return NextResponse.next({
+  const url = new URL(req.url);
+  requestHeaders.set("x-pathname", url.pathname);
+  const res = NextResponse.next({
     request: { headers: requestHeaders },
   });
+  return withFirstTouch(req, url, res);
+}
+
+/**
+ * Capture where this browser came from, once, on its very first request.
+ *
+ * MIDDLEWARE RATHER THAN A PAGE, for a mundane reason: a server component cannot set a
+ * cookie in Next, so the marketing pages physically cannot do this themselves. Middleware
+ * runs before all of them and sees the external `referer` header that only exists on the
+ * first hop — one request later it has already been replaced by Orbit's own URL.
+ *
+ * FIRST TOUCH WINS: if the cookie is already set, this does nothing. A visitor who arrives
+ * from Reddit, reads for a week and signs up after a direct visit was acquired by Reddit,
+ * and overwriting here would credit "direct" and erase the only channel that worked.
+ *
+ * Same-origin referrers are dropped before anything else. Without that, the second page
+ * anyone views would attribute them to orbit itself, and every internal navigation would
+ * look like a channel.
+ */
+function withFirstTouch(req: Request, url: URL, res: NextResponse) {
+  if (req.headers.get("cookie")?.includes(`${ATTRIBUTION_COOKIE}=`)) return res;
+
+  const referer = req.headers.get("referer");
+  let external: string | null = null;
+  if (referer) {
+    try {
+      if (new URL(referer).host !== url.host) external = referer;
+    } catch {
+      // Unparseable referer — treat as absent rather than guessing.
+    }
+  }
+
+  const attribution = attributionFromUrl(url.toString(), external);
+  if (!hasSignal(attribution)) return res;
+
+  res.cookies.set(ATTRIBUTION_COOKIE, serializeAttribution(attribution), {
+    maxAge: ATTRIBUTION_MAX_AGE_S,
+    sameSite: "lax",
+    httpOnly: true,
+    path: "/",
+    secure: process.env.NODE_ENV === "production",
+  });
+  return res;
 }
 
 export default configured
