@@ -7,7 +7,7 @@ import {
   imports,
   importJobRows,
   type Contact,
-  type ImportJobRowPayload,
+  type LinkedInImportRowPayload,
 } from "@/db/schema";
 import { createContactsBulk, updateContact, type ContactInput } from "@/actions/contacts";
 import { getAppBaseUrl } from "@/lib/app-url";
@@ -27,7 +27,7 @@ const CHUNK_SIZE = 40;
 /** Stay well under the 300s function ceiling, leaving room for the self-continuation call. */
 const TIME_BUDGET_MS = 4.5 * 60 * 1000;
 
-function rowFullName(payload: ImportJobRowPayload) {
+function rowFullName(payload: LinkedInImportRowPayload) {
   return `${payload.firstName} ${payload.lastName}`.trim();
 }
 
@@ -134,7 +134,9 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
       const toSkip: PendingRow[] = [];
 
       for (const row of pendingRows) {
-        const payload = row.payload;
+        // This runner only ever claims rows from a LinkedIn import, so the payload
+        // union is narrowed once here rather than at each of the dozen field reads.
+        const payload = row.payload as LinkedInImportRowPayload;
         const fullName = rowFullName(payload);
         if (!fullName) {
           toSkip.push(row);
@@ -331,7 +333,8 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
  */
 const PER_CONTACT_REVALIDATE_LIMIT = 50;
 
-async function failImport(importId: string, err: unknown) {
+/** Exported so the Gmail recruiter scan runner shares one job-failure path. */
+export async function failImport(importId: string, err: unknown) {
   const message = err instanceof Error ? err.message : "Import failed";
   const db = await getDb();
   await db

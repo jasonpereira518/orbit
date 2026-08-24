@@ -1,8 +1,11 @@
-import { and, count, eq, lt } from "drizzle-orm";
+import { and, count, inArray, lt, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { errorEvents, imports, usageEvents } from "@/db/schema";
-import { runLinkedInImportJob } from "@/lib/import-job-processor";
+import {
+  RESUMABLE_IMPORT_TYPES,
+  runImportJobById,
+} from "@/lib/import-job-dispatch";
 import {
   finishCronRun,
   startCronRun,
@@ -92,7 +95,9 @@ export async function GET(request: Request) {
     const staleBefore = new Date(Date.now() - CRON_STALL_THRESHOLD_MS);
     const stalled = await db.query.imports.findMany({
       where: and(
-        eq(imports.importType, "linkedin_connections"),
+        // Every server-owned job kind, not just LinkedIn — a stalled Gmail recruiter
+        // scan needs the same backstop, and it is the longer-running of the two.
+        inArray(imports.importType, [...RESUMABLE_IMPORT_TYPES]),
         eq(imports.status, "processing"),
         lt(imports.updatedAt, staleBefore)
       ),
@@ -103,7 +108,7 @@ export async function GET(request: Request) {
       // One bad import must not stop the others — but the swallow becomes a number
       // rather than disappearing.
       try {
-        await runLinkedInImportJob(job.id);
+        await runImportJobById(job.id);
         stats.resumed += 1;
       } catch {
         stats.resumeFailed += 1;

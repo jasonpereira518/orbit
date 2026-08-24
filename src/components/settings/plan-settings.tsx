@@ -101,7 +101,7 @@ export function PlanSettings({
       <div className="relative space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-lg font-medium text-primary">Plan</h2>
+            <h2 className="text-lg font-medium text-primary">Pricing Plan</h2>
             <p className="mt-1 text-sm text-muted-foreground">{copy.tagline}</p>
           </div>
           <span

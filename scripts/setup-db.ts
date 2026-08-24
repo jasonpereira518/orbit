@@ -32,6 +32,7 @@ import { sql } from "drizzle-orm";
   "import_job_rows",
   "recruiters",
   "user_recruiter_links",
+  "recruiter_messages",
   "gmail_connections",
   "outlook_connections",
   "usage_events",

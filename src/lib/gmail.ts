@@ -6,8 +6,20 @@ import { ReauthRequiredError, isRefreshRejection } from "@/lib/errors";
 
 const GOOGLE_CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts.readonly";
 
+/**
+ * Sending as the user, rather than through Orbit's own Resend domain, is what makes a
+ * recruiter reply land in their inbox and the message appear in their Sent folder.
+ *
+ * This is a Google *restricted* scope: it works immediately for the developer account
+ * and listed test users, but public launch requires app verification and likely a
+ * security assessment. Adding it here also invalidates existing consents — every
+ * already-connected user must reconnect, which is why `hasSendScope` exists.
+ */
+const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+
 const GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
+  GMAIL_SEND_SCOPE,
   "https://www.googleapis.com/auth/userinfo.email",
   GOOGLE_CONTACTS_SCOPE,
   "openid",
@@ -18,18 +30,14 @@ export function hasContactsScope(scopes: string | null | undefined) {
   return Boolean(scopes?.includes(GOOGLE_CONTACTS_SCOPE));
 }
 
+/** True once a connection has re-consented to sending. Connections made before the
+ *  send scope shipped return false and must reconnect before they can send. */
+export function hasSendScope(scopes: string | null | undefined) {
+  return Boolean(scopes?.includes(GMAIL_SEND_SCOPE));
+}
+
 /** Canonical Gmail OAuth callback path — must match Google Cloud authorized redirect URIs. */
 export const GMAIL_CALLBACK_PATH = "/api/gmail/callback";
-
-export type GmailRecruiterCandidate = {
-  key: string;
-  fullName: string;
-  email: string;
-  firm: string | null;
-  linkedinUrl: string | null;
-  evidence: string;
-  messageCount: number;
-};
 
 /**
  * Exact redirect URI for Google OAuth (auth URL + token exchange).
@@ -407,7 +415,7 @@ const AGENCY_DOMAIN_HINTS = [
   "harveynash",
 ];
 
-function parseFromHeader(from: string): { name: string; email: string } | null {
+export function parseFromHeader(from: string): { name: string; email: string } | null {
   const match = from.match(/^(?:"?([^"<]*)"?\s*)?<?([^\s<>]+@[^\s<>]+)>?$/);
   if (!match) return null;
   const email = match[2].trim().toLowerCase();
@@ -418,7 +426,7 @@ function parseFromHeader(from: string): { name: string; email: string } | null {
   return { name, email };
 }
 
-function firmFromEmail(email: string): string | null {
+export function firmFromEmail(email: string): string | null {
   const domain = email.split("@")[1];
   if (!domain) return null;
   const base = domain.split(".")[0];
@@ -428,7 +436,7 @@ function firmFromEmail(email: string): string | null {
   return base.charAt(0).toUpperCase() + base.slice(1);
 }
 
-function looksLikeRecruiter(opts: {
+export function looksLikeRecruiter(opts: {
   from: string;
   subject: string;
   snippet: string;
@@ -449,116 +457,192 @@ function looksLikeRecruiter(opts: {
   return false;
 }
 
-type GmailMessageMeta = {
+/**
+ * Gmail-side keyword filter. Everything downstream is far more expensive than this —
+ * a metadata fetch per hit, then an LLM call per surviving sender — so narrowing here
+ * is what makes a whole-mailbox scan affordable.
+ *
+ * Deliberately recall-biased and imprecise: `looksLikeRecruiter` and then the classifier
+ * both get a veto, so a false positive costs one cheap fetch while a false negative is
+ * invisible forever.
+ */
+export const RECRUITER_QUERY_TERMS =
+  '(recruiter OR "talent acquisition" OR sourcer OR staffing OR "job opportunity" OR "open role" OR "reaching out" OR headhunter OR "your background" OR "role at")';
+
+export type GmailMessageRef = { id: string; threadId: string };
+
+/**
+ * One page of message ids. The caller owns the cursor so a time-boxed job can persist
+ * `nextPageToken` and resume in a later invocation instead of restarting the mailbox.
+ */
+export async function listGmailMessagePage(
+  accessToken: string,
+  opts: { query: string; pageToken?: string | null; maxResults?: number }
+): Promise<{ messages: GmailMessageRef[]; nextPageToken: string | null }> {
+  const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+  url.searchParams.set("q", opts.query);
+  url.searchParams.set("maxResults", String(opts.maxResults ?? 500));
+  if (opts.pageToken) url.searchParams.set("pageToken", opts.pageToken);
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) {
+    throw new Error(`Gmail list failed: ${(await res.text()).slice(0, 200)}`);
+  }
+  const data = (await res.json()) as {
+    messages?: GmailMessageRef[];
+    nextPageToken?: string;
+  };
+  return {
+    messages: data.messages || [],
+    nextPageToken: data.nextPageToken || null,
+  };
+}
+
+export type GmailHeaderSummary = {
   id: string;
   threadId: string;
+  from: string;
+  subject: string;
+  snippet: string;
+  internalDate: number | null;
 };
 
-export async function scanGmailForRecruiters(
-  userId: string,
-  opts?: { maxMessages?: number; days?: number }
-): Promise<GmailRecruiterCandidate[]> {
-  const accessToken = await getValidAccessToken(userId);
-  const days = opts?.days ?? 90;
-  const maxMessages = opts?.maxMessages ?? 80;
-  const after = Math.floor((Date.now() - days * 86400000) / 1000);
-
-  const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
-  listUrl.searchParams.set(
-    "q",
-    `after:${after} (recruiter OR "talent acquisition" OR sourcer OR staffing OR "job opportunity" OR "open role")`
-  );
-  listUrl.searchParams.set("maxResults", String(maxMessages));
-
-  const listRes = await fetch(listUrl, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!listRes.ok) {
-    const text = await listRes.text();
-    throw new Error(`Gmail list failed: ${text.slice(0, 200)}`);
-  }
-
-  const listData = (await listRes.json()) as { messages?: GmailMessageMeta[] };
-  const messages = (listData.messages || []).slice(0, maxMessages);
-  const byEmail = new Map<string, GmailRecruiterCandidate>();
-
-  type MessageDetail = {
-    snippet?: string;
-    payload?: { headers?: Array<{ name: string; value: string }> };
+type RawGmailMessage = {
+  id?: string;
+  threadId?: string;
+  snippet?: string;
+  internalDate?: string;
+  payload?: {
+    headers?: Array<{ name: string; value: string }>;
+    mimeType?: string;
+    body?: { data?: string };
+    parts?: RawGmailMessage["payload"][];
   };
+};
 
-  const GMAIL_DETAIL_CONCURRENCY = 8;
-  const GMAIL_DETAIL_TIMEOUT_MS = 10_000;
-  const details: (MessageDetail | null)[] = new Array(messages.length);
-  let nextIndex = 0;
+function headerValue(msg: RawGmailMessage, name: string) {
+  return (
+    msg.payload?.headers?.find(
+      (h) => h.name.toLowerCase() === name.toLowerCase()
+    )?.value || ""
+  );
+}
 
-  async function fetchDetail(msg: GmailMessageMeta): Promise<MessageDetail | null> {
+/** Bounded-concurrency fetch, matching the pool the original scan used. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => worker())
+  );
+  return out;
+}
+
+export async function fetchGmailHeaders(
+  accessToken: string,
+  refs: GmailMessageRef[],
+  concurrency = 8
+): Promise<GmailHeaderSummary[]> {
+  const results = await mapWithConcurrency(refs, concurrency, async (ref) => {
     try {
-      const detailRes = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`,
+      const res = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${ref.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`,
         {
           headers: { Authorization: `Bearer ${accessToken}` },
-          signal: AbortSignal.timeout(GMAIL_DETAIL_TIMEOUT_MS),
+          signal: AbortSignal.timeout(10_000),
         }
       );
-      if (!detailRes.ok) return null;
-      return (await detailRes.json()) as MessageDetail;
+      if (!res.ok) return null;
+      const msg = (await res.json()) as RawGmailMessage;
+      const internal = Number(msg.internalDate);
+      return {
+        id: ref.id,
+        threadId: msg.threadId || ref.threadId,
+        from: headerValue(msg, "From"),
+        subject: headerValue(msg, "Subject"),
+        snippet: msg.snippet || "",
+        internalDate: Number.isFinite(internal) ? internal : null,
+      } satisfies GmailHeaderSummary;
     } catch {
       return null;
     }
-  }
+  });
+  return results.filter((r): r is GmailHeaderSummary => r !== null);
+}
 
-  async function worker() {
-    while (nextIndex < messages.length) {
-      const current = nextIndex++;
-      details[current] = await fetchDetail(messages[current]);
+function decodeBase64Url(data: string) {
+  try {
+    return Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+  } catch {
+    return "";
+  }
+}
+
+/** Depth-first walk for the first text/plain part; falls back to stripped HTML. */
+function extractBody(payload: RawGmailMessage["payload"]): string {
+  if (!payload) return "";
+  if (payload.mimeType === "text/plain" && payload.body?.data) {
+    return decodeBase64Url(payload.body.data);
+  }
+  for (const part of payload.parts || []) {
+    const found = extractBody(part);
+    if (found) return found;
+  }
+  if (payload.mimeType === "text/html" && payload.body?.data) {
+    return decodeBase64Url(payload.body.data)
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ");
+  }
+  return "";
+}
+
+export type GmailMessageContent = GmailHeaderSummary & { body: string };
+
+export async function fetchGmailMessages(
+  accessToken: string,
+  ids: string[],
+  concurrency = 4
+): Promise<GmailMessageContent[]> {
+  const results = await mapWithConcurrency(ids, concurrency, async (id) => {
+    try {
+      const res = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          signal: AbortSignal.timeout(15_000),
+        }
+      );
+      if (!res.ok) return null;
+      const msg = (await res.json()) as RawGmailMessage;
+      const internal = Number(msg.internalDate);
+      return {
+        id,
+        threadId: msg.threadId || "",
+        from: headerValue(msg, "From"),
+        subject: headerValue(msg, "Subject"),
+        snippet: msg.snippet || "",
+        internalDate: Number.isFinite(internal) ? internal : null,
+        // Trimmed hard: quoted reply chains routinely run to tens of thousands of
+        // characters and add nothing the classifier needs.
+        body: extractBody(msg.payload).slice(0, 4000),
+      } satisfies GmailMessageContent;
+    } catch {
+      return null;
     }
-  }
-
-  await Promise.all(
-    Array.from(
-      { length: Math.min(GMAIL_DETAIL_CONCURRENCY, messages.length) },
-      () => worker()
-    )
-  );
-
-  for (const detail of details) {
-    if (!detail) continue;
-    const headers = detail.payload?.headers || [];
-    const from =
-      headers.find((h) => h.name.toLowerCase() === "from")?.value || "";
-    const subject =
-      headers.find((h) => h.name.toLowerCase() === "subject")?.value || "";
-    const snippet = detail.snippet || "";
-
-    if (!looksLikeRecruiter({ from, subject, snippet })) continue;
-    const parsed = parseFromHeader(from);
-    if (!parsed) continue;
-
-    const existing = byEmail.get(parsed.email);
-    if (existing) {
-      existing.messageCount += 1;
-      continue;
-    }
-
-    byEmail.set(parsed.email, {
-      key: parsed.email,
-      fullName: parsed.name.replace(/\b\w/g, (c) => c.toUpperCase()),
-      email: parsed.email,
-      firm: firmFromEmail(parsed.email),
-      linkedinUrl: null,
-      evidence: subject || snippet.slice(0, 120),
-      messageCount: 1,
-    });
-  }
-
-  const db = await getDb();
-  await db
-    .update(gmailConnections)
-    .set({ lastSyncedAt: new Date(), updatedAt: new Date() })
-    .where(eq(gmailConnections.userId, userId));
-
-  return Array.from(byEmail.values()).sort(
-    (a, b) => b.messageCount - a.messageCount
-  );
+  });
+  return results.filter((r): r is GmailMessageContent => r !== null);
 }
