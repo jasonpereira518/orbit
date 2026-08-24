@@ -9,6 +9,21 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/lib/toast";
 
+/**
+ * Sized per-instance rather than in `clerkAppearance`: the same object dresses
+ * the UserButton in the sidebar and mobile nav, where the avatar is meant to
+ * stay small. Only here does it stand in as the profile portrait.
+ */
+const profileAvatarAppearance = {
+  ...clerkAppearance,
+  elements: {
+    ...clerkAppearance.elements,
+    userButtonAvatarBox: "size-12",
+    userButtonTrigger:
+      "rounded-full ring-1 ring-border/60 focus-visible:ring-2 focus-visible:ring-ring",
+  },
+};
+
 type ProfileData = {
   id: string;
   name: string;
@@ -46,7 +61,12 @@ export function ProfileSettings({
 
       {profile ? (
         <div className="flex flex-wrap items-center gap-4">
-          {profile.imageUrl ? (
+          {/* One face, and it is also the account menu. Clerk's UserButton
+              renders the user's own picture, so standing it beside a second
+              image of the same picture put the avatar on screen twice. */}
+          {clerkEnabled ? (
+            <UserButton appearance={profileAvatarAppearance} showName={false} />
+          ) : profile.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={profile.imageUrl}
@@ -64,23 +84,28 @@ export function ProfileSettings({
               <p className="text-sm text-muted-foreground">{profile.email}</p>
             )}
           </div>
+          {clerkEnabled && (
+            <SignOutButton>
+              <Button type="button" variant="outline" size="sm">
+                Sign out
+              </Button>
+            </SignOutButton>
+          )}
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground">
-          {clerkEnabled
-            ? "Sign in to manage your profile."
-            : "Running in local demo mode without Clerk."}
-        </p>
-      )}
-
-      {clerkEnabled && (
-        <div className="flex flex-wrap items-center gap-2">
-          <UserButton appearance={clerkAppearance} showName={false} />
-          <SignOutButton>
-            <Button type="button" variant="outline" size="sm">
-              Sign out
-            </Button>
-          </SignOutButton>
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            {clerkEnabled
+              ? "Sign in to manage your profile."
+              : "Running in local demo mode without Clerk."}
+          </p>
+          {clerkEnabled && (
+            <SignOutButton>
+              <Button type="button" variant="outline" size="sm">
+                Sign out
+              </Button>
+            </SignOutButton>
+          )}
         </div>
       )}
 

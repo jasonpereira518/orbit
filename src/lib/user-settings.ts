@@ -10,6 +10,13 @@ import { userSettings } from "@/db/schema";
  * `bootstrapAuthenticatedUser`, so an unconditional UPDATE here would add a database
  * round trip to the critical path of every page load. This throttle is what makes the
  * column affordable.
+ *
+ * Since the presence heartbeat landed (`src/lib/presence.ts`) this writer is close to
+ * vestigial in the browser: a beat every 45 seconds keeps the column fresher than 15
+ * minutes, so the staleness check below short-circuits and no UPDATE is issued. It stays
+ * because the heartbeat only covers *visible tabs in the app shell* — API clients, the ICS
+ * feed and the first request of a session all still arrive without one, and a user whose
+ * only interaction is a server action should not read as never-seen.
  */
 const ACTIVITY_THROTTLE_MS = 15 * 60 * 1000;
 
@@ -103,6 +110,54 @@ export async function setUserEmail(userId: string, email: string | null) {
 }
 
 /**
+ * Mirrors the user's Clerk display name and avatar URL, for the same reason `setUserEmail`
+ * mirrors the address: the admin console renders from Postgres alone, and asking Clerk for
+ * a display name per row would put a network call on the roster's critical path.
+ *
+ * Takes plain values rather than a Clerk user object on purpose. This module sits near the
+ * bottom of the import graph — every script and background job pulls it in — and importing
+ * anything Clerk here would drag `next/server` along with it, which alone keeps the Node
+ * event loop alive and hangs any script that exits by draining (see `touchLastActive`).
+ * The two callers that *do* know about Clerk (the webhook route and the backfill script)
+ * do the unwrapping themselves.
+ *
+ * Writes only on change: `user.updated` fires for many unrelated profile edits, and an
+ * unconditional UPDATE here would bump `updated_at` on every one of them.
+ */
+export async function setUserIdentity(
+  userId: string,
+  identity: {
+    firstName?: string | null;
+    lastName?: string | null;
+    imageUrl?: string | null;
+  }
+) {
+  const firstName = identity.firstName?.trim() || null;
+  const lastName = identity.lastName?.trim() || null;
+  const imageUrl = identity.imageUrl?.trim() || null;
+
+  const existing = await ensureUserSettings(userId);
+  if (
+    existing?.firstName === firstName &&
+    existing?.lastName === lastName &&
+    existing?.profileImageUrl === imageUrl
+  ) {
+    return;
+  }
+
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({
+      firstName,
+      lastName,
+      profileImageUrl: imageUrl,
+      updatedAt: new Date(),
+    })
+    .where(eq(userSettings.userId, userId));
+}
+
+/**
  * Clerk timestamps are unix epochs, but the units vary by field across the API surface.
  * Anything below ~2001-09 in milliseconds is far more likely to be seconds.
  */
@@ -166,7 +221,7 @@ export async function setLifetimePurchase(
     .where(eq(userSettings.userId, userId));
 }
 
-/** How many Lifetime seats have been sold, for the early-adopter cap. */
+/** How many one-time Lifetime purchases have been made. Reported in /admin. */
 export async function countLifetimePurchases() {
   const db = await getDb();
   const [row] = await db

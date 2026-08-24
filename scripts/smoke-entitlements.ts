@@ -94,7 +94,8 @@ async function main() {
   check(`contact limit is ${FREE_CONTACT_LIMIT}`, ent.contactLimit === FREE_CONTACT_LIMIT);
   check("outreach gated", ent.canUseOutreach === false);
   check("sync gated", ent.canUseSync === false);
-  check("hosted sends gated", ent.canUseHostedSends === false);
+  check("hosted sending gated", ent.canUseHostedSending === false);
+  check("hosted enrichment gated", ent.canUseHostedEnrichment === false);
 
   const resolver = await createCompanyResolver(USER);
   const bulk = Array.from({ length: FREE_CONTACT_LIMIT - 1 }, (_, i) => ({
@@ -164,7 +165,10 @@ async function main() {
   check("outreach unlocked", ent.canUseOutreach === true);
   check("sync unlocked", ent.canUseSync === true);
   check("extension unlocked", ent.canUseExtension === true);
-  check("hosted sends still gated on lifetime", ent.canUseHostedSends === false);
+  // The whole point of the split: Lifetime sends on Orbit's credits (bounded by
+  // DAILY_SEND_LIMIT) but enriches on its own Apollo key (which has no ceiling).
+  check("hosted sending unlocked on lifetime", ent.canUseHostedSending === true);
+  check("hosted enrichment gated on lifetime", ent.canUseHostedEnrichment === false);
 
   const past101 = await createContactsBulkForUser(
     USER,
@@ -174,7 +178,7 @@ async function main() {
   );
   check("lifetime creates past the free cap", past101.length === 25, String(past101.length));
 
-  // --- subscription grants hosted sends ---
+  // --- subscription grants hosted enrichment ---
   console.log("\norbit subscription");
   await setBilling({
     compedPlan: null,
@@ -184,7 +188,38 @@ async function main() {
   });
   ent = await getEntitlements(USER);
   check("plan is orbit", ent.plan === "orbit", ent.plan);
-  check("hosted sends unlocked", ent.canUseHostedSends === true);
+  check("hosted sending unlocked", ent.canUseHostedSending === true);
+  check("hosted enrichment unlocked", ent.canUseHostedEnrichment === true);
+
+  // --- lifetime + live subscription are additive ---
+  // `resolvePlan` ranks lifetime above subscription, so this user resolves to `lifetime`,
+  // which is denied enrichment on its own. The union in `getEntitlements` is the only
+  // thing that grants it back, and it is now the sole flag that union can affect.
+  console.log("\nlifetime plus live subscription");
+  await setBilling({
+    lifetimePurchasedAt: past,
+    subscriptionPlan: "orbit",
+    subscriptionStatus: "active",
+    subscriptionPeriodEnd: future,
+  });
+  ent = await getEntitlements(USER);
+  check("plan stays lifetime", ent.plan === "lifetime", ent.plan);
+  check("subscription unions enrichment back in", ent.canUseHostedEnrichment === true);
+
+  // Lapse the subscription: the Lifetime floor holds, enrichment falls away.
+  await setBilling({ subscriptionStatus: "canceled", subscriptionPeriodEnd: past });
+  ent = await getEntitlements(USER);
+  check("plan still lifetime after lapse", ent.plan === "lifetime", ent.plan);
+  check("enrichment gated again after lapse", ent.canUseHostedEnrichment === false);
+  check("sending survives the lapse", ent.canUseHostedSending === true);
+
+  await setBilling({
+    lifetimePurchasedAt: null,
+    subscriptionPlan: "orbit",
+    subscriptionStatus: "active",
+    subscriptionPeriodEnd: future,
+  });
+  ent = await getEntitlements(USER);
 
   const usage = await contactUsageForUser(USER);
   check("usage reports unlimited", usage.limit === null, JSON.stringify(usage));

@@ -93,7 +93,7 @@ export function MetricTile({
   value: string | number;
   hint?: string;
   icon?: LucideIcon;
-  tone?: "default" | "accent" | "muted";
+  tone?: "default" | "accent" | "muted" | "danger";
 }) {
   return (
     <div className="rounded-xl border border-border/70 bg-card p-3">
@@ -105,6 +105,7 @@ export function MetricTile({
         className={cn(
           "mt-1.5 text-2xl tabular-nums",
           tone === "accent" && "text-accent-foreground",
+          tone === "danger" && "text-destructive",
           tone === "muted" && "text-muted-foreground",
           tone === "default" && "text-foreground"
         )}
@@ -126,7 +127,13 @@ export function MetricTile({
 export function MiniBars({
   rows,
 }: {
-  rows: Array<{ label: string; count: number; href?: string }>;
+  rows: Array<{
+    label: string;
+    count: number;
+    href?: string;
+    /** Rendered as a destructive-toned block inside the same track. */
+    sub?: { count: number; label?: string };
+  }>;
 }) {
   const max = Math.max(1, ...rows.map((r) => r.count));
 
@@ -147,9 +154,18 @@ export function MiniBars({
               className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted"
             >
               <span
-                className="block h-full rounded-full bg-primary/70 transition-[width] duration-slow ease-house"
+                className="flex h-full rounded-full bg-primary/70 transition-[width] duration-slow ease-house"
                 style={{ width: `${pct}%` }}
-              />
+              >
+                {row.sub && row.sub.count > 0 && (
+                  <span
+                    className="h-full rounded-full bg-destructive/80"
+                    style={{
+                      width: `${Math.min(100, (row.sub.count / Math.max(1, row.count)) * 100)}%`,
+                    }}
+                  />
+                )}
+              </span>
             </span>
           </>
         );
@@ -165,6 +181,80 @@ export function MiniBars({
             ) : (
               body
             )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/**
+ * A trend, as one labelled bar per bucket.
+ *
+ * Deliberately not a sparkline. The overview's rule against them was written against
+ * smoothed shapes with no labels, and it is right: 0,1,0,0,2,1,0 drawn as a squiggle is
+ * noise rendered as a shape. The same seven numbers printed next to seven bars is a
+ * countable column — the reader gets the integers, and the bars only rank them.
+ *
+ * `secondary` overlays a second series inside the same bar (failures within calls), which
+ * only reads honestly when it is a strict subset of `count`.
+ */
+export function TrendBars({
+  rows,
+  emptyLabel = "Nothing in this window yet.",
+}: {
+  rows: Array<{
+    label: string;
+    count: number;
+    secondary?: number;
+    secondaryLabel?: string;
+    href?: string;
+  }>;
+  emptyLabel?: string;
+}) {
+  if (rows.length === 0) return <EmptyState>{emptyLabel}</EmptyState>;
+
+  // Against the max rather than the sum: the question is "which period was busiest",
+  // and a zero-height bar for an empty period is the honest answer for that period.
+  const max = Math.max(1, ...rows.map((r) => r.count));
+
+  return (
+    <ol className="space-y-1">
+      {rows.map((row) => {
+        const pct = (row.count / max) * 100;
+        const secondaryPct = row.secondary ? (row.secondary / max) * 100 : 0;
+        return (
+          <li key={row.label} className="flex items-center gap-3 text-sm">
+            <span className="w-24 shrink-0 truncate text-xs text-muted-foreground tabular-nums">
+              {row.label}
+            </span>
+            <span className="w-10 shrink-0 text-right tabular-nums">{row.count}</span>
+            {row.secondary != null && (
+              <span
+                className={cn(
+                  "w-10 shrink-0 text-right text-xs tabular-nums",
+                  row.secondary > 0 ? "text-destructive" : "text-muted-foreground/50"
+                )}
+                title={row.secondaryLabel}
+              >
+                {row.secondary > 0 ? row.secondary : "—"}
+              </span>
+            )}
+            <span
+              aria-hidden
+              className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-muted"
+            >
+              <span
+                className="absolute inset-y-0 left-0 rounded-full bg-primary/70 transition-[width] duration-slow ease-house"
+                style={{ width: `${pct}%` }}
+              />
+              {secondaryPct > 0 && (
+                <span
+                  className="absolute inset-y-0 left-0 rounded-full bg-destructive/80"
+                  style={{ width: `${secondaryPct}%` }}
+                />
+              )}
+            </span>
           </li>
         );
       })}
@@ -330,3 +420,59 @@ export function EmptyState({ children }: { children: React.ReactNode }) {
 }
 
 export { RelativeTime };
+
+/**
+ * A verbatim system error string.
+ *
+ * Load-bearing distinction: this renders SYSTEM output — import failures, sync errors,
+ * provider messages — which is shown in full precisely because it is not user prose. It
+ * must never be used for notes, chat content, or anything a person wrote.
+ */
+export function CodeDetail({ children }: { children: React.ReactNode }) {
+  if (!children) return null;
+  return (
+    <pre className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap break-words rounded bg-muted/60 p-2 font-mono text-xs text-muted-foreground">
+      {children}
+    </pre>
+  );
+}
+
+/**
+ * Periods down the left, integers across. Deliberately a table rather than a sparkline:
+ * a sparkline autoscales, so `0,1,0,0,2` renders as a dramatic spike, whereas printed
+ * integers read as "basically nothing happened". Past ~90 rows this stops working and
+ * that is when a chart library earns its place.
+ */
+export function TrendTable({
+  columns,
+  rows,
+}: {
+  columns: string[];
+  rows: Array<{ period: string; values: number[] }>;
+}) {
+  return (
+    <AdminTable
+      head={
+        <>
+          <Th>Period</Th>
+          {columns.map((c) => (
+            <Th key={c} numeric>
+              {c}
+            </Th>
+          ))}
+        </>
+      }
+    >
+      {rows.map((row) => (
+        <tr key={row.period} className="border-b border-border/40 last:border-b-0">
+          <Td className="text-muted-foreground">{row.period}</Td>
+          {row.values.map((v, i) => (
+            <Td key={i} numeric className={v === 0 ? "text-muted-foreground" : undefined}>
+              {v}
+            </Td>
+          ))}
+        </tr>
+      ))}
+    </AdminTable>
+  );
+}

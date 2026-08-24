@@ -9,10 +9,10 @@ import { PlanPriceDisplay } from "@/components/pricing/plan-price";
 import { cn } from "@/lib/utils";
 import {
   ANNUAL_SAVING_PERCENT,
-  PLAN_COPY,
+  planCopyWithOffer,
   type BillingPeriod,
 } from "@/lib/plan-copy";
-import { LIFETIME_SEAT_LIMIT, type Plan } from "@/lib/plan-limits";
+import { type Plan } from "@/lib/plan-limits";
 
 function BillingToggle({
   period,
@@ -80,15 +80,17 @@ function TierCta({
   planId,
   currentPlan,
   signedIn,
-  seatsLeft,
   lifetimePurchasable,
+  lifetimePriceUsd,
+  period,
 }: {
   planId: Plan;
   currentPlan: Plan | null;
   signedIn: boolean;
-  seatsLeft: number;
-  /** Stripe is configured and seats remain, so checkout can actually complete. */
+  /** Stripe is configured, so checkout can actually complete. */
   lifetimePurchasable: boolean;
+  lifetimePriceUsd: number;
+  period: BillingPeriod;
 }) {
   const base =
     "flex w-full items-center justify-center rounded-xl px-4 py-3 text-sm font-medium transition-opacity";
@@ -109,7 +111,7 @@ function TierCta({
   if (planId === "lifetime") {
     if (!lifetimePurchasable) {
       // Deliberately not a disabled <button>: with no checkout to attempt, a dead control
-      // reads as a broken product, while a stated queue reads as scarcity.
+      // reads as a broken product, while a stated wait reads as a date not yet reached.
       return (
         <div className="space-y-2">
           <p
@@ -118,12 +120,10 @@ function TierCta({
               "border border-dashed border-[#f2c14e]/35 text-[#f2c14e]"
             )}
           >
-            {seatsLeft > 0 ? `Opens to the first ${seatsLeft}` : "Sold out"}
+            Not on sale yet
           </p>
           <p className="text-center text-xs text-[#6d807c]">
-            {seatsLeft > 0
-              ? "Not on sale yet — it unlocks when checkout opens."
-              : "Every Orbit Lifetime spot has been claimed."}
+            It unlocks when checkout opens.
           </p>
         </div>
       );
@@ -133,32 +133,19 @@ function TierCta({
       // Checkout needs an account to attribute the purchase to, so send them to sign up
       // rather than into a Stripe session with nobody to grant the plan to.
       return (
-        <div className="space-y-2">
-          <Link
-            href="/sign-up"
-            className={cn(
-              base,
-              "bg-[#f2c14e] font-medium text-[#241a00] hover:opacity-90"
-            )}
-          >
-            Create an account to claim
-          </Link>
-          <p className="text-center text-xs text-[#6d807c]">
-            {seatsLeft} of {seatsLeft === 1 ? "1 spot" : "spots"} left.
-          </p>
-        </div>
+        <Link
+          href="/sign-up"
+          className={cn(
+            base,
+            "bg-[#f2c14e] font-medium text-[#241a00] hover:opacity-90"
+          )}
+        >
+          Create an account to buy
+        </Link>
       );
     }
 
-    return (
-      <div className="space-y-2">
-        <LifetimeCheckoutButton />
-        <p className="text-center text-xs text-[#6d807c]">
-          {seatsLeft} {seatsLeft === 1 ? "spot" : "spots"} left of{" "}
-          {LIFETIME_SEAT_LIMIT}.
-        </p>
-      </div>
-    );
+    return <LifetimeCheckoutButton priceUsd={lifetimePriceUsd} />;
   }
 
   if (planId === "free") {
@@ -175,9 +162,14 @@ function TierCta({
     );
   }
 
+  // The chosen period rides along in the URL. Clerk's PricingTable has no prop to
+  // preselect it, so /upgrade states it in copy rather than pretending it carried over.
+  const upgradeHref =
+    period === "annual" ? "/upgrade?period=annual" : "/upgrade";
+
   return (
     <Link
-      href={signedIn ? "/settings#settings-plan" : "/sign-up"}
+      href={signedIn ? upgradeHref : "/sign-up"}
       className={cn(
         base,
         "bg-[#eef7f4] text-[#0f2e28] hover:opacity-90"
@@ -236,22 +228,28 @@ const TIER_ACCENT: Record<
 export function PricingTiers({
   currentPlan,
   signedIn,
-  seatsLeft,
   lifetimePurchasable,
+  lifetimeOffer,
 }: {
   currentPlan: Plan | null;
   signedIn: boolean;
-  seatsLeft: number;
   lifetimePurchasable: boolean;
+  /**
+   * Resolved on the server from the live sale count, because Lifetime's price rises after
+   * the introductory buyers. Passed in rather than read here so this stays a client
+   * component; the shape is deliberately minimal for the same reason.
+   */
+  lifetimeOffer: { priceUsd: number; compareAtUsd: number | null };
 }) {
   const [period, setPeriod] = useState<BillingPeriod>("monthly");
+  const plans = planCopyWithOffer(lifetimeOffer);
 
   return (
     <div className="space-y-10">
       <BillingToggle period={period} onChange={setPeriod} />
 
       <div className="grid items-start gap-5 lg:grid-cols-3 lg:gap-6">
-        {PLAN_COPY.map((plan) => {
+        {plans.map((plan) => {
           const accent = TIER_ACCENT[plan.id];
           const price = plan.price[period];
 
@@ -331,8 +329,9 @@ export function PricingTiers({
                   planId={plan.id}
                   currentPlan={currentPlan}
                   signedIn={signedIn}
-                  seatsLeft={seatsLeft}
                   lifetimePurchasable={lifetimePurchasable}
+                  lifetimePriceUsd={lifetimeOffer.priceUsd}
+                  period={period}
                 />
               </div>
             </section>

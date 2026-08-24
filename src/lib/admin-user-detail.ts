@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   aiSuggestions,
@@ -7,58 +7,75 @@ import {
   chatThreads,
   companies,
   contactEmbeddings,
+  contactTags,
   contacts,
   gmailConnections,
   imports,
   interactions,
   outlookConnections,
+  outreachCampaigns,
+  outreachMessages,
+  outreachProspects,
   reminders,
+  suggestedReminders,
   tags,
   usageEvents,
   userGoals,
+  userRecruiterLinks,
   userSettings,
 } from "@/db/schema";
 import { entitlementsForPlan, resolvePlan } from "@/lib/entitlements";
 import type { Entitlements, Plan, PlanSource } from "@/lib/entitlements";
+import { assertRevealable } from "@/lib/admin-redaction";
 
 /**
  * Read-only inspection of one account, for operator support.
  *
- * THE RULE THIS MODULE ENFORCES: the inspector shows system state and metadata. It never
- * shows prose a user wrote about another human being.
+ * Contact records read plainly. This module used to mask them behind a time-boxed,
+ * per-account grant that the operator had to request with a typed reason; that gate was
+ * removed deliberately, because on a single-operator console it was friction paid by the
+ * one person it was protecting against, on every support question. Opening an account
+ * still writes an `account.view` row to `admin_audit_log` — the record of *what was
+ * looked at* survives; only the ceremony is gone.
  *
- * Orbit's data is not primarily about its users — it is about third parties who never
- * signed up for anything and have no way to object. So contact names are masked here, and
- * notes, AI summaries, key facts and chat transcripts are never selected at all. Redaction
- * lives in this query layer rather than in components on purpose: it makes the allowlist
- * greppable and auditable, and it means no component *can* leak a field it never receives.
- *
- * Never selected, under any circumstance:
+ * WHAT IS STILL ABSOLUTE. Redaction lives in this query layer rather than in components,
+ * and the part that matters never depended on the grant at all: a short list of columns is
+ * never SELECTed here under any circumstance, so no component *can* render a value it was
+ * never sent. That list is enforced at runtime by `assertRevealable()` against
+ * `NEVER_REVEALABLE` in `src/lib/admin-redaction.ts`:
  *   - *_api_key_encrypted, twilio_auth_token_encrypted  (never decrypt a foreign user's key)
  *   - calendar_feed_token                               (a live plaintext bearer credential)
  *   - gmail/outlook access + refresh tokens             (same class)
- *   - chat_messages.content                             (the most private data in the app)
- *   - contacts.notes / key_facts / opportunities / ai_summary / met_context / how_met
- *   - contacts.email / phone                            (third-party PII)
- *   - interactions.raw_notes / ai_summary / topics
+ *   - chat_messages.content                             (the most private data in the app,
+ *                                                        and no support question needs it)
+ *
+ * Those are credentials and private correspondence, not support context. Nothing about
+ * answering "why did this user's import fail" needs them, so the denylist stays a hard
+ * runtime assertion rather than a convention — add a column to the reads below that
+ * collides with it and the query throws rather than quietly widening.
+ *
+ * Two tiers remain, but they are now about *cost*, not permission: `getAdminUserDetail`
+ * returns a cheap summary row per contact, and `listAdminContacts` /
+ * `getAdminContactDetail` populate the full `detail` object. A null `detail` means "this
+ * read did not ask for it", never "you are not allowed to see it".
  */
-
-/** Masks a name to a length hint: enough to spot duplicates, not enough to identify. */
-export function maskName(name: string | null | undefined): string {
-  const trimmed = (name ?? "").trim();
-  if (!trimmed) return "—";
-  return `${"▨".repeat(Math.min(trimmed.length, 12))} (${trimmed.length})`;
-}
 
 export type AdminIdentity = {
   userId: string;
   email: string | null;
+  /** Mirrored from Clerk; null on accounts that predate the mirror. */
+  firstName: string | null;
+  lastName: string | null;
+  imageUrl: string | null;
   signupAt: Date;
   lastActiveAt: Date | null;
   onboardingCompletedAt: Date | null;
   onboardingStep: string | null;
   wizardCompletedAt: Date | null;
   theme: string | null;
+  suspendedAt: Date | null;
+  suspendedReason: string | null;
+  suspendedBy: string | null;
 };
 
 export type AdminBilling = {
@@ -100,12 +117,18 @@ export type AdminFootprint = {
   companies: number;
   interactions: number;
   reminders: number;
+  remindersPending: number;
   tags: number;
   chatThreads: number;
   chatMessages: number;
   imports: number;
   embeddings: number;
   suggestions: number;
+  suggestedReminders: number;
+  outreachCampaigns: number;
+  outreachProspects: number;
+  outreachMessagesSent: number;
+  recruiterLinks: number;
   firstContactAt: Date | null;
   lastWriteAt: Date | null;
 };
@@ -140,11 +163,32 @@ export type AdminTimelineEntry = {
 
 export type AdminContactRow = {
   id: string;
-  maskedName: string;
+  name: string;
+  email: string | null;
   company: string | null;
   title: string | null;
   interactionCount: number;
   createdAt: Date;
+  /**
+   * The full record. Null on the summary read (`getAdminUserDetail`), which does not select
+   * these columns because it does not render them — not because they are withheld.
+   */
+  detail: AdminContactFields | null;
+};
+
+export type AdminContactFields = {
+  fullName: string;
+  email: string | null;
+  phone: string | null;
+  location: string | null;
+  school: string | null;
+  linkedinUrl: string | null;
+  notes: string | null;
+  aiSummary: string | null;
+  metContext: string | null;
+  howMet: string | null;
+  keyFacts: string[];
+  opportunities: string[];
 };
 
 function num(value: string | number | null | undefined): number {
@@ -356,23 +400,21 @@ export async function getAdminUserDetail(
       .orderBy(desc(usageEvents.createdAt))
       .limit(10),
 
-    // Column allowlist: no email, phone, notes, summaries, key facts or opportunities.
+    // The summary read — identity and affiliation, no notes, summaries, key facts or
+    // opportunities. Those live behind `getAdminContactDetail`, one contact at a time,
+    // because a page listing twenty contacts has nowhere useful to put them.
     db.query.contacts.findMany({
       where: eq(contacts.userId, userId),
       orderBy: [desc(contacts.createdAt)],
       limit: 20,
-      columns: {
-        id: true,
-        fullName: true,
-        company: true,
-        title: true,
-        createdAt: true,
-      },
+      columns: CONTACT_BASE_COLUMNS,
     }),
   ]);
 
   const { plan, source } = resolvePlan(settings);
-  const hostedSends =
+  // Mirrors the union in `getEntitlements`: a Lifetime holder who also subscribes keeps
+  // hosted enrichment while that subscription is live.
+  const hostedEnrichment =
     plan === "orbit" ||
     (settings.subscriptionPlan === "orbit" &&
       (settings.subscriptionStatus === "active" ||
@@ -388,18 +430,61 @@ export async function getAdminUserDetail(
     twilio: Boolean(settings.twilioAuthTokenEncrypted),
   };
 
-  // Interaction counts for the visible contact page only — avoids a full per-contact scan.
+  // Interaction counts for the visible contact page only.
+  //
+  // The `inArray` is load-bearing: without it this grouped over every interaction the user
+  // had and then looked up twenty of them, so decorating one page cost a full scan of the
+  // largest table on a heavy account.
   const visibleIds = contactRows.map((c) => c.id);
   const interactionCounts = visibleIds.length
     ? await db
         .select({ contactId: interactions.contactId, n: countInt })
         .from(interactions)
-        .where(eq(interactions.userId, userId))
+        .where(
+          and(
+            eq(interactions.userId, userId),
+            inArray(interactions.contactId, visibleIds)
+          )
+        )
         .groupBy(interactions.contactId)
     : [];
   const interactionsByContact = new Map(
     interactionCounts.map((r) => [r.contactId, r.n])
   );
+
+  /**
+   * The rest of the footprint, as scalar subqueries in one statement.
+   *
+   * Deliberately not eight more entries in the `Promise.all` above: on Neon HTTP every
+   * entry is its own round trip, and this page already makes nineteen. One statement that
+   * the planner runs as eight index lookups is the same work with a tenth of the latency.
+   */
+  const [extra] = await db
+    .select({
+      remindersPending: sql<number>`(
+        SELECT count(*)::int FROM ${reminders}
+        WHERE ${reminders.userId} = ${userId} AND ${reminders.status} = 'pending')`,
+      suggestedReminders: sql<number>`(
+        SELECT count(*)::int FROM ${suggestedReminders}
+        WHERE ${suggestedReminders.userId} = ${userId})`,
+      outreachCampaigns: sql<number>`(
+        SELECT count(*)::int FROM ${outreachCampaigns}
+        WHERE ${outreachCampaigns.userId} = ${userId})`,
+      outreachProspects: sql<number>`(
+        SELECT count(*)::int FROM ${outreachProspects} p
+        JOIN ${outreachCampaigns} c ON c.id = p.campaign_id
+        WHERE c.user_id = ${userId})`,
+      outreachMessagesSent: sql<number>`(
+        SELECT count(*)::int FROM ${outreachMessages} m
+        JOIN ${outreachProspects} p ON p.id = m.prospect_id
+        JOIN ${outreachCampaigns} c ON c.id = p.campaign_id
+        WHERE c.user_id = ${userId} AND m.status = 'sent')`,
+      recruiterLinks: sql<number>`(
+        SELECT count(*)::int FROM ${userRecruiterLinks}
+        WHERE ${userRecruiterLinks.userId} = ${userId})`,
+    })
+    .from(userSettings)
+    .where(eq(userSettings.userId, userId));
 
   const health: AdminHealthItem[] = [];
 
@@ -499,17 +584,23 @@ export async function getAdminUserDetail(
     identity: {
       userId: settings.userId,
       email: settings.email,
+      firstName: settings.firstName,
+      lastName: settings.lastName,
+      imageUrl: settings.profileImageUrl,
       signupAt: settings.createdAt,
       lastActiveAt: settings.lastActiveAt,
       onboardingCompletedAt: settings.onboardingCompletedAt,
       onboardingStep: settings.onboardingStep,
       wizardCompletedAt: settings.wizardCompletedAt,
       theme: settings.theme,
+      suspendedAt: settings.suspendedAt,
+      suspendedReason: settings.suspendedReason,
+      suspendedBy: settings.suspendedBy,
     },
     billing: {
       plan,
       source,
-      entitlements: entitlementsForPlan(plan, source, { hostedSends }),
+      entitlements: entitlementsForPlan(plan, source, { hostedEnrichment }),
       compedPlan: settings.compedPlan ?? null,
       compedNote: settings.compedNote,
       compedAt: settings.compedAt,
@@ -534,12 +625,18 @@ export async function getAdminUserDetail(
       companies: companyAgg[0]?.n ?? 0,
       interactions: interactionAgg[0]?.n ?? 0,
       reminders: reminderAgg[0]?.n ?? 0,
+      remindersPending: extra?.remindersPending ?? 0,
       tags: tagAgg[0]?.n ?? 0,
       chatThreads: threadAgg[0]?.n ?? 0,
       chatMessages: messageAgg[0]?.n ?? 0,
       imports: importRows.length,
       embeddings: embeddingAgg[0]?.n ?? 0,
       suggestions: suggestionAgg[0]?.n ?? 0,
+      suggestedReminders: extra?.suggestedReminders ?? 0,
+      outreachCampaigns: extra?.outreachCampaigns ?? 0,
+      outreachProspects: extra?.outreachProspects ?? 0,
+      outreachMessagesSent: extra?.outreachMessagesSent ?? 0,
+      recruiterLinks: extra?.recruiterLinks ?? 0,
       firstContactAt: toDate(contactAgg[0]?.firstAt),
       lastWriteAt: maxDate(
         contactAgg[0]?.lastAt,
@@ -571,14 +668,384 @@ export async function getAdminUserDetail(
       })),
     },
     timeline,
-    contacts: contactRows.map((c) => ({
-      id: c.id,
-      maskedName: maskName(c.fullName),
-      company: c.company,
-      title: c.title,
-      interactionCount: interactionsByContact.get(c.id) ?? 0,
-      createdAt: c.createdAt,
-    })),
+    // `detail: null` here reflects the narrower query above, not a permission — the full
+    // record is one click away at `/admin/users/[userId]/contacts/[contactId]`.
+    contacts: contactRows.map((c) =>
+      toContactRow(c as ContactRecord, interactionsByContact.get(c.id) ?? 0, false)
+    ),
     contactTotal: contactAgg[0]?.n ?? 0,
+  };
+}
+
+/* ------------------------------------------------------------------------------------
+ * Two-tier contact reads
+ *
+ * The summary and detail paths differ by exactly one thing: which columns reach the
+ * `columns:` object below. Everything downstream is shared, so the two cannot drift in
+ * behaviour — only in how much they fetch.
+ * --------------------------------------------------------------------------------- */
+
+/** The summary read: enough to list contacts and link into them. */
+const CONTACT_BASE_COLUMNS = {
+  id: true,
+  fullName: true,
+  email: true,
+  company: true,
+  title: true,
+  createdAt: true,
+} as const;
+
+/**
+ * Added by the detail reads. Still checked against `NEVER_REVEALABLE` at runtime — this
+ * object is the allowlist, and `CONTACT_SENSITIVE_QUALIFIED` below is its mirror in the
+ * form the denylist check speaks.
+ */
+const CONTACT_SENSITIVE_COLUMNS = {
+  phone: true,
+  location: true,
+  school: true,
+  linkedinUrl: true,
+  notes: true,
+  aiSummary: true,
+  metContext: true,
+  howMet: true,
+  keyFacts: true,
+  opportunities: true,
+} as const;
+
+/**
+ * Qualified names for the runtime denylist check. Kept adjacent to the column object above
+ * so adding a field to one without the other is visible in a two-line diff.
+ */
+const CONTACT_SENSITIVE_QUALIFIED = [
+  "contacts.phone",
+  "contacts.location",
+  "contacts.school",
+  "contacts.linkedin_url",
+  "contacts.notes",
+  "contacts.ai_summary",
+  "contacts.met_context",
+  "contacts.how_met",
+  "contacts.key_facts",
+  "contacts.opportunities",
+];
+
+type ContactRecord = {
+  id: string;
+  fullName: string;
+  email: string | null;
+  company: string | null;
+  title: string | null;
+  createdAt: Date;
+  phone?: string | null;
+  location?: string | null;
+  school?: string | null;
+  linkedinUrl?: string | null;
+  notes?: string | null;
+  aiSummary?: string | null;
+  metContext?: string | null;
+  howMet?: string | null;
+  keyFacts?: string[] | null;
+  opportunities?: string[] | null;
+};
+
+/**
+ * `withDetail` reflects which column set the caller queried, not whether it is permitted to
+ * look. Passing `true` after a base-columns query would produce a row of nulls, so the two
+ * are set together at each call site.
+ */
+function toContactRow(
+  record: ContactRecord,
+  interactionCount: number,
+  withDetail: boolean
+): AdminContactRow {
+  return {
+    id: record.id,
+    name: record.fullName,
+    email: record.email,
+    company: record.company,
+    title: record.title,
+    interactionCount,
+    createdAt: record.createdAt,
+    detail: withDetail
+      ? {
+          fullName: record.fullName,
+          email: record.email ?? null,
+          phone: record.phone ?? null,
+          location: record.location ?? null,
+          school: record.school ?? null,
+          linkedinUrl: record.linkedinUrl ?? null,
+          notes: record.notes ?? null,
+          aiSummary: record.aiSummary ?? null,
+          metContext: record.metContext ?? null,
+          howMet: record.howMet ?? null,
+          keyFacts: record.keyFacts ?? [],
+          opportunities: record.opportunities ?? [],
+        }
+      : null,
+  };
+}
+
+export const ADMIN_CONTACTS_PAGE_SIZE = 25;
+
+/**
+ * One page of an account's contacts, in full.
+ *
+ * The interaction counts are restricted to the visible page with `inArray`. The inspector
+ * previously grouped over *every* interaction the user had and then looked up twenty of
+ * them — a full scan to decorate one page, which on a heavy account is the most expensive
+ * query on the screen.
+ */
+export async function listAdminContacts(
+  userId: string,
+  opts: {
+    page?: number;
+    pageSize?: number;
+  } = {}
+): Promise<{ rows: AdminContactRow[]; total: number; page: number; pageSize: number }> {
+  const db = await getDb();
+  const pageSize = Math.min(Math.max(opts.pageSize ?? ADMIN_CONTACTS_PAGE_SIZE, 1), 200);
+  const page = Math.max(opts.page ?? 1, 1);
+
+  // Still asserted, with no gate left to hide behind: this is the check that fails loudly
+  // if a credential column is ever added to `CONTACT_SENSITIVE_COLUMNS` by mistake.
+  assertRevealable(CONTACT_SENSITIVE_QUALIFIED);
+
+  const columns = { ...CONTACT_BASE_COLUMNS, ...CONTACT_SENSITIVE_COLUMNS };
+
+  const [records, totalAgg] = await Promise.all([
+    db.query.contacts.findMany({
+      where: eq(contacts.userId, userId),
+      orderBy: [desc(contacts.createdAt)],
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      columns,
+    }),
+    db.select({ n: countInt }).from(contacts).where(eq(contacts.userId, userId)),
+  ]);
+
+  const visibleIds = records.map((c) => c.id);
+  const counts = visibleIds.length
+    ? await db
+        .select({ contactId: interactions.contactId, n: countInt })
+        .from(interactions)
+        .where(
+          and(
+            eq(interactions.userId, userId),
+            inArray(interactions.contactId, visibleIds)
+          )
+        )
+        .groupBy(interactions.contactId)
+    : [];
+  const byContact = new Map(counts.map((r) => [r.contactId, r.n]));
+
+  return {
+    rows: records.map((r) =>
+      toContactRow(r as ContactRecord, byContact.get(r.id) ?? 0, true)
+    ),
+    total: totalAgg[0]?.n ?? 0,
+    page,
+    pageSize,
+  };
+}
+
+export type AdminInteractionRow = {
+  id: string;
+  interactionType: string;
+  source: string | null;
+  interactionDate: Date;
+  createdAt: Date;
+  /**
+   * Counted across *all* of the contact's interactions, not just the fifty in `detail`.
+   * "notes on 12 of 14" is the fastest answer to "did the capture actually write anything".
+   */
+  hasRawNotes: boolean;
+  hasAiSummary: boolean;
+  topicCount: number;
+  detail: InteractionFields;
+};
+
+export type InteractionFields = {
+  rawNotes: string | null;
+  aiSummary: string | null;
+  topics: string[];
+  actionItems: string[];
+  sentiment: string | null;
+};
+
+export type AdminContactDetail = {
+  contact: AdminContactRow;
+  userId: string;
+  relationshipScore: number | null;
+  statedCloseness: number | null;
+  priorityLevel: number | null;
+  source: string | null;
+  industry: string | null;
+  firstInteractionAt: Date | null;
+  lastInteractionAt: Date | null;
+  nextFollowUpAt: Date | null;
+  followUpStatus: string | null;
+  updatedAt: Date;
+  interactions: AdminInteractionRow[];
+  reminderCount: number;
+  tagCount: number;
+  embeddingCount: number;
+};
+
+const INTERACTION_BASE_COLUMNS = {
+  id: true,
+  interactionType: true,
+  source: true,
+  interactionDate: true,
+  createdAt: true,
+} as const;
+
+const INTERACTION_SENSITIVE_COLUMNS = {
+  rawNotes: true,
+  aiSummary: true,
+  topics: true,
+  actionItems: true,
+  sentiment: true,
+} as const;
+
+const INTERACTION_SENSITIVE_QUALIFIED = [
+  "interactions.raw_notes",
+  "interactions.ai_summary",
+  "interactions.topics",
+  "interactions.action_items",
+  "interactions.sentiment",
+];
+
+/**
+ * One contact record and its interactions.
+ *
+ * Presence booleans (`hasRawNotes`, `topicCount`) survived the removal of the reveal gate
+ * because they were never really about redaction: "this contact has notes on 12 of 14
+ * interactions" is the answer to *did the capture actually write anything*, and reading it
+ * off a count is faster and clearer than eyeballing fifty rows of prose for blanks.
+ *
+ * They come from SQL predicates rather than from the returned rows so the count covers
+ * every interaction, not just the fifty most recent ones fetched below.
+ */
+export async function getAdminContactDetail(
+  userId: string,
+  contactId: string
+): Promise<AdminContactDetail | null> {
+  const db = await getDb();
+
+  assertRevealable([
+    ...CONTACT_SENSITIVE_QUALIFIED,
+    ...INTERACTION_SENSITIVE_QUALIFIED,
+  ]);
+
+  const record = await db.query.contacts.findFirst({
+    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+    columns: {
+      ...CONTACT_BASE_COLUMNS,
+      ...CONTACT_SENSITIVE_COLUMNS,
+      relationshipScore: true,
+      statedCloseness: true,
+      priorityLevel: true,
+      source: true,
+      industry: true,
+      firstInteractionAt: true,
+      lastInteractionAt: true,
+      nextFollowUpAt: true,
+      followUpStatus: true,
+      updatedAt: true,
+    },
+  });
+  if (!record) return null;
+
+  const [interactionRows, presence, reminderAgg, tagAgg, embeddingAgg] =
+    await Promise.all([
+      db.query.interactions.findMany({
+        where: and(
+          eq(interactions.userId, userId),
+          eq(interactions.contactId, contactId)
+        ),
+        orderBy: [desc(interactions.interactionDate)],
+        limit: 50,
+        columns: { ...INTERACTION_BASE_COLUMNS, ...INTERACTION_SENSITIVE_COLUMNS },
+      }),
+
+      // Counted across every interaction, not just the fifty fetched above.
+      db
+        .select({
+          id: interactions.id,
+          hasRawNotes: sql<boolean>`${interactions.rawNotes} is not null`,
+          hasAiSummary: sql<boolean>`${interactions.aiSummary} is not null`,
+          topicCount: sql<number>`coalesce(jsonb_array_length(${interactions.topics}), 0)::int`,
+        })
+        .from(interactions)
+        .where(
+          and(
+            eq(interactions.userId, userId),
+            eq(interactions.contactId, contactId)
+          )
+        ),
+
+      db
+        .select({ n: countInt })
+        .from(reminders)
+        .where(
+          and(eq(reminders.userId, userId), eq(reminders.contactId, contactId))
+        ),
+
+      db
+        .select({ n: countInt })
+        .from(contactTags)
+        .where(eq(contactTags.contactId, contactId)),
+
+      db
+        .select({ n: countInt })
+        .from(contactEmbeddings)
+        .where(
+          and(
+            eq(contactEmbeddings.userId, userId),
+            eq(contactEmbeddings.contactId, contactId)
+          )
+        ),
+    ]);
+
+  const presenceById = new Map(presence.map((p) => [p.id, p]));
+
+  return {
+    contact: toContactRow(record as ContactRecord, presence.length, true),
+    userId,
+    relationshipScore: record.relationshipScore ?? null,
+    statedCloseness: record.statedCloseness ?? null,
+    priorityLevel: record.priorityLevel ?? null,
+    source: record.source ?? null,
+    industry: record.industry ?? null,
+    firstInteractionAt: record.firstInteractionAt ?? null,
+    lastInteractionAt: record.lastInteractionAt ?? null,
+    nextFollowUpAt: record.nextFollowUpAt ?? null,
+    followUpStatus: record.followUpStatus ?? null,
+    updatedAt: record.updatedAt,
+    interactions: interactionRows.map((row): AdminInteractionRow => {
+      const p = presenceById.get(row.id);
+      const r = row as typeof row & Partial<InteractionFields>;
+      return {
+        id: row.id,
+        interactionType: row.interactionType,
+        source: row.source,
+        interactionDate: row.interactionDate,
+        createdAt: row.createdAt,
+        hasRawNotes: Boolean(p?.hasRawNotes),
+        hasAiSummary: Boolean(p?.hasAiSummary),
+        topicCount: p?.topicCount ?? 0,
+        detail: {
+          rawNotes: r.rawNotes ?? null,
+          aiSummary: r.aiSummary ?? null,
+          topics: r.topics ?? [],
+          actionItems: r.actionItems ?? [],
+          sentiment: r.sentiment ?? null,
+        },
+      };
+    }),
+    reminderCount: reminderAgg[0]?.n ?? 0,
+    tagCount: tagAgg[0]?.n ?? 0,
+    embeddingCount: embeddingAgg[0]?.n ?? 0,
   };
 }

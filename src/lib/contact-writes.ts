@@ -13,9 +13,11 @@
 
 import { and, count, eq, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { getDb } from "@/db";
 import { contactTags, contacts, interactions, tags } from "@/db/schema";
 import { PaywallError, getEntitlements } from "@/lib/entitlements";
+import { recordGateHit } from "@/lib/gate-events";
 import {
   companyFieldsForWrite,
   companyFieldsForWriteCached,
@@ -23,6 +25,7 @@ import {
 } from "@/lib/companies";
 import { isMetContext } from "@/lib/met-context";
 import { generateAndStorePersonSummary } from "@/lib/person-summary";
+import { markCohortDirty, rescoreContact } from "@/lib/closeness-materialize";
 import {
   rebuildContactEmbedding,
   rebuildContactEmbeddingsBatch,
@@ -35,6 +38,12 @@ export type ContactWriteOptions = {
   skipEmbedding?: boolean;
   /** Skip the fire-and-forget person-summary refresh; caller will defer it (e.g. via `after()`). */
   skipSummary?: boolean;
+  /**
+   * Skip per-contact closeness scoring. For bulk paths only: they recalibrate the whole
+   * network once at the end, which supersedes scoring each row against a distribution that
+   * is about to be redrawn anyway.
+   */
+  skipCloseness?: boolean;
 };
 
 export type ContactInput = {
@@ -295,6 +304,15 @@ export async function createContactForUser(
   const headroom = await contactHeadroomForUser(userId);
   if (headroom !== null && headroom < 1) {
     const { plan, contactLimit } = await getEntitlements(userId);
+    // The cap is the most direct pricing lever Orbit has, and until now hitting it left no
+    // trace — so "does the 100-contact limit convert, or just annoy?" had no evidence
+    // behind it either way.
+    await recordGateHit({
+      userId,
+      feature: "contacts",
+      plan,
+      context: { contactLimit },
+    });
     throw new PaywallError(
       "contacts",
       plan,
@@ -316,6 +334,8 @@ export async function createContactForUser(
     await rebuildContactEmbedding(userId, contact.id);
   }
 
+  await scoreAfterWrite(userId, contact.id, options);
+
   if (!options?.skipRevalidate) {
     revalidatePath("/");
     revalidatePath("/contacts");
@@ -323,6 +343,31 @@ export async function createContactForUser(
   }
 
   return contact;
+}
+
+/**
+ * Give a just-written contact a closeness score, and note that the ranking has moved.
+ *
+ * The score matters immediately: a contact with none reads as "never scored", and the next
+ * page view would respond by recalibrating the entire network — so skipping this would make
+ * every individual write cost a full rescore. The dirty flag is the cheap half; a background
+ * pass redraws the distribution once things settle.
+ *
+ * Failure here is not worth failing a write over. An unscored contact is picked up by the
+ * next recalibration either way, which is exactly what the dirty flag is asking for.
+ */
+async function scoreAfterWrite(
+  userId: string,
+  contactId: string,
+  options?: ContactWriteOptions
+) {
+  if (options?.skipCloseness) return;
+  try {
+    await rescoreContact(userId, contactId);
+    await markCohortDirty(userId);
+  } catch {
+    // Left unscored on purpose; recalibration will claim it.
+  }
 }
 
 /**
@@ -361,6 +406,12 @@ export async function createContactsBulkForUser(
   );
 
   const created = await db.insert(contacts).values(values).returning();
+
+  // Deliberately no per-row scoring here. The caller recalibrates once when the import
+  // finishes, and scoring each row against a distribution that is about to be redrawn would
+  // be work thrown away — a 3,000-contact import would pay for 3,000 rescores to reach the
+  // same place one recalibration reaches.
+  await markCohortDirty(userId).catch(() => null);
 
   await syncTagsBulk(
     userId,
@@ -487,8 +538,13 @@ export async function updateContactForUser(
     input.sharedInterests !== undefined;
 
   if (significant && !options?.skipRevalidate && !options?.skipSummary) {
-    void generateAndStorePersonSummary(userId, id).catch(() => null);
+    // `after()` rather than a bare floating promise: on Vercel the function can be
+    // suspended the moment the response is sent, which would cut an unawaited summary
+    // request off partway through.
+    after(() => generateAndStorePersonSummary(userId, id).catch(() => null));
   }
+
+  await scoreAfterWrite(userId, id, options);
 
   if (!options?.skipRevalidate) {
     revalidatePath("/");
@@ -563,10 +619,14 @@ export async function logInteractionForUser(
 
   // Significant change: refresh stored person summary
   if (!options?.skipSummary) {
-    void generateAndStorePersonSummary(userId, input.contactId).catch(
-      () => null
+    after(() =>
+      generateAndStorePersonSummary(userId, input.contactId).catch(() => null)
     );
   }
+
+  // Recency and cadence are the two components an interaction actually moves, so this is
+  // the write most likely to change a contact's ring.
+  await scoreAfterWrite(userId, input.contactId, options);
 
   if (!options?.skipRevalidate) {
     revalidatePath(`/contacts/${input.contactId}`);

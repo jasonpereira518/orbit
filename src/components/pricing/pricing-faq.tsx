@@ -1,5 +1,10 @@
 import { Plus } from "lucide-react";
-import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
+import {
+  FREE_CONTACT_LIMIT,
+  LIFETIME_INTRO_PRICE,
+  LIFETIME_INTRO_SEATS,
+  LIFETIME_STANDARD_PRICE,
+} from "@/lib/plan-limits";
 
 /**
  * Native <details> rather than a scripted accordion: it is keyboard-operable, works
@@ -16,7 +21,11 @@ const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: "What is the difference between Orbit Pro and Orbit Lifetime?",
-    a: "Everything except sending. Both are uncapped and both include recruiter tracking, mailbox and calendar sync, and the extension. Orbit Pro also sends outreach email and SMS on Orbit's own credits; Lifetime connects your own Apollo, Resend, and Twilio keys instead. Metered sending is the one thing a single payment cannot honestly cover forever.",
+    a: "One thing: contact enrichment. Both are uncapped, both include recruiter tracking, mailbox and calendar sync, the extension, and outreach campaigns that send email and SMS on Orbit's own credits. Orbit Pro also enriches contacts on Orbit's Apollo credits; Lifetime connects your own Apollo key instead. Sending is capped at a fixed number per day on every plan, so a single payment can cover it. Enrichment has no such ceiling, which is the one thing a single payment cannot honestly cover forever.",
+  },
+  {
+    q: `Why is Orbit Lifetime $${LIFETIME_INTRO_PRICE} instead of $${LIFETIME_STANDARD_PRICE}?`,
+    a: `Because you are early. The first ${LIFETIME_INTRO_SEATS} people to buy Lifetime pay $${LIFETIME_INTRO_PRICE}; after that it is $${LIFETIME_STANDARD_PRICE}. To be clear about what that is and is not: Lifetime itself is not limited, does not run out, and will not stop being sold — the only thing that changes at ${LIFETIME_INTRO_SEATS} buyers is the price. If you buy at $${LIFETIME_INTRO_PRICE} you keep everything Lifetime ever includes, at the price you paid, permanently.`,
   },
   {
     q: "Can I cancel?",
@@ -27,8 +36,8 @@ const FAQ: Array<{ q: string; a: string }> = [
     a: "Nothing is deleted and nothing is hidden. You can export everything you have put into Orbit at any point, on any plan, including Free.",
   },
   {
-    q: "Is Orbit Lifetime really limited?",
-    a: "Yes — 100 people, then it retires. It exists because early users take a risk on an unfinished product, and everything it unlocks costs nothing per-user to run. That is what makes a one-time price something we can actually honour.",
+    q: "Why is Orbit Lifetime so much cheaper than subscribing?",
+    a: "Because it asks you to pay before Orbit has proven itself, and that is worth a discount. It is not a trick: Lifetime is the full product, and the one thing it leaves out — enrichment on our Apollo credits — is the only cost that would grow without limit for as long as you keep the account.",
   },
 ];
 

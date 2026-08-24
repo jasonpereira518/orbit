@@ -28,14 +28,16 @@ const COLUMN_ACCENT: Record<Plan, { heading: string; tick: string; tint?: string
  *  - The first block is ungated in code. Capture, chat, the map, LinkedIn import,
  *    reminders, the knowledge base, and export never consult entitlements at all, so they
  *    are true on every plan and stay grouped together.
- *  - `canUseOutreach`, `canUseRecruiters`, `canUseSync`, and `canUseExtension` are all
- *    plain `plan !== "free"`, so Lifetime matches Pro on each of them. Campaigns included:
- *    Lifetime users build and run them, they just send on their own keys.
- *  - `canUseHostedSends` is the only entitlement that separates the two paid tiers. It
- *    gates Orbit's *own* Resend/Twilio/Apollo credentials, never a key the user supplied —
- *    see the `envKey` helper in `outreach-send.ts` and the personal-key short-circuit at
- *    the top of `getApolloApiKey`. That is why enrichment reads "Your own key" on Free
- *    rather than a cross: a Free user who pastes an Apollo key into Settings gets it.
+ *  - `canUseOutreach`, `canUseRecruiters`, `canUseSync`, `canUseExtension`, and
+ *    `canUseHostedSending` are all plain `plan !== "free"`, so Lifetime matches Pro on
+ *    each of them. Sending included: it is capped at `DAILY_SEND_LIMIT` a day on every
+ *    plan, so it is a bounded cost a one-time payment can carry.
+ *  - `canUseHostedEnrichment` is the ONLY entitlement that separates the two paid tiers,
+ *    so "Contact enrichment" must stay the only row whose Pro and Lifetime cells differ.
+ *    It gates Orbit's *own* Apollo key, never a key the user supplied — see the
+ *    personal-key short-circuit at the top of `getApolloApiKey`. That is why enrichment
+ *    reads "Your own key" on Free and Lifetime rather than a cross: anyone who pastes an
+ *    Apollo key into Settings gets it.
  */
 const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
   {
@@ -53,10 +55,7 @@ const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
   { label: "Gmail, Outlook, calendar sync", cells: [false, true, true] },
   { label: "Chrome extension", cells: [false, true, true] },
   { label: "Outreach campaigns", cells: [false, true, true] },
-  {
-    label: "Email and SMS sending",
-    cells: [false, "Orbit's credits", "Your own keys"],
-  },
+  { label: "Email and SMS sending", cells: [false, true, true] },
   {
     label: "Contact enrichment",
     cells: ["Your own key", "Orbit's credits", "Your own key"],
