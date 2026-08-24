@@ -24,6 +24,7 @@ import {
   RetryImportButton,
 } from "@/components/admin/health-actions";
 import { getAdminHealth } from "@/lib/admin-health";
+import { getDataProtection } from "@/lib/admin-data-protection";
 import {
   getBugSignatures,
   getCronHealth,
@@ -51,14 +52,16 @@ export default async function AdminHealthPage() {
   // "what is broken about Orbit" — no person to name, no button to press, which is
   // precisely why none of it was visible before. Each degrades independently so this page
   // still renders if one instrumentation table is missing.
-  const [health, cron, webhooks, errors, outreach, bugs] = await Promise.all([
-    getAdminHealth(),
-    getCronHealth().catch(() => null),
-    getWebhookHealth().catch(() => null),
-    getErrorEventSummary().catch(() => null),
-    getOutreachQueueHealth().catch(() => null),
-    getBugSignatures().catch(() => null),
-  ]);
+  const [health, cron, webhooks, errors, outreach, bugs, protection] =
+    await Promise.all([
+      getAdminHealth(),
+      getCronHealth().catch(() => null),
+      getWebhookHealth().catch(() => null),
+      getErrorEventSummary().catch(() => null),
+      getOutreachQueueHealth().catch(() => null),
+      getBugSignatures().catch(() => null),
+      getDataProtection().catch(() => null),
+    ]);
 
   const inspector = (userId: string) =>
     `/admin/users/${encodeURIComponent(userId)}`;
@@ -634,6 +637,135 @@ export default async function AdminHealthPage() {
               />
             </div>
           </AdminPanel>
+        )}
+
+        {/* ------------------------------------------------------- data protection ---- */}
+
+        {protection && (
+          <>
+            <AdminPageHeader
+              title="Data protection"
+              subtitle={
+                protection.thirdPartyRecords === null
+                  ? "What Orbit holds, and whether erasure actually works"
+                  : `${protection.thirdPartyRecords.toLocaleString()} records about people who never signed up`
+              }
+            />
+
+            <AdminPanel title="Rows whose account no longer exists">
+              {protection.orphans.length === 0 ? (
+                <EmptyState>
+                  Nothing orphaned. Every user-scoped table is either purged on account
+                  deletion or deliberately anonymised.
+                </EmptyState>
+              ) : (
+                <>
+                  <AdminTable
+                    head={
+                      <>
+                        <Th>Table</Th>
+                        <Th numeric>Rows</Th>
+                      </>
+                    }
+                  >
+                    {protection.orphans.map((o) => (
+                      <tr
+                        key={o.table}
+                        className="border-b border-border/40 last:border-b-0"
+                      >
+                        <Td className="font-mono text-xs text-destructive">{o.table}</Td>
+                        <Td numeric>{o.rows}</Td>
+                      </tr>
+                    ))}
+                  </AdminTable>
+                  <p className="mt-3 text-xs text-destructive">
+                    These survived an account deletion. Three tables have reached production
+                    user-scoped and unpurged so far — each was invisible until something
+                    enumerated the schema rather than trusting a list.
+                  </p>
+                </>
+              )}
+              <p className="mt-3 border-t border-border/40 pt-2 text-xs text-muted-foreground">
+                Derived from <code className="font-mono">schema.ts</code> at run time, so a
+                new user-scoped table appears here the moment it holds an orphan.{" "}
+                <code className="font-mono">billing_events</code> is excluded: it is
+                anonymised rather than deleted, because financial records have to survive a
+                customer leaving.
+              </p>
+            </AdminPanel>
+
+            <div className="grid gap-6 lg:grid-cols-2">
+              <AdminPanel title="What is kept, and for how long">
+                <AdminTable
+                  head={
+                    <>
+                      <Th>Data</Th>
+                      <Th>Policy</Th>
+                      <Th numeric>Rows</Th>
+                    </>
+                  }
+                >
+                  {protection.retention.map((r) => (
+                    <tr
+                      key={r.what}
+                      className="border-b border-border/40 last:border-b-0"
+                    >
+                      <Td>{r.what}</Td>
+                      <Td
+                        className={
+                          r.keptForever ? "text-muted-foreground" : undefined
+                        }
+                      >
+                        {r.policy}
+                      </Td>
+                      <Td numeric>{r.rows === null ? "—" : r.rows}</Td>
+                    </tr>
+                  ))}
+                </AdminTable>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Contact data has no expiry. That is defensible for a CRM — remembering
+                  people is the product — but it is worth being a decision rather than an
+                  accident, given that the people being remembered did not agree to it.
+                </p>
+              </AdminPanel>
+
+              <AdminPanel title="Refused attempts to reach this console">
+                {protection.denials.length === 0 ? (
+                  <EmptyState>
+                    Nobody has been turned away. Recorded from the day the gate started
+                    logging — earlier attempts left no trace at all.
+                  </EmptyState>
+                ) : (
+                  <AdminTable
+                    head={
+                      <>
+                        <Th>Account</Th>
+                        <Th numeric>When</Th>
+                      </>
+                    }
+                  >
+                    {protection.denials.map((d, i) => (
+                      <tr
+                        key={`${d.userId}-${i}`}
+                        className="border-b border-border/40 last:border-b-0"
+                      >
+                        <Td className="font-mono text-xs">{d.userId}</Td>
+                        <Td numeric>
+                          <RelativeTime date={d.at} />
+                        </Td>
+                      </tr>
+                    ))}
+                  </AdminTable>
+                )}
+                <p className="mt-3 text-xs text-muted-foreground">
+                  The gate answers 404 rather than 403 deliberately, so a probe learns
+                  nothing — which also meant it left no trace. The response is unchanged;
+                  only the record is new. On a console with one legitimate operator, a
+                  second name here is worth reading.
+                </p>
+              </AdminPanel>
+            </div>
+          </>
         )}
       </div>
     </>
