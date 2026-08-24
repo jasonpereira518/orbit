@@ -10,6 +10,7 @@ import {
   RelativeTime,
 } from "@/components/admin/primitives";
 import { getAdminOverview } from "@/lib/admin-metrics";
+import { decisionsWaiting } from "@/lib/admin-decisions";
 import { formatCostMicros } from "@/lib/ai-pricing";
 import { countLifetimePurchases } from "@/lib/user-settings";
 import { cn } from "@/lib/utils";
@@ -29,9 +30,10 @@ export const metadata = { title: "Admin · Overview" };
  * change no decision.
  */
 export default async function AdminOverviewPage() {
-  const [overview, lifetimeSold] = await Promise.all([
+  const [overview, lifetimeSold, decisions] = await Promise.all([
     getAdminOverview(),
     countLifetimePurchases().catch(() => 0),
+    decisionsWaiting().catch(() => []),
   ]);
 
   const { plans, alerts, funnel, rows } = overview;
@@ -61,6 +63,48 @@ export default async function AdminOverviewPage() {
       />
 
       <div className="space-y-6">
+        {/* Below "Needs attention" on purpose. That panel is today's work — things that
+            name a person and want a reply. This is the slower list: questions the console
+            has been answering for weeks that nobody has acted on, because no single screen
+            shouts. Every item is a DECISION rather than a task; anything dispatchable by
+            clicking belongs in the panel above. */}
+        {decisions.length > 0 && (
+          <AdminPanel
+            title="Decisions waiting"
+            action={
+              <span className="text-xs text-muted-foreground">
+                nothing here is urgent
+              </span>
+            }
+          >
+            <ul className="space-y-3">
+              {decisions.map((d) => (
+                <li
+                  key={d.id}
+                  className="border-b border-border/40 pb-3 last:border-b-0"
+                >
+                  <Link
+                    href={d.href}
+                    className="flex items-start gap-2 hover:text-primary"
+                  >
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "mt-1.5 size-1.5 shrink-0 rounded-full",
+                        d.tone === "act" ? "bg-destructive" : "bg-muted-foreground/50"
+                      )}
+                    />
+                    <span className="text-sm">{d.headline}</span>
+                  </Link>
+                  <p className="ml-3.5 mt-0.5 text-xs text-muted-foreground">
+                    {d.detail}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </AdminPanel>
+        )}
+
         <AdminPanel title="Needs attention">
           {alerts.length === 0 ? (
             <EmptyState>
