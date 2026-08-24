@@ -3,7 +3,7 @@ import { getDb, rowsOf } from "@/db";
 import { USAGE_EVENT_RETENTION_DAYS } from "@/lib/admin-health";
 
 /**
- * Time-bucketed growth and activation, for `/admin/growth`.
+ * Time-bucketed growth and activation, for `/admin/funnel`.
  *
  * WHY THIS IS NOT ON `/admin`. The overview's rule — "absolute integers only: no
  * percentages, no rates, no trend sparklines" — is right, and stays. It is really three
