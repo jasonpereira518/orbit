@@ -64,11 +64,45 @@ export const requireAdminUserId = cache(async (): Promise<string> => {
   try {
     userId = await requireUserId();
   } catch {
+    // Unauthenticated. Nothing to record — there is no identity to record it against, and
+    // logging every signed-out probe would bury the case that matters below.
     throw new AdminForbiddenError();
   }
-  if (!isAdminUser(userId)) throw new AdminForbiddenError();
+  if (!isAdminUser(userId)) {
+    // A SIGNED-IN USER WHO IS NOT AN OPERATOR. The response stays a 404 — a 403 would
+    // confirm both that the surface exists and that they found its path — but the attempt
+    // is now on the record. That combination was the gap: refusing invisibly meant nobody
+    // could ever answer "has anyone tried?".
+    //
+    // Awaited and swallowed. It fires only on refusal, so steady-state cost is zero, and a
+    // failure here must not change what the caller sees.
+    await recordAccessDenial(userId);
+    throw new AdminForbiddenError();
+  }
   return userId;
 });
+
+/**
+ * Records a refused attempt, without altering the refusal.
+ *
+ * Imported lazily so `admin.ts` — which every admin surface pulls in — does not gain a
+ * database import on the path where the gate *passes*.
+ */
+async function recordAccessDenial(userId: string): Promise<void> {
+  try {
+    const { getDb } = await import("@/db");
+    const { adminAuditLog } = await import("@/db/schema");
+    const db = await getDb();
+    await db.insert(adminAuditLog).values({
+      adminUserId: userId,
+      action: "access.denied",
+      targetUserId: null,
+      detail: {},
+    });
+  } catch {
+    // Never let the audit write change the answer the gate gives.
+  }
+}
 
 /** The gate for pages and layouts: renders a real 404 rather than an error boundary. */
 export async function requireAdminPage(): Promise<string> {
