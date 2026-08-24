@@ -35,7 +35,10 @@ function SidebarNavLink({
         "relative flex items-center justify-center gap-2.5 rounded-xl px-2 py-2.5 text-sm transition-colors lg:justify-start lg:px-3 lg:py-2",
         active
           ? "text-sidebar-accent-foreground"
-          : "text-muted-foreground hover:bg-white/45 hover:text-foreground dark:hover:bg-white/8"
+          : // Hover darkens the label and nothing else. A hover background put a
+            // second bar on screen competing with the one that marks the active
+            // tab, which made the pill's slide read as a glitch rather than a move.
+            "text-muted-foreground hover:text-foreground"
       )}
     >
       {active && (
@@ -121,9 +124,10 @@ export function AppSidebar({
           />
         ))}
 
-        {/* `mt-auto` drops Settings to the foot of the nav, clear of Extras;
-            `pt-2` keeps a gap when a short viewport leaves no slack to eat. */}
-        <div className="mt-auto pt-2">
+        {/* `mt-auto` drops Settings to the foot of the nav, clear of Extras.
+            `py-2` keeps it off the account divider below and holds the same gap
+            above when a short viewport leaves no slack for `mt-auto` to eat. */}
+        <div className="mt-auto py-2">
           <SidebarNavLink
             item={APP_NAV_SETTINGS}
             pathname={pathname}
