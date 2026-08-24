@@ -22,11 +22,16 @@ const SIZES = {
  *
  * The offset is transparent, not `background`: this mark sits on the sidebar's glass, and a
  * solid offset would punch a mismatched disc out of it. Transparent leaves a clean gap.
+ *
+ * 1px ring on a 1px offset, deliberately. The artwork is a ~490px disc centred in a 512px
+ * frame, so it already carries roughly 0.7px of its own inset at the 32px render — a wider
+ * offset stacks on top of that and the ring reads as a detached halo rather than a rim,
+ * while dropping the offset entirely leaves the ring touching the disc.
  */
 const PLAN_RING: Record<Plan, string | null> = {
   free: null,
-  orbit: "ring-2 ring-offset-2 ring-offset-transparent ring-[#599de7]",
-  lifetime: "ring-2 ring-offset-2 ring-offset-transparent ring-[#f2c14e]",
+  orbit: "ring-1 ring-offset-1 ring-offset-transparent ring-[#599de7]",
+  lifetime: "ring-1 ring-offset-1 ring-offset-transparent ring-[#f2c14e]",
 };
 
 export function OrbitLogo({
