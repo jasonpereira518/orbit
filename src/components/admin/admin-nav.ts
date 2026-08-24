@@ -1,5 +1,13 @@
 import type { LucideIcon } from "lucide-react";
-import { Activity, Gauge, ScrollText, TrendingUp, Users, Wallet } from "lucide-react";
+import {
+  Activity,
+  Boxes,
+  Gauge,
+  ScrollText,
+  TrendingUp,
+  Users,
+  Wallet,
+} from "lucide-react";
 
 export type AdminNavItem = {
   href: string;
@@ -22,6 +30,10 @@ export const ADMIN_NAV: AdminNavItem[] = [
   { href: "/admin/health", label: "Health", icon: Activity },
   // Trends live here rather than on the overview, which stays triage-only by design.
   { href: "/admin/growth", label: "Growth", icon: TrendingUp },
+  // "What earns its keep, and what should it cost." Split out of Growth, which was
+  // answering two unrelated questions at once — whether people arrive and stay, and
+  // whether the product is worth what it charges.
+  { href: "/admin/product", label: "Product", icon: Boxes },
   // Route is /admin/billing, but the screen covers money in AND money out — "Billing"
   // alone reads as revenue-only.
   { href: "/admin/billing", label: "Money", icon: Wallet },

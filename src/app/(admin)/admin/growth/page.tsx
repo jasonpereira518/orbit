@@ -14,14 +14,11 @@ import {
   activationTrend,
   activeTrend,
   aiVolumeTrend,
-  featureAdoption,
   retentionCohorts,
   signupTrend,
   type Grain,
 } from "@/lib/admin-trends";
 import {
-  getAiOperationAdoption,
-  getArtifacts,
   getDataQuality,
   getFunnelParking,
   getWaitlist,
@@ -50,15 +47,15 @@ export default async function AdminGrowthPage({
   const grain: Grain = params.grain === "month" ? "month" : "week";
   const buckets = grain === "month" ? 12 : 12;
 
+  // Feature adoption, AI-operation adoption and durable artifacts moved to /admin/product:
+  // they answer "what should I build", where this screen answers "do people arrive and
+  // stay". They were only ever together because both were new at the same time.
   const [
     signups,
     actives,
     activation,
     cohorts,
-    adoption,
     aiVolume,
-    aiOps,
-    artifacts,
     parking,
     waitlist,
     quality,
@@ -67,10 +64,7 @@ export default async function AdminGrowthPage({
     activeTrend(grain, buckets),
     activationTrend(grain, buckets),
     retentionCohorts(6),
-    featureAdoption(),
     aiVolumeTrend(grain, buckets),
-    getAiOperationAdoption(),
-    getArtifacts(),
     getFunnelParking(),
     // Waitlist rides on the webhook ledger, so it degrades on its own if that is absent.
     getWaitlist().catch(() => null),
@@ -203,25 +197,7 @@ export default async function AdminGrowthPage({
           </AdminTable>
         </AdminPanel>
 
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* The one cross-account total that changes a decision: which parts of Orbit are
-              load-bearing and which are decoration. */}
-          <AdminPanel title="Accounts that have used each feature">
-            <MiniBars
-              rows={[
-                { label: "Imports", count: adoption.imports },
-                { label: "Chat", count: adoption.chat },
-                { label: "Goals", count: adoption.goals },
-                { label: "Calendar", count: adoption.calendar },
-                { label: "Recruiters", count: adoption.recruiters },
-                { label: "Gmail", count: adoption.gmail },
-                { label: "Outreach", count: adoption.outreach },
-                { label: "Outlook", count: adoption.outlook },
-              ].sort((a, b) => b.count - a.count)}
-            />
-          </AdminPanel>
-
-          <AdminPanel
+        <AdminPanel
             title={`AI calls by ${grain}`}
             action={
               <span className="text-xs text-muted-foreground">
@@ -241,77 +217,7 @@ export default async function AdminGrowthPage({
             <p className="mt-3 border-t border-border/40 pt-2 text-xs text-muted-foreground">
               usage_events is pruned at 180 days, so this window cannot reach further back.
             </p>
-          </AdminPanel>
-        </div>
-
-        <div className="grid gap-6 lg:grid-cols-2">
-          <AdminPanel title="AI operations used">
-            {/* Complements the table-level adoption above: this is per code path, so it can
-                show that nobody has ever run audio transcription or the Apollo enrichment. */}
-            {aiOps.adoption.length === 0 ? (
-              <EmptyState>No AI operations recorded in the last 30 days.</EmptyState>
-            ) : (
-              <AdminTable
-                head={
-                  <>
-                    <Th>Operation</Th>
-                    <Th numeric>Accounts</Th>
-                    <Th numeric>Calls</Th>
-                    <Th numeric>Failed</Th>
-                  </>
-                }
-              >
-                {aiOps.adoption.map((row) => (
-                  <tr key={row.operation} className="border-b border-border/40 last:border-b-0">
-                    <Td className="font-mono text-xs">{row.operation}</Td>
-                    <Td numeric>{row.users}</Td>
-                    <Td numeric className="text-muted-foreground">{row.calls}</Td>
-                    <Td
-                      numeric
-                      className={row.failures > 0 ? "text-destructive" : "text-muted-foreground"}
-                    >
-                      {row.failures}
-                    </Td>
-                  </tr>
-                ))}
-              </AdminTable>
-            )}
-            {aiOps.neverUsed.length > 0 && (
-              <div className="mt-3 border-t border-border/60 pt-3">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                  Never used
-                </div>
-                <p className="mt-1 font-mono text-xs text-muted-foreground">
-                  {aiOps.neverUsed.join(", ")}
-                </p>
-              </div>
-            )}
-          </AdminPanel>
-
-          <AdminPanel title="Durable artifacts">
-            {/* What usage_events structurally cannot show: reminders, tags and goals leave
-                no AI call behind, so a usage-only view reports them as unused. */}
-            <AdminTable
-              head={
-                <>
-                  <Th>Table</Th>
-                  <Th numeric>Rows</Th>
-                  <Th numeric>Accounts</Th>
-                </>
-              }
-            >
-              {artifacts.map((a) => (
-                <tr key={a.label} className="border-b border-border/40 last:border-b-0">
-                  <Td>{a.label}</Td>
-                  <Td numeric className={a.rows === 0 ? "text-muted-foreground" : undefined}>
-                    {a.rows}
-                  </Td>
-                  <Td numeric className="text-muted-foreground">{a.users || "\u2014"}</Td>
-                </tr>
-              ))}
-            </AdminTable>
-          </AdminPanel>
-        </div>
+        </AdminPanel>
 
         <div className="grid gap-6 lg:grid-cols-2">
           <AdminPanel title="Where incomplete accounts are parked">
