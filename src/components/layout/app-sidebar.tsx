@@ -12,6 +12,7 @@ import {
   type AppNavItem,
 } from "@/components/layout/app-nav";
 import { OrbitLogo } from "@/components/orbit-logo";
+import type { Plan } from "@/lib/plan-limits";
 import { SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
@@ -55,10 +56,12 @@ export function AppSidebar({
   pathname,
   clerkOn,
   demoMode,
+  plan,
 }: {
   pathname: string;
   clerkOn: boolean;
   demoMode: boolean;
+  plan: Plan;
 }) {
   return (
     <aside className="liquid-glass flex h-full w-[4.5rem] flex-col text-sidebar-foreground lg:w-60">
@@ -68,7 +71,7 @@ export function AppSidebar({
           className="flex min-w-0 flex-1 items-center justify-center gap-2.5 lg:justify-start"
           title="Back to landing page"
         >
-          <OrbitLogo size="md" />
+          <OrbitLogo size="md" plan={plan} />
           <div className="hidden min-w-0 lg:block">
             <p className="font-[family-name:var(--font-display)] text-lg leading-none tracking-tight text-sidebar-primary">
               Orbit
