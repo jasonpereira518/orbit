@@ -7,6 +7,17 @@ import {
   upsertGmailConnection,
 } from "@/lib/gmail";
 import { isDemoMode } from "@/lib/auth";
+import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
+
+/** Keeps `error_events.kind` low-cardinality so the admin console can group on it. */
+function classifyOAuthFailure(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/authorization code/i.test(message)) return "missing_code";
+  if (/OAuth state|does not match/i.test(message)) return "state_mismatch";
+  if (/Token exchange/i.test(message)) return "token_exchange_failed";
+  if (/profile|no email/i.test(message)) return "profile_fetch_failed";
+  return "other";
+}
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -19,6 +30,14 @@ export async function GET(request: Request) {
   let redirectBase = new URL("/recruiters", url.origin);
 
   if (error) {
+    // Every failure below is otherwise invisible: the reason is handed to the browser in
+    // a query param and nothing is persisted, so a user repeatedly failing to connect
+    // leaves no server-side trace at all.
+    await recordErrorEvent({
+      source: ERROR_SOURCES.oauthGmailCallback,
+      kind: "provider_denied",
+      message: error,
+    });
     redirectBase.searchParams.set("gmail", "error");
     redirectBase.searchParams.set("google", "error");
     redirectBase.searchParams.set("reason", error);
@@ -51,6 +70,11 @@ export async function GET(request: Request) {
     redirectBase.searchParams.set("google", "connected");
     return NextResponse.redirect(redirectBase);
   } catch (err) {
+    await recordErrorEvent({
+      source: ERROR_SOURCES.oauthGmailCallback,
+      kind: classifyOAuthFailure(err),
+      message: err,
+    });
     redirectBase.searchParams.set("gmail", "error");
     redirectBase.searchParams.set("google", "error");
     redirectBase.searchParams.set(

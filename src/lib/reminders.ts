@@ -325,6 +325,48 @@ export async function getDashboardData(
   const contactRowsPromise = Promise.resolve(
     db.query.contacts.findMany({
       where: eq(contacts.userId, userId),
+      // Explicit projection rather than the whole row. `notes` is still here — the
+      // constellation preview this feeds reads it — but naming the columns keeps the
+      // dashboard from silently picking up every column added to `contacts` later.
+      // `contacts_user_updated_idx` now backs the ordering.
+      columns: {
+        id: true,
+        userId: true,
+        fullName: true,
+        firstName: true,
+        lastName: true,
+        preferredName: true,
+        company: true,
+        title: true,
+        location: true,
+        school: true,
+        email: true,
+        phone: true,
+        linkedinUrl: true,
+        website: true,
+        profileImageUrl: true,
+        relationshipScore: true,
+        statedCloseness: true,
+        priorityLevel: true,
+        source: true,
+        industry: true,
+        metContext: true,
+        dateMet: true,
+        howMet: true,
+        keyFacts: true,
+        sharedInterests: true,
+        aiSummary: true,
+        firstInteractionAt: true,
+        lastInteractionAt: true,
+        nextFollowUpAt: true,
+        followUpStatus: true,
+        closeness: true,
+        closenessTier: true,
+        orbitScore: true,
+        createdAt: true,
+        updatedAt: true,
+        notes: true,
+      },
       orderBy: (c, { desc }) => [desc(c.updatedAt)],
       with: { contactTags: { with: { tag: true } } },
     })

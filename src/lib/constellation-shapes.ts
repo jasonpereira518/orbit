@@ -3,6 +3,8 @@
  * Coordinates are unit-ish; layout scales/rotates them per cluster.
  */
 
+import { hashUnit } from "@/lib/hash";
+
 export type ConstellationShape = {
   id: string;
   name: string;
@@ -522,14 +524,6 @@ const SHAPES: ConstellationShape[] = [
     ],
   },
 ];
-
-function hashUnit(id: string, salt = 0) {
-  let h = salt * 2654435761;
-  for (let i = 0; i < id.length; i++) {
-    h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  }
-  return (h % 10000) / 10000;
-}
 
 function normalizeStars(stars: Array<{ x: number; y: number }>) {
   const cx = stars.reduce((s, p) => s + p.x, 0) / stars.length;

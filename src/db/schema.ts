@@ -3,12 +3,70 @@ import {
   text,
   timestamp,
   integer,
+  real,
   jsonb,
   uuid,
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
+
+/** Orbit ring a contact sits in. Mirrors `ClosenessBreakdown["tier"]` in `@/lib/closeness`. */
+export type ClosenessTier = "inner" | "mid" | "outer";
+
+/**
+ * A user's raw-closeness distribution, stored so a single contact can be scored without
+ * re-reading the whole network.
+ *
+ * `quantiles` is a 101-point sketch (p0..p100) of the evidenced raw scores rather than the
+ * full sorted array the in-memory cohort uses. Percentile lookup interpolates between
+ * breakpoints, which costs a little precision at the tails and buys a row that does not
+ * grow with the network. Empty when no contact clears the evidence floor.
+ */
+export type ClosenessCohortSnapshot = {
+  n: number;
+  evidencedN: number;
+  coverage: number;
+  relativeWeight: number;
+  quantiles: number[];
+  /** Mean of the absolute raw scores. Unlike the blended mean it still moves with network health. */
+  averageRaw: number;
+  /**
+   * Network-wide inputs the raw formula needs, carried here so one contact can be scored
+   * without re-reading the network to derive them.
+   *
+   * These are snapshots, so a contact scored between recalibrations is measured against the
+   * shape the orbit had at the last one. That is the same staleness the distribution itself
+   * carries, and it resolves the same way.
+   */
+  maxCompany: number;
+  maxSchool: number;
+  userDomain: string | null;
+  mailConnected: boolean;
+};
+
+/**
+ * Structural mirror of `ClosenessBreakdown` in `@/lib/closeness`.
+ *
+ * Declared here rather than imported so `schema.ts` keeps no dependency on the lib layer —
+ * drizzle-kit loads this file directly and cannot resolve the `@/` alias. A compile-time
+ * assertion in `@/lib/closeness-materialize` keeps the two in step.
+ */
+export type StoredClosenessBreakdown = {
+  raw: number;
+  strength: number;
+  recency: number;
+  cadence: number;
+  goalRelevance: number;
+  evidence: number;
+  prior: number;
+  evidenced: number;
+  knownWeightShare: number;
+  closeness: number;
+  percentile: number;
+  orbitScore: number;
+  tier: ClosenessTier;
+};
 
 export const userSettings = pgTable("user_settings", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -49,6 +107,24 @@ export const userSettings = pgTable("user_settings", {
    * transit the same address.
    */
   email: text("email"),
+  /**
+   * The user's own name and avatar, mirrored from Clerk on the same events as `email`
+   * above and for the same reason: the admin console renders from Postgres alone, and a
+   * roster that had to ask Clerk for a display name would put a network call — and a new
+   * failure mode — on the critical path of a page that currently has neither.
+   *
+   * `profileImageUrl` stores Clerk's CDN URL, not the bytes. It is public, it needs no
+   * auth, and `user.updated` keeps it fresh, so downloading it into Blob storage would buy
+   * nothing. Note that `next.config.ts` declares no `images.remotePatterns`, so this must
+   * be rendered with a plain `<img>` (see `src/components/ui/avatar.tsx`) — `next/image`
+   * would reject the host at runtime.
+   *
+   * Accounts predating this mirror have nulls until `scripts/backfill-clerk-identity.ts`
+   * runs, so every read site needs an email-then-id fallback.
+   */
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  profileImageUrl: text("profile_image_url"),
   /**
    * Opaque bearer token for the read-only ICS reminder feed. Stored in plaintext
    * deliberately: the URL must stay re-displayable when the user adds a second device,
@@ -94,10 +170,21 @@ export const userSettings = pgTable("user_settings", {
   compedAt: timestamp("comped_at", { withTimezone: true }),
   compedBy: text("comped_by"),
   /**
-   * Last authenticated request, written from `ensureUserSettings` at most once every
-   * 15 minutes (see `touchLastActive`). Distinct from `updatedAt`, which means "settings
-   * changed" and is bumped by a dozen unrelated writers — conflating the two would poison
-   * `updatedAt` for every future use.
+   * The last time this human was present. Two writers, deliberately sharing one column:
+   *
+   *  - `POST /api/presence`, a ~45s heartbeat from every visible tab (`src/lib/presence.ts`).
+   *    This is what makes "active now" answerable at all — a user reading and scrolling one
+   *    open tab issues no server requests, so before the heartbeat they read as idle.
+   *  - `ensureUserSettings` → `touchLastActive`, throttled to 15 minutes, which covers
+   *    non-browser access and any request that arrives with the heartbeat not yet running.
+   *
+   * Keeping them on one column is what stops "last seen" and "active now" from drifting
+   * into two nearly-identical timestamps that every read site has to reconcile. The
+   * heartbeat makes the throttled writer almost always short-circuit, so this got *cheaper*
+   * to maintain, not more expensive.
+   *
+   * Distinct from `updatedAt`, which means "settings changed" and is bumped by a dozen
+   * unrelated writers — conflating the two would poison `updatedAt` for every future use.
    *
    * Null for every account that predates this column; admin surfaces fall back to a
    * derived last-write timestamp, so the roster is useful without a warm-up period.
@@ -114,6 +201,17 @@ export const userSettings = pgTable("user_settings", {
    * recruiters you added yourself. See `isViewerSharing` in `src/lib/recruiters.ts`.
    */
   recruiterSharing: integer("recruiter_sharing").default(0).notNull(),
+  /**
+   * Operator suspension. Enforced in `requireUserId()` (`src/lib/auth.ts`) rather than in a
+   * layout: actions are reachable by direct POST, so the gate has to sit at the one function
+   * every page *and* every server action already calls.
+   *
+   * Deliberately a timestamp rather than a boolean — "when did this happen" is the first
+   * question asked about a suspension, and `admin_audit_log` is the only other record.
+   */
+  suspendedAt: timestamp("suspended_at", { withTimezone: true }),
+  suspendedReason: text("suspended_reason"),
+  suspendedBy: text("suspended_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -178,6 +276,57 @@ export const contacts = pgTable(
     followUpStatus: text("follow_up_status").default("none"),
     aiSummary: text("ai_summary"),
     notes: text("notes"),
+
+    /**
+     * Materialized closeness. These are written by `src/lib/closeness-materialize.ts`, not
+     * by any normal contact write, and are always the result of applying the user's stored
+     * cohort snapshot to `closenessRaw`.
+     *
+     * They exist because closeness is cohort-relative: a contact's ring is its position in
+     * the distribution formed by the whole network. Computing it on read meant every
+     * surface had to load every contact to render any of them, which is what made the
+     * contacts page O(network size). Storing the applied result is what lets a page of 50
+     * be served without the other 4,950.
+     *
+     * Nullable on purpose — NULL means "never scored", which is how a contact created
+     * before this shipped, or since the last recalibration, asks to be picked up.
+     */
+    closenessRaw: real("closeness_raw"),
+    closeness: integer("closeness"),
+    closenessTier: text("closeness_tier").$type<ClosenessTier>(),
+    orbitScore: integer("orbit_score"),
+    /** Evidence and prior are what `selectTriageCandidates` ranks on. */
+    closenessEvidence: real("closeness_evidence"),
+    closenessPrior: real("closeness_prior"),
+    closenessComputedAt: timestamp("closeness_computed_at", { withTimezone: true }),
+    /*
+     * `closeness_breakdown jsonb` also exists on this table but is deliberately NOT declared
+     * here — see `SCALE_DDL` in `src/db/index.ts`.
+     *
+     * It holds the full breakdown including component scores, and exactly one query needs
+     * it. Declaring it would put it in the default select list of the 27 contact queries
+     * that have no explicit projection, several of which scan the whole table, so every
+     * import dedupe pass and knowledge-base load would start dragging a few hundred bytes
+     * of JSON per contact across the wire to ignore it. Keeping it undeclared makes reading
+     * it an explicit act — `readStoredCohortResult` asks for it in raw SQL.
+     */
+
+    /**
+     * Generated columns. Postgres maintains all three; never write to them.
+     *
+     * `sortKey` is the keyset-pagination ordering column, and the reason contact paging can
+     * be a total order in SQL rather than a `localeCompare` in JavaScript.
+     * `linkedinSlug` replaces a leading-wildcard ILIKE across every user's contacts.
+     * `searchTsv` is the weighted search vector; see `SCALE_DDL` in `src/db/index.ts` for
+     * the weight classes and why the config is 'simple'.
+     */
+    sortKey: text("sort_key").generatedAlwaysAs(
+      sql`lower(coalesce(nullif(trim(last_name), ''), split_part(trim(full_name), ' ', -1)))`
+    ),
+    linkedinSlug: text("linkedin_slug").generatedAlwaysAs(
+      sql`lower(nullif(split_part(split_part(split_part(split_part(coalesce(linkedin_url, ''), '/in/', 2), '?', 1), '#', 1), '/', 1), ''))`
+    ),
+
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -185,8 +334,28 @@ export const contacts = pgTable(
     index("contacts_user_id_idx").on(t.userId),
     index("contacts_company_idx").on(t.userId, t.company),
     index("contacts_follow_up_idx").on(t.userId, t.nextFollowUpAt),
+    index("contacts_user_sort_idx").on(t.userId, t.sortKey, t.fullName, t.id),
+    index("contacts_user_updated_idx").on(t.userId, t.updatedAt),
+    index("contacts_user_closeness_idx").on(t.userId, t.closeness.desc(), t.id.desc()),
+    index("contacts_user_recent_idx").on(t.userId, t.updatedAt.desc(), t.id.desc()),
+    index("contacts_company_id_idx").on(t.companyId),
   ]
 );
+
+/**
+ * The per-user closeness distribution that `contacts.closeness*` was applied against.
+ *
+ * `snapshot` holds a fixed-size quantile sketch rather than the full sorted score array, so
+ * this row stays the same size whether the user has 50 contacts or 50,000. `dirtyAt` is set
+ * by writes that invalidate the distribution and cleared by recalibration.
+ */
+export const closenessCohorts = pgTable("closeness_cohorts", {
+  userId: text("user_id").primaryKey(),
+  snapshot: jsonb("snapshot").$type<ClosenessCohortSnapshot>().default({} as ClosenessCohortSnapshot).notNull(),
+  contactCount: integer("contact_count").default(0).notNull(),
+  computedAt: timestamp("computed_at", { withTimezone: true }).defaultNow().notNull(),
+  dirtyAt: timestamp("dirty_at", { withTimezone: true }),
+});
 
 export const userGoals = pgTable(
   "user_goals",
@@ -790,7 +959,17 @@ export const gmailConnections = pgTable(
     refreshTokenEncrypted: text("refresh_token_encrypted"),
     tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
     scopes: text("scopes"),
-    status: text("status").default("active").notNull(),
+    /**
+     * Exactly two values. NOT "expired"/"revoked": disconnecting deletes the row, so a
+     * third value nothing ever writes would recreate the bug this replaced — the column
+     * was previously written only as "active", making every health check on it dead code.
+     *
+     * `needs_reauth` is written only on a token-level rejection (no refresh token, or the
+     * provider returning invalid_grant), never on a transport failure — a provider outage
+     * must not flag every account. Cleared by re-running OAuth, which is the only way back.
+     */
+    status: text("status").$type<"active" | "needs_reauth">().default("active").notNull(),
+    /** Last time this connection produced a usable access token. */
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -808,7 +987,17 @@ export const outlookConnections = pgTable(
     refreshTokenEncrypted: text("refresh_token_encrypted"),
     tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
     scopes: text("scopes"),
-    status: text("status").default("active").notNull(),
+    /**
+     * Exactly two values. NOT "expired"/"revoked": disconnecting deletes the row, so a
+     * third value nothing ever writes would recreate the bug this replaced — the column
+     * was previously written only as "active", making every health check on it dead code.
+     *
+     * `needs_reauth` is written only on a token-level rejection (no refresh token, or the
+     * provider returning invalid_grant), never on a transport failure — a provider outage
+     * must not flag every account. Cleared by re-running OAuth, which is the only way back.
+     */
+    status: text("status").$type<"active" | "needs_reauth">().default("active").notNull(),
+    /** Last time this connection produced a usable access token. */
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -917,13 +1106,21 @@ export const usageEvents = pgTable(
  * Comps are why this exists. `comped_plan` outranks every real billing signal in
  * `resolvePlan`, has no expiry, and no webhook will ever correct it; `updated_at` is bumped
  * by a dozen unrelated writers, so without this table there is no record a comp happened.
+ *
+ * Action names, all written by `src/actions/admin.ts`:
+ *   comp.grant · comp.revoke
+ *   record.reveal · reveal.grant · reveal.revoke
+ *   import.retry · import.cancel
+ *   onboarding.reset · integration.disconnect · calendar.enable · calendar.disable
+ *   account.suspend · account.unsuspend · account.delete
+ *   export.download
  */
 export const adminAuditLog = pgTable(
   "admin_audit_log",
   {
     id: uuid("id").defaultRandom().primaryKey(),
     adminUserId: text("admin_user_id").notNull(),
-    /** e.g. "comp.grant", "comp.revoke", "record.reveal". */
+    /** One of the names listed in this table's doc comment. */
     action: text("action").notNull(),
     targetUserId: text("target_user_id"),
     resourceType: text("resource_type"),
@@ -935,6 +1132,122 @@ export const adminAuditLog = pgTable(
   (t) => [
     index("admin_audit_log_created_idx").on(t.createdAt),
     index("admin_audit_log_target_idx").on(t.targetUserId),
+    index("admin_audit_log_action_idx").on(t.action, t.createdAt),
+  ]
+);
+
+/**
+ * One row per scheduled-job invocation.
+ *
+ * The row is written at START, not only at the end. Without that, "the cron never fired"
+ * and "the cron fired and died" are the same observation — no row — and they need
+ * completely different responses. A lambda killed at `maxDuration` never runs its
+ * `finally`, so an end-only write loses precisely the runs worth seeing.
+ *
+ * A crashed run therefore leaves `status='running'` forever; that is resolved on read by
+ * `deriveCronRunState`, not by a second cron watching the first.
+ */
+export const cronRuns = pgTable(
+  "cron_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    /** Dotted job id, same convention as `usage_events.operation`. */
+    job: text("job").notNull(),
+    status: text("status")
+      .$type<"running" | "ok" | "partial" | "failed">()
+      .default("running")
+      .notNull(),
+    trigger: text("trigger")
+      .$type<"schedule" | "manual">()
+      .default("schedule")
+      .notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    durationMs: integer("duration_ms"),
+    /** Job-specific counters. jsonb so a second cron needs no migration. */
+    stats: jsonb("stats").$type<Record<string, number | boolean>>().default({}).notNull(),
+    error: text("error"),
+  },
+  (t) => [
+    index("cron_runs_job_started_idx").on(t.job, t.startedAt),
+    index("cron_runs_started_idx").on(t.startedAt),
+  ]
+);
+
+/**
+ * One row per inbound webhook delivery, including the ones that are rejected or ignored.
+ *
+ * A silently dropped `subscriptionItem.*` event desyncs billing from `user_settings`, which
+ * every entitlement gate reads and nothing ever reconciles — so "an event arrived and
+ * nothing happened" has to be a recordable outcome, not an absence.
+ *
+ * Deliberately NO unique index on (source, event_id). Every handler is already idempotent,
+ * so a unique constraint would buy nothing and would destroy the retry count — and
+ * "this event was delivered six times" is the single most useful thing this table says.
+ */
+export const webhookDeliveries = pgTable(
+  "webhook_deliveries",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    source: text("source").default("clerk").notNull(),
+    /**
+     * The `svix-id` header. Clerk's event body carries no delivery id — `data.id` is the
+     * resource — and this header is stable across retries and readable before signature
+     * verification, which is what makes the rejection path recordable at all.
+     */
+    eventId: text("event_id"),
+    /** Null when verification failed: there is no trustworthy body to read a type from. */
+    eventType: text("event_type"),
+    outcome: text("outcome")
+      .$type<"handled" | "ignored" | "invalid" | "error">()
+      .notNull(),
+    /** Low-cardinality machine code, so this groups cleanly. See WEBHOOK_REASONS. */
+    reason: text("reason"),
+    targetUserId: text("target_user_id"),
+    /** `data.id` — the Clerk resource, not the delivery. */
+    resourceId: text("resource_id"),
+    detail: jsonb("detail").$type<Record<string, unknown>>().default({}).notNull(),
+    error: text("error"),
+    durationMs: integer("duration_ms"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("webhook_deliveries_created_idx").on(t.createdAt),
+    index("webhook_deliveries_event_idx").on(t.eventId),
+    index("webhook_deliveries_target_idx").on(t.targetUserId),
+    index("webhook_deliveries_type_created_idx").on(t.eventType, t.createdAt),
+  ]
+);
+
+/**
+ * Failures that would otherwise vanish into a `catch {}`.
+ *
+ * Scoped deliberately narrowly — see `src/lib/error-events.ts` for the closed list of
+ * call sites and, more importantly, the list of failures that must NOT be recorded here
+ * because they are already captured elsewhere. This is not a logging framework, and the
+ * moment it becomes one it should be replaced by a real one.
+ *
+ * `source` and `kind` are low-cardinality so both group cleanly; `message` is free text
+ * and can only ever appear in a most-recent list, never in a GROUP BY.
+ */
+export const errorEvents = pgTable(
+  "error_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    /** Dotted call-site id, e.g. "oauth.gmail.callback". */
+    source: text("source").notNull(),
+    kind: text("kind").notNull(),
+    /** Null when the failure has no user — config errors, unauthenticated callbacks. */
+    userId: text("user_id"),
+    /** Verbatim system output, truncated. Same class as `imports.error_message`. */
+    message: text("message"),
+    context: jsonb("context").$type<Record<string, unknown>>().default({}).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("error_events_created_idx").on(t.createdAt),
+    index("error_events_source_created_idx").on(t.source, t.createdAt),
+    index("error_events_user_created_idx").on(t.userId, t.createdAt),
   ]
 );
 
@@ -1087,3 +1400,6 @@ export type GmailConnection = typeof gmailConnections.$inferSelect;
 export type UsageEvent = typeof usageEvents.$inferSelect;
 export type NewUsageEvent = typeof usageEvents.$inferInsert;
 export type AdminAuditEntry = typeof adminAuditLog.$inferSelect;
+export type CronRun = typeof cronRuns.$inferSelect;
+export type WebhookDelivery = typeof webhookDeliveries.$inferSelect;
+export type ErrorEvent = typeof errorEvents.$inferSelect;

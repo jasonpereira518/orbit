@@ -1,7 +1,8 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { gmailConnections } from "@/db/schema";
 import { decrypt, encrypt } from "@/lib/crypto";
+import { ReauthRequiredError, isRefreshRejection } from "@/lib/errors";
 
 const GOOGLE_CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts.readonly";
 
@@ -176,6 +177,11 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> 
 
   if (!res.ok) {
     const text = await res.text();
+    // A dead grant means reconnect; anything else is transient and must NOT mark the
+    // connection, or a provider outage would flag every account at once.
+    if (isRefreshRejection(res.status, text)) {
+      throw new ReauthRequiredError(`Token refresh rejected: ${text.slice(0, 200)}`);
+    }
     throw new Error(`Token refresh failed: ${text.slice(0, 200)}`);
   }
   return res.json();
@@ -232,32 +238,78 @@ export async function upsertGmailConnection(
   return created;
 }
 
+/**
+ * Marks a connection as needing reconnection. Best-effort: health telemetry must never
+ * turn a session-expired error into a 500.
+ */
+async function markNeedsReauth(userId: string) {
+  try {
+    const db = await getDb();
+    await db
+      .update(gmailConnections)
+      .set({ status: "needs_reauth", updatedAt: new Date() })
+      .where(eq(gmailConnections.userId, userId));
+  } catch {
+    // ignore
+  }
+}
+
+/** Stamps "this connection produced a usable token", at most once every 15 minutes. */
+async function touchLastSynced(conn: { id: string; lastSyncedAt: Date | null }) {
+  const now = Date.now();
+  if (conn.lastSyncedAt && now - conn.lastSyncedAt.getTime() < 15 * 60 * 1000) return;
+  try {
+    const db = await getDb();
+    await db
+      .update(gmailConnections)
+      .set({ lastSyncedAt: new Date(now) })
+      .where(eq(gmailConnections.id, conn.id));
+  } catch {
+    // ignore
+  }
+}
+
 export async function getValidAccessToken(userId: string): Promise<string> {
   const db = await getDb();
+  // No `status` predicate here on purpose. Filtering it out would make a needs_reauth row
+  // invisible and turn a precise "session expired — reconnect" into a wrong
+  // "is not connected".
   const conn = await db.query.gmailConnections.findFirst({
-    where: and(
-      eq(gmailConnections.userId, userId),
-      eq(gmailConnections.status, "active")
-    ),
+    where: eq(gmailConnections.userId, userId),
   });
   if (!conn) throw new Error("Gmail is not connected");
+  if (conn.status !== "active") {
+    throw new Error("Gmail session expired — reconnect");
+  }
 
   const expiresSoon =
     conn.tokenExpiresAt &&
     conn.tokenExpiresAt.getTime() < Date.now() + 60_000;
 
   if (!expiresSoon) {
+    await touchLastSynced(conn);
     return decrypt(conn.accessTokenEncrypted);
   }
 
   if (!conn.refreshTokenEncrypted) {
+    await markNeedsReauth(userId);
     throw new Error("Gmail session expired — reconnect");
   }
 
-  const refreshed = await refreshAccessToken(
-    decrypt(conn.refreshTokenEncrypted)
-  );
+  let refreshed;
+  try {
+    refreshed = await refreshAccessToken(decrypt(conn.refreshTokenEncrypted));
+  } catch (err) {
+    if (err instanceof ReauthRequiredError) {
+      await markNeedsReauth(userId);
+      throw new Error("Gmail session expired — reconnect");
+    }
+    throw err;
+  }
+
+  // The upsert resets status to "active", which is the only path back from needs_reauth.
   await upsertGmailConnection(userId, refreshed, conn.emailAddress);
+  await touchLastSynced({ id: conn.id, lastSyncedAt: null });
   return refreshed.access_token;
 }
 

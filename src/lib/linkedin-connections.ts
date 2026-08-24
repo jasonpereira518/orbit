@@ -10,7 +10,8 @@ export type LinkedInConnectionRow = {
   url: string;
 };
 
-function csvGet(row: Record<string, string>, ...keys: string[]) {
+/** Case/whitespace-insensitive column lookup across LinkedIn CSV header variants. */
+export function csvGet(row: Record<string, string>, ...keys: string[]) {
   for (const k of keys) {
     const found = Object.entries(row).find(
       ([key]) => key.trim().toLowerCase() === k.toLowerCase()

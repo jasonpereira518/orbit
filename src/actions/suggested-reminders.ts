@@ -203,29 +203,3 @@ export async function discardSuggestedReminder(id: string) {
 
   revalidateReminderPaths(row.contactId);
 }
-
-export async function confirmSuggestedReminders(ids: string[]) {
-  let confirmed = 0;
-  for (const id of ids) {
-    try {
-      await confirmSuggestedReminder(id);
-      confirmed += 1;
-    } catch {
-      // Already resolved elsewhere — skip rather than failing the whole batch.
-    }
-  }
-  return { confirmed };
-}
-
-export async function discardSuggestedReminders(ids: string[]) {
-  let discarded = 0;
-  for (const id of ids) {
-    try {
-      await discardSuggestedReminder(id);
-      discarded += 1;
-    } catch {
-      // Already resolved elsewhere — skip.
-    }
-  }
-  return { discarded };
-}

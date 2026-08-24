@@ -1,10 +1,17 @@
 "use server";
 
-import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { getDb } from "@/db";
-import { contacts, interactions, reminders } from "@/db/schema";
+import { getDb, rowsOf } from "@/db";
+import { contactTags, contacts, interactions, reminders, tags } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import {
+  CONTACTS_PAGE_SIZE,
+  type ContactPickerOption,
+  type ContactSort,
+  type ContactsPage,
+  type ContactsPageFilters,
+} from "@/lib/contacts-page";
 import { isPaywallError } from "@/lib/entitlements";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { listActiveGoalTexts } from "@/actions/goals";
@@ -58,135 +65,318 @@ export type {
   ContactWriteOptions,
 } from "@/lib/contact-writes";
 
-export async function listContacts(filters?: {
-  q?: string;
-  company?: string;
-  minScore?: number;
-  followUp?: "due";
-}) {
+export type {
+  ContactListRow,
+  ContactPickerOption,
+  ContactSort,
+  ContactsPage,
+  ContactsPageFilters,
+} from "@/lib/contacts-page";
+
+/** Ordering position of the last row on a page, enough to resume immediately after it. */
+type Cursor =
+  | { s: "name"; k: string; n: string; id: string }
+  | { s: "closeness"; c: number; id: string }
+  | { s: "recent"; u: string; id: string };
+
+function encodeCursor(cursor: Cursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeCursor(raw: string | undefined, sort: ContactSort): Cursor | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+    // A cursor from a different sort describes a position that does not exist in this
+    // ordering. Starting over beats silently skipping or repeating people.
+    if (!parsed || parsed.s !== sort) return null;
+    return parsed as Cursor;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One page of a user's contacts, ordered, filtered and searched in Postgres.
+ *
+ * Every part of this used to happen in JavaScript over the whole network: the query loaded
+ * every contact and every tag, `Array.filter` applied the filters, and `localeCompare`
+ * sorted the result — so the cost of viewing 50 people was set by how many people you knew.
+ *
+ * Paging is keyset, not `OFFSET`. `OFFSET 5000` still walks the 5,000 rows it discards, so
+ * scrolling would get slower the further you went; comparing against the last row's
+ * ordering tuple starts exactly where the previous page stopped. That requires the ordering
+ * to be a total order, which is why every sort ends in `id`.
+ */
+export async function listContactsPage(
+  filters?: ContactsPageFilters
+): Promise<ContactsPage> {
   const userId = await requireUserId();
   const db = await getDb();
 
-  // Promise.resolve pins a single execution: a drizzle query builder is a lazy
-  // thenable that re-runs on every await, so handing the bare builder to the
-  // cohort would quietly issue the same scan twice.
-  const contactRowsPromise = Promise.resolve(
-    db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
-      columns: {
-        id: true,
-        userId: true,
-        fullName: true,
-        firstName: true,
-        lastName: true,
-        preferredName: true,
-        company: true,
-        title: true,
-        location: true,
-        school: true,
-        email: true,
-        phone: true,
-        linkedinUrl: true,
-        website: true,
-        // Omit raw profileImageUrl blob — rewritten via clientContactAvatarUrl.
-        profileImageUrl: true,
-        relationshipScore: true,
-        statedCloseness: true,
-        priorityLevel: true,
-        source: true,
-        industry: true,
-        metContext: true,
-        dateMet: true,
-        firstInteractionAt: true,
-        howMet: true,
-        // Heavy text fields not needed for list UI — keep short summary only.
-        notes: false,
-        aiSummary: true,
-        keyFacts: true,
-        sharedInterests: true,
-        nextFollowUpAt: true,
-        lastInteractionAt: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-      with: { contactTags: { with: { tag: true } } },
-      orderBy: [desc(contacts.updatedAt)],
-    })
-  );
+  const sort: ContactSort = filters?.sort ?? "name";
+  const limit = Math.min(Math.max(filters?.limit ?? CONTACTS_PAGE_SIZE, 1), 200);
+  const cursor = decodeCursor(filters?.cursor, sort);
 
-  const [allRows, closenessCohort] = await Promise.all([
-    contactRowsPromise,
-    // Donates the scan above rather than repeating it.
-    getClosenessCohort(userId, contactRowsPromise),
+  const conditions = [eq(contacts.userId, userId)];
+
+  const q = filters?.q?.trim();
+  if (q) conditions.push(searchCondition(q));
+
+  const company = filters?.company?.trim();
+  if (company) {
+    // Matches `contacts_company_idx`, which existed all along and was never used because
+    // this filter ran in JavaScript.
+    conditions.push(sql`lower(trim(${contacts.company})) = ${company.toLowerCase()}`);
+  }
+
+  if (filters?.minScore) {
+    conditions.push(sql`${contacts.relationshipScore} >= ${filters.minScore}`);
+  }
+
+  if (filters?.followUp === "due") {
+    conditions.push(
+      sql`${contacts.nextFollowUpAt} is not null and ${contacts.nextFollowUpAt} <= now()`
+    );
+  }
+
+  // The A–Z rail is a seek, not a scroll. Asking for "S" starts the page at the first
+  // contact sorting there rather than loading everyone up to it — which is the whole reason
+  // the rail survives pagination at all.
+  const letter = filters?.letter?.trim();
+  if (letter && sort === "name") {
+    conditions.push(
+      letter === "#"
+        ? sql`(${contacts.sortKey} is null or ${contacts.sortKey} < 'a')`
+        : sql`${contacts.sortKey} >= ${letter.toLowerCase()}`
+    );
+  }
+
+  if (cursor) conditions.push(cursorCondition(cursor));
+
+  const rows = await db
+    .select({
+      id: contacts.id,
+      fullName: contacts.fullName,
+      firstName: contacts.firstName,
+      lastName: contacts.lastName,
+      preferredName: contacts.preferredName,
+      title: contacts.title,
+      company: contacts.company,
+      school: contacts.school,
+      location: contacts.location,
+      linkedinUrl: contacts.linkedinUrl,
+      profileImageUrl: contacts.profileImageUrl,
+      relationshipScore: contacts.relationshipScore,
+      closeness: contacts.closeness,
+      closenessTier: contacts.closenessTier,
+      priorityLevel: contacts.priorityLevel,
+      nextFollowUpAt: contacts.nextFollowUpAt,
+      lastInteractionAt: contacts.lastInteractionAt,
+      sortKey: contacts.sortKey,
+      updatedAt: contacts.updatedAt,
+    })
+    .from(contacts)
+    .where(and(...conditions))
+    .orderBy(...orderFor(sort))
+    // One extra row answers "is there more" without a second count.
+    .limit(limit + 1);
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+
+  const [tagsByContact, total] = await Promise.all([
+    tagsForContacts(page.map((r) => r.id)),
+    cursor ? Promise.resolve(null) : countContacts(and(...conditions)),
   ]);
 
-  let rows = allRows;
-
-  if (filters?.q?.trim()) {
-    const q = filters.q.trim().toLowerCase();
-    rows = rows.filter((c) =>
-      [
-        c.fullName,
-        c.preferredName,
-        c.company,
-        c.title,
-        c.location,
-        c.school,
-        c.email,
-        c.phone,
-        c.location,
-        c.metContext,
-        c.howMet,
-        c.website,
-        c.aiSummary,
-        // notes intentionally excluded — no longer selected (payload slimming);
-        // list search matches the AI summary instead of raw note text.
-      ]
-        .filter(Boolean)
-        .some((v) => v!.toLowerCase().includes(q))
-    );
-  }
-  if (filters?.company?.trim()) {
-    rows = rows.filter(
-      (c) =>
-        (c.company || "").toLowerCase() === filters.company!.trim().toLowerCase()
-    );
-  }
-  if (filters?.minScore) {
-    rows = rows.filter((c) => c.relationshipScore >= filters.minScore!);
-  }
-  if (filters?.followUp === "due") {
-    const now = new Date();
-    rows = rows.filter(
-      (c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now
-    );
-  }
-
-  const mapped = rows.map((c) => {
-    const tags = c.contactTags.map((ct) => ct.tag.name);
-    // Scored against the whole orbit, not this filtered page — a search result
-    // must not change how close someone is.
-    const closeness = closenessCohort.byId.get(c.id);
-    return {
-      ...c,
+  return {
+    items: page.map((row) => ({
+      id: row.id,
+      fullName: row.fullName,
+      firstName: row.firstName,
+      lastName: row.lastName,
+      preferredName: row.preferredName,
+      title: row.title,
+      company: row.company,
+      school: row.school,
+      location: row.location,
+      linkedinUrl: row.linkedinUrl,
       // Never ship base64 data URLs in list payloads.
-      profileImageUrl: clientContactAvatarUrl(c.id, c.profileImageUrl),
-      tags,
-      closeness: closeness?.closeness ?? 0,
-      closenessTier: closeness?.tier ?? ("outer" as const),
-      orbitScore: closeness?.orbitScore ?? 1,
-    };
-  });
+      profileImageUrl: clientContactAvatarUrl(row.id, row.profileImageUrl),
+      relationshipScore: row.relationshipScore,
+      closeness: (row.closeness ?? 0) / 100,
+      closenessTier: row.closenessTier ?? "outer",
+      priorityLevel: row.priorityLevel,
+      nextFollowUpAt: row.nextFollowUpAt,
+      lastInteractionAt: row.lastInteractionAt,
+      tags: tagsByContact.get(row.id) ?? [],
+    })),
+    nextCursor: hasMore ? encodeCursor(cursorFor(sort, page[page.length - 1])) : null,
+    total,
+  };
+}
 
-  mapped.sort((a, b) => {
-    const aLast = lastNameSortKey(a.lastName, a.fullName);
-    const bLast = lastNameSortKey(b.lastName, b.fullName);
-    const byLast = aLast.localeCompare(bLast, undefined, { sensitivity: "base" });
-    if (byLast !== 0) return byLast;
-    return a.fullName.localeCompare(b.fullName, undefined, { sensitivity: "base" });
-  });
+/**
+ * Every ordering ends in `id`, so it is a total order — without that tiebreak two contacts
+ * comparing equal can straddle a page boundary and be shown twice or skipped. It matters
+ * more than it sounds: closeness is a 0–100 integer over thousands of rows, so ties are the
+ * common case, not the edge case.
+ *
+ * The tiebreak also has to run in the *same direction* as the column ahead of it. Cursors
+ * are row-value comparisons — `(a, b) < (x, y)` — and that form compares every element the
+ * same way. Pairing a descending sort with an ascending id silently produces a condition
+ * that skips rows on one side of each tie and repeats them on the other.
+ */
+function orderFor(sort: ContactSort) {
+  if (sort === "closeness") {
+    return [desc(contacts.closeness), desc(contacts.id)];
+  }
+  if (sort === "recent") {
+    return [desc(contacts.updatedAt), desc(contacts.id)];
+  }
+  return [asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id)];
+}
 
-  return mapped;
+function cursorCondition(cursor: Cursor) {
+  if (cursor.s === "closeness") {
+    // Both elements descending, matching `orderFor`. See the note there on why the id must
+    // run the same direction as the column it breaks ties for.
+    return sql`(${contacts.closeness}, ${contacts.id}) < (${cursor.c}, ${cursor.id}::uuid)`;
+  }
+  if (cursor.s === "recent") {
+    return sql`(${contacts.updatedAt}, ${contacts.id}) < (${new Date(cursor.u)}, ${cursor.id}::uuid)`;
+  }
+  // Row-value comparison rather than the unrolled OR chain, so the planner can satisfy it
+  // straight from `contacts_user_sort_idx`.
+  return sql`(${contacts.sortKey}, ${contacts.fullName}, ${contacts.id}) > (${cursor.k}, ${cursor.n}, ${cursor.id}::uuid)`;
+}
+
+function cursorFor(
+  sort: ContactSort,
+  row: { id: string; sortKey: string | null; fullName: string; closeness: number | null; updatedAt: Date }
+): Cursor {
+  if (sort === "closeness") {
+    return { s: "closeness", c: row.closeness ?? 0, id: row.id };
+  }
+  if (sort === "recent") {
+    return { s: "recent", u: new Date(row.updatedAt).toISOString(), id: row.id };
+  }
+  return { s: "name", k: row.sortKey ?? "", n: row.fullName, id: row.id };
+}
+
+/**
+ * Match a query against the stored search vector, fuzzily against names, and against tags.
+ *
+ * Three branches because they answer different questions. `search_tsv` is whole-word and
+ * ranked, and covers everything on the contact row. Trigram similarity is what finds
+ * someone when the spelling is off by a character. Tags cannot be in a generated column —
+ * they live in their own table — so they are an EXISTS.
+ *
+ * The `%` prefix match is kept for the partial-word case a user typing into a filter box
+ * expects: "mar" should find "Marcus" before they finish the word, which neither full-text
+ * nor trigram will do.
+ *
+ * `search_tsv` is written as a bare identifier because Drizzle has no `tsvector` column
+ * type to declare it with; Postgres maintains it as a generated column either way. The
+ * query selects `from contacts` unaliased, so the qualified name resolves.
+ */
+function searchCondition(q: string) {
+  const like = `${q.toLowerCase()}%`;
+  return sql`(
+    contacts.search_tsv @@ websearch_to_tsquery('simple', ${q})
+    or lower(${contacts.fullName}) like ${like}
+    or lower(coalesce(${contacts.company}, '')) like ${like}
+    or lower(coalesce(${contacts.email}, '')) like ${like}
+    or exists (
+      select 1 from contact_tags ct
+      join tags t on t.id = ct.tag_id
+      where ct.contact_id = ${contacts.id} and lower(t.name) like ${like}
+    )
+  )`;
+}
+
+/**
+ * Contacts for a picker — a bounded, searchable slice rather than the whole network.
+ *
+ * Three components (capture, the reminder dialog, the onboarding wizard) filled a `<select>`
+ * by calling `listContacts()` from the browser with no filter, which fetched and serialized
+ * every contact the user has. This is what they should have been asking for: a page of
+ * results, narrowed by whatever the user has typed.
+ */
+export async function searchContactsForPicker(
+  q?: string,
+  limit = 50
+): Promise<ContactPickerOption[]> {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const conditions = [eq(contacts.userId, userId)];
+  const term = q?.trim();
+  if (term) conditions.push(searchCondition(term));
+
+  const rows = await db
+    .select({
+      id: contacts.id,
+      fullName: contacts.fullName,
+      preferredName: contacts.preferredName,
+      company: contacts.company,
+    })
+    .from(contacts)
+    .where(and(...conditions))
+    .orderBy(asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id))
+    .limit(Math.min(Math.max(limit, 1), 200));
+
+  return rows;
+}
+
+/**
+ * Which letters the A–Z rail should offer.
+ *
+ * An index-only scan over `contacts_user_sort_idx` — it never touches the heap, and reads
+ * one small column rather than whole rows. The rail cannot derive this from the loaded page
+ * any more: with pagination the client has only seen the first 50 contacts, so asking it
+ * which letters exist would dim every letter the user has not scrolled to yet.
+ */
+export async function listContactLetters(): Promise<string[]> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const rows = await db
+    .select({
+      letter: sql<string>`coalesce(nullif(upper(left(${contacts.sortKey}, 1)), ''), '#')`,
+    })
+    .from(contacts)
+    .where(eq(contacts.userId, userId))
+    .groupBy(sql`1`);
+
+  return rows.map((r) => (/^[A-Z]$/.test(r.letter) ? r.letter : "#"));
+}
+
+async function countContacts(where: ReturnType<typeof and>) {
+  const db = await getDb();
+  const rows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(contacts)
+    .where(where);
+  return Number(rows[0]?.n ?? 0);
+}
+
+/** Tag names for one page of contacts — one query for the page, not one per row. */
+async function tagsForContacts(ids: string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (ids.length === 0) return out;
+  const db = await getDb();
+  const rows = await db
+    .select({ contactId: contactTags.contactId, name: tags.name })
+    .from(contactTags)
+    .innerJoin(tags, eq(tags.id, contactTags.tagId))
+    .where(inArray(contactTags.contactId, ids));
+  for (const row of rows) {
+    const list = out.get(row.contactId) ?? [];
+    list.push(row.name);
+    out.set(row.contactId, list);
+  }
+  return out;
 }
 
 export type TriageDisplayCandidate = {
@@ -276,14 +466,6 @@ export async function getTriageCandidates(): Promise<TriageDisplayCandidate[]> {
       },
     ];
   });
-}
-
-function lastNameSortKey(lastName: string | null | undefined, fullName: string) {
-  const fromField = lastName?.trim();
-  if (fromField) return fromField.toLocaleLowerCase();
-  const parts = fullName.trim().split(/\s+/).filter(Boolean);
-  const inferred = parts.length > 1 ? parts[parts.length - 1]! : parts[0] || "";
-  return inferred.toLocaleLowerCase();
 }
 
 export type ContactFieldSuggestions = {
@@ -1347,101 +1529,99 @@ export async function listMutualContacts(
   const profileKeys = new Set<string>([`i:${viewerContact.id}`]);
   if (profileLinkedinSlug) profileKeys.add(`l:${profileLinkedinSlug}`);
 
-  const MAX_OTHER_USERS_SCAN = 20;
-  const MAX_OTHER_USER_CONTACTS_SCAN = 250;
-  const MAX_OTHER_USER_MATCHING_CONTACTS = 1000;
+  // How many other accounts to credit a mutual from. A cap, not a correctness bound —
+  // beyond a couple of dozen the count stops meaning anything to a reader.
+  const MAX_PEER_ACCOUNTS = 20;
 
-  // Step 1: find other userIds that likely have this profile contact.
-  const otherUserConditions: Array<ReturnType<typeof ilike>> = [
-    ilike(contacts.linkedinUrl, `%/in/${profileLinkedinSlug}%`),
-  ];
+  /*
+   * One query where there used to be twenty-one.
+   *
+   * The old shape was `ILIKE '%/in/<slug>%'` across every user's contacts — a leading
+   * wildcard on an unindexed column, so a full scan of the whole table — followed by up to
+   * 20 sequential 250-row scans, one per peer account, with the overlap computed in
+   * JavaScript against every one of the viewer's own contacts loaded into memory.
+   *
+   * `linkedin_slug` is now a generated, indexed column, which turns the identity match into
+   * an equality join and lets the overlap count be a GROUP BY. The 250-row-per-peer cap is
+   * gone with it: it existed to bound the scan, and silently made mutual counts depend on
+   * how recently the peer had touched the contact.
+   *
+   * Note this reads other accounts' rows, exactly as before, and returns only the viewer's
+   * own contacts. It is worth being clear that a mutual count still discloses that *some*
+   * other account holds a given LinkedIn profile; that is a property of the feature, not of
+   * this rewrite.
+   */
+  const mutualRows = rowsOf<{ id: string; mutual_count: number }>(
+    await db.execute(sql`
+      with peers as (
+        select distinct user_id
+        from contacts
+        where linkedin_slug = ${profileLinkedinSlug}
+          and user_id <> ${userId}
+        limit ${MAX_PEER_ACCOUNTS}
+      ),
+      peer_slugs as (
+        select distinct c.user_id, c.linkedin_slug
+        from contacts c
+        join peers p on p.user_id = c.user_id
+        where c.linkedin_slug is not null
+      )
+      select v.id, count(distinct ps.user_id)::int as mutual_count
+      from contacts v
+      join peer_slugs ps on ps.linkedin_slug = v.linkedin_slug
+      where v.user_id = ${userId}
+        and v.id <> ${contactId}
+        and v.linkedin_slug is not null
+      group by v.id
+      order by mutual_count desc, v.id
+      limit ${limit}
+    `)
+  );
 
-  const otherUserRows = await db.query.contacts.findMany({
+  if (mutualRows.length === 0) return [];
+
+  // Display columns for the handful of rows that survived, rather than every contact the
+  // viewer has — the old version loaded the whole network to build a lookup map.
+  const detail = await db.query.contacts.findMany({
     where: and(
-      sql`${contacts.userId} <> ${userId}`,
-      or(...otherUserConditions)
+      eq(contacts.userId, userId),
+      inArray(
+        contacts.id,
+        mutualRows.map((r) => r.id)
+      )
     ),
     columns: {
-      userId: true,
-      lastInteractionAt: true,
+      id: true,
+      fullName: true,
+      preferredName: true,
+      firstName: true,
+      title: true,
+      company: true,
+      school: true,
+      location: true,
+      profileImageUrl: true,
+      linkedinUrl: true,
+      email: true,
+      phone: true,
     },
-    limit: MAX_OTHER_USER_MATCHING_CONTACTS,
   });
 
-  const maxLastInteractionAtByUser = new Map<string, number>();
-  for (const r of otherUserRows) {
-    if (!r.userId) continue;
-    const ts = r.lastInteractionAt ? new Date(r.lastInteractionAt).getTime() : 0;
-    const prev = maxLastInteractionAtByUser.get(r.userId) ?? -Infinity;
-    if (ts > prev) maxLastInteractionAtByUser.set(r.userId, ts);
-  }
-
-  const otherUserIds = [...maxLastInteractionAtByUser.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, MAX_OTHER_USERS_SCAN)
-    .map(([id]) => id);
-
-  const mutualCountByViewerContactId = new Map<string, number>();
-
-  // Step 2: for each other user, count which of *your* contacts overlap
-  // (given that they also have the profile contact).
-  for (const otherUserId of otherUserIds) {
-    const otherContacts = await db.query.contacts.findMany({
-      where: eq(contacts.userId, otherUserId),
-      columns: {
-        id: true,
-        linkedinUrl: true,
-        lastInteractionAt: true,
-      },
-      // Prefer recent contacts so we find mutuals quickly.
-      orderBy: (c, { desc: descOrder }) => [descOrder(c.lastInteractionAt)],
-      limit: MAX_OTHER_USER_CONTACTS_SCAN,
-    });
-
-    let hasProfile = false;
-    const overlaps = new Set<string>(); // viewer contact ids
-
-    for (const oc of otherContacts) {
-      const linkedinSlug = extractLinkedinSlug(oc.linkedinUrl);
-
-      const keys: string[] = [`i:${oc.id}`];
-      if (linkedinSlug) keys.push(`l:${linkedinSlug}`);
-      if (keys.length === 0) continue;
-
-      if (!hasProfile) {
-        for (const k of keys) {
-          if (profileKeys.has(k)) {
-            hasProfile = true;
-            break;
-          }
-        }
-      }
-
-      for (const k of keys) {
-        const viewerIds = viewerKeyToIds.get(k);
-        if (!viewerIds) continue;
-        for (const vid of viewerIds) overlaps.add(vid);
-      }
-    }
-
-    if (!hasProfile) continue;
-
-    for (const vid of overlaps) {
-      if (vid === contactId) continue;
-      const current = mutualCountByViewerContactId.get(vid) ?? 0;
-      mutualCountByViewerContactId.set(vid, current + 1);
-    }
-  }
-
-  const result: MutualContact[] = [];
-  for (const [vid, count] of mutualCountByViewerContactId.entries()) {
-    const base = viewerById.get(vid);
-    if (!base) continue;
-    result.push({
-      ...base,
-      mutualCount: count,
-    });
-  }
+  const countById = new Map(mutualRows.map((r) => [r.id, Number(r.mutual_count)]));
+  const result: MutualContact[] = detail.map((c) => ({
+    id: c.id,
+    fullName: c.fullName,
+    preferredName: c.preferredName ?? null,
+    firstName: c.firstName ?? null,
+    title: c.title ?? null,
+    company: c.company ?? null,
+    school: c.school ?? null,
+    location: c.location ?? null,
+    profileImageUrl: clientContactAvatarUrl(c.id, c.profileImageUrl),
+    linkedinUrl: c.linkedinUrl ?? null,
+    email: c.email ?? null,
+    phone: c.phone ?? null,
+    mutualCount: countById.get(c.id) ?? 0,
+  }));
 
   result.sort(
     (a, b) =>

@@ -32,7 +32,11 @@ export default configured
       // Defense in depth for the admin console. Without Clerk keys this is demo mode, where
       // `requireUserId()` succeeds as the shared "demo-user" — so the route must be gone
       // entirely, not merely unauthorized. `src/lib/admin.ts` denies it independently.
-      if (new URL(req.url).pathname.startsWith("/admin")) {
+      //
+      // `/api/admin` is listed separately rather than caught by the same prefix: the export
+      // handler lives under /api and would otherwise fall through this branch entirely.
+      const { pathname } = new URL(req.url);
+      if (pathname.startsWith("/admin") || pathname.startsWith("/api/admin")) {
         return new NextResponse(null, { status: 404 });
       }
       return withPathname(req);
