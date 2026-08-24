@@ -200,6 +200,16 @@ async function seed() {
     .insert(schema.userRecruiterLinks)
     .values({ userId: USER, recruiterId: recruiter.id });
 
+  // Carries the user's own prose to a named third party, plus the Gmail ids that locate it
+  // in a real mailbox. Exactly the class of row this suite exists to catch.
+  await db.insert(schema.recruiterMessages).values({
+    userId: USER,
+    recruiterId: recruiter.id,
+    intent: "set_up_chat",
+    subject: "Following up on the role",
+    body: "prose the user wrote about a real person",
+  });
+
   for (const table of [schema.gmailConnections, schema.outlookConnections]) {
     await db.insert(table).values({
       userId: USER,

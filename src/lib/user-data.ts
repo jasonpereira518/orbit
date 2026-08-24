@@ -24,6 +24,7 @@ import {
   tags,
   usageEvents,
   userGoals,
+  recruiterMessages,
   userRecruiterLinks,
   userSettings,
 } from "@/db/schema";
@@ -84,6 +85,17 @@ export async function purgeUserData(userId: string) {
       columns: { recruiterId: true },
     })
   ).map((l) => l.recruiterId);
+
+  // The drafts and sent messages themselves, which carry `subject` and `body` — the user's
+  // own prose to a named third party — plus the Gmail message and thread ids that locate
+  // them in a real mailbox. Deleted before the links so the sweep below cannot leave a
+  // message pointing at a recruiter the user is no longer linked to.
+  //
+  // This is the THIRD table to reach production user-scoped and unpurged, after
+  // `outlook_connections` and `suggested_reminders`. `scripts/smoke-purge.ts` derives its
+  // list from `schema.ts` precisely so a new one fails the suite — it did, and the failure
+  // was sitting red on main.
+  await db.delete(recruiterMessages).where(eq(recruiterMessages.userId, userId));
 
   await db.delete(userRecruiterLinks).where(eq(userRecruiterLinks.userId, userId));
 
