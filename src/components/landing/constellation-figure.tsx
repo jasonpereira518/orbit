@@ -225,12 +225,12 @@ export function ConstellationFigure({ className }: { className?: string }) {
       })}
 
       {/* Cluster name — the /graph cluster-label treatment: white text over
-          a brand-color copy offset by 0.75px. Sits over the bowl rather than
-          the box's centre line: the tilted figure's high ground is Dubhe on
-          the right, so a box-centred label floated in empty sky. */}
+          a brand-color copy offset by 0.75px. Centered over the figure's
+          own width (not the tilt-skewed box) rather than the bowl, so the
+          name reads as the cluster's title instead of a callout on Dubhe. */}
       <div
         className={cn(
-          "pointer-events-none absolute left-[72%] top-[19%] -translate-x-1/2 transition-opacity",
+          "pointer-events-none absolute left-1/2 top-[2%] -translate-x-1/2 text-center transition-opacity",
           figureHovered ? "opacity-100" : "opacity-0"
         )}
         style={FADE}
@@ -244,6 +244,9 @@ export function ConstellationFigure({ className }: { className?: string }) {
             {CLUSTER_NAME}
           </span>
           <span className="relative text-white">{CLUSTER_NAME}</span>
+        </span>
+        <span className="mt-1 block whitespace-nowrap text-[10px] font-normal tracking-[0.06em] text-white">
+          The Big Dipper
         </span>
       </div>
     </div>
