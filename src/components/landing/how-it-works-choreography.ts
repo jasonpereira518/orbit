@@ -13,9 +13,11 @@
 
 import { scrub01 } from "@/lib/motion";
 
-/** Pin wrapper height. ~3.6 viewports of scrub once the sticky frame's own
- * 100svh is subtracted — enough room for six beats without dragging. */
-export const PIN_SVH = 500;
+/** Pin wrapper height. ~2.6 viewports of scrub once the sticky frame's own
+ * 100svh is subtracted. Was 500 (3.6 viewports), which held the reader in
+ * the pin long after the loop had read — the beats below are fractions of
+ * this, so they all tighten together and keep their relative timing. */
+export const PIN_SVH = 360;
 
 export const BEATS = {
   /** Earth shrinks and travels centre → 12 o'clock. */
