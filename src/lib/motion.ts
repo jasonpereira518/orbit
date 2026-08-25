@@ -10,9 +10,6 @@
 /** House easing curve, as a motion/react ease array. */
 export const EASE_HOUSE = [0.22, 1, 0.36, 1] as const;
 
-/** House easing curve, as CSS. */
-export const EASE_HOUSE_CSS = "cubic-bezier(0.22, 1, 0.36, 1)";
-
 /** Durations in seconds, for motion/react `transition.duration`. */
 export const DUR = {
   fast: 0.12,

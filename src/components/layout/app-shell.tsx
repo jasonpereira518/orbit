@@ -14,6 +14,7 @@ import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar"
 import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
 import { ThemeSync } from "@/components/theme-sync";
 import { cn } from "@/lib/utils";
+import type { Plan } from "@/lib/plan-limits";
 import type { ThemePreference } from "@/lib/theme";
 
 const FloatingAskBar = dynamic(
@@ -29,11 +30,13 @@ export function AppShell({
   clerkOn,
   demoMode,
   theme,
+  plan,
 }: {
   children: React.ReactNode;
   clerkOn: boolean;
   demoMode: boolean;
   theme: ThemePreference | null;
+  plan: Plan;
 }) {
   const pathname = usePathname();
   const isOnboarding = pathname === "/onboarding";
@@ -73,6 +76,7 @@ export function AppShell({
             pathname={pathname}
             clerkOn={clerkOn}
             demoMode={demoMode}
+            plan={plan}
           />
         </div>
         <main
@@ -92,7 +96,7 @@ export function AppShell({
               className="flex items-center gap-2.5"
               title="Back to landing page"
             >
-              <OrbitLogo size="md" />
+              <OrbitLogo size="md" plan={plan} />
               <span className="font-[family-name:var(--font-display)] text-lg leading-none text-primary">
                 Orbit
               </span>

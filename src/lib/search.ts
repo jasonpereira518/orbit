@@ -1,9 +1,14 @@
-import { eq, and, inArray, sql } from "drizzle-orm";
+import { eq, and, ilike, inArray, sql } from "drizzle-orm";
 import { getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import { contactEmbeddings, contacts } from "@/db/schema";
 import { metContextLabel } from "@/lib/met-context";
 import { createEmbedding, createEmbeddingsBatch, cosineSimilarity } from "@/lib/ai";
 import { formatVectorLiteral } from "@/lib/pgvector";
+import {
+  ERROR_SOURCES,
+  recordErrorEvent,
+  shouldRecordThrottled,
+} from "@/lib/error-events";
 
 async function persistEmbeddingVector(rowId: string, embedding: number[]) {
   if (!isPgvectorAvailable()) return;
@@ -72,6 +77,27 @@ export type SemanticSearchRow = {
 };
 
 /** DB cosine similarity via pgvector; returns empty when unavailable. */
+/**
+ * How many embedding rows to scan per requested contact.
+ *
+ * The ANN scan ranks rows, but several rows can belong to one contact, so a scan of exactly
+ * `limit` rows could collapse to far fewer contacts. Four is comfortably above the number of
+ * embeddings a single contact accumulates in practice.
+ */
+const OVERSCAN_FOR_DEDUPE = 4;
+
+/** Below this cosine similarity a hit is noise rather than a weak match. */
+const SEMANTIC_SIMILARITY_FLOOR = 0.25;
+
+/**
+ * Ceiling on the in-memory cosine fallback. Each row holds a 1,536-float array, so this is
+ * about not materialising the entire embedding table in Node when pgvector is missing.
+ */
+const IN_MEMORY_EMBEDDING_SCAN_LIMIT = 2000;
+
+/** Ceiling on embedding rows pulled for the literal-text boost. */
+const CONTENT_BOOST_LIMIT = 200;
+
 export async function pgvectorSearchContacts(
   userId: string,
   queryEmbedding: number[],
@@ -82,18 +108,35 @@ export async function pgvectorSearchContacts(
   const db = await getDb();
   const literal = formatVectorLiteral(queryEmbedding);
 
+  // A contact can have several embeddings (profile, notes, interactions), and what we want
+  // is the best one per contact. Expressing that as `GROUP BY contact_id HAVING MAX(...)`
+  // reads naturally but defeats the HNSW index outright: an approximate-nearest-neighbour
+  // scan can only be driven by an `ORDER BY <=> ... LIMIT` at the top of a scan, and
+  // wrapping the distance in an aggregate hides it. The planner's only option was to read
+  // every embedding row for the user and compute a distance for each — precisely the scan
+  // the index exists to avoid.
+  //
+  // So the ANN scan happens first, in the inner query, over rows rather than contacts. It
+  // over-fetches because those rows collapse into fewer contacts once deduplicated; the
+  // multiplier is what keeps a full page of contacts available after the collapse.
+  const scanLimit = Math.max(limit * OVERSCAN_FOR_DEDUPE, 50);
+
   const result = await db.execute<{
     contact_id: string;
     similarity: number;
   }>(sql`
-    SELECT
-      contact_id,
-      MAX(1 - (embedding_vector <=> ${literal}::vector))::float8 AS similarity
-    FROM contact_embeddings
-    WHERE user_id = ${userId}
-      AND embedding_vector IS NOT NULL
+    WITH nearest AS (
+      SELECT contact_id, embedding_vector <=> ${literal}::vector AS distance
+      FROM contact_embeddings
+      WHERE user_id = ${userId}
+        AND embedding_vector IS NOT NULL
+      ORDER BY embedding_vector <=> ${literal}::vector
+      LIMIT ${scanLimit}
+    )
+    SELECT contact_id, (1 - MIN(distance))::float8 AS similarity
+    FROM nearest
     GROUP BY contact_id
-    HAVING MAX(1 - (embedding_vector <=> ${literal}::vector)) > 0.25
+    HAVING (1 - MIN(distance)) > ${SEMANTIC_SIMILARITY_FLOOR}
     ORDER BY similarity DESC
     LIMIT ${limit}
   `);
@@ -153,8 +196,18 @@ export async function semanticSearchContacts(
         for (const hit of pgHits) {
           scoreByContact.set(hit.contactId, hit.similarity);
         }
-      } catch {
-        // pgvector query can fail on Neon (extension/dim); fall back below
+      } catch (err) {
+        // pgvector query can fail on Neon (extension/dim); fall back below.
+        // Throttled: this fires per search, so a broken index would otherwise write a
+        // row for every query.
+        if (shouldRecordThrottled(ERROR_SOURCES.searchPgvector)) {
+          await recordErrorEvent({
+            source: ERROR_SOURCES.searchPgvector,
+            kind: "query_failed",
+            userId,
+            message: err,
+          });
+        }
       }
     }
 
@@ -164,23 +217,42 @@ export async function semanticSearchContacts(
       | null = null;
 
     if (scoreByContact.size === 0) {
+      // The fallback for when pgvector is unavailable — always the case on PGlite, which
+      // has no build of it. Every row carries a 1,536-float JSONB array, so this is capped:
+      // uncapped, a 5,000-contact network materialises tens of millions of floats in Node
+      // to score one query.
       embeddingRows = await db.query.contactEmbeddings.findMany({
         where: eq(contactEmbeddings.userId, userId),
         columns: { contactId: true, embedding: true, content: true },
+        limit: IN_MEMORY_EMBEDDING_SCAN_LIMIT,
       });
+      if (embeddingRows.length === IN_MEMORY_EMBEDDING_SCAN_LIMIT) {
+        console.warn(
+          `[search] in-memory vector fallback hit its ${IN_MEMORY_EMBEDDING_SCAN_LIMIT}-row cap; results are partial. Enable pgvector for complete semantic search.`
+        );
+      }
       const inMemory = inMemorySemanticScores(queryEmbedding, embeddingRows);
       for (const [contactId, sim] of inMemory) {
         scoreByContact.set(contactId, sim);
       }
     }
 
-    // Also boost contacts whose stored embedding text mentions the query
-    // (covers LinkedIn message chunks even when vector score is middling).
+    // Also boost contacts whose stored embedding text mentions the query (covers LinkedIn
+    // message chunks even when the vector score is middling).
+    //
+    // Matched in Postgres rather than by reading every embedding row and calling
+    // `String.includes` on it. The old shape ran a second unconditional full read of
+    // `contact_embeddings` even when the pgvector search above had already succeeded, purely
+    // to find the handful of rows that mention the query.
     const contentRows =
       embeddingRows ??
       (await db.query.contactEmbeddings.findMany({
-        where: eq(contactEmbeddings.userId, userId),
+        where: and(
+          eq(contactEmbeddings.userId, userId),
+          ilike(contactEmbeddings.content, `%${query.trim()}%`)
+        ),
         columns: { contactId: true, content: true },
+        limit: CONTENT_BOOST_LIMIT,
       }));
     for (const row of contentRows) {
       const hay = (row.content || "").toLowerCase();

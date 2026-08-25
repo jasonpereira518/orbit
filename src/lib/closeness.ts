@@ -495,15 +495,6 @@ export function closenessTierChipClass(tier: ClosenessBreakdown["tier"]) {
   return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
 }
 
-/**
- * Colour from the number alone. Prefer `closenessTierChipClass(tier)` wherever
- * the assigned tier is on hand — tiers are quota-assigned, so deriving one from
- * the percentage can disagree with the badge sitting next to it.
- */
-export function closenessPercentChipClass(closeness: number) {
-  return closenessTierChipClass(closenessTier(closeness));
-}
-
 /** Map continuous closeness onto the five constellation rings. Ring 4 ≈ Inner. */
 export function closenessToOrbitScore(closeness: number) {
   for (const { ring, min } of ABSOLUTE_RING_CUTOFFS) {
