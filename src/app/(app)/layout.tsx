@@ -8,6 +8,7 @@ import {
   isClerkConfigured,
   isDemoMode,
 } from "@/lib/auth";
+import { getEntitlements } from "@/lib/entitlements";
 import { resolveThemePreference } from "@/lib/theme";
 
 /**
@@ -53,9 +54,12 @@ export default async function AppLayout({
   if (settings.suspendedAt) redirect("/suspended");
 
   const theme = resolveThemePreference(settings.theme);
+  // Only for the tier ring on the mark. `getEntitlements` is request-cached and reads the
+  // same `user_settings` row bootstrapped above, so this costs nothing extra per request.
+  const { plan } = await getEntitlements(userId);
 
   return (
-    <AppShell clerkOn={clerkOn} demoMode={demoMode} theme={theme}>
+    <AppShell clerkOn={clerkOn} demoMode={demoMode} theme={theme} plan={plan}>
       {/* Renders nothing; keeps `last_active_at` fresh enough for the admin roster to
           answer "active now". One per tab, not one per route. */}
       <PresenceHeartbeat />

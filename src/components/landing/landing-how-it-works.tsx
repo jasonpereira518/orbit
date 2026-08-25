@@ -426,7 +426,13 @@ function EarthJourney({ reduced, isLg }: { reduced: boolean; isLg: boolean }) {
       className={reduced ? "hidden" : "hidden lg:block"}
       style={reduced ? undefined : { height: `${PIN_SVH}svh` }}
     >
-      <div ref={frameRef} className="sticky top-0 h-svh overflow-hidden">
+      {/* select-none: the whole frame is a drag surface for the globe, and a
+          pull that leaves a trail of highlighted step copy behind it reads as
+          the page breaking rather than as the planet being turned. */}
+      <div
+        ref={frameRef}
+        className="sticky top-0 h-svh select-none overflow-hidden"
+      >
         {/* Ring furniture sits under Earth: it passes in front of the dashed
             line and the markers it stamps, and covers the sun at both the
             opening hold and the full-bleed finale. */}

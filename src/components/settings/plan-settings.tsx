@@ -18,11 +18,12 @@ const SOURCE_NOTE: Record<PlanSource, string | null> = {
  * product itself runs on, Orbit Lifetime in the gold the marketing site reserves
  * for offers, Free deliberately recessed — restated for app chrome.
  *
- * The pricing page can hardcode `#599de7` because it only ever sits on a dark
- * starfield. This card sits on `--card` in either theme, so Pro rides `--primary`
- * (teal in light, that same blue in dark) and gold needs a genuinely darker shade
- * in light mode: `#f2c14e` is only 1.8:1 on white, which no amount of brand
- * loyalty makes readable.
+ * The pricing page can hardcode `#599de7` and `#f2c14e` because it only ever sits
+ * on a dark starfield. This card sits on `--card` in either theme, which splits
+ * the gold in two: as a *surface* it can be the real brand gold, because the text
+ * riding on it is near-black; as *text* on a white card it cannot, since `#f2c14e`
+ * is 1.8:1 there. So the badge carries the bright metal and the ticks carry a
+ * deeper amber that still clears 4.5:1.
  */
 const TIER_ACCENT: Record<
   Plan,
@@ -37,6 +38,8 @@ const TIER_ACCENT: Record<
     ink: string;
     /** Usage meter fill. */
     meter: string;
+    /** Whether the badge catches a travelling highlight. */
+    glint: boolean;
   }
 > = {
   free: {
@@ -45,6 +48,7 @@ const TIER_ACCENT: Record<
     badge: "border border-border/70 text-muted-foreground",
     ink: "text-muted-foreground",
     meter: "bg-muted-foreground/70",
+    glint: false,
   },
   orbit: {
     ring: "border-primary/35",
@@ -52,13 +56,18 @@ const TIER_ACCENT: Record<
     badge: "bg-primary text-primary-foreground",
     ink: "text-primary",
     meter: "bg-primary",
+    glint: false,
   },
   lifetime: {
-    ring: "border-[#c9a227]/45 dark:border-[#f2c14e]/35",
-    wash: "bg-[#e0af2f]/20 dark:bg-[#f2c14e]/15",
-    badge: "bg-[#7a5c12] text-[#fdf7e8] dark:bg-[#f2c14e] dark:text-[#241a00]",
-    ink: "text-[#7a5c12] dark:text-[#f2c14e]",
-    meter: "bg-[#c9a227] dark:bg-[#f2c14e]",
+    ring: "border-[#e0a52e]/60 dark:border-[#f2c14e]/40",
+    wash: "bg-[#f2c14e]/25 dark:bg-[#f2c14e]/15",
+    // A vertical ramp rather than one flat fill: gold reads as metal only when
+    // it has a light edge and a shaded one for the glint to travel between.
+    badge:
+      "bg-gradient-to-b from-[#f7d15f] to-[#e0a52e] text-[#3d2c00] shadow-sm",
+    ink: "text-[#a06a00] dark:text-[#f2c14e]",
+    meter: "bg-[#e0a52e] dark:bg-[#f2c14e]",
+    glint: true,
   },
 };
 
@@ -106,12 +115,21 @@ export function PlanSettings({
           </div>
           <span
             className={cn(
-              "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium",
+              "relative inline-flex shrink-0 items-center gap-1.5 overflow-hidden rounded-full px-3 py-1 text-sm font-medium",
               accent.badge
             )}
           >
-            {!isFree && <Sparkles className="size-3.5" aria-hidden="true" />}
-            {copy.name}
+            {accent.glint && (
+              <span
+                aria-hidden="true"
+                className="plan-badge-glint pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent"
+              />
+            )}
+            {/* Above the glint, which is positioned. */}
+            {!isFree && (
+              <Sparkles className="relative size-3.5" aria-hidden="true" />
+            )}
+            <span className="relative">{copy.name}</span>
           </span>
         </div>
 
@@ -164,11 +182,15 @@ export function PlanSettings({
           <h3 className="text-sm font-medium text-primary">
             What&apos;s included
           </h3>
-          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+          {/* Columns, not a two-column grid. A grid ties both cells of a row to
+              the tallest of them, so a feature that wraps to two lines opened a
+              double gap under its short neighbour. Columns flow independently,
+              so every row sits the same distance from the last. */}
+          <ul className="-mb-2 mt-3 sm:columns-2 sm:gap-x-6">
             {copy.features.map((feature) => (
               <li
                 key={feature}
-                className="flex gap-2 text-sm text-muted-foreground"
+                className="flex break-inside-avoid gap-2 pb-2 text-sm text-muted-foreground"
               >
                 <Check
                   className={cn("mt-0.5 size-4 shrink-0", accent.ink)}

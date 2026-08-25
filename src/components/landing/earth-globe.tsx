@@ -51,6 +51,33 @@ const AXIAL_TILT = (11 * Math.PI) / 180;
  * than as a globe being turned. */
 const SPIN_RATE = 0.045;
 
+/** Pointer tug. The globe turns under the mouse but never leaves its mark:
+ * the drag is spent entirely on rotation, so the planet stays exactly where
+ * the choreography puts it, on the ring or anywhere else.
+ *
+ * Radians of turn per pixel of pull, before the cap bites. Set so the first
+ * few pixels of movement already show — the globe answering the hand is the
+ * whole point, and a rate low enough to need a deliberate sweep reads as the
+ * drag not working. */
+const DRAG_RATE = 0.008;
+/** Hard ceilings on the turn — a nudge of the surface, not a globe being
+ * spun. Yaw rides on top of the axial spin; pitch nods the axis, and gets
+ * the smaller allowance because tipping the axis is the more conspicuous of
+ * the two. */
+const DRAG_YAW_MAX = 0.28;
+const DRAG_PITCH_MAX = 0.19;
+/** Slack around the silhouette, so the orbit-pose globe is still grabbable. */
+const DRAG_HIT_PAD = 10;
+/** Spring carrying the turn to the pointer, and back to true on release.
+ * Stiff enough to sit under the cursor rather than trail it, and damped well
+ * under critical so the release rebounds past true and swings back — the
+ * globe reads as sprung rather than as merely undoing the drag. Letting go
+ * mid-sweep adds the stored velocity on top, for a longer throw. */
+const DRAG_STIFFNESS = 340;
+const DRAG_DAMPING = 14;
+/** Fixed physics step, so a dropped frame can't blow the spring up. */
+const DRAG_STEP = 1 / 120;
+
 /** Arc the trail covers behind Earth, in radians (~31°). */
 const TRAIL_SPAN = 0.55;
 /** Half-thickness of the trail, in CSS px. Constant: this is a line drawn
@@ -88,6 +115,11 @@ const TRAIL_FRAG = /* glsl */ `
  * Sole writer of the globe (position, scale, spin, key light) — motion values
  * write only DOM. This component never re-renders from scroll: the rAF reads
  * `progress.get()` directly.
+ *
+ * It also owns the pointer tug: a mouse can turn the globe a little way under
+ * its own axis, and letting go springs it back to true. The tug is rotation
+ * only and capped — the planet never leaves the mark `earthAt` gives it, at
+ * any point in the scene, so the drag cannot pull it off the ring.
  *
  * Loaded only through earth-globe-mount.tsx, which owns every gate
  * (lg viewport, reduced motion, WebGL2, proximity).
@@ -160,8 +192,14 @@ export function EarthGlobe({
     tilt.rotation.z = AXIAL_TILT;
     tilt.add(earth);
 
+    // Carries the pitch half of the pointer tug. It sits above the axial tilt
+    // so a vertical pull nods the whole axis, and below `root` so it is not
+    // multiplied by the radius scale.
+    const nudge = new Group();
+    nudge.add(tilt);
+
     const root = new Group();
-    root.add(tilt);
+    root.add(nudge);
     scene.add(root);
 
     // Trail line. It lives beside `root` rather than inside it: its vertices
@@ -250,6 +288,62 @@ export function EarthGlobe({
     // only — never inside the rAF.
     const geom: Geom = { w: 0, h: 0, ringR: 0 };
 
+    // Where the choreography last put the globe, in frame space. The pointer
+    // hit test reads this rather than recomputing `earthAt`, so grabbing is
+    // always tested against the pixels actually on screen.
+    const pose = { x: 0, y: 0, r: 0 };
+
+    // Pointer tug. `turn` is the live rotation offset, in radians, that the
+    // spring carries — yaw from horizontal pull, pitch from vertical. It is
+    // pure rotation: nothing here ever touches the globe's position, so the
+    // drag cannot shift it off the ring or out of the finale's framing.
+    const turn = { yaw: 0, pitch: 0, vYaw: 0, vPitch: 0 };
+    const grab = { x: 0, y: 0 };
+    const pointer = { x: 0, y: 0 };
+    let dragId: number | null = null;
+    // Axial spin, kept separate from earth.rotation.y so the drag's yaw can
+    // ride on top of it without ever rewinding the spin itself.
+    let spin = 0;
+
+    /** Resistance curve: near 1:1 for the first pixels of pull, asymptotic at
+     * the cap, so the turn has weight and can never run away into a free
+     * spin — let go at any point and it is the same short trip back. */
+    const rubber = (delta: number, max: number) =>
+      max * Math.tanh((delta * DRAG_RATE) / max);
+
+    const advanceDrag = (dt: number) => {
+      let toYaw = 0;
+      let toPitch = 0;
+      if (dragId !== null) {
+        toYaw = rubber(pointer.x - grab.x, DRAG_YAW_MAX);
+        toPitch = rubber(pointer.y - grab.y, DRAG_PITCH_MAX);
+      } else if (
+        Math.abs(turn.yaw) < 1e-4 &&
+        Math.abs(turn.pitch) < 1e-4 &&
+        Math.abs(turn.vYaw) < 1e-4 &&
+        Math.abs(turn.vPitch) < 1e-4
+      ) {
+        // Settled back to true — park it exactly there rather than letting the
+        // spring hum against the floating-point floor for the rest of the page.
+        turn.yaw = 0;
+        turn.pitch = 0;
+        turn.vYaw = 0;
+        turn.vPitch = 0;
+        return;
+      }
+      for (let left = dt; left > 0; left -= DRAG_STEP) {
+        const h = Math.min(left, DRAG_STEP);
+        turn.vYaw +=
+          (-DRAG_STIFFNESS * (turn.yaw - toYaw) - DRAG_DAMPING * turn.vYaw) * h;
+        turn.vPitch +=
+          (-DRAG_STIFFNESS * (turn.pitch - toPitch) -
+            DRAG_DAMPING * turn.vPitch) *
+          h;
+        turn.yaw += turn.vYaw * h;
+        turn.pitch += turn.vPitch * h;
+      }
+    };
+
     const measure = () => {
       geom.w = frame.clientWidth;
       geom.h = frame.clientHeight;
@@ -266,6 +360,15 @@ export function EarthGlobe({
     const draw = () => {
       const p = progress.get();
       const { x, y, r, theta, onRing, light } = earthAt(p, geom, depart.get());
+      pose.x = x;
+      pose.y = y;
+      pose.r = r;
+
+      // The tug turns the globe and nothing else — position and scale below
+      // are the choreography's alone.
+      earth.rotation.y = spin + turn.yaw;
+      nudge.rotation.x = turn.pitch;
+
       // Frame space (origin top-left, y down) → world space (centred, y up).
       root.position.set(x - geom.w / 2, geom.h / 2 - y, 0);
       root.scale.setScalar(r);
@@ -319,6 +422,65 @@ export function EarthGlobe({
     });
     ro.observe(frame);
 
+    // Pointer tug. Listeners live on the frame, not the canvas: the canvas is
+    // pointer-events:none (it covers the whole sticky frame, and the labels
+    // above it have to stay selectable), so events bubble up from whatever is
+    // underneath and get hit-tested against the globe's silhouette here.
+    const framePoint = (e: PointerEvent) => {
+      const box = frame.getBoundingClientRect();
+      return { x: e.clientX - box.left, y: e.clientY - box.top };
+    };
+
+    const onGlobe = (e: PointerEvent) => {
+      const { x, y } = framePoint(e);
+      const reach = pose.r + DRAG_HIT_PAD;
+      return Math.hypot(x - pose.x, y - pose.y) <= reach;
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      // Touch is deliberately excluded: a finger on the globe is a finger
+      // scrolling the pin, and the pin's scroll is what plays the whole scene.
+      if (e.pointerType === "touch" || dragId !== null || !onGlobe(e)) return;
+      const point = framePoint(e);
+      dragId = e.pointerId;
+      grab.x = point.x;
+      grab.y = point.y;
+      pointer.x = point.x;
+      pointer.y = point.y;
+      frame.setPointerCapture(e.pointerId);
+      frame.style.cursor = "grabbing";
+      // Stops the drag from turning into a text or image selection.
+      e.preventDefault();
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (dragId === e.pointerId) {
+        const point = framePoint(e);
+        pointer.x = point.x;
+        pointer.y = point.y;
+        return;
+      }
+      if (dragId !== null || e.pointerType === "touch") return;
+      frame.style.cursor = onGlobe(e) ? "grab" : "";
+    };
+
+    const endDrag = (e: PointerEvent) => {
+      if (dragId !== e.pointerId) return;
+      dragId = null;
+      frame.style.cursor = onGlobe(e) ? "grab" : "";
+    };
+
+    const onPointerLeave = () => {
+      if (dragId === null) frame.style.cursor = "";
+    };
+
+    frame.addEventListener("pointerdown", onPointerDown);
+    frame.addEventListener("pointerleave", onPointerLeave);
+    frame.addEventListener("pointermove", onPointerMove);
+    frame.addEventListener("pointerup", endDrag);
+    frame.addEventListener("pointercancel", endDrag);
+    frame.addEventListener("lostpointercapture", endDrag);
+
     // Same policy as the hero's planet loop (hero-solar-system.tsx): spin
     // only while on screen in a foreground tab. Paused-when-hidden is the
     // designed behaviour, not a bug.
@@ -327,7 +489,12 @@ export function EarthGlobe({
     const tick = (now: number) => {
       const dt = last ? Math.min((now - last) / 1000, 0.05) : 0;
       last = now;
-      earth.rotation.y += dt * SPIN_RATE * Math.PI * 2;
+      // The axial spin holds while a hand is on the globe: something being
+      // held still should be still, and a planet creeping out from under the
+      // cursor fights the drag instead of answering it. It picks up again
+      // from where it stopped on release.
+      if (dragId === null) spin += dt * SPIN_RATE * Math.PI * 2;
+      advanceDrag(dt);
       draw();
       raf = requestAnimationFrame(tick);
     };
@@ -349,6 +516,20 @@ export function EarthGlobe({
     return () => {
       disposed = true;
       cancelAnimationFrame(raf);
+      frame.removeEventListener("pointerdown", onPointerDown);
+      frame.removeEventListener("pointerleave", onPointerLeave);
+      frame.removeEventListener("pointermove", onPointerMove);
+      frame.removeEventListener("pointerup", endDrag);
+      frame.removeEventListener("pointercancel", endDrag);
+      frame.removeEventListener("lostpointercapture", endDrag);
+      if (dragId !== null) {
+        try {
+          frame.releasePointerCapture(dragId);
+        } catch {
+          // The pointer is already gone; nothing to release.
+        }
+      }
+      frame.style.cursor = "";
       document.removeEventListener("visibilitychange", sync);
       io.disconnect();
       ro.disconnect();
