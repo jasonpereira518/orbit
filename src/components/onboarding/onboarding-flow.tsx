@@ -24,6 +24,7 @@ import { GraphPreview } from "@/components/onboarding/previews/graph-preview";
 import { DashboardPreview } from "@/components/onboarding/previews/dashboard-preview";
 import { RecruitersPreview } from "@/components/onboarding/previews/recruiters-preview";
 import { OutreachPreview } from "@/components/onboarding/previews/outreach-preview";
+import { KnowledgePreview } from "@/components/onboarding/previews/knowledge-preview";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +39,7 @@ const PREVIEWS: Record<TourNavKey, typeof WelcomePreview> = {
   dashboard: DashboardPreview,
   recruiters: RecruitersPreview,
   outreach: OutreachPreview,
+  knowledge: KnowledgePreview,
 };
 
 const LAST_INDEX = TOUR_STEPS.length - 1;

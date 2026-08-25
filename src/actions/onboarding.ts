@@ -20,6 +20,7 @@ const VALID_ONBOARDING_STEPS = new Set([
   "graph",
   "recruiters",
   "outreach",
+  "knowledge",
 ]);
 
 async function markOnboardingComplete(userId: string) {

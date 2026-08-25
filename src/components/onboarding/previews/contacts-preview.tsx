@@ -2,26 +2,18 @@
 
 import { motion } from "motion/react";
 import type { PreviewProps } from "@/components/onboarding/tour-config";
+import { closenessTier, closenessTierChipClass } from "@/lib/closeness";
 
+/**
+ * Closeness for a brand-new contact is a clamped prior (30–60%, never "inner") until
+ * there's real evidence — see PRIOR_MIN/PRIOR_MAX in lib/closeness-evidence.ts. These
+ * values stay inside that band so the tour doesn't promise scores a cold-start network
+ * can't actually produce yet.
+ */
 const people = [
-  {
-    name: "Sarah Chen",
-    meta: "OpenAI · Partnerships",
-    closeness: 78,
-    chipClass: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  },
-  {
-    name: "Marcus Lee",
-    meta: "Stripe · Recruiting",
-    closeness: 41,
-    chipClass: "bg-sky-500/10 text-sky-700 dark:text-sky-300",
-  },
-  {
-    name: "Priya Nair",
-    meta: "Notion · Agents",
-    closeness: 92,
-    chipClass: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  },
+  { name: "Sarah Chen", meta: "OpenAI · Partnerships", closeness: 0.34 },
+  { name: "Marcus Lee", meta: "Stripe · Recruiting", closeness: 0.52 },
+  { name: "Priya Nair", meta: "Notion · Agents", closeness: 0.58 },
 ];
 
 export function ContactsPreview({ reducedMotion }: PreviewProps) {
@@ -52,9 +44,9 @@ export function ContactsPreview({ reducedMotion }: PreviewProps) {
             </div>
             <span
               data-tour-hotspot={i === 0 ? "score" : undefined}
-              className={`rounded-full px-2 py-0.5 text-[10px] font-medium tabular-nums ${p.chipClass}`}
+              className={`rounded-full px-2 py-0.5 text-[10px] font-medium tabular-nums ${closenessTierChipClass(closenessTier(p.closeness))}`}
             >
-              {p.closeness}%
+              {Math.round(p.closeness * 100)}%
             </span>
           </motion.li>
         ))}
