@@ -729,6 +729,24 @@
   animation: landing-solar-enter 0.9s var(--ease-house) 0.15s both;
 }
 
+/* Orbit Lifetime's badge is the one place the brand gold appears as a surface
+ * rather than as text, so it gets a metal glint: one band crosses the pill and
+ * then rests off-frame for most of the cycle, which reads as material catching
+ * light rather than as something still loading. */
+@keyframes plan-badge-glint {
+  0% {
+    transform: translateX(-160%);
+  }
+  55%,
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.plan-badge-glint {
+  animation: plan-badge-glint 4.5s var(--ease-house) infinite;
+}
+
 @keyframes landing-credit-shimmer {
   0% {
     background-position: 120% 50%;
@@ -1130,5 +1148,11 @@ body:has(.landing-root) {
     background: none;
     color: #6d807c;
     -webkit-text-fill-color: #6d807c;
+  }
+
+  /* The band is only ever decoration over a gold that already reads on its own,
+     so it simply leaves rather than parking mid-sweep. */
+  .plan-badge-glint {
+    display: none;
   }
 }
