@@ -3,6 +3,7 @@ import {
   Users,
   Sparkles,
   Upload,
+  Bell,
   MessageSquare,
   Network,
   UsersRound,
@@ -13,12 +14,13 @@ export const TOUR_INTERVAL_MS = 7000;
 
 export type TourNavKey =
   | "welcome"
+  | "dashboard"
   | "contacts"
   | "capture"
   | "imports"
+  | "reminders"
   | "chat"
   | "graph"
-  | "dashboard"
   | "recruiters"
   | "outreach";
 
@@ -38,14 +40,15 @@ export type TourStep = {
   hotspots?: TourHotspot[];
 };
 
-/** Core loop items (before the Extras divider in the tour sidebar). */
+/** Core loop items (before the Extras divider in the tour sidebar) — mirrors the real app-nav.ts order. */
 export const TOUR_NAV_CORE = [
+  { key: "dashboard" as const, label: "Dashboard", icon: LayoutDashboard },
   { key: "contacts" as const, label: "Contacts", icon: Users },
   { key: "capture" as const, label: "Capture", icon: Sparkles },
   { key: "imports" as const, label: "Imports", icon: Upload },
+  { key: "reminders" as const, label: "Reminders", icon: Bell },
   { key: "chat" as const, label: "Chat", icon: MessageSquare },
   { key: "graph" as const, label: "Constellation", icon: Network },
-  { key: "dashboard" as const, label: "Dashboard", icon: LayoutDashboard },
 ];
 
 /** Extra feature items (after the Extras divider). */
@@ -63,6 +66,16 @@ export const TOUR_STEPS: TourStep[] = [
     hotspots: [
       { id: "logo", label: "This is your networking home base." },
       { id: "tagline", label: "Capture people, then know when to act." },
+    ],
+  },
+  {
+    id: "dashboard",
+    navKey: "dashboard",
+    title: "Your dashboard",
+    body: "Follow-ups, strong ties, and outreach suggestions — in one place.",
+    hotspots: [
+      { id: "due", label: "See who's due a follow-up." },
+      { id: "suggestion", label: "AI suggests who to reach out to." },
     ],
   },
   {
@@ -90,11 +103,23 @@ export const TOUR_STEPS: TourStep[] = [
     id: "imports",
     navKey: "imports",
     title: "Import your world",
-    body: "Bring in LinkedIn connections, messages, or calendar meetings.",
+    body: "Bring in LinkedIn connections, messages, or calendar meetings — then browse it all in Knowledge.",
     hotspots: [
       { id: "linkedin", label: "Import LinkedIn connections." },
       { id: "messages", label: "Enrich from message threads." },
       { id: "calendar", label: "Sync meetings from your calendar." },
+      { id: "knowledge", label: "Browse everything you've imported." },
+    ],
+  },
+  {
+    id: "reminders",
+    navKey: "reminders",
+    title: "Reminders",
+    body: "Turn follow-ups into a real to-do list — organized into lists, with due dates that don't let you forget.",
+    hotspots: [
+      { id: "filter", label: "Filter by pending, done, or all." },
+      { id: "reminder", label: "See what's overdue at a glance." },
+      { id: "action", label: "Mark done or snooze in one tap." },
     ],
   },
   {
@@ -111,27 +136,17 @@ export const TOUR_STEPS: TourStep[] = [
     id: "graph",
     navKey: "graph",
     title: "Constellation",
-    body: "See your network as a sky of connections — clustered by company and closeness.",
+    body: "See your network as a spiral galaxy — you're the sun at the center, with clusters of people orbiting by company and closeness.",
     hotspots: [
-      { id: "figure", label: "People linked into a constellation." },
-      { id: "spica", label: "Brightest stars are your closest ties." },
-    ],
-  },
-  {
-    id: "dashboard",
-    navKey: "dashboard",
-    title: "Your dashboard",
-    body: "Follow-ups, dormant ties, and outreach suggestions — in one place.",
-    hotspots: [
-      { id: "due", label: "See who's due a follow-up." },
-      { id: "suggestion", label: "AI suggests who to reach out to." },
+      { id: "sun", label: "You're the sun — everyone orbits you." },
+      { id: "cluster", label: "Each cluster is its own constellation." },
     ],
   },
   {
     id: "recruiters",
     navKey: "recruiters",
     title: "Recruiters",
-    body: "Track recruiters and unlock contact details when you log an interaction — or import from Gmail.",
+    body: "A toggle away from Contacts — track recruiters and unlock contact details when you log an interaction, or import threads straight from Gmail.",
     hotspots: [
       { id: "toggle", label: "Switch between Contacts and Recruiters." },
       { id: "recruiter", label: "Open a recruiter to log outreach." },
@@ -142,7 +157,7 @@ export const TOUR_STEPS: TourStep[] = [
     id: "outreach",
     navKey: "outreach",
     title: "Outreach",
-    body: "Run cold campaigns — find prospects, generate drafts, and send from your apps.",
+    body: "One of Orbit's extras — run cold campaigns, find prospects, generate drafts, and send from your apps.",
     hotspots: [
       { id: "campaign", label: "Your campaigns live here." },
       { id: "new", label: "Start a new cold outreach campaign." },

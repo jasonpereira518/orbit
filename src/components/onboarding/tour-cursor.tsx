@@ -20,22 +20,13 @@ type TourCursorProps = {
   progress: number;
   playing: boolean;
   reducedMotion: boolean;
-  /** When true (e.g. start step), cycle hotspots on a timer instead of progress. */
-  freeCycle?: boolean;
 };
 
-const CYCLE_MS = 2800;
 const MEASURE_INTERVAL_MS = 100;
 const APPEAR_DELAY_MS = 380;
 
-function pickHotspotIndex(
-  count: number,
-  progress: number,
-  freeCycle: boolean,
-  cycleTick: number
-) {
+function pickHotspotIndex(count: number, progress: number) {
   if (count <= 0) return 0;
-  if (freeCycle) return cycleTick % count;
   const t = Math.min(0.999, Math.max(0, progress));
   return Math.min(count - 1, Math.floor(t * count));
 }
@@ -60,35 +51,16 @@ export function TourCursor({
   progress,
   playing,
   reducedMotion,
-  freeCycle = false,
 }: TourCursorProps) {
-  const [cycleTick, setCycleTick] = useState(0);
   const [point, setPoint] = useState<Point | null>(null);
   const [visible, setVisible] = useState(false);
   const lastId = useRef<string | null>(null);
 
-  const activeIndex = pickHotspotIndex(
-    hotspots.length,
-    progress,
-    freeCycle,
-    cycleTick
-  );
+  const activeIndex = pickHotspotIndex(hotspots.length, progress);
   const active = hotspots[activeIndex] ?? null;
-
-  // Free-cycle for start step (no auto-advance progress bar)
-  useEffect(() => {
-    if (!freeCycle || reducedMotion || !playing || hotspots.length === 0) {
-      return;
-    }
-    const id = window.setInterval(() => {
-      setCycleTick((t) => t + 1);
-    }, CYCLE_MS);
-    return () => window.clearInterval(id);
-  }, [freeCycle, reducedMotion, playing, hotspots.length]);
 
   // Reset when hotspots change (new step)
   useEffect(() => {
-    setCycleTick(0);
     setVisible(false);
     setPoint(null);
     lastId.current = null;
@@ -130,7 +102,7 @@ export function TourCursor({
       window.clearInterval(interval);
       window.removeEventListener("resize", update);
     };
-  }, [active, containerRef, reducedMotion, progress, cycleTick, visible]);
+  }, [active, containerRef, reducedMotion, progress, visible]);
 
   if (reducedMotion || !active || !point || !visible) return null;
 

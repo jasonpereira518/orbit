@@ -4,9 +4,24 @@ import { motion } from "motion/react";
 import type { PreviewProps } from "@/components/onboarding/tour-config";
 
 const people = [
-  { name: "Sarah Chen", meta: "OpenAI · Partnerships", score: 4 },
-  { name: "Marcus Lee", meta: "Stripe · Recruiting", score: 3 },
-  { name: "Priya Nair", meta: "Notion · Agents", score: 5 },
+  {
+    name: "Sarah Chen",
+    meta: "OpenAI · Partnerships",
+    closeness: 78,
+    chipClass: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  },
+  {
+    name: "Marcus Lee",
+    meta: "Stripe · Recruiting",
+    closeness: 41,
+    chipClass: "bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  },
+  {
+    name: "Priya Nair",
+    meta: "Notion · Agents",
+    closeness: 92,
+    chipClass: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  },
 ];
 
 export function ContactsPreview({ reducedMotion }: PreviewProps) {
@@ -37,9 +52,9 @@ export function ContactsPreview({ reducedMotion }: PreviewProps) {
             </div>
             <span
               data-tour-hotspot={i === 0 ? "score" : undefined}
-              className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
+              className={`rounded-full px-2 py-0.5 text-[10px] font-medium tabular-nums ${p.chipClass}`}
             >
-              {p.score}/5
+              {p.closeness}%
             </span>
           </motion.li>
         ))}

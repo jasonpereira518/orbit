@@ -18,6 +18,7 @@ import { WelcomePreview } from "@/components/onboarding/previews/welcome-preview
 import { ContactsPreview } from "@/components/onboarding/previews/contacts-preview";
 import { CapturePreview } from "@/components/onboarding/previews/capture-preview";
 import { ImportsPreview } from "@/components/onboarding/previews/imports-preview";
+import { RemindersPreview } from "@/components/onboarding/previews/reminders-preview";
 import { ChatPreview } from "@/components/onboarding/previews/chat-preview";
 import { GraphPreview } from "@/components/onboarding/previews/graph-preview";
 import { DashboardPreview } from "@/components/onboarding/previews/dashboard-preview";
@@ -31,6 +32,7 @@ const PREVIEWS: Record<TourNavKey, typeof WelcomePreview> = {
   contacts: ContactsPreview,
   capture: CapturePreview,
   imports: ImportsPreview,
+  reminders: RemindersPreview,
   chat: ChatPreview,
   graph: GraphPreview,
   dashboard: DashboardPreview,

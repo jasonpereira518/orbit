@@ -20,7 +20,7 @@ export function WelcomePreview({ reducedMotion }: PreviewProps) {
       >
         <span
           aria-hidden
-          className="pointer-events-none absolute inset-[-28%] rounded-full bg-[#599de7]/40 blur-2xl"
+          className="pointer-events-none absolute inset-[-28%] rounded-full bg-primary/40 blur-2xl"
         />
         <OrbitLogo size="xl" className="relative" />
       </motion.div>
