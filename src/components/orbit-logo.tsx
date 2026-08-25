@@ -20,13 +20,15 @@ const SIZES = {
  * repeated from `pricing-tiers.tsx` and `plan-comparison.tsx` instead of being imported —
  * an arbitrary value has to be visible to the scanner at build time.
  *
- * The offset is transparent, not `background`: this mark sits on the sidebar's glass, and a
- * solid offset would punch a mismatched disc out of it. Transparent leaves a clean gap.
+ * No `ring-offset`: an offset draws the ring 2px out from the mark with a transparent gap
+ * between them, and at this size (28–32px in the sidebar) that gap read as an uneven halo
+ * rather than a ring — thicker-looking on some sides than others. A thin ring flush against
+ * the circle's own edge stays visibly centred at any size.
  */
 const PLAN_RING: Record<Plan, string | null> = {
   free: null,
-  orbit: "ring-2 ring-offset-2 ring-offset-transparent ring-[#599de7]",
-  lifetime: "ring-2 ring-offset-2 ring-offset-transparent ring-[#f2c14e]",
+  orbit: "ring-[1.5px] ring-inset ring-[#599de7]",
+  lifetime: "ring-[1.5px] ring-inset ring-[#f2c14e]",
 };
 
 export function OrbitLogo({
