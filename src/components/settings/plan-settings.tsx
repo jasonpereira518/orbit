@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { Check, Sparkles } from "lucide-react";
+import { Check } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { planCopy } from "@/lib/plan-copy";
+import { PlanBadge } from "@/components/plan-badge";
 import type { Entitlements, PlanSource } from "@/lib/entitlements";
 
 const SOURCE_NOTE: Record<PlanSource, string | null> = {
@@ -38,10 +39,7 @@ export function PlanSettings({
           <h2 className="text-lg font-medium text-primary">Pricing Plan</h2>
           <p className="mt-1 text-sm text-muted-foreground">{copy.tagline}</p>
         </div>
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-border/70 px-3 py-1 text-sm font-medium text-primary">
-          {entitlements.plan !== "free" && <Sparkles className="size-3.5" />}
-          {copy.name}
-        </span>
+        <PlanBadge plan={entitlements.plan} className="text-sm" />
       </div>
 
       {note && <p className="text-sm text-muted-foreground">{note}</p>}

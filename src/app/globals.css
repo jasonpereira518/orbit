@@ -46,6 +46,7 @@
   --color-landing-accent: #f2c14e;
   --color-landing-button-surface: #eef7f4;
   --color-landing-button-label: #0f2e28;
+  --color-tier-lifetime: var(--tier-lifetime);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -98,6 +99,12 @@
   --import-connections: #5b5fc7;
   --import-messages: #c2694a;
   --import-calendar: #b8873a;
+  /* Orbit Pro reads as `--primary` (the product's own color, per the pricing
+     tiers). Orbit Lifetime gets this dedicated gold so paywalled surfaces can
+     name which tier(s) unlock a feature without borrowing a hue that already
+     means something else (chart series, calendar import, etc). Dark enough
+     for 4.5:1 text contrast on a light card, not just icon-level contrast. */
+  --tier-lifetime: #8a6423;
   --radius: 0.625rem;
   --sidebar: #f7f8f6;
   --sidebar-foreground: #1a1c1a;
@@ -150,6 +157,9 @@
   --import-connections: #9b9ff5;
   --import-messages: #e08a68;
   --import-calendar: #d9a855;
+  /* Brighter on a dark card so it keeps 4.5:1 text contrast (#8a6423 would
+     read as near-black here). */
+  --tier-lifetime: #f2c14e;
   --sidebar: #272727;
   --sidebar-foreground: #f0f0f0;
   --sidebar-primary: #599de7;
