@@ -4,7 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/lib/toast";
 import { createReminder, updateReminder } from "@/actions/reminders";
-import { listContacts } from "@/actions/contacts";
+import { searchContactsForPicker } from "@/actions/contacts";
 import type { ReminderActionKind } from "@/db/schema";
 import {
   ACTION_KIND_LABELS,
@@ -94,7 +94,7 @@ export function ReminderFormFields({
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    listContacts()
+    searchContactsForPicker()
       .then((rows) => {
         if (cancelled) return;
         setContacts(

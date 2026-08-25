@@ -49,15 +49,30 @@ function main() {
     if (!ok) missing.push(route);
   }
 
-  // An app route must stay protected, or the matcher is too broad to mean anything.
-  const guarded = "/dashboard";
-  const guardedOk = !check(guarded);
-  console.log(`  ${guardedOk ? "ok  " : "FAIL"} ${guarded} stays protected`);
+  // Routes that must stay behind auth. `/upgrade` is the important one: it is a purchase
+  // page in the same visual world as the marketing site, so it is easy to mistake for
+  // another marketing page and make public — but checkout needs a user to attribute the
+  // payment to.
+  const mustBeGuarded = ["/dashboard", "/upgrade", "/settings"];
+  const leaked: string[] = [];
+  for (const route of mustBeGuarded) {
+    const ok = !check(route);
+    console.log(`  ${ok ? "ok  " : "FAIL"} ${route} stays protected`);
+    if (!ok) leaked.push(route);
+  }
+  const guardedOk = leaked.length === 0;
 
   if (missing.length > 0 || !guardedOk) {
-    console.error(
-      `\nFAILED: add ${missing.join(", ")} to PUBLIC_ROUTES in src/lib/public-routes.ts`
-    );
+    if (missing.length > 0) {
+      console.error(
+        `\nFAILED: add ${missing.join(", ")} to PUBLIC_ROUTES in src/lib/public-routes.ts`
+      );
+    }
+    if (leaked.length > 0) {
+      console.error(
+        `\nFAILED: ${leaked.join(", ")} must NOT be in PUBLIC_ROUTES — they require a session`
+      );
+    }
     process.exit(1);
   }
   console.log("\nAll marketing routes are publicly reachable.");

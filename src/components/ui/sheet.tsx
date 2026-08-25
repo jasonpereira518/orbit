@@ -15,10 +15,6 @@ function SheetTrigger({ ...props }: SheetPrimitive.Trigger.Props) {
   return <SheetPrimitive.Trigger data-slot="sheet-trigger" {...props} />
 }
 
-function SheetClose({ ...props }: SheetPrimitive.Close.Props) {
-  return <SheetPrimitive.Close data-slot="sheet-close" {...props} />
-}
-
 function SheetPortal({ ...props }: SheetPrimitive.Portal.Props) {
   return <SheetPrimitive.Portal data-slot="sheet-portal" {...props} />
 }
@@ -129,7 +125,6 @@ function SheetDescription({
 export {
   Sheet,
   SheetTrigger,
-  SheetClose,
   SheetContent,
   SheetHeader,
   SheetFooter,
