@@ -54,6 +54,14 @@ export function ImportsPreview({ reducedMotion }: PreviewProps) {
           );
         })}
       </ul>
+      <motion.p
+        initial={reducedMotion ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: reducedMotion ? 0 : 0.35 }}
+        className="text-[11px] text-muted-foreground"
+      >
+        Everything you import feeds your searchable Knowledge base.
+      </motion.p>
     </div>
   );
 }
