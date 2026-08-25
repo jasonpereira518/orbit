@@ -6,6 +6,8 @@ import {
   syncStaleCalendarSubscriptions,
 } from "@/actions/calendar";
 import { ImportHub } from "@/components/imports/import-hub";
+import { requireUserId } from "@/lib/auth";
+import { getEntitlements } from "@/lib/entitlements";
 
 /** Large connections imports process in the background via after(); allow it room to run. */
 export const maxDuration = 300;
@@ -16,9 +18,10 @@ export default async function ImportsPage() {
     void syncStaleCalendarSubscriptions().catch(() => {});
   });
 
-  const [history, calendarSubscriptions] = await Promise.all([
+  const [history, calendarSubscriptions, entitlements] = await Promise.all([
     listImports(),
     listCalendarSubscriptions(),
+    getEntitlements(await requireUserId()),
   ]);
 
   return (
@@ -40,6 +43,7 @@ export default async function ImportsPage() {
       <ImportHub
         history={history}
         calendarSubscriptions={calendarSubscriptions}
+        canUseSync={entitlements.canUseSync}
       />
     </div>
   );

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
-import { motion, useReducedMotion } from "motion/react";
+import { motion } from "motion/react";
 import {
   APP_NAV_CORE,
   APP_NAV_EXTRAS,
@@ -12,6 +12,8 @@ import {
   type AppNavItem,
 } from "@/components/layout/app-nav";
 import { OrbitLogo } from "@/components/orbit-logo";
+import type { Plan } from "@/lib/plan-limits";
+import { SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -20,11 +22,9 @@ import { clerkAppearance } from "@/lib/clerk-appearance";
 function SidebarNavLink({
   item,
   pathname,
-  reducedMotion,
 }: {
   item: AppNavItem;
   pathname: string;
-  reducedMotion: boolean | null;
 }) {
   const active = isNavActive(pathname, item.href);
   const Icon = item.icon;
@@ -36,18 +36,17 @@ function SidebarNavLink({
         "relative flex items-center justify-center gap-2.5 rounded-xl px-2 py-2.5 text-sm transition-colors lg:justify-start lg:px-3 lg:py-2",
         active
           ? "text-sidebar-accent-foreground"
-          : "text-muted-foreground hover:bg-white/45 hover:text-foreground dark:hover:bg-white/8"
+          : // Hover darkens the label and nothing else. A hover background put a
+            // second bar on screen competing with the one that marks the active
+            // tab, which made the pill's slide read as a glitch rather than a move.
+            "text-muted-foreground hover:text-foreground"
       )}
     >
       {active && (
         <motion.span
-          layoutId={reducedMotion ? undefined : "app-nav-pill"}
+          layoutId="app-nav-pill"
           className="absolute inset-0 rounded-xl bg-white/70 shadow-sm ring-1 ring-black/[0.04] dark:bg-white/10 dark:ring-white/10"
-          transition={
-            reducedMotion
-              ? { duration: 0 }
-              : { type: "spring", stiffness: 380, damping: 32 }
-          }
+          transition={SPRING_PILL}
         />
       )}
       <Icon className="relative z-10 h-4 w-4 shrink-0" />
@@ -60,13 +59,13 @@ export function AppSidebar({
   pathname,
   clerkOn,
   demoMode,
+  plan,
 }: {
   pathname: string;
   clerkOn: boolean;
   demoMode: boolean;
+  plan: Plan;
 }) {
-  const reducedMotion = useReducedMotion();
-
   return (
     <aside className="liquid-glass flex h-full w-[4.5rem] flex-col text-sidebar-foreground lg:w-60">
       <div className="flex items-center justify-between gap-2 px-3 py-5 lg:px-5 lg:py-6">
@@ -75,7 +74,7 @@ export function AppSidebar({
           className="flex min-w-0 flex-1 items-center justify-center gap-2.5 lg:justify-start"
           title="Back to landing page"
         >
-          <OrbitLogo size="md" />
+          <OrbitLogo size="md" plan={plan} />
           <div className="hidden min-w-0 lg:block">
             <p className="font-[family-name:var(--font-display)] text-lg leading-none tracking-tight text-sidebar-primary">
               Orbit
@@ -109,7 +108,6 @@ export function AppSidebar({
             key={item.href}
             item={item}
             pathname={pathname}
-            reducedMotion={reducedMotion}
           />
         ))}
 
@@ -126,15 +124,16 @@ export function AppSidebar({
             key={item.href}
             item={item}
             pathname={pathname}
-            reducedMotion={reducedMotion}
           />
         ))}
 
-        <div className="mt-2">
+        {/* `mt-auto` drops Settings to the foot of the nav, clear of Extras.
+            `py-2` keeps it off the account divider below and holds the same gap
+            above when a short viewport leaves no slack for `mt-auto` to eat. */}
+        <div className="mt-auto py-2">
           <SidebarNavLink
             item={APP_NAV_SETTINGS}
             pathname={pathname}
-            reducedMotion={reducedMotion}
           />
         </div>
       </nav>

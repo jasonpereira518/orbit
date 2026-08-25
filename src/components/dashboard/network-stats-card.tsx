@@ -3,13 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import type { NetworkStatItem, NetworkStats } from "@/lib/network-stats";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 const COUNT_MS = 800;
-
-function prefersReducedMotion() {
-  if (typeof window === "undefined") return false;
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
 
 function easeOutCubic(t: number) {
   return 1 - Math.pow(1 - t, 3);
@@ -22,31 +18,36 @@ function AnimatedStatValue({
   item: NetworkStatItem;
   active: boolean;
 }) {
-  const [display, setDisplay] = useState(0);
+  const reduced = usePrefersReducedMotion();
+  const spanRef = useRef<HTMLSpanElement>(null);
   const frameRef = useRef<number | null>(null);
 
+  // Count-up writes textContent directly — a React render per frame for
+  // every visible stat is wasted work.
   useEffect(() => {
+    const span = spanRef.current;
+    if (!span || item.empty) return;
+
     if (frameRef.current != null) {
       cancelAnimationFrame(frameRef.current);
       frameRef.current = null;
     }
 
-    if (!active || item.empty) {
-      setDisplay(item.empty ? 0 : item.value);
+    const write = (v: number) => {
+      span.textContent = `${v.toLocaleString()}${item.suffix ?? ""}`;
+    };
+
+    if (!active || reduced || item.value === 0) {
+      write(item.value);
       return;
     }
 
-    if (prefersReducedMotion() || item.value === 0) {
-      setDisplay(item.value);
-      return;
-    }
-
-    setDisplay(0);
+    write(0);
     const start = performance.now();
 
     const tick = (now: number) => {
       const t = Math.min(1, (now - start) / COUNT_MS);
-      setDisplay(Math.round(easeOutCubic(t) * item.value));
+      write(Math.round(easeOutCubic(t) * item.value));
       if (t < 1) {
         frameRef.current = requestAnimationFrame(tick);
       } else {
@@ -61,15 +62,17 @@ function AnimatedStatValue({
         frameRef.current = null;
       }
     };
-  }, [active, item.empty, item.value]);
+  }, [active, reduced, item.empty, item.value, item.suffix]);
 
   if (item.empty) {
     return <span>—</span>;
   }
 
+  // Server-rendered content is the final value; the effect rewinds and
+  // counts up only when the card becomes active.
   return (
-    <span>
-      {display.toLocaleString()}
+    <span ref={spanRef}>
+      {item.value.toLocaleString()}
       {item.suffix}
     </span>
   );

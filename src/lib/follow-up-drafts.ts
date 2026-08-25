@@ -152,6 +152,7 @@ async function draftFromContext(input: {
     : null;
 
   const content = await completeJson(input.userId, {
+    operation: "followup.draft",
     temperature: 0.5,
     system: `You draft warm, specific follow-up messages for a personal networking CRM called Orbit.
 The user is following up with someone they already know — not cold outreach.

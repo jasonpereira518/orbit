@@ -86,20 +86,36 @@ export function RecruiterList({
                   : ""}
               </p>
               {r.myLink && (
-                <Badge variant="secondary" className="mt-2 text-[10px]">
-                  {r.myLink.status}
-                </Badge>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <Badge variant="secondary" className="text-[10px]">
+                    {r.myLink.status}
+                  </Badge>
+                  {r.myLink.sharedToPool === 0 && (
+                    <Badge variant="outline" className="text-[10px]">
+                      Kept private
+                    </Badge>
+                  )}
+                </div>
               )}
             </div>
-            <div className="text-right text-xs text-muted-foreground">
-              <p>
-                ★ {formatAvg(r.avgRating)}
-                <span className="text-muted-foreground/70">
-                  {" "}
-                  ({r.ratingCount})
-                </span>
-              </p>
-              <p className="mt-0.5">{r.logCount} logs</p>
+            <div className="shrink-0 text-right text-xs text-muted-foreground">
+              {/* Aggregates count pool-visible links only, so a recruiter only you have
+                  logged legitimately reports zero. Saying so beats rendering "★ — (0)",
+                  which reads as a bug rather than as "nobody else has rated them". */}
+              {r.ratingCount > 0 ? (
+                <>
+                  <p>
+                    ★ {formatAvg(r.avgRating)}
+                    <span className="text-muted-foreground/70">
+                      {" "}
+                      ({r.ratingCount})
+                    </span>
+                  </p>
+                  <p className="mt-0.5">{r.logCount} logs</p>
+                </>
+              ) : (
+                <p className="text-muted-foreground/70">No community ratings</p>
+              )}
               {!r.piiUnlocked && (
                 <p className="mt-1 text-[10px] uppercase tracking-wide">
                   Contact locked

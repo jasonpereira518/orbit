@@ -13,6 +13,11 @@ const outfit = Outfit({
 const fraunces = Fraunces({
   variable: "--font-display",
   subsets: ["latin"],
+  // Fraunces has a genuine italic cut, and the pricing headline uses it. Without
+  // declaring it here the browser would slant the upright instead, which on a display
+  // serif at 56px reads as a mistake. The italic file is only fetched by pages that
+  // actually set font-style: italic.
+  style: ["normal", "italic"],
 });
 
 export const metadata: Metadata = {

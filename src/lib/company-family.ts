@@ -65,45 +65,6 @@ const EXACT_ALIAS_TO_CANONICAL: Record<string, string> = {
   "open ai": "OpenAI",
 };
 
-/** Known corporate families — related names place near each other on the map. */
-const FAMILY_ROOTS = [
-  "amazon",
-  "google",
-  "microsoft",
-  "meta",
-  "facebook",
-  "apple",
-  "openai",
-  "anthropic",
-  "nvidia",
-  "oracle",
-  "salesforce",
-  "ibm",
-  "jpmorgan",
-  "jp morgan",
-  "goldman",
-  "morgan stanley",
-  "deloitte",
-  "mckinsey",
-  "bain",
-  "bcg",
-  "accenture",
-  "stripe",
-  "uber",
-  "airbnb",
-  "netflix",
-  "spotify",
-  "adobe",
-  "intel",
-  "cisco",
-  "databricks",
-  "snowflake",
-  "palantir",
-  "tesla",
-  "spacex",
-  "deepmind",
-] as const;
-
 function stripTrailingInc(normalized: string) {
   return normalized
     .replace(/[.,']/g, "")
@@ -139,38 +100,4 @@ export function canonicalCompanyClusterName(
   }
 
   return displayCompanyName(display);
-}
-
-/**
- * Family key used to seat related companies near each other
- * (Google ↔ Google DeepMind, Amazon ↔ Amazon Web Services).
- */
-export function companyFamilyKey(raw: string | null | undefined): string {
-  const canonical = canonicalCompanyClusterName(raw) || raw || "";
-  const normalized = stripTrailingInc(normalizeCompanyName(canonical));
-  if (!normalized) return "";
-
-  // Prefer longest matching known root
-  let best: string | null = null;
-  for (const root of FAMILY_ROOTS) {
-    if (
-      normalized === root ||
-      normalized.startsWith(`${root} `) ||
-      normalized.includes(` ${root} `)
-    ) {
-      if (!best || root.length > best.length) best = root;
-    }
-  }
-  if (best) {
-    // Normalize meta/facebook → meta, jp morgan variants → jpmorgan,
-    // deepmind → google so Google DeepMind sits with Google
-    if (best === "facebook") return "meta";
-    if (best === "jp morgan" || best === "jpmorgan") return "jpmorgan";
-    if (best === "deepmind") return "google";
-    return best;
-  }
-
-  // Fallback: first significant token (length ≥ 3)
-  const token = normalized.split(/\s+/).find((t) => t.length >= 3);
-  return token || normalized;
 }

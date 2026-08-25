@@ -11,6 +11,7 @@ import { WizardAddManual } from "@/components/onboarding/wizard/wizard-add-manua
 import { WizardCapture } from "@/components/onboarding/wizard/wizard-capture";
 import { WizardImport } from "@/components/onboarding/wizard/wizard-import";
 import { WizardReview, type WizardResult } from "@/components/onboarding/wizard/wizard-review";
+import { WizardTriage } from "@/components/onboarding/wizard/wizard-triage";
 
 export type WizardStep =
   | "intro"
@@ -18,6 +19,7 @@ export type WizardStep =
   | "manual"
   | "capture"
   | "import"
+  | "triage"
   | "review";
 
 const PATHS = [
@@ -47,6 +49,7 @@ const STEP_TITLES: Record<WizardStep, string> = {
   manual: "Add someone manually",
   capture: "Capture from notes",
   import: "Import LinkedIn connections",
+  triage: "Rate a few people",
   review: "You're set up",
 };
 
@@ -57,6 +60,7 @@ function isValidStep(step: string | null | undefined): step is WizardStep {
     step === "manual" ||
     step === "capture" ||
     step === "import" ||
+    step === "triage" ||
     step === "review"
   );
 }
@@ -77,7 +81,20 @@ export function SetupWizard({
 
   const goTo = useCallback((next: WizardStep) => {
     setStep(next);
-    void saveWizardStep(next);
+    // Fire-and-forget, but not silently. The only thing a failed save costs is
+    // resuming at the wrong step after a refresh, so blocking a transition the
+    // user has already made would be worse than the bug. It is worth a console
+    // error though: this call returned `{ok: false}` for the entire `triage`
+    // step for as long as that step existed, and nothing anywhere said so.
+    void saveWizardStep(next)
+      .then((res) => {
+        if (!res.ok) {
+          console.error(`Wizard step "${next}" was rejected by the server.`);
+        }
+      })
+      .catch((err) => {
+        console.error(`Failed to persist wizard step "${next}"`, err);
+      });
   }, []);
 
   const addResult = useCallback((result: WizardResult) => {
@@ -139,7 +156,7 @@ export function SetupWizard({
                   <WizardAddManual
                     onCreated={() => {
                       addResult({ kind: "manual" });
-                      goTo("review");
+                      goTo("triage");
                     }}
                   />
                 </div>
@@ -152,7 +169,7 @@ export function SetupWizard({
                     hasApiKey={hasApiKey}
                     onSaved={(count) => {
                       addResult({ kind: "capture", count });
-                      goTo("review");
+                      goTo("triage");
                     }}
                   />
                 </div>
@@ -164,11 +181,13 @@ export function SetupWizard({
                   <WizardImport
                     onContinue={() => {
                       addResult({ kind: "import" });
-                      goTo("review");
+                      goTo("triage");
                     }}
                   />
                 </div>
               )}
+
+              {step === "triage" && <WizardTriage onDone={() => goTo("review")} />}
 
               {step === "review" && (
                 <WizardReview

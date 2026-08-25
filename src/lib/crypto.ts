@@ -34,3 +34,13 @@ export function decrypt(payload: string): string {
   ]);
   return decrypted.toString("utf8");
 }
+
+/** Decrypt a stored secret, returning null for missing or undecryptable values. */
+export function decryptOrNull(encrypted?: string | null): string | null {
+  if (!encrypted) return null;
+  try {
+    return decrypt(encrypted);
+  } catch {
+    return null;
+  }
+}

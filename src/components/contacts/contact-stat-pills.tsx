@@ -1,7 +1,7 @@
 import { formatDistanceToNow } from "date-fns";
 import { Badge } from "@/components/ui/badge";
 import {
-  closenessPercentChipClass,
+  closenessTierChipClass,
   type ClosenessBreakdown,
 } from "@/lib/closeness";
 import { cn } from "@/lib/utils";
@@ -24,7 +24,7 @@ export function ContactStatPills({
         variant="secondary"
         className={cn(
           "rounded-full px-3 py-1 text-xs font-medium",
-          closenessPercentChipClass(closeness.closeness)
+          closenessTierChipClass(closeness.tier)
         )}
       >
         Closeness {pct}%

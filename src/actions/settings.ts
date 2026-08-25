@@ -16,6 +16,8 @@ import {
 import { requireUserId } from "@/lib/auth";
 import { encrypt } from "@/lib/crypto";
 import { purgeUserData } from "@/lib/user-data";
+import { getEntitlements } from "@/lib/entitlements";
+import { contactUsageForUser } from "@/lib/contact-writes";
 import {
   resolveThemePreference,
   type ThemePreference,
@@ -36,6 +38,12 @@ export async function getSettings() {
   });
 
   const provider = resolveAiProvider(settings?.aiProvider);
+  const entitlements = await getEntitlements(userId);
+  // Mirrors the two runtime resolvers so this card states what would actually be used:
+  // `sending` follows the env fallback in `getOutreachSendConfig`, `enrichment` follows
+  // the one in `getApolloApiKey`. They diverge on Lifetime, so they cannot share a flag.
+  const hostedSending = entitlements.canUseHostedSending;
+  const hostedEnrichment = entitlements.canUseHostedEnrichment;
 
   return {
     aiProvider: provider,
@@ -68,16 +76,40 @@ export async function getSettings() {
             : Boolean(settings?.anthropicApiKeyEncrypted),
       usingEnv: usingEnvKey(p.id, settings),
     })),
+    // Mirrors the plan gate in `getOutreachSendConfig` / `getApolloApiKey`: Orbit's shared
+    // keys only count as configured when the plan actually permits hosted sends, so the
+    // UI never reports a capability the send path will refuse.
     outreach: {
-      apollo: Boolean(settings?.apolloApiKeyEncrypted) || Boolean(process.env.APOLLO_API_KEY),
-      resend: Boolean(settings?.resendApiKeyEncrypted) || Boolean(process.env.RESEND_API_KEY),
+      apollo:
+        Boolean(settings?.apolloApiKeyEncrypted) ||
+        (hostedEnrichment && Boolean(process.env.APOLLO_API_KEY)),
+      resend:
+        Boolean(settings?.resendApiKeyEncrypted) ||
+        (hostedSending && Boolean(process.env.RESEND_API_KEY)),
       twilio:
         (Boolean(settings?.twilioAccountSidEncrypted) ||
-          Boolean(process.env.TWILIO_ACCOUNT_SID)) &&
+          (hostedSending && Boolean(process.env.TWILIO_ACCOUNT_SID))) &&
         (Boolean(settings?.twilioAuthTokenEncrypted) ||
-          Boolean(process.env.TWILIO_AUTH_TOKEN)) &&
-        Boolean(settings?.twilioFromNumber || process.env.TWILIO_FROM_NUMBER),
-      twilioFromNumber: settings?.twilioFromNumber || process.env.TWILIO_FROM_NUMBER || null,
+          (hostedSending && Boolean(process.env.TWILIO_AUTH_TOKEN))) &&
+        Boolean(
+          settings?.twilioFromNumber ||
+            (hostedSending ? process.env.TWILIO_FROM_NUMBER : null)
+        ),
+      twilioFromNumber:
+        settings?.twilioFromNumber ||
+        (hostedSending ? process.env.TWILIO_FROM_NUMBER : null) ||
+        null,
+    },
+    plan: {
+      plan: entitlements.plan,
+      source: entitlements.source,
+      contactLimit: entitlements.contactLimit,
+      canUseOutreach: entitlements.canUseOutreach,
+      canUseHostedSending: entitlements.canUseHostedSending,
+      canUseHostedEnrichment: entitlements.canUseHostedEnrichment,
+      canUseRecruiters: entitlements.canUseRecruiters,
+      canUseSync: entitlements.canUseSync,
+      canUseExtension: entitlements.canUseExtension,
     },
     socialLinks: {
       linkedin: settings?.socialLinks?.linkedin || "",
@@ -343,4 +375,15 @@ export async function deleteAllData() {
   revalidatePath("/contacts");
   revalidatePath("/settings");
   revalidatePath("/outreach");
+}
+
+/** Everything the settings billing card needs, in one round trip. */
+export async function getPlanOverview() {
+  const userId = await requireUserId();
+  const [entitlements, usage] = await Promise.all([
+    getEntitlements(userId),
+    contactUsageForUser(userId),
+  ]);
+
+  return { entitlements, usage };
 }

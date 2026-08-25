@@ -1,3 +1,5 @@
+import { hashHue } from "@/lib/hash";
+
 /** Curated primary brand colors for common schools (normalized keys). */
 const SCHOOL_COLORS: Record<string, string> = {
   "harvard university": "#A51C30",
@@ -142,14 +144,6 @@ export function normalizeOrgKey(name: string | null | undefined): string {
     .trim();
 }
 
-function hashHue(input: string): number {
-  let h = 0;
-  for (let i = 0; i < input.length; i++) {
-    h = (h * 31 + input.charCodeAt(i)) >>> 0;
-  }
-  return h % 360;
-}
-
 function hslToHex(h: number, s: number, l: number): string {
   const sat = s / 100;
   const light = l / 100;
@@ -228,6 +222,20 @@ export function clusterBrandColor(
   const key = normalizeOrgKey(name);
   if (lookupColor(key, SCHOOL_COLORS)) return schoolStarColor(name);
   return companyBrandColor(name);
+}
+
+/** Lerp a hex color toward white (0 = unchanged, 1 = pure white). */
+export function mixWithWhite(hex: string, whiteRatio: number): string {
+  const raw = hex.replace("#", "");
+  if (raw.length !== 6) return hex;
+  const t = Math.min(1, Math.max(0, whiteRatio));
+  const channel = (i: number) => {
+    const v = parseInt(raw.slice(i, i + 2), 16);
+    return Math.round(v + (255 - v) * t)
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return `#${channel(0)}${channel(2)}${channel(4)}`;
 }
 
 export function withAlpha(hex: string, alpha: number): string {

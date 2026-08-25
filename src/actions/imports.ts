@@ -21,12 +21,9 @@ import {
   daysAgo,
   findDuplicateCandidates,
 } from "@/lib/duplicates";
-import { createContact, updateContact } from "@/actions/contacts";
+import { createContactIfRoom, updateContact } from "@/actions/contacts";
 import { runLinkedInImportJob } from "@/lib/import-job-processor";
-import {
-  parseConnectedOn,
-  parseLinkedInConnectionsCsv,
-} from "@/lib/linkedin-connections";
+import { parseLinkedInConnectionsCsv } from "@/lib/linkedin-connections";
 import {
   parseLinkedInMessagesCsv,
   participantIdentity,
@@ -39,6 +36,7 @@ import { refreshOutreachSuggestions } from "@/lib/reminders";
 import {
   mapCalendarCsvRow,
   parseIcsEvents,
+  windowCalendarEvents,
   type ParsedCalendarEvent,
 } from "@/lib/calendar-import";
 import { upsertContactEmbedding } from "@/lib/search";
@@ -55,6 +53,7 @@ function mergeStats(
   const base = prev ?? {};
   return {
     skipped: (base.skipped ?? 0) + (next.skipped ?? 0),
+    blockedByPlan: (base.blockedByPlan ?? 0) + (next.blockedByPlan ?? 0),
     messagesImported:
       (base.messagesImported ?? 0) + (next.messagesImported ?? 0),
     meetingsLogged: (base.meetingsLogged ?? 0) + (next.meetingsLogged ?? 0),
@@ -315,156 +314,6 @@ export async function cancelImportSession(importId: string) {
   return updated;
 }
 
-export async function confirmLinkedInImport(
-  csvText: string,
-  fileName: string,
-  selectedIds?: string[],
-  options?: ImportChunkOptions
-) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const finalize = options?.finalize !== false;
-  const writeOpts = { skipRevalidate: true };
-
-  const importRow = await resolveImportRow(
-    userId,
-    { importType: "linkedin_connections", fileName },
-    options?.importId
-  );
-
-  try {
-    const { rows } = parseLinkedInConnectionsCsv(csvText);
-    const selected =
-      selectedIds === undefined
-        ? new Set(rows.map((_, i) => String(i)))
-        : new Set(selectedIds);
-
-    let created = 0;
-    let updated = 0;
-    let duplicates = 0;
-    let skipped = 0;
-    let processed = 0;
-
-    const existing = await db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
-    });
-
-    for (let index = 0; index < rows.length; index++) {
-      if (!selected.has(String(index))) continue;
-
-      const row = rows[index];
-      const fullName = `${row.firstName} ${row.lastName}`.trim();
-      if (!fullName) {
-        skipped++;
-        continue;
-      }
-
-      processed++;
-      const connectedOn = parseConnectedOn(row.connectedOn);
-      const dups = findDuplicateCandidates(existing, {
-        fullName,
-        email: row.email,
-        linkedinUrl: row.url,
-        company: row.company,
-        title: row.position,
-      });
-
-      if (dups[0] && dups[0].confidence >= DUPLICATE_MERGE_CONFIDENCE) {
-        duplicates++;
-        await updateContact(
-          dups[0].contact.id,
-          {
-            company: row.company || undefined,
-            title: row.position || undefined,
-            email: row.email || undefined,
-            linkedinUrl: row.url || undefined,
-            firstName: row.firstName || undefined,
-            lastName: row.lastName || undefined,
-            source: "linkedin",
-            dateMet: connectedOn || undefined,
-            howMet: "LinkedIn connection",
-            metContext: "online",
-          },
-          writeOpts
-        );
-        updated++;
-      } else {
-        const contact = await createContact(
-          {
-            fullName,
-            firstName: row.firstName,
-            lastName: row.lastName,
-            company: row.company || undefined,
-            title: row.position || undefined,
-            email: row.email || undefined,
-            linkedinUrl: row.url || undefined,
-            source: "linkedin",
-            relationshipScore: 2,
-            dateMet: connectedOn,
-            howMet: "LinkedIn connection",
-            metContext: "online",
-            tagNames: ["linkedin"],
-          },
-          writeOpts
-        );
-        existing.push(contact as (typeof existing)[number]);
-        created++;
-      }
-    }
-
-    const contactsCreated = (importRow.contactsCreated ?? 0) + created;
-    const contactsUpdated = (importRow.contactsUpdated ?? 0) + updated;
-    const duplicatesFound = (importRow.duplicatesFound ?? 0) + duplicates;
-    const rowsProcessed = (importRow.rowsProcessed ?? 0) + processed;
-    const stats = mergeStats(importRow.stats, { skipped });
-
-    await db
-      .update(imports)
-      .set({
-        status: finalize ? "completed" : "processing",
-        rowsProcessed,
-        contactsCreated,
-        contactsUpdated,
-        duplicatesFound,
-        stats,
-        errorMessage: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(imports.id, importRow.id));
-
-    if (finalize) {
-      revalidatePath("/");
-      revalidatePath("/contacts");
-      revalidatePath("/imports");
-      revalidatePath("/graph");
-      revalidatePath("/knowledge");
-      revalidatePath("/chat");
-    }
-
-    return {
-      importId: importRow.id,
-      rowsProcessed,
-      contactsCreated,
-      contactsUpdated,
-      duplicatesFound,
-      skipped,
-      chunkCreated: created,
-      chunkUpdated: updated,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Import failed";
-    await db
-      .update(imports)
-      .set({
-        status: "failed",
-        errorMessage: message.slice(0, 500),
-        updatedAt: new Date(),
-      })
-      .where(eq(imports.id, importRow.id));
-    throw err;
-  }
-}
-
 export async function previewLinkedInMessagesCsv(csvText: string) {
   const userId = await requireUserId();
   const { columns, messages } = parseLinkedInMessagesCsv(csvText);
@@ -547,6 +396,7 @@ export async function confirmLinkedInMessagesImport(
     }
 
     let created = 0;
+    let blockedByPlan = 0;
     let updated = 0;
     let duplicates = 0;
     let messagesImported = 0;
@@ -566,7 +416,7 @@ export async function confirmLinkedInMessagesImport(
           continue;
         }
 
-        const contact = await createContact(
+        const contact = await createContactIfRoom(
           {
             fullName: identity.fullName,
             firstName: identity.firstName,
@@ -580,6 +430,10 @@ export async function confirmLinkedInMessagesImport(
           },
           writeOpts
         );
+        if (!contact) {
+          blockedByPlan++;
+          continue;
+        }
         contactId = contact.id;
         existing = [...existing, contact as (typeof existing)[number]];
         created++;
@@ -745,6 +599,7 @@ export async function confirmLinkedInMessagesImport(
     ]);
     let stats = mergeStats(importRow.stats, {
       skipped,
+      blockedByPlan,
       messagesImported,
     });
     stats = {
@@ -798,6 +653,7 @@ export async function confirmLinkedInMessagesImport(
       revalidatePath("/graph");
       revalidatePath("/chat");
       revalidatePath("/knowledge");
+      for (const id of touchedAll) revalidatePath(`/contacts/${id}`);
     }
 
     return {
@@ -886,13 +742,8 @@ export async function previewCalendarImport(payload: {
     });
   }
 
-  // Focus on past 180 days through next 14 days
-  const now = Date.now();
-  const windowed = events.filter((e) => {
-    if (!e.start) return true;
-    const t = e.start.getTime();
-    return t >= now - 180 * 86400000 && t <= now + 14 * 86400000;
-  });
+  // One-time calendar upload: reach back CALENDAR_BACKFILL_DAYS.
+  const windowed = windowCalendarEvents(events);
 
   const preview = windowed.slice(0, 40).map((event) => {
     const people = peopleFromEvent(event);
@@ -990,11 +841,9 @@ export async function confirmCalendarImport(payload: {
     }
 
     const now = Date.now();
-    const windowed = events.filter((e) => {
-      if (!e.start) return true;
-      const t = e.start.getTime();
-      return t >= now - 180 * 86400000 && t <= now + 14 * 86400000;
-    });
+    // Same one-time-upload backfill window as previewCalendarImport, so a
+    // confirm always processes exactly what the preview showed.
+    const windowed = windowCalendarEvents(events);
 
     const chunkEvents = payload.chunk
       ? windowed.slice(
@@ -1199,6 +1048,7 @@ export async function confirmCalendarImport(payload: {
       revalidatePath("/contacts");
       revalidatePath("/imports");
       revalidatePath("/graph");
+      for (const id of touched) revalidatePath(`/contacts/${id}`);
     }
 
     return {
@@ -1311,6 +1161,7 @@ export async function confirmGoogleContactsImport(selectedIds: string[]) {
   });
 
   let created = 0;
+  let blockedByPlan = 0;
   let updated = 0;
 
   for (const row of rows) {
@@ -1339,7 +1190,7 @@ export async function confirmGoogleContactsImport(selectedIds: string[]) {
       );
       updated++;
     } else {
-      const contact = await createContact(
+      const contact = await createContactIfRoom(
         {
           fullName: row.fullName,
           firstName: row.firstName || undefined,
@@ -1357,8 +1208,12 @@ export async function confirmGoogleContactsImport(selectedIds: string[]) {
         },
         writeOpts
       );
-      existing.push(contact as (typeof existing)[number]);
-      created++;
+      if (!contact) {
+        blockedByPlan++;
+      } else {
+        existing.push(contact as (typeof existing)[number]);
+        created++;
+      }
     }
   }
 
@@ -1371,6 +1226,7 @@ export async function confirmGoogleContactsImport(selectedIds: string[]) {
     contactsCreated: created,
     contactsUpdated: updated,
     duplicatesFound: updated,
+    stats: { blockedByPlan },
   });
 
   try {
@@ -1384,7 +1240,7 @@ export async function confirmGoogleContactsImport(selectedIds: string[]) {
   revalidatePath("/imports");
   revalidatePath("/graph");
 
-  return { created, updated };
+  return { created, updated, blockedByPlan };
 }
 
 export type OutlookContactPerson = {
@@ -1468,6 +1324,7 @@ export async function confirmOutlookContactsImport(selectedIds: string[]) {
   });
 
   let created = 0;
+  let blockedByPlan = 0;
   let updated = 0;
 
   for (const row of rows) {
@@ -1495,7 +1352,7 @@ export async function confirmOutlookContactsImport(selectedIds: string[]) {
       );
       updated++;
     } else {
-      const contact = await createContact(
+      const contact = await createContactIfRoom(
         {
           fullName: row.fullName,
           firstName: row.firstName || undefined,
@@ -1512,8 +1369,12 @@ export async function confirmOutlookContactsImport(selectedIds: string[]) {
         },
         writeOpts
       );
-      existing.push(contact as (typeof existing)[number]);
-      created++;
+      if (!contact) {
+        blockedByPlan++;
+      } else {
+        existing.push(contact as (typeof existing)[number]);
+        created++;
+      }
     }
   }
 
@@ -1526,6 +1387,7 @@ export async function confirmOutlookContactsImport(selectedIds: string[]) {
     contactsCreated: created,
     contactsUpdated: updated,
     duplicatesFound: updated,
+    stats: { blockedByPlan },
   });
 
   try {
@@ -1539,5 +1401,5 @@ export async function confirmOutlookContactsImport(selectedIds: string[]) {
   revalidatePath("/imports");
   revalidatePath("/graph");
 
-  return { created, updated };
+  return { created, updated, blockedByPlan };
 }

@@ -2,10 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { updateMyLink } from "@/actions/recruiters";
+import { setLinkShared, updateMyLink } from "@/actions/recruiters";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/lib/toast";
 import type { RecruiterLinkStatus } from "@/db/schema";
 
@@ -21,14 +22,20 @@ export function RecruiterLinkEditor({
   status,
   notes,
   personalRating,
+  sharedToPool,
+  sharingEnabled,
 }: {
   recruiterId: string;
   status: RecruiterLinkStatus;
   notes: string | null;
   personalRating: number | null;
+  sharedToPool: boolean;
+  /** Global opt-in. When false the per-link control is inert and stays hidden. */
+  sharingEnabled: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const [shared, setShared] = useState(sharedToPool);
   const [form, setForm] = useState({
     status,
     notes: notes || "",
@@ -91,6 +98,45 @@ export function RecruiterLinkEditor({
           />
         </div>
       </div>
+      {sharingEnabled && (
+        <label className="flex items-start gap-3 rounded-xl bg-muted/40 p-4 text-sm">
+          <Checkbox
+            checked={!shared}
+            disabled={pending}
+            onCheckedChange={(v) => {
+              const next = !Boolean(v);
+              const previous = shared;
+              setShared(next);
+              start(async () => {
+                try {
+                  await setLinkShared(recruiterId, next);
+                  toast.success(
+                    next
+                      ? "Shared with the pool"
+                      : "Kept out of the pool"
+                  );
+                  router.refresh();
+                } catch (err) {
+                  setShared(previous);
+                  toast.error(
+                    err instanceof Error ? err.message : "Update failed"
+                  );
+                }
+              });
+            }}
+          />
+          <span>
+            <span className="font-medium text-foreground">
+              Keep this recruiter out of the shared pool
+            </span>
+            <span className="mt-1 block text-muted-foreground">
+              Your list is shared, but this one stays visible only to you — along
+              with your rating of them.
+            </span>
+          </span>
+        </label>
+      )}
+
       <div className="flex flex-wrap gap-2">
         <Button
           disabled={pending}

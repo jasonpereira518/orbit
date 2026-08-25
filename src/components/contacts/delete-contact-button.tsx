@@ -56,7 +56,7 @@ export function DeleteContactButton({
         disabled={pending || leaving}
         className={cn(
           "delete-contact-btn group/trash text-destructive",
-          "transition-all duration-300",
+          "transition-[color,background-color,border-color,opacity,scale] duration-base",
           "hover:border-destructive/40 hover:bg-destructive/10",
           leaving && "pointer-events-none scale-95 opacity-0"
         )}
@@ -64,14 +64,14 @@ export function DeleteContactButton({
       >
         <Trash2
           className={cn(
-            "size-3.5 transition-transform duration-300 ease-out",
+            "size-3.5 transition-transform duration-base ease-out",
             "group-hover/trash:-translate-y-0.5 group-hover/trash:scale-110",
             "group-hover/trash:animate-[trash-wiggle_0.45s_ease-in-out]"
           )}
         />
         <span
           className={cn(
-            "transition-all duration-300",
+            "transition-[opacity,translate] duration-base",
             leaving && "translate-x-1 opacity-0"
           )}
         >

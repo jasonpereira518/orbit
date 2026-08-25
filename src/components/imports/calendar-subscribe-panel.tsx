@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { Calendar as CalendarIcon } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   addCalendarSubscription,
@@ -42,20 +43,27 @@ export function CalendarSubscribePanel({
   const [pending, start] = useTransition();
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-      <div>
-        <h2 className="text-lg font-medium text-primary">
-          Calendar subscription
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Paste a private ICS URL. For Google Calendar: Settings → Integrate
-          calendar → <span className="text-foreground">Secret address in iCal
-          format</span>{" "}
-          (it includes <code className="text-xs">/private-…/</code>, not{" "}
-          <code className="text-xs">/public/</code>). Orbit polls it, keeps 1:1 /
-          networking events in sync, and can create contacts for people it
-          recognizes — team standups and focus blocks are ignored.
-        </p>
+    <section className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-calendar/70 bg-card p-6">
+      <div className="flex items-start gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-calendar/10 text-import-calendar">
+          <CalendarIcon className="h-4 w-4" />
+        </span>
+        <div className="min-w-0">
+          <h2 className="text-lg font-medium text-primary">
+            Calendar subscription
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Paste a private ICS URL. For Google Calendar: Settings → Integrate
+            calendar →{" "}
+            <span className="text-foreground">
+              Secret address in iCal format
+            </span>{" "}
+            (it includes <code className="text-xs">/private-…/</code>, not{" "}
+            <code className="text-xs">/public/</code>). Orbit polls it, keeps
+            1:1 / networking events in sync, and can create contacts for people
+            it recognizes — team standups and focus blocks are ignored.
+          </p>
+        </div>
       </div>
 
       <div className="space-y-2">
@@ -94,14 +102,14 @@ export function CalendarSubscribePanel({
                   toast.error(`Saved, but sync failed: ${res.syncError}`);
                 } else if (res.stats) {
                   toast.success(
-                    `Synced: ${res.stats.scanned} events scanned · ${res.stats.matched} networking · ${res.stats.contactsCreated} contacts · ${res.stats.created} new meetings`
+                    `Synced: ${res.stats.scanned} events scanned · ${res.stats.matched} networking · ${res.stats.contactsCreated} contacts · ${res.stats.created} new meetings`,
                   );
                 } else {
                   toast.success("Calendar subscribed");
                 }
               } catch (err) {
                 toast.error(
-                  err instanceof Error ? err.message : "Could not subscribe"
+                  err instanceof Error ? err.message : "Could not subscribe",
                 );
               }
             })
@@ -176,15 +184,15 @@ export function CalendarSubscribePanel({
                                     lastSyncError: null,
                                     lastSyncStats: stats,
                                   }
-                                : x
-                            )
+                                : x,
+                            ),
                           );
-                  toast.success(
-                    `Synced: ${stats.scanned} events scanned · ${stats.matched} networking · ${stats.contactsCreated} contacts · ${stats.created} new meetings`
-                  );
+                          toast.success(
+                            `Synced: ${stats.scanned} events scanned · ${stats.matched} networking · ${stats.contactsCreated} contacts · ${stats.created} new meetings`,
+                          );
                         } catch (err) {
                           toast.error(
-                            err instanceof Error ? err.message : "Sync failed"
+                            err instanceof Error ? err.message : "Sync failed",
                           );
                         }
                       })
@@ -204,8 +212,8 @@ export function CalendarSubscribePanel({
                         });
                         setSubs((prev) =>
                           prev.map((x) =>
-                            x.id === s.id ? { ...x, enabled: next ? 1 : 0 } : x
-                          )
+                            x.id === s.id ? { ...x, enabled: next ? 1 : 0 } : x,
+                          ),
                         );
                         toast.success(next ? "Enabled" : "Paused");
                       })

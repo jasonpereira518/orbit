@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { calendarSubscriptions } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { requireSyncUser } from "@/lib/plan-guards";
 import {
   syncCalendarSubscription,
   syncDueCalendarSubscriptions,
@@ -58,7 +59,7 @@ export async function addCalendarSubscription(input: {
   label?: string;
   selfEmail?: string;
 }) {
-  const userId = await requireUserId();
+  const userId = await requireSyncUser();
   const db = await getDb();
   const icsUrl = normalizeIcsUrl(input.icsUrl);
 
@@ -146,7 +147,7 @@ export async function removeCalendarSubscription(id: string) {
 }
 
 export async function syncCalendarSubscriptionNow(id: string) {
-  const userId = await requireUserId();
+  const userId = await requireSyncUser();
   const stats = await syncCalendarSubscription(userId, id);
   revalidatePath("/imports");
   revalidatePath("/");
@@ -155,7 +156,7 @@ export async function syncCalendarSubscriptionNow(id: string) {
 }
 
 export async function syncStaleCalendarSubscriptions() {
-  const userId = await requireUserId();
+  const userId = await requireSyncUser();
   const results = await syncDueCalendarSubscriptions(userId);
   if (results.length) {
     revalidatePath("/imports");

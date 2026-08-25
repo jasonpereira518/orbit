@@ -48,8 +48,18 @@ export function NetworkDepthChart({
 }: {
   metrics: NetworkMetrics;
 }) {
-  const { tierCounts, totalContacts, totalPeerEdges, avgPeerDegree, degreeBuckets } =
-    metrics;
+  const {
+    tierCounts,
+    totalContacts,
+    totalPeerEdges,
+    avgPeerDegree,
+    degreeBuckets,
+    metricsSampleSize,
+  } = metrics;
+  // Peer-link analysis compares every pair, so past a few hundred contacts it runs on the
+  // closest ones only. Say so rather than presenting a subset's numbers as the whole
+  // network's — the tier bars above still cover everyone.
+  const sampled = metricsSampleSize > 0 && metricsSampleSize < totalContacts;
   const tierTotal =
     tierCounts.inner + tierCounts.mid + tierCounts.outer || 1;
   const bucketTotal =
@@ -76,7 +86,7 @@ export function NetworkDepthChart({
               return (
                 <div
                   key={t.key}
-                  className={cn(t.color, "transition-all")}
+                  className={cn(t.color, "transition-[width] duration-slow ease-house")}
                   style={{ width: `${width}%` }}
                   title={`${t.label}: ${tierCounts[t.key]}`}
                 />
@@ -104,16 +114,26 @@ export function NetworkDepthChart({
             })}
           </div>
           <p className="text-xs text-muted-foreground">
-            Strength, recency, and goal alignment combined
+            Strength, recency, cadence, and goal alignment combined
           </p>
         </div>
 
         <div className="space-y-2.5 border-t border-border/60 pt-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Peer connections
-          </p>
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Peer connections
+            </p>
+            {sampled && (
+              <p className="text-xs text-muted-foreground/80">
+                across your closest {metricsSampleSize.toLocaleString()}
+              </p>
+            )}
+          </div>
           <div className="grid grid-cols-3 gap-4">
-            <StatMini label="Contacts" value={totalContacts} />
+            <StatMini
+              label="Contacts"
+              value={sampled ? metricsSampleSize : totalContacts}
+            />
             <StatMini label="Peer links" value={totalPeerEdges} />
             <StatMini label="Avg links" value={avgPeerDegree} />
           </div>

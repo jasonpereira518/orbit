@@ -1,6 +1,7 @@
 "use client";
 
 import { motion } from "motion/react";
+import { SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import {
   TOUR_NAV_CORE,
@@ -12,11 +13,9 @@ import { OrbitLogo } from "@/components/orbit-logo";
 function NavItem({
   item,
   active,
-  reducedMotion,
 }: {
   item: (typeof TOUR_NAV_CORE)[number] | (typeof TOUR_NAV_EXTRAS)[number];
   active: boolean;
-  reducedMotion?: boolean;
 }) {
   const Icon = item.icon;
   return (
@@ -30,13 +29,9 @@ function NavItem({
     >
       {active && (
         <motion.div
-          layoutId={reducedMotion ? undefined : "tour-nav-pill"}
+          layoutId="tour-nav-pill"
           className="absolute inset-0 rounded-lg bg-sidebar-accent shadow-sm"
-          transition={
-            reducedMotion
-              ? { duration: 0 }
-              : { type: "spring", stiffness: 380, damping: 32 }
-          }
+          transition={SPRING_PILL}
         />
       )}
       <Icon className="relative z-10 h-3.5 w-3.5" />
@@ -47,10 +42,8 @@ function NavItem({
 
 export function TourSidebar({
   activeKey,
-  reducedMotion,
 }: {
   activeKey: TourNavKey | null;
-  reducedMotion?: boolean;
 }) {
   return (
     <aside className="hidden w-44 shrink-0 flex-col rounded-2xl border border-border/70 bg-sidebar p-3 sm:flex">
@@ -78,7 +71,6 @@ export function TourSidebar({
             key={item.key}
             item={item}
             active={activeKey === item.key}
-            reducedMotion={reducedMotion}
           />
         ))}
 
@@ -95,7 +87,6 @@ export function TourSidebar({
             key={item.key}
             item={item}
             active={activeKey === item.key}
-            reducedMotion={reducedMotion}
           />
         ))}
       </nav>

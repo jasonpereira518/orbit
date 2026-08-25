@@ -26,6 +26,7 @@ async function summarizeThread(
   transcript: string
 ) {
   const content = await completeJson(userId, {
+    operation: "import.enrich",
     temperature: 0.2,
     user: `Contact: ${contactName}\n\nLinkedIn messages (oldest → newest):\n${transcript}`,
     system: `You summarize LinkedIn DM history for a personal networking CRM.

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -14,8 +15,10 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { CalendarClock, Trash2 } from "lucide-react";
+import { DUR_MS } from "@/lib/motion";
 import { toast } from "@/lib/toast";
-import { deleteContact } from "@/actions/contacts";
+import { deleteContact, listContactsPage } from "@/actions/contacts";
+import { CONTACTS_PAGE_SIZE, type ContactSort } from "@/lib/contacts-page";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { CompanyRoleLine } from "@/components/contacts/company-role-line";
 import { ContactAvatarPreview } from "@/components/contacts/contact-preview-card";
@@ -43,10 +46,14 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  closenessPercentChipClass,
+  closenessTierChipClass,
 } from "@/lib/closeness";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { cn } from "@/lib/utils";
+import {
+  AVATARS_UPDATED_EVENT,
+  type AvatarsUpdatedDetail,
+} from "@/components/contacts/avatar-backfill";
 
 export type ContactListItem = {
   id: string;
@@ -137,70 +144,178 @@ const TIER_TOOLTIP: Record<"inner" | "mid" | "outer", string> = {
   outer: "Outer orbit",
 };
 
+export type ContactsListFilters = {
+  q?: string;
+  company?: string;
+  minScore?: number;
+  followUp?: "due";
+  sort?: ContactSort;
+  letter?: string;
+};
+
 export function ContactsList({
-  initialContacts,
+  initialItems,
+  initialCursor,
+  total,
+  filters,
+  availableLetters: serverLetters,
+  activeLetter: seekLetter,
 }: {
-  initialContacts: ContactListItem[];
+  initialItems: ContactListItem[];
+  initialCursor: string | null;
+  total: number | null;
+  filters: ContactsListFilters;
+  availableLetters: string[];
+  activeLetter: string | null;
 }) {
-  const [contacts, setContacts] = useState(initialContacts);
+  const [contacts, setContacts] = useState(initialItems);
+  const [cursor, setCursor] = useState(initialCursor);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [exitingId, setExitingId] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
-  const [activeLetter, setActiveLetter] = useState<string | null>(null);
+  const [draftContact, setDraftContact] = useState<{ id: string; name: string } | null>(null);
+  const [activeLetter, setActiveLetter] = useState<string | null>(seekLetter);
   const [pending, start] = useTransition();
   const router = useRouter();
-  const exitTimers = useRef<Map<string, number>>(new Map());
-  const serverSignature = initialContacts
-    .map((c) => `${c.id}:${c.nextFollowUpAt ?? ""}:${c.profileImageUrl ?? ""}`)
-    .join(",");
+  const exitTimer = useRef<number | null>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    setContacts(initialContacts);
+  // Resync when the server sends a different first page — a filter change, or a refresh
+  // after a mutation. Adjusted during render rather than in an effect: React re-runs the
+  // component immediately without committing the stale list, where an effect would paint
+  // the old rows first and then replace them.
+  //
+  // Compared by identity, not by joining every row into a signature string — that string
+  // was rebuilt on every render over the entire network.
+  const [syncedFrom, setSyncedFrom] = useState(initialItems);
+  if (syncedFrom !== initialItems) {
+    setSyncedFrom(initialItems);
+    setContacts(initialItems);
+    setCursor(initialCursor);
+    setLoadError(false);
     setExitingId(null);
-  }, [serverSignature, initialContacts]);
+  }
 
   useEffect(() => {
-    const timers = exitTimers.current;
     return () => {
-      timers.forEach((timer) => window.clearTimeout(timer));
-      timers.clear();
+      if (exitTimer.current) window.clearTimeout(exitTimer.current);
     };
   }, []);
 
-  const sections = useMemo(() => {
-    const sorted = [...contacts].sort((a, b) => {
-      const byLast = lastNameOf(a).localeCompare(lastNameOf(b), undefined, {
-        sensitivity: "base",
-      });
-      if (byLast !== 0) return byLast;
-      return a.fullName.localeCompare(b.fullName, undefined, {
-        sensitivity: "base",
-      });
-    });
-
-    const groups = new Map<string, ContactListItem[]>();
-    for (const c of sorted) {
-      const letter = letterOf(lastNameOf(c));
-      const list = groups.get(letter) ?? [];
-      list.push(c);
-      groups.set(letter, list);
+  useEffect(() => {
+    function onAvatarsUpdated(event: Event) {
+      const detail = (event as CustomEvent<AvatarsUpdatedDetail>).detail;
+      const ids = detail?.contactIds;
+      if (!ids?.length) return;
+      const idSet = new Set(ids);
+      setContacts((prev) =>
+        prev.map((c) =>
+          idSet.has(c.id)
+            ? {
+                ...c,
+                profileImageUrl: `/api/avatars/${c.id}?t=${Date.now()}`,
+              }
+            : c
+        )
+      );
     }
-    return ALPHABET.filter((letter) => groups.has(letter)).map((letter) => ({
-      letter,
-      contacts: groups.get(letter)!,
-    }));
+    window.addEventListener(AVATARS_UPDATED_EVENT, onAvatarsUpdated);
+    return () => {
+      window.removeEventListener(AVATARS_UPDATED_EVENT, onAvatarsUpdated);
+    };
+  }, []);
+
+  const loadMore = useCallback(async () => {
+    if (!cursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const next = await listContactsPage({
+        ...filters,
+        cursor,
+        limit: CONTACTS_PAGE_SIZE,
+      });
+      // Guard against a page arriving twice — a duplicate id would render two rows with the
+      // same React key. The cursor should make this impossible; this is belt and braces
+      // because the symptom is silent and ugly.
+      setContacts((prev) => {
+        const seen = new Set(prev.map((c) => c.id));
+        return [...prev, ...next.items.filter((c) => !seen.has(c.id))];
+      });
+      setCursor(next.nextCursor);
+      setLoadError(false);
+    } catch {
+      // Stop the observer from retrying in a tight loop against a failing server; the
+      // button rendered in its place lets the user ask again deliberately.
+      setLoadError(true);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [cursor, filters, loadingMore]);
+
+  // Fetch the next page slightly before the sentinel is actually visible, so scrolling does
+  // not stall at the bottom waiting for a round trip.
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !cursor || loadError) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) void loadMore();
+      },
+      { rootMargin: "600px 0px" }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [cursor, loadError, loadMore]);
+
+  // Grouping only, no sorting: the rows arrive in the order Postgres produced, and re-sorting
+  // them here would both waste a pass of `localeCompare` and risk disagreeing with the
+  // cursor — which would silently drop contacts at page boundaries.
+  const sections = useMemo(() => {
+    const groups: Array<{ letter: string; contacts: ContactListItem[] }> = [];
+    for (const c of contacts) {
+      const letter = letterOf(lastNameOf(c));
+      const last = groups[groups.length - 1];
+      if (last && last.letter === letter) last.contacts.push(c);
+      else groups.push({ letter, contacts: [c] });
+    }
+    return groups;
   }, [contacts]);
 
+  // Which letters exist across the *whole* network, not just the pages loaded so far. The
+  // client can no longer answer that from the rows it holds.
   const availableLetters = useMemo(
-    () => new Set(sections.map((s) => s.letter)),
-    [sections]
+    () => new Set(serverLetters),
+    [serverLetters]
   );
 
+  /**
+   * Jump the list to a letter.
+   *
+   * If it is already on screen this scrolls, which keeps the drag-scrub feeling immediate.
+   * Otherwise it re-queries anchored at that letter — the seek that lets the rail keep
+   * working when only the first page is loaded. Scrubbing through the rail only ever
+   * scrolls; the navigation happens once, when the finger lifts.
+   */
   function scrollToLetter(letter: string) {
+    setActiveLetter(letter);
     const target =
       document.getElementById(`contact-letter-${letter}`) ??
-      nearestSectionEl(letter, availableLetters);
+      nearestSectionEl(letter, new Set(sections.map((s) => s.letter)));
     target?.scrollIntoView({ behavior: "auto", block: "start" });
-    setActiveLetter(letter);
+  }
+
+  function seekToLetter(letter: string | null) {
+    if (!letter) return;
+    if (document.getElementById(`contact-letter-${letter}`)) return;
+    const params = new URLSearchParams();
+    if (filters.q) params.set("q", filters.q);
+    if (filters.company) params.set("company", filters.company);
+    if (filters.minScore) params.set("minScore", String(filters.minScore));
+    if (filters.followUp) params.set("followUp", filters.followUp);
+    if (filters.sort && filters.sort !== "name") params.set("sort", filters.sort);
+    params.set("letter", letter);
+    router.replace(`/contacts?${params.toString()}`);
   }
 
   const confirmContact = contacts.find((c) => c.id === confirmId);
@@ -214,12 +329,24 @@ export function ContactsList({
     const id = confirmId;
     const name = confirmContact?.fullName ?? "Contact";
     setConfirmId(null);
+    // One exiting row collapses via CSS (grid-rows + opacity + slide). The
+    // per-frame layout cost is bounded because rows below the viewport are
+    // content-visibility skipped. (A motion/AnimatePresence FLIP here made
+    // every React commit reconcile thousands of projection nodes — unusable
+    // at large list sizes.)
     setExitingId(id);
 
-    const timer = window.setTimeout(() => {
-      setContacts((prev) => prev.filter((c) => c.id !== id));
+    exitTimer.current = window.setTimeout(() => {
+      // Snapshot what is actually on screen, not the first server page. The list now
+      // accumulates pages as the user scrolls, so restoring `initialItems` on failure would
+      // silently throw away everything past page one.
+      let restore: ContactListItem[] = [];
+      setContacts((prev) => {
+        restore = prev;
+        return prev.filter((c) => c.id !== id);
+      });
       setExitingId((current) => (current === id ? null : current));
-      exitTimers.current.delete(id);
+      exitTimer.current = null;
 
       start(async () => {
         try {
@@ -228,14 +355,11 @@ export function ContactsList({
           router.refresh();
         } catch {
           toast.error("Could not delete contact");
-          // Restore server list if delete failed.
-          setContacts(initialContacts);
+          setContacts(restore);
           router.refresh();
         }
       });
-    }, 420);
-
-    exitTimers.current.set(id, timer);
+    }, DUR_MS.slow);
   }
 
   if (contacts.length === 0) {
@@ -303,7 +427,11 @@ export function ContactsList({
                       onClick={openContact}
                       onKeyDown={onRowKeyDown}
                       className={cn(
-                        "contact-row grid cursor-pointer transition-[grid-template-rows,opacity] duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+                        // content-visibility skips layout/paint for offscreen
+                        // rows — the browser remembers real heights after
+                        // first render (`auto` keyword), 74px is the estimate.
+                        "contact-row grid cursor-pointer [contain-intrinsic-size:auto_74px] [content-visibility:auto]",
+                        "transition-[grid-template-rows,opacity] duration-slow ease-house",
                         "outline-none focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset",
                         exiting
                           ? "grid-rows-[0fr] opacity-0"
@@ -313,8 +441,7 @@ export function ContactsList({
                       <div className="overflow-hidden">
                         <div
                           className={cn(
-                            "flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-muted/40 sm:px-5",
-                            "transition-transform duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+                            "flex items-center gap-3 px-4 py-3.5 transition-[background-color,translate] duration-slow ease-house hover:bg-muted/40 sm:px-5",
                             exiting && "-translate-x-8"
                           )}
                         >
@@ -408,6 +535,7 @@ export function ContactsList({
                               nextFollowUpAt={c.nextFollowUpAt}
                               overdue={overdue}
                               scheduledLabel={scheduledLabel}
+                              onOpenDraft={setDraftContact}
                             />
 
                             <DeleteRowButton
@@ -426,11 +554,59 @@ export function ContactsList({
           ))}
         </ul>
 
+        {cursor ? (
+          <div
+            ref={sentinelRef}
+            className="flex items-center justify-center px-4 py-6 text-sm text-muted-foreground"
+          >
+            {/*
+              A real button, not just a scroll target. The observer below is the enhancement;
+              this is the thing that works without it — for keyboard users, and when the page
+              is short enough that the sentinel never leaves the viewport to re-enter it.
+            */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={loadingMore}
+              onClick={() => void loadMore()}
+            >
+              {loadError
+                ? "Couldn’t load more — retry"
+                : loadingMore
+                  ? "Loading…"
+                  : "Load more"}
+            </Button>
+          </div>
+        ) : (
+          total !== null &&
+          contacts.length < total && (
+            <div className="px-4 py-6 text-center text-sm text-muted-foreground">
+              Showing {contacts.length.toLocaleString()} of {total.toLocaleString()}
+            </div>
+          )
+        )}
+
+        {/* One draft sheet for the whole list — see FollowUpRowButton. */}
+        <FollowUpDraftSheet
+          open={draftContact !== null}
+          onOpenChange={(open) => {
+            if (!open) setDraftContact(null);
+          }}
+          contactId={draftContact?.id ?? ""}
+          contactName={draftContact?.name ?? ""}
+        />
+
         <AlphabetScrubber
           available={availableLetters}
           activeLetter={activeLetter}
           onSelect={scrollToLetter}
-          onScrubEnd={() => setActiveLetter(null)}
+          onScrubEnd={() => {
+            // Commit the jump once, on release. Firing it per scrub position would issue a
+            // navigation for every letter the finger passes over.
+            seekToLetter(activeLetter);
+            setActiveLetter(null);
+          }}
         />
 
         <Dialog
@@ -626,10 +802,9 @@ function ClosenessChip({
       ? `${Math.round(closeness * 100)}%`
       : `Score ${relationshipScore}`;
 
-  const chipClass =
-    typeof closeness === "number"
-      ? closenessPercentChipClass(closeness)
-      : "bg-muted text-muted-foreground";
+  const chipClass = closenessTier
+    ? closenessTierChipClass(closenessTier)
+    : "bg-muted text-muted-foreground";
 
   const tierHint = closenessTier ? ` (${TIER_TOOLTIP[closenessTier]})` : "";
 
@@ -651,28 +826,38 @@ function ClosenessChip({
       </TooltipTrigger>
       <TooltipContent side="top" className="max-w-[240px] text-left leading-snug">
         Closeness combines relationship strength, how recently you’ve
-        interacted, and fit with your goals. Higher means a stronger orbit
-        {tierHint}.
+        interacted, how often you’re in touch, and fit with your goals — scored
+        relative to everyone else in your orbit{tierHint}.
       </TooltipContent>
     </Tooltip>
   );
 }
 
+/**
+ * The follow-up control on a row.
+ *
+ * The popover stays per-row because it anchors to this button. The draft sheet does not —
+ * it is a full-screen dialog, identical for every contact, and only ever open for one at a
+ * time. Instantiating one per row meant a network of 3,000 contacts mounted 3,000 dialog
+ * roots that would never open, so it is raised to a single instance the list owns and this
+ * button merely requests.
+ */
 function FollowUpRowButton({
   contactId,
   contactName,
   nextFollowUpAt,
   overdue,
   scheduledLabel,
+  onOpenDraft,
 }: {
   contactId: string;
   contactName: string;
   nextFollowUpAt?: string | Date | null;
   overdue: boolean;
   scheduledLabel: string | null;
+  onOpenDraft: (contact: { id: string; name: string }) => void;
 }) {
   const [popoverOpen, setPopoverOpen] = useState(false);
-  const [sheetOpen, setSheetOpen] = useState(false);
 
   return (
     <>
@@ -730,17 +915,11 @@ function FollowUpRowButton({
             embedDraftSheet={false}
             onFollowUpClick={() => {
               setPopoverOpen(false);
-              setSheetOpen(true);
+              onOpenDraft({ id: contactId, name: contactName });
             }}
           />
         </PopoverContent>
       </Popover>
-      <FollowUpDraftSheet
-        open={sheetOpen}
-        onOpenChange={setSheetOpen}
-        contactId={contactId}
-        contactName={contactName}
-      />
     </>
   );
 }

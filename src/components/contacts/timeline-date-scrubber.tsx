@@ -78,7 +78,7 @@ export function TimelineDateScrubber({
             >
               <span
                 className={cn(
-                  "size-2.5 rounded-full border-2 transition-all",
+                  "size-2.5 rounded-full border-2 transition-[background-color,border-color,scale]",
                   isActive
                     ? "scale-125 border-primary bg-primary shadow-sm"
                     : "border-muted-foreground/50 bg-card group-hover:border-primary group-hover:bg-primary/20"

@@ -21,6 +21,7 @@ import {
   userHasApolloKey,
 } from "@/lib/apollo";
 import { requireUserId } from "@/lib/auth";
+import { requireOutreachUser } from "@/lib/plan-guards";
 import {
   computeCampaignMetrics,
   computeChannelBreakdown,
@@ -154,8 +155,46 @@ export async function getCampaign(campaignId: string) {
 }
 
 export async function getOutreachPerformanceSummary() {
-  const campaigns = await listCampaigns();
-  const ranked = [...campaigns]
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  // Slim projection — metrics only, no full message bodies / prospect trees.
+  const campaigns = await db.query.outreachCampaigns.findMany({
+    where: eq(outreachCampaigns.userId, userId),
+    columns: {
+      id: true,
+      name: true,
+      status: true,
+      defaultChannel: true,
+      updatedAt: true,
+    },
+    with: {
+      prospects: {
+        columns: { id: true, status: true },
+        with: {
+          messages: {
+            columns: {
+              id: true,
+              status: true,
+              outcome: true,
+              stepIndex: true,
+              channel: true,
+              sentAt: true,
+              scheduledFor: true,
+              repliedAt: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const withMetrics = campaigns.map((campaign) => ({
+    ...campaign,
+    metrics: computeCampaignMetrics(campaign.prospects),
+  }));
+
+  const ranked = [...withMetrics]
     .filter((c) => c.metrics.sentCount > 0)
     .sort((a, b) => {
       const aRate = a.metrics.successfulReplyRate ?? -1;
@@ -172,7 +211,7 @@ export async function getOutreachPerformanceSummary() {
       status: c.status,
     }));
 
-  const totals = campaigns.reduce(
+  const totals = withMetrics.reduce(
     (acc, c) => {
       acc.sent += c.metrics.sentCount;
       acc.bounced += c.metrics.bouncedCount;
@@ -203,7 +242,7 @@ export async function createCampaign(input: {
   replyCta?: string | null;
   sequenceSteps?: SequenceStep[];
 }) {
-  const userId = await requireUserId();
+  const userId = await requireOutreachUser();
   const db = await getDb();
 
   const filters =
@@ -244,7 +283,7 @@ export async function updateCampaign(
     reparseAudience?: boolean;
   }
 ) {
-  const userId = await requireUserId();
+  const userId = await requireOutreachUser();
   await requireCampaign(userId, campaignId);
   const db = await getDb();
 
@@ -278,7 +317,7 @@ export async function updateCampaign(
 }
 
 export async function searchProspects(campaignId: string, page = 1) {
-  const userId = await requireUserId();
+  const userId = await requireOutreachUser();
   const campaign = await requireCampaign(userId, campaignId);
   const db = await getDb();
 
@@ -366,7 +405,7 @@ export async function updateProspectSelection(input: {
   prospectIds: string[];
   status: "selected" | "excluded" | "suggested";
 }) {
-  const userId = await requireUserId();
+  const userId = await requireOutreachUser();
   await requireCampaign(userId, input.campaignId);
   const db = await getDb();
 
@@ -462,7 +501,7 @@ export async function generateOutreachDrafts(input: {
   templateSeed?: string;
   excludeLowSignal?: boolean;
 }) {
-  const userId = await requireUserId();
+  const userId = await requireOutreachUser();
   const campaign = await requireCampaign(userId, input.campaignId);
   const db = await getDb();
   const goals = await listActiveGoalTexts();
@@ -546,7 +585,7 @@ export async function regenerateOutreachDraft(input: {
   channel?: OutreachChannel;
   stepIndex?: number;
 }) {
-  const userId = await requireUserId();
+  const userId = await requireOutreachUser();
   const campaign = await requireCampaign(userId, input.campaignId);
   const db = await getDb();
   const goals = await listActiveGoalTexts();
@@ -605,7 +644,7 @@ export async function updateOutreachMessage(input: {
   subject?: string | null;
   body?: string;
 }) {
-  const userId = await requireUserId();
+  const userId = await requireOutreachUser();
   const db = await getDb();
 
   const message = await db.query.outreachMessages.findFirst({
@@ -659,7 +698,7 @@ export async function markMessageAction(input: {
   messageId: string;
   status: Extract<OutreachMessageStatus, "copied" | "opened">;
 }) {
-  const userId = await requireUserId();
+  const userId = await requireOutreachUser();
   const db = await getDb();
 
   const message = await db.query.outreachMessages.findFirst({
@@ -720,7 +759,7 @@ export async function logMessageOutcome(input: {
   outcome: OutreachMessageOutcome;
   notes?: string | null;
 }) {
-  const userId = await requireUserId();
+  const userId = await requireOutreachUser();
   const db = await getDb();
 
   const message = await db.query.outreachMessages.findFirst({
@@ -848,7 +887,7 @@ async function scheduleNextFollowUpIfNeeded(input: {
 }
 
 export async function generateDueFollowUps(campaignId: string) {
-  const userId = await requireUserId();
+  const userId = await requireOutreachUser();
   const campaign = await requireCampaign(userId, campaignId);
   const db = await getDb();
   const goals = await listActiveGoalTexts();
@@ -940,7 +979,7 @@ export async function generateDueFollowUps(campaignId: string) {
 }
 
 export async function sendOutreachMessageAction(messageId: string) {
-  const userId = await requireUserId();
+  const userId = await requireOutreachUser();
   const db = await getDb();
 
   const message = await db.query.outreachMessages.findFirst({
@@ -1039,7 +1078,7 @@ export async function previewBulkSendQuality(input: {
   campaignId: string;
   messageIds: string[];
 }) {
-  const userId = await requireUserId();
+  const userId = await requireOutreachUser();
   await requireCampaign(userId, input.campaignId);
   const db = await getDb();
 
@@ -1065,7 +1104,7 @@ export async function bulkSendOutreach(input: {
   messageIds: string[];
   ignoreWarnings?: boolean;
 }) {
-  const userId = await requireUserId();
+  const userId = await requireOutreachUser();
   await requireCampaign(userId, input.campaignId);
 
   const quality = await previewBulkSendQuality({
@@ -1117,7 +1156,7 @@ export async function saveProspectAsContact(input: {
   campaignId: string;
   prospectId: string;
 }) {
-  const userId = await requireUserId();
+  const userId = await requireOutreachUser();
   await requireCampaign(userId, input.campaignId);
   const db = await getDb();
 
@@ -1179,7 +1218,7 @@ export async function enrichProspect(input: {
   campaignId: string;
   prospectId: string;
 }) {
-  const userId = await requireUserId();
+  const userId = await requireOutreachUser();
   await requireCampaign(userId, input.campaignId);
   const db = await getDb();
 

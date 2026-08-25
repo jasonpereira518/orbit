@@ -3,7 +3,7 @@
  * Prefers explicit dates; resolves relative phrases against a reference date.
  */
 
-const MONTHS: Record<string, number> = {
+export const MONTHS: Record<string, number> = {
   january: 0,
   jan: 0,
   february: 1,
@@ -50,7 +50,7 @@ const WEEKDAYS: Record<string, number> = {
   sat: 6,
 };
 
-function atLocalNoon(d: Date) {
+export function atLocalNoon(d: Date) {
   const out = new Date(d);
   out.setHours(12, 0, 0, 0);
   return out;

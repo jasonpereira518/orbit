@@ -44,7 +44,7 @@ export function ContactEditSheet({
           <SheetHeader>
             <SheetTitle>Edit {name}</SheetTitle>
             <SheetDescription>
-              Update profile details, closeness, tags, and notes.
+              Update profile details, strength, tags, and notes.
             </SheetDescription>
           </SheetHeader>
           <div className="flex flex-col gap-6 px-4 pb-6">

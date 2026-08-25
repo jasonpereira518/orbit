@@ -1,8 +1,9 @@
-import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   recruiters,
   userRecruiterLinks,
+  userSettings,
   type Recruiter,
   type RecruiterLinkSource,
   type RecruiterLinkStatus,
@@ -65,11 +66,22 @@ export function normalizeLinkedinUrl(
   }
 }
 
+/**
+ * Shape a canonical row for a specific viewer.
+ *
+ * `pooledForViewer` must mean "the viewer is sharing AND this row is in the pool" —
+ * callers compute it with `pooledRecruiterIds`. Passing a bare "is in the pool" would
+ * hand contact details to private viewers, who are entitled to see nothing but their own.
+ *
+ * Note what is absent: `notes` and `aiSummary` reach the caller only inside `myLink`,
+ * which is null for anyone but the owner. They are never derived from `row`.
+ */
 export function toPublicRecruiter(
   row: Recruiter,
-  link: UserRecruiterLink | null
+  link: UserRecruiterLink | null,
+  pooledForViewer = false
 ): PublicRecruiter {
-  const unlocked = Boolean(link);
+  const unlocked = Boolean(link) || pooledForViewer;
   return {
     id: row.id,
     fullName: row.fullName,
@@ -132,6 +144,65 @@ export function mergeRecruiterFields(
   }
 
   return patch;
+}
+
+/**
+ * A recruiter is in the shared pool when at least one owner who has opted in still has
+ * this particular link opted in.
+ *
+ * Deliberately a live EXISTS rather than a denormalized counter on `recruiters`: flipping
+ * the toggle off has to withdraw a user's contributions *immediately*, and a cached count
+ * would leave them exposed until something recomputed it.
+ */
+function pooledPredicate() {
+  return sql`exists (
+    select 1 from user_recruiter_links url
+    join user_settings us on us.user_id = url.user_id
+    where url.recruiter_id = ${recruiters.id}
+      and url.shared_to_pool = 1
+      and us.recruiter_sharing = 1
+  )`;
+}
+
+function linkedByViewerPredicate(viewerUserId: string) {
+  return sql`exists (
+    select 1 from user_recruiter_links url
+    where url.recruiter_id = ${recruiters.id}
+      and url.user_id = ${viewerUserId}
+  )`;
+}
+
+/** Whether this user has opted into the shared pool. */
+export async function isViewerSharing(userId: string): Promise<boolean> {
+  const db = await getDb();
+  const row = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { recruiterSharing: true },
+  });
+  return (row?.recruiterSharing ?? 0) === 1;
+}
+
+/**
+ * Which of these recruiter ids are in the pool, in one query.
+ *
+ * Batched on purpose — the per-row alternative is a query per result, and every list
+ * surface needs this for a whole page at once.
+ */
+export async function pooledRecruiterIds(ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const db = await getDb();
+  const rows = await db
+    .selectDistinct({ recruiterId: userRecruiterLinks.recruiterId })
+    .from(userRecruiterLinks)
+    .innerJoin(userSettings, eq(userSettings.userId, userRecruiterLinks.userId))
+    .where(
+      and(
+        inArray(userRecruiterLinks.recruiterId, ids),
+        eq(userRecruiterLinks.sharedToPool, 1),
+        eq(userSettings.recruiterSharing, 1)
+      )
+    );
+  return new Set(rows.map((r) => r.recruiterId));
 }
 
 export async function findMatchingRecruiter(input: {
@@ -226,12 +297,30 @@ export async function upsertCanonicalRecruiter(input: {
   return created;
 }
 
+/**
+ * Recompute the public aggregates from *pool-visible links only*.
+ *
+ * Private users contribute nothing, ratings included — otherwise a rating from someone
+ * who opted out still moves a public average they cannot see, and `log_count` would leak
+ * how many hidden users have logged a recruiter.
+ *
+ * Consequence: a recruiter only you have logged shows `ratingCount === 0`. That is
+ * correct — it means "no community ratings" — so UI must render that state rather than
+ * an empty zero-star row. Your own score lives on `myLink.personalRating`.
+ */
 export async function recomputeRecruiterRating(recruiterId: string) {
   const db = await getDb();
-  const links = await db.query.userRecruiterLinks.findMany({
-    where: eq(userRecruiterLinks.recruiterId, recruiterId),
-    columns: { personalRating: true },
-  });
+  const links = await db
+    .select({ personalRating: userRecruiterLinks.personalRating })
+    .from(userRecruiterLinks)
+    .innerJoin(userSettings, eq(userSettings.userId, userRecruiterLinks.userId))
+    .where(
+      and(
+        eq(userRecruiterLinks.recruiterId, recruiterId),
+        eq(userRecruiterLinks.sharedToPool, 1),
+        eq(userSettings.recruiterSharing, 1)
+      )
+    );
 
   const ratings = links
     .map((l) => l.personalRating)
@@ -314,34 +403,92 @@ export async function ensureUserLink(input: {
   return { link: created, created: true };
 }
 
+function matchesQuery(q: string) {
+  const pattern = `%${q}%`;
+  return or(
+    ilike(recruiters.fullName, pattern),
+    ilike(recruiters.firm, pattern),
+    sql`exists (
+      select 1 from jsonb_array_elements_text(coalesce(${recruiters.specialty}, '[]'::jsonb)) s
+      where s ilike ${pattern}
+    )`
+  );
+}
+
+/**
+ * Search recruiters *visible to this viewer*.
+ *
+ * `viewerUserId` is required rather than optional on purpose: this function is the read
+ * boundary for a globally-keyed table, and an optional viewer is one forgotten argument
+ * away from returning the entire directory to someone who opted out.
+ *
+ * Sharing viewer  -> pool + anything they linked themselves.
+ * Private viewer  -> only what they linked themselves.
+ */
 export async function searchCanonicalRecruiters(opts: {
   q?: string;
   limit?: number;
+  viewerUserId: string;
+  viewerIsSharing: boolean;
 }) {
   const db = await getDb();
   const limit = opts.limit ?? 40;
   const q = opts.q?.trim();
 
-  if (!q) {
-    return db.query.recruiters.findMany({
-      orderBy: [desc(recruiters.avgRating), desc(recruiters.logCount)],
-      limit,
-    });
-  }
+  const mine = linkedByViewerPredicate(opts.viewerUserId);
+  // Own links stay visible even when excluded from the pool — `shared_to_pool = 0` hides
+  // a recruiter from everyone else, never from the person who logged them.
+  const visibility = opts.viewerIsSharing ? or(pooledPredicate(), mine) : mine;
 
-  const pattern = `%${q}%`;
   return db.query.recruiters.findMany({
-    where: or(
-      ilike(recruiters.fullName, pattern),
-      ilike(recruiters.firm, pattern),
-      sql`exists (
-        select 1 from jsonb_array_elements_text(coalesce(${recruiters.specialty}, '[]'::jsonb)) s
-        where s ilike ${pattern}
-      )`
-    ),
+    where: q ? and(visibility, matchesQuery(q)) : visibility,
     orderBy: [desc(recruiters.avgRating), desc(recruiters.logCount)],
     limit,
   });
+}
+
+/**
+ * Pool recruiters the viewer has no link to — the "Discover" surface.
+ * Returns nothing for a private viewer, which is the whole point of the exchange.
+ */
+export async function listPoolDiscoveries(opts: {
+  viewerUserId: string;
+  viewerIsSharing: boolean;
+  q?: string;
+  limit?: number;
+}) {
+  if (!opts.viewerIsSharing) return [];
+  const db = await getDb();
+  const q = opts.q?.trim();
+  const notMine = sql`not exists (
+    select 1 from user_recruiter_links url
+    where url.recruiter_id = ${recruiters.id}
+      and url.user_id = ${opts.viewerUserId}
+  )`;
+
+  return db.query.recruiters.findMany({
+    where: q
+      ? and(pooledPredicate(), notMine, matchesQuery(q))
+      : and(pooledPredicate(), notMine),
+    orderBy: [desc(recruiters.avgRating), desc(recruiters.logCount)],
+    limit: opts.limit ?? 40,
+  });
+}
+
+/**
+ * Recompute every recruiter this user links to. Run after a sharing toggle, since one
+ * flip adds or removes this user's rating from every recruiter they have logged.
+ * Callers should defer it with `after()` — a heavy linker means one recompute per link.
+ */
+export async function resweepUserRatings(userId: string) {
+  const db = await getDb();
+  const links = await db.query.userRecruiterLinks.findMany({
+    where: eq(userRecruiterLinks.userId, userId),
+    columns: { recruiterId: true },
+  });
+  for (const link of links) {
+    await recomputeRecruiterRating(link.recruiterId);
+  }
 }
 
 /** Community score used for chat ranking: avgRating (x10 stored) * logCount. */

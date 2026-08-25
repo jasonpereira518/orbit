@@ -6,16 +6,30 @@ import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { ensureUserSettings } from "@/lib/user-settings";
+import type { WizardStep } from "@/components/onboarding/wizard/setup-wizard";
 
-/** Keep in sync with the wizard's step ids in setup-wizard.tsx. */
-const VALID_WIZARD_STEPS = new Set([
-  "intro",
-  "add-people",
-  "manual",
-  "capture",
-  "import",
-  "review",
-]);
+/**
+ * Every step id the wizard can be resumed at.
+ *
+ * A `Record<WizardStep, true>` rather than a bare `Set` of strings so that
+ * adding a step to the union in setup-wizard.tsx without adding it here is a
+ * compile error. It used to be a hand-maintained set behind a "keep in sync"
+ * comment, and it fell out of sync the moment `triage` landed: `saveWizardStep`
+ * silently returned `{ok: false}` for the whole step, so anyone who refreshed
+ * mid-triage resumed at `import` and did the import again. The import is
+ * type-only and erased at build time, so this does not pull a client component
+ * into the server bundle.
+ */
+const WIZARD_STEP_IDS: Record<WizardStep, true> = {
+  intro: true,
+  "add-people": true,
+  manual: true,
+  capture: true,
+  import: true,
+  triage: true,
+  review: true,
+};
+const VALID_WIZARD_STEPS = new Set<string>(Object.keys(WIZARD_STEP_IDS));
 
 export async function getWizardStatus() {
   const userId = await requireUserId();

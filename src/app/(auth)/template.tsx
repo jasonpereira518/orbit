@@ -1,9 +1,9 @@
-import { PageTransition } from "@/components/layout/page-transition";
+import { RouteTransition } from "@/components/layout/route-transition";
 
 export default function AuthTemplate({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return <PageTransition>{children}</PageTransition>;
+  return <RouteTransition>{children}</RouteTransition>;
 }

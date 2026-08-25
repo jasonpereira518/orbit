@@ -33,6 +33,7 @@ const TYPE_LABELS: Record<string, string> = {
   post_meeting: "Post-meeting",
   generated: "Auto-generated",
   ai_suggested: "AI suggested",
+  extracted_date: "From notes",
 };
 
 const TYPE_STYLES: Record<string, string> = {
@@ -41,6 +42,7 @@ const TYPE_STYLES: Record<string, string> = {
   post_meeting: "bg-sky-500/15 text-sky-800 dark:text-sky-200",
   generated: "bg-muted text-muted-foreground",
   ai_suggested: "bg-violet-500/15 text-violet-800 dark:text-violet-200",
+  extracted_date: "bg-amber-500/15 text-amber-800 dark:text-amber-200",
 };
 
 function dueLabel(dueDate: Date | string | null | undefined) {

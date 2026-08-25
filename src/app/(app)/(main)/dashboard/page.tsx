@@ -1,287 +1,79 @@
-import Link from "next/link";
-import { formatDistanceToNow } from "date-fns";
-import { Bell, Sparkles, Users } from "lucide-react";
+import { Suspense } from "react";
 import { getOutreachPerformanceSummary } from "@/actions/outreach";
 import { fetchDashboard } from "@/actions/reminders";
-import { fetchNetworkStats } from "@/actions/stats";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
-import { DashboardGraphPreview } from "@/components/dashboard/dashboard-graph-preview";
-import { DueFollowUpRow } from "@/components/dashboard/due-follow-up-row";
-import { GenerateFollowUpsButton } from "@/components/dashboard/generate-follow-ups-button";
-import { GoalsSummary } from "@/components/dashboard/goals-summary";
-import { NetworkDepthChart } from "@/components/dashboard/network-depth-chart";
-import { NetworkStatsCard } from "@/components/dashboard/network-stats-card";
-import { RemindersDashboardCard } from "@/components/dashboard/reminders-dashboard-card";
-import { SuggestedOutreachCard } from "@/components/dashboard/suggested-outreach-card";
-import { OutreachPerformanceCard } from "@/components/outreach/outreach-performance-card";
-import { buttonVariants } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { DashboardHeader } from "@/components/dashboard/dashboard-header";
+import {
+  ChartsSection,
+  OutreachPerformanceSection,
+  RecentlyUpdatedSection,
+  RemindersAndFollowUpsSection,
+  StatsSection,
+  SuggestedOutreachSection,
+  TailSection,
+} from "@/components/dashboard/dashboard-sections";
+import {
+  DashboardCardSkeleton,
+  DashboardStatRowSkeleton,
+} from "@/components/loading/page-skeletons";
 
-export default async function DashboardPage() {
-  const [data, networkStats, outreachPerformance] = await Promise.all([
-    fetchDashboard(),
-    fetchNetworkStats(),
-    getOutreachPerformanceSummary(),
-  ]);
-
-  function tierForContact(id: string) {
-    return data.closenessById.get(id)?.tier;
-  }
-
-  function contactMeta(contactId: string | null | undefined) {
-    if (!contactId) {
-      return {
-        name: "Unknown contact",
-        title: null as string | null,
-        company: null as string | null,
-      };
-    }
-    const c = data.contactById.get(contactId);
-    return {
-      name: data.contactNameById.get(contactId) || c?.fullName || "Contact",
-      title: c?.title ?? null,
-      company: c?.company ?? null,
-    };
-  }
+export default function DashboardPage() {
+  // Start both fetches WITHOUT awaiting: the header and grid shell flush
+  // immediately, and each Suspense section below awaits the shared promise
+  // it needs. The bundle promise feeds every card from one network scan
+  // (don't split it into per-card fetches); the outreach summary streams
+  // independently.
+  const bundle = fetchDashboard();
+  const outreachSummary = getOutreachPerformanceSummary();
 
   return (
     <div className="space-y-8">
-      <header className="space-y-2">
-        <p className="text-sm font-medium text-primary">Your network</p>
-        <h1 className="font-[family-name:var(--font-display)] text-4xl tracking-tight text-primary">
-          Stay in orbit
-        </h1>
-        <p className="max-w-xl text-muted-foreground">
-          Follow-ups, dormant connections, and people worth reaching out to — in one place.
-          Press{" "}
-          <kbd className="rounded-md border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[11px]">
-            ⌘K
-          </kbd>{" "}
-          to ask your network.
-        </p>
-      </header>
+      <DashboardHeader />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          label="Contacts"
-          value={data.stats.totalContacts}
-          icon={<Users className="h-4 w-4" />}
-          href="/contacts"
-        />
-        <StatCard
-          label="Due follow-ups"
-          value={data.stats.dueFollowUps}
-          icon={<Bell className="h-4 w-4" />}
-          href="/contacts?followUp=due"
-          subtitle={data.stats.dueFollowUps > 0 ? "Needs attention" : undefined}
-        />
-        <StatCard
-          label="Strong ties"
-          value={data.stats.strongConnections}
-          icon={<Sparkles className="h-4 w-4" />}
-          href="/graph"
-          subtitle="Inner + mid orbit"
-        />
-        <StatCard
-          label="Reminders"
-          value={data.stats.pendingReminders}
-          icon={<Bell className="h-4 w-4" />}
-          href="/reminders"
-        />
-      </div>
+      <Suspense fallback={<DashboardStatRowSkeleton />}>
+        <StatsSection bundle={bundle} />
+      </Suspense>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <NetworkDepthChart metrics={data.networkMetrics} />
-        <DashboardGraphPreview graphPreview={data.graphPreview} />
+        <Suspense
+          fallback={
+            <>
+              <DashboardCardSkeleton className="h-80" />
+              <DashboardCardSkeleton className="h-80" />
+            </>
+          }
+        >
+          <ChartsSection bundle={bundle} />
+        </Suspense>
       </div>
 
       <div className="grid items-stretch gap-6 lg:grid-cols-2">
-        <SuggestedOutreachCard
-          items={data.suggestions.map((s) => {
-            const contactId = s.relatedContactIds?.[0] ?? null;
-            const meta = contactMeta(contactId);
-            return {
-              id: s.id,
-              suggestionType: s.suggestionType,
-              description: s.description,
-              contactId,
-              contactName: meta.name,
-              contactTitle: meta.title,
-              contactCompany: meta.company,
-              tier: contactId ? tierForContact(contactId) : undefined,
-            };
-          })}
-        />
+        <Suspense fallback={<DashboardCardSkeleton className="h-64" />}>
+          <SuggestedOutreachSection bundle={bundle} />
+        </Suspense>
+        <Suspense fallback={<DashboardCardSkeleton className="h-64" />}>
+          <OutreachPerformanceSection summary={outreachSummary} />
+        </Suspense>
+      </div>
 
-        <OutreachPerformanceCard
-          accountRate={outreachPerformance.accountMetrics.successfulReplyRate}
-          sentCount={outreachPerformance.accountMetrics.sentCount}
-          positiveReplyCount={
-            outreachPerformance.accountMetrics.positiveReplyCount
+      <div className="grid items-start gap-6 lg:grid-cols-2">
+        <Suspense
+          fallback={
+            <>
+              <DashboardCardSkeleton className="h-64" />
+              <DashboardCardSkeleton className="h-64" />
+            </>
           }
-          campaigns={outreachPerformance.topCampaigns}
-        />
+        >
+          <RemindersAndFollowUpsSection bundle={bundle} />
+        </Suspense>
+        <Suspense fallback={<DashboardCardSkeleton className="h-64" />}>
+          <RecentlyUpdatedSection bundle={bundle} />
+        </Suspense>
       </div>
 
-      <div className="grid items-start gap-6 lg:grid-cols-2">
-        <RemindersDashboardCard
-          items={data.reminders.map((r) => ({
-            id: r.id,
-            title: r.title,
-            description: r.description,
-            dueDate: r.dueDate,
-            reminderType: r.reminderType,
-            actionKind: r.actionKind,
-            contactId: r.contactId,
-            contactName: r.contactId
-              ? data.contactNameById.get(r.contactId) ?? null
-              : null,
-          }))}
-        />
-
-        <Card id="due-follow-ups" className="border-border/70 shadow-none scroll-mt-8">
-          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-            <CardTitle className="text-base">Due follow-ups</CardTitle>
-            {data.dueFollowUps.length > 0 && (
-              <div className="flex items-center gap-1.5">
-                <GenerateFollowUpsButton limit={8} />
-                <Link
-                  href="/contacts?followUp=due"
-                  className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
-                >
-                  View all
-                </Link>
-              </div>
-            )}
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {data.dueFollowUps.length === 0 ? (
-              <div className="space-y-3">
-                <Empty hint="You're caught up." />
-                <GenerateFollowUpsButton
-                  limit={8}
-                  label="Generate follow-ups"
-                />
-              </div>
-            ) : (
-              data.dueFollowUps.map((c) => (
-                <DueFollowUpRow
-                  key={c.id}
-                  id={c.id}
-                  fullName={c.fullName}
-                  title={c.title}
-                  company={c.company}
-                  tier={tierForContact(c.id)}
-                  nextFollowUpAt={c.nextFollowUpAt}
-                  lastInteractionAt={c.lastInteractionAt}
-                />
-              ))
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid items-start gap-6 lg:grid-cols-2">
-        <Card className="border-border/70 shadow-none">
-          <CardHeader>
-            <CardTitle className="text-base">Recently updated</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {data.recentContacts.length === 0 ? (
-              <Empty hint="No contacts yet. Start by capturing notes." />
-            ) : (
-              data.recentContacts.map((c) => {
-                const tier = tierForContact(c.id);
-                return (
-                  <Link
-                    key={c.id}
-                    href={`/contacts/${c.id}`}
-                    className="flex items-center justify-between rounded-lg px-2 py-2 hover:bg-muted/60"
-                  >
-                    <div className="flex min-w-0 items-center gap-2">
-                      {tier && <ClosenessTierBadge tier={tier} dotOnly />}
-                      <div className="min-w-0">
-                        <p className="font-medium">{c.fullName}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {c.company || "No company"}
-                        </p>
-                      </div>
-                    </div>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {formatDistanceToNow(new Date(c.updatedAt), { addSuffix: true })}
-                    </span>
-                  </Link>
-                );
-              })
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <GoalsSummary
-        goals={data.goals}
-        goalAlignedContacts={data.goalAlignedContacts.map((c) => ({
-          id: c.id,
-          fullName: c.fullName,
-          preferredName: c.preferredName,
-          company: c.company,
-          title: c.title,
-          goalRelevance: c.goalRelevance,
-        }))}
-      />
-
-      <NetworkStatsCard stats={networkStats} />
+      <Suspense fallback={<DashboardCardSkeleton className="h-64" />}>
+        <TailSection bundle={bundle} />
+      </Suspense>
     </div>
   );
-}
-
-function StatCard({
-  label,
-  value,
-  icon,
-  href,
-  subtitle,
-}: {
-  label: string;
-  value: number;
-  icon: React.ReactNode;
-  href?: string;
-  subtitle?: string;
-}) {
-  const inner = (
-    <>
-      <div className="flex items-center justify-between text-muted-foreground">
-        <span className="text-xs font-medium uppercase tracking-wide">{label}</span>
-        {icon}
-      </div>
-      <p className="mt-3 font-[family-name:var(--font-display)] text-3xl text-primary">
-        {value}
-      </p>
-      {subtitle && (
-        <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
-      )}
-    </>
-  );
-
-  if (href) {
-    return (
-      <Link
-        href={href}
-        className="block rounded-2xl border border-border/70 bg-card/80 p-4 backdrop-blur transition-colors hover:border-primary/30 hover:bg-card"
-      >
-        {inner}
-      </Link>
-    );
-  }
-
-  return (
-    <div className="rounded-2xl border border-border/70 bg-card/80 p-4 backdrop-blur">
-      {inner}
-    </div>
-  );
-}
-
-function Empty({ hint }: { hint: string }) {
-  return <p className="text-sm text-muted-foreground">{hint}</p>;
 }

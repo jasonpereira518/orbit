@@ -1,10 +1,27 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
-import { contacts, reminders } from "@/db/schema";
+import {
+  contacts,
+  reminders,
+  suggestedReminders,
+  type ReminderActionKind,
+} from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import {
+  extractDatedCommitments,
+  emptyCommitmentResult,
+  type RejectedCounts,
+} from "@/lib/date-commitment-extract";
+import {
+  buildSuggestionItemHash,
+  hashSourceNote,
+  isoDay,
+  isoDayToLocalNoon,
+} from "@/lib/suggested-reminder-utils";
 import {
   parseMultiPersonNotesWithAI,
   type CaptureParseHints,
@@ -41,9 +58,30 @@ export type BulkNotePersonPreview = {
   interactionType: string | null;
 };
 
+/** A dated commitment awaiting the user's review, shaped for the client. */
+export type SuggestedReminderPreview = {
+  key: string;
+  title: string;
+  description: string | null;
+  rawDatePhrase: string;
+  /** YYYY-MM-DD, so the date input round-trips without timezone drift. */
+  dueDateIso: string;
+  yearInferred: boolean;
+  personName: string | null;
+  actionKind: ReminderActionKind;
+  confidenceScore: number;
+  sourceExcerpt: string;
+};
+
+/** What the client echoes back on save, plus any per-row edits. */
+export type SuggestedReminderSubmission = SuggestedReminderPreview & {
+  contactId?: string | null;
+};
+
 function namesMatch(a: string, b: string) {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
+
 
 function sharedNotesForPerson(
   personName: string | null,
@@ -155,10 +193,24 @@ export async function parseBulkCaptureNotes(
         ? detected.text
         : notes;
 
-    const { people, shared_notes, interaction_date } =
-      await parseMultiPersonNotesWithAI(userId, corpus, mergedHints);
-    if (!people.length) {
-      return { ok: false as const, error: "No people found in those notes" };
+    // Run both extractions concurrently. The commitment pass is failure-isolated:
+    // contact extraction is the core value and must survive a bad dates response.
+    const [personParse, commitmentResult] = await Promise.all([
+      parseMultiPersonNotesWithAI(userId, corpus, mergedHints),
+      extractDatedCommitments(userId, corpus, {
+        today: new Date(),
+        knownPeople: seedPeople.map((p) => p.name).filter(Boolean) as string[],
+      }).catch(() => emptyCommitmentResult()),
+    ]);
+
+    const { people, shared_notes, interaction_date } = personParse;
+    // A note can legitimately carry dates but no people ("Board review 15th of October"),
+    // so only fail when both extractions came back empty.
+    if (!people.length && !commitmentResult.commitments.length) {
+      return {
+        ok: false as const,
+        error: "No people or dates found in those notes",
+      };
     }
 
     const db = await getDb();
@@ -217,6 +269,21 @@ export async function parseBulkCaptureNotes(
       };
     });
 
+    const sourceHash = hashSourceNote(corpus);
+    const suggestedRemindersPreview: SuggestedReminderPreview[] =
+      commitmentResult.commitments.map((c, index) => ({
+        key: `${index}-${c.rawDatePhrase}`,
+        title: c.title,
+        description: c.description,
+        rawDatePhrase: c.rawDatePhrase,
+        dueDateIso: isoDay(c.dueDate),
+        yearInferred: c.yearInferred,
+        personName: c.personName,
+        actionKind: c.actionKind,
+        confidenceScore: c.confidenceScore,
+        sourceExcerpt: c.sourceExcerpt,
+      }));
+
     return {
       ok: true as const,
       items,
@@ -224,6 +291,12 @@ export async function parseBulkCaptureNotes(
       interactionDate: defaultDate,
       interactionType,
       hints: mergedHints,
+      // Computed server-side and echoed back on save, so the client can't forge them
+      // into a hash that would collide with (or evade) another note's dedupe key.
+      captureBatchId: randomUUID(),
+      sourceHash,
+      suggestedReminders: suggestedRemindersPreview,
+      suggestionsSkipped: commitmentResult.rejected as RejectedCounts,
     };
   } catch (err) {
     const { toUserFacingError } = await import("@/lib/errors");
@@ -245,27 +318,110 @@ export async function confirmBulkCapture(
     followUpDays?: number | null;
     interactionDate?: string | null;
     interactionType?: string | null;
-  }>
+  }>,
+  suggestions?: {
+    captureBatchId: string;
+    sourceHash: string;
+    items: SuggestedReminderSubmission[];
+  }
 ) {
-  await requireUserId();
-  if (!items.length) throw new Error("Nothing to save");
+  const userId = await requireUserId();
+  const suggestionItems = suggestions?.items || [];
+  // A dates-only save is legitimate when the note named no people.
+  if (!items.length && !suggestionItems.length) {
+    throw new Error("Nothing to save");
+  }
+
+  // An absolute date the user actually wrote down beats a follow-up interval the model
+  // guessed at. When both land on roughly the same day for the same person, keep the
+  // dated one and suppress the generated nudge so the user isn't handed two reminders
+  // for one commitment.
+  const COLLISION_WINDOW_MS = 3 * 86_400_000;
+  const now = Date.now();
+  const suppressFollowUp = items.map((item) => {
+    const days = item.followUpDays || item.parsed.follow_up_days;
+    if (!item.createReminder || !days || !item.parsed.name) return false;
+    const projected = now + days * 86_400_000;
+    return suggestionItems.some((s) => {
+      if (!s.personName || !namesMatch(s.personName, item.parsed.name!)) return false;
+      const due = isoDayToLocalNoon(s.dueDateIso).getTime();
+      return Math.abs(due - projected) <= COLLISION_WINDOW_MS;
+    });
+  });
 
   let created = 0;
   let updated = 0;
   const contactIds: string[] = [];
 
-  for (const item of items) {
-    const res = await confirmCapture(item);
+  for (const [index, item] of items.entries()) {
+    const res = await confirmCapture({
+      ...item,
+      suppressFollowUpReminder: suppressFollowUp[index],
+    });
     contactIds.push(res.contactId);
     if (item.mergeContactId) updated += 1;
     else created += 1;
   }
 
+  // Contacts only exist now, so this is the first point a suggestion can be linked.
+  const contactIdByName = new Map<string, string>();
+  items.forEach((item, index) => {
+    const name = item.parsed.name?.trim().toLowerCase();
+    if (name && contactIds[index]) contactIdByName.set(name, contactIds[index]);
+  });
+
+  let suggestionsStaged = 0;
+  if (suggestions && suggestionItems.length) {
+    const db = await getDb();
+    const rows = suggestionItems.map((s) => {
+      const contactId =
+        s.contactId ??
+        (s.personName
+          ? contactIdByName.get(s.personName.trim().toLowerCase()) ?? null
+          : null);
+      return {
+        userId,
+        contactId,
+        captureBatchId: suggestions.captureBatchId,
+        title: s.title,
+        description: s.description,
+        rawDatePhrase: s.rawDatePhrase,
+        dueDate: isoDayToLocalNoon(s.dueDateIso),
+        yearInferred: s.yearInferred ? 1 : 0,
+        sourceExcerpt: s.sourceExcerpt,
+        sourceHash: suggestions.sourceHash,
+        itemHash: buildSuggestionItemHash(
+          suggestions.sourceHash,
+          s.dueDateIso,
+          s.title
+        ),
+        actionKind: s.actionKind,
+        confidenceScore: s.confidenceScore,
+        status: "pending" as const,
+      };
+    });
+
+    // Re-pasting the same note must not restage what the user already resolved.
+    const inserted = await db
+      .insert(suggestedReminders)
+      .values(rows)
+      .onConflictDoNothing({
+        target: [suggestedReminders.userId, suggestedReminders.itemHash],
+      })
+      .returning();
+    suggestionsStaged = inserted.length;
+  }
+
   revalidatePath("/chat");
   revalidatePath("/contacts");
   revalidatePath("/capture");
+  if (suggestionsStaged) {
+    revalidatePath("/");
+    revalidatePath("/dashboard");
+    revalidatePath("/reminders");
+  }
 
-  return { created, updated, contactIds };
+  return { created, updated, contactIds, suggestionsStaged };
 }
 
 export async function confirmCapture(input: {
@@ -278,6 +434,11 @@ export async function confirmCapture(input: {
   followUpDays?: number | null;
   interactionDate?: string | null;
   interactionType?: string | null;
+  /**
+   * Set by `confirmBulkCapture` when an absolute dated commitment for this person
+   * already covers the same window. Defaults to false so other callers are unaffected.
+   */
+  suppressFollowUpReminder?: boolean;
 }) {
   const userId = await requireUserId();
   const { parsed } = input;
@@ -313,6 +474,7 @@ export async function confirmCapture(input: {
       sharedInterests: parsed.shared_interests,
       opportunities: parsed.opportunities,
       relationshipScore: input.relationshipScore,
+      statedCloseness: input.relationshipScore,
       tagNames: input.tagNames,
       nextFollowUpAt: followUpDate?.toISOString() ?? undefined,
     });
@@ -331,6 +493,9 @@ export async function confirmCapture(input: {
       sharedInterests: parsed.shared_interests,
       opportunities: parsed.opportunities,
       relationshipScore: input.relationshipScore,
+      // The user set this in the capture review UI's "Closeness" field
+      // (bulk-notes-panel.tsx) — a real rating, unlike an importer default.
+      statedCloseness: input.relationshipScore,
       tagNames: input.tagNames,
       source: "ai_capture",
       notes: input.notes,
@@ -351,7 +516,9 @@ export async function confirmCapture(input: {
     parseDateFromNotes: !interactionDate,
   });
 
-  if (input.createReminder && followUpDate) {
+  // Note: the contact's nextFollowUpAt above is deliberately still set even when
+  // suppressed — that's relationship hygiene, a separate signal from this task row.
+  if (input.createReminder && followUpDate && !input.suppressFollowUpReminder) {
     const db = await getDb();
     const title =
       parsed.follow_up_recommendation || `Follow up with ${parsed.name}`;

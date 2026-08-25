@@ -8,17 +8,9 @@ import {
   outreachProspects,
   userSettings,
 } from "@/db/schema";
-import { decrypt } from "@/lib/crypto";
+import { decryptOrNull } from "@/lib/crypto";
 import { DAILY_SEND_LIMIT, type OutreachChannel } from "@/lib/outreach-types";
-
-function decryptKey(encrypted?: string | null) {
-  if (!encrypted) return null;
-  try {
-    return decrypt(encrypted);
-  } catch {
-    return null;
-  }
-}
+import { getEntitlements } from "@/lib/entitlements";
 
 export async function getOutreachSendConfig(userId: string) {
   const db = await getDb();
@@ -26,23 +18,27 @@ export async function getOutreachSendConfig(userId: string) {
     where: eq(userSettings.userId, userId),
   });
 
+  // Orbit's own Resend/Twilio credits are metered, but not open-endedly: every user is
+  // capped at DAILY_SEND_LIMIT sends a day regardless of plan, so both paid tiers can
+  // reach them — including Lifetime, whose single payment funds a bounded obligation
+  // rather than an unbounded one. `hosted` gates the env fallback, never the personal
+  // key: a user who supplies their own Resend or Twilio credentials uses it on any plan.
+  const { canUseHostedSending: hosted } = await getEntitlements(userId);
+  const envKey = (value: string | undefined) => (hosted ? value || null : null);
+
   return {
     resendApiKey:
-      decryptKey(settings?.resendApiKeyEncrypted) ||
-      process.env.RESEND_API_KEY ||
-      null,
+      decryptOrNull(settings?.resendApiKeyEncrypted) ||
+      envKey(process.env.RESEND_API_KEY),
     twilioAccountSid:
-      decryptKey(settings?.twilioAccountSidEncrypted) ||
-      process.env.TWILIO_ACCOUNT_SID ||
-      null,
+      decryptOrNull(settings?.twilioAccountSidEncrypted) ||
+      envKey(process.env.TWILIO_ACCOUNT_SID),
     twilioAuthToken:
-      decryptKey(settings?.twilioAuthTokenEncrypted) ||
-      process.env.TWILIO_AUTH_TOKEN ||
-      null,
+      decryptOrNull(settings?.twilioAuthTokenEncrypted) ||
+      envKey(process.env.TWILIO_AUTH_TOKEN),
     twilioFromNumber:
       settings?.twilioFromNumber?.trim() ||
-      process.env.TWILIO_FROM_NUMBER ||
-      null,
+      envKey(process.env.TWILIO_FROM_NUMBER),
     fromEmail: process.env.RESEND_FROM_EMAIL || "outreach@orbit.local",
   };
 }

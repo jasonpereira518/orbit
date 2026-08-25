@@ -210,7 +210,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 aria-label={`${label} progress`}
               >
                 <div
-                  className={`h-full rounded-full transition-[width] duration-300 ease-out ${
+                  className={`h-full rounded-full transition-[width] duration-slow ease-house ${
                     isCurrent || isDone ? "bg-primary" : "bg-muted-foreground/30"
                   }`}
                   style={{ width: `${Math.round(value * 100)}%` }}

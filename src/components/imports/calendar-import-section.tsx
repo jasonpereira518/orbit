@@ -2,11 +2,13 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Calendar as CalendarIcon } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   previewCalendarImport,
   confirmCalendarImport,
 } from "@/actions/imports";
+import { CALENDAR_BACKFILL_DAYS } from "@/lib/calendar-import";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CalendarSubscribePanel } from "@/components/imports/calendar-subscribe-panel";
@@ -66,18 +68,23 @@ export function CalendarImportSection({
     <div className="space-y-6">
       <CalendarSubscribePanel initialSubscriptions={calendarSubscriptions} />
 
-      <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
-        <div>
-          <h2 className="text-lg font-medium text-primary">
-            One-time calendar upload
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Export an ICS or CSV from Google, Apple, or Outlook. Orbit matches
-            attendees to contacts already in your network and logs those
-            meetings — it does not create new contacts from a one-time upload.
-            Use a calendar subscription above if you want Orbit to create
-            contacts from 1:1s.
-          </p>
+      <section className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-calendar/70 bg-card p-6">
+        <div className="flex items-start gap-3">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-calendar/10 text-import-calendar">
+            <CalendarIcon className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-lg font-medium text-primary">
+              One-time calendar upload
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Export an ICS or CSV from Google, Apple, or Outlook. Orbit matches
+              attendees to contacts already in your network and logs those
+              meetings — it does not create new contacts from a one-time upload.
+              Use a calendar subscription above if you want Orbit to create
+              contacts from 1:1s.
+            </p>
+          </div>
         </div>
         <ImportFilePicker
           accept=".ics,.csv,text/calendar,text/csv"
@@ -115,11 +122,11 @@ export function CalendarImportSection({
                   });
                   setCalendarPreview(res);
                   toast.success(
-                    `${res.windowedEvents} events in window · ${res.matchedEventCount} with matches`
+                    `${res.windowedEvents} events in window · ${res.matchedEventCount} with matches`,
                   );
                 } catch (err) {
                   toast.error(
-                    err instanceof Error ? err.message : "Preview failed"
+                    err instanceof Error ? err.message : "Preview failed",
                   );
                 }
               })
@@ -221,7 +228,8 @@ export function CalendarImportSection({
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
               {calendarPreview.totalEvents} events ·{" "}
-              {calendarPreview.windowedEvents} in last 180 days / next 14 ·{" "}
+              {calendarPreview.windowedEvents} in last{" "}
+              {Math.round(CALENDAR_BACKFILL_DAYS / 365)} years / next 14 ·{" "}
               {calendarPreview.matchedEventCount} with contact matches
             </p>
             <div className="max-h-80 overflow-auto rounded-xl border border-border/60">
