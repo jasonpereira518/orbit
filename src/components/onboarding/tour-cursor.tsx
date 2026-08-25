@@ -66,6 +66,7 @@ export function TourCursor({
   const [cycleTick, setCycleTick] = useState(0);
   const [point, setPoint] = useState<Point | null>(null);
   const [visible, setVisible] = useState(false);
+  const [containerSize, setContainerSize] = useState({ width: 400, height: 300 });
   const lastId = useRef<string | null>(null);
 
   const activeIndex = pickHotspotIndex(
@@ -122,6 +123,12 @@ export function TourCursor({
         return next;
       });
       lastId.current = active.id;
+
+      setContainerSize((prev) => {
+        const { clientWidth: width, clientHeight: height } = container;
+        if (prev.width === width && prev.height === height) return prev;
+        return { width, height };
+      });
     };
 
     update();
@@ -135,11 +142,8 @@ export function TourCursor({
 
   if (reducedMotion || !active || !point || !visible) return null;
 
-  const container = containerRef.current;
-  const cw = container?.clientWidth ?? 400;
-  const ch = container?.clientHeight ?? 300;
-  const bubbleRight = point.x > cw * 0.55;
-  const bubbleBelow = point.y < ch * 0.38;
+  const bubbleRight = point.x > containerSize.width * 0.55;
+  const bubbleBelow = point.y < containerSize.height * 0.38;
 
   const bubbleLeft = bubbleRight ? point.x - 18 : point.x + 26;
   const bubbleTop = bubbleBelow ? point.y + 30 : point.y - 58;
