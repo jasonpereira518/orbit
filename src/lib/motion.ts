@@ -40,6 +40,13 @@ export const SPRING_SOFT = {
   damping: 22,
 } as const;
 
+/** Snappy squish for whileTap press feedback (bottom-nav Capture button). */
+export const SPRING_TAP = {
+  type: "spring",
+  stiffness: 600,
+  damping: 30,
+} as const;
+
 /** React Flow camera tween durations (ms). */
 export const CAMERA_MS = {
   move: 450,

@@ -363,6 +363,55 @@
   }
 }
 
+/* Pill-shaped, absolutely-positioned variant of .liquid-glass, for
+ * floating surfaces that detach from screen edges (mobile bottom nav).
+ * Same sheen/blur/border as .liquid-glass, but with a lighter fill than
+ * the base panel — leans toward see-through glass rather than a fully
+ * frosted tinted panel, without going fully transparent — and no outer
+ * drop-shadow: against a light fill the blurred shadow read as a
+ * dark haze floating under the bar rather than a grounded shadow, so only
+ * the hairline inset highlights (top sheen + bottom edge) are kept for
+ * definition. Combined selector (not a bare class) so specificity (0,2,0)
+ * reliably beats both .liquid-glass (0,1,0) and .dark .liquid-glass
+ * (0,2,0, but declared earlier so loses the source-order tiebreak),
+ * independent of Tailwind's layered utilities. */
+.liquid-glass.liquid-glass-pill {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: linear-gradient(
+    165deg,
+    rgba(255, 255, 255, 0.5) 0%,
+    rgba(255, 255, 255, 0.32) 42%,
+    rgba(247, 248, 246, 0.28) 100%
+  );
+  border-color: rgba(255, 255, 255, 0.45);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.65) inset,
+    0 -1px 0 0 rgba(15, 61, 62, 0.04) inset;
+}
+
+.liquid-glass.liquid-glass-pill::before {
+  opacity: 0.85;
+}
+
+.dark .liquid-glass.liquid-glass-pill {
+  background: linear-gradient(
+    165deg,
+    rgba(55, 55, 55, 0.5) 0%,
+    rgba(39, 39, 39, 0.38) 45%,
+    rgba(32, 32, 32, 0.32) 100%
+  );
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.14) inset,
+    0 -1px 0 0 rgba(0, 0, 0, 0.25) inset;
+}
+
+.dark .liquid-glass.liquid-glass-pill::before {
+  opacity: 0.85;
+}
+
 @keyframes trash-wiggle {
   0%,
   100% {

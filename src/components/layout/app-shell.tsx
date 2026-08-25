@@ -62,19 +62,14 @@ export function AppShell({
 
   return (
     <MotionConfig reducedMotion="user">
-      <div
-        className={cn(
-          "flex bg-background",
-          isViewportLocked ? "h-dvh overflow-hidden" : "min-h-screen",
-        )}
-      >
+      <div className="flex h-dvh overflow-hidden bg-background">
         <ThemeSync theme={theme} />
         <AvatarBackfill />
         <DueNotificationsWatcher />
         <ImportJobWatcher />
         <GlobalJobProgressBar />
         <div
-          className="sticky top-0 z-40 hidden h-dvh shrink-0 p-3 md:block lg:p-4"
+          className="hidden h-dvh shrink-0 p-3 md:block lg:p-4"
           style={{ viewTransitionName: "app-sidebar" }}
         >
           <AppSidebar
@@ -86,10 +81,10 @@ export function AppShell({
         </div>
         <main
           className={cn(
-            "relative flex min-h-0 flex-1 flex-col",
+            "relative flex h-dvh min-h-0 flex-1 flex-col",
             isViewportLocked
-              ? "h-dvh overflow-hidden"
-              : "min-h-screen overflow-auto",
+              ? "overflow-hidden"
+              : "overflow-y-auto overscroll-contain",
           )}
         >
           <header
@@ -117,10 +112,10 @@ export function AppShell({
             className={cn(
               "mx-auto flex w-full max-w-6xl flex-col px-4 py-6 md:px-10 md:py-8",
               isViewportLocked
-                ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-8"
+                ? "min-h-0 flex-1 overflow-hidden pb-[calc(5.25rem+env(safe-area-inset-bottom))] md:pb-8"
                 : isSettings
-                  ? "flex-1 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-8"
-                  : "flex-1 pb-[calc(9.5rem+env(safe-area-inset-bottom))] md:pb-24",
+                  ? "flex-1 pb-[calc(5.25rem+env(safe-area-inset-bottom))] md:pb-8"
+                  : "flex-1 pb-[calc(10.25rem+env(safe-area-inset-bottom))] md:pb-24",
               isConstellation && "py-4 md:py-5",
             )}
           >

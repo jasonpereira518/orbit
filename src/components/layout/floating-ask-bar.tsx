@@ -15,6 +15,7 @@ import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { ArrowUp, Loader2, RotateCcw, Search, Sparkles, X } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
+import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
 import { askNetwork } from "@/actions/chat";
 import { getAskBarContact } from "@/actions/contacts";
 import { searchDashboardContacts } from "@/actions/search";
@@ -150,6 +151,14 @@ export function FloatingAskBar() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [focusBar, open]);
+
+  useEffect(() => {
+    function onOpenRequest() {
+      focusBar();
+    }
+    window.addEventListener(OPEN_ASK_BAR_EVENT, onOpenRequest);
+    return () => window.removeEventListener(OPEN_ASK_BAR_EVENT, onOpenRequest);
+  }, [focusBar]);
 
   const chatPendingRef = useRef(chatPending);
   chatPendingRef.current = chatPending;
@@ -333,8 +342,13 @@ export function FloatingAskBar() {
       }
       transition={{ duration: DUR.slow, ease: EASE_HOUSE }}
       className={cn(
-        "pointer-events-none fixed inset-x-0 z-50 flex justify-center px-4",
-        "bottom-[calc(4.5rem+env(safe-area-inset-bottom))] md:bottom-5",
+        "pointer-events-none fixed inset-x-0 z-50 justify-center px-4",
+        // On mobile the bar is intrusive if left permanently floating above
+        // the bottom nav — keep it fully out of the layout there until the
+        // "Ask your network" item in the More sheet opens it. Desktop keeps
+        // the persistent collapsed pill.
+        open ? "flex" : "hidden md:flex",
+        "bottom-[calc(7.5rem+env(safe-area-inset-bottom))] md:bottom-5",
         !visible && "pointer-events-none"
       )}
       aria-hidden={!visible}

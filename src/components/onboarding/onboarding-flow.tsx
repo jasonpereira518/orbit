@@ -18,6 +18,7 @@ import { WelcomePreview } from "@/components/onboarding/previews/welcome-preview
 import { ContactsPreview } from "@/components/onboarding/previews/contacts-preview";
 import { CapturePreview } from "@/components/onboarding/previews/capture-preview";
 import { ImportsPreview } from "@/components/onboarding/previews/imports-preview";
+import { RemindersPreview } from "@/components/onboarding/previews/reminders-preview";
 import { ChatPreview } from "@/components/onboarding/previews/chat-preview";
 import { GraphPreview } from "@/components/onboarding/previews/graph-preview";
 import { DashboardPreview } from "@/components/onboarding/previews/dashboard-preview";
@@ -31,6 +32,7 @@ const PREVIEWS: Record<TourNavKey, typeof WelcomePreview> = {
   contacts: ContactsPreview,
   capture: CapturePreview,
   imports: ImportsPreview,
+  reminders: RemindersPreview,
   chat: ChatPreview,
   graph: GraphPreview,
   dashboard: DashboardPreview,
@@ -119,9 +121,22 @@ export function OnboardingFlow({
     }
   }, [goTo, stepIndex]);
 
+  // Backgrounded tabs throttle requestAnimationFrame but not the wall clock, so
+  // resuming from a stale `startedAt` would fast-forward progress by however long the
+  // tab was hidden. Tracking visibility separately lets the effect below bail out
+  // while hidden and re-anchor `startedAt` to `progress` once the tab is visible again.
+  const [tabHidden, setTabHidden] = useState(
+    () => typeof document !== "undefined" && document.hidden
+  );
+  useEffect(() => {
+    const onVisibility = () => setTabHidden(document.hidden);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
+
   // Auto-advance with freezable progress
   useEffect(() => {
-    if (!autoAdvance) return;
+    if (!autoAdvance || tabHidden) return;
 
     const startedAt = performance.now() - progress * TOUR_INTERVAL_MS;
     let raf = 0;
@@ -138,8 +153,8 @@ export function OnboardingFlow({
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- resume from frozen `progress` only when autoAdvance flips on
-  }, [autoAdvance, goNext, stepIndex]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- resume from frozen `progress` only when autoAdvance/tabHidden flips
+  }, [autoAdvance, tabHidden, goNext, stepIndex]);
 
   // Keyboard: ←/→, Space = pause/play
   useEffect(() => {
