@@ -1,8 +1,10 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { CircleDollarSign, MessageSquareQuote, TrendingUp } from "lucide-react";
 import {
   AdminPageHeader,
   AdminPanel,
+  AdminPanelSkeleton,
   AdminTable,
   EmptyState,
   MetricTile,
@@ -11,6 +13,8 @@ import {
   Td,
   Th,
 } from "@/components/admin/primitives";
+import { LiveProvider, LiveValue } from "@/components/admin/live";
+import { SCREEN_TIER } from "@/lib/admin-live-tiers";
 import { displayName, loadAdminUserRows } from "@/lib/admin-metrics";
 import {
   contactCapPicture,
@@ -44,27 +48,35 @@ export const dynamic = "force-dynamic";
  * what happened and, by construction, nothing about what somebody tried and could not — so
  * demand for a gated feature was invisible in both directions.
  */
-export default async function AdminProductPage() {
-  const rows = await loadAdminUserRows();
+type Cap = Awaited<ReturnType<typeof contactCapPicture>>;
+type Demand = Awaited<ReturnType<typeof gateDemand>>;
+type PaidUsage = Awaited<ReturnType<typeof paidFeatureUsage>>;
+type Adoption = Awaited<ReturnType<typeof featureAdoption>>;
+type AiOps = Awaited<ReturnType<typeof getAiOperationAdoption>>;
+type Artifacts = Awaited<ReturnType<typeof getArtifacts>>;
+type Pmf = Awaited<ReturnType<typeof pmfSummary>> | null;
+type Verbatims = Awaited<ReturnType<typeof recentFeedback>>;
 
-  const [cap, demand, paidUsage, adoption, aiOps, artifacts, pmf, verbatims] =
-    await Promise.all([
-      contactCapPicture(rows),
-      gateDemand().catch(() => []),
-      paidFeatureUsage().catch(() => new Map<string, number | null>()),
-      featureAdoption(),
-      getAiOperationAdoption(),
-      getArtifacts(),
-      pmfSummary().catch(() => null),
-      recentFeedback({ limit: 15 }).catch(() => []),
-    ]);
-
-  const findings = tierFindings(demand, paidUsage);
-  const wanted = findings.filter((f) => f.verdict === "wanted");
-  const unwanted = findings.filter((f) => f.verdict === "unwanted");
+/**
+ * NOT ASYNC, ON PURPOSE — every panel here rests on a different source, so each streams
+ * behind its own boundary instead of the screen waiting on the slowest of eight.
+ */
+export default function AdminProductPage() {
+  // `contactCapPicture` is the only thing here that needs the roster, so it chains off it
+  // rather than the whole screen waiting for it first.
+  const capPromise = loadAdminUserRows().then(contactCapPicture);
+  const demandPromise = gateDemand().catch(() => []);
+  const paidUsagePromise = paidFeatureUsage().catch(
+    () => new Map<string, number | null>()
+  );
+  const adoptionPromise = featureAdoption();
+  const aiOpsPromise = getAiOperationAdoption();
+  const artifactsPromise = getArtifacts();
+  const pmfPromise = pmfSummary().catch(() => null);
+  const verbatimsPromise = recentFeedback({ limit: 15 }).catch(() => []);
 
   return (
-    <>
+    <LiveProvider screen="product" intervalMs={SCREEN_TIER.product} initial={{}}>
       <AdminPageHeader
         title="Product"
         subtitle="What earns its keep, and where money is being left on the table"
@@ -73,6 +85,63 @@ export default async function AdminProductPage() {
       <div className="space-y-6">
         {/* ---------------------------------------------------------- what to charge */}
 
+        <Suspense fallback={<AdminPanelSkeleton title="The free contact cap" />}>
+          <CapPanel capPromise={capPromise} />
+        </Suspense>
+
+        <Suspense fallback={<AdminPanelSkeleton title="Which walls people hit" />}>
+          <WallsPanel demandPromise={demandPromise} />
+        </Suspense>
+
+        <Suspense
+          fallback={<AdminPanelSkeleton title="Is anything in the wrong tier?" />}
+        >
+          <TierPanel
+            demandPromise={demandPromise}
+            paidUsagePromise={paidUsagePromise}
+          />
+        </Suspense>
+
+        {/* ------------------------------------------------------- voice of the user */}
+
+        <Suspense
+          fallback={
+            <div className="grid gap-6 lg:grid-cols-2">
+              <AdminPanelSkeleton title="Would they miss it?" />
+              <AdminPanelSkeleton title="What people actually said" />
+            </div>
+          }
+        >
+          <VoicePanels pmfPromise={pmfPromise} verbatimsPromise={verbatimsPromise} />
+        </Suspense>
+
+        {/* ----------------------------------------------------------- what to build */}
+
+        <Suspense
+          fallback={
+            <div className="grid gap-6 lg:grid-cols-2">
+              <AdminPanelSkeleton title="Accounts that have used each feature" />
+              <AdminPanelSkeleton title="What people have made" />
+            </div>
+          }
+        >
+          <AdoptionPanels
+            adoptionPromise={adoptionPromise}
+            artifactsPromise={artifactsPromise}
+          />
+        </Suspense>
+
+        <Suspense fallback={<AdminPanelSkeleton title="AI operations used" />}>
+          <AiOperationsPanel aiOpsPromise={aiOpsPromise} />
+        </Suspense>
+      </div>
+    </LiveProvider>
+  );
+}
+
+async function CapPanel({ capPromise }: { capPromise: Promise<Cap> }) {
+  const cap = await capPromise;
+  return (
         <AdminPanel
           title={`The ${cap.limit}-contact cap`}
           action={
@@ -84,7 +153,7 @@ export default async function AdminProductPage() {
           <div className="grid gap-3 sm:grid-cols-3">
             <MetricTile
               label="At the cap"
-              value={String(cap.atCap.length)}
+              value={<LiveValue name="atCap">{cap.atCap.length}</LiveValue>}
               hint="free accounts, blocked from adding more"
             />
             <MetricTile
@@ -95,7 +164,7 @@ export default async function AdminProductPage() {
             />
             <MetricTile
               label="Approaching"
-              value={String(cap.nearCap.length)}
+              value={<LiveValue name="nearCap">{cap.nearCap.length}</LiveValue>}
               hint="within 10% of the limit"
             />
           </div>
@@ -150,7 +219,12 @@ export default async function AdminProductPage() {
             only exist from the day <code className="font-mono">gate_events</code> shipped.
           </p>
         </AdminPanel>
+  );
+}
 
+async function WallsPanel({ demandPromise }: { demandPromise: Promise<Demand> }) {
+  const demand = await demandPromise;
+  return (
         <AdminPanel title="Which walls people hit">
           {demand.length === 0 ? (
             <EmptyState>
@@ -188,7 +262,21 @@ export default async function AdminProductPage() {
             visible.
           </p>
         </AdminPanel>
+  );
+}
 
+async function TierPanel({
+  demandPromise,
+  paidUsagePromise,
+}: {
+  demandPromise: Promise<Demand>;
+  paidUsagePromise: Promise<PaidUsage>;
+}) {
+  const [demand, paidUsage] = await Promise.all([demandPromise, paidUsagePromise]);
+  const findings = tierFindings(demand, paidUsage);
+  const wanted = findings.filter((f) => f.verdict === "wanted");
+  const unwanted = findings.filter((f) => f.verdict === "unwanted");
+  return (
         <AdminPanel title="Is anything in the wrong tier?">
           <div className="space-y-2">
             {findings.map((f) => (
@@ -228,9 +316,18 @@ export default async function AdminProductPage() {
             size, and is left as one rather than forced into a conclusion.
           </p>
         </AdminPanel>
+  );
+}
 
-        {/* ------------------------------------------------------- voice of the user */}
-
+async function VoicePanels({
+  pmfPromise,
+  verbatimsPromise,
+}: {
+  pmfPromise: Promise<Pmf>;
+  verbatimsPromise: Promise<Verbatims>;
+}) {
+  const [pmf, verbatims] = await Promise.all([pmfPromise, verbatimsPromise]);
+  return (
         <div className="grid gap-6 lg:grid-cols-2">
           <AdminPanel title="Would they miss it?">
             {!pmf || pmf.total === 0 ? (
@@ -309,9 +406,18 @@ export default async function AdminProductPage() {
             </p>
           </AdminPanel>
         </div>
+  );
+}
 
-        {/* ----------------------------------------------------------- what to build */}
-
+async function AdoptionPanels({
+  adoptionPromise,
+  artifactsPromise,
+}: {
+  adoptionPromise: Promise<Adoption>;
+  artifactsPromise: Promise<Artifacts>;
+}) {
+  const [adoption, artifacts] = await Promise.all([adoptionPromise, artifactsPromise]);
+  return (
         <div className="grid gap-6 lg:grid-cols-2">
           <AdminPanel title="Accounts that have used each feature">
             <MiniBars
@@ -352,7 +458,12 @@ export default async function AdminProductPage() {
             </AdminTable>
           </AdminPanel>
         </div>
+  );
+}
 
+async function AiOperationsPanel({ aiOpsPromise }: { aiOpsPromise: Promise<AiOps> }) {
+  const aiOps = await aiOpsPromise;
+  return (
           <AdminPanel title="AI operations used">
             {/* Complements the table-level adoption above: this is per code path, so it can
                 show that nobody has ever run audio transcription or the Apollo enrichment. */}
@@ -395,7 +506,5 @@ export default async function AdminProductPage() {
               </div>
             )}
           </AdminPanel>
-      </div>
-    </>
   );
 }

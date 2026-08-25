@@ -122,7 +122,7 @@ function FilterGroup({
           className={cn(
             "rounded-md px-2 py-1 text-xs transition-colors duration-fast",
             value === option.value
-              ? "bg-accent/15 text-accent-foreground"
+              ? "bg-muted text-foreground"
               : "text-muted-foreground hover:text-foreground"
           )}
         >

@@ -72,16 +72,32 @@ export async function accountEconomics(
 ): Promise<AccountEconomics[]> {
   const db = await getDb();
 
-  // Split AI spend by whose key paid for it. One grouped scan, joined in JS — the same
-  // shape every other admin aggregate uses.
-  const aiRows = await db
-    .select({
-      userId: usageEvents.userId,
-      keyOwner: usageEvents.keyOwner,
-      costMicros: sql<string>`coalesce(sum(${usageEvents.estimatedCostMicros}), 0)`,
-    })
-    .from(usageEvents)
-    .groupBy(usageEvents.userId, usageEvents.keyOwner);
+  // Both scans in one wave. They share nothing, and each is a separate HTTPS request on
+  // Neon HTTP, so running them in sequence doubled this function's latency for free.
+  const [aiRows, sendRows] = await Promise.all([
+    // Split AI spend by whose key paid for it. One grouped scan, joined in JS — the same
+    // shape every other admin aggregate uses.
+    db
+      .select({
+        userId: usageEvents.userId,
+        keyOwner: usageEvents.keyOwner,
+        costMicros: sql<string>`coalesce(sum(${usageEvents.estimatedCostMicros}), 0)`,
+      })
+      .from(usageEvents)
+      .groupBy(usageEvents.userId, usageEvents.keyOwner),
+    // Hosted sends. `outreach_messages` has no `user_id` — it hangs off a prospect, which
+    // hangs off a campaign — so the owner comes through the join rather than off the row.
+    db.execute(sql`
+      SELECT c.user_id AS user_id,
+             m.channel  AS channel,
+             count(*)::int AS n
+      FROM outreach_messages m
+      JOIN outreach_prospects p ON p.id = m.prospect_id
+      JOIN outreach_campaigns c ON c.id = p.campaign_id
+      WHERE m.status = 'sent'
+      GROUP BY c.user_id, m.channel
+    `),
+  ]);
 
   const orbitAi = new Map<string, number>();
   const userAi = new Map<string, number>();
@@ -89,19 +105,6 @@ export async function accountEconomics(
     const target = r.keyOwner === "orbit" ? orbitAi : userAi;
     target.set(r.userId, (target.get(r.userId) ?? 0) + num(r.costMicros));
   }
-
-  // Hosted sends. `outreach_messages` has no `user_id` — it hangs off a prospect, which
-  // hangs off a campaign — so the owner comes through the join rather than off the row.
-  const sendRows = await db.execute(sql`
-    SELECT c.user_id AS user_id,
-           m.channel  AS channel,
-           count(*)::int AS n
-    FROM outreach_messages m
-    JOIN outreach_prospects p ON p.id = m.prospect_id
-    JOIN outreach_campaigns c ON c.id = p.campaign_id
-    WHERE m.status = 'sent'
-    GROUP BY c.user_id, m.channel
-  `);
 
   const sendCost = new Map<string, number>();
   const sendList = Array.isArray(sendRows)
@@ -285,19 +288,22 @@ export async function mrrReconciliation(now: Date = new Date()): Promise<{
 }> {
   const db = await getDb();
 
-  const ledger = await db
-    .select({ total: sql<string>`coalesce(sum(mrr_delta_cents), 0)` })
-    .from(sql`billing_events`);
+  // The two derivations are independent by design — that is the whole point of
+  // reconciling them — so there is no reason to wait for one before starting the other.
+  const [ledger, settings] = await Promise.all([
+    db
+      .select({ total: sql<string>`coalesce(sum(mrr_delta_cents), 0)` })
+      .from(sql`billing_events`),
+    db
+      .select({
+        status: userSettings.subscriptionStatus,
+        periodEnd: userSettings.subscriptionPeriodEnd,
+        plan: userSettings.subscriptionPlan,
+        comped: userSettings.compedPlan,
+      })
+      .from(userSettings),
+  ]);
   const ledgerCents = num(ledger[0]?.total);
-
-  const settings = await db
-    .select({
-      status: userSettings.subscriptionStatus,
-      periodEnd: userSettings.subscriptionPeriodEnd,
-      plan: userSettings.subscriptionPlan,
-      comped: userSettings.compedPlan,
-    })
-    .from(userSettings);
 
   const liveCents = settings.reduce((total, r) => {
     if (r.comped) return total;

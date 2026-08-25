@@ -1,4 +1,4 @@
-import { loadAdminUserRows } from "@/lib/admin-metrics";
+import { loadAdminUserRows, type AdminUserRow } from "@/lib/admin-metrics";
 import { getDataProtection } from "@/lib/admin-data-protection";
 import { mrrReconciliation } from "@/lib/admin-economics";
 import { contactCapPicture, gateDemand, paidFeatureUsage, tierFindings } from "@/lib/admin-pricing";
@@ -33,14 +33,41 @@ export type Decision = {
   tone: "act" | "watch";
 };
 
-export async function decisionsWaiting(): Promise<Decision[]> {
+/**
+ * @param roster An already-loaded roster, when the caller has one.
+ *
+ * `/admin` renders this beside `getAdminOverview()`, and both need the same six-query
+ * roster. `loadAdminUserRows` is memoised with React `cache()`, but that only dedupes
+ * inside a render — so the caller passes the promise in rather than the two of them
+ * trusting a memo that is a passthrough anywhere else (a script, a route handler, a test).
+ */
+export async function decisionsWaiting(
+  roster?: Promise<AdminUserRow[]> | AdminUserRow[],
+  soldCount?: Promise<number> | number
+): Promise<Decision[]> {
   const out: Decision[] = [];
 
-  const rows = await loadAdminUserRows().catch(() => []);
+  // ONE WAVE, not eight. Every source below is independent except `contactCapPicture`,
+  // which needs the roster, so that is the only chain. Previously these ran strictly in
+  // sequence, which on Neon HTTP meant eight serial round trips before the first decision
+  // could be assembled — on the console's front page, in the same `Promise.all` as the
+  // Overview's own loaders.
+  const [cap, demand, paidUsage, aiOps, drift, infra, offer, protection] =
+    await Promise.all([
+      Promise.resolve(roster ?? loadAdminUserRows())
+        .catch(() => [] as AdminUserRow[])
+        .then((rows) => contactCapPicture(rows).catch(() => null)),
+      gateDemand().catch(() => []),
+      paidFeatureUsage().catch(() => new Map<string, number | null>()),
+      getAiOperationAdoption().catch(() => null),
+      mrrReconciliation().catch(() => null),
+      monthlyInfraCents(new Date()).catch(() => 0),
+      lifetimeOffer(soldCount).catch(() => null),
+      getDataProtection().catch(() => null),
+    ]);
 
   /* ------------------------------------------------------------------- pricing */
 
-  const cap = await contactCapPicture(rows).catch(() => null);
   if (cap && cap.stalledAtCap.length > 0) {
     out.push({
       id: "cap.stalled",
@@ -52,10 +79,6 @@ export async function decisionsWaiting(): Promise<Decision[]> {
     });
   }
 
-  const [demand, paidUsage] = await Promise.all([
-    gateDemand().catch(() => []),
-    paidFeatureUsage().catch(() => new Map<string, number | null>()),
-  ]);
   const unwanted = tierFindings(demand, paidUsage).filter(
     (f) => f.verdict === "unwanted"
   );
@@ -69,7 +92,6 @@ export async function decisionsWaiting(): Promise<Decision[]> {
     });
   }
 
-  const aiOps = await getAiOperationAdoption().catch(() => null);
   if (aiOps && aiOps.neverUsed.length > 0) {
     out.push({
       id: "ops.never-used",
@@ -82,7 +104,6 @@ export async function decisionsWaiting(): Promise<Decision[]> {
 
   /* --------------------------------------------------------------------- money */
 
-  const drift = await mrrReconciliation().catch(() => null);
   if (drift && !drift.agrees) {
     out.push({
       id: "mrr.drift",
@@ -93,7 +114,6 @@ export async function decisionsWaiting(): Promise<Decision[]> {
     });
   }
 
-  const infra = await monthlyInfraCents(new Date()).catch(() => 0);
   if (infra === 0) {
     out.push({
       id: "infra.missing",
@@ -105,7 +125,6 @@ export async function decisionsWaiting(): Promise<Decision[]> {
     });
   }
 
-  const offer = await lifetimeOffer().catch(() => null);
   if (offer?.needsStandardPrice) {
     out.push({
       id: "lifetime.price",
@@ -118,7 +137,6 @@ export async function decisionsWaiting(): Promise<Decision[]> {
 
   /* ----------------------------------------------------------- data protection */
 
-  const protection = await getDataProtection().catch(() => null);
   if (protection && protection.orphans.length > 0) {
     const total = protection.orphans.reduce((a, o) => a + o.rows, 0);
     out.push({

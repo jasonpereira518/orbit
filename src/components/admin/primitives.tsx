@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { Download } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { PLAN_LABELS, type Plan } from "@/lib/plan-limits";
 import type { PlanSource } from "@/lib/entitlements";
 import { RelativeTime } from "@/components/admin/relative-time";
@@ -30,10 +32,9 @@ export function AdminPageHeader({
   return (
     <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
       <div>
-        {/* The only Fraunces on the page. */}
-        <h1 className="font-[family-name:var(--font-display)] text-2xl text-primary">
-          {title}
-        </h1>
+        {/* No display serif in the console. A big serif number reads as celebratory,
+            and every number on this screen is evidence. */}
+        <h1 className="text-2xl font-medium tracking-tight text-primary">{title}</h1>
         {subtitle && (
           <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
         )}
@@ -90,7 +91,8 @@ export function MetricTile({
   tone = "default",
 }: {
   label: string;
-  value: string | number;
+  /** A node, not just a scalar, so `LiveValue` can sit in the slot. */
+  value: React.ReactNode;
   hint?: string;
   icon?: LucideIcon;
   tone?: "default" | "accent" | "muted" | "danger";
@@ -275,7 +277,10 @@ const SOURCE_LABEL: Record<PlanSource, string> = {
  * Plan and its source together — the source is what makes the number honest, since comps
  * are currently the only thing writing a paid plan.
  *
- * Gold marks anything Jason did by hand, consistently throughout the console.
+ * THE ACCENT MARKS WHAT THE OPERATOR DID BY HAND, and on a monochrome console it is one of
+ * only two colours in use (the other is `destructive`, for things that are broken). Older
+ * comments here called it gold; it has always rendered teal, because they pointed at
+ * `--landing-accent`, which the console does not use.
  */
 export function PlanBadge({
   plan,
@@ -413,6 +418,27 @@ export function Td({
   );
 }
 
+/**
+ * The placeholder a panel shows while its own query is still in flight.
+ *
+ * Sized in the same `rounded-xl` box as `AdminPanel` so the page does not reflow when the
+ * real panel arrives — the whole point of streaming a panel is defeated if everything
+ * below it jumps once it lands.
+ */
+export function AdminPanelSkeleton({
+  title,
+  className = "h-40",
+}: {
+  title?: string;
+  className?: string;
+}) {
+  return (
+    <AdminPanel title={title}>
+      <Skeleton className={cn("w-full", className)} />
+    </AdminPanel>
+  );
+}
+
 export function EmptyState({ children }: { children: React.ReactNode }) {
   return (
     <p className="py-6 text-center text-sm text-muted-foreground">{children}</p>
@@ -438,41 +464,90 @@ export function CodeDetail({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Periods down the left, integers across. Deliberately a table rather than a sparkline:
- * a sparkline autoscales, so `0,1,0,0,2` renders as a dramatic spike, whereas printed
- * integers read as "basically nothing happened". Past ~90 rows this stops working and
- * that is when a chart library earns its place.
+ * The console's one export affordance.
+ *
+ * Extracted because the same 130-character class string was hand-written verbatim on
+ * Users, Health and Audit — three copies that had already started to drift from the
+ * near-identical button class in `account-actions.tsx`.
  */
-export function TrendTable({
-  columns,
-  rows,
+export function ExportCsvLink({ href }: { href: string }) {
+  return (
+    <a
+      href={href}
+      className="inline-flex items-center gap-1.5 rounded-md border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-fast hover:text-foreground"
+    >
+      <Download className="size-3" aria-hidden />
+      Export CSV
+    </a>
+  );
+}
+
+/**
+ * A panel that is itself the warning.
+ *
+ * `AdminPanel` was doing double duty for these — the Money screen's two reconciliation
+ * warnings and the Overview's decision list rendered in an ordinary panel whose only
+ * signal was red body copy, which reads as "a panel that happens to contain bad news"
+ * rather than as an alert.
+ *
+ * On a monochrome console the accent bar carries this, not a fill: a tinted panel
+ * background would be the loudest thing on a white screen, and these are worth noticing
+ * rather than worth shouting.
+ */
+export function AdminAlert({
+  title,
+  tone = "danger",
+  action,
+  children,
 }: {
-  columns: string[];
-  rows: Array<{ period: string; values: number[] }>;
+  title: string;
+  tone?: "danger" | "notice";
+  action?: React.ReactNode;
+  children: React.ReactNode;
 }) {
   return (
-    <AdminTable
-      head={
-        <>
-          <Th>Period</Th>
-          {columns.map((c) => (
-            <Th key={c} numeric>
-              {c}
-            </Th>
-          ))}
-        </>
-      }
+    <section
+      className={cn(
+        "rounded-xl border border-l-2 border-border/70 bg-card",
+        tone === "danger" ? "border-l-destructive" : "border-l-accent-foreground"
+      )}
     >
-      {rows.map((row) => (
-        <tr key={row.period} className="border-b border-border/40 last:border-b-0">
-          <Td className="text-muted-foreground">{row.period}</Td>
-          {row.values.map((v, i) => (
-            <Td key={i} numeric className={v === 0 ? "text-muted-foreground" : undefined}>
-              {v}
-            </Td>
-          ))}
-        </tr>
-      ))}
-    </AdminTable>
+      <header className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-2.5">
+        <h2
+          className={cn(
+            "text-xs font-medium uppercase tracking-wider",
+            tone === "danger" ? "text-destructive" : "text-muted-foreground"
+          )}
+        >
+          {title}
+        </h2>
+        {action}
+      </header>
+      <div className="p-4">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * A table row. The class was hand-written roughly thirty times across eight page files,
+ * and `hover:bg-muted/40` was applied on only two of them — so most of the console's
+ * tables had no row hover at all, inconsistently.
+ */
+export function Tr({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <tr
+      className={cn(
+        "border-b border-border/40 transition-colors duration-fast last:border-b-0 hover:bg-muted/40",
+        className
+      )}
+    >
+      {children}
+    </tr>
   );
 }

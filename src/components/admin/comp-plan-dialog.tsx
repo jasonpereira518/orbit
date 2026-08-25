@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { ADMIN_THEME_CLASS } from "@/components/admin/theme";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Gift, MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -127,7 +128,7 @@ export function CompPlanButton(props: {
               </Button>
             }
           />
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent align="end" className={ADMIN_THEME_CLASS}>
             <DropdownMenuItem onClick={() => setOpen(true)}>
               <Gift className="size-3.5" aria-hidden />
               {props.currentSource === "comp" ? "Change comp…" : "Comp plan…"}
@@ -205,7 +206,7 @@ function CompPlanDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className={cn(ADMIN_THEME_CLASS, "sm:max-w-lg")}>
         <DialogHeader>
           <DialogTitle>Comp a plan</DialogTitle>
           <DialogDescription>

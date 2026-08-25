@@ -8,7 +8,7 @@ import Link from "next/link";
 export default function AdminNotFound() {
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center gap-3 px-6 text-center">
-      <h1 className="font-[family-name:var(--font-display)] text-2xl text-primary">
+      <h1 className="text-2xl font-medium tracking-tight text-primary">
         Page not found
       </h1>
       <p className="text-sm text-muted-foreground">

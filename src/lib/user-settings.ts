@@ -221,15 +221,21 @@ export async function setLifetimePurchase(
     .where(eq(userSettings.userId, userId));
 }
 
-/** How many one-time Lifetime purchases have been made. Reported in /admin. */
-export async function countLifetimePurchases() {
+/**
+ * How many one-time Lifetime purchases have been made. Reported in /admin.
+ *
+ * Request-scoped, because `/admin/billing` reaches it twice in one render — once
+ * directly and once through `lifetimeOffer()`, which needs the same count to decide
+ * whether the introductory price still applies.
+ */
+export const countLifetimePurchases = cache(async function countLifetimePurchases() {
   const db = await getDb();
   const [row] = await db
     .select({ value: count() })
     .from(userSettings)
     .where(isNotNull(userSettings.lifetimePurchasedAt));
   return row?.value ?? 0;
-}
+});
 
 /**
  * The only writer of `comped_plan` anywhere in the codebase.

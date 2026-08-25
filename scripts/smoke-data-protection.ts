@@ -30,6 +30,7 @@ import {
   retentionPicture,
 } from "../src/lib/admin-data-protection";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { renderDeep, textOf } from "./lib/render-tree";
 
 const PREFIX = "smoke-dp-";
 const GHOST = `${PREFIX}ghost`;
@@ -162,7 +163,24 @@ async function main() {
   const { default: AdminHealthPage } = await import(
     "../src/app/(admin)/admin/health/page"
   );
-  check("the Health screen renders with the section", (await AdminHealthPage()) != null);
+  // `renderDeep`, because Health now streams each group behind its own Suspense boundary:
+  // calling the page alone would build a shell of fallbacks and prove nothing.
+  const healthTree = await renderDeep(AdminHealthPage());
+  const healthText = textOf(healthTree).join(" ");
+  check("the Health screen renders with the section", healthTree != null);
+  // Anchored on titles that appear ONLY once resolved — "Accounts that cannot use AI at
+  // all" would be a false pass, since the core skeleton carries that same title.
+  check(
+    "...and the data-protection group resolves rather than staying a fallback",
+    healthText.includes("What is kept, and for how long") &&
+      healthText.includes("Refused attempts to reach this console"),
+    healthText.slice(0, 240)
+  );
+  check(
+    "...and the account-health panels resolve",
+    healthText.includes("Broken mail connections") &&
+      healthText.includes("Failing calendar feeds")
+  );
 
   await cleanup();
   console.log("\nAll data-protection checks passed.");

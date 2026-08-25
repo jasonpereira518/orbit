@@ -9,7 +9,7 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans), "Outfit", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono);
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-heading: var(--font-display), "Fraunces", ui-serif, Georgia, serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -158,6 +158,76 @@
   --sidebar-accent-foreground: #599de7;
   --sidebar-border: #3d3d3d;
   --sidebar-ring: #599de7;
+  color-scheme: dark;
+}
+
+/* ── The operator console ──
+ * A monochrome palette scoped to /admin, applied by `ADMIN_THEME_CLASS`.
+ *
+ * WHY THIS IS A TOKEN BLOCK AND NOT A COMPONENT REWRITE. The admin tree contains zero
+ * hardcoded colours — every one of its ~330 colour utilities resolves through one of the
+ * thirteen custom properties below. Because `@theme inline` compiles `bg-card` to
+ * `background-color: var(--card)` rather than to a literal, redefining these on an
+ * ancestor re-colours the entire console without touching a single component.
+ *
+ * THE RAMP IS THE POINT. `hover:text-primary` is the console's main hover affordance and
+ * it appears on almost every link and table row. If `--primary` and `--foreground` were
+ * both black, every one of those hovers would silently become a no-op. So the neutrals are
+ * a deliberate three-step ramp — muted-foreground → foreground → primary — and hover
+ * genuinely darkens.
+ *
+ * TWO COLOURS SURVIVE, and only two, because on a monochrome field a colour is a shout:
+ *   destructive  something is broken
+ *   accent       state the operator created by hand (comped plans, manual overrides)
+ * Selection affordances that used to borrow `accent` — the nav pill, filter chips — are
+ * neutral here, so teal keeps meaning one thing.
+ */
+.admin-theme {
+  --background: #fafafa;
+  --foreground: #27272a;
+  --card: #ffffff;
+  --card-foreground: #27272a;
+  --popover: #ffffff;
+  --popover-foreground: #27272a;
+  --primary: #000000;
+  --primary-foreground: #ffffff;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #27272a;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --accent: #e3efed;
+  --accent-foreground: #0f3d3e;
+  --destructive: #dc2626;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #18181b;
+  color-scheme: light;
+
+  /* Body copy is inherited from <body>, which computed `font-sans` as Outfit before this
+     subtree existed — so the family has to be set here, not only as a token. */
+  font-family: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-geist);
+}
+
+.dark .admin-theme {
+  --background: #0a0a0a;
+  --foreground: #d4d4d8;
+  --card: #141414;
+  --card-foreground: #d4d4d8;
+  --popover: #141414;
+  --popover-foreground: #d4d4d8;
+  --primary: #ffffff;
+  --primary-foreground: #0a0a0a;
+  --secondary: #1f1f1f;
+  --secondary-foreground: #d4d4d8;
+  --muted: #1f1f1f;
+  --muted-foreground: #a1a1aa;
+  --accent: #17312e;
+  --accent-foreground: #5eead4;
+  --destructive: #f87171;
+  --border: #262626;
+  --input: #262626;
+  --ring: #fafafa;
   color-scheme: dark;
 }
 

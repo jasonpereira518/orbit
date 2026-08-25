@@ -31,6 +31,7 @@ import {
 import { loadAdminUserRows } from "../src/lib/admin-metrics";
 import { setInfraCost, monthStart } from "../src/lib/infra-costs";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { renderDeep, textOf } from "./lib/render-tree";
 
 const PREFIX = "smoke-econ-";
 const PAYER = `${PREFIX}payer`;
@@ -237,8 +238,17 @@ async function main() {
   const { default: AdminBillingPage } = await import(
     "../src/app/(admin)/admin/billing/page"
   );
-  const tree = await AdminBillingPage();
+  // `renderDeep`, because the Money screen streams each group behind its own Suspense
+  // boundary now: invoking the page alone would build a shell of fallbacks and assert
+  // nothing about whether the economics actually rendered.
+  const tree = await renderDeep(AdminBillingPage());
+  const text = textOf(tree).join(" ");
   check("the Money screen renders", tree != null);
+  check(
+    "...and its panels resolve rather than staying fallbacks",
+    text.includes("Concentration") && text.includes("Recent billing movements"),
+    text.slice(0, 240)
+  );
 
   await cleanup();
   console.log("\nAll unit-economics checks passed.");

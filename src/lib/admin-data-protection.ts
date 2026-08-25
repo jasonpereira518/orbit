@@ -42,36 +42,73 @@ const ANONYMISED_ON_PURGE = new Set(["billing_events"]);
 
 export type OrphanTable = { table: string; rows: number };
 
-export async function orphanRows(): Promise<OrphanTable[]> {
-  const db = await getDb();
-  const out: OrphanTable[] = [];
-
+/** The user-scoped tables the sweep covers, derived from the schema rather than listed. */
+function sweptTables(): string[] {
+  const names: string[] = [];
   for (const value of Object.values(schema)) {
     if (!(value instanceof PgTable)) continue;
-    const columns = getTableColumns(value);
-    if (!("userId" in columns)) continue;
-
+    if (!("userId" in getTableColumns(value))) continue;
     const name = getTableName(value);
     if (name === "user_settings" || ANONYMISED_ON_PURGE.has(name)) continue;
-
-    try {
-      const result = await db.execute(
-        sql.raw(
-          `SELECT count(*)::int AS n FROM ${name} t
-           WHERE t.user_id IS NOT NULL
-             AND NOT EXISTS (
-               SELECT 1 FROM user_settings s WHERE s.user_id = t.user_id
-             )`
-        )
-      );
-      const rows = num(rowsOf<{ n: number }>(result)[0]?.n);
-      if (rows > 0) out.push({ table: name, rows });
-    } catch {
-      // A table the query cannot read is not evidence of a leak; skip rather than
-      // reporting a false one.
-    }
+    names.push(name);
   }
+  return names;
+}
 
+function orphanCountSql(table: string): string {
+  return `SELECT '${table}' AS t, count(*) AS n FROM ${table} x
+          WHERE x.user_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM user_settings s WHERE s.user_id = x.user_id
+            )`;
+}
+
+export async function orphanRows(): Promise<OrphanTable[]> {
+  const db = await getDb();
+  const tables = sweptTables();
+  if (tables.length === 0) return [];
+
+  // ONE round trip, not one per table. There are 25 swept tables and on Neon HTTP every
+  // statement is its own HTTPS request, so the loop this replaced was 25 sequential
+  // network round trips on both /admin/health and /admin (via `decisionsWaiting`).
+  // Same technique as `getDataQuality` in admin-product-health.ts.
+  //
+  // Table names are interpolated raw, which is safe *because they come from the schema*
+  // rather than from a request — `sweptTables()` reads Drizzle's own table objects.
+  try {
+    const result = await db.execute(
+      sql.raw(tables.map(orphanCountSql).join("\n UNION ALL "))
+    );
+    return rowsOf<{ t: string; n: number | string }>(result)
+      .map((r) => ({ table: r.t, rows: num(r.n) }))
+      .filter((r) => r.rows > 0)
+      .sort((a, b) => b.rows - a.rows);
+  } catch {
+    // A single unreadable table fails the whole UNION, and a sweep that silently returns
+    // nothing is indistinguishable from a clean database — which is the exact failure
+    // `smoke-data-protection.ts` exists to catch. So fall back to asking table by table,
+    // where one unreadable table only costs its own row.
+    return orphanRowsPerTable(db, tables);
+  }
+}
+
+async function orphanRowsPerTable(
+  db: Awaited<ReturnType<typeof getDb>>,
+  tables: string[]
+): Promise<OrphanTable[]> {
+  const out: OrphanTable[] = [];
+  const counts = await Promise.all(
+    tables.map(async (name) => {
+      try {
+        const result = await db.execute(sql.raw(orphanCountSql(name)));
+        return { table: name, rows: num(rowsOf<{ n: number | string }>(result)[0]?.n) };
+      } catch {
+        // Not evidence of a leak; skip rather than reporting a false one.
+        return null;
+      }
+    })
+  );
+  for (const c of counts) if (c && c.rows > 0) out.push(c);
   return out.sort((a, b) => b.rows - a.rows);
 }
 
@@ -91,53 +128,94 @@ export type RetentionRule = {
  * remembering people — but it is the sort of thing that should be chosen out loud, given
  * that the people being remembered did not agree to it.
  */
+/**
+ * Row counts for several tables in one round trip.
+ *
+ * Returns `null` for a table it could not read, which the callers render as "unknown"
+ * rather than as zero — an unreadable table and an empty one are very different claims.
+ */
+async function countTables(
+  db: Awaited<ReturnType<typeof getDb>>,
+  tables: string[]
+): Promise<Map<string, number | null>> {
+  const out = new Map<string, number | null>(tables.map((t) => [t, null]));
+
+  try {
+    const result = await db.execute(
+      sql.raw(
+        tables
+          .map((t) => `SELECT '${t}' AS t, count(*) AS n FROM ${t}`)
+          .join("\n UNION ALL ")
+      )
+    );
+    for (const r of rowsOf<{ t: string; n: number | string }>(result)) {
+      out.set(r.t, num(r.n));
+    }
+    return out;
+  } catch {
+    // One missing table would otherwise blank every count on the screen.
+    await Promise.all(
+      tables.map(async (t) => {
+        try {
+          const r = await db.execute(sql.raw(`SELECT count(*) AS n FROM ${t}`));
+          out.set(t, num(rowsOf<{ n: number | string }>(r)[0]?.n));
+        } catch {
+          out.set(t, null);
+        }
+      })
+    );
+    return out;
+  }
+}
+
 export async function retentionPicture(): Promise<RetentionRule[]> {
   const db = await getDb();
 
-  const count = async (table: string): Promise<number | null> => {
-    try {
-      const r = await db.execute(sql.raw(`SELECT count(*)::int AS n FROM ${table}`));
-      return num(rowsOf<{ n: number }>(r)[0]?.n);
-    } catch {
-      return null;
-    }
-  };
+  const counts = await countTables(db, [
+    "contacts",
+    "recruiter_messages",
+    "chat_messages",
+    "usage_events",
+    "error_events",
+    "billing_events",
+  ]);
+  const count = (table: string): number | null => counts.get(table) ?? null;
 
   return [
     {
       what: "Contacts and interactions",
       policy: "Kept until the user deletes them or their account",
-      rows: await count("contacts"),
+      rows: count("contacts"),
       keptForever: true,
     },
     {
       what: "Recruiter messages",
       policy: "Kept until the user deletes them or their account",
-      rows: await count("recruiter_messages"),
+      rows: count("recruiter_messages"),
       keptForever: true,
     },
     {
       what: "Chat transcripts",
       policy: "Kept until the user deletes them or their account",
-      rows: await count("chat_messages"),
+      rows: count("chat_messages"),
       keptForever: true,
     },
     {
       what: "AI usage events",
       policy: `Pruned after ${USAGE_EVENT_RETENTION_DAYS} days`,
-      rows: await count("usage_events"),
+      rows: count("usage_events"),
       keptForever: false,
     },
     {
       what: "Error events",
       policy: "Pruned after 30 days",
-      rows: await count("error_events"),
+      rows: count("error_events"),
       keptForever: false,
     },
     {
       what: "Billing events",
       policy: "Kept indefinitely, anonymised when the account is deleted",
-      rows: await count("billing_events"),
+      rows: count("billing_events"),
       keptForever: true,
     },
   ];
@@ -191,12 +269,13 @@ export type DataProtectionPicture = {
 export async function getDataProtection(): Promise<DataProtectionPicture> {
   const db = await getDb();
 
-  const thirdParty = await db
-    .execute(sql`SELECT count(*)::int AS n FROM contacts`)
-    .then((r) => num(rowsOf<{ n: number }>(r)[0]?.n))
-    .catch(() => null);
-
-  const [orphans, retention, denials] = await Promise.all([
+  // All four in one wave. `thirdParty` used to be awaited before the others, which made
+  // the cheapest query on the screen gate the three expensive ones behind it.
+  const [thirdParty, orphans, retention, denials] = await Promise.all([
+    db
+      .execute(sql`SELECT count(*)::int AS n FROM contacts`)
+      .then((r) => num(rowsOf<{ n: number }>(r)[0]?.n))
+      .catch(() => null),
     orphanRows().catch(() => []),
     retentionPicture().catch(() => []),
     recentAccessDenials().catch(() => []),

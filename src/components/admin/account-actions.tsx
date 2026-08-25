@@ -35,7 +35,7 @@ export function AccountDangerZone({
   contactCount: number;
 }) {
   return (
-    <div className="space-y-4 rounded-lg border border-destructive/30 p-4">
+    <div className="space-y-4 rounded-xl border border-destructive/30 p-4">
       <div>
         <h3 className="text-sm font-medium text-destructive">Danger zone</h3>
         <p className="mt-1 text-xs text-muted-foreground">

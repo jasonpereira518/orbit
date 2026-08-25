@@ -20,6 +20,7 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, gateEvents, userSettings } from "../src/db/schema";
 import { loadAdminUserRows } from "../src/lib/admin-metrics";
+import { renderDeep, textOf } from "./lib/render-tree";
 import {
   contactCapPicture,
   gateDemand,
@@ -176,7 +177,16 @@ async function main() {
   const { default: AdminProductPage } = await import(
     "../src/app/(admin)/admin/product/page"
   );
-  check("the Product screen renders", (await AdminProductPage()) != null);
+  // `renderDeep`, because Product streams each panel behind its own Suspense boundary.
+  const productTree = await renderDeep(AdminProductPage());
+  const productText = textOf(productTree).join(" ");
+  check("the Product screen renders", productTree != null);
+  check(
+    "...and its panels resolve rather than staying fallbacks",
+    productText.includes("Which walls people hit") &&
+      productText.includes("Is anything in the wrong tier?"),
+    productText.slice(0, 240)
+  );
 
   await cleanup();
   console.log("\nAll pricing-lever checks passed.");

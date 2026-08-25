@@ -31,6 +31,7 @@ import {
 import { decisionsWaiting } from "../src/lib/admin-decisions";
 import { recordFirstTouch, recordDirectVisit } from "../src/lib/attribution";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { renderDeep, textOf } from "./lib/render-tree";
 
 const PREFIX = "smoke-funnel-";
 const REDDIT_A = `${PREFIX}reddit-a`;
@@ -188,13 +189,34 @@ async function main() {
   const { default: AdminFunnelPage } = await import(
     "../src/app/(admin)/admin/funnel/page"
   );
+  const funnelTree = await renderDeep(
+    await AdminFunnelPage({ searchParams: Promise.resolve({}) })
+  );
+  const funnelText = textOf(funnelTree).join(" ");
+  check("the Funnel screen renders", funnelTree != null);
   check(
-    "the Funnel screen renders",
-    (await AdminFunnelPage({ searchParams: Promise.resolve({}) })) != null
+    "...and its panels resolve rather than staying fallbacks",
+    funnelText.includes("Where accounts came from") &&
+      funnelText.includes("Activation by signup cohort"),
+    funnelText.slice(0, 240)
   );
 
+  // `renderDeep`, not a bare call: the Overview starts its queries and hands the promises
+  // to async sections behind Suspense, so invoking the page alone would build a shell and
+  // assert nothing about whether any panel actually renders.
   const { default: AdminOverviewPage } = await import("../src/app/(admin)/admin/page");
-  check("the Overview renders with the decisions list", (await AdminOverviewPage()) != null);
+  const overviewTree = await renderDeep(AdminOverviewPage());
+  const overviewText = textOf(overviewTree).join(" ");
+  check("the Overview renders with the decisions list", overviewTree != null);
+  // Anchored on strings that exist ONLY in the resolved panels. Panel titles are no good
+  // here — the skeleton fallbacks carry the same titles, so asserting on those would pass
+  // against a page that never resolved anything.
+  check(
+    "...and its panels resolve rather than staying as fallbacks",
+    overviewText.includes("one-time purchases") &&
+      overviewText.includes("Orbit Pro, recurring"),
+    overviewText.slice(0, 240)
+  );
 
   await cleanup();
   console.log("\nAll funnel and decision checks passed.");

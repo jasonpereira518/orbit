@@ -1,6 +1,8 @@
+import { Suspense } from "react";
 import {
   AdminPageHeader,
   AdminPanel,
+  AdminPanelSkeleton,
   AdminTable,
   EmptyState,
   MetricTile,
@@ -10,6 +12,9 @@ import {
   Th,
   TrendBars,
 } from "@/components/admin/primitives";
+import { LiveProvider, LiveValue } from "@/components/admin/live";
+import { SCREEN_TIER } from "@/lib/admin-live-tiers";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   activationTrend,
   activeTrend,
@@ -45,67 +50,24 @@ export const metadata = { title: "Admin · Funnel" };
  * for every bucket. The objection was to smoothed shapes with no labels; a labelled column
  * of numbers is the same information the roster would give you, sorted by time.
  */
-export default async function AdminGrowthPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ grain?: string }>;
-}) {
-  const params = await searchParams;
-  const grain: Grain = params.grain === "month" ? "month" : "week";
-  const buckets = grain === "month" ? 12 : 12;
+type Signups = Awaited<ReturnType<typeof signupTrend>>;
+type Actives = Awaited<ReturnType<typeof activeTrend>>;
+type Activation = Awaited<ReturnType<typeof activationTrend>>;
+type Cohorts = Awaited<ReturnType<typeof retentionCohorts>>;
+type AiVolume = Awaited<ReturnType<typeof aiVolumeTrend>>;
+type Parking = Awaited<ReturnType<typeof getFunnelParking>>;
+type Waitlist = Awaited<ReturnType<typeof getWaitlist>> | null;
+type Quality = Awaited<ReturnType<typeof getDataQuality>>;
+type Channels = Awaited<ReturnType<typeof channelBreakdown>>;
+type Engagement = Awaited<ReturnType<typeof engagementDepth>>;
+type TopOfFunnel = Awaited<ReturnType<typeof topOfFunnel>>;
 
-  // Feature adoption, AI-operation adoption and durable artifacts moved to /admin/product:
-  // they answer "what should I build", where this screen answers "do people arrive and
-  // stay". They were only ever together because both were new at the same time.
-  const [
-    signups,
-    actives,
-    activation,
-    cohorts,
-    aiVolume,
-    parking,
-    waitlist,
-    quality,
-    channels,
-    engagement,
-    funnel,
-  ] = await Promise.all([
-    signupTrend(grain, buckets),
-    activeTrend(grain, buckets),
-    activationTrend(grain, buckets),
-    retentionCohorts(6),
-    aiVolumeTrend(grain, buckets),
-    getFunnelParking(),
-    // Waitlist rides on the webhook ledger, so it degrades on its own if that is absent.
-    getWaitlist().catch(() => null),
-    getDataQuality(),
-    // The three that only became answerable once attribution and the presence heartbeat
-    // shipped. Each degrades to an empty shape rather than taking the screen down.
-    channelBreakdown().catch(() => []),
-    engagementDepth().catch(() => ({
-      dau: 0,
-      wau: 0,
-      mau: 0,
-      stickiness: null,
-      liveNow: 0,
-      minimumForStickiness: STICKINESS_MINIMUM_MAU,
-    })),
-    topOfFunnel().catch(() => ({
-      waitlistEntries: null,
-      signups: 0,
-      activated: 0,
-      everWrote: 0,
-    })),
-  ]);
+/** Bucket label. A pure function of the grain, so every section builds its own. */
+const labelFor = (grain: Grain) => (d: Date) =>
+  grain === "month" ? d.toISOString().slice(0, 7) : d.toISOString().slice(5, 10);
 
-  const label = (d: Date) =>
-    grain === "month"
-      ? d.toISOString().slice(0, 7)
-      : d.toISOString().slice(5, 10);
-
-  const totalSignups = signups.reduce((a, p) => a + p.count, 0);
-
-  const grainLink = (value: Grain) => (
+function GrainLink({ grain, value }: { grain: Grain; value: Grain }) {
+  return (
     <a
       href={`/admin/funnel${value === "week" ? "" : "?grain=month"}`}
       className={
@@ -117,29 +79,176 @@ export default async function AdminGrowthPage({
       {value === "week" ? "Weekly" : "Monthly"}
     </a>
   );
+}
+
+/**
+ * Awaits ONLY `searchParams` — which costs nothing — then starts eleven independent
+ * loaders and hands each panel its own promise. Before this the screen waited on the
+ * slowest of the eleven before showing any of them.
+ */
+export default async function AdminFunnelPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ grain?: string }>;
+}) {
+  const params = await searchParams;
+  const grain: Grain = params.grain === "month" ? "month" : "week";
+  const buckets = grain === "month" ? 12 : 12;
+
+  // Feature adoption, AI-operation adoption and durable artifacts moved to /admin/product:
+  // they answer "what should I build", where this screen answers "do people arrive and
+  // stay". They were only ever together because both were new at the same time.
+  const signupsP = signupTrend(grain, buckets);
+  const activesP = activeTrend(grain, buckets);
+  const activationP = activationTrend(grain, buckets);
+  const cohortsP = retentionCohorts(6);
+  const aiVolumeP = aiVolumeTrend(grain, buckets);
+  const parkingP = getFunnelParking();
+  // Waitlist rides on the webhook ledger, so it degrades on its own if that is absent.
+  const waitlistP = getWaitlist().catch(() => null);
+  const qualityP = getDataQuality();
+  // The three that only became answerable once attribution and the presence heartbeat
+  // shipped. Each degrades to an empty shape rather than taking the screen down.
+  const channelsP = channelBreakdown().catch(() => []);
+  const engagementP = engagementDepth().catch(() => ({
+    dau: 0,
+    wau: 0,
+    mau: 0,
+    stickiness: null,
+    liveNow: 0,
+    minimumForStickiness: STICKINESS_MINIMUM_MAU,
+  }));
+  const funnelP = topOfFunnel().catch(() => ({
+    waitlistEntries: null,
+    signups: 0,
+    activated: 0,
+    everWrote: 0,
+  }));
 
   return (
-    <>
+    <LiveProvider screen="funnel" intervalMs={SCREEN_TIER.funnel} initial={{}}>
+      <Suspense
+        fallback={
+          <div className="mb-6">
+            <Skeleton className="h-8 w-32" />
+            <Skeleton className="mt-2 h-4 w-72" />
+          </div>
+        }
+      >
+        <FunnelHeader
+          signupsPromise={signupsP}
+          engagementPromise={engagementP}
+          grain={grain}
+          buckets={buckets}
+        />
+      </Suspense>
+
+      <div className="space-y-6">
+        <div className="flex items-center gap-3 text-xs">
+          <GrainLink grain={grain} value="week" />
+          <span className="text-muted-foreground/40">·</span>
+          <GrainLink grain={grain} value="month" />
+        </div>
+
+        {/* ---------------------------------------------------- top of funnel ---- */}
+
+        <Suspense fallback={<AdminPanelSkeleton title="Where accounts came from" />}>
+          <OriginPanel channelsPromise={channelsP} />
+        </Suspense>
+
+        <Suspense
+          fallback={
+            <div className="grid gap-6 lg:grid-cols-2">
+              <AdminPanelSkeleton title="Reach" />
+              <AdminPanelSkeleton title="How deeply it is used" />
+            </div>
+          }
+        >
+          <ReachPanels engagementPromise={engagementP} funnelPromise={funnelP} />
+        </Suspense>
+
+        <Suspense
+          fallback={
+            <div className="grid gap-6 lg:grid-cols-2">
+              <AdminPanelSkeleton title="Signups" />
+              <AdminPanelSkeleton title="Active accounts" />
+            </div>
+          }
+        >
+          <TrendPanels
+            signupsPromise={signupsP}
+            activesPromise={activesP}
+            grain={grain}
+          />
+        </Suspense>
+
+        <Suspense fallback={<AdminPanelSkeleton title="Activation by signup cohort" />}>
+          <ActivationCohort activationPromise={activationP} grain={grain} />
+        </Suspense>
+
+        <Suspense
+          fallback={<AdminPanelSkeleton title="Did each month's intake stick?" />}
+        >
+          <StickPanel cohortsPromise={cohortsP} />
+        </Suspense>
+
+        <Suspense fallback={<AdminPanelSkeleton title="AI calls" />}>
+          <AiVolumePanel aiVolumePromise={aiVolumeP} grain={grain} />
+        </Suspense>
+
+        <Suspense
+          fallback={
+            <div className="grid gap-6 lg:grid-cols-2">
+              <AdminPanelSkeleton title="Where incomplete accounts are parked" />
+              <AdminPanelSkeleton title="Waitlist" />
+            </div>
+          }
+        >
+          <ParkingPanels parkingPromise={parkingP} waitlistPromise={waitlistP} />
+        </Suspense>
+
+        <Suspense fallback={<AdminPanelSkeleton title="Data quality" />}>
+          <QualityPanel qualityPromise={qualityP} />
+        </Suspense>
+      </div>
+    </LiveProvider>
+  );
+}
+
+async function FunnelHeader({
+  signupsPromise,
+  engagementPromise,
+  grain,
+  buckets,
+}: {
+  signupsPromise: Promise<Signups>;
+  engagementPromise: Promise<Engagement>;
+  grain: Grain;
+  buckets: number;
+}) {
+  const [signups, engagement] = await Promise.all([signupsPromise, engagementPromise]);
+  const totalSignups = signups.reduce((a, p) => a + p.count, 0);
+  return (
       <AdminPageHeader
         title="Funnel"
         subtitle={
           <>
             <span className="tabular-nums">{totalSignups}</span> signup
             {totalSignups === 1 ? "" : "s"} in the last {buckets} {grain}s ·{" "}
-            <span className="tabular-nums">{engagement.liveNow}</span> active right now
+            <LiveValue name="liveNow">{engagement.liveNow}</LiveValue> active right now
           </>
         }
       />
+  );
+}
 
-      <div className="space-y-6">
-        <div className="flex items-center gap-3 text-xs">
-          {grainLink("week")}
-          <span className="text-muted-foreground/40">·</span>
-          {grainLink("month")}
-        </div>
-
-        {/* ---------------------------------------------------- top of funnel ---- */}
-
+async function OriginPanel({
+  channelsPromise,
+}: {
+  channelsPromise: Promise<Channels>;
+}) {
+  const channels = await channelsPromise;
+  return (
         <AdminPanel title="Where accounts came from">
           {channels.length === 0 ? (
             <EmptyState>No accounts yet.</EmptyState>
@@ -187,7 +296,18 @@ export default async function AdminGrowthPage({
             predate the attribution mirror, kept in the denominator rather than hidden.
           </p>
         </AdminPanel>
+  );
+}
 
+async function ReachPanels({
+  engagementPromise,
+  funnelPromise,
+}: {
+  engagementPromise: Promise<Engagement>;
+  funnelPromise: Promise<TopOfFunnel>;
+}) {
+  const [engagement, funnel] = await Promise.all([engagementPromise, funnelPromise]);
+  return (
         <div className="grid gap-6 lg:grid-cols-2">
           <AdminPanel title="Reach">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -223,10 +343,16 @@ export default async function AdminGrowthPage({
             <div className="grid gap-3 sm:grid-cols-2">
               <MetricTile
                 label="Active today"
-                value={String(engagement.dau)}
+                value={<LiveValue name="dau">{engagement.dau}</LiveValue>}
               />
-              <MetricTile label="This week" value={String(engagement.wau)} />
-              <MetricTile label="This month" value={String(engagement.mau)} />
+              <MetricTile
+                label="This week"
+                value={<LiveValue name="wau">{engagement.wau}</LiveValue>}
+              />
+              <MetricTile
+                label="This month"
+                value={<LiveValue name="mau">{engagement.mau}</LiveValue>}
+              />
               <MetricTile
                 label="Stickiness"
                 value={
@@ -249,7 +375,21 @@ export default async function AdminGrowthPage({
             </p>
           </AdminPanel>
         </div>
+  );
+}
 
+async function TrendPanels({
+  signupsPromise,
+  activesPromise,
+  grain,
+}: {
+  signupsPromise: Promise<Signups>;
+  activesPromise: Promise<Actives>;
+  grain: Grain;
+}) {
+  const [signups, actives] = await Promise.all([signupsPromise, activesPromise]);
+  const label = labelFor(grain);
+  return (
         <div className="grid gap-6 lg:grid-cols-2">
           <AdminPanel title={`Signups by ${grain}`}>
             <TrendBars
@@ -273,7 +413,19 @@ export default async function AdminGrowthPage({
             />
           </AdminPanel>
         </div>
+  );
+}
 
+async function ActivationCohort({
+  activationPromise,
+  grain,
+}: {
+  activationPromise: Promise<Activation>;
+  grain: Grain;
+}) {
+  const activation = await activationPromise;
+  const label = labelFor(grain);
+  return (
         <AdminPanel title="Activation by signup cohort">
           {activation.every((p) => p.signed === 0) ? (
             <EmptyState>No signups in this window.</EmptyState>
@@ -304,7 +456,13 @@ export default async function AdminGrowthPage({
             </AdminTable>
           )}
         </AdminPanel>
+  );
+}
 
+async function StickPanel({ cohortsPromise }: { cohortsPromise: Promise<Cohorts> }) {
+  const cohorts = await cohortsPromise;
+  return (
+      <>
         {/* Three integers per cohort, never a percentage grid: at this scale a retention
             percentage has one or two people behind it. */}
         <AdminPanel title="Did each month's intake stick?">
@@ -333,7 +491,20 @@ export default async function AdminGrowthPage({
             ))}
           </AdminTable>
         </AdminPanel>
+      </>
+  );
+}
 
+async function AiVolumePanel({
+  aiVolumePromise,
+  grain,
+}: {
+  aiVolumePromise: Promise<AiVolume>;
+  grain: Grain;
+}) {
+  const aiVolume = await aiVolumePromise;
+  const label = labelFor(grain);
+  return (
         <AdminPanel
             title={`AI calls by ${grain}`}
             action={
@@ -355,7 +526,18 @@ export default async function AdminGrowthPage({
               usage_events is pruned at 180 days, so this window cannot reach further back.
             </p>
         </AdminPanel>
+  );
+}
 
+async function ParkingPanels({
+  parkingPromise,
+  waitlistPromise,
+}: {
+  parkingPromise: Promise<Parking>;
+  waitlistPromise: Promise<Waitlist>;
+}) {
+  const [parking, waitlist] = await Promise.all([parkingPromise, waitlistPromise]);
+  return (
         <div className="grid gap-6 lg:grid-cols-2">
           <AdminPanel title="Where incomplete accounts are parked">
             {parking.onboardingParking.length === 0 && parking.wizardParking.length === 0 ? (
@@ -414,7 +596,12 @@ export default async function AdminGrowthPage({
             )}
           </AdminPanel>
         </div>
+  );
+}
 
+async function QualityPanel({ qualityPromise }: { qualityPromise: Promise<Quality> }) {
+  const quality = await qualityPromise;
+  return (
         <AdminPanel title="Data quality">
           {/* A section rather than a screen: at this scale it is eight integers and most
               are zero. Split it out when two rows stay non-zero for a week — at that point
@@ -445,7 +632,5 @@ export default async function AdminGrowthPage({
             ))}
           </AdminTable>
         </AdminPanel>
-      </div>
-    </>
   );
 }

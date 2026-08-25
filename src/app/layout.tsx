@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Fraunces, Outfit } from "next/font/google";
+import { Fraunces, Geist, Geist_Mono, Outfit } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/components/auth-provider";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -7,6 +7,28 @@ import "./globals.css";
 
 const outfit = Outfit({
   variable: "--font-sans",
+  subsets: ["latin"],
+});
+
+/**
+ * The operator console's face. Scoped to `/admin` by `.admin-theme` in globals.css — the
+ * product keeps Outfit, which is warm and geometric and right for it, and wrong for a
+ * dense table of figures.
+ */
+const geist = Geist({
+  variable: "--font-geist",
+  subsets: ["latin"],
+});
+
+/**
+ * ALSO A BUG FIX. `--font-mono` in globals.css has always read `var(--font-geist-mono)`,
+ * and nothing anywhere defined that variable — so the declaration was invalid and every
+ * `font-mono` in the codebase silently inherited Outfit instead. Every user ID, every
+ * verbatim error block and every feature key has been rendering in a proportional sans,
+ * which is precisely what monospace was specified to avoid.
+ */
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
   subsets: ["latin"],
 });
 
@@ -42,7 +64,7 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${outfit.variable} ${fraunces.variable} h-full`}
+      className={`${outfit.variable} ${fraunces.variable} ${geist.variable} ${geistMono.variable} h-full`}
     >
       <body className="h-full min-h-full font-sans antialiased">
         <ThemeProvider

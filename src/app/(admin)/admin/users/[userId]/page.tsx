@@ -130,7 +130,7 @@ export default async function AdminUserDetailPage({
           </Avatar>
 
           <div className="min-w-0">
-            <h1 className="truncate font-[family-name:var(--font-display)] text-2xl text-primary">
+            <h1 className="truncate text-2xl font-medium tracking-tight text-primary">
               {displayName(identity)}
             </h1>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">

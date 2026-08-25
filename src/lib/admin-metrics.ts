@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { desc, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
@@ -171,7 +172,19 @@ function maxDate(
  * function over billing columns already fetched, which is exactly why the paywall split
  * the two apart.
  */
-export async function loadAdminUserRows(): Promise<AdminUserRow[]> {
+/**
+ * Request-scoped: six aggregate queries, and more than one caller wants them.
+ *
+ * `/admin` renders `getAdminOverview()` and `decisionsWaiting()` in the same
+ * `Promise.all`, and both start here — so without this memo those six queries ran twice,
+ * concurrently, on every load of the console's front page.
+ *
+ * Memoising also makes the ROW ARRAY IDENTITY stable across callers, which is what lets
+ * `contactCapPicture(rows)` dedupe too: `cache()` keys on argument identity, so two
+ * callers only share a result when they were handed the same array.
+ */
+export const loadAdminUserRows = cache(
+  async function loadAdminUserRows(): Promise<AdminUserRow[]> {
   const db = await getDb();
 
   const [settingsRows, contactAgg, interactionAgg, importAgg, chatAgg, usageAgg] =
@@ -336,7 +349,7 @@ export async function loadAdminUserRows(): Promise<AdminUserRow[]> {
     };
   });
 }
-
+)
 /* ------------------------------------------------------------------------------------
  * Reductions over the rollup
  * --------------------------------------------------------------------------------- */
@@ -553,8 +566,11 @@ export type AdminOverview = {
   missingKeyCount: number;
 };
 
-export async function getAdminOverview(now = new Date()): Promise<AdminOverview> {
-  const rows = await loadAdminUserRows();
+export async function getAdminOverview(
+  now = new Date(),
+  roster?: Promise<AdminUserRow[]> | AdminUserRow[]
+): Promise<AdminOverview> {
+  const rows = await (roster ?? loadAdminUserRows());
   const ts = now.getTime();
 
   const activeSince = (days: number) =>

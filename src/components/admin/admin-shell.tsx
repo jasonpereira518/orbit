@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ADMIN_THEME_CLASS } from "@/components/admin/theme";
 import { usePathname } from "next/navigation";
 import { motion } from "motion/react";
 import { ArrowUpRight } from "lucide-react";
@@ -26,23 +27,27 @@ export function AdminShell({
   adminEmail,
 }: {
   children: React.ReactNode;
-  adminEmail?: string | null;
+  /** A server-rendered node, not a string — it streams in behind its own Suspense
+   *  boundary so the shell never waits on Clerk to paint. See `(admin)/layout.tsx`. */
+  adminEmail?: React.ReactNode;
 }) {
   const pathname = usePathname();
 
   return (
-    <div className="min-h-dvh bg-background text-sm">
-      {/* Mode signal. Gold is an existing Orbit token that is essentially unused in app
-          chrome, so peripheral vision catches it before a word has been read. */}
-      <div aria-hidden className="h-0.5 w-full bg-accent" />
+    <div className={cn(ADMIN_THEME_CLASS, "min-h-dvh bg-background text-sm")}>
+      {/* Mode signal. A solid black hairline against a white page — peripheral vision
+          catches it before a word has been read, and unlike the accent it costs nothing
+          from the two-colour budget. (This was described as gold for a long time. It was
+          never gold: it pointed at `--accent`, which renders teal.) */}
+      <div aria-hidden className="h-0.5 w-full bg-foreground" />
 
       <header className="sticky top-0 z-30 border-b border-border/70 bg-card/90 backdrop-blur">
         <div className="mx-auto flex w-full max-w-[1400px] items-center gap-6 px-6 py-3">
           <Link href="/admin" className="flex items-center gap-2">
-            <span className="font-[family-name:var(--font-display)] text-base text-primary">
+            <span className="text-base font-medium tracking-tight text-primary">
               Orbit
             </span>
-            <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[0.625rem] font-medium uppercase tracking-widest text-accent-foreground">
+            <span className="rounded border border-border px-1.5 py-0.5 text-[0.625rem] font-medium uppercase tracking-widest text-muted-foreground">
               Admin
             </span>
           </Link>
@@ -65,7 +70,7 @@ export function AdminShell({
                   {active && (
                     <motion.span
                       layoutId="admin-nav-pill"
-                      className="absolute inset-0 rounded-lg bg-accent/12"
+                      className="absolute inset-0 rounded-lg bg-muted"
                       transition={{ type: "spring", stiffness: 400, damping: 34 }}
                     />
                   )}
@@ -79,11 +84,7 @@ export function AdminShell({
           </nav>
 
           <div className="ml-auto flex items-center gap-4 text-xs text-muted-foreground">
-            {adminEmail && (
-              <span className="hidden sm:inline truncate max-w-[16rem]">
-                {adminEmail}
-              </span>
-            )}
+            {adminEmail}
             <Link
               href="/dashboard"
               className="flex items-center gap-1 rounded-lg border border-border/70 px-2 py-1 transition-colors duration-fast hover:text-foreground"

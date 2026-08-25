@@ -1,8 +1,11 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { AlertTriangle, TrendingDown } from "lucide-react";
 import {
+  AdminAlert,
   AdminPageHeader,
   AdminPanel,
+  AdminPanelSkeleton,
   AdminTable,
   EmptyState,
   MetricTile,
@@ -11,6 +14,9 @@ import {
   Td,
   Th,
 } from "@/components/admin/primitives";
+import { LiveProvider, LiveValue } from "@/components/admin/live";
+import { SCREEN_TIER } from "@/lib/admin-live-tiers";
+import { Skeleton } from "@/components/ui/skeleton";
 import { CopyId } from "@/components/admin/copy-id";
 import {
   buildPlanBreakdown,
@@ -47,42 +53,135 @@ export const dynamic = "force-dynamic";
  * merely rough; the second pointed the wrong way, so heavier usage looked like higher cost
  * when it was the opposite.
  */
-export default async function AdminBillingPage() {
-  const [rows, lifetimeSold, offer, ledger, drift] = await Promise.all([
-    loadAdminUserRows(),
-    countLifetimePurchases().catch(() => 0),
-    lifetimeOffer(),
-    recentBillingEvents(12).catch(() => []),
-    mrrReconciliation().catch(() => null),
-  ]);
+type Rows = Awaited<ReturnType<typeof loadAdminUserRows>>;
+type Econ = Awaited<ReturnType<typeof getUnitEconomics>>;
+type Offer = Awaited<ReturnType<typeof lifetimeOffer>>;
+type Ledger = Awaited<ReturnType<typeof recentBillingEvents>>;
+type Drift = Awaited<ReturnType<typeof mrrReconciliation>> | null;
 
-  const econ = await getUnitEconomics(rows);
-  const plans = buildPlanBreakdown(rows);
-
-  const needsAttention = subscriptionsNeedingAttention(rows);
-  const comped = rows.filter((r) => r.planSource === "comp");
-  const underwater = econ.accounts.filter((a) => a.marginCents < 0);
+/**
+ * NOT ASYNC, ON PURPOSE. Most of this screen rests on the roster, and `getUnitEconomics`
+ * chains off it — so the panels that need only the roster (subscription health, comped
+ * accounts) and the one that needs neither (the billing ledger) no longer wait for the
+ * economics pass to finish before they appear.
+ */
+export default function AdminBillingPage() {
+  // ONE promise, awaited in several places — not several calls. `loadAdminUserRows` is
+  // memoised with React `cache()`, but that only dedupes inside a render, so anything
+  // that must not double-query shares the promise explicitly rather than trusting the memo.
+  const rowsPromise = loadAdminUserRows();
+  const econPromise = rowsPromise.then(getUnitEconomics);
+  const soldPromise = countLifetimePurchases().catch(() => 0);
+  const offerPromise = lifetimeOffer(soldPromise);
+  const ledgerPromise = recentBillingEvents(12).catch(() => []);
+  const driftPromise = mrrReconciliation().catch(() => null);
 
   return (
-    <>
+    <LiveProvider screen="billing" intervalMs={SCREEN_TIER.billing} initial={{}}>
+      <Suspense
+        fallback={
+          <div className="mb-6">
+            <Skeleton className="h-8 w-28" />
+            <Skeleton className="mt-2 h-4 w-80" />
+          </div>
+        }
+      >
+        <BillingHeader
+          rowsPromise={rowsPromise}
+          econPromise={econPromise}
+          soldPromise={soldPromise}
+        />
+      </Suspense>
+
+      <div className="space-y-6">
+        <Suspense
+          fallback={
+            <>
+              <AdminPanelSkeleton title="Break-even" />
+              <AdminPanelSkeleton title="Margin by account" />
+            </>
+          }
+        >
+          <EconPanels
+            econPromise={econPromise}
+            soldPromise={soldPromise}
+            offerPromise={offerPromise}
+            driftPromise={driftPromise}
+          />
+        </Suspense>
+
+        <Suspense fallback={<AdminPanelSkeleton title="Recent billing movements" />}>
+          <LedgerPanel ledgerPromise={ledgerPromise} />
+        </Suspense>
+
+        <Suspense fallback={<AdminPanelSkeleton title="Subscription health" />}>
+          <SubsPanel rowsPromise={rowsPromise} />
+        </Suspense>
+
+        <Suspense fallback={<AdminPanelSkeleton title="Comped accounts" />}>
+          <CompedPanel rowsPromise={rowsPromise} />
+        </Suspense>
+      </div>
+    </LiveProvider>
+  );
+}
+
+async function BillingHeader({
+  rowsPromise,
+  econPromise,
+  soldPromise,
+}: {
+  rowsPromise: Promise<Rows>;
+  econPromise: Promise<Econ>;
+  soldPromise: Promise<number>;
+}) {
+  const [rows, econ, lifetimeSold] = await Promise.all([
+    rowsPromise,
+    econPromise,
+    soldPromise,
+  ]);
+  const plans = buildPlanBreakdown(rows);
+  return (
       <AdminPageHeader
         title="Money"
         subtitle={
           <>
-            <span className="tabular-nums">{formatCents(econ.mrrCents)}</span>/mo
+            <LiveValue name="mrr">{formatCents(econ.mrrCents)}</LiveValue>/mo
             recurring · <span className="tabular-nums">{lifetimeSold}</span> Lifetime
             sold · <span className="tabular-nums">{plans.comped}</span> comped
           </>
         }
       />
 
-      <div className="space-y-6">
+  );
+}
+
+async function EconPanels({
+  econPromise,
+  soldPromise,
+  offerPromise,
+  driftPromise,
+}: {
+  econPromise: Promise<Econ>;
+  soldPromise: Promise<number>;
+  offerPromise: Promise<Offer>;
+  driftPromise: Promise<Drift>;
+}) {
+  const [econ, lifetimeSold, offer, drift] = await Promise.all([
+    econPromise,
+    soldPromise,
+    offerPromise,
+    driftPromise,
+  ]);
+  const underwater = econ.accounts.filter((a) => a.marginCents < 0);
+  return (
+    <>
         {/* A dropped billing webhook is invisible in every other view: both numbers look
             entirely reasonable on their own, and only their disagreement gives it away.
             Orbit has had this failure once already. */}
         {drift && !drift.agrees && (
-          <AdminPanel title="Revenue does not reconcile">
-            <p className="text-sm text-destructive">
+          <AdminAlert title="Revenue does not reconcile">
+            <p className="text-sm">
               Live subscriptions total{" "}
               <span className="tabular-nums">{formatCents(drift.liveCents)}</span>/mo, but
               the billing ledger sums to{" "}
@@ -95,11 +194,11 @@ export default async function AdminBillingPage() {
               means a billing webhook was dropped and never replayed. Subscriptions that
               predate the ledger also show here, and clear themselves on the next renewal.
             </p>
-          </AdminPanel>
+          </AdminAlert>
         )}
 
         {offer.needsStandardPrice && (
-          <AdminPanel title="Lifetime is still selling at the introductory price">
+          <AdminAlert title="Lifetime is still selling at the introductory price" tone="notice">
             <p className="text-sm">
               {offer.sold} Lifetime purchases have been made, so the introductory price has
               ended — but <code className="font-mono text-xs">STRIPE_LIFETIME_STANDARD_PRICE_ID</code>{" "}
@@ -111,7 +210,7 @@ export default async function AdminBillingPage() {
               and charging another costs something harder to fix. Add the $49 Stripe price
               to close it.
             </p>
-          </AdminPanel>
+          </AdminAlert>
         )}
 
         <div className="grid gap-6 lg:grid-cols-2">
@@ -119,7 +218,7 @@ export default async function AdminBillingPage() {
             <div className="grid gap-3 sm:grid-cols-2">
               <MetricTile
                 label="MRR"
-                value={formatCents(econ.mrrCents)}
+                value={<LiveValue name="mrr">{formatCents(econ.mrrCents)}</LiveValue>}
                 hint={`${econ.payingCount} paying account${econ.payingCount === 1 ? "" : "s"}`}
               />
               <MetricTile
@@ -290,7 +389,13 @@ export default async function AdminBillingPage() {
             adoption table and the roadmap are all a story about one person.
           </p>
         </AdminPanel>
+    </>
+  );
+}
 
+async function LedgerPanel({ ledgerPromise }: { ledgerPromise: Promise<Ledger> }) {
+  const ledger = await ledgerPromise;
+  return (
         <AdminPanel title="Recent billing movements">
           {ledger.length === 0 ? (
             <EmptyState>
@@ -341,7 +446,13 @@ export default async function AdminBillingPage() {
             </AdminTable>
           )}
         </AdminPanel>
+  );
+}
 
+async function SubsPanel({ rowsPromise }: { rowsPromise: Promise<Rows> }) {
+  const rows = await rowsPromise;
+  const needsAttention = subscriptionsNeedingAttention(rows);
+  return (
         <AdminPanel title="Subscription health">
           {needsAttention.length === 0 ? (
             <EmptyState>Every subscription is current.</EmptyState>
@@ -393,7 +504,13 @@ export default async function AdminBillingPage() {
             </AdminTable>
           )}
         </AdminPanel>
+  );
+}
 
+async function CompedPanel({ rowsPromise }: { rowsPromise: Promise<Rows> }) {
+  const rows = await rowsPromise;
+  const comped = rows.filter((r) => r.planSource === "comp");
+  return (
         <AdminPanel title="Comped accounts">
           {comped.length === 0 ? (
             <EmptyState>Nobody has been comped yet.</EmptyState>
@@ -437,7 +554,5 @@ export default async function AdminBillingPage() {
             </AdminTable>
           )}
         </AdminPanel>
-      </div>
-    </>
   );
 }

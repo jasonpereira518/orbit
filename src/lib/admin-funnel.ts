@@ -160,22 +160,26 @@ export type TopOfFunnel = {
 export async function topOfFunnel(): Promise<TopOfFunnel> {
   const db = await getDb();
 
-  const waitlist = await db
-    .execute(
-      sql`SELECT count(DISTINCT resource_id)::int AS n
-          FROM webhook_deliveries
-          WHERE event_type LIKE 'waitlistEntry.%'`
-    )
-    .then((r) => num(rowsOf<{ n: number }>(r)[0]?.n))
-    .catch(() => null);
-
-  const counts = await db.execute(sql`
-    SELECT
-      count(*)::int                        AS signups,
-      count(onboarding_completed_at)::int  AS activated,
-      (SELECT count(DISTINCT user_id)::int FROM contacts) AS ever_wrote
-    FROM user_settings
-  `);
+  // Independent counts, one wave. The waitlist ledger may not be instrumented at all,
+  // which is why it keeps its own `.catch` — an uninstrumented ledger reads as unknown,
+  // and must not take the other three counts down with it.
+  const [waitlist, counts] = await Promise.all([
+    db
+      .execute(
+        sql`SELECT count(DISTINCT resource_id)::int AS n
+            FROM webhook_deliveries
+            WHERE event_type LIKE 'waitlistEntry.%'`
+      )
+      .then((r) => num(rowsOf<{ n: number }>(r)[0]?.n))
+      .catch(() => null),
+    db.execute(sql`
+      SELECT
+        count(*)::int                        AS signups,
+        count(onboarding_completed_at)::int  AS activated,
+        (SELECT count(DISTINCT user_id)::int FROM contacts) AS ever_wrote
+      FROM user_settings
+    `),
+  ]);
 
   const row = rowsOf<Record<string, number>>(counts)[0] ?? {};
 

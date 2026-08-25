@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { CircleAlert, Ban, Download } from "lucide-react";
+import { CircleAlert, Ban } from "lucide-react";
 import {
   AdminPageHeader,
   AdminPanel,
+  ExportCsvLink,
   AdminTable,
   EmptyState,
   RelativeTime,
@@ -129,17 +130,13 @@ export default async function AdminUsersPage({
         action={
           // Exports the current filter, not just this page — and account-level columns
           // only. No contact data leaves through here.
-          <a
+          <ExportCsvLink
             href={`/api/admin/export?dataset=roster&format=csv&${new URLSearchParams(
               Object.entries({ q, plan, state, sort }).filter(
                 ([, v]) => v && v !== "all"
               ) as [string, string][]
             ).toString()}`}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-fast hover:text-foreground"
-          >
-            <Download className="size-3" aria-hidden />
-            Export CSV
-          </a>
+          />
         }
       />
 
