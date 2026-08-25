@@ -47,7 +47,7 @@ export default function RootLayout({
       <body className="h-full min-h-full font-sans antialiased">
         <ThemeProvider
           attribute="class"
-          defaultTheme="system"
+          defaultTheme="light"
           enableSystem
           disableTransitionOnChange
         >
