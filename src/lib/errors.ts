@@ -109,3 +109,26 @@ export function classifyAiError(err: unknown): AiErrorKind {
   if (/model|not found|404/i.test(base)) return "model_unavailable";
   return "other";
 }
+
+/**
+ * A provider has rejected the refresh token itself — the user must reconnect.
+ *
+ * Distinct from a transport failure on purpose. A provider outage or a missing client
+ * secret must never mark accounts as needing reauth; only a token-level rejection should.
+ */
+export class ReauthRequiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ReauthRequiredError";
+  }
+}
+
+/**
+ * Whether an OAuth token-endpoint response means "this grant is dead, reconnect" rather
+ * than "try again later". Google and Microsoft both return 400 with an `invalid_grant`
+ * error code for a revoked or expired refresh token.
+ */
+export function isRefreshRejection(status: number, body: string): boolean {
+  if (status !== 400 && status !== 401) return false;
+  return /invalid_grant|invalid_client|unauthorized_client/i.test(body);
+}

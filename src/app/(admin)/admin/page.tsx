@@ -11,7 +11,6 @@ import {
 } from "@/components/admin/primitives";
 import { getAdminOverview } from "@/lib/admin-metrics";
 import { formatCostMicros } from "@/lib/ai-pricing";
-import { LIFETIME_SEAT_LIMIT } from "@/lib/plan-limits";
 import { countLifetimePurchases } from "@/lib/user-settings";
 import { cn } from "@/lib/utils";
 
@@ -181,7 +180,7 @@ export default async function AdminOverviewPage() {
             <MetricTile
               label="Lifetime sold"
               value={lifetimeSold}
-              hint={`${Math.max(0, LIFETIME_SEAT_LIMIT - lifetimeSold)} of ${LIFETIME_SEAT_LIMIT} seats left`}
+              hint="one-time purchases"
             />
             <MetricTile
               label="Comped"

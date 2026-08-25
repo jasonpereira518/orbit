@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Lock, Mail, Phone, ExternalLink } from "lucide-react";
-import { getRecruiter } from "@/actions/recruiters";
+import { getRecruiter, getRecruiterSharing } from "@/actions/recruiters";
 import { RecruiterLogForm } from "@/components/recruiters/recruiter-log-form";
 import { RecruiterLinkEditor } from "@/components/recruiters/recruiter-link-editor";
 import { Badge } from "@/components/ui/badge";
@@ -19,8 +19,16 @@ export default async function RecruiterDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const recruiter = await getRecruiter(id);
+  const [recruiter, { enabled: sharingEnabled }] = await Promise.all([
+    getRecruiter(id),
+    getRecruiterSharing(),
+  ]);
   if (!recruiter) notFound();
+
+  const link = recruiter.myLink;
+  const summary = link?.aiSummary?.trim();
+  const companies = link?.companiesMentioned ?? [];
+  const roles = link?.rolesDiscussed ?? [];
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -47,12 +55,29 @@ export default async function RecruiterDetailPage({
           </div>
         </div>
         <div className="rounded-xl border border-border/70 bg-card px-4 py-3 text-center text-sm">
-          <p className="text-2xl font-medium text-primary">
-            ★ {formatAvg(recruiter.avgRating)}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {recruiter.ratingCount} ratings · {recruiter.logCount} logs
-          </p>
+          {recruiter.ratingCount > 0 ? (
+            <>
+              <p className="text-2xl font-medium text-primary">
+                ★ {formatAvg(recruiter.avgRating)}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {recruiter.ratingCount} ratings · {recruiter.logCount} logs
+              </p>
+            </>
+          ) : (
+            <>
+              {/* Aggregates only count links shared into the pool, so this is the
+                  normal state for a recruiter nobody else has shared — not an error. */}
+              <p className="text-sm font-medium text-muted-foreground">
+                No community ratings
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {link?.personalRating
+                  ? `You rated them ${link.personalRating}/5`
+                  : "Nobody has shared a rating yet"}
+              </p>
+            </>
+          )}
         </div>
       </div>
 
@@ -114,12 +139,70 @@ export default async function RecruiterDetailPage({
         )}
       </div>
 
-      {recruiter.myLink ? (
+      {(summary || companies.length > 0 || roles.length > 0) && (
+        <div className="rounded-2xl border border-border/70 bg-card p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-[family-name:var(--font-display)] text-lg text-primary">
+              Your history
+            </h2>
+            {/* Stated plainly because this text is distilled from the user's inbox.
+                It lives on the link, never on the shared recruiter row. */}
+            <Badge variant="outline" className="text-[10px]">
+              Private to you
+            </Badge>
+          </div>
+          {summary && (
+            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+              {summary}
+            </p>
+          )}
+          {companies.length > 0 && (
+            <div className="mt-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Companies
+              </p>
+              <div className="mt-1.5 flex flex-wrap gap-2">
+                {companies.map((c) => (
+                  <Badge key={c} variant="secondary">
+                    {c}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+          {roles.length > 0 && (
+            <div className="mt-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Roles discussed
+              </p>
+              <div className="mt-1.5 flex flex-wrap gap-2">
+                {roles.map((r) => (
+                  <Badge key={r} variant="secondary">
+                    {r}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+          {link?.emailCount ? (
+            <p className="mt-4 text-xs text-muted-foreground">
+              {link.emailCount} email{link.emailCount === 1 ? "" : "s"}
+              {link.lastEmailAt
+                ? ` · last on ${new Date(link.lastEmailAt).toLocaleDateString()}`
+                : ""}
+            </p>
+          ) : null}
+        </div>
+      )}
+
+      {link ? (
         <RecruiterLinkEditor
           recruiterId={recruiter.id}
-          status={recruiter.myLink.status}
-          notes={recruiter.myLink.notes}
-          personalRating={recruiter.myLink.personalRating}
+          status={link.status}
+          notes={link.notes}
+          personalRating={link.personalRating}
+          sharedToPool={link.sharedToPool === 1}
+          sharingEnabled={sharingEnabled}
         />
       ) : (
         <div className="rounded-2xl border border-border/70 bg-card p-5">

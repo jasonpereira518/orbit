@@ -13,16 +13,22 @@ import { PricingTiers } from "@/components/pricing/pricing-tiers";
 import { getEntitlements } from "@/lib/entitlements";
 import {
   FREE_CONTACT_LIMIT,
-  LIFETIME_SEAT_LIMIT,
+  LIFETIME_INTRO_PRICE,
+  LIFETIME_INTRO_SEATS,
+  LIFETIME_STANDARD_PRICE,
   type Plan,
 } from "@/lib/plan-limits";
-import { countLifetimePurchases } from "@/lib/user-settings";
+import { MONTHLY_AMOUNT } from "@/lib/plan-copy";
 import { isStripeConfigured } from "@/lib/stripe";
+import { lifetimeOffer } from "@/lib/lifetime-offer";
 import { isClerkConfigured, isDemoMode } from "@/lib/auth";
 
 export const metadata: Metadata = {
   title: "Pricing — Orbit",
-  description: `Orbit is free for your first ${FREE_CONTACT_LIMIT} contacts. $5 a month for unlimited, or $19 once for the first ${LIFETIME_SEAT_LIMIT} early adopters.`,
+  // Static, so it cannot consult the live sale count. It therefore states the introductory
+  // price as introductory rather than as the price — accurate whichever side of the
+  // threshold a crawler reads it on.
+  description: `Orbit is free for your first ${FREE_CONTACT_LIMIT} contacts. $${MONTHLY_AMOUNT} a month for unlimited, or Orbit Lifetime once — $${LIFETIME_INTRO_PRICE} introductory, $${LIFETIME_STANDARD_PRICE} after the first ${LIFETIME_INTRO_SEATS} buyers.`,
 };
 
 const HEADING =
@@ -59,21 +65,22 @@ export default async function PricingPage() {
   const { userId } = clerkOn ? await auth() : { userId: null };
   const signedIn = Boolean(userId);
 
-  const [currentPlan, sold] = await Promise.all([
-    (async (): Promise<Plan | null> => {
-      if (!userId) return null;
-      try {
-        return (await getEntitlements(userId)).plan;
-      } catch {
-        return null;
-      }
-    })(),
-    countLifetimePurchases().catch(() => 0),
-  ]);
+  // What Lifetime costs today. Read from the sale count rather than hardcoded, so the
+  // struck-through comparison stops being shown the moment it stops being true — a
+  // permanent "was $49" beside a price that is simply $25 is a fake discount.
+  const offer = await lifetimeOffer();
 
-  const seatsLeft = Math.max(0, LIFETIME_SEAT_LIMIT - sold);
-  // Only offer checkout when Stripe can actually take the payment and a seat remains.
-  const lifetimePurchasable = isStripeConfigured() && seatsLeft > 0;
+  const currentPlan = await (async (): Promise<Plan | null> => {
+    if (!userId) return null;
+    try {
+      return (await getEntitlements(userId)).plan;
+    } catch {
+      return null;
+    }
+  })();
+
+  // Only offer checkout when Stripe can actually take the payment.
+  const lifetimePurchasable = isStripeConfigured();
   const authProps = { clerkOn, demoMode, signedIn };
 
   return (
@@ -123,8 +130,11 @@ export default async function PricingPage() {
           <PricingTiers
             currentPlan={currentPlan}
             signedIn={signedIn}
-            seatsLeft={seatsLeft}
             lifetimePurchasable={lifetimePurchasable}
+            lifetimeOffer={{
+              priceUsd: offer.priceUsd,
+              compareAtUsd: offer.compareAtUsd,
+            }}
           />
         </Reveal>
 

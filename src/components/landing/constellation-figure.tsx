@@ -11,11 +11,11 @@ import { scrub01 } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import {
-  VIRGO_CHAINS,
-  VIRGO_FIELD_STARS,
-  VIRGO_STARS,
-  virgoChainPath,
-} from "@/lib/virgo-figure";
+  DIPPER_CHAINS,
+  DIPPER_FIELD_STARS,
+  DIPPER_STARS,
+  dipperChainPath,
+} from "@/lib/big-dipper-figure";
 
 const CLUSTER_NAME = "Amazon Web Services (AWS)";
 const CLUSTER_BRAND = "#ff9900";
@@ -29,23 +29,16 @@ const NAME_FADE_IN = 0.012;
 const NAME_HOLD = 0.16;
 const NAME_FADE_OUT = 0.055;
 
-/** Demo people, one per figure star (landing-only; the shared Virgo data
- * in src/lib/virgo-figure.ts stays name-free). */
+/** Demo people, one per figure star (landing-only; the shared Big Dipper data
+ * in src/lib/big-dipper-figure.ts stays name-free). */
 const STAR_NAMES: Record<string, string> = {
-  vir109: "Maya Patel",
-  mu: "Dan Kowalski",
-  iota: "Priya Raman",
-  kappa: "Chris Okafor",
-  lambda: "Sofia Reyes",
-  zeta: "Ben Liu",
-  spica: "Sarah Chen",
-  eps: "Tom Nguyen",
-  delta: "Alicia Gomez",
-  gamma: "Marcus Webb",
-  eta: "Nina Shah",
-  omi: "Jake Turner",
-  beta: "Elena Petrova",
-  nu: "Omar Haddad",
+  dubhe: "Maya Patel",
+  merak: "Dan Kowalski",
+  phecda: "Priya Raman",
+  megrez: "Marcus Webb",
+  alioth: "Sarah Chen",
+  mizar: "Nina Shah",
+  alkaid: "Elena Petrova",
 };
 
 const FADE = {
@@ -61,10 +54,11 @@ const CHAIN_WINDOWS = [
 ] as const;
 
 /** Every time a chain stroke reaches a node — junction stars included,
- * and the same star may appear more than once (e.g. eta, gamma). */
+ * and the same star may appear more than once (Megrez closes the bowl and
+ * starts the handle, so it fires three times). */
 const CROSSINGS_BY_STAR: Record<string, number[]> = (() => {
   const map: Record<string, number[]> = {};
-  VIRGO_CHAINS.forEach((chain, i) => {
+  DIPPER_CHAINS.forEach((chain, i) => {
     const [a, b] = CHAIN_WINDOWS[i]!;
     const segs = Math.max(1, chain.length - 1);
     chain.forEach((id, j) => {
@@ -100,7 +94,7 @@ function crossingOpacity(v: number, times: number[]) {
 function nearestStarId(x: number, y: number): string | null {
   let best: string | null = null;
   let bestD = HOVER_R2;
-  for (const star of VIRGO_STARS) {
+  for (const star of DIPPER_STARS) {
     const d = (star.x - x) ** 2 + (star.y - y) ** 2;
     if (d < bestD) {
       bestD = d;
@@ -111,7 +105,7 @@ function nearestStarId(x: number, y: number): string | null {
 }
 
 /**
- * Scene B centerpiece: the Virgo figure draws itself in as the section
+ * Scene B centerpiece: the Big Dipper draws itself in as the section
  * scrolls through the viewport — scrubbed and reversible, Apple-style.
  * Each chain crossing triggers that node's name; junction stars fire on
  * every line that reaches them. Names hold, then fade. Hover near a star
@@ -167,7 +161,7 @@ export function ConstellationFigure({ className }: { className?: string }) {
         viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
         className="absolute inset-0 h-full w-full overflow-visible"
       >
-        {VIRGO_FIELD_STARS.map(([x, y], i) => (
+        {DIPPER_FIELD_STARS.map(([x, y], i) => (
           <circle
             key={`field-${i}`}
             cx={x}
@@ -177,10 +171,10 @@ export function ConstellationFigure({ className }: { className?: string }) {
           />
         ))}
 
-        {VIRGO_CHAINS.map((chain, i) => (
+        {DIPPER_CHAINS.map((chain, i) => (
           <motion.path
             key={i}
-            d={virgoChainPath(chain)}
+            d={dipperChainPath(chain)}
             fill="none"
             stroke="rgba(89,157,231,0.55)"
             strokeWidth={1.2}
@@ -190,13 +184,13 @@ export function ConstellationFigure({ className }: { className?: string }) {
           />
         ))}
 
-        {VIRGO_STARS.map((star, i) => (
+        {DIPPER_STARS.map((star, i) => (
           <motion.circle
             key={star.id}
             cx={star.x}
             cy={star.y}
             r={star.r}
-            fill={star.id === "spica" ? "#e8f3f1" : "#c5d4d1"}
+            fill={star.hotspot ? "#e8f3f1" : "#c5d4d1"}
             initial={reduced ? false : { opacity: 0 }}
             animate={reduced ? { opacity: 1 } : { opacity: [0.72, 1, 0.72] }}
             transition={
@@ -213,7 +207,7 @@ export function ConstellationFigure({ className }: { className?: string }) {
         ))}
       </svg>
 
-      {VIRGO_STARS.map((star) => {
+      {DIPPER_STARS.map((star) => {
         const name = STAR_NAMES[star.id];
         const crossings = CROSSINGS_BY_STAR[star.id];
         if (!name || !crossings?.length) return null;
@@ -231,10 +225,12 @@ export function ConstellationFigure({ className }: { className?: string }) {
       })}
 
       {/* Cluster name — the /graph cluster-label treatment: white text over
-          a brand-color copy offset by 0.75px. */}
+          a brand-color copy offset by 0.75px. Centered over the figure's
+          own width (not the tilt-skewed box) rather than the bowl, so the
+          name reads as the cluster's title instead of a callout on Dubhe. */}
       <div
         className={cn(
-          "pointer-events-none absolute left-1/2 top-[2%] -translate-x-1/2 transition-opacity",
+          "pointer-events-none absolute left-1/2 top-[2%] -translate-x-1/2 text-center transition-opacity",
           figureHovered ? "opacity-100" : "opacity-0"
         )}
         style={FADE}
@@ -249,6 +245,9 @@ export function ConstellationFigure({ className }: { className?: string }) {
           </span>
           <span className="relative text-white">{CLUSTER_NAME}</span>
         </span>
+        <span className="mt-1 block whitespace-nowrap text-[10px] font-normal tracking-[0.06em] text-white">
+          The Big Dipper
+        </span>
       </div>
     </div>
   );
@@ -262,7 +261,7 @@ function StarNameLabel({
   reduced,
   hovered,
 }: {
-  star: (typeof VIRGO_STARS)[number];
+  star: (typeof DIPPER_STARS)[number];
   name: string;
   crossings: number[];
   scrollYProgress: MotionValue<number>;

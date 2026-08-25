@@ -1,3 +1,5 @@
+import { hashHue } from "@/lib/hash";
+
 /** Curated primary brand colors for common schools (normalized keys). */
 const SCHOOL_COLORS: Record<string, string> = {
   "harvard university": "#A51C30",
@@ -140,14 +142,6 @@ export function normalizeOrgKey(name: string | null | undefined): string {
     .replace(/\s+/g, " ")
     .replace(/\s*\(.*\)\s*$/, "")
     .trim();
-}
-
-function hashHue(input: string): number {
-  let h = 0;
-  for (let i = 0; i < input.length; i++) {
-    h = (h * 31 + input.charCodeAt(i)) >>> 0;
-  }
-  return h % 360;
 }
 
 function hslToHex(h: number, s: number, l: number): string {

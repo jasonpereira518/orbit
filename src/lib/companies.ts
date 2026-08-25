@@ -1,6 +1,6 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { companies, contacts } from "@/db/schema";
+import { companies } from "@/db/schema";
 import {
   displayCompanyName,
   normalizeCompanyName,
@@ -110,36 +110,4 @@ export async function companyFieldsForWriteCached(
   const resolved = await resolve(rawName);
   if (!resolved) return { companyId: null, company: null };
   return { companyId: resolved.id, company: resolved.name };
-}
-
-/**
- * Link existing free-text company values to companies rows and canonicalize
- * contact.company to the shared display name.
- */
-export async function backfillContactCompanies(userId?: string) {
-  const db = await getDb();
-  const candidates = await db.query.contacts.findMany({
-    where: userId
-      ? and(eq(contacts.userId, userId), isNull(contacts.companyId))
-      : isNull(contacts.companyId),
-    columns: { id: true, userId: true, company: true },
-  });
-
-  const orphans = candidates.filter((row) => Boolean(row.company?.trim()));
-
-  let linked = 0;
-  for (const row of orphans) {
-    const resolved = await resolveCompany(row.userId, row.company);
-    if (!resolved) continue;
-    await db
-      .update(contacts)
-      .set({
-        companyId: resolved.id,
-        company: resolved.name,
-        updatedAt: new Date(),
-      })
-      .where(eq(contacts.id, row.id));
-    linked++;
-  }
-  return { linked, scanned: orphans.length };
 }
