@@ -11,13 +11,13 @@ import {
  * page, the settings card, and any upgrade prompt cannot drift from each other —
  * the same reason `settings/sections.ts` centralises the settings rail.
  *
- * Prices are display copy. The amounts actually charged live in the Clerk plan and the
- * Stripe price; changing a string here does not change what anyone pays.
+ * Prices are display copy. The amounts actually charged live in the Stripe prices;
+ * changing a string here does not change what anyone pays.
  *
  * Display names and internal ids are deliberately decoupled: the tiers are shown as
  * "Orbit Pro" and "Orbit Lifetime", but the ids stay `orbit` / `lifetime` because they
- * are persisted in `user_settings` and matched against the Clerk plan slug. Rename the
- * copy freely; renaming an id is a data migration.
+ * are persisted in `user_settings` and matched against Stripe checkout metadata. Rename
+ * the copy freely; renaming an id is a data migration.
  */
 export type BillingPeriod = "monthly" | "annual";
 
@@ -55,10 +55,10 @@ export type PlanCopy = {
 /**
  * $5/mo against $50/yr — two months free, 17% off.
  *
- * Worth knowing before changing this: net of fees (Clerk 0.7% + Stripe 2.9% + $0.30),
- * a subscriber retained a full year nets $54.24 monthly against $47.90 annually, so
- * annual only pays off if they would otherwise churn before roughly month eleven. It is
- * a retention and cash-flow instrument here, not a fee saving.
+ * Worth knowing before changing this: net of Stripe fees (2.9% + $0.30), a subscriber
+ * retained a full year nets $54.66 monthly against $48.25 annually, so annual only pays
+ * off if they would otherwise churn before roughly month eleven. It is a retention and
+ * cash-flow instrument here, not a fee saving.
  */
 /** Exported so the admin MRR figure reads the same number the pricing page charges. */
 export const MONTHLY_AMOUNT = 5;
@@ -167,7 +167,7 @@ export function planCopyWithOffer(offer: {
   const price: PlanPrice = {
     amount: `$${offer.priceUsd}`,
     cadence: "once",
-    // Both only while the intro is live. Once it ends, $49 is simply the price and there
+    // Both only while the intro is live. Once it ends, $75 is simply the price and there
     // is nothing to strike through or explain.
     ...(offer.compareAtUsd
       ? {

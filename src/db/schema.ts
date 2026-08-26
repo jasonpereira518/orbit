@@ -158,9 +158,9 @@ export const userSettings = pgTable("user_settings", {
   /**
    * Billing. Entitlements are resolved exclusively from these columns by
    * `src/lib/entitlements.ts` — never by calling Clerk's `has()` or Stripe at a gate.
-   * Clerk sells the monthly plan and Stripe sells the one-time Lifetime, but both are
-   * mirrored here so that background jobs (which have no request context, and so cannot
-   * call `has()`) resolve the same plan the UI does. Same rationale as `email` above.
+   * Stripe sells both paid tiers (the Pro subscription and the one-time Lifetime), and
+   * its webhook mirrors them here so that background jobs (which have no request
+   * context) resolve the same plan the UI does. Same rationale as `email` above.
    */
   compedPlan: text("comped_plan").$type<"orbit" | "lifetime">(),
   lifetimePurchasedAt: timestamp("lifetime_purchased_at", { withTimezone: true }),

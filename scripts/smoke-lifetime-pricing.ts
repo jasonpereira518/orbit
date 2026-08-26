@@ -64,7 +64,7 @@ function main() {
   check("the intro allocation is reported as gone", after.introRemaining === null);
 
   // A struck-through price that never goes away is a fake discount, and it is the exact
-  // pattern regulators look for. Once $49 IS the price there is nothing to compare to.
+  // pattern regulators look for. Once $75 IS the price there is nothing to compare to.
   check("the struck-through comparison disappears with the discount", after.compareAtUsd === null);
 
   /* ------------------------------------------------- LIFETIME IS NOT LIMITED IN SUPPLY */
@@ -77,7 +77,7 @@ function main() {
   /* --------------------------------------------- the safe failure when Stripe is behind */
 
   // If the standard price object does not exist yet, keep charging (and showing) the intro
-  // price. Selling too cheap costs money; advertising $49 and charging $25 is a different
+  // price. Selling too cheap costs money; advertising $75 and charging $25 is a different
   // category of problem, so the safe failure is the one that only costs money.
   const unconfigured = offerForCount(LIFETIME_INTRO_SEATS + 5, NO_STANDARD);
   check(

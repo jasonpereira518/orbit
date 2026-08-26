@@ -103,7 +103,7 @@ export function PlanPriceDisplay({ price }: { price: PlanPrice }) {
         </span>
 
         {/* The price it is reduced FROM. Sits between the number and the cadence so the
-            eye reads "$25 — was $49 — once" in one pass, and carries `layout` so it
+            eye reads "$25 — was $75 — once" in one pass, and carries `layout` so it
             slides rather than jumps when the amount beside it gains a digit.
 
             Deliberately not animated on entry: it is present from the first paint or not
