@@ -12,10 +12,15 @@ import {
 /**
  * Persistent, page-independent progress list for large imports/batches/
  * background tasks — mounted once in the app shell so it stays visible
- * across navigation. Mirrors the same jobs shown in the notification panel.
+ * across navigation. Mirrors the same jobs shown in the notification panel,
+ * except avatar-backfill, which is silent here and shown in Settings instead.
  */
 export function GlobalJobProgressBar() {
-  const jobs = useBackgroundJobs();
+  // avatar-backfill runs silently on every page load; it gets its own
+  // progress display in Settings instead of a bottom-right toast.
+  const jobs = useBackgroundJobs().filter(
+    (job) => job.kind !== "avatar-backfill"
+  );
   if (jobs.length === 0) return null;
 
   return (

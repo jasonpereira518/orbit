@@ -5,6 +5,7 @@ import Link from "next/link";
 import { toast } from "@/lib/toast";
 import { deleteAllData, exportAllData } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
+import { AvatarSyncStatus } from "@/components/settings/avatar-sync-status";
 import { cancelImportJob } from "@/lib/import-job-runner";
 
 export function DataSettings() {
@@ -73,6 +74,7 @@ export function DataSettings() {
           Delete all data
         </Button>
       </div>
+      <AvatarSyncStatus />
     </section>
   );
 }
