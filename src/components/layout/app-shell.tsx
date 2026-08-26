@@ -62,7 +62,10 @@ export function AppShell({
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="flex h-dvh overflow-hidden bg-background">
+      {/* data-warp-craft: the thing that drops away on lift-off and takes
+          the touchdown judder on re-entry. Driven by `html[data-warp]` in
+          globals.css so the server layout needs no knowledge of the journey. */}
+      <div data-warp-craft className="flex h-dvh overflow-hidden bg-background">
         <ThemeSync theme={theme} />
         <AvatarBackfill />
         <DueNotificationsWatcher />

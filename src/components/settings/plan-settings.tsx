@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Check, Sparkles } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { WarpLink } from "@/components/warp/warp-link";
 import { planCopy } from "@/lib/plan-copy";
 import type { Plan } from "@/lib/plan-limits";
 import type { Entitlements, PlanSource } from "@/lib/entitlements";
@@ -226,12 +227,12 @@ export function PlanSettings({
               Upgrade
             </Link>
           )}
-          <Link
+          <WarpLink
             href="/pricing"
             className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
           >
             {isFree ? "Compare plans" : "See all plans"}
-          </Link>
+          </WarpLink>
         </div>
       </div>
     </section>
