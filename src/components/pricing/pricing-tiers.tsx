@@ -1,80 +1,14 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { motion } from "motion/react";
 import { Check } from "lucide-react";
+import { BillingToggle } from "@/components/pricing/billing-toggle";
 import { LifetimeCheckoutButton } from "@/components/pricing/lifetime-checkout-button";
 import { PlanPriceDisplay } from "@/components/pricing/plan-price";
 import { cn } from "@/lib/utils";
-import {
-  ANNUAL_SAVING_PERCENT,
-  planCopyWithOffer,
-  type BillingPeriod,
-} from "@/lib/plan-copy";
+import { planCopyWithOffer, type BillingPeriod } from "@/lib/plan-copy";
 import { type Plan } from "@/lib/plan-limits";
-
-function BillingToggle({
-  period,
-  onChange,
-}: {
-  period: BillingPeriod;
-  onChange: (next: BillingPeriod) => void;
-}) {
-  const name = useId();
-
-  // Native radios inside a fieldset: arrow-key navigation, grouping, and the
-  // checked state all come from the platform rather than from re-implemented ARIA.
-  return (
-    <fieldset className="mx-auto w-fit">
-      <legend className="sr-only">Billing period</legend>
-      <div className="flex items-center gap-1 rounded-full border border-[#e8f3f1]/[0.12] bg-[#05070f]/70 p-1 backdrop-blur-sm">
-        {(["monthly", "annual"] as const).map((value) => {
-          const selected = period === value;
-          return (
-            <label
-              key={value}
-              className={cn(
-                "relative cursor-pointer rounded-full px-4 py-2 text-sm transition-colors",
-                selected ? "text-[#0f2e28]" : "text-[#9aada8] hover:text-[#e8f3f1]",
-                "focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[#f2c14e]"
-              )}
-            >
-              <input
-                type="radio"
-                name={name}
-                value={value}
-                checked={selected}
-                onChange={() => onChange(value)}
-                className="sr-only"
-              />
-              {selected && (
-                <motion.span
-                  layoutId="pricing-period-pill"
-                  className="absolute inset-0 -z-10 rounded-full bg-[#eef7f4]"
-                  transition={{ type: "spring", stiffness: 380, damping: 32 }}
-                />
-              )}
-              <span className="relative whitespace-nowrap">
-                {value === "monthly" ? "Monthly" : "Annual"}
-                {value === "annual" && (
-                  <span
-                    className={cn(
-                      "ml-1.5 text-xs",
-                      selected ? "text-[#0f2e28]/70" : "text-[#f2c14e]"
-                    )}
-                  >
-                    −{ANNUAL_SAVING_PERCENT}%
-                  </span>
-                )}
-              </span>
-            </label>
-          );
-        })}
-      </div>
-    </fieldset>
-  );
-}
 
 /**
  * Where signed-out buyers land after creating the account they need to buy: back here,
