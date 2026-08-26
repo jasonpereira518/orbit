@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   aiSuggestions,
@@ -801,6 +801,7 @@ export async function listAdminContacts(
   opts: {
     page?: number;
     pageSize?: number;
+    search?: string;
   } = {}
 ): Promise<{ rows: AdminContactRow[]; total: number; page: number; pageSize: number }> {
   const db = await getDb();
@@ -813,15 +814,27 @@ export async function listAdminContacts(
 
   const columns = { ...CONTACT_BASE_COLUMNS, ...CONTACT_SENSITIVE_COLUMNS };
 
+  const q = opts.search?.trim();
+  const where = q
+    ? and(
+        eq(contacts.userId, userId),
+        or(
+          ilike(contacts.fullName, `%${q}%`),
+          ilike(contacts.company, `%${q}%`),
+          ilike(contacts.title, `%${q}%`)
+        )
+      )
+    : eq(contacts.userId, userId);
+
   const [records, totalAgg] = await Promise.all([
     db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
+      where,
       orderBy: [desc(contacts.createdAt)],
       limit: pageSize,
       offset: (page - 1) * pageSize,
       columns,
     }),
-    db.select({ n: countInt }).from(contacts).where(eq(contacts.userId, userId)),
+    db.select({ n: countInt }).from(contacts).where(where),
   ]);
 
   const visibleIds = records.map((c) => c.id);
