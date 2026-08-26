@@ -1,5 +1,5 @@
-import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { WarpLink } from "@/components/warp/warp-link";
 
 /**
  * Shows how much of a capped plan's contact allowance is used, and turns into an upgrade
@@ -59,12 +59,12 @@ export function ContactQuotaNotice({
           </span>
         )}
       </p>
-      <Link
+      <WarpLink
         href="/pricing"
         className="shrink-0 text-sm font-medium text-primary underline underline-offset-4 hover:opacity-80"
       >
         See plans
-      </Link>
+      </WarpLink>
     </div>
   );
 }
