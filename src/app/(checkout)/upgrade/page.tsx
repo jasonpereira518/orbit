@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { Eye, KeyRound, RotateCcw } from "lucide-react";
-import { OrbitLogo } from "@/components/orbit-logo";
+import { PageExitOnBack } from "@/components/motion/page-exit-on-back";
 import { Reveal } from "@/components/motion/reveal";
-import { BackControl } from "@/components/pricing/back-control";
 import { UpgradePlanCards } from "@/components/pricing/upgrade-plan-cards";
 import { getLifetimeAvailability } from "@/actions/billing";
 import { requireUserId } from "@/lib/auth";
@@ -64,66 +62,52 @@ export default async function UpgradePage({
     // No starfield here: a payment page should feel steady, and a moving background behind
     // a card form is friction dressed as delight.
     <div className="landing-root relative min-h-screen overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
-      <header className="mx-auto flex w-full max-w-4xl items-center justify-between gap-4 px-6 py-6 md:px-8">
-        <div className="flex items-center gap-4">
-          <BackControl />
-          <Link
-            href="/"
-            className="flex items-center gap-2.5 transition-opacity hover:opacity-80"
-            aria-label="Orbit home"
-          >
-            <OrbitLogo size="sm" />
-            <span className="font-[family-name:var(--font-display)] text-[17px] tracking-tight text-[#e8f3f1]">
-              Orbit
-            </span>
-          </Link>
-        </div>
-      </header>
-
-      <main className="mx-auto w-full max-w-4xl px-6 pb-24 md:px-8">
-        <Reveal className="reveal-celestial">
-          <h1 className={`${HEADING} text-[clamp(28px,4vw,42px)]`}>
-            {hasPro || hasLifetime
-              ? "You're already on a paid plan."
-              : "Pick how you'd like to pay."}
-          </h1>
-        </Reveal>
-
-        <Reveal className="reveal-celestial mt-12 block" delay={60}>
-          <UpgradePlanCards
-            initialPeriod={params.period === "annual" ? "annual" : "monthly"}
-            hasPro={hasPro}
-            hasLifetime={hasLifetime}
-            proCheckoutConfigured={isProCheckoutConfigured()}
-            lifetimePurchasable={lifetime.purchasable}
-            lifetimeOffer={{
-              priceUsd: offer.priceUsd,
-              compareAtUsd: offer.compareAtUsd,
-            }}
-          />
-        </Reveal>
-
-        {!hasPro && !hasLifetime && (
-          <Reveal className="reveal-celestial mt-14 block">
-            <ul className="grid gap-6 sm:grid-cols-3">
-              {TRUST.map(({ icon: Icon, title, body }) => (
-                <li key={title} className="flex gap-3.5">
-                  <Icon
-                    className="mt-0.5 size-[18px] shrink-0 text-[#f2c14e]"
-                    aria-hidden="true"
-                  />
-                  <div>
-                    <h3 className="text-sm font-medium text-[#e8f3f1]">{title}</h3>
-                    <p className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">
-                      {body}
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ul>
+      <PageExitOnBack>
+        <main className="mx-auto w-full max-w-4xl px-6 pb-24 md:px-8">
+          <Reveal className="reveal-celestial">
+            <h1 className={`${HEADING} text-[clamp(28px,4vw,42px)]`}>
+              {hasPro || hasLifetime
+                ? "You're already on a paid plan."
+                : "Pick how you'd like to pay."}
+            </h1>
           </Reveal>
-        )}
-      </main>
+
+          <Reveal className="reveal-celestial mt-12 block" delay={60}>
+            <UpgradePlanCards
+              initialPeriod={params.period === "annual" ? "annual" : "monthly"}
+              hasPro={hasPro}
+              hasLifetime={hasLifetime}
+              proCheckoutConfigured={isProCheckoutConfigured()}
+              lifetimePurchasable={lifetime.purchasable}
+              lifetimeOffer={{
+                priceUsd: offer.priceUsd,
+                compareAtUsd: offer.compareAtUsd,
+              }}
+            />
+          </Reveal>
+
+          {!hasPro && !hasLifetime && (
+            <Reveal className="reveal-celestial mt-14 block">
+              <ul className="grid gap-6 sm:grid-cols-3">
+                {TRUST.map(({ icon: Icon, title, body }) => (
+                  <li key={title} className="flex gap-3.5">
+                    <Icon
+                      className="mt-0.5 size-[18px] shrink-0 text-[#f2c14e]"
+                      aria-hidden="true"
+                    />
+                    <div>
+                      <h3 className="text-sm font-medium text-[#e8f3f1]">{title}</h3>
+                      <p className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">
+                        {body}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </Reveal>
+          )}
+        </main>
+      </PageExitOnBack>
     </div>
   );
 }
