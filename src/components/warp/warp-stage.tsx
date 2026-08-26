@@ -92,6 +92,14 @@ export function WarpStage({ run }: { run: WarpRun }) {
         .trim() || (night ? "#272727" : "#fbfbf9");
     const ground = hexToRgb(groundHex.startsWith("#") ? groundHex : night ? "#272727" : "#fbfbf9");
 
+    /** A zero-size viewport at mount (a hidden tab being restored, a prerender)
+     * produces a zero-size layer, and drawImage throws InvalidStateError on
+     * those — which would take down the page tree rather than just the sky.
+     * The resize listener repairs the layer once real dimensions arrive. */
+    function hasSpace() {
+      return space !== null && space.width > 0 && space.height > 0;
+    }
+
     function paintSpaceLayer() {
       const off = document.createElement("canvas");
       off.width = Math.floor(width * dpr);
@@ -159,9 +167,9 @@ export function WarpStage({ run }: { run: WarpRun }) {
 
       // Cross-fade into the real starfield's exact background as we reach vacuum.
       const mix = clamp01((altitude - 0.7) / 0.3);
-      if (mix > 0 && space) {
+      if (mix > 0 && hasSpace()) {
         ctx!.globalAlpha = mix;
-        ctx!.drawImage(space, 0, 0, width, height);
+        ctx!.drawImage(space!, 0, 0, width, height);
         ctx!.globalAlpha = 1;
       }
     }
@@ -320,7 +328,7 @@ export function WarpStage({ run }: { run: WarpRun }) {
         // No motion at all: a calm hold on the destination's own background.
         // It still covers the route swap, so reduced-motion users get the
         // benefit of the transition (no skeleton flash) without the journey.
-        if (space) ctx!.drawImage(space, 0, 0, width, height);
+        if (hasSpace()) ctx!.drawImage(space!, 0, 0, width, height);
         else {
           ctx!.fillStyle = DEEP_SPACE;
           ctx!.fillRect(0, 0, width, height);
@@ -402,8 +410,10 @@ export function WarpStage({ run }: { run: WarpRun }) {
       raf = requestAnimationFrame(frame);
     }
 
-    resize();
+    // Listener first, so if the viewport is zero-sized at mount the resize
+    // event that gives it real dimensions can still repair the field.
     window.addEventListener("resize", resize);
+    resize();
     raf = requestAnimationFrame(frame);
 
     return () => {
