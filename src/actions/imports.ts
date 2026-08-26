@@ -98,7 +98,19 @@ function hasEncodingArtifacts(rows: { firstName: string; lastName: string; compa
 
 export async function previewLinkedInCsv(csvText: string) {
   const userId = await requireUserId();
-  const { columns, rows, warnings } = parseLinkedInConnectionsCsv(csvText);
+  // parseLinkedInConnectionsCsv throws for expected validation failures (empty
+  // file, wrong export type, no rows found). Server Actions strip thrown error
+  // messages in production, replacing them with a generic digest — so those
+  // failures must come back as data, not a throw, to reach the client's toast.
+  let parsed: ReturnType<typeof parseLinkedInConnectionsCsv>;
+  try {
+    parsed = parseLinkedInConnectionsCsv(csvText);
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : "Failed to parse CSV",
+    };
+  }
+  const { columns, rows, warnings } = parsed;
   if (hasEncodingArtifacts(rows)) {
     warnings.push(
       "Some characters may not have decoded correctly — if names look garbled, re-export the CSV with UTF-8 encoding."
