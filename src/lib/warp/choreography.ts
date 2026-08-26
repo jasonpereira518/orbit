@@ -13,8 +13,12 @@
  * The back button is an escape hatch, so re-entry is ~3x shorter than ascent.
  */
 
-/** Milliseconds from launch to the cruise hold. Deterministic. */
-export const ASCENT_MS = 1650;
+/** Milliseconds from launch to the cruise hold. Deterministic.
+ *
+ * Long on purpose: this is a trip from the ground to deep space, and every
+ * band below needs room to be read as a place rather than a colour. Anything
+ * under ~3s turns the whole climb into one blue-to-black smear. */
+export const ASCENT_MS = 3800;
 
 /**
  * When the stage is fully opaque and the route swap becomes invisible.
@@ -23,35 +27,59 @@ export const ASCENT_MS = 1650;
  * which takes `[data-warp-craft]` — the element visibly flying away — with it.
  * So we wait until the atmosphere covers the frame, then swap behind it.
  */
-export const ASCENT_OPAQUE_MS = 900;
+export const ASCENT_OPAQUE_MS = 1050;
 
 /** Deceleration + handoff to the real starfield, once /pricing has painted. */
-export const ARRIVAL_MS = 450;
+export const ARRIVAL_MS = 500;
 
 /**
  * Hard ceiling on the cruise hold. A route that never resolves must not strand
  * anyone on a black screen, so the stage force-resolves regardless.
  */
-export const CRUISE_CAP_MS = 4000;
+export const CRUISE_CAP_MS = 6000;
 
-/** The fall home, start to settled. */
-export const REENTRY_MS = 750;
+/** The fall home, start to settled. Still a quarter of the climb: you fall
+ * back to Earth, you don't tour it. */
+export const REENTRY_MS = 900;
 
-/** Ascent beats, in ms from launch. Overlapping on purpose — the sky is
- * already brightening while the dashboard is still on its way down. */
+/**
+ * Ascent beats, in ms from launch. Heavily overlapped on purpose: each band
+ * is already arriving while the one before it is still leaving, which is what
+ * makes the climb continuous instead of a slideshow of five separate scenes.
+ */
 export const ASCENT = {
-  ignition: [0, 180],
-  liftoff: [140, 820],
-  atmosphere: [420, 1300],
-  vacuum: [1150, ASCENT_MS],
+  /** Engines light; the dashboard judders but has not moved yet. */
+  ignition: [0, 250],
+  /** The dashboard drops away beneath the camera. */
+  liftoff: [200, 1150],
+  /** Cloud deck, rushing down past us. */
+  troposphere: [300, 1700],
+  /** Sky goes navy, the air thins, another rocket races ahead. */
+  stratosphere: [1150, 2450],
+  /** Earth's limb below, satellites drifting up past the camera. */
+  orbit: [1550, 3200],
+  /** Earth is a marble; planets hang in the distance. */
+  deepSpace: [2400, ASCENT_MS],
+  /** Stars stretch out and we punch into the dark. */
+  vacuum: [3150, ASCENT_MS],
 } as const;
+
+/** Height through the atmosphere: drives the sky ramp, clouds and horizon.
+ * Tops out well before the climb ends — you are in vacuum for the last third. */
+export const ASCENT_ALTITUDE = [250, 2400] as const;
+
+/** Distance from the planet: drives Earth's size and the far bodies. Kept
+ * separate from altitude because the sky stops changing long before Earth
+ * stops shrinking. */
+export const ASCENT_DISTANCE = [1550, ASCENT_MS] as const;
 
 /** Re-entry beats, in ms from the moment Back is pressed. */
 export const REENTRY = {
-  retroBurn: [0, 120],
-  fall: [80, 500],
-  judder: [350, 620],
-  settle: [600, REENTRY_MS],
+  retroBurn: [0, 160],
+  /** Earth swelling back up to fill the frame, then the air, then the ground. */
+  fall: [100, 640],
+  judder: [500, 800],
+  settle: [780, REENTRY_MS],
 } as const;
 
 /** Reduced motion collapses both arcs to a plain cross-fade. */
