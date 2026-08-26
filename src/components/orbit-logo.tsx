@@ -20,16 +20,31 @@ const SIZES = {
  * repeated from `pricing-tiers.tsx` and `plan-comparison.tsx` instead of being imported —
  * an arbitrary value has to be visible to the scanner at build time.
  *
- * No `ring-offset`: an offset draws the ring 2px out from the mark with a transparent gap
- * between them, and at this size (28–32px in the sidebar) that gap read as an uneven halo
- * rather than a ring — thicker-looking on some sides than others. A thin ring flush against
- * the circle's own edge stays visibly centred at any size.
+ * The ring is drawn on a wrapper `span` sized to the logo's footprint, not on the `Image`
+ * itself: the mark is shrunk and centred inside that wrapper, leaving a transparent gap
+ * between the mark's own edge and the ring. Drawing both from the same box (rather than
+ * ring-offsetting off the image element) keeps the ring concentric with the mark instead of
+ * drifting off-centre.
+ *
+ * `orbit-logo.png`'s painted disc isn't centred in its own square canvas — it sits ~10.5px
+ * right of centre on the 512px source (verified by scanning for the disc's solid-colour
+ * bounding box), which is also why a star tip bleeds past the disc's left edge with no
+ * matching bleed on the right. `MARK_SHIFT_RATIO` nudges the rendered mark left to centre
+ * the disc itself (not the canvas) inside the ring, which is what a viewer actually judges
+ * "centred" against.
  */
 const PLAN_RING: Record<Plan, string | null> = {
   free: null,
-  orbit: "ring-[1.5px] ring-inset ring-[#599de7]",
-  lifetime: "ring-[1.5px] ring-inset ring-[#f2c14e]",
+  orbit: "ring-[2.5px] ring-inset ring-[#599de7]",
+  lifetime: "ring-[2.5px] ring-inset ring-[#f2c14e]",
 };
+
+// Transparent breathing room between the mark's edge and the ring stroke, plus the stroke's
+// own width — subtracted from each side so the ring sits just outside the shrunk mark.
+const RING_GAP = 2;
+const RING_WIDTH = 2.5;
+
+const MARK_SHIFT_RATIO = 10.5 / 512;
 
 export function OrbitLogo({
   size = "md",
@@ -45,17 +60,43 @@ export function OrbitLogo({
 }) {
   const px = SIZES[size];
   const ring = plan ? PLAN_RING[plan] : null;
+
+  if (!ring) {
+    return (
+      <Image
+        src="/orbit-logo.png"
+        alt="Orbit"
+        width={px}
+        height={px}
+        priority={priority}
+        className={cn("shrink-0 rounded-full", className)}
+      />
+    );
+  }
+
+  const markPx = px - 2 * (RING_GAP + RING_WIDTH);
+
   return (
-    <Image
-      src="/orbit-logo.png"
-      alt="Orbit"
-      width={px}
-      height={px}
-      priority={priority}
+    <span
+      className={cn(
+        "relative inline-flex shrink-0 items-center justify-center rounded-full",
+        ring,
+        className,
+      )}
+      style={{ width: px, height: px }}
       // Colour alone should never be the only carrier of meaning: the ring is decorative,
       // and this is what names the plan for a pointer or a screen reader that surfaces it.
-      title={ring ? PLAN_LABELS[plan!] : undefined}
-      className={cn("shrink-0 rounded-full", ring, className)}
-    />
+      title={PLAN_LABELS[plan!]}
+    >
+      <Image
+        src="/orbit-logo.png"
+        alt="Orbit"
+        width={markPx}
+        height={markPx}
+        priority={priority}
+        className="rounded-full"
+        style={{ transform: `translateX(-${markPx * MARK_SHIFT_RATIO}px)` }}
+      />
+    </span>
   );
 }
