@@ -5,17 +5,16 @@ import { OrbitLogo } from "@/components/orbit-logo";
 import { Reveal } from "@/components/motion/reveal";
 import { BackControl } from "@/components/pricing/back-control";
 import { LifetimeCheckoutButton } from "@/components/pricing/lifetime-checkout-button";
-import { OrbitProCheckout } from "@/components/checkout/orbit-pro-checkout";
+import { ProCheckoutButton } from "@/components/pricing/pro-checkout-button";
 import { getLifetimeAvailability } from "@/actions/billing";
 import { requireUserId } from "@/lib/auth";
-import { getEntitlements, ORBIT_PLAN_SLUG } from "@/lib/entitlements";
-import { planCopy } from "@/lib/plan-copy";
+import { getEntitlements } from "@/lib/entitlements";
 import { lifetimeOffer } from "@/lib/lifetime-offer";
 import {
   LIFETIME_INTRO_SEATS,
   LIFETIME_STANDARD_PRICE,
 } from "@/lib/plan-limits";
-import { isClerkConfigured } from "@/lib/auth";
+import { isProCheckoutConfigured } from "@/lib/stripe";
 
 export const metadata: Metadata = {
   title: "Upgrade — Orbit",
@@ -50,7 +49,6 @@ export default async function UpgradePage({
   const wantsAnnual = params.period === "annual";
   const hasPro = entitlements.plan === "orbit";
   const hasLifetime = entitlements.plan === "lifetime";
-  const annual = planCopy("orbit").price.annual;
 
   return (
     // `landing-root` keeps the body deep-space on overscroll, exactly as /pricing does.
@@ -82,17 +80,6 @@ export default async function UpgradePage({
           </h1>
         </Reveal>
 
-        {wantsAnnual && !hasPro && !hasLifetime && (
-          <Reveal className="reveal-celestial" delay={70}>
-            <p className="mt-4 max-w-[54ch] text-sm leading-relaxed text-[#9aada8]">
-              You chose annual on the pricing page — {annual.amount}{" "}
-              {annual.cadence}, {annual.footnote?.toLowerCase()}. Select{" "}
-              <span className="text-[#e8f3f1]">Annual</span> below to get that
-              rate; the table starts on monthly.
-            </p>
-          </Reveal>
-        )}
-
         {/* ── Orbit Pro ── */}
         <section className="mt-12" aria-labelledby="upgrade-pro">
           <Reveal className="reveal-celestial">
@@ -117,8 +104,10 @@ export default async function UpgradePage({
                 contact enrichment on Orbit&apos;s credits. Subscribing as well
                 would only add that.
               </p>
-            ) : isClerkConfigured() ? (
-              <OrbitProCheckout highlightedPlan={ORBIT_PLAN_SLUG} />
+            ) : isProCheckoutConfigured() ? (
+              <div className="rounded-2xl border border-[#599de7]/25 bg-[#070b18]/80 p-6">
+                <ProCheckoutButton period={wantsAnnual ? "annual" : "monthly"} />
+              </div>
             ) : (
               <p className="rounded-2xl border border-dashed border-[#e8f3f1]/[0.14] p-5 text-sm text-[#9aada8]">
                 Subscription checkout is unavailable in this environment.
@@ -149,7 +138,7 @@ export default async function UpgradePage({
                       ${offer.priceUsd}
                     </span>
                     {/* Shown only while the introductory price is actually in effect. A
-                        permanent "was $49" beside a price that is simply $25 is a fake
+                        permanent "was $75" beside a price that is simply $25 is a fake
                         discount, not a design flourish. */}
                     {offer.compareAtUsd && (
                       <span className="text-base leading-none text-[#9aada8]/70 line-through decoration-[#9aada8]/60">
