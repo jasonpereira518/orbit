@@ -56,8 +56,15 @@ type WarpApi = {
   run: WarpRun;
   /** Fly to /pricing. `origin` is the clicked element's rect. */
   launch: (origin?: DOMRect | null) => void;
-  /** Fall back into the app. Returns false if there was no warp to undo. */
-  reenter: () => boolean;
+  /**
+   * Fall back into the app. Returns false if a run is already in flight, in
+   * which case the caller still owes the navigation.
+   *
+   * Takes the navigation rather than performing it, so it composes with
+   * `BackControl`'s `onBeforeNavigate` contract — that seam already handles
+   * the no-history case by pushing home instead of going back.
+   */
+  reenter: (navigate?: () => void) => boolean;
   /** Called by the arrival beacon once /pricing has mounted. */
   arrive: () => void;
 };
@@ -202,7 +209,7 @@ export function WarpProvider({ children }: { children: React.ReactNode }) {
     if (phaseRef.current === "cruise") beginArrival();
   }, [beginArrival]);
 
-  const reenter = useCallback(() => {
+  const reenter = useCallback((navigate?: () => void) => {
     if (phaseRef.current !== "idle") return false;
     clearTimers();
     phaseRef.current = "descending";
@@ -216,7 +223,8 @@ export function WarpProvider({ children }: { children: React.ReactNode }) {
     });
     // Navigate immediately: unlike the ascent there is nothing on screen worth
     // preserving, and the app needs to be mounted before the touchdown judder.
-    router.back();
+    if (navigate) navigate();
+    else router.back();
     if (!reduced) {
       // The judder has to fire on a timer, not on mount: `(app)` remounts at
       // whatever pace the router resolves, and a shake nobody sees (because

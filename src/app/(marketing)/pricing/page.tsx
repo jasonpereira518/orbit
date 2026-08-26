@@ -6,7 +6,7 @@ import { OrbitLogo } from "@/components/orbit-logo";
 import { Reveal } from "@/components/motion/reveal";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
-import { BackControl } from "@/components/pricing/back-control";
+import { WarpBackControl } from "@/components/warp/warp-back-control";
 import { WarpArrivalBeacon } from "@/components/warp/warp-arrival-beacon";
 import { PlanComparison } from "@/components/pricing/plan-comparison";
 import { PricingFaq } from "@/components/pricing/pricing-faq";
@@ -97,7 +97,7 @@ export default async function PricingPage() {
 
       <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-6 py-6 md:px-10">
         <div className="flex items-center gap-4">
-          <BackControl />
+          <WarpBackControl />
           <Link
             href="/"
             className="flex items-center gap-2.5 transition-opacity hover:opacity-80"
