@@ -78,32 +78,34 @@ export default async function ContactsPage({
         </>
       }
     >
-      <ContactQuotaNotice
-        used={planOverview.usage.used}
-        limit={planOverview.usage.limit}
-      />
-      <ContactsFilters
-        initialQ={params.q || ""}
-        initialCompany={params.company || ""}
-        initialMinScore={params.minScore || ""}
-        initialFollowUp={params.followUp || ""}
-      >
-        {/*
-          Keyed on the filters so a new query starts from a clean list rather than appending
-          onto the previous one's pages. Note this is the *filter* identity, not the contact
-          data — the list used to be keyed on the latter, which meant every keystroke tore
-          down and rebuilt the whole subtree.
-        */}
-        <ContactsList
-          key={[params.q, params.company, params.minScore, params.followUp, sort].join("|")}
-          initialItems={page.items}
-          initialCursor={page.nextCursor}
-          total={page.total}
-          filters={filters}
-          availableLetters={letters}
-          activeLetter={params.letter ?? null}
+      <div className="space-y-6">
+        <ContactQuotaNotice
+          used={planOverview.usage.used}
+          limit={planOverview.usage.limit}
         />
-      </ContactsFilters>
+        <ContactsFilters
+          initialQ={params.q || ""}
+          initialCompany={params.company || ""}
+          initialMinScore={params.minScore || ""}
+          initialFollowUp={params.followUp || ""}
+        >
+          {/*
+            Keyed on the filters so a new query starts from a clean list rather than appending
+            onto the previous one's pages. Note this is the *filter* identity, not the contact
+            data — the list used to be keyed on the latter, which meant every keystroke tore
+            down and rebuilt the whole subtree.
+          */}
+          <ContactsList
+            key={[params.q, params.company, params.minScore, params.followUp, sort].join("|")}
+            initialItems={page.items}
+            initialCursor={page.nextCursor}
+            total={page.total}
+            filters={filters}
+            availableLetters={letters}
+            activeLetter={params.letter ?? null}
+          />
+        </ContactsFilters>
+      </div>
     </PeopleListShell>
   );
 }
