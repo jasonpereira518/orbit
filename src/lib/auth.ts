@@ -43,8 +43,20 @@ export async function getPostAuthRedirectPath(userId: string) {
   return (await needsOnboarding(userId)) ? "/onboarding" : "/dashboard";
 }
 
-/** Redirect signed-in users away from /sign-in and /sign-up. */
+/**
+ * Redirect signed-in users away from /sign-in and /sign-up.
+ *
+ * Demo mode counts as signed in: `requireUserId()` already treats `demo-user` as an
+ * authenticated identity everywhere else in the app (dashboard, settings, /upgrade), so
+ * showing these two pages a dead "Clerk is not configured" wall instead of just carrying
+ * the visitor into the app was the inconsistency, not a deliberate gate. This runs the
+ * same way on any demo server or worktree — it keys off `isDemoMode()`, not local config.
+ */
 export async function redirectIfAuthenticated() {
+  if (isDemoMode()) {
+    redirect(await getPostAuthRedirectPath("demo-user"));
+  }
+
   if (!isClerkConfigured()) return;
 
   const { userId } = await auth();

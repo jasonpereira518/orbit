@@ -173,18 +173,22 @@ export type SubscriptionMirror = {
 };
 
 /**
- * Mirrors Clerk subscription state into `user_settings`, for the same reason
- * `setUserEmail` mirrors the address: Clerk's `has({ plan })` needs an active request
- * context, so background work (the import job processor, the ICS feed) could never ask
- * Clerk directly. `src/lib/entitlements.ts` reads these columns and nothing else, which
- * keeps request and background code resolving the same plan.
+ * Mirrors subscription state into `user_settings`, for the same reason `setUserEmail`
+ * mirrors the address: Stripe can't be asked outside a request context, so background
+ * work (the import job processor, the ICS feed) needs the columns.
+ * `src/lib/entitlements.ts` reads these columns and nothing else, which keeps request
+ * and background code resolving the same plan.
  *
- * NOTE: the `subscriptionItem.*` events must also be enabled on this endpoint's
- * subscription in the Clerk Dashboard — handling them in code alone is not enough.
+ * Written exclusively by the Stripe webhook — Orbit Pro's only seller — and
+ * overwrite-idempotent, so replaying the latest event is harmless.
+ *
+ * `stripeCustomerId` is only touched when explicitly passed, so a caller that has no
+ * customer id in hand can never blank out a link written by an earlier event.
  */
 export async function setSubscriptionState(
   userId: string,
-  mirror: SubscriptionMirror
+  mirror: SubscriptionMirror,
+  opts: { stripeCustomerId?: string | null } = {}
 ) {
   await ensureUserSettings(userId);
   const db = await getDb();
@@ -194,9 +198,27 @@ export async function setSubscriptionState(
       subscriptionPlan: mirror.plan,
       subscriptionStatus: mirror.status,
       subscriptionPeriodEnd: epochToDate(mirror.periodEnd),
+      ...(opts.stripeCustomerId !== undefined
+        ? { stripeCustomerId: opts.stripeCustomerId }
+        : {}),
       updatedAt: new Date(),
     })
     .where(eq(userSettings.userId, userId));
+}
+
+/**
+ * Maps a Stripe customer back to a user, for `customer.subscription.*` events created
+ * outside our own Checkout flow (dashboard-created subscriptions carry none of our
+ * metadata). Returns null when the customer was never linked to an account.
+ */
+export async function findUserIdByStripeCustomerId(customerId: string) {
+  const db = await getDb();
+  const [row] = await db
+    .select({ userId: userSettings.userId })
+    .from(userSettings)
+    .where(eq(userSettings.stripeCustomerId, customerId))
+    .limit(1);
+  return row?.userId ?? null;
 }
 
 /**
