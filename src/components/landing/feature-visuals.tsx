@@ -50,9 +50,17 @@ export function ContactsVisual() {
   };
 
   return (
-    <div ref={ref} className="relative h-[195px] w-full lg:h-[200px]" aria-hidden>
+    // Percentage geometry below md so the three cards keep their gaps at any
+    // phone width (at fixed px they overlapped by 5px at 375 and 60px at 320),
+    // plus a max-width so they don't scatter across a 669px frame at 767.
+    // Every md: value repeats the old base value, so 768-1023 is unchanged.
+    <div
+      ref={ref}
+      className="relative mx-auto h-[195px] w-full max-w-[320px] md:max-w-none lg:h-[200px]"
+      aria-hidden
+    >
       <motion.div
-        className="absolute left-0 top-0 w-[118px] rounded-2xl border border-[#e8f3f1]/10 bg-[#05070f]/70 px-2.5 py-2 lg:top-3.5 lg:w-[154px] lg:px-3.5 lg:py-3"
+        className="absolute left-0 top-0 w-[44%] rounded-2xl border border-[#e8f3f1]/10 bg-[#05070f]/70 px-2.5 py-2 md:w-[118px] lg:top-3.5 lg:w-[154px] lg:px-3.5 lg:py-3"
         style={reduced ? { rotate: -6 } : a}
       >
         <p className="text-[10px] uppercase tracking-wide text-[#6d807c] lg:text-[11px]">LinkedIn</p>
@@ -60,15 +68,17 @@ export function ContactsVisual() {
         <p className="text-[11px] text-[#9aada8] lg:text-xs">Head of Growth</p>
       </motion.div>
       <motion.div
-        className="absolute left-7 top-[98px] w-[118px] rounded-2xl border border-[#e8f3f1]/10 bg-[#05070f]/70 px-2.5 py-2 lg:left-11 lg:top-[104px] lg:w-[154px] lg:px-3.5 lg:py-3"
+        className="absolute left-[6%] top-[98px] w-[48%] rounded-2xl border border-[#e8f3f1]/10 bg-[#05070f]/70 px-1.5 py-2 md:left-7 md:w-[118px] md:px-2.5 lg:left-11 lg:top-[104px] lg:w-[154px] lg:px-3.5 lg:py-3"
         style={reduced ? { rotate: 3 } : b}
       >
         <p className="text-[10px] uppercase tracking-wide text-[#6d807c] lg:text-[11px]">Gmail</p>
-        <p className="mt-1.5 text-xs text-[#e8f3f1] lg:text-sm">priya@northwind.io</p>
+        {/* text-[10px] below md: this address is one unbreakable 18-char
+          * token that overflowed its card by 8px at every phone width. */}
+        <p className="mt-1.5 text-[10px] text-[#e8f3f1] md:text-xs lg:text-sm">priya@northwind.io</p>
         <p className="text-[11px] text-[#9aada8] lg:text-xs">Northwind · last week</p>
       </motion.div>
       <motion.div
-        className="absolute right-0 top-12 w-[136px] rounded-2xl border border-[#f2c14e]/35 bg-[#f2c14e]/[0.07] p-3 shadow-[0_0_40px_rgba(242,193,78,0.14)] lg:top-11 lg:w-[190px] lg:p-4"
+        className="absolute right-0 top-10 w-[44%] rounded-2xl border border-[#f2c14e]/35 bg-[#f2c14e]/[0.07] p-2.5 shadow-[0_0_40px_rgba(242,193,78,0.14)] md:top-12 md:w-[136px] md:p-3 lg:top-11 lg:w-[190px] lg:p-4"
         style={reduced ? undefined : merged}
       >
         <div className="h-[24px] w-[24px] rounded-full bg-[#e8f3f1]/15 lg:h-[30px] lg:w-[30px]" />
@@ -126,7 +136,7 @@ export function ConstellationVisual({ label }: { label: string }) {
         </motion.g>
       </svg>
       <motion.span
-        className="absolute bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-[#05070f]/70 px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-[#f2c14e]"
+        className="absolute bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-[#05070f]/70 px-2 py-1 text-[9px] uppercase tracking-[0.08em] text-[#f2c14e] md:px-2.5 md:text-[10px] md:tracking-[0.2em]"
         style={reduced ? undefined : { opacity: labelOpacity }}
       >
         {label}
@@ -247,7 +257,7 @@ export function AskVisual() {
         <span className="h-6 w-6 shrink-0 rounded-full bg-[#f2c14e]/25" />
       </motion.div>
       <motion.div
-        className="ml-6 flex items-center gap-2.5 rounded-2xl bg-[#e8f3f1]/[0.05] px-4 py-3"
+        className="ml-3 flex items-center gap-2.5 rounded-2xl bg-[#e8f3f1]/[0.05] px-4 py-3 md:ml-6"
         style={reduced ? undefined : a}
       >
         <span className="h-5 w-5 rounded-full bg-[#599de7]/40" />
@@ -257,7 +267,7 @@ export function AskVisual() {
         </p>
       </motion.div>
       <motion.div
-        className="ml-6 flex items-center gap-3 rounded-2xl border border-[#e8f3f1]/[0.14] bg-[#05070f]/60 px-4 py-3"
+        className="ml-3 flex items-center gap-3 rounded-2xl border border-[#e8f3f1]/[0.14] bg-[#05070f]/60 px-4 py-3 md:ml-6"
         style={reduced ? undefined : s}
       >
         <p className="flex-1 text-xs text-[#e8f3f1]">Draft intro to Elena</p>
