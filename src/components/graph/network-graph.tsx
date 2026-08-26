@@ -273,8 +273,18 @@ const edgeTypes: EdgeTypes = {
 
 /** Ambient galaxy drift — slow enough to feel alive without distracting. */
 const GALAXY_DEG_PER_MIN = 3;
-/** How often the CSS-var rotation is committed back into node positions. */
-const ROTATION_COMMIT_MS = 450;
+/**
+ * How often the CSS-var rotation is committed back into node positions
+ * (an O(contactCount) React state update). Spaced out further as the
+ * network grows so the commit cost stays bounded; disabled entirely past
+ * ROTATION_DISABLE_ABOVE contacts.
+ */
+function rotationCommitMs(contactCount: number): number {
+  if (contactCount > 900) return 1500;
+  if (contactCount > 400) return 900;
+  return 450;
+}
+const ROTATION_DISABLE_ABOVE = 2500;
 /** Max sun→member rays drawn for a hovered/selected cluster. */
 const RAY_CAP = 30;
 
@@ -361,7 +371,17 @@ function contactSearchHaystack(c: GraphContact): string {
     .toLowerCase();
 }
 
-function matchGraphContacts(contacts: GraphContact[], query: string): string[] {
+function buildContactHaystackIndex(contacts: GraphContact[]): Map<string, string> {
+  const index = new Map<string, string>();
+  for (const c of contacts) index.set(c.id, contactSearchHaystack(c));
+  return index;
+}
+
+function matchGraphContacts(
+  contacts: GraphContact[],
+  query: string,
+  haystackById: Map<string, string>
+): string[] {
   const phrase = query.trim().toLowerCase().replace(/\s+/g, " ");
   if (!phrase) return [];
   const tokens = phrase
@@ -370,7 +390,7 @@ function matchGraphContacts(contacts: GraphContact[], query: string): string[] {
 
   return contacts
     .filter((c) => {
-      const hay = contactSearchHaystack(c);
+      const hay = haystackById.get(c.id) ?? contactSearchHaystack(c);
       if (hay.includes(phrase)) return true;
       if (tokens.length === 0) return false;
       if (tokens.length === 1) return hay.includes(tokens[0]);
@@ -562,8 +582,17 @@ function GraphCanvas(props: {
   resetToken: number;
   compact?: boolean;
 }) {
+  // Keyword is the one filter driven by continuous typing — debounce it so
+  // the (potentially expensive) filter/layout rebuild below doesn't run on
+  // every keystroke. Company/school/minScore come from discrete selects.
+  const [debouncedKeyword, setDebouncedKeyword] = useState(props.keyword);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedKeyword(props.keyword), 220);
+    return () => clearTimeout(t);
+  }, [props.keyword]);
+
   const filteredContacts = useMemo(() => {
-    const kw = props.keyword.trim().toLowerCase();
+    const kw = debouncedKeyword.trim().toLowerCase();
     return props.data.contacts.filter((c) => {
       if (props.company !== "all" && c.company !== props.company) return false;
       if (props.school !== "all" && (c.school || "") !== props.school) {
@@ -593,7 +622,7 @@ function GraphCanvas(props: {
     props.data.contacts,
     props.company,
     props.school,
-    props.keyword,
+    debouncedKeyword,
     props.minScore,
   ]);
 
@@ -601,24 +630,15 @@ function GraphCanvas(props: {
     return buildHybridGraphLayout(filteredContacts, props.data.summary.userName);
   }, [filteredContacts, props.data.summary.userName]);
 
+  // Only remount the canvas subtree when the set of visible contacts (or an
+  // explicit reset) actually changes — `ids` already reflects any change in
+  // company/school/keyword/minScore, so those don't need to be in the key
+  // themselves. Keying on the raw, per-keystroke `keyword` value here was
+  // forcing a full remount (and rotation-loop restart) on every keystroke.
   const layoutKey = useMemo(() => {
     const ids = filteredContacts.map((c) => c.id).join(",");
-    return [
-      props.company,
-      props.school,
-      props.keyword,
-      props.minScore,
-      props.resetToken,
-      ids,
-    ].join("|");
-  }, [
-    filteredContacts,
-    props.company,
-    props.school,
-    props.keyword,
-    props.minScore,
-    props.resetToken,
-  ]);
+    return [props.resetToken, ids].join("|");
+  }, [filteredContacts, props.resetToken]);
 
   return (
     <GraphCanvasInner
@@ -891,7 +911,7 @@ function GraphCanvasInner({
   /**
    * Ambient galaxy rotation. Every frame the accrued angle lands on a CSS var
    * (rings + arm glow rotate on the compositor, no React render); every
-   * ROTATION_COMMIT_MS the pending delta is committed to node state as a rigid
+   * rotationCommitMs(count) the pending delta is committed to node state as a rigid
    * disk rotation p' = F(Rot(δ, F⁻¹(p))) with F = scaleY(GALAXY_FLATTEN) — the
    * same transform the CSS layers use, so the whole sky moves as one body.
    * Paused while dragging, while the inspect panel is open, in the compact
@@ -902,7 +922,9 @@ function GraphCanvasInner({
    */
   useEffect(() => {
     if (compact || prefersReducedMotion || selection) return;
+    if (filteredContacts.length > ROTATION_DISABLE_ABOVE) return;
 
+    const commitMs = rotationCommitMs(filteredContacts.length);
     let frame = 0;
     let last = performance.now();
     let lastCommit = last;
@@ -961,7 +983,7 @@ function GraphCanvasInner({
           `${galaxyThetaRef.current.toFixed(6)}rad`
         );
 
-      if (now - lastCommit >= ROTATION_COMMIT_MS) {
+      if (now - lastCommit >= commitMs) {
         lastCommit = now;
         commitPending();
       }
@@ -973,7 +995,7 @@ function GraphCanvasInner({
       // Keep stars in step with the CSS-var rotation across pauses
       commitPending();
     };
-  }, [compact, prefersReducedMotion, selection, storeApi]);
+  }, [compact, prefersReducedMotion, selection, storeApi, filteredContacts.length]);
 
   /**
    * Cluster / search / peek zooms are separate. Default wide view is owned by
@@ -1240,6 +1262,7 @@ function GraphCanvasInner({
         nodeOrigin={[0.5, 0.5]}
         minZoom={0.05}
         maxZoom={2.4}
+        onlyRenderVisibleElements
         style={{ width: "100%", height: "100%" }}
         onInit={(instance) => {
           const pane = document.querySelector(
@@ -1487,6 +1510,12 @@ export function NetworkGraph({
   const lastSearchQuery = useRef("");
   const searchRequestId = useRef(0);
   const suppressSearchHomeRef = useRef(false);
+  // Built once per data load instead of re-joined per contact on every
+  // keystroke inside matchGraphContacts.
+  const contactHaystackIndex = useMemo(
+    () => (data ? buildContactHaystackIndex(data.contacts) : new Map<string, string>()),
+    [data]
+  );
 
   const requestDefaultView = useCallback(() => {
     setFocusCluster(null);
@@ -1535,7 +1564,7 @@ export function NetworkGraph({
       reframe = true
     ) => {
       const personIds = new Set<string>([
-        ...matchGraphContacts(data.contacts, q),
+        ...matchGraphContacts(data.contacts, q, contactHaystackIndex),
         ...extraIds,
       ]);
       const clusterByName = findClusterMatch(data.clusters, q);
@@ -1605,7 +1634,7 @@ export function NetworkGraph({
     return () => {
       if (searchTimer.current) clearTimeout(searchTimer.current);
     };
-  }, [search, data, compact, requestDefaultView]);
+  }, [search, data, compact, requestDefaultView, contactHaystackIndex]);
 
   const userId = data?.userId;
 
