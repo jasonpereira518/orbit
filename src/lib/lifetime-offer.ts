@@ -22,7 +22,7 @@ import { countLifetimePurchases } from "@/lib/user-settings";
  *
  * WHEN THE STANDARD PRICE IS NOT CONFIGURED, the offer stays on the intro price rather
  * than advertising a price nothing can charge. Continuing to sell at $25 past the hundredth
- * buyer costs Orbit money; advertising $49 and charging $25 is a different category of
+ * buyer costs Orbit money; advertising $75 and charging $25 is a different category of
  * problem, and the safe failure is the one that only costs money. `needsStandardPrice`
  * flags it so the operator finds out from the console rather than from a customer.
  */

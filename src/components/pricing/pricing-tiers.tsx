@@ -76,6 +76,12 @@ function BillingToggle({
   );
 }
 
+/**
+ * Where signed-out buyers land after creating the account they need to buy: back here,
+ * with the toggle and cards fresh in mind, rather than into onboarding.
+ */
+const SIGN_UP_FROM_PRICING = "/sign-up?redirect_url=/pricing";
+
 function TierCta({
   planId,
   currentPlan,
@@ -134,7 +140,7 @@ function TierCta({
       // rather than into a Stripe session with nobody to grant the plan to.
       return (
         <Link
-          href="/sign-up"
+          href={SIGN_UP_FROM_PRICING}
           className={cn(
             base,
             "bg-[#f2c14e] font-medium text-[#241a00] hover:opacity-90"
@@ -151,7 +157,7 @@ function TierCta({
   if (planId === "free") {
     return (
       <Link
-        href={signedIn ? "/dashboard" : "/sign-up"}
+        href={signedIn ? "/dashboard" : SIGN_UP_FROM_PRICING}
         className={cn(
           base,
           "border border-[#e8f3f1]/[0.18] text-[#e8f3f1] hover:opacity-80"
@@ -162,14 +168,15 @@ function TierCta({
     );
   }
 
-  // The chosen period rides along in the URL. Clerk's PricingTable has no prop to
-  // preselect it, so /upgrade states it in copy rather than pretending it carried over.
+  // The chosen period rides along in the URL, and /upgrade's Orbit Pro section honours
+  // it directly via ProCheckoutButton — real Stripe subscription checkout, not Clerk's
+  // PricingTable, which had no way to preselect a period at all.
   const upgradeHref =
     period === "annual" ? "/upgrade?period=annual" : "/upgrade";
 
   return (
     <Link
-      href={signedIn ? upgradeHref : "/sign-up"}
+      href={signedIn ? upgradeHref : SIGN_UP_FROM_PRICING}
       className={cn(
         base,
         "bg-[#eef7f4] text-[#0f2e28] hover:opacity-90"
@@ -183,8 +190,10 @@ function TierCta({
 /**
  * Each tier owns an accent rather than a single `featured` boolean, because the two paid
  * tiers now say different things: Orbit Pro is the default path (Orbit's own primary blue,
- * centred and lifted on wide screens), while Orbit Lifetime is the value play (the gold
- * accent the rest of the marketing site reserves for offers, plus the only badge).
+ * centred and lifted on wide screens, badged "Most popular"), while Orbit Lifetime is the
+ * value play (the gold accent the rest of the marketing site reserves for offers, badged
+ * "Best Value"). The two badges carry two different messages in two different colours —
+ * social proof against value — so neither dilutes the other.
  * Free stays deliberately recessed — dimmer border, no glow, muted ticks.
  */
 const TIER_ACCENT: Record<
@@ -194,7 +203,7 @@ const TIER_ACCENT: Record<
     tick: string;
     /** Soft wash behind the card's own translucent background. */
     glow: string | null;
-    badge: string | null;
+    badge: { label: string; className: string } | null;
     /** The centre column reads as the recommendation through position alone. */
     raised: boolean;
   }
@@ -213,14 +222,14 @@ const TIER_ACCENT: Record<
     surface: "border-[#599de7]/40 bg-[#070b18]/80 hover:border-[#599de7]/75",
     tick: "text-[#599de7]",
     glow: "radial-gradient(circle, rgba(89,157,231,0.20), transparent 68%)",
-    badge: null,
+    badge: { label: "Most popular", className: "bg-[#599de7] text-[#081326]" },
     raised: true,
   },
   lifetime: {
     surface: "border-[#f2c14e]/40 bg-[#070b18]/80 hover:border-[#f2c14e]/75",
     tick: "text-[#f2c14e]",
     glow: "radial-gradient(circle, rgba(242,193,78,0.15), transparent 68%)",
-    badge: "Best Value",
+    badge: { label: "Best Value", className: "bg-[#f2c14e] text-[#241a00]" },
     raised: false,
   },
 };
@@ -280,8 +289,13 @@ export function PricingTiers({
                 />
               )}
               {accent.badge && (
-                <p className="absolute -top-3 left-7 rounded-full bg-[#f2c14e] px-3 py-1 text-xs font-medium text-[#241a00]">
-                  {accent.badge}
+                <p
+                  className={cn(
+                    "absolute -top-3 left-7 rounded-full px-3 py-1 text-xs font-medium",
+                    accent.badge.className
+                  )}
+                >
+                  {accent.badge.label}
                 </p>
               )}
 

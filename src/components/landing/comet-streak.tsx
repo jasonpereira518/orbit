@@ -120,7 +120,7 @@ export function CometStreak() {
       >
         {/* Tail sweeps behind the head. */}
         <motion.div
-          className="h-[3px] w-64 rounded-full bg-[linear-gradient(90deg,transparent,rgba(196,220,230,0.55),rgba(255,255,255,0.95))]"
+          className="h-[3px] w-40 rounded-full md:w-64 bg-[linear-gradient(90deg,transparent,rgba(196,220,230,0.55),rgba(255,255,255,0.95))]"
           style={reduced ? undefined : { background: tailGradient }}
         />
         <motion.div
