@@ -823,6 +823,7 @@ export const contactEmbeddings = pgTable(
     sourceId: text("source_id"),
     embedding: jsonb("embedding").$type<number[]>().notNull(),
     content: text("content").notNull(),
+    contentHash: text("content_hash"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [

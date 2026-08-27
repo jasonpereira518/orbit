@@ -587,7 +587,7 @@ CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action,
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -701,6 +701,9 @@ export const SCALE_DDL: string[] = [
   // base and outreach refresh had no usable index for their scans.
   `CREATE INDEX IF NOT EXISTS interactions_user_date_idx ON interactions(user_id, interaction_date DESC)`,
   `CREATE INDEX IF NOT EXISTS embeddings_user_src_idx ON contact_embeddings(user_id, source_type, contact_id)`,
+  // Lets upsertContactEmbedding and rebuildContactEmbeddingsBatch skip the embedding API
+  // call entirely when a row's source content hasn't changed since it was last embedded.
+  `ALTER TABLE contact_embeddings ADD COLUMN IF NOT EXISTS content_hash text`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
@@ -1187,10 +1190,10 @@ export function neonClient() {
 /**
  * Copies JSONB embeddings into the pgvector column for rows written before it existed.
  *
- * Deliberately NOT on the boot path any more. It is one `UPDATE` per row, and on
- * `neon-http` every statement is its own HTTPS request — so a cold start could spend 500
- * sequential round trips here before serving its first request. The daily cron drains it
- * instead; until a row is copied, search just falls back for that row.
+ * Deliberately NOT on the boot path any more. It is one round trip per run (a single
+ * batched `UPDATE ... FROM (VALUES ...)`) rather than one per row, so it can be called
+ * more aggressively than before if needed — but the daily cron cadence is left alone here.
+ * Until a row is copied, search just falls back for that row.
  */
 export async function backfillEmbeddingVectors(
   sql: ReturnType<typeof neon>,
@@ -1208,20 +1211,26 @@ export async function backfillEmbeddingVectors(
     embedding: number[];
   }>;
 
-  let copied = 0;
-  for (const row of rows) {
-    const embedding = row.embedding;
-    if (!Array.isArray(embedding) || embedding.length === 0) continue;
-    const literal = formatVectorLiteral(embedding);
-    await sql.query(
-      `UPDATE contact_embeddings
-       SET embedding_vector = $1::vector
-       WHERE id = $2`,
-      [literal, row.id]
-    );
-    copied += 1;
-  }
-  return copied;
+  const valid = rows.filter(
+    (row) => Array.isArray(row.embedding) && row.embedding.length > 0
+  );
+  if (valid.length === 0) return 0;
+
+  const params: unknown[] = [];
+  const tuples = valid
+    .map((row, i) => {
+      params.push(row.id, formatVectorLiteral(row.embedding));
+      return `($${i * 2 + 1}::uuid, $${i * 2 + 2}::vector)`;
+    })
+    .join(", ");
+  await sql.query(
+    `UPDATE contact_embeddings AS ce
+     SET embedding_vector = v.vec
+     FROM (VALUES ${tuples}) AS v(id, vec)
+     WHERE ce.id = v.id`,
+    params
+  );
+  return valid.length;
 }
 
 /**

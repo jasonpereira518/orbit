@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { eq, and, ilike, inArray, sql } from "drizzle-orm";
 import { getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import { contactEmbeddings, contacts } from "@/db/schema";
@@ -10,13 +11,28 @@ import {
   shouldRecordThrottled,
 } from "@/lib/error-events";
 
-async function persistEmbeddingVector(rowId: string, embedding: number[]) {
-  if (!isPgvectorAvailable()) return;
+export function computeContentHash(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+/** One set-based UPDATE per batch instead of one HTTPS round trip per row. */
+async function persistEmbeddingVectorsBatch(
+  rows: Array<{ id: string; embedding: number[] }>
+) {
+  if (!isPgvectorAvailable() || rows.length === 0) return;
   const db = await getDb();
-  const literal = formatVectorLiteral(embedding);
-  await db.execute(
-    sql`UPDATE contact_embeddings SET embedding_vector = ${literal}::vector WHERE id = ${rowId}`
+  const values = sql.join(
+    rows.map(
+      (r) => sql`(${r.id}::uuid, ${formatVectorLiteral(r.embedding)}::vector)`
+    ),
+    sql`, `
   );
+  await db.execute(sql`
+    UPDATE contact_embeddings AS ce
+    SET embedding_vector = v.vec
+    FROM (VALUES ${values}) AS v(id, vec)
+    WHERE ce.id = v.id
+  `);
 }
 
 export async function upsertContactEmbedding(
@@ -29,42 +45,40 @@ export async function upsertContactEmbedding(
   if (!content.trim()) return;
 
   try {
-    const embedding = await createEmbedding(userId, content);
     const db = await getDb();
+    const contentHash = computeContentHash(content);
 
-    if (sourceId) {
-      const existing = await db.query.contactEmbeddings.findFirst({
-        where: and(
-          eq(contactEmbeddings.userId, userId),
-          eq(contactEmbeddings.contactId, contactId),
-          eq(contactEmbeddings.sourceType, sourceType),
-          eq(contactEmbeddings.sourceId, sourceId)
-        ),
-      });
-      if (existing) {
-        await db
-          .update(contactEmbeddings)
-          .set({ embedding, content })
-          .where(eq(contactEmbeddings.id, existing.id));
-        await persistEmbeddingVector(existing.id, embedding);
-        return;
-      }
+    const existing = sourceId
+      ? await db.query.contactEmbeddings.findFirst({
+          where: and(
+            eq(contactEmbeddings.userId, userId),
+            eq(contactEmbeddings.contactId, contactId),
+            eq(contactEmbeddings.sourceType, sourceType),
+            eq(contactEmbeddings.sourceId, sourceId)
+          ),
+        })
+      : undefined;
+
+    // Unchanged content: the stored embedding is still correct — skip the API call.
+    if (existing?.contentHash === contentHash) return;
+
+    const embedding = await createEmbedding(userId, content);
+
+    if (existing) {
+      await db
+        .update(contactEmbeddings)
+        .set({ embedding, content, contentHash })
+        .where(eq(contactEmbeddings.id, existing.id));
+      await persistEmbeddingVectorsBatch([{ id: existing.id, embedding }]);
+      return;
     }
 
     const [inserted] = await db
       .insert(contactEmbeddings)
-      .values({
-        userId,
-        contactId,
-        sourceType,
-        sourceId,
-        embedding,
-        content,
-      })
+      .values({ userId, contactId, sourceType, sourceId, embedding, content, contentHash })
       .returning();
-
     if (inserted?.id) {
-      await persistEmbeddingVector(inserted.id, embedding);
+      await persistEmbeddingVectorsBatch([{ id: inserted.id, embedding }]);
     }
   } catch {
     // AI key may be missing; skip embeddings silently
@@ -340,7 +354,26 @@ type ContactEmbeddingSource = {
   contactTags?: { tag: { name: string } }[];
 };
 
-function buildContactEmbeddingContent(contact: ContactEmbeddingSource): string {
+/**
+ * Embedding-content audit (spec §3), re-checked in Task 6:
+ *
+ * 1. This function never absorbs content that has its own source row. LinkedIn messages
+ *    (`src/lib/message-enrichment.ts`) and meeting/interaction notes
+ *    (`src/actions/imports.ts`, `src/lib/calendar-sync.ts`) call `upsertContactEmbedding`
+ *    directly with their own `sourceType`/`sourceId` ("linkedin_message", "meeting") and
+ *    never flow through here — no split needed on that front.
+ * 2. This function's own output CAN exceed the 8,000-char truncation in
+ *    `createEmbedding`/`createEmbeddingsBatch` (`src/lib/ai.ts:1165`) when `notes` is long,
+ *    since `notes` is the one open-ended free-text field folded in below. `notes` is split
+ *    into its own `sourceType: "notes"` row by `rebuildContactEmbedding` /
+ *    `rebuildContactEmbeddingsBatch` whenever the combined content would overflow — see
+ *    `PROFILE_CONTENT_TRUNCATION_LIMIT` below.
+ */
+function buildContactEmbeddingContent(
+  contact: ContactEmbeddingSource,
+  options: { includeNotes?: boolean } = {}
+): string {
+  const includeNotes = options.includeNotes ?? true;
   return [
     contact.fullName,
     contact.preferredName,
@@ -352,7 +385,7 @@ function buildContactEmbeddingContent(contact: ContactEmbeddingSource): string {
     contact.linkedinUrl,
     contact.website,
     contact.aiSummary,
-    contact.notes,
+    includeNotes ? contact.notes : null,
     metContextLabel(contact.metContext),
     contact.dateMet
       ? new Date(contact.dateMet).toLocaleDateString()
@@ -366,6 +399,28 @@ function buildContactEmbeddingContent(contact: ContactEmbeddingSource): string {
     .join("\n");
 }
 
+/** Matches the embedding-input truncation in `createEmbedding`/`createEmbeddingsBatch`. */
+const PROFILE_CONTENT_TRUNCATION_LIMIT = 8000;
+
+/**
+ * Splits a contact's profile embedding content into a `notes`-free profile chunk plus a
+ * separate `notes` chunk when the combined content would otherwise overflow the 8,000-char
+ * embedding truncation and silently lose its tail. Small contacts keep the single row they
+ * had before, so this doesn't double the row count for the common case.
+ */
+function splitProfileEmbeddingContent(
+  contact: ContactEmbeddingSource
+): { profile: string; notes: string | null } {
+  const full = buildContactEmbeddingContent(contact);
+  if (full.length <= PROFILE_CONTENT_TRUNCATION_LIMIT || !contact.notes?.trim()) {
+    return { profile: full, notes: null };
+  }
+  return {
+    profile: buildContactEmbeddingContent(contact, { includeNotes: false }),
+    notes: contact.notes,
+  };
+}
+
 export async function rebuildContactEmbedding(userId: string, contactId: string) {
   const db = await getDb();
   const contact = await db.query.contacts.findFirst({
@@ -374,14 +429,20 @@ export async function rebuildContactEmbedding(userId: string, contactId: string)
   });
   if (!contact) return;
 
-  const content = buildContactEmbeddingContent(contact);
-  await upsertContactEmbedding(userId, contactId, "profile", content, contactId);
+  const { profile, notes } = splitProfileEmbeddingContent(contact);
+  await upsertContactEmbedding(userId, contactId, "profile", profile, contactId);
+  if (notes) {
+    await upsertContactEmbedding(userId, contactId, "notes", notes, contactId);
+  }
 }
 
-/** Rebuild "profile" embeddings for many contacts with one batched embedding API call. */
+/** Rebuild "profile" (and, when content overflows, "notes") embeddings for many contacts
+ *  with one batched embedding API call. `embedFn` is injectable for tests; it defaults to
+ *  the real batched embedder. */
 export async function rebuildContactEmbeddingsBatch(
   userId: string,
-  contactIds: string[]
+  contactIds: string[],
+  embedFn: (userId: string, texts: string[]) => Promise<number[][]> = createEmbeddingsBatch
 ) {
   const ids = [...new Set(contactIds)];
   if (ids.length === 0) return;
@@ -392,73 +453,89 @@ export async function rebuildContactEmbeddingsBatch(
     with: { contactTags: { with: { tag: true } } },
   });
 
-  const entries = rows
-    .map((contact) => ({ contactId: contact.id, content: buildContactEmbeddingContent(contact) }))
-    .filter((entry) => entry.content.trim().length > 0);
+  const existing = await db.query.contactEmbeddings.findMany({
+    where: and(
+      eq(contactEmbeddings.userId, userId),
+      inArray(contactEmbeddings.sourceType, ["profile", "notes"]),
+      inArray(contactEmbeddings.contactId, ids)
+    ),
+    columns: { id: true, contactId: true, sourceType: true, contentHash: true },
+  });
+  const existingByKey = new Map(
+    existing.map((row) => [`${row.contactId}:${row.sourceType}`, row])
+  );
+
+  type Entry = { contactId: string; sourceType: "profile" | "notes"; content: string; contentHash: string };
+  const candidates: Entry[] = [];
+  for (const contact of rows) {
+    const { profile, notes } = splitProfileEmbeddingContent(contact);
+    if (profile.trim().length > 0) {
+      candidates.push({ contactId: contact.id, sourceType: "profile", content: profile, contentHash: computeContentHash(profile) });
+    }
+    if (notes && notes.trim().length > 0) {
+      candidates.push({ contactId: contact.id, sourceType: "notes", content: notes, contentHash: computeContentHash(notes) });
+    }
+  }
+
+  // Unchanged content keeps its stored embedding — no API call, no write.
+  const entries = candidates.filter(
+    (entry) => existingByKey.get(`${entry.contactId}:${entry.sourceType}`)?.contentHash !== entry.contentHash
+  );
   if (entries.length === 0) return;
 
   let embeddings: number[][];
   try {
-    embeddings = await createEmbeddingsBatch(
-      userId,
-      entries.map((entry) => entry.content)
-    );
+    embeddings = await embedFn(userId, entries.map((entry) => entry.content));
   } catch {
-    // AI key may be missing; skip embeddings silently, matching upsertContactEmbedding.
-    return;
+    return; // AI key may be missing; skip silently, matching upsertContactEmbedding.
   }
 
-  const existing = await db.query.contactEmbeddings.findMany({
-    where: and(
-      eq(contactEmbeddings.userId, userId),
-      eq(contactEmbeddings.sourceType, "profile"),
-      inArray(
-        contactEmbeddings.contactId,
-        entries.map((entry) => entry.contactId)
-      )
-    ),
-  });
-  const existingByContactId = new Map(existing.map((row) => [row.contactId, row]));
-
-  const toInsert: Array<{
-    userId: string;
-    contactId: string;
-    sourceType: string;
-    sourceId: string;
-    embedding: number[];
-    content: string;
-  }> = [];
-  const toUpdate: Array<{ id: string; embedding: number[]; content: string }> = [];
+  const toInsert: Array<typeof contactEmbeddings.$inferInsert> = [];
+  const toUpdate: Array<{ id: string; embedding: number[]; content: string; contentHash: string }> = [];
 
   entries.forEach((entry, index) => {
     const embedding = embeddings[index];
-    const found = existingByContactId.get(entry.contactId);
+    const found = existingByKey.get(`${entry.contactId}:${entry.sourceType}`);
     if (found) {
-      toUpdate.push({ id: found.id, embedding, content: entry.content });
+      toUpdate.push({ id: found.id, embedding, content: entry.content, contentHash: entry.contentHash });
     } else {
       toInsert.push({
         userId,
         contactId: entry.contactId,
-        sourceType: "profile",
+        sourceType: entry.sourceType,
         sourceId: entry.contactId,
         embedding,
         content: entry.content,
+        contentHash: entry.contentHash,
       });
     }
   });
 
+  const vectorRows: Array<{ id: string; embedding: number[] }> = [];
+
   if (toInsert.length > 0) {
     const inserted = await db.insert(contactEmbeddings).values(toInsert).returning();
     for (const row of inserted) {
-      await persistEmbeddingVector(row.id, row.embedding as number[]);
+      vectorRows.push({ id: row.id, embedding: row.embedding as number[] });
     }
   }
 
-  for (const update of toUpdate) {
-    await db
-      .update(contactEmbeddings)
-      .set({ embedding: update.embedding, content: update.content })
-      .where(eq(contactEmbeddings.id, update.id));
-    await persistEmbeddingVector(update.id, update.embedding);
+  if (toUpdate.length > 0) {
+    const values = sql.join(
+      toUpdate.map(
+        (u) =>
+          sql`(${u.id}::uuid, ${JSON.stringify(u.embedding)}::jsonb, ${u.content}, ${u.contentHash})`
+      ),
+      sql`, `
+    );
+    await db.execute(sql`
+      UPDATE contact_embeddings AS ce
+      SET embedding = v.embedding, content = v.content, content_hash = v.content_hash
+      FROM (VALUES ${values}) AS v(id, embedding, content, content_hash)
+      WHERE ce.id = v.id
+    `);
+    for (const u of toUpdate) vectorRows.push({ id: u.id, embedding: u.embedding });
   }
+
+  await persistEmbeddingVectorsBatch(vectorRows);
 }
