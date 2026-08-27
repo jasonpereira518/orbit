@@ -33,6 +33,7 @@
     { "question": "journalists covering technology", "expect": ["amelia@nyt.example"], "kind": "semantic" },
     { "question": "who mentors designers?", "expect": ["lena@figma.example"], "kind": "semantic" },
     { "question": "VCs investing in healthcare AI", "expect": ["claire@nea.example"], "kind": "attribute-multi" },
-    { "question": "who did I meet at Money2020?", "expect": ["james@sequoia.example"], "kind": "notes-recall" }
+    { "question": "who did I meet at Money2020?", "expect": ["james@sequoia.example"], "kind": "notes-recall" },
+    { "question": "may", "expect": ["maya@stripe.example"], "kind": "prefix" }
   ]
 }

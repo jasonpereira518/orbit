@@ -84,6 +84,17 @@ async function main() {
   hits = await hybridSearchContacts(U, { query: "Ada Lovelase" });
   check("typo finds Ada", hits.some((h) => h.id === ada.id));
 
+  // 2a. Prefix-LIKE fuzzy arm: "ada" (3 chars) is a straight prefix of "Ada
+  // Lovelace" — trigram similarity is active at this length too, but the
+  // prefix-LIKE predicate alone already covers it.
+  hits = await hybridSearchContacts(U, { query: "ada" });
+  check("3-char prefix finds Ada", hits.some((h) => h.id === ada.id));
+
+  // 2b. "ad" (2 chars) is below the trigram-similarity threshold (needs 3+),
+  // so only the always-on prefix-LIKE predicate can surface Ada here.
+  hits = await hybridSearchContacts(U, { query: "ad" });
+  check("2-char prefix (below trigram threshold) still finds Ada", hits.some((h) => h.id === ada.id));
+
   // 3. Semantic arm: query embedding on Alan's axis, lexically unrelated text.
   hits = await hybridSearchContacts(U, {
     query: "zzqx unrelated", embedding: axisVector(2),

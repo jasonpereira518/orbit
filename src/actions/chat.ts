@@ -189,8 +189,9 @@ export async function askNetwork(
     const activeGoals = await db.query.userGoals.findMany({
       where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
       columns: { text: true },
+      orderBy: [desc(userGoals.createdAt)],
       limit: 5,
-    });
+    }).catch(() => []);
     const [queryEmbedding, parsedQuery] = await Promise.all([
       getQueryEmbedding(userId, q).catch(() => null),
       understandQuery(userId, q, activeGoals.map((g) => g.text)),
@@ -306,7 +307,9 @@ export async function askNetwork(
       }))
     );
 
-    const allowedContacts = new Set(retrieved.map((c) => c.id));
+    // Allow-list must reflect what the model actually saw, not everything retrieved —
+    // budgetContactsContext can drop trailing contacts once the char budget runs out.
+    const allowedContacts = new Set(budgeted.map((c) => c.id));
     const allowedRecruiters = new Set(recruitersForChat.map((r) => r.id));
     const recommendations = (result.recommendations || []).filter((r) => {
       if (r.recruiter_id) return allowedRecruiters.has(r.recruiter_id);

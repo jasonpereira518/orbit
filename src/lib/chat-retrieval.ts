@@ -85,6 +85,14 @@ Return JSON: {"semanticQuery": string, "filters": {"companies"?: string[], "indu
 /**
  * Accuracy-only stage: on any failure or timeout it returns the pass-through
  * fallback. It must never throw and never block the pipeline.
+ *
+ * Spec erratum: the spec says self-references ("my school", "my company")
+ * resolve against the user's profile, but userSettings carries no
+ * school/company profile fields to resolve against — only active networking
+ * goals are available as user context here. Unresolvable self-references are
+ * therefore deliberately left unfiltered (see UNDERSTAND_SYSTEM) rather than
+ * guessing a value.
+ * @param userGoals - the user's active networking goals, used as context.
  */
 export async function understandQuery(
   userId: string,
@@ -117,18 +125,21 @@ export async function understandQuery(
 
 export const CANDIDATE_POOL = 60;
 export const FINAL_CONTACT_COUNT = 12;
-const RERANK_TIMEOUT_MS = 6000;
+// Keeps worst-case pipeline inside the ~10s budget; on timeout the RRF-order
+// fallback answers.
+const RERANK_TIMEOUT_MS = 4000;
 const RERANK_MIN_RELEVANCE = 3;
 const RERANK_MIN_SURVIVORS = 3;
 
 const RERANK_SYSTEM = `You score how relevant each candidate contact is to the user's question about their network.
 10 = directly answers the question. 5 = plausibly useful. 0 = unrelated.
 Judge from the card text only. Score every candidate you were given, using their exact ids.
+Candidates marked matches_filters=no did not satisfy the user's explicit filters and were included only as backup — prefer matches_filters=yes candidates when relevance is comparable.
 Return JSON: {"scores": [{"id": string, "relevance": number}]}`;
 
 function candidateCard(c: RankedContact): string {
   const summary = (c.aiSummary || c.notes || "").replace(/\s+/g, " ").slice(0, 160);
-  return `[id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | school=${c.school || "?"} | industry=${c.industry || "?"} | tier=${c.closenessTier || "?"} | tags=${c.tags.join(",") || "-"}${summary ? ` | ${summary}` : ""}`;
+  return `[id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | school=${c.school || "?"} | industry=${c.industry || "?"} | tier=${c.closenessTier || "?"} | tags=${c.tags.join(",") || "-"}${summary ? ` | ${summary}` : ""} | matches_filters=${c.filterMatched ? "yes" : "no"}`;
 }
 
 /**

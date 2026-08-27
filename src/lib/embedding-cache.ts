@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createEmbedding } from "@/lib/ai";
+import { createEmbedding, resolveEmbeddingBackend } from "@/lib/ai";
 
 /**
  * In-memory LRU for query embeddings. Fluid Compute reuses function instances
@@ -29,18 +29,36 @@ export function normalizeQuery(q: string): string {
   return q.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function cacheKey(userId: string, query: string): string {
+/**
+ * Resolves the embedding backend ("openai" | "gemini") for a user, so it can
+ * be folded into the cache key — a user switching providers must not get
+ * stale-model vectors served back for up to an hour. Backend uniquely
+ * determines the model (OPENAI_EMBEDDING_MODEL / GEMINI_EMBEDDING_MODEL are
+ * constants), so the backend string alone suffices as the scope.
+ */
+export async function defaultResolveScope(userId: string): Promise<string> {
+  try {
+    const { backend } = await resolveEmbeddingBackend(userId);
+    return backend;
+  } catch {
+    return "unresolved";
+  }
+}
+
+function cacheKey(userId: string, scope: string, query: string): string {
   return createHash("sha256")
-    .update(`${userId}\n${normalizeQuery(query)}`)
+    .update(`${userId}\n${scope}\n${normalizeQuery(query)}`)
     .digest("hex");
 }
 
 export async function getQueryEmbedding(
   userId: string,
   query: string,
-  embed: (userId: string, text: string) => Promise<number[]> = createEmbedding
+  embed: (userId: string, text: string) => Promise<number[]> = createEmbedding,
+  resolveScope: (userId: string) => Promise<string> = defaultResolveScope
 ): Promise<number[]> {
-  const key = cacheKey(userId, query);
+  const scope = await resolveScope(userId);
+  const key = cacheKey(userId, scope, query);
   const store = cache();
   const now = nowFn();
 

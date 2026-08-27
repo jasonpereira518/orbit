@@ -186,26 +186,47 @@ async function ftsArm(
   return rowsOf<{ id: string }>(result).map((r) => r.id);
 }
 
+/**
+ * Fuzzy arm: spec mandates trigram similarity PLUS prefix LIKE. Prefix-LIKE
+ * runs for any non-empty query (served by the lower() trigram GIN index, or a
+ * plain seq scan bounded by user_id + armLimit when the extension is absent)
+ * so the ask-bar's per-keystroke typing ("ad", "ada") gets partial-word
+ * matches immediately. Trigram similarity only kicks in at 3+ chars (below
+ * that, similarity scores are too noisy to be useful) and only when the
+ * extension is installed; it exists to catch typos that prefix matching can't
+ * ("Ada Lovelase").
+ */
 async function trigramArm(
   userId: string,
   query: string,
   filter: SQL | null,
   armLimit: number
 ): Promise<string[]> {
-  if (!isTrigramAvailable()) return [];
   const q = query.trim().toLowerCase();
-  if (q.length < 3) return [];
+  if (!q) return [];
+  const trigramActive = q.length >= 3 && isTrigramAvailable();
+  const prefixPattern = `${escapeLikeValue(q)}%`;
   const db = await getDb();
+  const predicate = trigramActive
+    ? sql`(lower(contacts.full_name) like ${prefixPattern}
+        or lower(coalesce(contacts.company, '')) like ${prefixPattern}
+        or lower(contacts.full_name) % ${q}
+        or lower(coalesce(contacts.company, '')) % ${q})`
+    : sql`(lower(contacts.full_name) like ${prefixPattern}
+        or lower(coalesce(contacts.company, '')) like ${prefixPattern})`;
+  const orderBy = trigramActive
+    ? sql`greatest(
+        similarity(lower(contacts.full_name), ${q}),
+        similarity(lower(coalesce(contacts.company, '')), ${q})
+      ) desc, lower(contacts.full_name) asc`
+    : sql`lower(contacts.full_name) asc`;
   const result = await db.execute(sql`
     select contacts.id
     from contacts
     where contacts.user_id = ${userId}
-      and (lower(contacts.full_name) % ${q} or lower(coalesce(contacts.company, '')) % ${q})
+      and ${predicate}
       ${filter ? sql`and ${filter}` : sql``}
-    order by greatest(
-      similarity(lower(contacts.full_name), ${q}),
-      similarity(lower(coalesce(contacts.company, '')), ${q})
-    ) desc
+    order by ${orderBy}
     limit ${armLimit}
   `);
   return rowsOf<{ id: string }>(result).map((r) => r.id);
