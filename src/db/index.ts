@@ -587,7 +587,7 @@ CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action,
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -747,9 +747,14 @@ export async function applyScaleSchema(run: StatementRunner) {
   // and search still works through `search_tsv`; only typo tolerance is lost.
   try {
     await run(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+    // The predicates in searchCondition and the hybrid search arms compare
+    // lower(column), so the index must be on the identical expression or the
+    // planner ignores it. The old contacts_name_trgm on the raw columns was
+    // never usable; drop it on the way through.
+    await run(`DROP INDEX IF EXISTS contacts_name_trgm`);
     await run(
       `CREATE INDEX IF NOT EXISTS contacts_name_trgm
-       ON contacts USING gin(full_name gin_trgm_ops, company gin_trgm_ops)`
+       ON contacts USING gin(lower(full_name) gin_trgm_ops, lower(coalesce(company, '')) gin_trgm_ops)`
     );
     globalForDb.orbitTrigram = true;
   } catch {
@@ -1162,6 +1167,10 @@ export function rowsOf<T>(result: unknown): T[] {
 
 export function isPgvectorAvailable() {
   return Boolean(globalForDb.orbitPgvector);
+}
+
+export function isTrigramAvailable() {
+  return Boolean(globalForDb.orbitTrigram);
 }
 
 /**
