@@ -4,14 +4,22 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { motion } from "motion/react";
 import { BackControl } from "@/components/pricing/back-control";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
-import { CHRONO_IN, CHRONO_RESOLVE, tangentForSlot } from "@/lib/warp/chrono";
+import {
+  CHRONO_IN,
+  CHRONO_RESOLVE,
+  partDirection,
+  partDistance,
+  tangentForSlot,
+} from "@/lib/warp/chrono";
 import { arrivedBy, useWarp } from "@/components/warp/warp-provider";
 
 /**
@@ -42,8 +50,8 @@ import { arrivedBy, useWarp } from "@/components/warp/warp-provider";
  * in this mode is the provider's rewind, not the assembly played backwards: there is no
  * click handler here, because `BackControl` owns Back. Instead the panels watch
  * `useWarp().run.phase` and, once it enters the inbound leg (`inbound` or `landing`),
- * smear themselves back into the exposure in reverse order — the mirror of how they
- * condensed in, not the brick-lift of the assemble exit.
+ * lift and then fly out of the frame in reverse order — each to whichever side of the
+ * viewport centre it is already nearer, so the two plan cards part like curtains.
  *
  * Scoped to /upgrade: BackControl's `onBeforeNavigate` hook this relies on is opt-in, so
  * /pricing and the marketing docs keep their instant back navigation untouched.
@@ -97,9 +105,39 @@ const RESOLVE_OFFSET = 14;
 const RESOLVE_SCALE = 1.015;
 const RESOLVE_EASE = [0.22, 0.61, 0.36, 1] as const;
 
-/** How long the rewind's dissolve takes, derived from the same beat table the
- *  chrono stage reads so this can never drift out of step with it. */
-const DISSOLVE_DURATION = (CHRONO_IN.dissolve[1] - CHRONO_IN.dissolve[0]) / 1000;
+/* ── Leaving: lift, then part ──
+ *
+ * The way home for a visitor who time-warped in. Not the mirror of the
+ * arrival: a panel that smears back into the exposure it condensed out of is
+ * tidy, but it is also 380ms of nothing much happening at the exact moment
+ * someone has asked to leave. Two beats instead.
+ *
+ * The rise matters more than its 160ms suggests. Flying straight sideways from
+ * rest reads as a slide — a thing on a track — whereas lifting first reads as
+ * something releasing before it goes, and the release is what makes the flight
+ * feel like the panel's own move rather than the page scrolling sideways.
+ *
+ * Then the flight, eased IN so it accelerates away instead of coasting to the
+ * edge, and far enough to clear the frame whatever the panel's width. Every
+ * duration is derived from the same beat table the chrono stage reads, so the
+ * cover cannot come up over a panel that has not left yet. */
+const LIFT_DURATION = (CHRONO_IN.lift[1] - CHRONO_IN.lift[0]) / 1000;
+const PART_DURATION = (CHRONO_IN.part[1] - CHRONO_IN.part[0]) / 1000;
+/** The flight starts before the rise has finished — see `CHRONO_IN.part`. */
+const PART_LEAD = (CHRONO_IN.part[0] - CHRONO_IN.lift[0]) / 1000;
+/** How far a panel rises before it goes. Larger than the assembly's brick lift:
+ *  that one is a piece coming off its studs, this is a release, and it has to
+ *  register inside 160ms against a flight that is about to cross the screen. */
+const PART_RISE = -18;
+/**
+ * The tail of the flight over which opacity finally gives out.
+ *
+ * Short, and at the very end. Fading across the whole flight turns it back
+ * into a dissolve — the thing this exit replaced — and not fading at all
+ * leaves a hard-edged panel meeting the frame boundary, which reads as a clip
+ * rather than as a departure.
+ */
+const PART_FADE_DURATION = 0.12;
 
 type TransitionState = {
   exiting: boolean;
@@ -108,8 +146,8 @@ type TransitionState = {
   /** "assemble" is the brick placement, for /pricing arrivals and direct
    *  loads. "resolve" is the time warp's condensation. */
   mode: "assemble" | "resolve";
-  /** True once a chrono rewind is under way and the panels should smear back
-   *  into the exposure. */
+  /** True once a chrono rewind is under way and the panels should lift and
+   *  fly out of the frame. */
   rewinding: boolean;
   /** True while the warp that is delivering this page is still outbound: the
    *  panels sit smeared behind full cover, waiting to be released. */
@@ -143,7 +181,7 @@ export function UpgradeTransition({
   const [mode, setMode] = useState<"assemble" | "resolve">("assemble");
   // Only "inbound" and "landing" are the rewind home — "cruise" and
   // "arriving" belong to the outbound trip that condenses this page IN, and
-  // must not be mistaken for the rewind that dissolves it back out.
+  // must not be mistaken for the rewind that takes it back out.
   const rewinding =
     run.journey === "chrono" &&
     (run.phase === "inbound" || run.phase === "landing");
@@ -254,7 +292,11 @@ export function TransitionBackControl() {
   return <BackControl onBeforeNavigate={startExit} />;
 }
 
-function usePanelMotionProps(order: number) {
+function usePanelMotionProps(
+  order: number,
+  /** Which way this panel flies on the way home; see `usePartDirection`. */
+  partDir: RefObject<-1 | 1>,
+) {
   const { exiting, reduced, maxOrder, mode, rewinding, holding, resolveLead } =
     usePanelTransition();
 
@@ -271,13 +313,30 @@ function usePanelMotionProps(order: number) {
     if (rewinding) {
       // Reverse stagger, as the assembly's exit already does: the last thing
       // to resolve is the first to go.
+      const delay = (maxOrder - order) * EXIT_STAGGER;
+      const flight = delay + PART_LEAD;
       return {
         initial: false,
-        animate: smeared,
+        animate: {
+          y: PART_RISE,
+          // Measured after mount, so "away from the centre of the screen" is
+          // the layout's own answer rather than an assumption about it.
+          x: partDir.current * partDistance(window.innerWidth),
+          opacity: 0,
+        },
+        // One target, three clocks. The rise is short and eased OUT so it
+        // settles into the flight; the flight is long and eased IN so it
+        // accelerates off the edge; opacity holds through both and only gives
+        // out over the last fraction, which is what keeps the panel a solid
+        // object leaving rather than a ghost fading sideways.
         transition: {
-          duration: DISSOLVE_DURATION,
-          ease: "easeIn",
-          delay: (maxOrder - order) * EXIT_STAGGER,
+          y: { duration: LIFT_DURATION, ease: "easeOut", delay },
+          x: { duration: PART_DURATION, ease: "easeIn", delay: flight },
+          opacity: {
+            duration: PART_FADE_DURATION,
+            ease: "linear",
+            delay: flight + PART_DURATION - PART_FADE_DURATION,
+          },
         },
       } as const;
     }
@@ -334,6 +393,45 @@ function usePanelMotionProps(order: number) {
 }
 
 /**
+ * Which side of the frame this panel leaves by, measured once after mount.
+ *
+ * Measured rather than derived from the slot, because the point of the beat is
+ * that the two plan cards go the way they already are — Pro left, Lifetime
+ * right — and only the layout knows where that is. Once is enough, and this is
+ * the one moment it can be read cheaply and correctly:
+ *
+ *   - Layout is final. A chrono arrival mounts behind a fully opaque stage, so
+ *     there is no first paint to beat; and Back cannot be pressed for at least
+ *     the length of the outbound arc after that.
+ *   - The box is untransformed in the horizontal. This runs before the effect
+ *     that switches `mode` to "resolve", so the styles in the DOM are still the
+ *     assembly's — a y offset and a scale about the panel's own centre, neither
+ *     of which moves a horizontal centre. Reading it one commit later would
+ *     measure the resolve smear's ~14px tangent offset instead, which is enough
+ *     to push a full-width section off the centre line and out of the parity
+ *     fallback below.
+ *
+ * A ref rather than state on purpose: nothing about this needs to re-render,
+ * and the value is only ever read on the exit, hundreds of ms after it is
+ * written.
+ */
+function usePartDirection<T extends HTMLElement>(order: number) {
+  const ref = useRef<T | null>(null);
+  const direction = useRef<-1 | 1>(1);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const box = el.getBoundingClientRect();
+    direction.current = partDirection(
+      box.left + box.width / 2,
+      window.innerWidth / 2,
+      order,
+    );
+  }, [order]);
+  return { ref, direction };
+}
+
+/**
  * One section of the page, holding slot `order` in the assembly sequence: it descends onto
  * its position and seats, then lifts back off when the page comes apart.
  */
@@ -346,9 +444,10 @@ export function Panel({
   className?: string;
   children: ReactNode;
 }) {
-  const motionProps = usePanelMotionProps(order);
+  const { ref, direction } = usePartDirection<HTMLDivElement>(order);
+  const motionProps = usePanelMotionProps(order, direction);
   return (
-    <motion.div className={className} {...motionProps}>
+    <motion.div ref={ref} className={className} {...motionProps}>
       {children}
     </motion.div>
   );
@@ -364,9 +463,10 @@ export function HeaderPanel({
   className?: string;
   children: ReactNode;
 }) {
-  const motionProps = usePanelMotionProps(order);
+  const { ref, direction } = usePartDirection<HTMLElement>(order);
+  const motionProps = usePanelMotionProps(order, direction);
   return (
-    <motion.header className={className} {...motionProps}>
+    <motion.header ref={ref} className={className} {...motionProps}>
       {children}
     </motion.header>
   );

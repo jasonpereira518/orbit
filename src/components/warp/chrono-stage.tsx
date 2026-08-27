@@ -302,12 +302,12 @@ export function ChronoStage({ run }: { run: WarpRun }) {
         return 1 - easeFade(span(since, [CHRONO_OPAQUE_MS, CHRONO_ARRIVING_MS]));
       }
       if (r.phase === "inbound" || r.phase === "landing") {
-        // UP across the dissolve, then down again over the landing window.
-        // Mounting at full cover would put the entire reverse-staggered panel
-        // dissolve behind an opaque canvas — and that dissolve is the shot the
-        // late `CHRONO_IN.push` exists to buy time for. The two windows are
-        // far apart, so `min` leaves a flat plateau between them rather than
-        // clipping either ramp.
+        // UP behind the departing panels, then down again over the landing
+        // window. Mounting at full cover would put the entire reverse-staggered
+        // exit behind an opaque canvas — and that exit, the panels lifting and
+        // flying out to either side, is the shot the late `CHRONO_IN.push`
+        // exists to buy time for. The two windows are far apart, so `min`
+        // leaves a flat plateau between them rather than clipping either ramp.
         return Math.min(
           easeFade(span(elapsed, CHRONO_IN_COVER)),
           1 - easeFade(span(elapsed, CHRONO_IN.landing)),

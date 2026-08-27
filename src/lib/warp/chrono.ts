@@ -28,7 +28,7 @@ export const CHRONO_OUTBOUND_MS = 1950;
 /** Deceleration: arcs collapse back into stars. The payoff shot. */
 export const CHRONO_ARRIVING_MS = 860;
 /** The rewind home, start to settled. */
-export const CHRONO_INBOUND_MS = 1900;
+export const CHRONO_INBOUND_MS = 1150;
 
 import {
   CRUISE_CAP_MS,
@@ -52,32 +52,49 @@ export const CHRONO_OUT = {
 
 /** Inbound beats, ms from the moment Back is pressed. */
 export const CHRONO_IN = {
-  /** Panels smear back into the exposure. */
-  dissolve: [0, 380],
-  /** Late, unlike the rocket's frame-one push: the page dissolving is the shot. */
-  push: 340,
+  /** The panels rise off the page. Short, and its own beat: flying straight
+   *  sideways from rest reads as a slide, whereas a rise first reads as
+   *  something releasing before it goes. */
+  lift: [0, 160],
+  /** The panels fly horizontally clean out of the frame, each to whichever
+   *  side of the centre line it is already nearer. Overlaps the lift on
+   *  purpose — the rise is still finishing as the flight begins, so the two
+   *  read as one gesture and not as two moves in sequence. */
+  part: [120, 620],
+  /** The canvas fades up behind them, once they are all but gone. Late by
+   *  design: a stage that is opaque from frame one hides the exit entirely,
+   *  and the exit is the shot. */
+  cover: [480, 700],
+  /** Late, unlike the rocket's frame-one push: the page leaving is the shot,
+   *  so the swap waits until the cover above has finished. */
+  push: 700,
   /** Time runs backwards. */
-  rewind: [240, 1200],
+  rewind: [300, 850],
   /** Stars go out in bursts; the growth un-happens. */
-  extinguish: [400, 1300],
+  extinguish: [350, 900],
   /** Arcs collapse back to points. */
-  collapse: [1250, 1700],
+  collapse: [850, 1020],
   /** The room lights come back up. */
-  landing: [1550, 1900],
+  landing: [1000, 1150],
 } as const;
 
 /**
  * When the stage covers the frame on the way home, ms from Back.
  *
- * The cover ramps UP across the dissolve rather than being opaque from frame
- * one — the panels smearing back into the exposure is the shot, and a stage
- * that is already opaque hides it completely. But it has to be complete before
- * `push` swaps the route, or the swap itself shows through a translucent
- * canvas. Derived from both beats so retuning either one cannot open a gap.
+ * Two failures bracket this window, one on each side.
+ *
+ * Too early and the cover veils the exit: the panels now fly OUTWARD across
+ * the full width of the frame, so a stage that is already opaque — or even
+ * halfway up — while they are still crossing it hides the one thing the late
+ * `push` exists to buy time for. Hence a start well after `part` begins.
+ *
+ * Too late and the route swap shows through a translucent canvas as a flash of
+ * the settings page. Hence an end clamped to `push`: derived rather than
+ * written twice, so retuning either beat cannot open a gap between them.
  */
 export const CHRONO_IN_COVER = [
-  CHRONO_IN.dissolve[0],
-  Math.min(CHRONO_IN.dissolve[1], CHRONO_IN.push),
+  CHRONO_IN.cover[0],
+  Math.min(CHRONO_IN.cover[1], CHRONO_IN.push),
 ] as const;
 
 /**
@@ -274,6 +291,60 @@ export function chronoFrame(
 }
 
 /**
+ * How near a panel's own centre has to be to the frame's centre before it
+ * counts as having no side to leave by, in px.
+ *
+ * Two pixels rather than zero because a full-width section is centred by
+ * layout, not by arithmetic: sub-pixel rounding, a scrollbar-driven odd
+ * viewport width, a container with an odd margin, all put its centre a
+ * fraction off the line. Wide enough to catch every one of those, narrow
+ * enough that nothing genuinely to one side is ever swallowed — the two plan
+ * cards sit hundreds of pixels out.
+ */
+export const PART_CENTRED_EPSILON = 2;
+
+/**
+ * Which way the panel in assembly slot `order` flies on the way home: -1 for
+ * the left edge of the frame, +1 for the right.
+ *
+ * Measured, not assumed. "Away from the centre of the screen" is only
+ * literally true if it is answered against the layout that actually happened,
+ * and the whole point of the beat is that the two plan cards part like
+ * curtains — Pro to the left, Lifetime to the right — because that is where
+ * they already are.
+ *
+ * A panel whose centre IS the frame's centre has no nearer side, and /upgrade
+ * has four of them: the header, the heading, the billing toggle and the trust
+ * row are all full width. Those fall back to a split by slot parity, which is
+ * arbitrary but deterministic and, crucially, not all the same way — four
+ * full-width bands sliding off in convoy would read as one sheet being pulled,
+ * which is the opposite of parting.
+ */
+export function partDirection(
+  panelCentreX: number,
+  viewportCentreX: number,
+  order: number,
+): -1 | 1 {
+  const offset = panelCentreX - viewportCentreX;
+  if (Math.abs(offset) <= PART_CENTRED_EPSILON) return order % 2 === 0 ? -1 : 1;
+  return offset < 0 ? -1 : 1;
+}
+
+/**
+ * How far a parting panel travels, in px.
+ *
+ * One full viewport width, which clears the frame whatever the panel's own
+ * width is: a panel that starts inside the viewport has its far edge no more
+ * than one viewport width from its near edge, so translating by that width
+ * always puts the whole box past the edge it is heading for. A distance tuned
+ * to the panel's own width instead would leave the widest sections — the
+ * full-bleed header, at exactly one viewport width — clipping at the boundary.
+ */
+export function partDistance(viewportWidth: number) {
+  return Math.max(0, viewportWidth);
+}
+
+/**
  * The direction a panel in assembly slot `order` was smeared by the exposure:
  * the unit tangent of the arc it sits on, i.e. perpendicular to its radius
  * from the pole.
@@ -282,6 +353,9 @@ export function chronoFrame(
  * the page from a pole that is up and to the left, so the radius angle sweeps
  * predictably; a layout read per panel would buy an accuracy nobody can see
  * and would have to happen before first paint to avoid a flash.
+ *
+ * ARRIVAL only. The way home no longer smears — panels lift and fly out of the
+ * frame instead — so nothing on the exit path reads this. See `partDirection`.
  */
 export function tangentForSlot(order: number, maxOrder: number) {
   const t = maxOrder > 0 ? order / maxOrder : 0;

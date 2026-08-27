@@ -29,9 +29,11 @@ import {
   IGNITION_FRACTIONS,
   burstForRadiusRank,
   chronoFrame,
+  partDirection,
+  partDistance,
   tangentForSlot,
 } from "../src/lib/warp/chrono";
-import { CRUISE_CAP_MS, easeFade } from "../src/lib/warp/choreography";
+import { CRUISE_CAP_MS, easeFade, span } from "../src/lib/warp/choreography";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -186,6 +188,33 @@ function main() {
   check("...with the shutter closed", near(home.alpha, 1));
   check("...and the growth undone", near(home.alive, 0));
 
+  /* ------------------------------------------- the page leaving the frame */
+
+  // The exit is lift-then-part, and the three beats have to nest in that order
+  // or the shot is lost. This is exactly what a future retune breaks, so each
+  // link in the chain is pinned separately rather than as one compound.
+  check(
+    "the flight begins before the rise has finished, so the two read as one move",
+    CHRONO_IN.part[0] >= CHRONO_IN.lift[0] &&
+      CHRONO_IN.part[0] < CHRONO_IN.lift[1],
+    `lift ${CHRONO_IN.lift.join("-")}ms, part starts ${CHRONO_IN.part[0]}ms`
+  );
+  check(
+    "the panels are clear of the frame before the cover finishes",
+    CHRONO_IN.part[1] <= CHRONO_IN.cover[1],
+    `part ends ${CHRONO_IN.part[1]}ms, cover ends ${CHRONO_IN.cover[1]}ms`
+  );
+  check(
+    "the cover finishes no later than the route swap",
+    CHRONO_IN.cover[1] <= CHRONO_IN.push,
+    `cover ends ${CHRONO_IN.cover[1]}ms, push at ${CHRONO_IN.push}ms`
+  );
+  check(
+    "the return arc ends exactly when the run does",
+    CHRONO_IN.landing[1] === CHRONO_INBOUND_MS,
+    `landing ends ${CHRONO_IN.landing[1]}ms, run is ${CHRONO_INBOUND_MS}ms`
+  );
+
   /* --------------------------------------------- the cover on the way home */
 
   // The cover has to be complete before router.back() swaps the route, or the
@@ -195,13 +224,27 @@ function main() {
     CHRONO_IN_COVER[1] <= CHRONO_IN.push,
     `cover ends ${CHRONO_IN_COVER[1]}ms, push at ${CHRONO_IN.push}ms`
   );
-  // ...and it has to rise over the dissolve rather than starting up, or the
-  // panel dissolve the late push exists to buy time for plays behind an opaque
-  // canvas and nobody ever sees it.
+  // ...and it has to stay down while the panels are crossing it, or the exit
+  // the late push exists to buy time for plays behind an opaque canvas and
+  // nobody ever sees it. The panels now fly OUTWARD across the full width of
+  // the frame, so "down at t=0" is no longer enough on its own: the cover must
+  // still be flat past the halfway point of the flight.
   check(
-    "the cover starts down, so the dissolve is visible through it",
-    CHRONO_IN_COVER[0] === CHRONO_IN.dissolve[0] &&
+    "the cover starts down, so the exit is visible through it",
+    CHRONO_IN_COVER[0] === CHRONO_IN.cover[0] &&
       CHRONO_IN_COVER[1] > CHRONO_IN_COVER[0]
+  );
+  check(
+    "the cover is still completely down when the flight is half over",
+    easeFade(
+      span((CHRONO_IN.part[0] + CHRONO_IN.part[1]) / 2, CHRONO_IN_COVER)
+    ) === 0,
+    `flight midpoint ${(CHRONO_IN.part[0] + CHRONO_IN.part[1]) / 2}ms, cover opens ${CHRONO_IN_COVER[0]}ms`
+  );
+  check(
+    "...and completely up by the time the route swaps",
+    near(easeFade(span(CHRONO_IN.push, CHRONO_IN_COVER)), 1),
+    `coverage at push = ${easeFade(span(CHRONO_IN.push, CHRONO_IN_COVER))}`
   );
   check(
     "the cover is fully up long before the landing lifts it again",
@@ -252,6 +295,66 @@ function main() {
     "the smear rotates down the page, so panels ride their own arc",
     Math.atan2(last.y, last.x) !== Math.atan2(first.y, first.x)
   );
+
+  /* --------------------------------------------------- the parting directions */
+
+  // The headline of the exit: the two plan cards sit either side of the centre
+  // line and must leave by the side they are already nearer, not by a side
+  // some table decided for them.
+  const frame = 1280;
+  const centre = frame / 2;
+  const proCard = partDirection(centre - 232, centre, 3);
+  const lifetimeCard = partDirection(centre + 232, centre, 4);
+  check("the card left of centre leaves to the left", proCard === -1);
+  check("the card right of centre leaves to the right", lifetimeCard === 1);
+  check("...so the two cards part rather than convoy", proCard !== lifetimeCard);
+
+  // /upgrade's other four slots are full-width bands whose centre IS the frame
+  // centre. They have no nearer side, so they split by parity — and the thing
+  // that matters is that they do not all go the same way.
+  const bands = [0, 1, 2, 5].map((order) => partDirection(centre, centre, order));
+  check(
+    "a panel dead on the centre line still picks a side",
+    bands.every((d) => d === -1 || d === 1)
+  );
+  check(
+    "...and centred panels do not all leave the same way",
+    new Set(bands).size === 2,
+    bands.join(" ")
+  );
+  check(
+    "a sub-pixel drift off centre is still treated as centred",
+    partDirection(centre + 1, centre, 0) === partDirection(centre, centre, 0) &&
+      partDirection(centre - 1, centre, 1) === partDirection(centre, centre, 1)
+  );
+  check(
+    "the direction is stable for a given slot, so a re-measure cannot flip it",
+    partDirection(centre - 232, centre, 3) === proCard
+  );
+
+  /* ------------------------------------------------------ the parting distance */
+
+  // The distance has to clear the frame for EVERY panel width, or the widest
+  // section stops with an edge still inside the viewport as the cover comes up.
+  for (const width of [320, 768, 1280, 2560]) {
+    const distance = partDistance(width);
+    const boxes = [
+      { label: "full-width band", left: 0, w: width },
+      { label: "left card", left: width * 0.05, w: width * 0.42 },
+      { label: "right card", left: width * 0.53, w: width * 0.42 },
+      { label: "narrow, hard right", left: width - 40, w: 40 },
+    ];
+    for (const box of boxes) {
+      const dir = partDirection(box.left + box.w / 2, width / 2, 0);
+      const left = box.left + dir * distance;
+      check(
+        `a ${box.label} is clean off the frame after parting (w=${width})`,
+        left >= width || left + box.w <= 0,
+        `ends at ${left}..${left + box.w} in a ${width}px frame`
+      );
+    }
+  }
+  check("a degenerate viewport cannot ask for negative travel", partDistance(-10) === 0);
 
   /* ------------------------------------------------------------- easeFade */
 
