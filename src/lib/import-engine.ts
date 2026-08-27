@@ -303,7 +303,7 @@ export async function runImportJob(importId: string): Promise<void> {
       const pendingRows: PendingRow[] = rowsOf<{
         id: string;
         row_index: number;
-        payload: ImportJobRowPayload;
+        payload: ImportJobRowPayload | string;
         status: string;
         contact_id: string | null;
       }>(claimed).map((row) => ({
@@ -311,7 +311,15 @@ export async function runImportJob(importId: string): Promise<void> {
         importId,
         userId,
         rowIndex: row.row_index,
-        payload: row.payload,
+        // `db.execute` is a raw driver call, so it skips Drizzle's own jsonb column mapping
+        // (`PgJsonb.mapFromDriverValue`), which defensively `JSON.parse`s a string payload
+        // rather than assuming the driver already decoded it. Matched here for the same
+        // reason: whether `jsonb` comes back pre-parsed or as text is driver-specific, and
+        // getting this wrong would silently break every downstream `adapter.identity()`
+        // call rather than throw.
+        payload: (typeof row.payload === "string"
+          ? JSON.parse(row.payload)
+          : row.payload) as ImportJobRowPayload,
         status: row.status,
         contactId: row.contact_id,
       }));
