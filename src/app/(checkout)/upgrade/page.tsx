@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Eye, KeyRound, RotateCcw } from "lucide-react";
 import { OrbitLogo } from "@/components/orbit-logo";
+import { LandingStarfield } from "@/components/landing/landing-visuals";
+import { WarpArrivalBeacon } from "@/components/warp/warp-arrival-beacon";
 import {
   HeaderPanel,
   Panel,
@@ -71,10 +73,18 @@ export default async function UpgradePage({
   const hasLifetime = entitlements.plan === "lifetime";
 
   return (
-    // `landing-root` keeps the body deep-space on overscroll, exactly as /pricing does.
-    // No starfield here: a payment page should feel steady, and a moving background behind
-    // a card form is friction dressed as delight.
+    // `landing-root` keeps the body deep-space on overscroll, exactly as
+    // /pricing does. The starfield is the sky the time warp decelerates into:
+    // the stage cross-fades to this exact image, so the handoff is invisible,
+    // and /upgrade stops being the one black page in the marketing world.
+    // Twinkle and shooting stars are Starfield's own; nothing here moves near
+    // the payment form itself.
     <div className="landing-root relative min-h-screen overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
+      <LandingStarfield />
+      {/* Ends the time warp's cruise hold. Until this mounts the stage keeps
+          the exposure running, which is what covers this page's session
+          resolve and three awaited reads. No-op on a direct load. */}
+      <WarpArrivalBeacon />
       <UpgradeTransition maxOrder={5}>
         <HeaderPanel
           order={0}
