@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
@@ -48,17 +49,25 @@ export function ContactRelatedReachOut({
         Reach out
       </Button>
       <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent className="overflow-y-auto sm:max-w-lg">
+        <SheetContent
+          className="overflow-y-auto sm:max-w-lg"
+          overlayClassName="supports-backdrop-filter:backdrop-blur-[2px]"
+        >
           <SheetHeader>
             <SheetTitle>Reach out to {contactName}</SheetTitle>
+            <SheetDescription>
+              Schedule a reminder, or pick a channel to draft a message from
+              your history.
+            </SheetDescription>
           </SheetHeader>
-          <div className="mt-4">
+          <div className="px-4 pb-6">
             <ContactFollowUpSection
               contactId={contactId}
               contactName={contactName}
               sendOptions={sendOptions}
               phone={phone}
               initialIntent={`Ask ${contactName} for an intro or insight related to ${subjectName}`}
+              bare
             />
           </div>
         </SheetContent>

@@ -19,6 +19,9 @@ export type BackgroundJob = {
   error?: string;
   cancelling?: boolean;
   onCancel?: () => void;
+  /** Swiped away from the bottom-right widget — still tracked (and shown in
+   * the notification center) until it finishes and auto-removes. */
+  hiddenFromWidget?: boolean;
 };
 
 const AUTO_REMOVE_MS = 6000;
@@ -99,6 +102,13 @@ export function dismissBackgroundJob(id: string) {
   if (!jobs.has(id)) return;
   jobs.delete(id);
   emit();
+}
+
+/** Swipe-dismiss from the bottom-right widget only — the job keeps running
+ * (or stays in its terminal state) and remains visible in the notification
+ * center's Tasks section until it finishes and auto-removes. */
+export function hideBackgroundJobFromWidget(id: string) {
+  updateBackgroundJob(id, { hiddenFromWidget: true });
 }
 
 export function getBackgroundJob(id: string) {
