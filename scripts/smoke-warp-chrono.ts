@@ -29,8 +29,10 @@ import {
   IGNITION_FRACTIONS,
   burstForRadiusRank,
   chronoFrame,
+  PART_FLIGHT_MS,
   partDirection,
   partDistance,
+  partScheduleForSlot,
   tangentForSlot,
 } from "../src/lib/warp/chrono";
 import { CRUISE_CAP_MS, easeFade, span } from "../src/lib/warp/choreography";
@@ -213,6 +215,79 @@ function main() {
     "the return arc ends exactly when the run does",
     CHRONO_IN.landing[1] === CHRONO_INBOUND_MS,
     `landing ends ${CHRONO_IN.landing[1]}ms, run is ${CHRONO_INBOUND_MS}ms`
+  );
+
+  /* ------------------------------------------------------- the exit schedule */
+
+  // THE ASSERTION THIS SECTION EXISTS FOR. The first shape of this exit reused
+  // the assembly's 50ms stagger, which put the last slot's flight 250ms past
+  // the window the beat table advertises: the top sections never finished
+  // leaving, and the cover came up over them. Every slot must land inside
+  // `part`, whatever the page's slot count, or the beat table is a lie.
+  const SLOTS = 5; // /upgrade's maxOrder: header, heading, toggle, 2 cards, trust row.
+  for (const slots of [SLOTS, 0, 1, 12]) {
+    for (let order = 0; order <= slots; order += 1) {
+      const s = partScheduleForSlot(order, slots);
+      check(
+        `slot ${order} of ${slots} starts its flight inside the part window`,
+        s.startMs >= CHRONO_IN.part[0],
+        `starts ${s.startMs}ms, window opens ${CHRONO_IN.part[0]}ms`
+      );
+      check(
+        `slot ${order} of ${slots} is clear of the frame before the part window closes`,
+        s.startMs + s.durationMs <= CHRONO_IN.part[1] + 1e-9,
+        `ends ${s.startMs + s.durationMs}ms, window closes ${CHRONO_IN.part[1]}ms`
+      );
+    }
+  }
+
+  // Reverse order: the last slot to arrive is the first to leave, and no two
+  // slots may leave out of turn.
+  let prevStart = -Infinity;
+  for (let order = SLOTS; order >= 0; order -= 1) {
+    const s = partScheduleForSlot(order, SLOTS);
+    check(
+      `slot ${order} leaves no earlier than slot ${order + 1}`,
+      s.startMs >= prevStart,
+      `slot ${order} starts ${s.startMs}ms, slot ${order + 1} started ${prevStart}ms`
+    );
+    prevStart = s.startMs;
+  }
+  check(
+    "the last slot to arrive is the very first to leave",
+    partScheduleForSlot(SLOTS, SLOTS).startMs === CHRONO_IN.part[0]
+  );
+  check(
+    "...and the first slot to arrive is the last out, on the window's edge",
+    near(
+      partScheduleForSlot(0, SLOTS).startMs + PART_FLIGHT_MS,
+      CHRONO_IN.part[1]
+    ),
+    `slot 0 ends ${partScheduleForSlot(0, SLOTS).startMs + PART_FLIGHT_MS}ms`
+  );
+  check(
+    "the flight is still under way when the cover starts rising, so it is not a wait",
+    partScheduleForSlot(0, SLOTS).startMs < CHRONO_IN_COVER[0],
+    `last slot starts ${partScheduleForSlot(0, SLOTS).startMs}ms, cover opens ${CHRONO_IN_COVER[0]}ms`
+  );
+  check(
+    "the flight begins before the rise it follows has finished, for every slot",
+    Array.from({ length: SLOTS + 1 }, (_, order) => {
+      const s = partScheduleForSlot(order, SLOTS);
+      const liftStart = CHRONO_IN.lift[0] + (s.startMs - CHRONO_IN.part[0]);
+      return s.startMs < liftStart + (CHRONO_IN.lift[1] - CHRONO_IN.lift[0]);
+    }).every(Boolean)
+  );
+  // A single-panel page has nobody to stagger against and must not be nudged.
+  check(
+    "a lone panel leaves at the top of the window",
+    partScheduleForSlot(0, 0).startMs === CHRONO_IN.part[0]
+  );
+  // A window too short for one flight must not stagger backwards out of it.
+  check(
+    "the flight fits the window it is given",
+    PART_FLIGHT_MS <= CHRONO_IN.part[1] - CHRONO_IN.part[0],
+    `flight ${PART_FLIGHT_MS}ms, window ${CHRONO_IN.part[1] - CHRONO_IN.part[0]}ms`
   );
 
   /* --------------------------------------------- the cover on the way home */

@@ -345,6 +345,44 @@ export function partDistance(viewportWidth: number) {
 }
 
 /**
+ * How long one panel's flight off the frame lasts, in ms.
+ *
+ * A fixed duration with the stagger derived from what the `part` window has
+ * left over, rather than a fixed stagger with the window free to overrun.
+ * The first shape of this exit borrowed the assembly's 50ms exit stagger,
+ * which was tuned for a different move entirely — pieces lifting a few pixels
+ * in place, where the total run IS the beat and nothing downstream depends on
+ * when it ends. This window has a hard end: the cover starts rising at 480ms
+ * and is opaque at 700ms. A 50ms stagger put the last slot's flight at
+ * 370-870ms, so the top three sections never visually completed and the beat
+ * table claimed a window the code did not honour. A beat table that does not
+ * describe the motion is worse than no beat table.
+ */
+export const PART_FLIGHT_MS = 420;
+
+/**
+ * When the panel in assembly slot `order` starts its flight off the frame, and
+ * how long that flight lasts, in ms from the start of the return arc.
+ *
+ * Reverse order, as the assembly's exit already does: the last panel to arrive
+ * is the first to leave. The spread is whatever `part` has left after the
+ * flight itself — 80ms across six slots on /upgrade, so 16ms apart. Near
+ * simultaneous, and deliberately so: two plan cards parting like curtains part
+ * together, and a cascade would turn a single gesture into a queue.
+ */
+export function partScheduleForSlot(order: number, maxOrder: number) {
+  const [from, to] = CHRONO_IN.part;
+  // Never negative: a `part` window shorter than one flight would otherwise
+  // stagger the panels backwards, out of the window it is meant to fit them in.
+  const slack = Math.max(0, to - from - PART_FLIGHT_MS);
+  const stagger = maxOrder > 0 ? slack / maxOrder : 0;
+  return {
+    startMs: from + (maxOrder - order) * stagger,
+    durationMs: PART_FLIGHT_MS,
+  };
+}
+
+/**
  * The direction a panel in assembly slot `order` was smeared by the exposure:
  * the unit tangent of the arc it sits on, i.e. perpendicular to its radius
  * from the pole.

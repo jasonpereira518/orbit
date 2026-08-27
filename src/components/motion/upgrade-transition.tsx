@@ -18,6 +18,7 @@ import {
   CHRONO_RESOLVE,
   partDirection,
   partDistance,
+  partScheduleForSlot,
   tangentForSlot,
 } from "@/lib/warp/chrono";
 import { arrivedBy, useWarp } from "@/components/warp/warp-provider";
@@ -118,13 +119,11 @@ const RESOLVE_EASE = [0.22, 0.61, 0.36, 1] as const;
  * feel like the panel's own move rather than the page scrolling sideways.
  *
  * Then the flight, eased IN so it accelerates away instead of coasting to the
- * edge, and far enough to clear the frame whatever the panel's width. Every
- * duration is derived from the same beat table the chrono stage reads, so the
- * cover cannot come up over a panel that has not left yet. */
+ * edge, and far enough to clear the frame whatever the panel's width. Its
+ * length and its reverse stagger both come from `partScheduleForSlot`, which
+ * fits the whole cohort inside `CHRONO_IN.part` — so the cover cannot come up
+ * over a panel that has not left yet, for any slot count. */
 const LIFT_DURATION = (CHRONO_IN.lift[1] - CHRONO_IN.lift[0]) / 1000;
-const PART_DURATION = (CHRONO_IN.part[1] - CHRONO_IN.part[0]) / 1000;
-/** The flight starts before the rise has finished — see `CHRONO_IN.part`. */
-const PART_LEAD = (CHRONO_IN.part[0] - CHRONO_IN.lift[0]) / 1000;
 /** How far a panel rises before it goes. Larger than the assembly's brick lift:
  *  that one is a piece coming off its studs, this is a release, and it has to
  *  register inside 160ms against a flight that is about to cross the screen. */
@@ -312,9 +311,15 @@ function usePanelMotionProps(
 
     if (rewinding) {
       // Reverse stagger, as the assembly's exit already does: the last thing
-      // to resolve is the first to go.
-      const delay = (maxOrder - order) * EXIT_STAGGER;
-      const flight = delay + PART_LEAD;
+      // to resolve is the first to go — but NOT the assembly's EXIT_STAGGER.
+      // That constant belongs to a move whose end nothing waits on; this
+      // window closes at CHRONO_IN.part[1] and the cover comes up behind it,
+      // so the spread is derived from the room the window actually has. The
+      // lift takes the same offset, so the two beats stay in step.
+      const flight = partScheduleForSlot(order, maxOrder);
+      const flightDelay = flight.startMs / 1000;
+      const flightDuration = flight.durationMs / 1000;
+      const delay = (flight.startMs - CHRONO_IN.part[0]) / 1000;
       return {
         initial: false,
         animate: {
@@ -331,11 +336,11 @@ function usePanelMotionProps(
         // object leaving rather than a ghost fading sideways.
         transition: {
           y: { duration: LIFT_DURATION, ease: "easeOut", delay },
-          x: { duration: PART_DURATION, ease: "easeIn", delay: flight },
+          x: { duration: flightDuration, ease: "easeIn", delay: flightDelay },
           opacity: {
             duration: PART_FADE_DURATION,
             ease: "linear",
-            delay: flight + PART_DURATION - PART_FADE_DURATION,
+            delay: flightDelay + flightDuration - PART_FADE_DURATION,
           },
         },
       } as const;
