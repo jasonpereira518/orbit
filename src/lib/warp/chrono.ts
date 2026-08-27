@@ -139,13 +139,19 @@ export const CRUISE_BURST_MS = 420;
  *
  * A counter that keeps incrementing past the last star that can answer it is
  * not growth, it is arithmetic: the stage seeds exactly this many reserve
- * burst levels, and `chronoFrame` must not promise more than that. The hold
- * cannot outlast `CRUISE_CAP_MS` (measured from launch, so the hold itself is
- * capped at CRUISE_CAP_MS - CHRONO_OUTBOUND_MS), which is the real ceiling;
- * the spare level absorbs timer jitter.
+ * burst levels, and `chronoFrame` must not promise more than that.
+ *
+ * Derived from the longest hold that can actually happen — `CRUISE_CAP_MS` is
+ * measured from launch, so the hold itself cannot outlast
+ * CRUISE_CAP_MS - CHRONO_OUTBOUND_MS. Floor rather than ceiling on purpose: a
+ * level beyond that is one no hold can ever reach, and the stars seeded into
+ * it would sit in the field forever without lighting. A hold that overshoots
+ * (a main thread too busy to run the cap's timer on time) is absorbed by the
+ * clamp in `cruiseBurstsBy` instead.
  */
-export const CRUISE_BURSTS =
-  Math.ceil((CRUISE_CAP_MS - CHRONO_OUTBOUND_MS) / CRUISE_BURST_MS) + 1;
+export const CRUISE_BURSTS = Math.floor(
+  (CRUISE_CAP_MS - CHRONO_OUTBOUND_MS) / CRUISE_BURST_MS,
+);
 
 /**
  * How much extra field the stage holds back for those bursts, as a fraction of

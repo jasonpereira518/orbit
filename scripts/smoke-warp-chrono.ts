@@ -116,12 +116,13 @@ function main() {
     forever.bursts === IGNITION_FRACTIONS.length + CRUISE_BURSTS,
     `${forever.bursts} vs ${IGNITION_FRACTIONS.length + CRUISE_BURSTS}`
   );
-  // ...and the reserve has to be big enough to last the longest hold the
-  // provider permits, or the sky freezes before the cap force-resolves.
+  // ...and the reserve is spent exactly at the cap: any shorter and the sky
+  // freezes before the provider force-resolves, any longer and the surplus
+  // levels hold stars no hold can ever reach.
   const atCap = chronoFrame("cruise", CRUISE_CAP_MS, 0);
   check(
-    "the reserve outlasts the longest hold CRUISE_CAP_MS allows",
-    atCap.bursts < IGNITION_FRACTIONS.length + CRUISE_BURSTS,
+    "the reserve lasts exactly as long as the longest possible hold",
+    atCap.bursts === IGNITION_FRACTIONS.length + CRUISE_BURSTS,
     `held ${CRUISE_CAP_MS - CHRONO_OUTBOUND_MS}ms = ${atCap.bursts - IGNITION_FRACTIONS.length} bursts of ${CRUISE_BURSTS}`
   );
   check(
