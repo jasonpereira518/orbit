@@ -1,5 +1,18 @@
 import type { Contact } from "@/db/schema";
 
+/**
+ * The columns duplicate detection actually reads.
+ *
+ * Deliberately not `Contact`: the index was typed on the full row, so every caller was
+ * pulling each contact's `notes`, `aiSummary`, `keyFacts`, `sharedInterests`, and
+ * `opportunities` across the wire — on every import invocation, including each
+ * self-continuation — in order to compare six short strings.
+ */
+export type DuplicateSubject = Pick<
+  Contact,
+  "id" | "fullName" | "email" | "linkedinUrl" | "company" | "title"
+>;
+
 /** Confidence at/above which a duplicate match is treated as an auto-merge, not just a hint. */
 export const DUPLICATE_MERGE_CONFIDENCE = 0.85;
 
@@ -53,14 +66,20 @@ export function linkedinSlug(url: string | null | undefined) {
   return match ? match[1].toLowerCase() : normalize(url);
 }
 
-export type DuplicateMatch = {
-  contact: Contact;
+/**
+ * Generic over `T` (defaulting to `DuplicateSubject`) so a caller that still has full
+ * `Contact` rows in hand (e.g. `calendar-sync.ts`, which reads fields duplicate detection
+ * itself never touches) gets `contact: Contact` back, while a caller that queried only the
+ * six columns gets `contact: DuplicateSubject` — no cast needed on either side.
+ */
+export type DuplicateMatch<T extends DuplicateSubject = DuplicateSubject> = {
+  contact: T;
   reason: string;
   confidence: number;
 };
 
-export function findDuplicateCandidates(
-  existing: Contact[],
+export function findDuplicateCandidates<T extends DuplicateSubject>(
+  existing: T[],
   incoming: {
     fullName?: string | null;
     email?: string | null;
@@ -68,8 +87,8 @@ export function findDuplicateCandidates(
     company?: string | null;
     title?: string | null;
   }
-): DuplicateMatch[] {
-  const matches: DuplicateMatch[] = [];
+): DuplicateMatch<T>[] {
+  const matches: DuplicateMatch<T>[] = [];
   const name = normalize(incoming.fullName);
   const email = normalize(incoming.email);
   const linkedin = linkedinSlug(incoming.linkedinUrl);
@@ -141,15 +160,15 @@ export function findDuplicateCandidates(
  * fallback still scans, and only within a same-first-3-letters name bucket.
  */
 export type DuplicateIndex = {
-  byLinkedin: Map<string, Contact[]>;
-  byEmail: Map<string, Contact[]>;
-  byNameCompany: Map<string, Contact[]>;
-  byNameTitle: Map<string, Contact[]>;
-  byName: Map<string, Contact[]>;
-  fuzzyBuckets: Map<string, Contact[]>;
+  byLinkedin: Map<string, DuplicateSubject[]>;
+  byEmail: Map<string, DuplicateSubject[]>;
+  byNameCompany: Map<string, DuplicateSubject[]>;
+  byNameTitle: Map<string, DuplicateSubject[]>;
+  byName: Map<string, DuplicateSubject[]>;
+  fuzzyBuckets: Map<string, DuplicateSubject[]>;
 };
 
-function pushTo<K>(map: Map<K, Contact[]>, key: K, contact: Contact) {
+function pushTo<K>(map: Map<K, DuplicateSubject[]>, key: K, contact: DuplicateSubject) {
   const list = map.get(key);
   if (list) list.push(contact);
   else map.set(key, [contact]);
@@ -171,7 +190,7 @@ function fuzzyBucketKey(fullName: string | null | undefined) {
   return normalizeName(fullName).slice(0, 3);
 }
 
-export function buildDuplicateIndex(existing: Contact[]): DuplicateIndex {
+export function buildDuplicateIndex(existing: DuplicateSubject[]): DuplicateIndex {
   const index: DuplicateIndex = {
     byLinkedin: new Map(),
     byEmail: new Map(),
@@ -200,7 +219,7 @@ export function buildDuplicateIndex(existing: Contact[]): DuplicateIndex {
 }
 
 /** Add a single contact (e.g. one just created mid-batch) into an existing index. */
-export function addToDuplicateIndex(index: DuplicateIndex, contact: Contact) {
+export function addToDuplicateIndex(index: DuplicateIndex, contact: DuplicateSubject) {
   const name = normalize(contact.fullName);
   const email = normalize(contact.email);
   const linkedin = linkedinSlug(contact.linkedinUrl);
@@ -232,10 +251,10 @@ export function findDuplicateCandidatesIndexed(
   const company = normalize(incoming.company);
   const title = normalize(incoming.title);
 
-  const matched = new Set<Contact>();
+  const matched = new Set<DuplicateSubject>();
   const matches: DuplicateMatch[] = [];
 
-  const addAll = (contacts: Contact[] | undefined, reason: string, confidence: number) => {
+  const addAll = (contacts: DuplicateSubject[] | undefined, reason: string, confidence: number) => {
     for (const contact of contacts || []) {
       if (matched.has(contact)) continue;
       matched.add(contact);

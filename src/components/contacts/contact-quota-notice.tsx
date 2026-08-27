@@ -44,7 +44,7 @@ export function ContactQuotaNotice({
       <p className="text-sm">
         {atLimit ? (
           <>
-            <span className="font-medium text-primary">
+            <span className="font-medium text-ink">
               You&apos;ve reached {limit} contacts.
             </span>{" "}
             <span className="text-muted-foreground">

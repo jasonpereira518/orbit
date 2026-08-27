@@ -10,13 +10,45 @@ import {
   shouldRecordThrottled,
 } from "@/lib/error-events";
 
-async function persistEmbeddingVector(rowId: string, embedding: number[]) {
-  if (!isPgvectorAvailable()) return;
+/**
+ * Rows per statement. Unlike `closeness-materialize.ts`'s `WRITE_CHUNK` (500, for rows of
+ * a few scalars each), a row here embeds a full 1,536-dim vector literal — roughly 18KB of
+ * text — so 500 of them would build a multi-megabyte statement, well past what `neon-http`
+ * will accept. 50 keeps a single statement in the ~1MB range regardless of caller size.
+ */
+const VECTOR_WRITE_CHUNK = 50;
+
+/**
+ * Copy embeddings into the pgvector column for many rows, chunked across statements.
+ *
+ * This used to be one `UPDATE` per row awaited in a loop, which on `neon-http` is one
+ * HTTPS request each — the largest single cost in a bulk import, and entirely invisible
+ * from the outside because the result is identical either way. It was later batched into
+ * one `UPDATE ... FROM (VALUES ...)` per call, which was safe only because every caller at
+ * the time pre-chunked upstream; chunking now happens here so no future caller can pass an
+ * unbounded set and build an oversized statement.
+ */
+export async function persistEmbeddingVectors(
+  rows: Array<{ id: string; embedding: number[] }>
+) {
+  if (!isPgvectorAvailable() || rows.length === 0) return;
   const db = await getDb();
-  const literal = formatVectorLiteral(embedding);
-  await db.execute(
-    sql`UPDATE contact_embeddings SET embedding_vector = ${literal}::vector WHERE id = ${rowId}`
-  );
+  for (let i = 0; i < rows.length; i += VECTOR_WRITE_CHUNK) {
+    const chunk = rows.slice(i, i + VECTOR_WRITE_CHUNK);
+    const tuples = chunk.map(
+      (row) => sql`(${row.id}::uuid, ${formatVectorLiteral(row.embedding)}::vector)`
+    );
+    await db.execute(sql`
+      UPDATE contact_embeddings AS e
+      SET embedding_vector = v.vec
+      FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, vec)
+      WHERE e.id = v.id
+    `);
+  }
+}
+
+async function persistEmbeddingVector(rowId: string, embedding: number[]) {
+  await persistEmbeddingVectors([{ id: rowId, embedding }]);
 }
 
 export async function upsertContactEmbedding(
@@ -339,7 +371,7 @@ type ContactEmbeddingSource = {
   contactTags?: { tag: { name: string } }[];
 };
 
-function buildContactEmbeddingContent(contact: ContactEmbeddingSource): string {
+export function buildContactEmbeddingContent(contact: ContactEmbeddingSource): string {
   return [
     contact.fullName,
     contact.preferredName,
@@ -446,18 +478,25 @@ export async function rebuildContactEmbeddingsBatch(
     }
   });
 
+  let inserted: typeof contactEmbeddings.$inferSelect[] = [];
   if (toInsert.length > 0) {
-    const inserted = await db.insert(contactEmbeddings).values(toInsert).returning();
-    for (const row of inserted) {
-      await persistEmbeddingVector(row.id, row.embedding as number[]);
-    }
+    inserted = await db.insert(contactEmbeddings).values(toInsert).returning();
   }
 
-  for (const update of toUpdate) {
-    await db
-      .update(contactEmbeddings)
-      .set({ embedding: update.embedding, content: update.content })
-      .where(eq(contactEmbeddings.id, update.id));
-    await persistEmbeddingVector(update.id, update.embedding);
+  if (toUpdate.length > 0) {
+    const tuples = toUpdate.map(
+      (u) => sql`(${u.id}::uuid, ${JSON.stringify(u.embedding)}::jsonb, ${u.content}::text)`
+    );
+    await db.execute(sql`
+      UPDATE contact_embeddings AS e
+      SET embedding = v.embedding, content = v.content
+      FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, embedding, content)
+      WHERE e.id = v.id
+    `);
   }
+
+  await persistEmbeddingVectors([
+    ...inserted.map((row) => ({ id: row.id, embedding: row.embedding as number[] })),
+    ...toUpdate.map((u) => ({ id: u.id, embedding: u.embedding })),
+  ]);
 }

@@ -494,7 +494,7 @@ export function BulkNotesPanel({
             <div>
               <h2
                 className={cn(
-                  "font-medium text-primary",
+                  "font-medium text-ink",
                   compact ? "text-base" : "text-lg"
                 )}
               >
@@ -530,7 +530,7 @@ export function BulkNotesPanel({
 
           {sharedNotes.length > 0 && reviewIndex === 0 && (
             <div className="space-y-2 rounded-2xl border border-sky-200/80 bg-sky-50/60 p-3 dark:border-sky-900/50 dark:bg-sky-950/20">
-              <p className="text-xs font-medium text-primary">
+              <p className="text-xs font-medium text-ink">
                 Shared context ({sharedNotes.length}) — applied to matching
                 people
               </p>
@@ -618,7 +618,7 @@ export function BulkNotesPanel({
             <div>
               <h2
                 className={cn(
-                  "font-medium text-primary",
+                  "font-medium text-ink",
                   compact ? "text-base" : "text-lg"
                 )}
               >

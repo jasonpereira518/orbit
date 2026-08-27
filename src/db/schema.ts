@@ -345,6 +345,16 @@ export const contacts = pgTable(
 
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+
+    /**
+     * Set when a write changed text the contact's embedding is built from.
+     *
+     * Imports no longer embed inline — they flag rows here and a backfill claims them. NULL
+     * means "the stored embedding matches the current content", which is also true of a
+     * contact that was never embedded and has no embedding row at all; the backfill treats
+     * both the same way.
+     */
+    embeddingStaleAt: timestamp("embedding_stale_at", { withTimezone: true }),
   },
   (t) => [
     index("contacts_user_id_idx").on(t.userId),
@@ -589,6 +599,11 @@ export type ImportStats = {
   recruitersFound?: number;
   /** Senders the classifier rejected or scored below the confidence floor. */
   sendersRejected?: number;
+
+  /** Wall-clock milliseconds across every invocation of this job. */
+  durationMs?: number;
+  /** SQL statements issued across every invocation. The cost this work exists to bound. */
+  statements?: number;
 };
 
 export const imports = pgTable("imports", {
@@ -636,9 +651,40 @@ export type GmailSenderRowPayload = {
   messageIds: string[];
 };
 
+/** One row of a Google People API contacts fetch, snapshotted for the engine to process. */
+export type GoogleContactRowPayload = {
+  kind: "google_contact";
+  resourceName: string;
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  company: string;
+  title: string;
+  email: string;
+  phone: string;
+  photoUrl: string;
+};
+
+/** One row of an Outlook/Microsoft Graph contacts fetch, snapshotted for the engine to
+ *  process. No `photoUrl` — unlike Google People, the Graph contacts endpoint this import
+ *  reads from doesn't carry a photo URL alongside the contact fields. */
+export type OutlookContactRowPayload = {
+  kind: "outlook_contact";
+  id: string;
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  company: string;
+  title: string;
+  email: string;
+  phone: string;
+};
+
 export type ImportJobRowPayload =
   | LinkedInImportRowPayload
-  | GmailSenderRowPayload;
+  | GmailSenderRowPayload
+  | GoogleContactRowPayload
+  | OutlookContactRowPayload;
 
 export function isGmailSenderRow(
   payload: ImportJobRowPayload
@@ -828,6 +874,11 @@ export const contactEmbeddings = pgTable(
   (t) => [
     index("embeddings_user_idx").on(t.userId),
     index("embeddings_contact_idx").on(t.contactId),
+    uniqueIndex("embeddings_user_contact_source_uidx").on(
+      t.userId,
+      t.contactId,
+      t.sourceType
+    ),
   ]
 );
 

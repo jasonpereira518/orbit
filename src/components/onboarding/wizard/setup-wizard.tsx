@@ -117,7 +117,7 @@ export function SetupWizard({
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Guided setup
             </p>
-            <h1 className="mt-1 font-[family-name:var(--font-display)] text-2xl tracking-tight text-primary sm:text-3xl">
+            <h1 className="mt-1 font-[family-name:var(--font-display)] text-2xl tracking-tight text-ink sm:text-3xl">
               {STEP_TITLES[step]}
             </h1>
           </div>
@@ -247,7 +247,7 @@ function PathStep({
                 <Icon className="h-5 w-5" />
               </span>
               <span>
-                <span className="block font-medium text-primary">
+                <span className="block font-medium text-ink">
                   {path.title}
                 </span>
                 <span className="mt-1 block text-sm text-muted-foreground">

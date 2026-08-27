@@ -158,7 +158,10 @@ function expectMatch(
   for (const c of existing) addToDuplicateIndex(index, c);
 
   for (const probe of probes) {
-    const best = (ms: { contact: Contact; confidence: number }[]) =>
+    // Typed by what this actually reads, not by the row shape: the linear path is generic
+    // over the caller's element type (full `Contact` fixtures here) while the indexed path
+    // returns `DuplicateSubject`, and this only ever compares confidences.
+    const best = (ms: { confidence: number }[]) =>
       ms.reduce((acc, m) => Math.max(acc, m.confidence), 0);
     const linear = findDuplicateCandidates(existing, probe);
     const indexed = findDuplicateCandidatesIndexed(index, probe);

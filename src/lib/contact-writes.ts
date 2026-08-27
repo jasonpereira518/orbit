@@ -11,7 +11,7 @@
  * `src/lib/search.ts`, which already take `userId` as their first argument.
  */
 
-import { and, count, eq, inArray } from "drizzle-orm";
+import { and, count, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getDb } from "@/db";
@@ -44,6 +44,14 @@ export type ContactWriteOptions = {
    * is about to be redrawn anyway.
    */
   skipCloseness?: boolean;
+  /**
+   * Pre-computed remaining contact allowance, or `null` for unlimited.
+   *
+   * Bulk import loops know this already — they counted once at job start and track it in
+   * memory. Without it every chunk pays a fresh `count(*)` over the whole contacts table
+   * to re-derive a number that has not changed since the previous chunk.
+   */
+  headroom?: number | null;
 };
 
 export type ContactInput = {
@@ -387,7 +395,10 @@ export async function createContactsBulkForUser(
   // Take what fits rather than failing the whole batch: a free user importing 847
   // LinkedIn connections should still get their first 500, and the caller reports the
   // shortfall by comparing `created.length` against what it passed in.
-  const headroom = await contactHeadroomForUser(userId);
+  const headroom =
+    options?.headroom !== undefined
+      ? options.headroom
+      : await contactHeadroomForUser(userId);
   if (headroom !== null && headroom < 1) return [];
   const admitted =
     headroom === null ? inputs : inputs.slice(0, headroom);
@@ -401,9 +412,13 @@ export async function createContactsBulkForUser(
     )
   );
 
-  const values = admitted.map((input, i) =>
-    contactInsertValues(userId, input, companyFieldsList[i], now)
-  );
+  const values = admitted.map((input, i) => ({
+    ...contactInsertValues(userId, input, companyFieldsList[i], now),
+    // Flagged, not embedded. `skipEmbedding` used to mean "the caller will embed these in
+    // a batch"; it now means "the backfill will" — the same promise with the provider call
+    // moved out of the write loop.
+    ...(options?.skipEmbedding ? { embeddingStaleAt: now } : {}),
+  }));
 
   const created = await db.insert(contacts).values(values).returning();
 
@@ -435,6 +450,100 @@ export async function createContactsBulkForUser(
   }
 
   return created;
+}
+
+/**
+ * Apply a column patch to many existing contacts in one statement.
+ *
+ * The import merge path used to call `updateContactForUser` per row, which re-resolved the
+ * company through the *uncached* `companyFieldsForWrite` — throwing away the resolver the
+ * caller had already preloaded and spending two to three round trips per merged row.
+ *
+ * `undefined` means "leave alone", matching `updateContactForUser`'s `!== undefined`
+ * checks: each field is passed as NULL and coalesced against the existing column.
+ *
+ * IMPORTANT: this is the second contact-write path in the codebase. Its column list must
+ * be kept in sync by hand with `updateContactForUser` below. Deliberately narrow — it
+ * carries only the fields importers actually merge, and notably NOT `relationshipScore`,
+ * because mirroring that into `statedCloseness` is reserved for a human moving the slider
+ * (see the comment on `relationshipScore` in `updateContactForUser`).
+ *
+ * KNOWN LIMITATION: COALESCE cannot tell "this field was explicitly normalized/resolved to
+ * null" apart from "this field was never mentioned" — both arrive as SQL NULL in the VALUES
+ * tuple, so this path can only set a column or leave it alone, never clear one. Four fields
+ * can legitimately resolve to null from a defined input, and for all four that null is
+ * indistinguishable from absence here: `company`/`companyId` (an unresolvable or blank name
+ * resolves to `{company: null, companyId: null}` via `companyFieldsForWriteCached`),
+ * `metContext` (an invalid string normalizes to null via `normalizeMetContext`),
+ * `profileImageUrl`, and `dateMet` (both typed nullable on `ContactInput`).
+ * `updateContactForUser` does not have this problem — its `!== undefined` checks see the
+ * whole patch object, including a null-valued one, and apply it — so it can clear any of
+ * these where this path cannot. It stays safe only because today's one caller (the LinkedIn
+ * merge builder in `import-job-processor.ts`) never asks to clear any of them. The day an
+ * importer needs to clear one of these fields during a merge, this silently keeps the stale
+ * value instead; that importer needs a different encoding here (e.g. a sentinel that
+ * distinguishes "clear" from "leave alone"), not a fix to this comment.
+ */
+export async function bulkMergeContactsForUser(
+  userId: string,
+  merges: Array<{ contactId: string; input: Partial<ContactInput> }>,
+  companyResolve: CompanyResolver
+) {
+  if (merges.length === 0) return;
+  const db = await getDb();
+  const now = new Date();
+
+  const companyFields = await Promise.all(
+    merges.map((m) =>
+      m.input.company !== undefined
+        ? companyFieldsForWriteCached(companyResolve, m.input.company)
+        : Promise.resolve({ company: null, companyId: null })
+    )
+  );
+
+  const tuples = merges.map((m, i) => {
+    const v = m.input;
+    return sql`(
+      ${m.contactId}::uuid,
+      ${companyFields[i].company}::text,
+      ${companyFields[i].companyId}::uuid,
+      ${v.title ?? null}::text,
+      ${v.email ?? null}::text,
+      ${v.phone ?? null}::text,
+      ${v.linkedinUrl ?? null}::text,
+      ${v.firstName ?? null}::text,
+      ${v.lastName ?? null}::text,
+      ${v.profileImageUrl ?? null}::text,
+      ${v.source ?? null}::text,
+      ${v.howMet ?? null}::text,
+      ${normalizeMetContext(v.metContext)}::text,
+      ${safeTimestamp(v.dateMet)}::timestamptz
+    )`;
+  });
+
+  await db.execute(sql`
+    UPDATE contacts AS c
+    SET company           = COALESCE(v.company, c.company),
+        company_id        = COALESCE(v.company_id, c.company_id),
+        title             = COALESCE(v.title, c.title),
+        email             = COALESCE(v.email, c.email),
+        phone             = COALESCE(v.phone, c.phone),
+        linkedin_url      = COALESCE(v.linkedin_url, c.linkedin_url),
+        first_name        = COALESCE(v.first_name, c.first_name),
+        last_name         = COALESCE(v.last_name, c.last_name),
+        profile_image_url = COALESCE(v.profile_image_url, c.profile_image_url),
+        source            = COALESCE(v.source, c.source),
+        how_met           = COALESCE(v.how_met, c.how_met),
+        met_context       = COALESCE(v.met_context, c.met_context),
+        date_met          = COALESCE(v.date_met, c.date_met),
+        embedding_stale_at = ${now},
+        updated_at        = ${now}
+    FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(
+      id, company, company_id, title, email, phone, linkedin_url,
+      first_name, last_name, profile_image_url, source, how_met, met_context, date_met
+    )
+    WHERE c.id = v.id AND c.user_id = ${userId}
+  `);
 }
 
 export async function updateContactForUser(

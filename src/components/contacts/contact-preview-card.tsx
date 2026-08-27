@@ -158,7 +158,7 @@ export function ContactAvatarPreview({
                 className="size-14 max-h-14 max-w-14 shrink-0"
               />
               <div className="min-w-0 flex-1 space-y-0.5">
-                <p className="truncate text-sm font-medium leading-snug text-primary">
+                <p className="truncate text-sm font-medium leading-snug text-ink">
                   {displayName}
                 </p>
                 {contact.title?.trim() ? (

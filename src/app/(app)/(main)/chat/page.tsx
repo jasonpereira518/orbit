@@ -7,7 +7,7 @@ export default function ChatPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
       <div className="shrink-0">
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-primary">
+        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
           Chat with your network
         </h1>
         <p className="mt-1 text-muted-foreground">

@@ -16,7 +16,11 @@ import {
 } from "@/components/imports/import-history";
 import { ImportProgress } from "@/components/imports/import-utils";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cancelImportJob, useImportJob } from "@/lib/import-job-runner";
+import {
+  cancelImportJob,
+  useImportJob,
+  type ImportJobKind,
+} from "@/lib/import-job-runner";
 import { LockedFeature } from "@/components/locked-feature";
 import { SPRING_PILL } from "@/lib/motion";
 import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
@@ -67,6 +71,23 @@ const TABS: {
     activeText: "text-import-calendar",
   },
 ];
+
+/**
+ * Which tab an in-flight import job belongs to. Google/Outlook contacts imports render
+ * inside the "connections" tab alongside LinkedIn connections (see the panel below), so
+ * both map there rather than getting their own tab. `null` for kinds this hub doesn't
+ * surface a tab for.
+ */
+function tabForImportJobKind(kind: ImportJobKind): ImportTab | null {
+  switch (kind) {
+    case "connections":
+    case "google_contacts":
+    case "outlook_contacts":
+      return "connections";
+    case "messages":
+      return "messages";
+  }
+}
 
 const PanelSkeleton = () => (
   <div className="space-y-3 rounded-xl border border-border/60 p-4">
@@ -141,14 +162,15 @@ export function ImportHub({
     setMounted((prev) => (prev[tab] ? prev : { ...prev, [tab]: true }));
   }, [tab]);
 
-  // When returning mid-import, open the relevant tab and show progress.
+  // When returning mid-import, open the relevant tab and show progress. Google/Outlook
+  // contacts imports render inside the "connections" tab alongside LinkedIn connections
+  // (see the panel below), so both map there rather than getting their own tab.
   useEffect(() => {
     if (job?.status !== "running") return;
-    if (job.kind !== "connections" && job.kind !== "messages") return;
-    setTab(job.kind);
-    setMounted((prev) =>
-      prev[job.kind] ? prev : { ...prev, [job.kind]: true },
-    );
+    const targetTab = tabForImportJobKind(job.kind);
+    if (!targetTab) return;
+    setTab(targetTab);
+    setMounted((prev) => (prev[targetTab] ? prev : { ...prev, [targetTab]: true }));
   }, [job]);
 
   const runningProgress =
@@ -203,7 +225,9 @@ export function ImportHub({
               />
               <span className="relative z-10">
                 {t.label}
-                {job?.status === "running" && job.kind === t.id ? " ·…" : ""}
+                {job?.status === "running" && tabForImportJobKind(job.kind) === t.id
+                  ? " ·…"
+                  : ""}
               </span>
             </button>
           );

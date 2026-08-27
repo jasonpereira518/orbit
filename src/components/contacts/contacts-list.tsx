@@ -457,7 +457,7 @@ export function ContactsList({
                           </ContactAvatarPreview>
 
                           <div className="min-w-0 flex-1">
-                            <p className="truncate font-medium text-primary">
+                            <p className="truncate font-medium text-ink">
                               {c.preferredName || c.fullName}
                             </p>
                             <div className="mt-0.5 flex min-w-0 items-center gap-2">

@@ -78,7 +78,7 @@ export function RecruiterList({
             className="flex flex-wrap items-start justify-between gap-3 px-5 py-4 transition-colors hover:bg-muted/40"
           >
             <div className="min-w-0">
-              <p className="font-medium text-primary">{r.fullName}</p>
+              <p className="font-medium text-ink">{r.fullName}</p>
               <p className="mt-0.5 text-sm text-muted-foreground">
                 {r.firm || "Unknown firm"}
                 {r.specialty.length

@@ -342,7 +342,7 @@ export function ContactTimeline({
                                     {typeLabel(i.interactionType)}
                                   </span>
                                 </p>
-                                <p className="mt-1 text-sm text-primary">
+                                <p className="mt-1 text-sm text-ink">
                                   {oneLine(i)}
                                 </p>
                                 {(i.actionItems || []).length > 0 ? (
@@ -424,7 +424,7 @@ export function ContactTimeline({
           <SheetHeader>
             <SheetTitle>Notes</SheetTitle>
           </SheetHeader>
-          <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-primary">
+          <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-ink">
             {notesOpen?.rawNotes?.trim() || "No notes."}
           </p>
         </SheetContent>

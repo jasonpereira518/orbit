@@ -69,7 +69,7 @@ export function ContactRelatedPeople({
                       className="size-10"
                     />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-primary">
+                      <p className="truncate text-sm font-medium text-ink">
                         {display}
                       </p>
                       <p className="truncate text-xs text-muted-foreground">

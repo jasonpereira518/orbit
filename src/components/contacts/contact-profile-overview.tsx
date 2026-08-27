@@ -97,7 +97,7 @@ export function ContactProfileOverview({
             <CardTitle>Key facts</CardTitle>
           </CardHeader>
           <CardContent>
-            <ul className="list-disc space-y-1.5 pl-5 text-sm text-primary">
+            <ul className="list-disc space-y-1.5 pl-5 text-sm text-ink">
               {keyFacts.map((f) => (
                 <li key={f}>{f}</li>
               ))}
@@ -112,7 +112,7 @@ export function ContactProfileOverview({
             <CardTitle>Shared interests</CardTitle>
           </CardHeader>
           <CardContent>
-            <ul className="list-disc space-y-1.5 pl-5 text-sm text-primary">
+            <ul className="list-disc space-y-1.5 pl-5 text-sm text-ink">
               {sharedInterests.map((interest) => (
                 <li key={interest}>{interest}</li>
               ))}
@@ -127,7 +127,7 @@ export function ContactProfileOverview({
             <CardTitle>Industry</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-primary">{industry}</p>
+            <p className="text-sm text-ink">{industry}</p>
           </CardContent>
         </Card>
       ) : null}
@@ -148,7 +148,7 @@ export function ContactProfileOverview({
               <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2">
                 <div>
                   <p className="text-xs text-muted-foreground">Strength</p>
-                  <p className="mt-0.5 text-lg font-medium text-primary">
+                  <p className="mt-0.5 text-lg font-medium text-ink">
                     {Math.round(closeness.strength * 100)}%
                   </p>
                 </div>
@@ -156,7 +156,7 @@ export function ContactProfileOverview({
                   {/* Both lines feed the score: recency and cadence are
                       separate components of closeness. */}
                   <p className="text-xs text-muted-foreground">Activity</p>
-                  <p className="mt-0.5 text-sm text-primary">
+                  <p className="mt-0.5 text-sm text-ink">
                     Last interaction {recencyLabel}
                   </p>
                   <p className="mt-0.5 text-sm text-muted-foreground">

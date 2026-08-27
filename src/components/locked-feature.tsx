@@ -33,7 +33,7 @@ export function LockedFeature({
         <span className="mx-auto flex size-11 items-center justify-center rounded-full border border-tier-lifetime/35 bg-tier-lifetime/10">
           <Lock className="size-5 text-tier-lifetime" />
         </span>
-        <h1 className="font-[family-name:var(--font-display)] text-2xl text-primary">
+        <h1 className="font-[family-name:var(--font-display)] text-2xl text-ink">
           {title}
         </h1>
         <p className="text-sm leading-relaxed text-muted-foreground">
