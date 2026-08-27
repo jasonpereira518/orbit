@@ -28,7 +28,7 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-import";
 // DATABASE_URL (one `vercel env pull` away) would point that at shared data.
 delete process.env.DATABASE_URL;
 
-import { eq } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, imports, importJobRows, userSettings } from "../src/db/schema";
 import { isClerkConfigured, isDemoMode } from "../src/lib/auth";
@@ -268,6 +268,48 @@ async function main() {
   await runJob(id);
   const again = await outcome(id);
   check("re-running a finished job is a no-op", again.created === before, JSON.stringify(again));
+
+  // --- a chunk interrupted mid-write must not duplicate on resume ---
+  await reset();
+  id = await seedJob(fixture(20));
+  const db3 = await getDb();
+  await runJob(id);
+  // Simulate a crash after contacts were inserted but before rows were marked done: the
+  // rows sit in `processing`, which is exactly the state the claim step leaves behind.
+  await db3
+    .update(importJobRows)
+    .set({ status: "processing" })
+    .where(eq(importJobRows.importId, id));
+  await db3.update(imports).set({ status: "processing" }).where(eq(imports.id, id));
+  await runJob(id);
+  const [resumed] = await db3
+    .select({ value: count() })
+    .from(contacts)
+    .where(eq(contacts.userId, USER));
+  check(
+    "resuming a half-written chunk merges rather than duplicates",
+    (resumed?.value ?? 0) === 20,
+    `contacts: ${resumed?.value}`
+  );
+  // The count assertion above passes trivially if the resumed job just leaves the rows
+  // stuck in `processing` and never touches them again — 20 unchanged either way. These
+  // two checks rule that out: the rows must actually reach a terminal status, and they
+  // must get there via the merge path (`duplicatesFound`), not by being silently ignored.
+  const resumedRows = await db3.query.importJobRows.findMany({
+    where: eq(importJobRows.importId, id),
+  });
+  check(
+    "resumed rows reach a terminal status instead of staying stuck in processing",
+    resumedRows.every((row) => row.status === "done"),
+    JSON.stringify(resumedRows.map((row) => row.status))
+  );
+  const resumedOutcome = await outcome(id);
+  const resumedRow = await db3.query.imports.findFirst({ where: eq(imports.id, id) });
+  check(
+    "resumed rows were actually re-run through the duplicate index and merged",
+    resumedRow?.duplicatesFound === 20,
+    `duplicatesFound: ${resumedRow?.duplicatesFound}, ${JSON.stringify(resumedOutcome)}`
+  );
 
   await reset();
   const db = await getDb();

@@ -1,7 +1,7 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
 import {
   contacts,
   imports,
@@ -112,7 +112,21 @@ async function kickEmbeddingBackfill(userId: string) {
   }
 }
 
-type PendingRow = typeof importJobRows.$inferSelect;
+/**
+ * Shape of a row returned by the claiming `UPDATE ... RETURNING` below — the columns that
+ * statement actually selects, not the full `import_job_rows` schema. `errorMessage` /
+ * `createdAt` are deliberately absent: nothing downstream reads them, so there's no reason
+ * to fabricate values for them just to match the table's inferred type.
+ */
+type PendingRow = {
+  id: string;
+  importId: string;
+  userId: string;
+  rowIndex: number;
+  payload: ImportJobRowPayload;
+  status: string;
+  contactId: string | null;
+};
 
 /** Row-level reason recorded when the plan's contact limit refused an otherwise-valid row. */
 export const PLAN_LIMIT_ROW_REASON = "Contact limit reached on your plan";
@@ -258,11 +272,49 @@ export async function runImportJob(importId: string): Promise<void> {
       if (!current || current.status !== "processing") return;
       latestStats = current.stats ?? {};
 
-      const pendingRows: PendingRow[] = await db.query.importJobRows.findMany({
-        where: and(eq(importJobRows.importId, importId), eq(importJobRows.status, "pending")),
-        orderBy: [asc(importJobRows.rowIndex)],
-        limit: CHUNK_SIZE,
-      });
+      /**
+       * Claim the next chunk in the same statement that reads it.
+       *
+       * `neon-http` has no transactions, so a crash between "insert contacts" and "mark
+       * rows done" would otherwise leave rows `pending` and re-create their contacts on
+       * resume. Claiming first means an interrupted chunk is left `processing`, and a
+       * resumed job re-runs those rows through the duplicate index — which now matches the
+       * contact that was created and merges instead of duplicating. Self-healing for any
+       * row carrying a LinkedIn URL or an email; a name-only row can still duplicate,
+       * which is strictly better than the alternative and worth knowing about.
+       *
+       * It also costs nothing: one UPDATE replaces one SELECT.
+       */
+      const claimed = await db.execute(sql`
+        UPDATE import_job_rows SET status = 'processing', updated_at = ${new Date()}
+        WHERE id IN (
+          SELECT id FROM import_job_rows
+          WHERE import_id = ${importId} AND status IN ('pending', 'processing')
+          ORDER BY row_index
+          LIMIT ${CHUNK_SIZE}
+        )
+        RETURNING id, row_index, payload, status, contact_id
+      `);
+
+      // Raw SQL returns actual Postgres column names (snake_case), not Drizzle's camelCase
+      // mapping — the loop below reads `rowIndex`/`contactId` on `PendingRow`, so those are
+      // mapped explicitly rather than assumed. `rowsOf` normalizes the driver-dependent
+      // shape: an array on `neon-http`, `{ rows }` on PGlite.
+      const pendingRows: PendingRow[] = rowsOf<{
+        id: string;
+        row_index: number;
+        payload: ImportJobRowPayload;
+        status: string;
+        contact_id: string | null;
+      }>(claimed).map((row) => ({
+        id: row.id,
+        importId,
+        userId,
+        rowIndex: row.row_index,
+        payload: row.payload,
+        status: row.status,
+        contactId: row.contact_id,
+      }));
 
       if (pendingRows.length === 0) break;
 
