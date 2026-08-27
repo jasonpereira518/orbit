@@ -52,12 +52,16 @@ async function main() {
   }).returning();
   const [grace] = await db.insert(contacts).values({
     userId: U, fullName: "Grace Hopper", company: "Navy Research",
-    title: "Rear Admiral", school: "Yale", industry: "defense", location: "Arlington",
+    // "Engineer of Systems" gives Grace a lexical match on "engineer" without
+    // giving her the fintech industry — she's the unfiltered-only match the
+    // mixed recall-guard case (#5) needs.
+    title: "Rear Admiral, Engineer of Systems", school: "Yale", industry: "defense", location: "Arlington",
   }).returning();
   const [alan] = await db.insert(contacts).values({
     userId: U, fullName: "Alan Turing", company: "Bletchley Park",
     title: "Cryptanalyst", school: "Cambridge", industry: "research", location: "London",
     notes: "Loves puzzles and long-distance running.",
+    closenessTier: "inner",
   }).returning();
 
   const [tagRow] = await db.insert(tags).values({ userId: U, name: "mentor" }).returning();
@@ -95,24 +99,93 @@ async function main() {
   const ids = hits.map((h) => h.id);
   check("fusion keeps both arms' hits", ids.includes(grace.id) && ids.includes(ada.id));
 
-  // 5. Filters: industry narrows to Ada.
+  // 5. Mixed recall-guard case: the industry filter matches exactly Ada, while
+  // the unfiltered query "engineer" also lexically matches Grace (her title).
+  // Filtered hits must lead with relevance 1 and filterMatched true; backfill
+  // must trail, flagged filterMatched false, at a strictly lower relevance —
+  // and the whole array must stay non-increasing.
   hits = await hybridSearchContacts(U, {
     query: "engineer", filters: { industries: ["fintech"] },
   });
-  check("industry filter keeps Ada only", hits.length >= 1 && hits.every((h) => h.id === ada.id));
+  check("industry filter surfaces Ada as the filtered match", hits[0]?.id === ada.id);
+  check("Ada is filterMatched", hits[0]?.filterMatched === true);
+  check("Ada's relevance is 1", hits[0]?.relevance === 1);
+  check(
+    "only Ada carries filterMatched true",
+    hits.filter((h) => h.filterMatched).every((h) => h.id === ada.id)
+  );
+  const graceBackfilled = hits.find((h) => h.id === grace.id);
+  check(
+    "Grace appears only as recall-guard backfill",
+    graceBackfilled !== undefined && graceBackfilled.filterMatched === false
+  );
+  check(
+    "backfilled relevance is strictly below the filtered relevance",
+    graceBackfilled !== undefined && graceBackfilled.relevance < hits[0].relevance
+  );
+  check(
+    "relevance is non-increasing across the merged array",
+    hits.every((h, i) => i === 0 || h.relevance <= hits[i - 1].relevance)
+  );
 
   // 6. Tag filter.
   hits = await hybridSearchContacts(U, { query: "hopper", filters: { tags: ["mentor"] } });
   check("tag filter keeps Grace", hits.length === 1 && hits[0].id === grace.id);
+  check("tag-filtered Grace is filterMatched", hits[0]?.filterMatched === true);
 
   // 7. Recall guard: absurd filter falls back to unfiltered rather than empty.
   hits = await hybridSearchContacts(U, {
     query: "Hopper", filters: { companies: ["nonexistent-corp"] },
   });
-  check("recall guard returns unfiltered results", hits.some((h) => h.id === grace.id));
+  const graceRecallGuard = hits.find((h) => h.id === grace.id);
+  check("recall guard returns unfiltered results", graceRecallGuard !== undefined);
+  check(
+    "recall-guard hit is flagged filterMatched false",
+    graceRecallGuard?.filterMatched === false
+  );
 
   // 8. relevance normalized into (0, 1].
   check("top relevance is 1", Math.abs(hits[0].relevance - 1) < 1e-9);
+
+  // 9. closenessTiers filter: Alan is the only "inner" contact. "London" also
+  // lexically matches Ada (unfiltered) via her location, so the same mixed
+  // filtered/backfill shape as #5 applies here.
+  hits = await hybridSearchContacts(U, {
+    query: "London", filters: { closenessTiers: ["inner"] },
+  });
+  check("closeness-tier filter surfaces Alan as the filtered match", hits[0]?.id === alan.id);
+  check("Alan is filterMatched", hits[0]?.filterMatched === true);
+  check(
+    "only Alan carries filterMatched true",
+    hits.filter((h) => h.filterMatched).every((h) => h.id === alan.id)
+  );
+
+  // 10. Wildcard escaping: "A_B Corp" has a literal underscore. The filter
+  // value "a_b" must match it literally rather than as a single-char
+  // wildcard, and an unrelated value must not match at all. The recall guard
+  // can still surface Wendy as backfill on the negative case (she's the only
+  // lexical match for "wildcard" either way), so the assertion is on
+  // filterMatched, not on presence in the result set.
+  const [wendy] = await db.insert(contacts).values({
+    userId: U, fullName: "Wendy Wildcard", company: "A_B Corp",
+    title: "Analyst", industry: "other", location: "Remote",
+  }).returning();
+
+  hits = await hybridSearchContacts(U, {
+    query: "wildcard", filters: { companies: ["a_b"] },
+  });
+  check(
+    "literal underscore in company filter matches literally",
+    hits.some((h) => h.id === wendy.id && h.filterMatched)
+  );
+
+  hits = await hybridSearchContacts(U, {
+    query: "wildcard", filters: { companies: ["axb"] },
+  });
+  check(
+    "underscore is not treated as a SQL wildcard",
+    !hits.some((h) => h.id === wendy.id && h.filterMatched)
+  );
 
   await cleanup(db);
 }

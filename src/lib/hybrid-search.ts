@@ -46,6 +46,13 @@ export type RankedContact = {
   rrfScore: number;
   relevance: number;
   matchedArms: Array<"fts" | "trigram" | "semantic">;
+  /**
+   * True for every row produced by a run whose filters this row satisfied
+   * (including all rows when no filters were given at all). False only for
+   * recall-guard backfill rows — hits pulled in from the unfiltered fallback
+   * because the real filter was too narrow to fill a page on its own.
+   */
+  filterMatched: boolean;
 };
 
 /** Standard RRF constant: dampens the gap between adjacent ranks. */
@@ -62,9 +69,21 @@ const RECALL_GUARD_DIVISOR = 4;
 type ArmName = "fts" | "trigram" | "semantic";
 type ArmResult = { arm: ArmName; ids: string[] };
 
+/**
+ * Escapes LIKE metacharacters (`\`, `%`, `_`) in a value that is about to be
+ * embedded inside a `%...%` pattern, so a literal underscore or percent sign
+ * in user input (e.g. a company name like "A_B Corp") is matched literally
+ * instead of acting as a single-character or any-length wildcard. Postgres's
+ * default LIKE escape character is backslash, so no explicit ESCAPE clause
+ * is needed.
+ */
+function escapeLikeValue(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
+
 function anyLike(column: SQL, values: string[]): SQL {
   return sql`(${sql.join(
-    values.map((v) => sql`${column} like ${`%${v.toLowerCase()}%`}`),
+    values.map((v) => sql`${column} like ${`%${escapeLikeValue(v.toLowerCase())}%`}`),
     sql` or `
   )})`;
 }
@@ -92,7 +111,7 @@ function filterCondition(filters: SearchFilters | null | undefined): SQL | null 
       join tags t on t.id = ct.tag_id
       where ct.contact_id = contacts.id
         and (${sql.join(
-          tagNames.map((t) => sql`lower(t.name) like ${`%${t.toLowerCase()}%`}`),
+          tagNames.map((t) => sql`lower(t.name) like ${`%${escapeLikeValue(t.toLowerCase())}%`}`),
           sql` or `
         )})
     )`);
@@ -262,30 +281,57 @@ export async function hybridSearchContacts(
 
   const fused = fuse(await runArms(userId, options, filter, armLimit));
   // The semantic arm is unfiltered (ANN can't see contact columns), so the
-  // filter is re-applied at hydration; over-fetch so post-filter still fills a page.
+  // filter is re-applied at hydration; over-fetch so post-filter still fills a
+  // page. Always over-fetch, filtered or not — the recall guard below also
+  // needs more candidates than a single page to backfill from.
   const orderedIds = [...fused.entries()]
     .sort((a, b) => b[1].score - a[1].score)
-    .slice(0, filter ? limit * 2 : limit)
+    .slice(0, limit * 2)
     .map(([id]) => id);
 
   let hydrated = await hydrate(userId, orderedIds, fused, filter);
   hydrated = hydrated.slice(0, limit);
 
-  // Recall guard: an over-narrow filter should widen, not starve.
-  if (filter && hydrated.length < Math.ceil(limit / RECALL_GUARD_DIVISOR)) {
+  const normalizeToOwnMax = (rows: RankedContact[]): RankedContact[] => {
+    const max = rows.reduce((m, h) => Math.max(m, h.rrfScore), 0);
+    return rows.map((h) => ({ ...h, relevance: max > 0 ? h.rrfScore / max : 0 }));
+  };
+
+  let results = normalizeToOwnMax(hydrated);
+
+  // Recall guard: an over-narrow filter should widen, not starve. Filtered
+  // hits stay first (spec-mandated order); backfill is appended after them,
+  // each segment normalized against its own max so the merged array stays
+  // monotonic non-increasing in relevance rather than jumbling two unrelated
+  // scales together.
+  if (filter && results.length < Math.ceil(limit / RECALL_GUARD_DIVISOR)) {
     const unfiltered = await hybridSearchContacts(userId, {
       ...options,
       filters: null,
     });
-    const seen = new Set(hydrated.map((h) => h.id));
-    hydrated = [...hydrated, ...unfiltered.filter((h) => !seen.has(h.id))].slice(0, limit);
+    const seen = new Set(results.map((h) => h.id));
+    const backfillRaw = unfiltered
+      .filter((h) => !seen.has(h.id))
+      .slice(0, limit - results.length);
+
+    if (backfillRaw.length > 0) {
+      const backfillNormalized = normalizeToOwnMax(backfillRaw);
+      const minFilteredRelevance = results.length
+        ? Math.min(...results.map((h) => h.relevance))
+        : 0;
+      // No filtered rows at all: backfill just normalizes to (0,1] directly.
+      // Otherwise scale it to sit strictly below the lowest filtered relevance.
+      const scale = results.length > 0 ? minFilteredRelevance * 0.9 : 1;
+      const backfillSegment = backfillNormalized.map((h) => ({
+        ...h,
+        relevance: h.relevance * scale,
+        filterMatched: false,
+      }));
+      results = [...results, ...backfillSegment];
+    }
   }
 
-  const maxScore = hydrated.reduce((m, h) => Math.max(m, h.rrfScore), 0);
-  return hydrated.map((h) => ({
-    ...h,
-    relevance: maxScore > 0 ? h.rrfScore / maxScore : 0,
-  }));
+  return results.slice(0, limit);
 }
 
 async function hydrate(
@@ -345,6 +391,11 @@ async function hydrate(
       rrfScore: entry.score,
       relevance: 0, // normalized by caller
       matchedArms: entry.arms,
+      // The WHERE clause above already enforces `filter` when one is given (and is
+      // vacuously satisfied when it isn't), so every row hydrate() returns satisfied
+      // whatever filter this call ran with. The caller is responsible for marking
+      // recall-guard backfill rows false when it merges them in from elsewhere.
+      filterMatched: true,
     });
   }
   return out;
