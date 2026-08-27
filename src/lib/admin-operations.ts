@@ -1,3 +1,4 @@
+import { clerkClient } from "@clerk/nextjs/server";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
@@ -439,18 +440,7 @@ export async function deleteAccount(adminUserId: string, input: {
 }): Promise<void> {
   const reason = requireReason(input.reason, 8);
   assertNotOperator(adminUserId, input.targetUserId);
-
-  const account = await requireAccount(input.targetUserId);
-  const expected = (account.email ?? "").trim().toLowerCase();
-  const provided = input.confirmEmail.trim().toLowerCase();
-  if (!expected) {
-    throw new Error(
-      "This account has no email on file, so the confirmation cannot be checked. Delete it with scripts/ instead."
-    );
-  }
-  if (expected !== provided) {
-    throw new Error("That email does not match this account.");
-  }
+  const account = await confirmAccountEmail(input.targetUserId, input.confirmEmail);
 
   await recordAdminAction({
     adminUserId,
@@ -461,7 +451,70 @@ export async function deleteAccount(adminUserId: string, input: {
   });
 
   await purgeUserData(input.targetUserId);
+}
 
+/** Shared by `deleteAccount` and `hardDeleteAccount`: resolves the account and checks the
+ * typed email against it, so the operator cannot fire either action against the row next to
+ * the one they meant. */
+async function confirmAccountEmail(targetUserId: string, confirmEmail: string) {
+  const account = await requireAccount(targetUserId);
+  const expected = (account.email ?? "").trim().toLowerCase();
+  const provided = confirmEmail.trim().toLowerCase();
+  if (!expected) {
+    throw new Error(
+      "This account has no email on file, so the confirmation cannot be checked. Delete it with scripts/ instead."
+    );
+  }
+  if (expected !== provided) {
+    throw new Error("That email does not match this account.");
+  }
+  return account;
+}
+
+/**
+ * Hard-delete an account: every row this user's id touches, INCLUDING the fields
+ * `deleteAccount` deliberately preserves (credentials, billing/subscription links, the
+ * suspension record, the Clerk identity mirror) — plus the Clerk login itself, so the person
+ * can never sign in again. This is "delete the entire account," not "delete their data."
+ *
+ * The DB purge runs before the Clerk API call, deliberately: if Clerk's `deleteUser` fails,
+ * the account is left in a half-deleted state either way, and "all local data is gone, Clerk
+ * login still works" is the safer half to be stuck in than "Clerk login is gone, but billing/
+ * suspension/credentials are still sitting in `user_settings`" — the DB side is fully
+ * idempotent to retry, so a failed Clerk call is a "run it again" note, not corruption.
+ *
+ * The audit row is written before either destructive step, since it is the one artifact that
+ * legitimately outlives the account (see `purgeUserData`'s doc comment on `admin_audit_log`).
+ */
+export async function hardDeleteAccount(adminUserId: string, input: {
+  targetUserId: string;
+  confirmEmail: string;
+  reason: string;
+}): Promise<void> {
+  const reason = requireReason(input.reason, 20);
+  assertNotOperator(adminUserId, input.targetUserId);
+  const account = await confirmAccountEmail(input.targetUserId, input.confirmEmail);
+
+  await recordAdminAction({
+    adminUserId,
+    action: "account.hard_delete",
+    targetUserId: input.targetUserId,
+    detail: { email: account.email },
+    reason,
+  });
+
+  await purgeUserData(input.targetUserId, { keepSettings: false });
+
+  try {
+    const clerk = await clerkClient();
+    await clerk.users.deleteUser(input.targetUserId);
+  } catch (err) {
+    throw new Error(
+      `Account data was permanently deleted, but removing the Clerk login failed: ${
+        err instanceof Error ? err.message : String(err)
+      }. Remove user ${input.targetUserId} manually in the Clerk dashboard.`
+    );
+  }
 }
 
 /* ---------------------------------------------------------------------- the audit trail */

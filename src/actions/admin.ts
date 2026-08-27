@@ -192,3 +192,14 @@ export async function deleteAccountAction(input: {
   revalidateAdmin();
   return { ok: true };
 }
+
+export async function hardDeleteAccountAction(input: {
+  targetUserId: string;
+  confirmEmail: string;
+  reason: string;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await ops.hardDeleteAccount(adminUserId, input);
+  revalidateAdmin();
+  return { ok: true };
+}

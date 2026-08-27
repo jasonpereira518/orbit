@@ -1,9 +1,10 @@
 "use client";
 
-import { Ban, RotateCcw, Trash2, Undo2 } from "lucide-react";
+import { Ban, Flame, RotateCcw, Trash2, Undo2 } from "lucide-react";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
 import {
   deleteAccountAction,
+  hardDeleteAccountAction,
   resetOnboardingAction,
   setAccountSuspendedAction,
 } from "@/actions/admin";
@@ -141,6 +142,33 @@ export function AccountDangerZone({
           typedConfirmationHint={`Type ${email ?? "the account email"} to confirm`}
           onConfirm={(reason) =>
             deleteAccountAction({
+              targetUserId,
+              confirmEmail: email ?? "",
+              reason,
+            })
+          }
+        />
+
+        <ConfirmActionDialog
+          trigger={
+            <button
+              type="button"
+              className={`${ACTION_BUTTON} border-destructive/50 text-destructive hover:bg-destructive/10`}
+            >
+              <Flame className="size-3" aria-hidden />
+              Hard delete everything
+            </button>
+          }
+          title="Permanently delete this account, not just its data?"
+          description={`This is different from "Delete data" above: it also removes their Clerk login (they can never sign in again), and it does NOT preserve their API keys, billing/subscription link, or suspension history — those all survive "Delete data" but not this. There is no undo, and no dashboard to restore from.`}
+          confirmLabel="Hard delete account"
+          danger
+          minReason={20}
+          typedConfirmation={email ?? undefined}
+          typedConfirmationHint={`Type ${email ?? "the account email"} to confirm`}
+          redirectTo="/admin/users"
+          onConfirm={(reason) =>
+            hardDeleteAccountAction({
               targetUserId,
               confirmEmail: email ?? "",
               reason,
