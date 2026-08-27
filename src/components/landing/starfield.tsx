@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
+import { STAR_GOLD, STAR_WHITE, paintSpace } from "@/lib/sky-palette";
 
 type Star = {
   x: number;
@@ -39,19 +40,10 @@ const PARALLAX = 0.35;
 const STAR_AREA = 2650;
 const STAR_CAP = 1400;
 
-/** Soft gas clouds, painted once into the background layer. Positions and
- * radii are fractions of the viewport so they hold their composition at any
- * size; radii are both scaled by WIDTH so a nebula keeps its aspect instead
- * of stretching on short windows. Alphas are deliberately low — these should
- * register as depth, not as scenery. */
-const NEBULAE = [
-  // Violet, upper left — the largest, sits behind the hero copy.
-  { x: 0.16, y: 0.24, rx: 0.46, ry: 0.3, rot: -0.35, rgb: "104, 96, 214", a: 0.1 },
-  // Blue, lower right — balances the solar system's side of the frame.
-  { x: 0.84, y: 0.72, rx: 0.42, ry: 0.26, rot: 0.42, rgb: "58, 104, 198", a: 0.09 },
-  // Faint cyan low centre, mostly off-frame — keeps the bottom from going flat.
-  { x: 0.52, y: 1.02, rx: 0.34, ry: 0.2, rot: 0.1, rgb: "46, 122, 158", a: 0.055 },
-] as const;
+/* Nebulae, the base gradient and the corner vignette all live in
+ * `lib/sky-palette.ts` now: the warp stage cross-fades into this exact
+ * image at the end of a lift-off, and a half-shade of drift between the two
+ * shows up as a visible seam at the moment the user is looking at the sky. */
 
 export function Starfield() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -84,66 +76,7 @@ export function Starfield() {
       const bctx = off.getContext("2d");
       if (!bctx) return;
       bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-      // Deep indigo, lifted slightly through the middle band and falling off
-      // to near-black at the edges.
-      const g = bctx.createRadialGradient(
-        width * 0.5,
-        height * 0.42,
-        0,
-        width * 0.5,
-        height * 0.5,
-        Math.max(width, height) * 0.9
-      );
-      g.addColorStop(0, "#0f1630");
-      g.addColorStop(0.42, "#0a1024");
-      g.addColorStop(0.72, "#060915");
-      g.addColorStop(1, "#03050c");
-      bctx.fillStyle = g;
-      bctx.fillRect(0, 0, width, height);
-
-      // Nebulae composite with "screen" so they only ever lighten — over a
-      // near-black base that keeps them glowing rather than milky, and means
-      // overlaps blend instead of banding.
-      for (const n of NEBULAE) {
-        const rx = width * n.rx;
-        const ry = width * n.ry;
-        bctx.save();
-        bctx.globalCompositeOperation = "screen";
-        bctx.translate(width * n.x, height * n.y);
-        bctx.rotate(n.rot);
-        bctx.scale(1, ry / rx);
-        const neb = bctx.createRadialGradient(0, 0, 0, 0, 0, rx);
-        neb.addColorStop(0, `rgba(${n.rgb}, ${n.a})`);
-        neb.addColorStop(0.4, `rgba(${n.rgb}, ${n.a * 0.42})`);
-        neb.addColorStop(0.72, `rgba(${n.rgb}, ${n.a * 0.12})`);
-        neb.addColorStop(1, `rgba(${n.rgb}, 0)`);
-        bctx.fillStyle = neb;
-        bctx.beginPath();
-        bctx.arc(0, 0, rx, 0, Math.PI * 2);
-        bctx.fill();
-        bctx.restore();
-      }
-
-      // Deepen the top-left corner toward black — "multiply" only darkens,
-      // so it grounds that corner without dulling the nebula glow or
-      // recoloring anything further into the frame.
-      const corner = bctx.createRadialGradient(
-        0,
-        0,
-        0,
-        0,
-        0,
-        Math.max(width, height) * 0.65
-      );
-      corner.addColorStop(0, "rgba(0, 0, 0, 0.6)");
-      corner.addColorStop(1, "rgba(0, 0, 0, 0)");
-      bctx.save();
-      bctx.globalCompositeOperation = "multiply";
-      bctx.fillStyle = corner;
-      bctx.fillRect(0, 0, width, height);
-      bctx.restore();
-
+      paintSpace(bctx, width, height);
       bg = off;
     }
 
@@ -214,12 +147,12 @@ export function Starfield() {
 
         if (s.bloom) {
           ctx!.shadowBlur = 6;
-          ctx!.shadowColor = "rgba(242, 193, 78, 0.8)";
+          ctx!.shadowColor = `rgba(${STAR_GOLD}, 0.8)`;
         }
         ctx!.beginPath();
         ctx!.fillStyle = s.gold
-          ? `rgba(242, 193, 78, ${alpha})`
-          : `rgba(232, 243, 241, ${alpha})`;
+          ? `rgba(${STAR_GOLD}, ${alpha})`
+          : `rgba(${STAR_WHITE}, ${alpha})`;
         ctx!.arc(s.x, y, s.r, 0, Math.PI * 2);
         ctx!.fill();
         if (s.bloom) ctx!.shadowBlur = 0;
@@ -245,7 +178,7 @@ export function Starfield() {
           const tailX = x - Math.cos(shot.angle) * shot.len;
           const tailY = y - Math.sin(shot.angle) * shot.len;
           const streak = ctx!.createLinearGradient(tailX, tailY, x, y);
-          streak.addColorStop(0, "rgba(232, 243, 241, 0)");
+          streak.addColorStop(0, `rgba(${STAR_WHITE}, 0)`);
           streak.addColorStop(0.7, `rgba(196, 220, 230, ${opacity * 0.45})`);
           streak.addColorStop(1, `rgba(255, 255, 255, ${opacity * 0.95})`);
 
