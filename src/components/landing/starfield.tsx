@@ -126,7 +126,12 @@ export function Starfield() {
 
     function draw(now: number) {
       ctx!.clearRect(0, 0, width, height);
-      if (bg) ctx!.drawImage(bg, 0, 0, width, height);
+      // A zero-size viewport at mount (hidden tab being restored, prerender) produces a
+      // zero-size bg canvas, and drawImage throws InvalidStateError on those — which
+      // would take down the whole page tree, not just the backdrop.
+      if (bg && bg.width > 0 && bg.height > 0) {
+        ctx!.drawImage(bg, 0, 0, width, height);
+      }
 
       // Read scroll once per frame rather than binding a scroll listener —
       // the value is only ever consumed here.
@@ -199,10 +204,6 @@ export function Starfield() {
       }
     }
 
-    resize();
-    nextShot = performance.now() + 800;
-    draw(performance.now());
-
     // Don't burn battery repainting a starfield in a background tab.
     function onVisibility() {
       cancelAnimationFrame(raf);
@@ -211,8 +212,14 @@ export function Starfield() {
       }
     }
 
+    // Listeners attach before the first draw so that if the viewport is zero-sized at
+    // mount, the resize event that gives it real dimensions can still repair the field.
     window.addEventListener("resize", resize);
     document.addEventListener("visibilitychange", onVisibility);
+
+    resize();
+    nextShot = performance.now() + 800;
+    draw(performance.now());
     return () => {
       window.removeEventListener("resize", resize);
       document.removeEventListener("visibilitychange", onVisibility);

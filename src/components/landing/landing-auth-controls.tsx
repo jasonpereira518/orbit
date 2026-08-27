@@ -4,16 +4,11 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { UserButton } from "@clerk/nextjs";
 import { clerkAppearance } from "@/lib/clerk-appearance";
-import { cn } from "@/lib/utils";
 
 const ghostClass =
   "rounded-lg px-3 py-2 text-sm text-[#c5d4d1] transition-colors hover:text-white";
 const solidClass =
   "rounded-full bg-[#e8f3f1] px-4 py-2 text-sm font-medium text-[#0f3d3e] transition-colors hover:bg-white";
-// "Open app" only — a press lifts it toward the dashboard it's about to
-// open, rather than the plain color fade the other header buttons use.
-const openAppClass =
-  "transition-[background-color,transform] duration-[var(--transition-duration-base)] ease-[var(--ease-house)] active:-translate-y-0.5 active:translate-x-0.5";
 const ctaSolidClass =
   "inline-flex items-center justify-center rounded-full bg-[#e8f3f1] px-6 py-3 text-sm font-medium text-[#0f3d3e] transition-colors hover:bg-white";
 // Pill, to match the solid CTA it always sits beside. (The header's ghost
@@ -33,11 +28,18 @@ export function LandingAuthControls({
   demoMode,
   signedIn = false,
   variant,
+  mobileVisible = false,
 }: {
   clerkOn: boolean;
   demoMode: boolean;
   signedIn?: boolean;
   variant: "header" | "hero";
+  /**
+   * Hero variant only. Off by default, so /pricing, /contact and the docs
+   * pages keep today's "hidden below sm" behavior untouched. On, the buttons
+   * stack full-width below sm — a real tap target instead of nothing.
+   */
+  mobileVisible?: boolean;
 }) {
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
@@ -48,7 +50,9 @@ export function LandingAuthControls({
   const ghost = variant === "header" ? ghostClass : ctaGhostClass;
   const wrapClass =
     variant === "hero"
-      ? "hidden sm:flex sm:w-auto sm:flex-row sm:gap-3"
+      ? mobileVisible
+        ? "flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:gap-3"
+        : "hidden sm:flex sm:w-auto sm:flex-row sm:gap-3"
       : "flex items-center gap-2 sm:gap-3";
 
   if (!clerkOn) {
@@ -74,7 +78,7 @@ export function LandingAuthControls({
             : wrapClass
         }
       >
-        <Link href="/dashboard" className={cn(solid, openAppClass)}>
+        <Link href="/dashboard" className={solid}>
           Open app
         </Link>
         <span className="inline-flex size-7 items-center justify-center">

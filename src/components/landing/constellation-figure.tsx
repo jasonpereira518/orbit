@@ -231,7 +231,9 @@ export function ConstellationFigure({ className }: { className?: string }) {
       <div
         className={cn(
           "pointer-events-none absolute left-1/2 top-[2%] -translate-x-1/2 text-center transition-opacity",
-          figureHovered ? "opacity-100" : "opacity-0"
+          // Always on below md: hover never fires on touch, so the cluster
+          // name was invisible to every phone visitor.
+          figureHovered ? "opacity-100" : "opacity-100 md:opacity-0"
         )}
         style={FADE}
       >
@@ -272,9 +274,20 @@ function StarNameLabel({
     reduced ? 0 : crossingOpacity(v, crossings)
   );
 
+  // Centring a nowrap label on a star near the viewBox edge pushes it outside
+  // the figure — measured 12-16px for Alkaid at phone widths. Anchor the outer
+  // stars by their inner edge instead; md: restores centring, where the box is
+  // wide enough (520px) that nothing overflows anyway.
+  const pct = (star.x / VIEW_W) * 100;
+
   return (
     <motion.div
-      className="pointer-events-none absolute -translate-x-1/2 whitespace-nowrap text-[11px] font-medium tracking-wide text-white/95"
+      className={cn(
+        "pointer-events-none absolute whitespace-nowrap text-[10px] font-medium tracking-wide text-white/95 md:text-[11px]",
+        pct < 20 && "translate-x-0 md:-translate-x-1/2",
+        pct > 80 && "-translate-x-full md:-translate-x-1/2",
+        pct >= 20 && pct <= 80 && "-translate-x-1/2"
+      )}
       style={{
         left: `${(star.x / VIEW_W) * 100}%`,
         top: `${((star.y + star.r + 8) / VIEW_H) * 100}%`,

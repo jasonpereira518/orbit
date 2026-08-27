@@ -110,10 +110,14 @@ export function LandingHeader({
             "relative z-10 flex w-full items-center",
             pastHero
               ? cn(
-                  "gap-2 px-3 py-2 sm:gap-3 sm:px-5 sm:py-2.5 md:px-6 md:py-3",
+                  // px-5 below sm: the pill is already inset 12px by its
+                  // animated width, so 12 + 20 matches the sections' 32px
+                  // gutter. sm:px-5 is the same value, so this lands on
+                  // 0-639px only.
+                  "gap-2 px-5 py-2 sm:gap-3 sm:px-5 sm:py-2.5 md:px-6 md:py-3",
                   showSectionNav ? "justify-start" : "justify-between"
                 )
-              : "justify-between px-6 py-5 md:px-10"
+              : "justify-between px-8 py-5 md:px-10"
           )}
         >
           <Link

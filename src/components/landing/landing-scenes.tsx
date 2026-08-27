@@ -5,6 +5,7 @@ import { LandingAuthControls } from "@/components/landing/landing-auth-controls"
 import { WaitlistForm } from "@/components/landing/waitlist-form";
 import { Reveal } from "@/components/motion/reveal";
 import { OrbitLogo } from "@/components/orbit-logo";
+import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
 
 // All narrative copy is server-rendered here so it ships in the document;
 // <Reveal> only choreographs when it becomes visible.
@@ -18,7 +19,7 @@ export function SceneConstellations() {
   return (
     <section
       aria-labelledby="groups-heading"
-      className="landing-scene scene-constellations relative z-10 flex min-h-[110svh] items-center px-6 py-36 md:px-10 md:py-44"
+      className="landing-scene scene-constellations relative z-10 flex min-h-[72svh] items-center px-8 py-20 md:min-h-[110svh] md:px-10 md:py-44"
     >
       <div className="mx-auto grid w-full max-w-6xl items-center gap-10 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:gap-12">
         <div id="groups">
@@ -50,7 +51,7 @@ export function SceneComets() {
   return (
     <section
       aria-labelledby="reminders-heading"
-      className="landing-scene scene-comets relative z-10 px-6 py-24 md:px-10"
+      className="landing-scene scene-comets relative z-10 px-8 py-24 md:px-10"
     >
       <CometStreak />
       <div className="mx-auto w-full max-w-6xl">
@@ -76,11 +77,14 @@ export function SceneComets() {
            * has no `.dark` ancestor to invert against on this page, so it
            * rendered as a washed-out white panel instead of a card. */}
           <div className="landing-glass mt-10 max-w-sm rounded-2xl p-5">
-            <div className="flex items-center gap-3">
+            {/* Below md the pill drops to its own line: on a phone the name
+             * block was squeezed to ~97px, wrapping the subtitle to three
+             * lines beside a shrink-0 badge. */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 md:flex-nowrap md:gap-3">
               <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#0f3d3e] text-sm font-medium text-[#e8f3f1]">
                 PR
               </div>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1 md:flex-initial">
                 <p className="text-sm font-medium text-[#e8f3f1]">
                   Priya Raman
                 </p>
@@ -88,7 +92,7 @@ export function SceneComets() {
                   Referral call · 3 weeks ago · no follow-up sent
                 </p>
               </div>
-              <span className="ml-auto shrink-0 rounded-full bg-[#f2c14e]/15 px-2.5 py-1 text-xs text-[#f2c14e]">
+              <span className="ml-13 shrink-0 rounded-full bg-[#f2c14e]/15 px-2.5 py-1 text-xs text-[#f2c14e] md:ml-auto">
                 Follow up today
               </span>
             </div>
@@ -112,7 +116,7 @@ export function SceneFinale({
     <section
       id="cta"
       aria-labelledby="cta-heading"
-      className="landing-scene scene-finale relative z-10 px-6 pt-24 md:px-10"
+      className="landing-scene scene-finale relative z-10 px-8 pt-24 md:px-10"
     >
       {/* Deep-space vignette: the base starfield stays put underneath, but
        * the last stretch of page (footer included) darkens toward it, so
@@ -133,7 +137,7 @@ export function SceneFinale({
           </Reveal>
           <Reveal className="reveal-celestial" delay={100}>
             <p className={BODY}>
-              Free for your first 100 contacts. Connect LinkedIn and Gmail once,
+              Free for your first {FREE_CONTACT_LIMIT} contacts. Connect LinkedIn and Gmail once,
               and Orbit runs the follow-up loop while you keep interviewing.{" "}
               <Link
                 href="/pricing"
@@ -144,13 +148,18 @@ export function SceneFinale({
               .
             </p>
           </Reveal>
-          <Reveal className="reveal-celestial" delay={200}>
-            <div className="mt-8 hidden sm:block">
+          {/* w-full below sm so the stacked buttons fill the column — the
+            * parent's items-center would otherwise size this to its content. */}
+          <Reveal className="reveal-celestial w-full sm:w-auto" delay={200}>
+            {/* Visible at every width — this is the page's closing ask, and
+             * the hero's copy of these buttons is hidden below md. */}
+            <div className="mt-8 w-full sm:w-auto">
               <LandingAuthControls
                 clerkOn={clerkOn}
                 demoMode={demoMode}
                 signedIn={signedIn}
                 variant="hero"
+                mobileVisible
               />
             </div>
           </Reveal>
@@ -191,7 +200,7 @@ export function SceneFinale({
          * reached this text. */}
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-[900px] w-[900px] -translate-x-1/2 -translate-y-1/2 rounded-full"
+          className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-[560px] w-[560px] -translate-x-1/2 -translate-y-1/2 rounded-full md:h-[900px] md:w-[900px]"
           style={{
             background:
               "radial-gradient(circle, rgba(242,193,78,0.14), transparent 62%)",

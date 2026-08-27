@@ -66,7 +66,7 @@ export function SceneFeatures() {
   return (
     <section
       aria-labelledby="features-heading"
-      className="landing-scene scene-features relative z-10 px-6 py-24 md:px-10 lg:pt-10"
+      className="landing-scene scene-features relative z-10 px-8 py-24 md:px-10 lg:pt-10"
     >
       <div className="mx-auto w-full max-w-6xl">
         <div id="features" className="max-w-xl">
@@ -86,7 +86,7 @@ export function SceneFeatures() {
         <div className="mt-12 space-y-6">
           {FEATURES.map((feature, i) => (
             <Reveal key={feature.kicker} className="reveal-celestial">
-              <div className="landing-glass rounded-3xl p-6 md:p-8 lg:p-10">
+              <div className="landing-glass rounded-3xl p-5 md:p-8 lg:p-10">
                 <div className="grid items-center gap-8 lg:grid-cols-2 lg:gap-12">
                   <div className={cn(i % 2 === 1 && "lg:order-2")}>
                     <p className={KICKER}>{feature.kicker}</p>

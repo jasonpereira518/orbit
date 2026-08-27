@@ -18,9 +18,24 @@ import { arrivedByWarp, useWarp } from "@/components/warp/warp-provider";
  * button is left alone on purpose: hijacking browser chrome to play an animation is
  * worse than the animation is good.
  */
-export function BackControl() {
+export function BackControl({
+  onBeforeNavigate,
+}: {
+  /**
+   * Lets a page intercept the click to run an exit transition first. Called with the real
+   * navigation function instead of navigating immediately; the caller is responsible for
+   * invoking it once ready. Omit for the default, instant behavior.
+   */
+  onBeforeNavigate?: (navigate: () => void) => void;
+}) {
   const router = useRouter();
   const { reenter } = useWarp();
+
+  function navigate() {
+    // A direct load or a shared link has no entry to go back to.
+    if (window.history.length > 1) router.back();
+    else router.push("/");
+  }
 
   return (
     <button

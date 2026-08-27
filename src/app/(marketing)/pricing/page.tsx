@@ -68,7 +68,7 @@ export default async function PricingPage() {
 
   // What Lifetime costs today. Read from the sale count rather than hardcoded, so the
   // struck-through comparison stops being shown the moment it stops being true — a
-  // permanent "was $49" beside a price that is simply $25 is a fake discount.
+  // permanent "was $75" beside a price that is simply $25 is a fake discount.
   const offer = await lifetimeOffer();
 
   const currentPlan = await (async (): Promise<Plan | null> => {

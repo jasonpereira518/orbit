@@ -6,11 +6,17 @@ import {
   LIFETIME_METADATA_KEY,
   LIFETIME_METADATA_VALUE,
   LIFETIME_PRICE_ID,
+  PRO_ANNUAL_PRICE_ID,
+  PRO_METADATA_VALUE,
+  PRO_MONTHLY_PRICE_ID,
+  SUBSCRIPTION_USER_METADATA_KEY,
   getStripe,
+  isProCheckoutConfigured,
   isStripeConfigured,
 } from "@/lib/stripe";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { lifetimeOffer } from "@/lib/lifetime-offer";
+import type { BillingPeriod } from "@/lib/plan-copy";
 
 export type CheckoutResult = { url: string } | { error: string };
 
@@ -61,6 +67,66 @@ export async function startLifetimeCheckout(): Promise<CheckoutResult> {
     return { url: session.url };
   } catch (err) {
     console.error("Stripe checkout session failed:", err);
+    return { error: "Could not start checkout. Please try again." };
+  }
+}
+
+/**
+ * Opens a Stripe Checkout Session for the recurring Orbit Pro subscription.
+ *
+ * Same contract as `startLifetimeCheckout`: the URL comes back to the caller so refusals
+ * (already subscribed, not on sale) render inline next to the button.
+ */
+export async function startProCheckout(
+  period: BillingPeriod
+): Promise<CheckoutResult> {
+  const userId = await requireUserId();
+
+  const priceId =
+    period === "annual" ? PRO_ANNUAL_PRICE_ID : PRO_MONTHLY_PRICE_ID;
+  if (!isProCheckoutConfigured() || !priceId) {
+    return { error: "Pro checkout isn't open yet. Check back shortly." };
+  }
+
+  // `getEntitlements` resolves comps too, so a comped account gets the same refusal a
+  // paying one would.
+  const entitlements = await getEntitlements(userId);
+  if (entitlements.plan === "lifetime") {
+    return {
+      error: "You already have Orbit Lifetime — it includes everything in Pro.",
+    };
+  }
+  if (entitlements.plan === "orbit") {
+    return { error: "You already have Orbit Pro." };
+  }
+
+  const baseUrl = getAppBaseUrl();
+  const profile = await getCurrentUserProfile();
+
+  try {
+    const session = await getStripe().checkout.sessions.create({
+      mode: "subscription",
+      line_items: [{ price: priceId, quantity: 1 }],
+      // How the webhook knows who paid — same rationale as the Lifetime session above.
+      client_reference_id: userId,
+      metadata: { [LIFETIME_METADATA_KEY]: PRO_METADATA_VALUE },
+      // Copied onto the subscription object itself, so `customer.subscription.*` events
+      // (renewals, cancellations) can be attributed without a session in hand.
+      subscription_data: {
+        metadata: {
+          [LIFETIME_METADATA_KEY]: PRO_METADATA_VALUE,
+          [SUBSCRIPTION_USER_METADATA_KEY]: userId,
+        },
+      },
+      customer_email: profile?.email || undefined,
+      success_url: `${baseUrl}/settings#settings-plan`,
+      cancel_url: `${baseUrl}/pricing`,
+    });
+
+    if (!session.url) return { error: "Stripe did not return a checkout URL." };
+    return { url: session.url };
+  } catch (err) {
+    console.error("Stripe subscription checkout failed:", err);
     return { error: "Could not start checkout. Please try again." };
   }
 }
