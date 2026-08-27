@@ -26,6 +26,11 @@ import {
 } from "@/lib/warp/journeys";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
+/** How long the stage stays up after `skip()` navigates, so the route swap
+ *  has time to resolve behind cover instead of exposing the pre-navigation
+ *  page for a frame. */
+const SKIP_COVER_MS = 120;
+
 export type WarpPhase =
   | "idle"
   | "outbound"
@@ -294,8 +299,11 @@ export function WarpProvider({ children }: { children: React.ReactNode }) {
       if (phase === "inbound" || phase === "landing") router.back();
       else router.push(journey.destination);
     }
-    settle();
-  }, [clearTimers, router, settle]);
+    // Stay covering the frame a beat longer: settling in the same tick as the
+    // navigation would unmount the stage before the route swap resolves,
+    // flashing whatever page is still underneath.
+    after(SKIP_COVER_MS, settle);
+  }, [after, clearTimers, router, settle]);
 
   // Escape completes a journey rather than abandoning it — the navigation is
   // already in flight, so the only thing left to skip is the waiting.

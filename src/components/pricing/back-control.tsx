@@ -43,10 +43,18 @@ export function BackControl({
       onClick={() => {
         // A second press during a chrono rewind means "stop waiting", not
         // "go back twice" — the arc is long enough that it would otherwise
-        // read as a dead button.
+        // read as a dead button. An outbound run is left alone: the visitor
+        // cannot see the page they are clicking, and skip() would complete
+        // the journey forwards, which is the opposite of Back.
         if (run.phase !== "idle") {
-          if (run.journey === "chrono") skip();
-          else router.back();
+          if (
+            run.journey === "chrono" &&
+            (run.phase === "inbound" || run.phase === "landing")
+          ) {
+            skip();
+          } else if (run.journey !== "chrono") {
+            router.back();
+          }
           return;
         }
         // A direct load or a shared link has no entry to go back to.
