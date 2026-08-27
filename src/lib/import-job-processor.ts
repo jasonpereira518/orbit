@@ -9,7 +9,11 @@ import {
   type Contact,
   type LinkedInImportRowPayload,
 } from "@/db/schema";
-import { createContactsBulk, updateContact, type ContactInput } from "@/actions/contacts";
+import {
+  createContactsBulkForUser,
+  updateContactForUser,
+  type ContactInput,
+} from "@/lib/contact-writes";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { createCompanyResolver } from "@/lib/companies";
 import {
@@ -200,7 +204,7 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
       const touchedContactIds: string[] = [];
       const contactIdByRowId = new Map<string, string>();
 
-      // `createContactsBulk` admits only what the plan's contact headroom allows, taking
+      // `createContactsBulkForUser` admits only what the plan's contact headroom allows, taking
       // from the front, so anything past `created.length` was refused by the cap rather
       // than failed. These rows must reach a terminal status: the loop re-queries pending
       // rows every pass, so leaving them pending would spin until the time budget and then
@@ -209,7 +213,8 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
       let planBlockedRows: PendingRow[] = [];
 
       if (toCreate.length > 0) {
-        const created = await createContactsBulk(
+        const created = await createContactsBulkForUser(
+          userId,
           toCreate.map((item) => item.input),
           companyResolve,
           { skipRevalidate: true, skipEmbedding: true }
@@ -230,7 +235,7 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
       }
 
       for (const item of toUpdate) {
-        await updateContact(item.contactId, item.input, {
+        await updateContactForUser(userId, item.contactId, item.input, {
           skipRevalidate: true,
           skipEmbedding: true,
           // The whole network is recalibrated when the import finishes. Scoring each

@@ -45,7 +45,6 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
-  ArmGlowNode,
   ClusterLabelNode,
   ContactNode,
   LabeledEdge,
@@ -59,12 +58,11 @@ import {
 } from "@/components/graph/contact-inspect-panel";
 import {
   buildHybridGraphLayout,
-  GALAXY_FLATTEN,
   type ClusterLabelData,
   type GraphNodeData,
   type NebulaData,
 } from "@/lib/graph-layout";
-import { clusterBrandColor, mixWithWhite, withAlpha } from "@/lib/school-color";
+import { clusterBrandColor } from "@/lib/school-color";
 import { CAMERA_MS } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { cn } from "@/lib/utils";
@@ -132,7 +130,7 @@ function computeSunExtents(
 
   for (const n of liveNodes) {
     if (n.hidden) continue;
-    if (n.type === "orbitRings" || n.type === "armGlow") continue;
+    if (n.type === "orbitRings") continue;
     const halfW = Math.max(24, (n.measured?.width ?? 48) / 2);
     const halfH = Math.max(24, (n.measured?.height ?? 48) / 2);
     if (n.type === "nebula") {
@@ -175,17 +173,27 @@ function DefaultViewFitter({
   homeToken,
   layoutNodes,
   positionOverrides,
+  onSettled,
 }: {
   homeToken: number;
   layoutNodes: ReturnType<typeof buildHybridGraphLayout>["nodes"];
   positionOverrides: PositionMap;
+  /**
+   * Fires once the *refined* (post-measurement) framing has been applied.
+   * The first pass runs before React Flow has measured node DOM sizes, so
+   * it frames too tight; callers should stay hidden until this fires to
+   * avoid painting that too-tight frame.
+   */
+  onSettled?: () => void;
 }) {
   const { setCenter, getNodes } = useReactFlow();
   const storeApi = useStoreApi();
   const layoutRef = useRef(layoutNodes);
   const overridesRef = useRef(positionOverrides);
+  const onSettledRef = useRef(onSettled);
   layoutRef.current = layoutNodes;
   overridesRef.current = positionOverrides;
+  onSettledRef.current = onSettled;
 
   useEffect(() => {
     if (homeToken <= 0) return;
@@ -222,11 +230,17 @@ function DefaultViewFitter({
           }
           return;
         }
-        // One refine after layout settles (no animation)
+        // One refine after layout settles (no animation) — the first pass
+        // above ran before nodes were DOM-measured, so it under-estimates
+        // extents and frames too tight. This is the frame callers should
+        // actually reveal.
         timeoutId = window.setTimeout(() => {
           if (cancelled) return;
           const size = storeApi.getState();
-          if (size.width < 48 || size.height < 48) return;
+          if (size.width < 48 || size.height < 48) {
+            onSettledRef.current?.();
+            return;
+          }
           const extents = computeSunExtents(
             layoutRef.current,
             overridesRef.current,
@@ -238,7 +252,10 @@ function DefaultViewFitter({
             size.width,
             size.height
           );
-          void setCenter(0, 0, { zoom: z, duration: 0 });
+          void setCenter(0, 0, { zoom: z, duration: 0 }).then(() => {
+            if (cancelled) return;
+            onSettledRef.current?.();
+          });
         }, 100);
       });
     };
@@ -263,7 +280,6 @@ const nodeTypes = {
   orbitRings: OrbitRingsNode,
   clusterLabel: ClusterLabelNode,
   nebula: NebulaNode,
-  armGlow: ArmGlowNode,
 };
 
 const edgeTypes: EdgeTypes = {
@@ -275,11 +291,10 @@ const edgeTypes: EdgeTypes = {
 const GALAXY_DEG_PER_MIN = 3;
 /** How often the CSS-var rotation is committed back into node positions. */
 const ROTATION_COMMIT_MS = 450;
-/** Max sun→member rays drawn for a hovered/selected cluster. */
-const RAY_CAP = 30;
 
+// v5: the honest-orbit layout invalidated spiral-era drag positions.
 function positionsStorageKey(userId: string) {
-  return `orbit-graph-positions-v4:${userId}`;
+  return `orbit-graph-positions-v5:${userId}`;
 }
 
 function loadPositions(userId: string): PositionMap {
@@ -361,14 +376,139 @@ function contactSearchHaystack(c: GraphContact): string {
     .toLowerCase();
 }
 
-function matchGraphContacts(contacts: GraphContact[], query: string): string[] {
+/**
+ * Bounded Levenshtein distance for typo tolerance. Name words are short, so
+ * a two-row DP with an early exit is plenty.
+ */
+function withinEditDistance(a: string, b: string, max: number): boolean {
+  if (max <= 0) return a === b;
+  if (Math.abs(a.length - b.length) > max) return false;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let rowMin = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      if (cur[j] < rowMin) rowMin = cur[j];
+    }
+    if (rowMin > max) return false;
+    prev = cur;
+  }
+  return prev[b.length] <= max;
+}
+
+/** Allowed typos scale with how much of the name has been typed. */
+function typoBudget(token: string) {
+  return token.length >= 7 ? 2 : token.length >= 4 ? 1 : 0;
+}
+
+/** Plain Levenshtein distance — name-sized strings only. */
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/**
+ * A query only "completes" a name once it's this close (in edits) to being
+ * the whole thing. Below this, any edit-distance gap between candidates is
+ * just an artifact of their differing name lengths, not a real signal.
+ */
+const NAME_LOCK_MAX_DIST = 2;
+
+/**
+ * Once the query is close to a *complete* name and one candidate fits it
+ * decisively better than every other, keep only that one — "Viktor Larsen"
+ * should not also highlight the other Larsens. While the query is still a
+ * short/partial fragment of a much longer name, every candidate's edit
+ * distance is large regardless of how good a fit they are, so this never
+ * fires early: "Larsen" alone keeps every Larsen highlighted, and only
+ * something close to a full name locks onto one.
+ */
+function dominantNameHit<T>(
+  hits: T[],
+  nameOf: (hit: T) => string,
+  phrase: string
+): T[] {
+  if (hits.length <= 1) return hits;
+  const scored = hits
+    .map((hit) => ({ hit, dist: editDistance(nameOf(hit), phrase) }))
+    .sort((a, b) => a.dist - b.dist);
+  const [best, second] = scored;
+  if (best.dist > NAME_LOCK_MAX_DIST) return hits;
+  if (second.dist - best.dist >= 2) return [best.hit];
+  return hits;
+}
+
+/** Does a query token match a name word, tolerating typos and partial typing? */
+function fuzzyNameWordMatch(word: string, token: string) {
+  if (word.startsWith(token)) return true;
+  const budget = typoBudget(token);
+  if (budget === 0) return false;
+  if (withinEditDistance(word, token, budget)) return true;
+  // Partial typing with a typo: compare against the same-length prefix
+  // ("victo" ↔ "vikto" while typing toward Viktor).
+  return (
+    token.length >= 4 &&
+    word.length > token.length &&
+    withinEditDistance(word.slice(0, token.length), token, budget)
+  );
+}
+
+type GraphContactMatch = {
+  ids: string[];
+  /** True when the hits came from the name tiers (exact or fuzzy). */
+  nameTier: boolean;
+};
+
+function matchGraphContacts(
+  contacts: GraphContact[],
+  query: string
+): GraphContactMatch {
   const phrase = query.trim().toLowerCase().replace(/\s+/g, " ");
-  if (!phrase) return [];
+  if (!phrase) return { ids: [], nameTier: false };
   const tokens = phrase
     .split(/[^a-z0-9+#.]+/i)
     .filter((t) => t.length > 1);
 
-  return contacts
+  const nameOf = (c: GraphContact) =>
+    [c.fullName, c.preferredName].filter(Boolean).join(" ").toLowerCase();
+
+  // Names take precedence: "Viktor Larsen" should land on Viktor Larsen,
+  // not also on everyone whose notes mention a Viktor or a Larsen. Within a
+  // name tier, one decisively-best fit wins alone.
+  const exactNameHits = contacts.filter((c) => nameOf(c).includes(phrase));
+  if (exactNameHits.length > 0) {
+    return {
+      ids: dominantNameHit(exactNameHits, nameOf, phrase).map((c) => c.id),
+      nameTier: true,
+    };
+  }
+
+  // Typo-tolerant name pass: every token must fuzzily match one of the
+  // contact's name words ("Victor Larson" still finds Viktor Larsen).
+  if (tokens.length > 0) {
+    const fuzzyNameHits = contacts.filter((c) => {
+      const words = nameOf(c).split(/\s+/).filter(Boolean);
+      return tokens.every((t) => words.some((w) => fuzzyNameWordMatch(w, t)));
+    });
+    if (fuzzyNameHits.length > 0) {
+      return {
+        ids: dominantNameHit(fuzzyNameHits, nameOf, phrase).map((c) => c.id),
+        nameTier: true,
+      };
+    }
+  }
+
+  const ids = contacts
     .filter((c) => {
       const hay = contactSearchHaystack(c);
       if (hay.includes(phrase)) return true;
@@ -380,6 +520,7 @@ function matchGraphContacts(contacts: GraphContact[], query: string): string[] {
       return strong.length >= 2;
     })
     .map((c) => c.id);
+  return { ids, nameTier: false };
 }
 
 function findClusterMatch(
@@ -409,59 +550,6 @@ function findClusterMatch(
     return includes[0];
   }
   return null;
-}
-
-function resolveSearchTarget(
-  query: string,
-  matchIds: string[],
-  clusters: GraphCluster[]
-):
-  | { mode: "cluster"; id: string }
-  | { mode: "nodes"; ids: string[] }
-  | { mode: "none" } {
-  // Cluster-name query (e.g. "AWS") — zoom that constellation
-  const clusterByName = findClusterMatch(clusters, query);
-  if (clusterByName && matchIds.length === 0) {
-    return { mode: "cluster", id: clusterByName.id };
-  }
-  if (
-    clusterByName &&
-    clusterByName.name.toLowerCase() === query.trim().toLowerCase()
-  ) {
-    return { mode: "cluster", id: clusterByName.id };
-  }
-
-  if (matchIds.length === 0) return { mode: "none" };
-
-  // Single person → frame their whole constellation (highlight stays on them only)
-  if (matchIds.length === 1) {
-    const cluster = clusters.find((cl) => cl.contactIds.includes(matchIds[0]));
-    if (cluster) return { mode: "cluster", id: cluster.id };
-    return { mode: "nodes", ids: matchIds };
-  }
-
-  const counts = new Map<string, number>();
-  for (const id of matchIds) {
-    const cluster = clusters.find((cl) => cl.contactIds.includes(id));
-    if (!cluster) continue;
-    counts.set(cluster.id, (counts.get(cluster.id) || 0) + 1);
-  }
-
-  let best: string | null = null;
-  let bestN = 0;
-  for (const [id, n] of counts) {
-    if (n > bestN) {
-      best = id;
-      bestN = n;
-    }
-  }
-
-  // Group of people mostly in one constellation → zoom the cluster
-  if (best && bestN >= 2 && bestN >= Math.ceil(matchIds.length * 0.5)) {
-    return { mode: "cluster", id: best };
-  }
-
-  return { mode: "nodes", ids: matchIds };
 }
 
 function Starfield() {
@@ -514,7 +602,6 @@ function buildStructuralNodes(
   return layoutNodes.map((n) => {
     if (
       n.type === "orbitRings" ||
-      n.type === "armGlow" ||
       n.type === "user" ||
       n.type === "clusterLabel" ||
       n.type === "nebula"
@@ -675,7 +762,7 @@ function GraphCanvasInner({
   data: GraphPayload;
 }) {
   const router = useRouter();
-  const { fitView, getNodes } = useReactFlow();
+  const { fitView, getNodes, getViewport, setViewport } = useReactFlow();
   const storeApi = useStoreApi();
   const draggingId = useRef<string | null>(null);
   const fitViewRef = useRef(fitView);
@@ -691,6 +778,21 @@ function GraphCanvasInner({
   const [orbitNodes, setOrbitNodes] = useState<Node[]>(() =>
     buildStructuralNodes(layout.nodes, positionOverrides, compact)
   );
+
+  /**
+   * The initial (and every post-remount) framing pass runs before React Flow
+   * has measured node DOM sizes, so it frames too tight, then snaps out to
+   * the correct view ~100ms later — a visible double-zoom jump. Stay hidden
+   * (chrome and starfield stay visible; only the graph itself is gated)
+   * until DefaultViewFitter confirms the refined frame is applied. A safety
+   * timeout reveals regardless so a stalled measurement never hides the sky
+   * forever.
+   */
+  const [viewportReady, setViewportReady] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setViewportReady(true), 1500);
+    return () => window.clearTimeout(t);
+  }, []);
 
   const focusCompany = useMemo(() => {
     if (focusCluster) {
@@ -713,10 +815,13 @@ function GraphCanvasInner({
 
   const searchQuery = search.trim().toLowerCase();
   const hasSearch = Boolean(searchQuery) || searchHitIds.size > 0;
+  // Dim the rest of the sky only when the search actually hit someone —
+  // a no-match query must not blank the whole map.
+  const searchDimActive = hasSearch && searchHitIds.size > 0;
 
   const nodes = useMemo(() => {
     return orbitNodes.map((n) => {
-      if (n.type === "orbitRings" || n.type === "armGlow") {
+      if (n.type === "orbitRings") {
         return n;
       }
       if (n.type === "user") {
@@ -737,7 +842,7 @@ function GraphCanvasInner({
           ...n,
           hidden: false,
           style: {
-            opacity: hidden && hasSearch ? 0.15 : 1,
+            opacity: hidden && searchDimActive ? 0.35 : 1,
             transition: "opacity 200ms ease",
           },
         } as Node;
@@ -747,14 +852,17 @@ function GraphCanvasInner({
       const isHovered = hoveredId === n.id;
       const isSelected = selection?.type === "contact" && selection.id === n.id;
       // Spotlight only explicit search hits — not every star in a zoomed cluster
-      const spotlight = hasSearch && searchHitIds.has(n.id);
-      const dimFromSearch = hasSearch && !spotlight;
+      const spotlight = searchDimActive && searchHitIds.has(n.id);
+      const dimFromSearch = searchDimActive && !spotlight;
       const dimFromFocus =
         Boolean(hoveredId || selection?.type === "contact") &&
         !isHovered &&
         !isSelected;
-      const dim = dimFromSearch || dimFromFocus;
       const hasOverride = Boolean(positionOverrides[n.id]);
+
+      // Search keeps the rest of the sky readable as context; hover/selection
+      // focus dims harder because it's transient.
+      const opacity = dimFromFocus ? 0.15 : dimFromSearch ? 0.35 : 1;
 
       return {
         ...n,
@@ -764,9 +872,10 @@ function GraphCanvasInner({
           ...d,
           motionPaused: isHovered || isSelected || hasOverride,
           spotlight,
+          spotlightSolo: spotlight && searchHitIds.size === 1,
         },
         style: {
-          opacity: dim ? 0.12 : 1,
+          opacity,
           transition: "opacity 200ms ease",
         },
       } as Node;
@@ -776,7 +885,7 @@ function GraphCanvasInner({
     hoveredId,
     selection,
     searchHitIds,
-    hasSearch,
+    searchDimActive,
     positionOverrides,
     focusCompany,
     company,
@@ -802,7 +911,7 @@ function GraphCanvasInner({
 
         let opacity = Number(e.style?.opacity ?? 0.5);
         const edgeKind = e.data?.kind;
-        if (hasSearch) {
+        if (searchDimActive) {
           const sourceOk = searchHitIds.has(e.source);
           const targetOk = searchHitIds.has(e.target);
           if (focusCluster && edgeKind === "constellation") {
@@ -812,7 +921,7 @@ function GraphCanvasInner({
               opacity = Math.min(1, opacity + 0.25);
             }
           } else if (!(sourceOk && targetOk)) {
-            opacity = 0.06;
+            opacity = Math.min(opacity, 0.25);
           }
         }
         if (dimOthers && !emphasized) {
@@ -837,71 +946,29 @@ function GraphCanvasInner({
         } as Edge;
       });
 
-    // Faint sun→member rays for the hovered/selected/focused cluster only,
-    // appended after the dim mapping so they never inherit the 0.12 clamp.
-    if (!compact && focusCompany) {
-      const members = layout.nodes
-        .filter((n) => {
-          if (n.type !== "contact") return false;
-          const d = n.data as GraphNodeData;
-          return (d.clusterName ?? d.company) === focusCompany;
-        })
-        .map((n) => ({ id: n.id, d: n.data as GraphNodeData }))
-        .sort((a, b) => {
-          const fa = a.d.figureRole === "scatter" ? 1 : 0;
-          const fb = b.d.figureRole === "scatter" ? 1 : 0;
-          if (fa !== fb) return fa - fb;
-          return (b.d.score ?? 0) - (a.d.score ?? 0);
-        })
-        .slice(0, RAY_CAP);
-
-      if (members.length > 0) {
-        const brand = members[0].d.clusterColor;
-        const stroke = withAlpha(mixWithWhite(brand ?? "#ffffff", 0.6), 0.14);
-        for (const m of members) {
-          mapped.push({
-            id: `solar-${m.id}`,
-            source: "me",
-            target: m.id,
-            type: "labeled",
-            className: "constellation-ray",
-            selectable: false,
-            focusable: false,
-            animated: false,
-            data: { kind: "solar" },
-            style: { stroke, strokeWidth: 0.75 },
-          } as Edge);
-        }
-      }
-    }
-
     return mapped;
   }, [
     layout.edges,
-    layout.nodes,
-    focusCompany,
     focusCluster,
     hoveredId,
     selection,
     searchHitIds,
-    hasSearch,
-    compact,
+    searchDimActive,
   ]);
 
   /**
-   * Ambient galaxy rotation. Every frame the accrued angle lands on a CSS var
-   * (rings + arm glow rotate on the compositor, no React render); every
-   * ROTATION_COMMIT_MS the pending delta is committed to node state as a rigid
-   * disk rotation p' = F(Rot(δ, F⁻¹(p))) with F = scaleY(GALAXY_FLATTEN) — the
-   * same transform the CSS layers use, so the whole sky moves as one body.
-   * Paused while dragging, while the inspect panel is open, in the compact
-   * card, in hidden tabs, and under prefers-reduced-motion. State lives inside
-   * GraphCanvasInner, so a layoutKey remount resets θ to 0 alongside the
-   * freshly built (unrotated) layout — the stale CSS var dies with the old
-   * React Flow DOM node.
+   * Ambient sky rotation. Every frame the accrued angle lands on a CSS var
+   * (rings rotate on the compositor, no React render); every
+   * ROTATION_COMMIT_MS the pending delta is committed to node state as a
+   * plain rigid rotation about the sun. Paused while dragging, while the
+   * inspect panel is open, while a search spotlight is active (a studied
+   * star must hold still), in the compact card, in hidden tabs, and under
+   * prefers-reduced-motion. State lives inside GraphCanvasInner, so a
+   * layoutKey remount resets θ to 0 alongside the freshly built (unrotated)
+   * layout — the stale CSS var dies with the old React Flow DOM node.
    */
   useEffect(() => {
-    if (compact || prefersReducedMotion || selection) return;
+    if (compact || prefersReducedMotion || selection || searchDimActive) return;
 
     let frame = 0;
     let last = performance.now();
@@ -925,10 +992,10 @@ function GraphCanvasInner({
           }
           if (draggingId.current === n.id) return n;
           const ux = n.position.x;
-          const uy = n.position.y / GALAXY_FLATTEN;
+          const uy = n.position.y;
           const position = {
             x: ux * cos - uy * sin,
-            y: (ux * sin + uy * cos) * GALAXY_FLATTEN,
+            y: ux * sin + uy * cos,
           };
           if (n.type !== "contact") return { ...n, position };
           const d = n.data as GraphNodeData;
@@ -973,7 +1040,36 @@ function GraphCanvasInner({
       // Keep stars in step with the CSS-var rotation across pauses
       commitPending();
     };
-  }, [compact, prefersReducedMotion, selection, storeApi]);
+  }, [compact, prefersReducedMotion, selection, searchDimActive, storeApi]);
+
+  /**
+   * Keep the sky anchored when the pane resizes (window resize, fullscreen,
+   * side panel): shift the viewport by half the size delta so the world point
+   * at the old view center stays at the new center — the sun, and everything
+   * else, holds its relative position.
+   */
+  useEffect(() => {
+    const el = storeApi.getState().domNode;
+    if (!el) return;
+    let last = { w: el.clientWidth, h: el.clientHeight };
+    const observer = new ResizeObserver(() => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (!w || !h) return;
+      const dw = w - last.w;
+      const dh = h - last.h;
+      if (dw === 0 && dh === 0) return;
+      last = { w, h };
+      const vp = getViewport();
+      void setViewport({
+        x: vp.x + dw / 2,
+        y: vp.y + dh / 2,
+        zoom: vp.zoom,
+      });
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [storeApi, getViewport, setViewport]);
 
   /**
    * Cluster / search / peek zooms are separate. Default wide view is owned by
@@ -1034,7 +1130,9 @@ function GraphCanvasInner({
       void fitViewRef.current({
         nodes: nodesToFit.map((id) => ({ id })),
         padding: 0.4,
-        duration: CAMERA_MS.wide,
+        // Snappy direct flight: pan and zoom move together, no arc.
+        duration: CAMERA_MS.snap,
+        interpolate: "linear",
         maxZoom: 1.5,
         minZoom: 0.2,
       });
@@ -1084,18 +1182,24 @@ function GraphCanvasInner({
     let cancelled = false;
     const timer = window.setTimeout(() => {
       if (cancelled) return;
+      // Frame exactly the hit set; the local matcher is only a fallback for
+      // the beat before searchHitIds state catches up with fresh keystrokes.
       const matchIds = nodes
         .filter((n) => {
           if (n.type !== "contact") return false;
-          const d = n.data as GraphNodeData;
-          return searchHitIds.has(n.id) || contactMatchesLocal(d, searchQuery);
+          if (searchHitIds.size > 0) return searchHitIds.has(n.id);
+          return contactMatchesLocal(n.data as GraphNodeData, searchQuery);
         })
         .map((n) => n.id);
       if (matchIds.length === 0) return;
       void fitViewRef.current({
         nodes: matchIds.map((nid) => ({ id: nid })),
-        padding: matchIds.length === 1 ? 0.55 : 0.35,
-        duration: CAMERA_MS.move,
+        // Multi-hit padding leaves headroom so the slow ambient rotation
+        // doesn't immediately drift an edge hit out of frame.
+        padding: matchIds.length === 1 ? 0.55 : 0.45,
+        // Snappy direct flight: pan and zoom move together, no arc.
+        duration: CAMERA_MS.snap,
+        interpolate: "linear",
         maxZoom: matchIds.length === 1 ? 1.75 : 1.2,
       });
     }, 40);
@@ -1240,7 +1344,13 @@ function GraphCanvasInner({
         nodeOrigin={[0.5, 0.5]}
         minZoom={0.05}
         maxZoom={2.4}
-        style={{ width: "100%", height: "100%" }}
+        style={{
+          width: "100%",
+          height: "100%",
+          opacity: viewportReady ? 1 : 0,
+          transition: viewportReady ? "opacity 220ms ease" : "none",
+          pointerEvents: viewportReady ? "auto" : "none",
+        }}
         onInit={(instance) => {
           const pane = document.querySelector(
             ".constellation-stage.react-flow"
@@ -1276,6 +1386,7 @@ function GraphCanvasInner({
           homeToken={homeToken}
           layoutNodes={layout.nodes}
           positionOverrides={positionOverrides}
+          onSettled={() => setViewportReady(true)}
         />
         <Background
           gap={48}
@@ -1530,14 +1641,12 @@ export function NetworkGraph({
     // Instant local match across name, role, school, tags, keywords, etc.
     // `reframe` moves the camera; semantic enrichment only updates highlights
     // so finishing a word doesn't yank the view back out to the full map.
+    const localMatch = matchGraphContacts(data.contacts, q);
     const applySearchResults = (
       extraIds: string[] = [],
       reframe = true
     ) => {
-      const personIds = new Set<string>([
-        ...matchGraphContacts(data.contacts, q),
-        ...extraIds,
-      ]);
+      const personIds = new Set<string>([...localMatch.ids, ...extraIds]);
       const clusterByName = findClusterMatch(data.clusters, q);
       const qNorm = q.toLowerCase();
       const isExactClusterName =
@@ -1569,38 +1678,35 @@ export function NetworkGraph({
 
       if (!reframe) return;
 
-      const target = resolveSearchTarget(q, [...personIds], data.clusters);
-      if (target.mode === "cluster") {
-        // Zoom the constellation; spotlight stays on personIds only
-        setFocusCluster(target.id);
-      } else if (target.mode === "nodes") {
-        setFocusCluster(null);
-      } else {
-        // No hits — keep the current camera; don't snap home mid-typing
-        setFocusCluster(null);
-        return;
-      }
+      // Frame the matches themselves: every hit in view, or a single hit up
+      // close. No hits — keep the current camera; don't snap home mid-typing.
+      setFocusCluster(null);
+      if (personIds.size === 0) return;
       setZoomToken((t) => t + 1);
     };
 
     applySearchResults([], true);
 
-    // Enrich with semantic hits (debounced) without reframing the camera
-    searchTimer.current = setTimeout(() => {
-      const req = ++searchRequestId.current;
-      searchDashboardContacts(q, { limit: 40 })
-        .then((hits) => {
-          if (req !== searchRequestId.current) return;
-          if (lastSearchQuery.current !== q) return;
-          applySearchResults(
-            hits.map((h) => h.id),
-            false
-          );
-        })
-        .catch(() => {
-          /* local results already applied */
-        });
-    }, 280);
+    // Enrich with semantic hits (debounced) without reframing the camera.
+    // A name match is already the answer — enriching it would widen the hit
+    // set and kill the solo spotlight mid-hover, so skip it entirely.
+    if (!localMatch.nameTier) {
+      searchTimer.current = setTimeout(() => {
+        const req = ++searchRequestId.current;
+        searchDashboardContacts(q, { limit: 40 })
+          .then((hits) => {
+            if (req !== searchRequestId.current) return;
+            if (lastSearchQuery.current !== q) return;
+            applySearchResults(
+              hits.map((h) => h.id),
+              false
+            );
+          })
+          .catch(() => {
+            /* local results already applied */
+          });
+      }, 280);
+    }
 
     return () => {
       if (searchTimer.current) clearTimeout(searchTimer.current);
@@ -2173,7 +2279,7 @@ export function NetworkGraph({
                     </li>
                     <li className="flex items-center gap-2">
                       <span className="h-2 w-2 rounded-full bg-white shadow-[0_0_6px_rgba(255,255,255,0.8)]" />
-                      Star — a person in your network
+                      Star — a person in your network (bigger = closer tie)
                     </li>
                     <li className="flex items-center gap-2">
                       <span className="text-[9px] font-semibold uppercase tracking-wider text-[#ff9900]">
@@ -2187,7 +2293,8 @@ export function NetworkGraph({
                     </li>
                     <li className="flex items-center gap-2">
                       <span className="h-px w-4 bg-white/70" />
-                      Constellation — between related people
+                      Constellation — bright stars trace a cluster&apos;s
+                      figure; fainter ones are the rest of the group
                     </li>
                     <li className="flex items-center gap-2">
                       <span className="h-2 w-4 rounded-full bg-gradient-to-r from-transparent to-[#ff6b4a]" />
