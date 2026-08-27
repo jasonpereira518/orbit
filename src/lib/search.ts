@@ -217,10 +217,11 @@ export async function semanticSearchContacts(
       | null = null;
 
     if (scoreByContact.size === 0) {
-      // The fallback for when pgvector is unavailable — always the case on PGlite, which
-      // has no build of it. Every row carries a 1,536-float JSONB array, so this is capped:
-      // uncapped, a 5,000-contact network materialises tens of millions of floats in Node
-      // to score one query.
+      // The fallback for when pgvector is unavailable — always the case on local PGlite
+      // (no vector extension in the pinned version), and also on any Neon DB where the
+      // extension failed to install. Every row carries a 1,536-float JSONB array, so this
+      // is capped: uncapped, a 5,000-contact network materialises tens of millions of
+      // floats in Node to score one query.
       embeddingRows = await db.query.contactEmbeddings.findMany({
         where: eq(contactEmbeddings.userId, userId),
         columns: { contactId: true, embedding: true, content: true },
