@@ -156,6 +156,62 @@ async function markRowsDone(rowIds: string[], contactIdByRowId: Map<string, stri
 }
 
 /**
+ * Run a chunk's writes, splitting on failure until the bad rows are isolated.
+ *
+ * With 250-row statements, all-or-nothing failure means one malformed row costs an entire
+ * import — the larger the chunk, the worse that trade gets. Halving costs at most
+ * log2(chunk) extra attempts, and only when something is actually wrong, so the happy path
+ * (`write` never throws) costs exactly the one call it always cost — no narrowing statement
+ * is ever issued unless a write actually fails.
+ *
+ * A chunk where every row is bad degrades to one statement per row (the base case fires for
+ * every leaf). That is the correct worst case, not a bug to cap: the alternative is failing
+ * the whole chunk again, which is exactly what this function exists to stop doing. A cap
+ * would just reintroduce "one bad row (or a few) costs a batch of good ones" at whatever
+ * size the cap picked, and 250 one-row statements is not a cost worth guarding against — the
+ * plain multi-row happy path already dominates real traffic.
+ *
+ * `write` and `onBadRow` are expected to apply their own side effects (accounting, mapping
+ * row ids to contact ids, etc.) as part of running — `writeWithNarrowing` itself only
+ * decides how many rows to include in each attempt, never what a successful or failed write
+ * means to the caller.
+ */
+async function writeWithNarrowing<T>(
+  items: T[],
+  write: (batch: T[]) => Promise<void>,
+  onBadRow: (item: T, err: unknown) => Promise<void>
+): Promise<void> {
+  if (items.length === 0) return;
+  try {
+    await write(items);
+  } catch (err) {
+    if (items.length === 1) {
+      await onBadRow(items[0], err);
+      return;
+    }
+    const mid = Math.ceil(items.length / 2);
+    // Sequential, not `Promise.all`: the second half's headroom-aware admission (the create
+    // path) depends on the first half having already updated `headroom`, so these two calls
+    // must not race.
+    await writeWithNarrowing(items.slice(0, mid), write, onBadRow);
+    await writeWithNarrowing(items.slice(mid), write, onBadRow);
+  }
+}
+
+/** Row-level reason recorded when narrowing isolates this row as the cause of a chunk failure. */
+async function markRowFailed(row: PendingRow, err: unknown) {
+  const db = await getDb();
+  await db
+    .update(importJobRows)
+    .set({
+      status: "failed",
+      errorMessage: (err instanceof Error ? err.message : "Row failed").slice(0, 500),
+      updatedAt: new Date(),
+    })
+    .where(eq(importJobRows.id, row.id));
+}
+
+/**
  * Folds this invocation's cost into whatever `stats` the row already carried, rather than
  * overwriting it. A self-continuing job runs this once per invocation — at the time-budget
  * early return and again (or instead) at completion — and the interesting number is the
@@ -324,6 +380,16 @@ export async function runImportJob(importId: string): Promise<void> {
         contactId: row.contact_id,
       }));
 
+      // `UPDATE ... RETURNING` does not guarantee its output is in the claiming subquery's
+      // `ORDER BY row_index` — that clause only bounds *which* rows are claimed, not the
+      // order they come back in. Classification below is order-independent, but
+      // `createContactsBulkForUser` admits from the front of `toCreate` under the plan cap,
+      // and `toCreate` is built by iterating `pendingRows` — so an unsorted claim would make
+      // "which contacts get admitted" depend on arbitrary RETURNING order instead of file
+      // order. Sorting once here is what makes every "from the front" guarantee downstream
+      // (the cap, and narrowing's recursive front/back split below) actually mean file order.
+      pendingRows.sort((a, b) => a.rowIndex - b.rowIndex);
+
       if (pendingRows.length === 0) break;
 
       const toCreate: { row: PendingRow; input: ContactInput }[] = [];
@@ -377,43 +443,61 @@ export async function runImportJob(importId: string): Promise<void> {
       // rows every pass, so leaving them pending would spin until the time budget and then
       // reschedule forever. They are marked `skipped` with a reason, and counted under
       // `blockedByPlan` so the UI can offer an upgrade instead of reporting an error.
-      let planBlockedRows: PendingRow[] = [];
+      //
+      // Accumulated with `push` rather than a single assignment because `writeWithNarrowing`
+      // can call this batch's write callback more than once (once per surviving sub-batch
+      // after a poison row is isolated), and each successful sub-batch can contribute its
+      // own cap-refused tail.
+      const planBlockedRows: PendingRow[] = [];
 
       if (toCreate.length > 0) {
-        const created = await createContactsBulkForUser(
-          userId,
-          toCreate.map((item) => item.input),
-          companyResolve,
-          { skipRevalidate: true, skipEmbedding: true, headroom }
-        );
-        created.forEach((contact, i) => {
-          addToDuplicateIndex(duplicateIndex, contact);
-          contactIdByRowId.set(toCreate[i].row.id, contact.id);
-          touchedContactIds.push(contact.id);
-        });
-        contactsCreated += created.length;
-        if (headroom !== null) headroom = Math.max(0, headroom - created.length);
+        await writeWithNarrowing(
+          toCreate,
+          async (batch) => {
+            const created = await createContactsBulkForUser(
+              userId,
+              batch.map((item) => item.input),
+              companyResolve,
+              { skipRevalidate: true, skipEmbedding: true, headroom }
+            );
+            // Only reached once the insert has actually succeeded — a batch whose insert
+            // throws is caught by `writeWithNarrowing`, which retries smaller slices of the
+            // same `batch`, so nothing here may run for a batch that didn't really write.
+            created.forEach((contact, i) => {
+              addToDuplicateIndex(duplicateIndex, contact);
+              contactIdByRowId.set(batch[i].row.id, contact.id);
+              touchedContactIds.push(contact.id);
+            });
+            contactsCreated += created.length;
+            if (headroom !== null) headroom = Math.max(0, headroom - created.length);
 
-        if (created.length < toCreate.length) {
-          planBlockedRows = toCreate
-            .slice(created.length)
-            .map((item) => item.row);
-          blockedByPlanTotal += planBlockedRows.length;
-        }
+            if (created.length < batch.length) {
+              planBlockedRows.push(...batch.slice(created.length).map((item) => item.row));
+              blockedByPlanTotal += batch.length - created.length;
+            }
+          },
+          async (item, err) => markRowFailed(item.row, err)
+        );
       }
 
       if (toUpdate.length > 0) {
-        await bulkMergeContactsForUser(
-          userId,
-          toUpdate.map((item) => ({ contactId: item.contactId, input: item.input })),
-          companyResolve
+        await writeWithNarrowing(
+          toUpdate,
+          async (batch) => {
+            await bulkMergeContactsForUser(
+              userId,
+              batch.map((item) => ({ contactId: item.contactId, input: item.input })),
+              companyResolve
+            );
+            for (const item of batch) {
+              contactIdByRowId.set(item.row.id, item.contactId);
+              touchedContactIds.push(item.contactId);
+            }
+            contactsUpdated += batch.length;
+            duplicatesFound += batch.length;
+          },
+          async (item, err) => markRowFailed(item.row, err)
         );
-        for (const item of toUpdate) {
-          contactIdByRowId.set(item.row.id, item.contactId);
-          touchedContactIds.push(item.contactId);
-        }
-        contactsUpdated += toUpdate.length;
-        duplicatesFound += toUpdate.length;
       }
 
       // One insert for the whole chunk, not one per row: an importer that logs a meeting or
@@ -438,17 +522,21 @@ export async function runImportJob(importId: string): Promise<void> {
       for (const id of touchedContactIds) allTouchedContactIds.add(id);
 
       const blockedRowIds = new Set(planBlockedRows.map((row) => row.id));
-      const doneRowIds = [
-        ...toCreate
-          .map((item) => item.row.id)
-          .filter((id) => !blockedRowIds.has(id)),
-        ...toUpdate.map((item) => item.row.id),
-      ];
+      // Every row that actually got a contact id — via a successful create or a successful
+      // merge — is in `contactIdByRowId`, and nothing else is: a cap-refused row is never
+      // passed to `createContactsBulkForUser` for a batch beyond `created.length`, and a
+      // narrowed-out poison row's batch throws before this map is ever touched for it. So
+      // this is simply every row this chunk actually wrote, independent of how narrowing
+      // split the batches to get there — no need to separately subtract blocked/failed rows
+      // from `toCreate`/`toUpdate` the way a pre-narrowing "all or nothing" write allowed.
+      const doneRowIds = [...contactIdByRowId.keys()];
 
       // These three writes touch disjoint row sets — blockedRowIds is a subset of
-      // toCreate's rows that createContactsBulkForUser refused, doneRowIds is every
-      // toCreate/toUpdate row except those, and toSkip is rows filtered out before either
-      // bulk write ran — so there is nothing to gain from running them one after another.
+      // toCreate's rows that createContactsBulkForUser refused, doneRowIds is every row that
+      // was actually created or merged, and toSkip is rows filtered out before either bulk
+      // write ran. (Rows narrowing isolated as poison are already terminal — `markRowFailed`
+      // wrote them directly — and appear in none of these three sets.) So there is nothing
+      // to gain from running these three writes one after another.
       await Promise.all([
         blockedRowIds.size > 0
           ? db

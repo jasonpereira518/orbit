@@ -28,6 +28,7 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-import";
 // DATABASE_URL (one `vercel env pull` away) would point that at shared data.
 delete process.env.DATABASE_URL;
 
+import crypto from "node:crypto";
 import { count, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, imports, importJobRows, userSettings } from "../src/db/schema";
@@ -310,6 +311,48 @@ async function main() {
     resumedRow?.duplicatesFound === 20,
     `duplicatesFound: ${resumedRow?.duplicatesFound}, ${JSON.stringify(resumedOutcome)}`
   );
+
+  // --- one poisonous row must not take the whole import with it ---
+  // The brief's suggested poison — a NUL byte in `firstName` — turns out to be inert here
+  // for the wrong-but-instructive reason: `import_job_rows.payload` is `jsonb`, and
+  // Postgres's own JSON parser refuses an embedded NUL byte ("unsupported Unicode escape
+  // sequence") before the row can even be seeded, let alone reach the create/merge write
+  // this task narrows. Confirmed by hand: seeding one row with
+  // `firstName: "bad" + String.fromCharCode(0) + "name"` throws at `seedJob` time, never
+  // reaching `runImportJob` at all — so it would prove nothing about narrowing.
+  //
+  // A value that fails only at the actual write, and only for this one row, has to be
+  // something Postgres accepts as JSON text but refuses when it lands in an *indexed*
+  // column: `contacts_company_idx` covers `(user_id, company)`, and a btree index entry has
+  // a hard ~2704-byte ceiling. An incompressible (crypto-random, so PGLZ/TOAST can't shrink
+  // it) 3000-character `company` value clears that ceiling and reliably throws "index row
+  // size ... exceeds btree version 4 maximum 2704 for index \"contacts_company_idx\"" on
+  // insert — confirmed by hand the same way. The other 29 rows keep their normal, short
+  // company values and insert cleanly.
+  await reset();
+  const poisoned = fixture(30);
+  poisoned[7].company = crypto.randomBytes(1500).toString("hex");
+  id = await seedJob(poisoned);
+  await runJob(id);
+  out = await outcome(id);
+  check("import survives a bad row", out.status === "completed", JSON.stringify(out));
+  check("good rows still land", out.created === 29, JSON.stringify(out));
+  {
+    const db = await getDb();
+    const rows = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, id) });
+    const bad = rows.find((r) => r.rowIndex === 7);
+    const rest = rows.filter((r) => r.rowIndex !== 7);
+    check(
+      "the poisoned row alone is marked failed with a message",
+      bad?.status === "failed" && typeof bad.errorMessage === "string" && bad.errorMessage.length > 0,
+      JSON.stringify(bad)
+    );
+    check(
+      "every other row reached a terminal done status",
+      rest.every((r) => r.status === "done"),
+      JSON.stringify(rest.map((r) => r.status))
+    );
+  }
 
   await reset();
   const db = await getDb();
