@@ -20,11 +20,13 @@ const SIZES = {
  * repeated from `pricing-tiers.tsx` and `plan-comparison.tsx` instead of being imported —
  * an arbitrary value has to be visible to the scanner at build time.
  *
- * The ring is drawn on a wrapper `span` sized to the logo's footprint, not on the `Image`
- * itself: the mark is shrunk and centred inside that wrapper, leaving a transparent gap
- * between the mark's own edge and the ring. Drawing both from the same box (rather than
- * ring-offsetting off the image element) keeps the ring concentric with the mark instead of
- * drifting off-centre.
+ * The ring is drawn on a wrapper `span` that's larger than the mark, not on the `Image`
+ * itself: the mark renders at its full requested size and sits centred inside that larger
+ * wrapper, leaving a transparent gap between the mark's own edge and the ring. Drawing both
+ * from the same box (rather than ring-offsetting off the image element) keeps the ring
+ * concentric with the mark instead of drifting off-centre. This does mean a ringed logo's
+ * footprint is bigger than its `size` — callers that need a ring to stay within a fixed box
+ * should size that box independently.
  *
  * `orbit-logo.png`'s painted disc isn't centred in its own square canvas — it sits ~10.5px
  * right of centre on the 512px source (verified by scanning for the disc's solid-colour
@@ -40,7 +42,7 @@ const PLAN_RING: Record<Plan, string | null> = {
 };
 
 // Transparent breathing room between the mark's edge and the ring stroke, plus the stroke's
-// own width — subtracted from each side so the ring sits just outside the shrunk mark.
+// own width — added to each side so the ring sits just outside the full-size mark.
 const RING_GAP = 2;
 const RING_WIDTH = 2.5;
 
@@ -74,7 +76,7 @@ export function OrbitLogo({
     );
   }
 
-  const markPx = px - 2 * (RING_GAP + RING_WIDTH);
+  const wrapperPx = px + 2 * (RING_GAP + RING_WIDTH);
 
   return (
     <span
@@ -83,7 +85,7 @@ export function OrbitLogo({
         ring,
         className,
       )}
-      style={{ width: px, height: px }}
+      style={{ width: wrapperPx, height: wrapperPx }}
       // Colour alone should never be the only carrier of meaning: the ring is decorative,
       // and this is what names the plan for a pointer or a screen reader that surfaces it.
       title={PLAN_LABELS[plan!]}
@@ -91,11 +93,11 @@ export function OrbitLogo({
       <Image
         src="/orbit-logo.png"
         alt="Orbit"
-        width={markPx}
-        height={markPx}
+        width={px}
+        height={px}
         priority={priority}
         className="rounded-full"
-        style={{ transform: `translateX(-${markPx * MARK_SHIFT_RATIO}px)` }}
+        style={{ transform: `translateX(-${px * MARK_SHIFT_RATIO}px)` }}
       />
     </span>
   );
