@@ -651,9 +651,40 @@ export type GmailSenderRowPayload = {
   messageIds: string[];
 };
 
+/** One row of a Google People API contacts fetch, snapshotted for the engine to process. */
+export type GoogleContactRowPayload = {
+  kind: "google_contact";
+  resourceName: string;
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  company: string;
+  title: string;
+  email: string;
+  phone: string;
+  photoUrl: string;
+};
+
+/** One row of an Outlook/Microsoft Graph contacts fetch, snapshotted for the engine to
+ *  process. No `photoUrl` — unlike Google People, the Graph contacts endpoint this import
+ *  reads from doesn't carry a photo URL alongside the contact fields. */
+export type OutlookContactRowPayload = {
+  kind: "outlook_contact";
+  id: string;
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  company: string;
+  title: string;
+  email: string;
+  phone: string;
+};
+
 export type ImportJobRowPayload =
   | LinkedInImportRowPayload
-  | GmailSenderRowPayload;
+  | GmailSenderRowPayload
+  | GoogleContactRowPayload
+  | OutlookContactRowPayload;
 
 export function isGmailSenderRow(
   payload: ImportJobRowPayload

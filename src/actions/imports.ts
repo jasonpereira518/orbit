@@ -23,6 +23,11 @@ import {
 } from "@/lib/duplicates";
 import { createContactIfRoom, updateContact } from "@/actions/contacts";
 import { runLinkedInImportJob } from "@/lib/import-job-processor";
+import {
+  GOOGLE_CONTACTS_IMPORT_TYPE,
+  OUTLOOK_CONTACTS_IMPORT_TYPE,
+  runImportJobById,
+} from "@/lib/import-job-dispatch";
 import { parseLinkedInConnectionsCsv } from "@/lib/linkedin-connections";
 import {
   parseLinkedInMessagesCsv,
@@ -1184,109 +1189,65 @@ export async function previewGoogleContacts(): Promise<{
   return { connected: true, contactsScopeGranted: true, people };
 }
 
-export async function confirmGoogleContactsImport(selectedIds: string[]) {
+/**
+ * Starts a server-owned Google Contacts import: snapshots the selected contacts once, then
+ * hands them to the engine in the background via `after()`. Survives tab close/navigation —
+ * the client should poll `getImportJobStatus`, same as `startLinkedInImport`.
+ *
+ * This used to be the entire import inline, one contact at a time — a headroom count, a
+ * company resolve, an insert, a tag sync, an embedding API call, and a rescore, per contact.
+ * A large mailbox hit the 300s function ceiling and died with nothing recoverable. Snapshotting
+ * into `import_job_rows` and letting the engine's own chunked, resumable loop (Tasks 10-12)
+ * own the writes is what fixes that.
+ */
+export async function confirmGoogleContactsImport(
+  selectedIds: string[]
+): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
   const db = await getDb();
-  const writeOpts = { skipRevalidate: true };
 
   const accessToken = await getValidAccessToken(userId);
   const googleContacts = await fetchGooglePeopleContacts(accessToken);
   const selected = new Set(selectedIds);
   const rows = googleContacts.filter((p) => selected.has(p.resourceName));
+  if (rows.length === 0) throw new Error("No contacts selected to import");
 
-  const existing = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    columns: {
-      id: true,
-      fullName: true,
-      email: true,
-      linkedinUrl: true,
-      company: true,
-      title: true,
-    },
-  });
+  const [importRow] = await db
+    .insert(imports)
+    .values({
+      userId,
+      importType: GOOGLE_CONTACTS_IMPORT_TYPE,
+      fileName: "Google Contacts",
+      status: "processing",
+      totalRows: rows.length,
+      stats: {},
+    })
+    .returning();
 
-  let created = 0;
-  let blockedByPlan = 0;
-  let updated = 0;
+  await db.insert(importJobRows).values(
+    rows.map((row, index) => ({
+      importId: importRow.id,
+      userId,
+      rowIndex: index,
+      payload: {
+        kind: "google_contact" as const,
+        resourceName: row.resourceName,
+        fullName: row.fullName,
+        firstName: row.firstName,
+        lastName: row.lastName,
+        company: row.company,
+        title: row.title,
+        email: row.email,
+        phone: row.phone,
+        photoUrl: row.photoUrl ?? "",
+      },
+    }))
+  );
 
-  for (const row of rows) {
-    if (!row.fullName.trim()) continue;
-    const dups = findDuplicateCandidates(existing, {
-      fullName: row.fullName,
-      email: row.email,
-      company: row.company,
-      title: row.title,
-    });
-
-    if (dups[0] && dups[0].confidence >= DUPLICATE_MERGE_CONFIDENCE) {
-      await updateContact(
-        dups[0].contact.id,
-        {
-          company: row.company || undefined,
-          title: row.title || undefined,
-          email: row.email || undefined,
-          phone: row.phone || undefined,
-          profileImageUrl: row.photoUrl || undefined,
-          source: "google_contacts",
-          howMet: "Google Contacts",
-          metContext: "online",
-        },
-        writeOpts
-      );
-      updated++;
-    } else {
-      const contact = await createContactIfRoom(
-        {
-          fullName: row.fullName,
-          firstName: row.firstName || undefined,
-          lastName: row.lastName || undefined,
-          company: row.company || undefined,
-          title: row.title || undefined,
-          email: row.email || undefined,
-          phone: row.phone || undefined,
-          profileImageUrl: row.photoUrl || undefined,
-          source: "google_contacts",
-          relationshipScore: 2,
-          howMet: "Google Contacts",
-          metContext: "online",
-          tagNames: ["google-contacts"],
-        },
-        writeOpts
-      );
-      if (!contact) {
-        blockedByPlan++;
-      } else {
-        existing.push(contact as (typeof existing)[number]);
-        created++;
-      }
-    }
-  }
-
-  await db.insert(imports).values({
-    userId,
-    importType: "google_contacts",
-    fileName: "Google Contacts",
-    status: "completed",
-    rowsProcessed: rows.length,
-    contactsCreated: created,
-    contactsUpdated: updated,
-    duplicatesFound: updated,
-    stats: { blockedByPlan },
-  });
-
-  try {
-    await refreshOutreachSuggestions(userId);
-  } catch {
-    // non-fatal
-  }
-
-  revalidatePath("/");
-  revalidatePath("/contacts");
+  after(() => runImportJobById(importRow.id).catch(() => {}));
   revalidatePath("/imports");
-  revalidatePath("/graph");
 
-  return { created, updated, blockedByPlan };
+  return { importId: importRow.id, totalRows: rows.length };
 }
 
 export type OutlookContactPerson = {
@@ -1363,105 +1324,57 @@ export async function previewOutlookContacts(): Promise<{
   return { connected: true, people };
 }
 
-export async function confirmOutlookContactsImport(selectedIds: string[]) {
+/**
+ * Starts a server-owned Outlook Contacts import: snapshots the selected contacts once, then
+ * hands them to the engine in the background via `after()`. Identical shape to
+ * `confirmGoogleContactsImport` — see its comment for why this collapsed from a per-row loop
+ * to a snapshot-and-handoff.
+ */
+export async function confirmOutlookContactsImport(
+  selectedIds: string[]
+): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
   const db = await getDb();
-  const writeOpts = { skipRevalidate: true };
 
   const accessToken = await getValidOutlookAccessToken(userId);
   const outlookContacts = await fetchOutlookContacts(accessToken);
   const selected = new Set(selectedIds);
   const rows = outlookContacts.filter((p) => selected.has(p.id));
+  if (rows.length === 0) throw new Error("No contacts selected to import");
 
-  const existing = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    columns: {
-      id: true,
-      fullName: true,
-      email: true,
-      linkedinUrl: true,
-      company: true,
-      title: true,
-    },
-  });
+  const [importRow] = await db
+    .insert(imports)
+    .values({
+      userId,
+      importType: OUTLOOK_CONTACTS_IMPORT_TYPE,
+      fileName: "Outlook Contacts",
+      status: "processing",
+      totalRows: rows.length,
+      stats: {},
+    })
+    .returning();
 
-  let created = 0;
-  let blockedByPlan = 0;
-  let updated = 0;
+  await db.insert(importJobRows).values(
+    rows.map((row, index) => ({
+      importId: importRow.id,
+      userId,
+      rowIndex: index,
+      payload: {
+        kind: "outlook_contact" as const,
+        id: row.id,
+        fullName: row.fullName,
+        firstName: row.firstName,
+        lastName: row.lastName,
+        company: row.company,
+        title: row.title,
+        email: row.email,
+        phone: row.phone,
+      },
+    }))
+  );
 
-  for (const row of rows) {
-    if (!row.fullName.trim()) continue;
-    const dups = findDuplicateCandidates(existing, {
-      fullName: row.fullName,
-      email: row.email,
-      company: row.company,
-      title: row.title,
-    });
-
-    if (dups[0] && dups[0].confidence >= DUPLICATE_MERGE_CONFIDENCE) {
-      await updateContact(
-        dups[0].contact.id,
-        {
-          company: row.company || undefined,
-          title: row.title || undefined,
-          email: row.email || undefined,
-          phone: row.phone || undefined,
-          source: "outlook_contacts",
-          howMet: "Outlook Contacts",
-          metContext: "online",
-        },
-        writeOpts
-      );
-      updated++;
-    } else {
-      const contact = await createContactIfRoom(
-        {
-          fullName: row.fullName,
-          firstName: row.firstName || undefined,
-          lastName: row.lastName || undefined,
-          company: row.company || undefined,
-          title: row.title || undefined,
-          email: row.email || undefined,
-          phone: row.phone || undefined,
-          source: "outlook_contacts",
-          relationshipScore: 2,
-          howMet: "Outlook Contacts",
-          metContext: "online",
-          tagNames: ["outlook-contacts"],
-        },
-        writeOpts
-      );
-      if (!contact) {
-        blockedByPlan++;
-      } else {
-        existing.push(contact as (typeof existing)[number]);
-        created++;
-      }
-    }
-  }
-
-  await db.insert(imports).values({
-    userId,
-    importType: "outlook_contacts",
-    fileName: "Outlook Contacts",
-    status: "completed",
-    rowsProcessed: rows.length,
-    contactsCreated: created,
-    contactsUpdated: updated,
-    duplicatesFound: updated,
-    stats: { blockedByPlan },
-  });
-
-  try {
-    await refreshOutreachSuggestions(userId);
-  } catch {
-    // non-fatal
-  }
-
-  revalidatePath("/");
-  revalidatePath("/contacts");
+  after(() => runImportJobById(importRow.id).catch(() => {}));
   revalidatePath("/imports");
-  revalidatePath("/graph");
 
-  return { created, updated, blockedByPlan };
+  return { importId: importRow.id, totalRows: rows.length };
 }

@@ -3,7 +3,9 @@
 import { useSyncExternalStore } from "react";
 import {
   cancelImportSession,
+  confirmGoogleContactsImport,
   confirmLinkedInMessagesImport,
+  confirmOutlookContactsImport,
   getImportJobStatus,
   startLinkedInImport,
   type ImportJobStatus,
@@ -25,7 +27,19 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 }
 
-export type ImportJobKind = "connections" | "messages";
+export type ImportJobKind =
+  | "connections"
+  | "messages"
+  | "google_contacts"
+  | "outlook_contacts";
+
+/** Job kinds whose import is server-owned and processed by the resumable engine — as
+ *  opposed to "messages", which is still driven client-side, batch by batch. */
+const SERVER_OWNED_KINDS = new Set<ImportJobKind>([
+  "connections",
+  "google_contacts",
+  "outlook_contacts",
+]);
 
 export type ImportJobSnapshot = {
   id: string;
@@ -38,12 +52,11 @@ export type ImportJobSnapshot = {
   enrichmentMessage?: string;
 };
 
-export type ImportJobInput = {
-  kind: ImportJobKind;
-  csvText: string;
-  fileName: string;
-  ids: string[];
-};
+export type ImportJobInput =
+  | { kind: "connections"; csvText: string; fileName: string; ids: string[] }
+  | { kind: "messages"; csvText: string; fileName: string; ids: string[] }
+  | { kind: "google_contacts"; ids: string[] }
+  | { kind: "outlook_contacts"; ids: string[] };
 
 type Listener = () => void;
 
@@ -58,9 +71,16 @@ function emit() {
 }
 
 function importJobLabel(kind: ImportJobKind) {
-  return kind === "connections"
-    ? "Importing LinkedIn connections"
-    : "Importing LinkedIn messages";
+  switch (kind) {
+    case "connections":
+      return "Importing LinkedIn connections";
+    case "messages":
+      return "Importing LinkedIn messages";
+    case "google_contacts":
+      return "Importing Google contacts";
+    case "outlook_contacts":
+      return "Importing Outlook contacts";
+  }
 }
 
 /** Mirrors the singleton import snapshot into the shared multi-job store so it
@@ -76,7 +96,7 @@ function mirrorToBackgroundJobs(next: ImportJobSnapshot | null) {
     if (!getBackgroundJob(backgroundJobId)) {
       startBackgroundJob({
         id: backgroundJobId,
-        kind: next.kind === "connections" ? "connections-import" : "messages-import",
+        kind: `${next.kind}-import`,
         label: importJobLabel(next.kind),
         done,
         total,
@@ -104,9 +124,9 @@ function setSnapshot(next: ImportJobSnapshot | null) {
 }
 
 function onBeforeUnload(event: BeforeUnloadEvent) {
-  // Connections imports run server-side and survive navigation/tab close —
-  // only warn for the still-client-driven messages import.
-  if (snapshot?.status === "running" && snapshot.kind !== "connections") {
+  // Server-owned imports (connections, Google/Outlook contacts) run on the engine and
+  // survive navigation/tab close — only warn for the still-client-driven messages import.
+  if (snapshot?.status === "running" && !SERVER_OWNED_KINDS.has(snapshot.kind)) {
     event.preventDefault();
     event.returnValue = "";
   }
@@ -233,9 +253,14 @@ type PollOutcome =
   | { outcome: "cancelled" }
   | { outcome: "done"; status: ImportJobStatus };
 
+/** The subset of `ImportJobKind` that names a server-owned import — one the resumable
+ *  engine (Tasks 10-13) processes, rather than the still-client-driven "messages" import. */
+type ServerOwnedKind = "connections" | "google_contacts" | "outlook_contacts";
+
 /** Polls a server-owned import job's status until it leaves "processing"/"pending". */
-async function pollLinkedInImportJob(
+async function pollServerOwnedImportJob(
   jobId: string,
+  kind: ServerOwnedKind,
   importId: string,
   label: string,
   startedAt: number
@@ -259,7 +284,7 @@ async function pollLinkedInImportJob(
 
     setSnapshot({
       id: jobId,
-      kind: "connections",
+      kind,
       status: "running",
       cancelling: isCancelRequested(jobId),
       progress: {
@@ -277,6 +302,77 @@ async function pollLinkedInImportJob(
 
     await sleep(POLL_INTERVAL_MS);
   }
+}
+
+/**
+ * Starts a server-owned import job (LinkedIn connections, Google contacts, Outlook
+ * contacts — anything the resumable engine drives) and polls it to completion, updating
+ * the shared snapshot as it goes. `start` is expected to insert the `imports`/
+ * `import_job_rows` snapshot and kick the background run, exactly like `startLinkedInImport`
+ * and the `confirm*ContactsImport` actions do.
+ */
+async function runServerOwnedImportJob(
+  jobId: string,
+  kind: ServerOwnedKind,
+  label: string,
+  start: () => Promise<{ importId: string; totalRows: number }>
+): Promise<void> {
+  const startedAt = Date.now();
+  const { importId, totalRows } = await start();
+
+  if (snapshot?.id !== jobId) return;
+  setSnapshot({
+    id: jobId,
+    kind,
+    status: "running",
+    progress: { done: 0, total: totalRows, label, startedAt },
+  });
+
+  const result = await pollServerOwnedImportJob(jobId, kind, importId, label, startedAt);
+  if (result.outcome === "stale") return;
+
+  if (result.outcome === "cancelled") {
+    cancelJobId = null;
+    setSnapshot({
+      id: jobId,
+      kind,
+      status: "cancelled",
+      progress: null,
+      resultMessage: `Import stopped.`,
+    });
+    return;
+  }
+
+  const status = result.status;
+  if (status.status === "failed") {
+    setSnapshot({
+      id: jobId,
+      kind,
+      status: "failed",
+      progress: null,
+      error: status.errorMessage || "Import failed",
+    });
+    return;
+  }
+
+  if (status.status === "cancelled") {
+    setSnapshot({
+      id: jobId,
+      kind,
+      status: "cancelled",
+      progress: null,
+      resultMessage: `Import stopped. ${status.rowsProcessed} of ${status.totalRows} ${label} kept.`,
+    });
+    return;
+  }
+
+  setSnapshot({
+    id: jobId,
+    kind,
+    status: "completed",
+    progress: null,
+    resultMessage: `Imported: ${status.contactsCreated} created, ${status.contactsUpdated} updated`,
+  });
 }
 
 /**
@@ -298,66 +394,23 @@ export function startImportJob(input: ImportJobInput) {
   void (async () => {
     try {
       if (input.kind === "connections") {
-        const startedAt = Date.now();
-        const { importId, totalRows } = await startLinkedInImport(
-          input.csvText,
-          input.fileName,
-          input.ids
+        await runServerOwnedImportJob(jobId, "connections", label, () =>
+          startLinkedInImport(input.csvText, input.fileName, input.ids)
         );
+        return;
+      }
 
-        if (snapshot?.id !== jobId) return;
-        setSnapshot({
-          id: jobId,
-          kind: "connections",
-          status: "running",
-          progress: { done: 0, total: totalRows, label, startedAt },
-        });
+      if (input.kind === "google_contacts") {
+        await runServerOwnedImportJob(jobId, "google_contacts", label, () =>
+          confirmGoogleContactsImport(input.ids)
+        );
+        return;
+      }
 
-        const result = await pollLinkedInImportJob(jobId, importId, label, startedAt);
-        if (result.outcome === "stale") return;
-
-        if (result.outcome === "cancelled") {
-          cancelJobId = null;
-          setSnapshot({
-            id: jobId,
-            kind: "connections",
-            status: "cancelled",
-            progress: null,
-            resultMessage: `Import stopped.`,
-          });
-          return;
-        }
-
-        const status = result.status;
-        if (status.status === "failed") {
-          setSnapshot({
-            id: jobId,
-            kind: "connections",
-            status: "failed",
-            progress: null,
-            error: status.errorMessage || "Import failed",
-          });
-          return;
-        }
-
-        if (status.status === "cancelled") {
-          setSnapshot({
-            id: jobId,
-            kind: "connections",
-            status: "cancelled",
-            progress: null,
-            resultMessage: `Import stopped. ${status.rowsProcessed} of ${status.totalRows} ${label} kept.`,
-          });
-          return;
-        }
-
-        setSnapshot({
-          id: jobId,
-          kind: "connections",
-          status: "completed",
-          progress: null,
-          resultMessage: `Imported: ${status.contactsCreated} created, ${status.contactsUpdated} updated`,
-        });
+      if (input.kind === "outlook_contacts") {
+        await runServerOwnedImportJob(jobId, "outlook_contacts", label, () =>
+          confirmOutlookContactsImport(input.ids)
+        );
         return;
       }
 

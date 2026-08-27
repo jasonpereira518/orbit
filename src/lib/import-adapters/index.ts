@@ -4,6 +4,14 @@ import {
   LINKEDIN_IMPORT_TYPE,
   linkedinConnectionsAdapter,
 } from "@/lib/import-adapters/linkedin-connections";
+import {
+  GOOGLE_CONTACTS_IMPORT_TYPE,
+  googleContactsAdapter,
+} from "@/lib/import-adapters/google-contacts";
+import {
+  OUTLOOK_CONTACTS_IMPORT_TYPE,
+  outlookContactsAdapter,
+} from "@/lib/import-adapters/outlook-contacts";
 
 /**
  * Every import type the engine can run, keyed by `imports.import_type`.
@@ -15,6 +23,8 @@ import {
  */
 const ADAPTERS: Record<string, ImportAdapter<ImportJobRowPayload>> = {
   [LINKEDIN_IMPORT_TYPE]: linkedinConnectionsAdapter,
+  [GOOGLE_CONTACTS_IMPORT_TYPE]: googleContactsAdapter,
+  [OUTLOOK_CONTACTS_IMPORT_TYPE]: outlookContactsAdapter,
 };
 
 /**

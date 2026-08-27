@@ -2,6 +2,8 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { imports } from "@/db/schema";
 import { LINKEDIN_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-connections";
+import { GOOGLE_CONTACTS_IMPORT_TYPE } from "@/lib/import-adapters/google-contacts";
+import { OUTLOOK_CONTACTS_IMPORT_TYPE } from "@/lib/import-adapters/outlook-contacts";
 import { runImportJob } from "@/lib/import-engine";
 import {
   GMAIL_SCAN_IMPORT_TYPE,
@@ -9,11 +11,11 @@ import {
 } from "@/lib/gmail-scan-processor";
 
 /**
- * Re-exported from the LinkedIn adapter, which is where the constant now lives: the adapter
- * registry has to key on it, and importing it from here would close a cycle
+ * Re-exported from their adapters, which is where these constants now live: the adapter
+ * registry has to key on them, and importing them from here would close a cycle
  * (dispatch -> engine -> registry -> dispatch). Every existing call site keeps working.
  */
-export { LINKEDIN_IMPORT_TYPE };
+export { LINKEDIN_IMPORT_TYPE, GOOGLE_CONTACTS_IMPORT_TYPE, OUTLOOK_CONTACTS_IMPORT_TYPE };
 
 /**
  * Import types that own their own server-side processing and can therefore be resumed.
@@ -23,6 +25,8 @@ export { LINKEDIN_IMPORT_TYPE };
  */
 export const RESUMABLE_IMPORT_TYPES = [
   LINKEDIN_IMPORT_TYPE,
+  GOOGLE_CONTACTS_IMPORT_TYPE,
+  OUTLOOK_CONTACTS_IMPORT_TYPE,
   GMAIL_SCAN_IMPORT_TYPE,
 ] as const;
 
@@ -45,6 +49,8 @@ export async function runImportJobById(importId: string): Promise<void> {
     case GMAIL_SCAN_IMPORT_TYPE:
       return runGmailRecruiterScanJob(importId);
     case LINKEDIN_IMPORT_TYPE:
+    case GOOGLE_CONTACTS_IMPORT_TYPE:
+    case OUTLOOK_CONTACTS_IMPORT_TYPE:
       return runImportJob(importId);
     default:
       // Client-driven kinds (e.g. the LinkedIn messages import) have no server runner.

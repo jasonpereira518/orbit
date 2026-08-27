@@ -293,7 +293,16 @@ export async function runImportJob(importId: string): Promise<void> {
   // runner (the client-driven ones) resolve to `null` and are left alone rather than being
   // pushed through a loop that has no idea what their payloads mean.
   const adapter = getAdapter(importRow.importType);
-  if (!adapter) return;
+  if (!adapter) {
+    // `startQueryCount()` above already armed the module-global counter. Without stopping
+    // it here, it stays armed and keeps ticking on whatever unrelated work runs next in
+    // this process, until some future `startQueryCount()` zeroes it again — silently
+    // misattributing those statements to that next count. This path was unreachable while
+    // only LinkedIn was registered; registering Google/Outlook (and any client-driven type
+    // with no server runner) makes it reachable.
+    stopQueryCount();
+    return;
+  }
   const createsContacts = adapter.createsContacts !== false;
 
   const userId = importRow.userId;

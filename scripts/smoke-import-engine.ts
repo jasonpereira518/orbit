@@ -31,15 +31,21 @@ delete process.env.DATABASE_URL;
 import crypto from "node:crypto";
 import { count, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, imports, importJobRows, userSettings } from "../src/db/schema";
+import {
+  contacts,
+  imports,
+  importJobRows,
+  userSettings,
+  type ImportJobRowPayload,
+} from "../src/db/schema";
 import { isClerkConfigured, isDemoMode } from "../src/lib/auth";
 import { FREE_CONTACT_LIMIT } from "../src/lib/entitlements";
 import {
   CHUNK_SIZE,
   MAX_ROW_FAILURES_PER_CHUNK,
   PLAN_LIMIT_ROW_REASON,
-  runLinkedInImportJob,
 } from "../src/lib/import-job-processor";
+import { runImportJobById } from "../src/lib/import-job-dispatch";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const USER = "smoke-import-engine-user";
@@ -50,14 +56,16 @@ function check(label: string, condition: boolean, detail?: string) {
 }
 
 /**
- * Runs the job, tolerating only the `revalidatePath` invariant that fires because this
- * is a bare script rather than a Next.js request. The DB row is already fully updated by
- * the time that call happens, so swallowing it does not hide anything the checks below
- * would otherwise catch. Anything else escapes and fails the run.
+ * Runs the job through the shared dispatcher (which resolves the right runner from the
+ * job row's own `import_type`, LinkedIn included — see `import-job-dispatch.ts`), tolerating
+ * only the `revalidatePath` invariant that fires because this is a bare script rather than a
+ * Next.js request. The DB row is already fully updated by the time that call happens, so
+ * swallowing it does not hide anything the checks below would otherwise catch. Anything else
+ * escapes and fails the run.
  */
 async function runJob(importId: string) {
   try {
-    await runLinkedInImportJob(importId);
+    await runImportJobById(importId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (!message.startsWith("Invariant: static generation store missing")) throw err;
@@ -98,14 +106,18 @@ function poisonCompany() {
   return crypto.randomBytes(1500).toString("hex");
 }
 
-/** Seeds an import plus its job rows directly, skipping CSV parsing. */
-async function seedJob(rows: ReturnType<typeof fixture>) {
+/**
+ * Seeds an import plus its job rows directly, skipping CSV/API parsing. Widened to take the
+ * import type and any payload shape so the same helper seeds LinkedIn, Google, and Outlook
+ * fixtures alike.
+ */
+async function seedJob(rows: object[], importType = "linkedin_connections") {
   const db = await getDb();
   const [job] = await db
     .insert(imports)
     .values({
       userId: USER,
-      importType: "linkedin_connections",
+      importType,
       fileName: "fixture.csv",
       status: "processing",
       totalRows: rows.length,
@@ -117,7 +129,7 @@ async function seedJob(rows: ReturnType<typeof fixture>) {
       importId: job.id,
       userId: USER,
       rowIndex: i,
-      payload,
+      payload: payload as ImportJobRowPayload,
     }))
   );
   return job.id;
@@ -527,6 +539,68 @@ async function main() {
       JSON.stringify(rows.map((r) => r.status))
     );
   }
+
+  // --- Google contacts run the same engine, keyed on email ---
+  // Google/Outlook rows carry no LinkedIn URL, and often no email either — this fixture
+  // always has one so it can freeze the "re-import merges" behavior specifically. A
+  // name-only row still gets exercised above: the blank-name row (index 5) proves the
+  // no-identity skip path works the same way it does for LinkedIn.
+  await reset();
+  const google = Array.from({ length: 40 }, (_, i) => ({
+    kind: "google_contact" as const,
+    resourceName: `people/c${i}`,
+    fullName: `Google Person ${i}`,
+    firstName: "Google",
+    lastName: `Person ${i}`,
+    company: `Company ${i % 6}`,
+    title: `Title ${i % 4}`,
+    email: `google${i}@example.com`,
+    phone: "",
+    photoUrl: "",
+  }));
+  google[5].fullName = "   ";
+
+  id = await seedJob(google, "google_contacts");
+  await runJob(id);
+  out = await outcome(id);
+  check("google import completes", out.status === "completed", JSON.stringify(out));
+  check("google creates all but the nameless row", out.created === 39, JSON.stringify(out));
+  check("google skips the nameless row", out.skipped === 1, JSON.stringify(out));
+
+  // Re-running the same export must merge on email, not duplicate.
+  id = await seedJob(google, "google_contacts");
+  await runJob(id);
+  out = await outcome(id);
+  check("google re-import merges", out.updated === 39, JSON.stringify(out));
+  check("google re-import creates none", out.created === 0, JSON.stringify(out));
+
+  // --- Outlook contacts: same engine, same email-keyed identity, different payload shape ---
+  await reset();
+  const outlook = Array.from({ length: 40 }, (_, i) => ({
+    kind: "outlook_contact" as const,
+    id: `AAMk${i}`,
+    fullName: `Outlook Person ${i}`,
+    firstName: "Outlook",
+    lastName: `Person ${i}`,
+    company: `Company ${i % 6}`,
+    title: `Title ${i % 4}`,
+    email: `outlook${i}@example.com`,
+    phone: "",
+  }));
+  outlook[5].fullName = "   ";
+
+  id = await seedJob(outlook, "outlook_contacts");
+  await runJob(id);
+  out = await outcome(id);
+  check("outlook import completes", out.status === "completed", JSON.stringify(out));
+  check("outlook creates all but the nameless row", out.created === 39, JSON.stringify(out));
+  check("outlook skips the nameless row", out.skipped === 1, JSON.stringify(out));
+
+  id = await seedJob(outlook, "outlook_contacts");
+  await runJob(id);
+  out = await outcome(id);
+  check("outlook re-import merges", out.updated === 39, JSON.stringify(out));
+  check("outlook re-import creates none", out.created === 0, JSON.stringify(out));
 
   await reset();
   const db = await getDb();
