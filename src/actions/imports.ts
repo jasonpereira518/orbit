@@ -119,6 +119,14 @@ export async function previewLinkedInCsv(csvText: string) {
   const db = await getDb();
   const existing = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
+    columns: {
+      id: true,
+      fullName: true,
+      email: true,
+      linkedinUrl: true,
+      company: true,
+      title: true,
+    },
   });
 
   const people = rows.map((row, index) => {
