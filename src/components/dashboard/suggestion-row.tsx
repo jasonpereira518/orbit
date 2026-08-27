@@ -68,7 +68,7 @@ export function SuggestionRow({
                 {contactName}
               </Link>
             ) : (
-              <p className="font-medium text-primary">{contactName}</p>
+              <p className="font-medium text-ink">{contactName}</p>
             )}
             <span
               className={cn(

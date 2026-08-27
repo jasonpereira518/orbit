@@ -100,7 +100,7 @@ export function AppShell({
               title="Back to landing page"
             >
               <OrbitLogo size="md" plan={plan} />
-              <span className="font-[family-name:var(--font-display)] text-lg leading-none text-primary">
+              <span className="font-[family-name:var(--font-display)] text-lg leading-none text-ink">
                 Orbit
               </span>
             </Link>

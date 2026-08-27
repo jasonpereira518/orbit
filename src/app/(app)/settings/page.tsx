@@ -42,7 +42,7 @@ export default async function SettingsPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-8">
       <div>
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-primary">
+        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
           Settings
         </h1>
         <p className="mt-1 text-muted-foreground">

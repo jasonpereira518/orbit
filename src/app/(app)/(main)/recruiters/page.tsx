@@ -135,7 +135,7 @@ export default async function RecruitersPage({
           // The empty Discover tab is the incentive made visible. Hiding it entirely
           // would also hide the offer, so it renders the reason instead of a list.
           <div className="rounded-2xl border border-dashed border-border/70 bg-card px-5 py-12 text-center">
-            <p className="font-medium text-primary">Nothing to discover yet</p>
+            <p className="font-medium text-ink">Nothing to discover yet</p>
             <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
               Discover shows recruiters other people have logged. It fills up
               when you share your own list — that&apos;s the trade. Your notes and

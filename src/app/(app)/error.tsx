@@ -18,8 +18,8 @@ export default function AppError({
 
   return (
     <div className="mx-auto flex min-h-[50vh] max-w-lg flex-col items-center justify-center gap-4 px-6 py-16 text-center">
-      <p className="text-sm font-medium text-primary">Something went wrong</p>
-      <h1 className="font-[family-name:var(--font-display)] text-3xl tracking-tight text-primary">
+      <p className="text-sm font-medium text-ink">Something went wrong</p>
+      <h1 className="font-[family-name:var(--font-display)] text-3xl tracking-tight text-ink">
         Orbit hit a snag
       </h1>
       <p className="text-muted-foreground">

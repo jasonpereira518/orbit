@@ -67,7 +67,7 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
           className="reveal-mount rounded-2xl border border-dashed border-border/70 px-6 py-10 text-center"
           style={revealDelay(60)}
         >
-          <h2 className="font-[family-name:var(--font-display)] text-2xl text-primary">
+          <h2 className="font-[family-name:var(--font-display)] text-2xl text-ink">
             Your orbit is empty
           </h2>
           <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
@@ -376,7 +376,7 @@ function StatCard({
         <span className="text-xs font-medium uppercase tracking-wide">{label}</span>
         {icon}
       </div>
-      <p className="mt-3 font-[family-name:var(--font-display)] text-3xl text-primary">
+      <p className="mt-3 font-[family-name:var(--font-display)] text-3xl text-ink">
         {value}
       </p>
       {subtitle && (

@@ -42,7 +42,7 @@ export default async function OutreachCampaignPage({
           >
             ← All campaigns
           </Link>
-          <h1 className="mt-2 font-[family-name:var(--font-display)] text-3xl text-primary">
+          <h1 className="mt-2 font-[family-name:var(--font-display)] text-3xl text-ink">
             {campaign.name}
           </h1>
           <p className="mt-1 max-w-2xl text-muted-foreground">

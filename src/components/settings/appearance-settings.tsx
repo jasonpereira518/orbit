@@ -41,7 +41,7 @@ export function AppearanceSettings({
   return (
     <section className="space-y-3 rounded-2xl border border-border/70 bg-card p-6">
       <div>
-        <h2 className="text-lg font-medium text-primary">Appearance</h2>
+        <h2 className="text-lg font-medium text-ink">Appearance</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Choose light, dark, or match your system. Saved to your account and
           syncs across devices.

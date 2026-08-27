@@ -106,7 +106,7 @@ export function CalendarFeedSettings() {
   return (
     <section className="space-y-3 rounded-2xl border border-border/70 bg-card p-6">
       <div>
-        <h2 className="text-lg font-medium text-primary">Calendar feed</h2>
+        <h2 className="text-lg font-medium text-ink">Calendar feed</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Subscribe to your reminders in Google Calendar, Apple Calendar, or
           Outlook so they show up alongside everything else.

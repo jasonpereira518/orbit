@@ -39,7 +39,7 @@ export function AdminShell({
       <header className="sticky top-0 z-30 border-b border-border/70 bg-card/90 backdrop-blur">
         <div className="mx-auto flex w-full max-w-[1400px] items-center gap-6 px-6 py-3">
           <Link href="/admin" className="flex items-center gap-2">
-            <span className="font-[family-name:var(--font-display)] text-base text-primary">
+            <span className="font-[family-name:var(--font-display)] text-base text-ink">
               Orbit
             </span>
             <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[0.625rem] font-medium uppercase tracking-widest text-accent-foreground">

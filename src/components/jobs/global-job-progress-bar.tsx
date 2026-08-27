@@ -55,7 +55,7 @@ function JobRow({ job }: { job: BackgroundJob }) {
       </div>
 
       <div className="min-w-0 flex-1 space-y-1.5">
-        <p className="truncate text-sm font-medium text-primary">
+        <p className="truncate text-sm font-medium text-ink">
           {job.status === "running"
             ? job.cancelling
               ? "Stopping…"

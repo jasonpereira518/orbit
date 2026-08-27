@@ -44,9 +44,16 @@
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
   --color-landing-accent: #f2c14e;
+  /* Orbit Pro's blue, mirroring how gold is handled: `--color-tier-pro` follows
+     the theme (for app surfaces that must stay legible in light mode) while
+     `--color-brand-pro` is a fixed value for the always-dark canvases — pricing
+     cards and the logo ring — that never see the light palette. */
+  --color-brand-pro: #599de7;
   --color-landing-button-surface: #eef7f4;
   --color-landing-button-label: #0f2e28;
   --color-tier-lifetime: var(--tier-lifetime);
+  --color-tier-pro: var(--tier-pro);
+  --color-ink: var(--ink);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -105,6 +112,16 @@
      means something else (chart series, calendar import, etc). Dark enough
      for 4.5:1 text contrast on a light card, not just icon-level contrast. */
   --tier-lifetime: #8a6423;
+  --tier-pro: #2f68b0;
+  /* Emphasised content — names, titles, section headings. This is the value
+     `--primary` has always had in light mode, which is why ~90 call sites reach
+     for `text-primary` to mean "strong text". It only worked by coincidence:
+     light `--primary` is near-black teal, so the tint read as emphasis. In dark,
+     `--primary` is a bright accent, so the same class turned every heading and
+     every contact name into saturated blue. Splitting the two meanings apart
+     lets `--primary` be an accent in both themes without dragging body content
+     with it. Light is unchanged from before the split. */
+  --ink: #0f3d3e;
   --radius: 0.625rem;
   --sidebar: #f7f8f6;
   --sidebar-foreground: #1a1c1a;
@@ -131,43 +148,77 @@
 }
 
 .dark {
-  --background: #272727;
-  --foreground: #f0f0f0;
-  --card: #303030;
-  --card-foreground: #f0f0f0;
-  --popover: #303030;
-  --popover-foreground: #f0f0f0;
-  --primary: #599de7;
-  --primary-foreground: #0f1720;
-  --secondary: #353535;
-  --secondary-foreground: #f0f0f0;
-  --muted: #333333;
-  --muted-foreground: #a8a8a8;
-  --accent: #2d3a48;
-  --accent-foreground: #599de7;
-  --destructive: oklch(0.65 0.2 25);
-  --border: #3d3d3d;
-  --input: #3d3d3d;
-  --ring: #599de7;
-  --chart-1: #599de7;
-  --chart-2: #7bb0ec;
-  --chart-3: #9dc4f1;
-  --chart-4: #3d7fc7;
-  --chart-5: #b8d4f5;
+  /* ── Night sky ──
+   * The app chrome paints the same space the Constellation canvas and the
+   * landing page already live in (see lib/sky-palette.ts), rather than the
+   * neutral gray it used to be. Every neutral carries hue 220-222°, close
+   * enough to the sky's 227° to read as one continuous product.
+   *
+   * The surface ladder below is spaced by PERCEPTUAL lightness (L*), not by
+   * WCAG contrast ratio: the ratio formula's +0.05 flare term compresses hard
+   * near black, so it reports two clearly-distinct dark surfaces as ~1.1:1 and
+   * is the wrong tool down here. Every adjacent rung is >= 3.2 L* apart and the
+   * ladder is monotonic — `--muted` used to sit ABOVE `--card`, which is why
+   * recessed wells read as raised.
+   *
+   *   sidebar     #080d18   L*  3.7
+   *   background  #0e1524   L*  6.8
+   *   muted       #151d2f   L* 10.9
+   *   card        #1a2438   L* 14.2
+   *   popover     #212c42   L* 18.0
+   *   border      #333f5a   L* 26.7
+   */
+  --background: #0e1524;
+  --foreground: #e4ebf6;
+  --card: #1a2438;
+  --card-foreground: #e4ebf6;
+  --popover: #212c42;
+  --popover-foreground: #e4ebf6;
+  --primary: #7cc3e2;
+  --primary-foreground: #04121b;
+  --secondary: #212c42;
+  --secondary-foreground: #e4ebf6;
+  --muted: #151d2f;
+  --muted-foreground: #96a8c4;
+  --accent: #20374f;
+  --accent-foreground: #aeddf0;
+  --destructive: #ff6b6b;
+  --border: #333f5a;
+  /* Light enough to clear 3:1 against `--card` — this is a control boundary
+     (WCAG 1.4.11), not decoration. The old #3d3d3d managed 1.22:1, so text
+     fields had effectively no edge. */
+  --input: #626f90;
+  --ring: #7cc3e2;
+  /* Five distinct HUES with staggered lightness, so series stay separable in
+     grayscale and under red-green colour blindness. The old dark ramp was five
+     lightnesses of one hue (211-212°) — a categorical scale that silently
+     rendered as a sequential one. Hue order tracks light mode's
+     (cool -> green -> blue -> gold -> rust) so a series keeps its identity
+     when the theme flips. */
+  --chart-1: #3aa8c4;
+  --chart-2: #63d69b;
+  --chart-3: #7d8ee8;
+  --chart-4: #f7d071;
+  --chart-5: #f08a63;
   --import-connections: #9b9ff5;
-  --import-messages: #e08a68;
-  --import-calendar: #d9a855;
+  --import-messages: #f0956f;
+  --import-calendar: #e2b45f;
   /* Brighter on a dark card so it keeps 4.5:1 text contrast (#8a6423 would
      read as near-black here). */
   --tier-lifetime: #f2c14e;
-  --sidebar: #272727;
-  --sidebar-foreground: #f0f0f0;
-  --sidebar-primary: #599de7;
-  --sidebar-primary-foreground: #0f1720;
-  --sidebar-accent: #353535;
-  --sidebar-accent-foreground: #599de7;
-  --sidebar-border: #3d3d3d;
-  --sidebar-ring: #599de7;
+  --tier-pro: #599de7;
+  --ink: #e4ebf6;
+  /* Shadows on a dark ground want to be deeper than the surface, not neutral
+     black — a pure-black shadow over navy reads as a dead hole. */
+  --shadow-color: 218deg 60% 3%;
+  --sidebar: #080d18;
+  --sidebar-foreground: #e4ebf6;
+  --sidebar-primary: #7cc3e2;
+  --sidebar-primary-foreground: #04121b;
+  --sidebar-accent: #1a2438;
+  --sidebar-accent-foreground: #aeddf0;
+  --sidebar-border: #333f5a;
+  --sidebar-ring: #7cc3e2;
   color-scheme: dark;
 }
 
@@ -190,16 +241,21 @@
       );
     background-attachment: fixed;
   }
+  /* Ambient nebulae, at a fraction of the landing page's strength. Hues are
+   * lifted straight from NEBULAE in lib/sky-palette.ts so the app chrome is
+   * lit by the same gas clouds as the starfield. The old second glow here was
+   * rgba(53,53,53,.55) — gray on gray, i.e. an invisible layer that still cost
+   * a paint. */
   .dark body {
     background-image:
       radial-gradient(
         ellipse 80% 50% at 100% -20%,
-        rgba(89, 157, 231, 0.14),
+        rgba(104, 96, 214, 0.16),
         transparent
       ),
       radial-gradient(
         ellipse 60% 40% at 0% 100%,
-        rgba(53, 53, 53, 0.55),
+        rgba(46, 122, 158, 0.14),
         transparent
       );
   }
@@ -293,12 +349,15 @@
     );
 }
 
+/* Built on the navy surface values rather than the old rgba(55,55,55): the
+ * base `saturate(1.65)` needs actual chroma behind it to do anything, and over
+ * flat gray it was a no-op. */
 .dark .liquid-glass {
   background: linear-gradient(
     165deg,
-    rgba(55, 55, 55, 0.72) 0%,
-    rgba(39, 39, 39, 0.55) 45%,
-    rgba(32, 32, 32, 0.48) 100%
+    rgba(43, 57, 86, 0.72) 0%,
+    rgba(26, 36, 56, 0.55) 45%,
+    rgba(14, 21, 36, 0.48) 100%
   );
   border-color: rgba(255, 255, 255, 0.12);
   box-shadow:
@@ -317,7 +376,7 @@
     ),
     radial-gradient(
       90% 60% at 100% 100%,
-      rgba(89, 157, 231, 0.1) 0%,
+      rgba(124, 195, 226, 0.12) 0%,
       transparent 50%
     );
 }
@@ -325,9 +384,9 @@
 .dark .liquid-glass:hover {
   background: linear-gradient(
     165deg,
-    rgba(60, 60, 60, 0.55) 0%,
-    rgba(39, 39, 39, 0.4) 45%,
-    rgba(28, 28, 28, 0.36) 100%
+    rgba(52, 68, 102, 0.55) 0%,
+    rgba(33, 44, 66, 0.4) 45%,
+    rgba(18, 27, 45, 0.36) 100%
   );
   border-color: rgba(255, 255, 255, 0.18);
   box-shadow:
@@ -346,7 +405,7 @@
     ),
     radial-gradient(
       95% 65% at 100% 100%,
-      rgba(89, 157, 231, 0.14) 0%,
+      rgba(124, 195, 226, 0.16) 0%,
       transparent 50%
     );
 }
@@ -398,9 +457,9 @@
 .dark .liquid-glass.liquid-glass-pill {
   background: linear-gradient(
     165deg,
-    rgba(55, 55, 55, 0.5) 0%,
-    rgba(39, 39, 39, 0.38) 45%,
-    rgba(32, 32, 32, 0.32) 100%
+    rgba(43, 57, 86, 0.5) 0%,
+    rgba(26, 36, 56, 0.38) 45%,
+    rgba(14, 21, 36, 0.32) 100%
   );
   border-color: rgba(255, 255, 255, 0.12);
   box-shadow:

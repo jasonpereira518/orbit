@@ -116,7 +116,7 @@ export function PeopleListShell({
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: DUR.base, ease: EASE_HOUSE }}
-            className="font-[family-name:var(--font-display)] text-3xl text-primary"
+            className="font-[family-name:var(--font-display)] text-3xl text-ink"
           >
             {title}
           </motion.h1>

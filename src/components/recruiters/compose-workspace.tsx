@@ -78,7 +78,7 @@ export function ComposeWorkspace({
 
         <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-5">
           <div>
-            <h2 className="font-medium text-primary">1. What do you want to say?</h2>
+            <h2 className="font-medium text-ink">1. What do you want to say?</h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Orbit writes each email from your history with that recruiter. You review
               every one before anything sends.
@@ -104,7 +104,7 @@ export function ComposeWorkspace({
         <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="font-medium text-primary">2. Who should get it?</h2>
+              <h2 className="font-medium text-ink">2. Who should get it?</h2>
               <p className="mt-1 text-sm text-muted-foreground">
                 {sendable.length} recruiter{sendable.length === 1 ? "" : "s"} with an
                 email address.
@@ -205,7 +205,7 @@ export function ComposeWorkspace({
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/70 bg-card p-5">
         <div>
-          <h2 className="font-medium text-primary">
+          <h2 className="font-medium text-ink">
             {drafts.length} draft{drafts.length === 1 ? "" : "s"} ready
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -290,7 +290,7 @@ export function ComposeWorkspace({
                 className="mt-1"
               />
               <div className="min-w-0 flex-1">
-                <p className="font-medium text-primary">{d.recruiterName}</p>
+                <p className="font-medium text-ink">{d.recruiterName}</p>
                 <p className="text-sm text-muted-foreground">
                   {d.recruiterFirm ? `${d.recruiterFirm} · ` : ""}
                   {d.recruiterEmail}

@@ -14,9 +14,9 @@ const COLUMNS: Plan[] = ["free", "orbit", "lifetime"];
 const COLUMN_ACCENT: Record<Plan, { heading: string; tick: string; tint?: string }> = {
   free: { heading: "text-[#e8f3f1]", tick: "text-[#6f8b84]" },
   orbit: {
-    heading: "text-[#599de7]",
-    tick: "text-[#599de7]",
-    tint: "bg-[#599de7]/[0.05]",
+    heading: "text-brand-pro",
+    tick: "text-brand-pro",
+    tint: "bg-brand-pro/5",
   },
   lifetime: { heading: "text-[#f2c14e]", tick: "text-[#f2c14e]" },
 };

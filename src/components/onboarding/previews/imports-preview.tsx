@@ -28,7 +28,7 @@ const sources = [
 export function ImportsPreview({ reducedMotion }: PreviewProps) {
   return (
     <div className="space-y-3 p-1">
-      <p className="font-[family-name:var(--font-display)] text-lg text-primary">
+      <p className="font-[family-name:var(--font-display)] text-lg text-ink">
         Imports
       </p>
       <ul className="space-y-2">

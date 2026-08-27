@@ -462,7 +462,7 @@ export function FloatingAskBar() {
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                              <p className="text-sm font-medium text-primary">
+                              <p className="text-sm font-medium text-ink">
                                 {hit.preferredName || hit.fullName}
                               </p>
                               <p className="truncate text-xs text-muted-foreground">

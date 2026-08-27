@@ -404,7 +404,7 @@ export function ChatPanel() {
           </DropdownMenu>
 
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-primary">
+            <p className="truncate text-sm font-medium text-ink">
               {headerTitle}
             </p>
             <p className="truncate text-xs text-muted-foreground">
@@ -452,7 +452,7 @@ export function ChatPanel() {
                 <>
                   {messages.length === 0 && !pending && (
                     <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-                      <p className="font-[family-name:var(--font-display)] text-xl text-primary sm:text-2xl">
+                      <p className="font-[family-name:var(--font-display)] text-xl text-ink sm:text-2xl">
                         Ask your network
                       </p>
                       <p className="max-w-md text-sm text-muted-foreground">

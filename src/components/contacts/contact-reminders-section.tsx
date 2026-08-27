@@ -81,7 +81,7 @@ export function ContactRemindersSection({
                 className="flex items-start gap-2 rounded-xl border border-border/60 p-3"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-primary">{r.title}</p>
+                  <p className="text-sm font-medium text-ink">{r.title}</p>
                   {r.description?.trim() ? (
                     <p className="mt-1 text-sm text-muted-foreground">
                       {r.description}
