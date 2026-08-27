@@ -1190,10 +1190,15 @@ export function neonClient() {
 /**
  * Copies JSONB embeddings into the pgvector column for rows written before it existed.
  *
- * Deliberately NOT on the boot path any more. It is one round trip per run (a single
- * batched `UPDATE ... FROM (VALUES ...)`) rather than one per row, so it can be called
- * more aggressively than before if needed — but the daily cron cadence is left alone here.
- * Until a row is copied, search just falls back for that row.
+ * Deliberately NOT on the boot path any more. Normally one round trip per run (a single
+ * batched `UPDATE ... FROM (VALUES ...)`) rather than one per row, so it can be called more
+ * aggressively than before if needed — but the daily cron cadence is left alone here. If the
+ * batched statement fails (e.g. one malformed/wrong-dimension embedding in the window), this
+ * falls back to per-row updates so a single bad row can't wedge the whole window: the SELECT
+ * has no cursor, so a permanently-failing batch would otherwise re-select and re-fail the
+ * same rows on every future cron run. Bad rows are logged and skipped; everything else in the
+ * window still drains. Returns the number of rows actually copied. Until a row is copied,
+ * search just falls back for that row.
  */
 export async function backfillEmbeddingVectors(
   sql: ReturnType<typeof neon>,
@@ -1223,14 +1228,38 @@ export async function backfillEmbeddingVectors(
       return `($${i * 2 + 1}::uuid, $${i * 2 + 2}::vector)`;
     })
     .join(", ");
-  await sql.query(
-    `UPDATE contact_embeddings AS ce
-     SET embedding_vector = v.vec
-     FROM (VALUES ${tuples}) AS v(id, vec)
-     WHERE ce.id = v.id`,
-    params
-  );
-  return valid.length;
+  try {
+    await sql.query(
+      `UPDATE contact_embeddings AS ce
+       SET embedding_vector = v.vec
+       FROM (VALUES ${tuples}) AS v(id, vec)
+       WHERE ce.id = v.id`,
+      params
+    );
+    return valid.length;
+  } catch (err) {
+    console.error(
+      `[backfillEmbeddingVectors] batched update failed for ${valid.length} rows, falling back to per-row:`,
+      err
+    );
+  }
+
+  let copied = 0;
+  for (const row of valid) {
+    try {
+      const literal = formatVectorLiteral(row.embedding);
+      await sql.query(
+        `UPDATE contact_embeddings
+         SET embedding_vector = $1::vector
+         WHERE id = $2`,
+        [literal, row.id]
+      );
+      copied += 1;
+    } catch (err) {
+      console.error(`[backfillEmbeddingVectors] failed to copy row ${row.id}:`, err);
+    }
+  }
+  return copied;
 }
 
 /**

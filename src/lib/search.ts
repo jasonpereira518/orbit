@@ -433,6 +433,19 @@ export async function rebuildContactEmbedding(userId: string, contactId: string)
   await upsertContactEmbedding(userId, contactId, "profile", profile, contactId);
   if (notes) {
     await upsertContactEmbedding(userId, contactId, "notes", notes, contactId);
+  } else {
+    // Content shrank back under the split threshold — drop the now-stale "notes" row so it
+    // doesn't keep contributing to semantic search / content-boost matching forever.
+    await db
+      .delete(contactEmbeddings)
+      .where(
+        and(
+          eq(contactEmbeddings.userId, userId),
+          eq(contactEmbeddings.contactId, contactId),
+          eq(contactEmbeddings.sourceType, "notes"),
+          eq(contactEmbeddings.sourceId, contactId)
+        )
+      );
   }
 }
 
@@ -475,6 +488,22 @@ export async function rebuildContactEmbeddingsBatch(
     if (notes && notes.trim().length > 0) {
       candidates.push({ contactId: contact.id, sourceType: "notes", content: notes, contentHash: computeContentHash(notes) });
     }
+  }
+
+  // Content that shrank back under the split threshold stops producing a "notes" candidate
+  // this run — drop any stored "notes" row for that contact so stale text doesn't keep
+  // contributing to semantic search / content-boost matching. Driven by the candidate set,
+  // not by hash comparison, so this fires even when nothing else changed this run.
+  const notesCandidateContactIds = new Set(
+    candidates.filter((entry) => entry.sourceType === "notes").map((entry) => entry.contactId)
+  );
+  const orphanedNotesRows = existing.filter(
+    (row) => row.sourceType === "notes" && !notesCandidateContactIds.has(row.contactId)
+  );
+  if (orphanedNotesRows.length > 0) {
+    await db.delete(contactEmbeddings).where(
+      inArray(contactEmbeddings.id, orphanedNotesRows.map((row) => row.id))
+    );
   }
 
   // Unchanged content keeps its stored embedding — no API call, no write.
