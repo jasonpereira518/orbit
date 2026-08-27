@@ -11,8 +11,8 @@ import {
 import { motion } from "motion/react";
 import { BackControl } from "@/components/pricing/back-control";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
-import { tangentForSlot } from "@/lib/warp/chrono";
-import { arrivedBy } from "@/components/warp/warp-provider";
+import { CHRONO_IN, tangentForSlot } from "@/lib/warp/chrono";
+import { arrivedBy, useWarp } from "@/components/warp/warp-provider";
 
 /**
  * Choreography for /upgrade's arrival, in one of two modes.
@@ -34,7 +34,11 @@ import { arrivedBy } from "@/components/warp/warp-provider";
  * "resolve" is the other arrival, produced only by the Settings time warp (a chrono
  * journey). Someone who time-warped in did not watch this page being built, so panels
  * condense out of the star trails instead of being placed — see the constants below. Back
- * in this mode is the provider's rewind, not the assembly played backwards.
+ * in this mode is the provider's rewind, not the assembly played backwards: there is no
+ * click handler here, because `BackControl` owns Back. Instead the panels watch
+ * `useWarp().run.phase` and, once it enters the inbound leg (`inbound` or `landing`),
+ * smear themselves back into the exposure in reverse order — the mirror of how they
+ * condensed in, not the brick-lift of the assemble exit.
  *
  * Scoped to /upgrade: BackControl's `onBeforeNavigate` hook this relies on is opt-in, so
  * /pricing and the marketing docs keep their instant back navigation untouched.
@@ -78,6 +82,10 @@ const RESOLVE_OFFSET = 14;
 const RESOLVE_SCALE = 1.015;
 const RESOLVE_EASE = [0.22, 0.61, 0.36, 1] as const;
 
+/** How long the rewind's dissolve takes, derived from the same beat table the
+ *  chrono stage reads so this can never drift out of step with it. */
+const DISSOLVE_DURATION = (CHRONO_IN.dissolve[1] - CHRONO_IN.dissolve[0]) / 1000;
+
 type TransitionState = {
   exiting: boolean;
   reduced: boolean;
@@ -85,6 +93,9 @@ type TransitionState = {
   /** "assemble" is the brick placement, for /pricing arrivals and direct
    *  loads. "resolve" is the time warp's condensation. */
   mode: "assemble" | "resolve";
+  /** True once a chrono rewind is under way and the panels should smear back
+   *  into the exposure. */
+  rewinding: boolean;
   startExit: (navigate: () => void) => void;
 };
 
@@ -107,8 +118,15 @@ export function UpgradeTransition({
   children: ReactNode;
 }) {
   const reduced = usePrefersReducedMotion();
+  const { run } = useWarp();
   const [exiting, setExiting] = useState(false);
   const [mode, setMode] = useState<"assemble" | "resolve">("assemble");
+  // Only "inbound" and "landing" are the rewind home — "cruise" and
+  // "arriving" belong to the outbound trip that condenses this page IN, and
+  // must not be mistaken for the rewind that dissolves it back out.
+  const rewinding =
+    run.journey === "chrono" &&
+    (run.phase === "inbound" || run.phase === "landing");
   // Captured at click time and run once every piece has lifted away — a ref because
   // invoking it must never itself trigger a re-render.
   const navigateRef = useRef<() => void>(() => {});
@@ -138,7 +156,9 @@ export function UpgradeTransition({
   }
 
   return (
-    <TransitionContext.Provider value={{ exiting, reduced, maxOrder, mode, startExit }}>
+    <TransitionContext.Provider
+      value={{ exiting, reduced, maxOrder, mode, rewinding, startExit }}
+    >
       {children}
     </TransitionContext.Provider>
   );
@@ -155,20 +175,34 @@ export function TransitionBackControl() {
 }
 
 function usePanelMotionProps(order: number) {
-  const { exiting, reduced, maxOrder, mode } = usePanelTransition();
+  const { exiting, reduced, maxOrder, mode, rewinding } = usePanelTransition();
 
   if (mode === "resolve") {
     const t = tangentForSlot(order, maxOrder);
+    const smeared = {
+      opacity: 0,
+      filter: `blur(${RESOLVE_BLUR}px)`,
+      scale: RESOLVE_SCALE,
+      x: t.x * RESOLVE_OFFSET,
+      y: t.y * RESOLVE_OFFSET,
+    };
+
+    if (rewinding) {
+      // Reverse stagger, as the assembly's exit already does: the last thing
+      // to resolve is the first to go.
+      return {
+        initial: false,
+        animate: smeared,
+        transition: {
+          duration: DISSOLVE_DURATION,
+          ease: "easeIn",
+          delay: (maxOrder - order) * EXIT_STAGGER,
+        },
+      } as const;
+    }
+
     return {
-      initial: reduced
-        ? false
-        : {
-            opacity: 0,
-            filter: `blur(${RESOLVE_BLUR}px)`,
-            scale: RESOLVE_SCALE,
-            x: t.x * RESOLVE_OFFSET,
-            y: t.y * RESOLVE_OFFSET,
-          },
+      initial: reduced ? false : smeared,
       animate: { opacity: 1, filter: "blur(0px)", scale: 1, x: 0, y: 0 },
       transition: {
         duration: RESOLVE_DURATION,
