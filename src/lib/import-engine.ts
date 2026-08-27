@@ -98,6 +98,21 @@ export type ImportAdapter<P> = {
   createsContacts?: boolean;
   /** Interaction rows to bulk-insert for this payload, once its contact id is known. */
   interactions?(payload: P, contactId: string, userId: string): InteractionInsert[];
+  /**
+   * Optional once-per-job finalization step, called after the chunk loop completes with
+   * every contact id this job touched (created or merged) across every chunk. Non-fatal —
+   * the engine wraps the call in `.catch(() => null)`, the same ignorable-failure treatment
+   * `refreshOutreachSuggestions` and `recalibrateCloseness` already get, so a bug here can
+   * never fail an otherwise-successful import.
+   *
+   * This is the seam for work that has to run once over the whole touched set rather than
+   * per row or per chunk — e.g. the LinkedIn messages adapter's AI enrichment pass, which
+   * re-reads each contact's `interactions` rows itself rather than needing anything from
+   * the payload. Deliberately NOT called per chunk: an adapter that used it for something
+   * chunk-sized would reintroduce the per-chunk provider-call cost Phase 2 removed from the
+   * embedding path.
+   */
+  finalize?(userId: string, contactIds: string[]): Promise<void>;
 };
 
 /** Kick a self-continuation request so remaining rows keep processing in a fresh invocation. */
@@ -685,6 +700,13 @@ export async function runImportJob(importId: string): Promise<void> {
     // improvement, not scope creep: it's the one finalization step every import type is
     // supposed to get, not something specific to this task's two new adapters.
     await refreshOutreachSuggestions(importRow.userId).catch(() => null);
+
+    // Adapter-specific once-per-job finalization (see `ImportAdapter.finalize`) — e.g. the
+    // LinkedIn messages adapter's AI enrichment pass. Runs over every contact this job
+    // touched across every chunk, once, not per chunk; non-fatal like the two calls above.
+    if (adapter.finalize) {
+      await adapter.finalize(importRow.userId, [...allTouchedContactIds]).catch(() => null);
+    }
 
     // Redraw the distribution once, now that every contact this import will ever add is in.
     // Closeness is cohort-relative, so importing 3,000 people moves where all the existing
