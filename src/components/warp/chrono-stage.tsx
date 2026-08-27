@@ -4,14 +4,19 @@ import { useEffect, useRef } from "react";
 import {
   CHRONO_ARRIVING_MS,
   CHRONO_IN,
+  CHRONO_IN_COVER,
   CHRONO_OPAQUE_MS,
   CHRONO_OUT,
+  CRUISE_BURSTS,
+  CRUISE_RESERVE_FRACTION,
+  IGNITION_FRACTIONS,
   POLE,
   burstForRadiusRank,
   chronoFrame,
+  type ChronoFrame,
   type ChronoPhase,
 } from "@/lib/warp/chrono";
-import { easeFade, span } from "@/lib/warp/choreography";
+import { REDUCED_MS, easeFade, span } from "@/lib/warp/choreography";
 import { DEEP_SPACE, STAR_GOLD, STAR_WHITE, paintSpace } from "@/lib/sky-palette";
 import type { WarpRun } from "@/components/warp/warp-provider";
 
@@ -55,6 +60,24 @@ const CORE = 0.07;
 const MAX_DT = 0.05;
 /** How fast an ignition flash decays, per second. */
 const FLASH_DECAY = 3.2;
+/**
+ * Where a reserve star sits in the growth order. Just under 1 — they are the
+ * newest things in the sky — but strictly below it, because `born < alive` is
+ * the lit gate and `alive` is exactly 1 for the whole outbound leg.
+ */
+const RESERVE_BORN = 0.99;
+/**
+ * Coverage at which the canvas starts swallowing clicks.
+ *
+ * The stage is `position: fixed` over the whole viewport, but the DESTINATION
+ * page is not the one the `[data-warp-craft]` pointer-events rule reaches —
+ * that rule only disables the origin's app shell, and the destination mounts
+ * in a different layout entirely. On /pricing that was cosmetic. /upgrade has
+ * checkout buttons under the cover, and a blind click there starts a Stripe
+ * session the visitor never saw. Half-hidden or more is not a click anyone
+ * meant to make.
+ */
+const COVER_BLOCKS_CLICKS = 0.5;
 
 /** The provider's phases, narrowed to the ones the beat math knows. */
 function chronoPhaseOf(phase: WarpRun["phase"]): ChronoPhase {
@@ -102,6 +125,8 @@ export function ChronoStage({ run }: { run: WarpRun }) {
     let stars: Star[] = [];
     let poleX = 0;
     let poleY = 0;
+    /** Radius of the corner furthest from the pole; the field scales with it. */
+    let maxR = 0;
     let last = 0;
 
     function paintSpaceLayer() {
@@ -115,7 +140,85 @@ export function ChronoStage({ run }: { run: WarpRun }) {
       space = off;
     }
 
+    /** The beat math for right now. */
+    function currentFrame() {
+      const r = runRef.current;
+      const now = performance.now();
+      return chronoFrame(
+        chronoPhaseOf(r.phase),
+        now - r.startedAt,
+        r.arrivingAt === null ? 0 : now - r.arrivingAt,
+      );
+    }
+
+    /**
+     * Whether a star with this burst and birth order is alight in frame `f`.
+     *
+     * Shared by the draw loop and the field builder on purpose: a field built
+     * mid-run must agree with the very next frame about what is already lit,
+     * or every one of those stars takes the ignition branch at once.
+     */
+    function isLit(f: ChronoFrame, burst: number, born: number) {
+      return burst >= 0 && f.bursts > burst && born < f.alive;
+    }
+
+    function newStar(burst: number, born: number, f: ChronoFrame): Star {
+      return {
+        // sqrt keeps the areal density even; CORE holds the knot open.
+        radius: maxR * (CORE + (1 - CORE) * Math.sqrt(Math.random())),
+        angle: Math.random() * Math.PI * 2,
+        r: Math.random() * 1.15 + 0.35,
+        gold: Math.random() < 0.05,
+        burst,
+        flash: 0,
+        // Seeded from what is already true rather than from "nothing has ever
+        // been lit". The stage REMOUNTS for the inbound run, where seven
+        // bursts have already fired — without this, ~88% of the field would
+        // take the `!s.ignited` branch on the first frame of the rewind and
+        // the sky would flare gold at the exact moment stars should be going
+        // out. The flare must only ever fire on a genuine unlit -> lit change.
+        ignited: isLit(f, burst, born),
+        born,
+      };
+    }
+
+    function buildField() {
+      const count = Math.min(Math.floor((width * height) / STAR_AREA), STAR_CAP);
+      const seeds = Math.floor(count * SEED_FRACTION);
+      const f = currentFrame();
+
+      // Build the field, then sort by ascending radius so growth spreads
+      // OUTWARD from the pole: the innermost `seeds` stars are the always-
+      // present spots, and every star beyond them ignites in a burst keyed to
+      // how far out it sits, filling the frame from the centre outward.
+      const field = Array.from({ length: count }, () => newStar(-1, 0, f));
+      field.sort((a, b) => a.radius - b.radius);
+      stars = field.map((s, i) => {
+        const grown = i >= seeds;
+        const rank = grown ? (i - seeds) / Math.max(1, count - seeds) : 0;
+        const burst = grown ? burstForRadiusRank(rank) : -1;
+        return { ...s, burst, born: rank, ignited: isLit(f, burst, rank) };
+      });
+
+      // The reserve: stars only a cruise hold can reach. Their burst indices
+      // begin where the scripted seven end, and `chronoFrame` only counts past
+      // seven while holding — so on a fast route not one of them ever appears,
+      // and during a hold the sky keeps filling instead of becoming a loop.
+      // Radii are drawn from the whole range rather than continuing the
+      // outward march: this is the sky filling in during a wait, not more of
+      // the designed seven-burst spread.
+      const reserve = Math.floor(count * CRUISE_RESERVE_FRACTION);
+      for (let i = 0; i < reserve; i += 1) {
+        const burst =
+          IGNITION_FRACTIONS.length + Math.floor((i / reserve) * CRUISE_BURSTS);
+        stars.push(newStar(burst, RESERVE_BORN, f));
+      }
+    }
+
     function resize() {
+      const prevTrail = trail;
+      const prevMaxR = maxR;
+
       dpr = Math.min(window.devicePixelRatio || 1, 2);
       width = window.innerWidth;
       height = window.innerHeight;
@@ -128,6 +231,14 @@ export function ChronoStage({ run }: { run: WarpRun }) {
 
       poleX = width * POLE.x;
       poleY = height * POLE.y;
+      // Far enough out to cover the corner furthest from the pole, or arcs
+      // would stop short of the frame edge.
+      maxR = Math.max(
+        Math.hypot(poleX, poleY),
+        Math.hypot(width - poleX, poleY),
+        Math.hypot(poleX, height - poleY),
+        Math.hypot(width - poleX, height - poleY),
+      );
 
       // The trail layer is never cleared — that accumulation IS the exposure —
       // so it is its own canvas, composited over the space base each frame.
@@ -137,46 +248,26 @@ export function ChronoStage({ run }: { run: WarpRun }) {
       const tctx = t.getContext("2d");
       if (!tctx) return;
       tctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Carry the accumulated exposure over rather than starting blank: a
+      // resize mid-run would otherwise wipe every arc in a single frame, which
+      // is a harder cut than anything else in the journey. Stretched rather
+      // than re-projected — the pole is a viewport fraction, so the mapping is
+      // close, and the shutter erases the residue within a few hundred ms.
+      if (prevTrail) tctx.drawImage(prevTrail, 0, 0, width, height);
       trail = t;
       trailCtx = tctx;
 
-      // Far enough out to cover the corner furthest from the pole, or arcs
-      // would stop short of the frame edge.
-      const maxR = Math.max(
-        Math.hypot(poleX, poleY),
-        Math.hypot(width - poleX, poleY),
-        Math.hypot(poleX, height - poleY),
-        Math.hypot(width - poleX, height - poleY),
-      );
-
-      const count = Math.min(Math.floor((width * height) / STAR_AREA), STAR_CAP);
-      const seeds = Math.floor(count * SEED_FRACTION);
-
-      // Build the field, then sort by ascending radius so growth spreads
-      // OUTWARD from the pole: the innermost `seeds` stars are the always-
-      // present spots, and every star beyond them ignites in a burst keyed to
-      // how far out it sits, filling the frame from the centre outward.
-      stars = Array.from({ length: count }, () => ({
-        // sqrt keeps the areal density even; CORE holds the knot open.
-        radius: maxR * (CORE + (1 - CORE) * Math.sqrt(Math.random())),
-        angle: Math.random() * Math.PI * 2,
-        r: Math.random() * 1.15 + 0.35,
-        gold: Math.random() < 0.05,
-        burst: -1,
-        flash: 0,
-        ignited: false,
-        born: 0,
-      }));
-      stars.sort((a, b) => a.radius - b.radius);
-      stars = stars.map((s, i) => {
-        const grown = i >= seeds;
-        const rank = grown ? (i - seeds) / Math.max(1, count - seeds) : 0;
-        return {
-          ...s,
-          burst: grown ? burstForRadiusRank(rank) : -1,
-          born: rank,
-        };
-      });
+      if (stars.length > 0) {
+        // Keep the field across a resize. Rebuilding it re-randomises every
+        // position mid-arc, which reads as the sky being swapped out; scaling
+        // the radii holds the composition and every star's history with it.
+        // Density is left at the count the field was built for — a transition
+        // is 2s long and nobody resizes through one twice.
+        const k = prevMaxR > 0 ? maxR / prevMaxR : 1;
+        for (const s of stars) s.radius *= k;
+        return;
+      }
+      buildField();
     }
 
     /**
@@ -189,8 +280,21 @@ export function ChronoStage({ run }: { run: WarpRun }) {
      */
     function coverage(now: number) {
       const r = runRef.current;
-      if (r.reduced) return 1;
       const elapsed = now - r.startedAt;
+      if (r.reduced) {
+        // Exactly the liftoff stage's reduced path, and for its reason: a
+        // full-viewport cut to an opaque deep-space canvas and a cut back out
+        // is a bigger luminance jump than the animation this visitor opted out
+        // of. The stage fades in, the route swaps, the stage fades out.
+        const fadeIn = span(elapsed, [0, REDUCED_MS]);
+        const out =
+          r.phase === "arriving" && r.arrivingAt !== null
+            ? 1 - span(now - r.arrivingAt, [0, REDUCED_MS])
+            : r.phase === "inbound" || r.phase === "landing"
+              ? 1 - span(elapsed, [0, REDUCED_MS])
+              : 1;
+        return Math.min(fadeIn, out);
+      }
       if (r.phase === "arriving") {
         const since = r.arrivingAt === null ? 0 : now - r.arrivingAt;
         // Hold through the collapse (the first CHRONO_OPAQUE_MS of the
@@ -198,8 +302,16 @@ export function ChronoStage({ run }: { run: WarpRun }) {
         return 1 - easeFade(span(since, [CHRONO_OPAQUE_MS, CHRONO_ARRIVING_MS]));
       }
       if (r.phase === "inbound" || r.phase === "landing") {
-        const [from, to] = CHRONO_IN.landing;
-        return 1 - easeFade(span(elapsed, [from, to]));
+        // UP across the dissolve, then down again over the landing window.
+        // Mounting at full cover would put the entire reverse-staggered panel
+        // dissolve behind an opaque canvas — and that dissolve is the shot the
+        // late `CHRONO_IN.push` exists to buy time for. The two windows are
+        // far apart, so `min` leaves a flat plateau between them rather than
+        // clipping either ramp.
+        return Math.min(
+          easeFade(span(elapsed, CHRONO_IN_COVER)),
+          1 - easeFade(span(elapsed, CHRONO_IN.landing)),
+        );
       }
       return easeFade(span(elapsed, CHRONO_OUT.shutter));
     }
@@ -233,8 +345,7 @@ export function ChronoStage({ run }: { run: WarpRun }) {
           s.angle += step;
 
           if (s.burst >= 0) {
-            const lit = f.bursts > s.burst && s.born < f.alive;
-            if (!lit) {
+            if (!isLit(f, s.burst, s.born)) {
               s.ignited = false;
               s.flash = 0;
               continue;
@@ -274,7 +385,11 @@ export function ChronoStage({ run }: { run: WarpRun }) {
         ctx!.globalCompositeOperation = "source-over";
       }
 
-      canvas!.style.opacity = String(coverage(now));
+      const cover = coverage(now);
+      canvas!.style.opacity = String(cover);
+      // See COVER_BLOCKS_CLICKS: the page under the cover stays fully
+      // interactive otherwise, and on /upgrade that page has checkout buttons.
+      canvas!.style.pointerEvents = cover >= COVER_BLOCKS_CLICKS ? "auto" : "none";
       raf = requestAnimationFrame(frame);
     }
 

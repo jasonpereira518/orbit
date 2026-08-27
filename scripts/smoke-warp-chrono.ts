@@ -20,13 +20,18 @@ import {
   CHRONO_ARRIVING_MS,
   CHRONO_IN,
   CHRONO_INBOUND_MS,
+  CHRONO_IN_COVER,
+  CHRONO_OPAQUE_MS,
   CHRONO_OUTBOUND_MS,
+  CHRONO_RESOLVE,
+  CRUISE_BURSTS,
+  CRUISE_BURST_MS,
   IGNITION_FRACTIONS,
   burstForRadiusRank,
   chronoFrame,
   tangentForSlot,
 } from "../src/lib/warp/chrono";
-import { easeFade } from "../src/lib/warp/choreography";
+import { CRUISE_CAP_MS, easeFade } from "../src/lib/warp/choreography";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -101,6 +106,52 @@ function main() {
     "...and keeps igniting, so a long hold is growth and not a loop",
     heldLong.bursts > heldShort.bursts
   );
+  // A burst counter that outruns the stage's reserve is arithmetic, not
+  // growth: nothing lights, and the beat the count exists to produce silently
+  // stops happening. The reserve is what those extra bursts light, so the
+  // count must never promise more of them than there are.
+  const forever = chronoFrame("cruise", CHRONO_OUTBOUND_MS + 60_000, 0);
+  check(
+    "the hold's bursts stop at the reserve the stage actually seeds",
+    forever.bursts === IGNITION_FRACTIONS.length + CRUISE_BURSTS,
+    `${forever.bursts} vs ${IGNITION_FRACTIONS.length + CRUISE_BURSTS}`
+  );
+  // ...and the reserve has to be big enough to last the longest hold the
+  // provider permits, or the sky freezes before the cap force-resolves.
+  const atCap = chronoFrame("cruise", CRUISE_CAP_MS, 0);
+  check(
+    "the reserve outlasts the longest hold CRUISE_CAP_MS allows",
+    atCap.bursts < IGNITION_FRACTIONS.length + CRUISE_BURSTS,
+    `held ${CRUISE_CAP_MS - CHRONO_OUTBOUND_MS}ms = ${atCap.bursts - IGNITION_FRACTIONS.length} bursts of ${CRUISE_BURSTS}`
+  );
+  check(
+    "nothing extra ignites on a fast route, where there is no hold at all",
+    chronoFrame("cruise", CHRONO_OUTBOUND_MS, 0).bursts ===
+      IGNITION_FRACTIONS.length
+  );
+  check(
+    "the first held burst arrives one CRUISE_BURST_MS into the hold",
+    chronoFrame("cruise", CHRONO_OUTBOUND_MS + CRUISE_BURST_MS, 0).bursts ===
+      IGNITION_FRACTIONS.length + 1
+  );
+
+  /* ------------------------------------ the hold carries into the landing */
+
+  // The stars a hold lit must still be lit while the arcs collapse. Reporting
+  // a bare seven in "arriving" would snuff every one of them out on the frame
+  // deceleration begins — a sky visibly emptying at the moment it is handed to
+  // the page. `elapsed - sinceArriving` is the elapsed time when the hold
+  // ended, so the two must agree for every hold length.
+  for (let held = 0; held <= 4000; held += 137) {
+    const decelAt = CHRONO_OUTBOUND_MS + held;
+    for (const since of [0, CHRONO_OPAQUE_MS / 2, CHRONO_ARRIVING_MS]) {
+      check(
+        `the collapse keeps the hold's stars lit (held=${held}, since=${since})`,
+        chronoFrame("arriving", decelAt + since, since).bursts ===
+          chronoFrame("cruise", decelAt, 0).bursts
+      );
+    }
+  }
 
   /* ---------------------------------------------------------- the collapse */
 
@@ -133,6 +184,57 @@ function main() {
   check("the rewind ends at rest", near(home.omega, 0));
   check("...with the shutter closed", near(home.alpha, 1));
   check("...and the growth undone", near(home.alive, 0));
+
+  /* --------------------------------------------- the cover on the way home */
+
+  // The cover has to be complete before router.back() swaps the route, or the
+  // swap itself shows through a translucent canvas...
+  check(
+    "the way home is fully covered before the route swaps",
+    CHRONO_IN_COVER[1] <= CHRONO_IN.push,
+    `cover ends ${CHRONO_IN_COVER[1]}ms, push at ${CHRONO_IN.push}ms`
+  );
+  // ...and it has to rise over the dissolve rather than starting up, or the
+  // panel dissolve the late push exists to buy time for plays behind an opaque
+  // canvas and nobody ever sees it.
+  check(
+    "the cover starts down, so the dissolve is visible through it",
+    CHRONO_IN_COVER[0] === CHRONO_IN.dissolve[0] &&
+      CHRONO_IN_COVER[1] > CHRONO_IN_COVER[0]
+  );
+  check(
+    "the cover is fully up long before the landing lifts it again",
+    CHRONO_IN_COVER[1] < CHRONO_IN.landing[0],
+    `plateau ${CHRONO_IN.landing[0] - CHRONO_IN_COVER[1]}ms`
+  );
+
+  /* ------------------------------------------- the page out of the stream */
+
+  // The reveal — where coverage() lifts the stage off the page — opens
+  // CHRONO_OPAQUE_MS after deceleration begins and closes at
+  // CHRONO_ARRIVING_MS. The panels must be sharpening INSIDE it. Finishing
+  // before it opens is "sky cleared, then page faded in", which is precisely
+  // what this arrival exists not to be.
+  const firstPanel = { from: CHRONO_RESOLVE.lead, to: CHRONO_RESOLVE.lead + CHRONO_RESOLVE.duration };
+  check(
+    "the first panel is already sharpening when the veil starts lifting",
+    firstPanel.from < CHRONO_OPAQUE_MS && firstPanel.to > CHRONO_OPAQUE_MS,
+    `panel 0 runs ${firstPanel.from}-${firstPanel.to}ms, reveal opens ${CHRONO_OPAQUE_MS}ms`
+  );
+  // The last slot on the page is the trust row, order 5 — the same maxOrder
+  // /upgrade passes to UpgradeTransition.
+  const lastPanelEnds =
+    CHRONO_RESOLVE.lead + 5 * CHRONO_RESOLVE.stagger + CHRONO_RESOLVE.duration;
+  check(
+    "the last panel is still sharpening after the veil is off",
+    lastPanelEnds > CHRONO_ARRIVING_MS,
+    `panel 5 ends ${lastPanelEnds}ms, reveal closes ${CHRONO_ARRIVING_MS}ms`
+  );
+  check(
+    "...but not so far after that the page is left visibly unfinished",
+    lastPanelEnds - CHRONO_ARRIVING_MS < CHRONO_RESOLVE.duration,
+    `${lastPanelEnds - CHRONO_ARRIVING_MS}ms past the reveal`
+  );
 
   /* ----------------------------------------------------------- the tangents */
 

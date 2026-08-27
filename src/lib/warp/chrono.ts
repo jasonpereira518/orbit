@@ -30,7 +30,13 @@ export const CHRONO_ARRIVING_MS = 860;
 /** The rewind home, start to settled. */
 export const CHRONO_INBOUND_MS = 1900;
 
-import { easeHouse, easeIn, lerp, span } from "@/lib/warp/choreography";
+import {
+  CRUISE_CAP_MS,
+  easeHouse,
+  easeIn,
+  lerp,
+  span,
+} from "@/lib/warp/choreography";
 
 /** Outbound beats, ms from launch. */
 export const CHRONO_OUT = {
@@ -58,6 +64,44 @@ export const CHRONO_IN = {
   collapse: [1250, 1700],
   /** The room lights come back up. */
   landing: [1550, 1900],
+} as const;
+
+/**
+ * When the stage covers the frame on the way home, ms from Back.
+ *
+ * The cover ramps UP across the dissolve rather than being opaque from frame
+ * one — the panels smearing back into the exposure is the shot, and a stage
+ * that is already opaque hides it completely. But it has to be complete before
+ * `push` swaps the route, or the swap itself shows through a translucent
+ * canvas. Derived from both beats so retuning either one cannot open a gap.
+ */
+export const CHRONO_IN_COVER = [
+  CHRONO_IN.dissolve[0],
+  Math.min(CHRONO_IN.dissolve[1], CHRONO_IN.push),
+] as const;
+
+/**
+ * The page resolving out of the exposure, in ms.
+ *
+ * These are panel timings, and they live here rather than in
+ * `upgrade-transition.tsx` because they have to interlock with the reveal —
+ * the window where `coverage()` lifts the stage off the page, which runs from
+ * CHRONO_OPAQUE_MS to CHRONO_ARRIVING_MS after deceleration begins. The whole
+ * point of this arrival is that the sharpening happens INSIDE that window: a
+ * page that finishes resolving before the veil lifts is "sky cleared, then
+ * page faded in", which is the thing this journey exists not to be. That
+ * invariant is only checkable if both halves are in one table, so they are.
+ */
+export const CHRONO_RESOLVE = {
+  /** After deceleration begins, when the FIRST panel starts sharpening.
+   *  Deliberately a little before the reveal opens, so it is already mid-blur
+   *  when the veil lifts instead of starting from scratch in clear sky. */
+  lead: CHRONO_OPAQUE_MS - 100,
+  /** Between panels. Shorter than the assembly's: these are condensing out of
+   *  one exposure, not being placed one at a time. */
+  stagger: 45,
+  /** One panel, smeared to sharp. */
+  duration: 260,
 } as const;
 
 /**
@@ -91,6 +135,34 @@ export const IGNITION_FRACTIONS = [0, 0.13, 0.31, 0.4, 0.62, 0.79, 1] as const;
 export const CRUISE_BURST_MS = 420;
 
 /**
+ * How many further bursts a hold can fire before the reserve runs out.
+ *
+ * A counter that keeps incrementing past the last star that can answer it is
+ * not growth, it is arithmetic: the stage seeds exactly this many reserve
+ * burst levels, and `chronoFrame` must not promise more than that. The hold
+ * cannot outlast `CRUISE_CAP_MS` (measured from launch, so the hold itself is
+ * capped at CRUISE_CAP_MS - CHRONO_OUTBOUND_MS), which is the real ceiling;
+ * the spare level absorbs timer jitter.
+ */
+export const CRUISE_BURSTS =
+  Math.ceil((CRUISE_CAP_MS - CHRONO_OUTBOUND_MS) / CRUISE_BURST_MS) + 1;
+
+/**
+ * How much extra field the stage holds back for those bursts, as a fraction of
+ * the base star count.
+ *
+ * The seven scripted bursts spend ~12% of the field each; at that rate a
+ * full-length hold would roughly double the sky and overfill the frame right
+ * where the payment form is about to land. A fifth of the field spread across
+ * the whole reserve is a steady trickle — visible new stars every 420ms —
+ * that still leaves the arrival composition recognisably the one that was
+ * designed. Reserve stars are drawn from the whole radius range rather than
+ * continuing the outward march: they are the sky filling in during a wait,
+ * not part of the seven-burst spread.
+ */
+export const CRUISE_RESERVE_FRACTION = 0.2;
+
+/**
  * Which ignition burst lights a star at this radius rank — 0 nearest the pole,
  * 1 farthest. Growth spreads OUTWARD: a few spots near the pole, then the sky
  * filling out to the frame edges, rather than stars pricking on at random all
@@ -114,6 +186,15 @@ export type ChronoFrame = {
    *  way home as the growth un-happens. */
   alive: number;
 };
+
+/**
+ * How many bursts a hold of `elapsed` total run time has added on top of the
+ * scripted seven. Clamped to the reserve the stage actually seeded.
+ */
+function cruiseBurstsBy(elapsed: number) {
+  const held = Math.max(0, elapsed - CHRONO_OUTBOUND_MS);
+  return Math.min(CRUISE_BURSTS, Math.floor(held / CRUISE_BURST_MS));
+}
 
 function burstsBy(elapsed: number) {
   const [from, to] = CHRONO_OUT.growth;
@@ -144,7 +225,11 @@ export function chronoFrame(
     return {
       omega: OMEGA_PEAK * (1 - p),
       alpha: lerp(ALPHA_FAST, 1, p),
-      bursts: IGNITION_FRACTIONS.length,
+      // Frozen at whatever the hold had reached: `elapsed - sinceArriving` is
+      // the elapsed time at the instant deceleration began. Reporting a bare
+      // seven here would snuff out every star a cruise hold had just lit, at
+      // exactly the moment the sky is being handed to the page.
+      bursts: IGNITION_FRACTIONS.length + cruiseBurstsBy(elapsed - sinceArriving),
       alive: 1,
     };
   }
@@ -163,11 +248,10 @@ export function chronoFrame(
   }
 
   if (phase === "cruise") {
-    const held = Math.max(0, elapsed - CHRONO_OUTBOUND_MS);
     return {
       omega: OMEGA_PEAK,
       alpha: ALPHA_FAST,
-      bursts: IGNITION_FRACTIONS.length + Math.floor(held / CRUISE_BURST_MS),
+      bursts: IGNITION_FRACTIONS.length + cruiseBurstsBy(elapsed),
       alive: 1,
     };
   }
