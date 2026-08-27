@@ -9,7 +9,11 @@ import {
   type Contact,
   type LinkedInImportRowPayload,
 } from "@/db/schema";
-import { createContactsBulk, updateContact, type ContactInput } from "@/actions/contacts";
+import {
+  createContactsBulkForUser,
+  updateContactForUser,
+  type ContactInput,
+} from "@/lib/contact-writes";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { createCompanyResolver } from "@/lib/companies";
 import {
@@ -23,7 +27,7 @@ import { parseConnectedOn } from "@/lib/linkedin-connections";
 import { rebuildContactEmbeddingsBatch } from "@/lib/search";
 
 /** Rows pulled from the DB per processing loop iteration. */
-const CHUNK_SIZE = 40;
+export const CHUNK_SIZE = 40;
 /** Stay well under the 300s function ceiling, leaving room for the self-continuation call. */
 const TIME_BUDGET_MS = 4.5 * 60 * 1000;
 
@@ -209,7 +213,8 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
       let planBlockedRows: PendingRow[] = [];
 
       if (toCreate.length > 0) {
-        const created = await createContactsBulk(
+        const created = await createContactsBulkForUser(
+          userId,
           toCreate.map((item) => item.input),
           companyResolve,
           { skipRevalidate: true, skipEmbedding: true }
@@ -230,7 +235,7 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
       }
 
       for (const item of toUpdate) {
-        await updateContact(item.contactId, item.input, {
+        await updateContactForUser(userId, item.contactId, item.input, {
           skipRevalidate: true,
           skipEmbedding: true,
           // The whole network is recalibrated when the import finishes. Scoring each

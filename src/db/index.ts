@@ -5,8 +5,16 @@ import { PGlite } from "@electric-sql/pglite";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import * as schema from "./schema";
 import { formatVectorLiteral } from "@/lib/pgvector";
+import { noteQuery } from "@/lib/query-counter";
 import path from "node:path";
 import fs from "node:fs";
+
+/**
+ * Drizzle's logger hook is the only place every statement funnels through regardless of
+ * driver, which is why the statement counter hangs off it rather than off `db.execute`.
+ * It logs nothing — `logQuery` is used purely as a per-statement callback.
+ */
+const countingLogger = { logQuery: () => noteQuery() };
 
 type Db =
   | ReturnType<typeof drizzleNeon<typeof schema>>
@@ -1459,15 +1467,15 @@ export async function getDb(): Promise<Db> {
   // per request — each rebuild reconstructs the relational query metadata from `schema`.
   if (process.env.NODE_ENV !== "production") {
     if (globalForDb.orbitNeonSql) {
-      return drizzleNeon(globalForDb.orbitNeonSql, { schema }) as Db;
+      return drizzleNeon(globalForDb.orbitNeonSql, { schema, logger: countingLogger }) as Db;
     }
-    return drizzlePglite(globalForDb.orbitPglite!, { schema });
+    return drizzlePglite(globalForDb.orbitPglite!, { schema, logger: countingLogger });
   }
 
   if (!globalForDb.orbitDrizzle) {
     globalForDb.orbitDrizzle = globalForDb.orbitNeonSql
-      ? (drizzleNeon(globalForDb.orbitNeonSql, { schema }) as Db)
-      : drizzlePglite(globalForDb.orbitPglite!, { schema });
+      ? (drizzleNeon(globalForDb.orbitNeonSql, { schema, logger: countingLogger }) as Db)
+      : drizzlePglite(globalForDb.orbitPglite!, { schema, logger: countingLogger });
   }
   return globalForDb.orbitDrizzle;
 }

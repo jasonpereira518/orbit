@@ -5,44 +5,16 @@
  * costs; none of it is allowed to change how many contacts an import creates, merges,
  * or refuses. This asserts the second thing so the first is safe to change.
  *
- * Two environment gaps had to be worked around to run `runLinkedInImportJob` headlessly
- * (neither is a source change — both are documented in the report for task 1):
+ * One environment gap has to be worked around to run `runLinkedInImportJob` headlessly:
+ * `revalidatePath`, called once after an import completes, throws "Invariant: static
+ * generation store missing" outside a real Next.js request/render. This is a plain
+ * limitation of running route-layer code from a script, not a bug in the import engine,
+ * so `runJob` below swallows exactly that one invariant message and re-throws anything
+ * else — the DB row is already in its final state by the time `revalidatePath` runs,
+ * which is what every assertion here checks.
  *
- *  - `createContactsBulk`/`updateContact` (imported from `@/actions/contacts`, not the
- *    `*ForUser` variants) resolve their acting identity through `requireUserId()`, which
- *    reads an ambient Clerk session. Outside a real request there is no session, so
- *    without Clerk configured this throws `UnauthorizedError`; the only way it *can*
- *    succeed from a bare script is demo mode, which always resolves to the literal
- *    "demo-user" regardless of who owns the import row. So `USER` below is "demo-user"
- *    (not an arbitrary fixture string) — anything else would make the import's own
- *    duplicate-index lookup (scoped to `imports.userId`) disagree with the identity the
- *    writes actually land under, and merges would silently stop matching.
- *  - `revalidatePath`, called once after an import completes, throws
- *    "Invariant: static generation store missing" outside a real Next.js request/render.
- *    This is a plain limitation of running route-layer code from a script, not a bug in
- *    the import engine, so `runJob` below swallows exactly that one invariant message and
- *    re-throws anything else — the DB row is already in its final state by the time
- *    `revalidatePath` runs, which is what every assertion here checks.
- *
- * !!! WARNING — THIS SCRIPT WIPES ALL LOCAL "demo-user" DATA ON EVERY RUN !!!
- * "demo-user" is not a private test fixture — it's the shared identity any developer
- * running the app locally without Clerk lands in, and the one `scripts/seed-demo.ts`,
- * `scripts/seed-graph-fixture.ts`, and `scripts/seed-scale.ts` seed persistent data under.
- * `reset()` below deletes all of that user's contacts/imports/user_settings, and running
- * this script leaves demo-user with none of it left. If you had local demo data, restore
- * it afterward with `npm run db:seed` (or `db:seed:graph`).
- * This dependence on "demo-user" is temporary: Task 2 switches the processor to call
- * `createContactsBulkForUser`/`updateContactForUser` with `importRow.userId` directly
- * instead of going through `requireUserId()`, which removes the need for demo mode
- * entirely and lets `USER` become a private, non-destructive literal again.
- *
- * Run: NODE_ENV=development npx tsx scripts/smoke-import-engine.ts
+ * Run: npx tsx scripts/smoke-import-engine.ts
  */
-// `NODE_ENV` is typed read-only (Next's global augmentation); route the write through an
-// untyped view of `process.env` rather than widening the type everywhere else.
-(process.env as Record<string, string | undefined>).NODE_ENV = "development";
-delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-
 import { config } from "dotenv";
 config({ path: ".env.local" });
 config();
@@ -53,9 +25,7 @@ import { contacts, imports, importJobRows, userSettings } from "../src/db/schema
 import { runLinkedInImportJob } from "../src/lib/import-job-processor";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
-// See the file header: this must be the literal Clerk demo-mode identity, not an
-// arbitrary fixture string, or writes and duplicate lookups resolve to different users.
-const USER = "demo-user";
+const USER = "smoke-import-engine-user";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -78,9 +48,6 @@ async function runJob(importId: string) {
 }
 
 async function reset() {
-  // Destructive on purpose, and destructive of shared data: USER is "demo-user" (see file
-  // header), so this wipes any local demo seed data every time this script runs. Temporary
-  // until Task 2 removes the demo-mode dependence.
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(imports).where(eq(imports.userId, USER));
