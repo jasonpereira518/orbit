@@ -21,9 +21,11 @@ import {
   CHRONO_INBOUND_MS,
   CHRONO_OUTBOUND_MS,
   IGNITION_FRACTIONS,
+  burstForRadiusRank,
   chronoFrame,
   tangentForSlot,
 } from "../src/lib/warp/chrono";
+import { easeFade } from "../src/lib/warp/choreography";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -142,6 +144,61 @@ function main() {
     "the smear rotates down the page, so panels ride their own arc",
     Math.atan2(last.y, last.x) !== Math.atan2(first.y, first.x)
   );
+
+  /* ------------------------------------------------------------- easeFade */
+
+  check("easeFade(0) is 0", near(easeFade(0), 0));
+  check("easeFade(1) is 1", near(easeFade(1), 1));
+  check("easeFade(0.5) is 0.5", near(easeFade(0.5), 0.5));
+
+  // Monotonic across the whole domain — a fade that dips or reopens reads as
+  // a flicker.
+  let prevFade = -Infinity;
+  for (let t = 0; t <= 1; t += 0.02) {
+    const v = easeFade(t);
+    check(`easeFade never reverses (t=${t.toFixed(2)})`, v >= prevFade - 1e-9);
+    prevFade = v;
+  }
+
+  // The defining property: zero slope at both ends. Sampled just inside each
+  // edge, easeFade must land far closer to the endpoint than a linear ramp
+  // would — that's the whole reason it exists over a raw span().
+  check(
+    "the slope is ~zero at the start",
+    easeFade(0.02) < 0.02 * 0.5,
+    `easeFade(0.02)=${easeFade(0.02)}`
+  );
+  check(
+    "the slope is ~zero at the end",
+    1 - easeFade(0.98) < 0.02 * 0.5,
+    `easeFade(0.98)=${easeFade(0.98)}`
+  );
+
+  /* ------------------------------------------------------ burstForRadiusRank */
+
+  check("rank 0 (nearest the pole) lights the first burst", burstForRadiusRank(0) === 0);
+  check(
+    "rank 1 (farthest out) lights the last burst",
+    burstForRadiusRank(1) === IGNITION_FRACTIONS.length - 1
+  );
+  check(
+    "a rank past 1 still clamps to the last burst",
+    burstForRadiusRank(1.5) === IGNITION_FRACTIONS.length - 1
+  );
+  check(
+    "a negative rank still clamps to the first burst",
+    burstForRadiusRank(-0.5) === 0
+  );
+
+  let prevBurst = -1;
+  for (let rank = 0; rank <= 1; rank += 0.02) {
+    const b = burstForRadiusRank(rank);
+    check(
+      `burstForRadiusRank never decreases (rank=${rank.toFixed(2)})`,
+      b >= prevBurst
+    );
+    prevBurst = b;
+  }
 
   console.log("\nAll chrono beat checks passed.");
 }

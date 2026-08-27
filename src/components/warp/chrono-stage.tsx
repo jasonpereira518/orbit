@@ -2,14 +2,16 @@
 
 import { useEffect, useRef } from "react";
 import {
+  CHRONO_ARRIVING_MS,
   CHRONO_IN,
+  CHRONO_OPAQUE_MS,
   CHRONO_OUT,
-  IGNITION_FRACTIONS,
   POLE,
+  burstForRadiusRank,
   chronoFrame,
   type ChronoPhase,
 } from "@/lib/warp/chrono";
-import { span } from "@/lib/warp/choreography";
+import { easeFade, span } from "@/lib/warp/choreography";
 import { DEEP_SPACE, STAR_GOLD, STAR_WHITE, paintSpace } from "@/lib/sky-palette";
 import type { WarpRun } from "@/components/warp/warp-provider";
 
@@ -41,9 +43,10 @@ type Star = {
 /** One star per this many px² of viewport, capped for ultrawide displays. */
 const STAR_AREA = 2400;
 const STAR_CAP = 1100;
-/** How much of the field is already there when the exposure opens. The rest
- *  ignite as the orbit grows — the whole point of the journey. */
-const SEED_FRACTION = 0.42;
+/** How much of the field is already there when the exposure opens: a few
+ *  spots near the pole. The rest ignite as the orbit grows and spreads
+ *  outward to fill the frame — the whole point of the journey. */
+const SEED_FRACTION = 0.12;
 /** Keeps the innermost radii empty so the pole never becomes a bullseye
  *  competing with the arriving page. */
 const CORE = 0.07;
@@ -148,23 +151,29 @@ export function ChronoStage({ run }: { run: WarpRun }) {
 
       const count = Math.min(Math.floor((width * height) / STAR_AREA), STAR_CAP);
       const seeds = Math.floor(count * SEED_FRACTION);
-      stars = Array.from({ length: count }, (_, i) => {
+
+      // Build the field, then sort by ascending radius so growth spreads
+      // OUTWARD from the pole: the innermost `seeds` stars are the always-
+      // present spots, and every star beyond them ignites in a burst keyed to
+      // how far out it sits, filling the frame from the centre outward.
+      stars = Array.from({ length: count }, () => ({
+        // sqrt keeps the areal density even; CORE holds the knot open.
+        radius: maxR * (CORE + (1 - CORE) * Math.sqrt(Math.random())),
+        angle: Math.random() * Math.PI * 2,
+        r: Math.random() * 1.15 + 0.35,
+        gold: Math.random() < 0.05,
+        burst: -1,
+        flash: 0,
+        ignited: false,
+        born: 0,
+      }));
+      stars.sort((a, b) => a.radius - b.radius);
+      stars = stars.map((s, i) => {
         const grown = i >= seeds;
         const rank = grown ? (i - seeds) / Math.max(1, count - seeds) : 0;
         return {
-          // sqrt keeps the areal density even; CORE holds the knot open.
-          radius: maxR * (CORE + (1 - CORE) * Math.sqrt(Math.random())),
-          angle: Math.random() * Math.PI * 2,
-          r: Math.random() * 1.15 + 0.35,
-          gold: Math.random() < 0.05,
-          burst: grown
-            ? Math.min(
-                IGNITION_FRACTIONS.length - 1,
-                Math.floor(rank * IGNITION_FRACTIONS.length),
-              )
-            : -1,
-          flash: 0,
-          ignited: false,
+          ...s,
+          burst: grown ? burstForRadiusRank(rank) : -1,
           born: rank,
         };
       });
@@ -184,14 +193,15 @@ export function ChronoStage({ run }: { run: WarpRun }) {
       const elapsed = now - r.startedAt;
       if (r.phase === "arriving") {
         const since = r.arrivingAt === null ? 0 : now - r.arrivingAt;
-        // Hold through the collapse, then hand off.
-        return 1 - span(since, [380, 620]);
+        // Hold through the collapse (the first CHRONO_OPAQUE_MS of the
+        // arriving window), then hand off over the remainder.
+        return 1 - easeFade(span(since, [CHRONO_OPAQUE_MS, CHRONO_ARRIVING_MS]));
       }
       if (r.phase === "inbound" || r.phase === "landing") {
         const [from, to] = CHRONO_IN.landing;
-        return 1 - span(elapsed, [from, to]);
+        return 1 - easeFade(span(elapsed, [from, to]));
       }
-      return span(elapsed, CHRONO_OUT.shutter);
+      return easeFade(span(elapsed, CHRONO_OUT.shutter));
     }
 
     function frame() {

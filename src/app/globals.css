@@ -1338,15 +1338,15 @@ html[data-warp] [data-warp-craft] {
 html[data-warp-journey="chrono"][data-warp="outbound"] [data-warp-craft],
 html[data-warp-journey="chrono"][data-warp="cruise"] [data-warp-craft],
 html[data-warp-journey="chrono"][data-warp="arriving"] [data-warp-craft] {
-  animation: chrono-craft-dim 380ms cubic-bezier(0.4, 0, 0.6, 1) both;
+  animation: chrono-craft-dim 560ms cubic-bezier(0.4, 0, 0.6, 1) both;
   will-change: transform, filter;
 }
 
-/* Coming home: the last 250ms of the return arc, played forwards out of the
+/* Coming home: the last 350ms of the return arc, played forwards out of the
    dimmed state. `reverse` rather than a second keyframe block so the two can
    never drift apart. */
 html[data-warp-journey="chrono"][data-warp="landing"] [data-warp-craft] {
-  animation: chrono-craft-dim 250ms cubic-bezier(0.4, 0, 0.6, 1) reverse both;
+  animation: chrono-craft-dim 350ms cubic-bezier(0.4, 0, 0.6, 1) reverse both;
   will-change: transform, filter;
 }
 

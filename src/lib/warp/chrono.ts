@@ -4,41 +4,48 @@
  * window is where it is.
  */
 
-/** When the stage covers the frame and the route swap becomes invisible. */
-export const CHRONO_OPAQUE_MS = 380;
+/**
+ * When the stage covers the frame and the route swap becomes invisible.
+ *
+ * Must stay equal to `CHRONO_OUT.shutter[1]` — the route swap happens behind
+ * the opaque stage at that instant. If the two diverge, a white flash appears
+ * at the swap.
+ */
+export const CHRONO_OPAQUE_MS = 560;
 /** End of the deterministic outbound run, before any cruise hold. */
-export const CHRONO_OUTBOUND_MS = 1450;
+export const CHRONO_OUTBOUND_MS = 1950;
 /** Deceleration: arcs collapse back into stars. The payoff shot. */
-export const CHRONO_ARRIVING_MS = 620;
+export const CHRONO_ARRIVING_MS = 860;
 /** The rewind home, start to settled. */
-export const CHRONO_INBOUND_MS = 1500;
+export const CHRONO_INBOUND_MS = 1900;
 
 import { easeHouse, easeIn, lerp, span } from "@/lib/warp/choreography";
 
 /** Outbound beats, ms from launch. */
 export const CHRONO_OUT = {
-  /** The room goes dark and the stage covers the frame. */
-  shutter: [0, 380],
+  /** The room goes dark and the stage covers the frame. Mirrors
+   *  CHRONO_OPAQUE_MS — see the comment there. */
+  shutter: [0, 560],
   /** Time accelerates: the spin ramps up and the shutter opens. */
-  spin: [300, 1250],
+  spin: [420, 1700],
   /** The orbit grows. */
-  growth: [520, 1400],
+  growth: [560, 1850],
 } as const;
 
 /** Inbound beats, ms from the moment Back is pressed. */
 export const CHRONO_IN = {
   /** Panels smear back into the exposure. */
-  dissolve: [0, 300],
+  dissolve: [0, 380],
   /** Late, unlike the rocket's frame-one push: the page dissolving is the shot. */
-  push: 260,
+  push: 340,
   /** Time runs backwards. */
-  rewind: [200, 950],
+  rewind: [240, 1200],
   /** Stars go out in bursts; the growth un-happens. */
-  extinguish: [350, 1050],
+  extinguish: [400, 1300],
   /** Arcs collapse back to points. */
-  collapse: [1050, 1400],
+  collapse: [1250, 1700],
   /** The room lights come back up. */
-  landing: [1250, 1500],
+  landing: [1550, 1900],
 } as const;
 
 /**
@@ -70,6 +77,17 @@ export const IGNITION_FRACTIONS = [0, 0.13, 0.31, 0.4, 0.62, 0.79, 1] as const;
 /** During a cruise hold, one further burst every this many ms, so a slow route
  *  still reads as growth instead of as a loop. */
 export const CRUISE_BURST_MS = 420;
+
+/**
+ * Which ignition burst lights a star at this radius rank — 0 nearest the pole,
+ * 1 farthest. Growth spreads OUTWARD: a few spots near the pole, then the sky
+ * filling out to the frame edges, rather than stars pricking on at random all
+ * over at once.
+ */
+export function burstForRadiusRank(rank: number) {
+  const i = Math.floor(rank * IGNITION_FRACTIONS.length);
+  return Math.min(IGNITION_FRACTIONS.length - 1, Math.max(0, i));
+}
 
 export type ChronoPhase = "outbound" | "cruise" | "arriving" | "inbound";
 
@@ -107,9 +125,10 @@ export function chronoFrame(
   sinceArriving: number
 ): ChronoFrame {
   if (phase === "arriving") {
-    // Collapse fills the first 380ms of the arriving window; the rest is the
-    // cross-fade into the real starfield.
-    const p = easeHouse(span(sinceArriving, [0, 380]));
+    // Collapse fills the first 560ms of the arriving window (the shutter
+    // length — CHRONO_OPAQUE_MS); the rest is the cross-fade into the real
+    // starfield.
+    const p = easeHouse(span(sinceArriving, [0, CHRONO_OPAQUE_MS]));
     return {
       omega: OMEGA_PEAK * (1 - p),
       alpha: lerp(ALPHA_FAST, 1, p),
