@@ -51,6 +51,37 @@ import { recomputeRecruiterRating } from "@/lib/recruiters";
  *     the evidence of the deletion itself.
  * A Clerk id is inert once the account is gone. `error_events`, by contrast, is data about
  * the user rather than about the operator, so it IS purged.
+ *
+ * A third exception lives inside `user_settings` rather than being a whole table, and only
+ * applies when `keepSettings` is true (the default — see below): everything on that row that
+ * is NOT the user's own content survives, on the reasoning that "delete all data" means
+ * "delete the data I put in," not "erase the account." That is:
+ *   - the BYO provider keys (`*_api_key_encrypted` for Gemini/OpenAI/Anthropic/Apollo/Resend/
+ *     Twilio) plus `aiProvider`/`aiModel`, since a key without the selection that uses it is
+ *     inert — these are credentials for third-party services the user pays for directly, not
+ *     Orbit data about them, unlike the Gmail/Outlook OAuth tokens purged above
+ *   - `theme`, a cosmetic preference rather than content
+ *   - the Clerk identity mirror (`email`, `firstName`, `lastName`, `profileImageUrl`) and
+ *     `createdAt` — account metadata, not something the user authored
+ *   - billing/subscription fields (`compedPlan`, `stripeCustomerId`, `subscriptionPlan`,
+ *     `subscriptionStatus`, `subscriptionPeriodEnd`, `lifetimePurchasedAt`, `compedNote`,
+ *     `compedAt`, `compedBy`) — deleting these would silently disconnect a live subscription
+ *     from Stripe or reverse a comp with no record of why
+ *   - `suspendedAt`/`suspendedReason`/`suspendedBy` — an operator-set flag; a user's own
+ *     "delete data" action must not be a backdoor out of a suspension
+ *   - signup attribution (`signupReferrer`, `signupUtmSource/Medium/Campaign`,
+ *     `signupLandingPath`, `signupAttributedAt`) and `lastActiveAt` — operational/analytics
+ *     metadata about the account, not user-entered content
+ * Everything else on the row — onboarding/wizard state, `desktopNotifiedIds`, `socialLinks`,
+ * the calendar feed token and its timestamps, `recruiterSharing` (back to its default of 0,
+ * revoking the opt-in since there is no longer data behind it to share) — genuinely is app
+ * state tied to the data being deleted, so the row is deleted and recreated with nothing but
+ * the id and the fields above, letting the rest fall back to a fresh row's defaults.
+ *
+ * `keepSettings: false` (used only by the admin console's hard-delete, which also removes the
+ * Clerk login) skips all of that and lets `user_settings` be deleted outright — the "entire
+ * account" case, where none of the above is meant to survive.
+ *
  * Deliberate exception: `admin_audit_log` rows referencing this user are NOT deleted.
  * That table is the operator's own record of privileged actions he took — chiefly comping
  * a plan, which outranks every real billing signal and has no other trace. Purging it here
@@ -59,7 +90,11 @@ import { recomputeRecruiterRating } from "@/lib/recruiters";
  *
  * `scripts/smoke-purge.ts` asserts this leaves nothing behind, table by table.
  */
-export async function purgeUserData(userId: string) {
+export async function purgeUserData(
+  userId: string,
+  opts: { keepSettings?: boolean } = {}
+) {
+  const keepSettings = opts.keepSettings ?? true;
   const db = await getDb();
 
   await db.delete(closenessCohorts).where(eq(closenessCohorts.userId, userId));
@@ -145,5 +180,53 @@ export async function purgeUserData(userId: string) {
   await db.delete(contacts).where(eq(contacts.userId, userId));
   await db.delete(companies).where(eq(companies.userId, userId));
   await db.delete(tags).where(eq(tags.userId, userId));
+
+  // PARTIALLY RESET, NOT DELETED (unless `keepSettings` is false) — see the doc comment
+  // above for what survives and why.
+  const preserved = keepSettings
+    ? await db.query.userSettings.findFirst({
+        where: eq(userSettings.userId, userId),
+        columns: {
+          geminiApiKeyEncrypted: true,
+          openaiApiKeyEncrypted: true,
+          anthropicApiKeyEncrypted: true,
+          apolloApiKeyEncrypted: true,
+          resendApiKeyEncrypted: true,
+          twilioAccountSidEncrypted: true,
+          twilioAuthTokenEncrypted: true,
+          twilioFromNumber: true,
+          aiProvider: true,
+          aiModel: true,
+          theme: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          profileImageUrl: true,
+          signupReferrer: true,
+          signupUtmSource: true,
+          signupUtmMedium: true,
+          signupUtmCampaign: true,
+          signupLandingPath: true,
+          signupAttributedAt: true,
+          compedPlan: true,
+          lifetimePurchasedAt: true,
+          stripeCustomerId: true,
+          subscriptionPlan: true,
+          subscriptionStatus: true,
+          subscriptionPeriodEnd: true,
+          compedNote: true,
+          compedAt: true,
+          compedBy: true,
+          suspendedAt: true,
+          suspendedReason: true,
+          suspendedBy: true,
+          createdAt: true,
+          lastActiveAt: true,
+        },
+      })
+    : undefined;
   await db.delete(userSettings).where(eq(userSettings.userId, userId));
+  if (preserved) {
+    await db.insert(userSettings).values({ userId, ...preserved });
+  }
 }

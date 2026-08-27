@@ -162,6 +162,39 @@ async function main() {
     /operator account/i
   );
 
+  await refuses(
+    "hard-deleting your own account is refused",
+    () =>
+      actions.hardDeleteAccount(ADMIN, {
+        targetUserId: ADMIN,
+        confirmEmail: "whatever@example.test",
+        reason: "testing the self-target guard, well over twenty characters",
+      }),
+    /your own account/i
+  );
+
+  await refuses(
+    "hard-deleting another operator is refused",
+    () =>
+      actions.hardDeleteAccount(ADMIN, {
+        targetUserId: OTHER_OP,
+        confirmEmail: "whatever@example.test",
+        reason: "testing the operator guard, well over twenty characters",
+      }),
+    /operator account/i
+  );
+
+  await refuses(
+    "a hard delete reason shorter than 20 characters is refused",
+    () =>
+      actions.hardDeleteAccount(ADMIN, {
+        targetUserId: TARGET,
+        confirmEmail: "target@example.test",
+        reason: "too short",
+      }),
+    /at least/i
+  );
+
   /* ---------------------------------------------------------------------- suspension */
 
   const suspended = await actions.setAccountSuspended(ADMIN, {
@@ -441,10 +474,32 @@ async function main() {
   const afterDelete = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, TARGET),
   });
-  check("the account row is gone", afterDelete === undefined);
+  // `deleteAccount` (as opposed to a hard delete) deliberately keeps the settings row alive
+  // with its account/identity/credential fields intact — see `purgeUserData`'s doc comment.
+  check(
+    "the settings row survives with its identity mirror intact",
+    afterDelete?.email === "target@example.test"
+  );
+  check(
+    "but app state like the calendar feed token still resets",
+    afterDelete?.calendarFeedToken === null
+  );
   check(
     "the account's contacts are gone",
     (await db.query.contacts.findMany({ where: eq(contacts.userId, TARGET) })).length === 0
+  );
+
+  // Hard delete is exercised for its guards only — the happy path calls Clerk's real API to
+  // remove the login, which this script has no disposable test user to safely exercise.
+  await refuses(
+    "hard-deleting with a mismatched confirmation email is refused",
+    () =>
+      actions.hardDeleteAccount(ADMIN, {
+        targetUserId: TARGET,
+        confirmEmail: "not-the-right@example.test",
+        reason: "should never get here, comfortably past twenty characters",
+      }),
+    /does not match/i
   );
 
   // The property that makes this auditable at all: purgeUserData deliberately spares the

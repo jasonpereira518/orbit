@@ -59,7 +59,8 @@ async function seed() {
   await db.insert(schema.userSettings).values({
     userId: USER,
     email: `${USER}@example.test`,
-    // Credentials that must not outlive the account.
+    // The BYO provider key is a deliberate survivor of purge — see `purgeUserData`.
+    // The calendar feed token is not, and must not outlive the account.
     geminiApiKeyEncrypted: "ciphertext",
     calendarFeedToken: "feed-token",
   });
@@ -281,6 +282,9 @@ async function main() {
 
   let leaked = 0;
   for (const { name } of tables) {
+    // Asserted separately below: the BYO provider key is a deliberate survivor (see
+    // `purgeUserData`), so this table legitimately keeps a row under the same user id.
+    if (name === "user_settings") continue;
     const remaining = await countFor(name);
     if (remaining === 0) {
       console.log(`  ok  ${name} is empty`);
@@ -306,6 +310,41 @@ async function main() {
   await ledgerDb
     .delete(schema.billingEvents)
     .where(eq(schema.billingEvents.eventId, `${USER}-evt`));
+
+  // The second deliberate survivor — see `purgeUserData`. Asserting BOTH halves matters:
+  // the key surviving alone would miss a purge that forgot to delete-and-recreate the row,
+  // and the row surviving without the key check would miss a purge that kept everything.
+  const settingsAfterPurge = await ledgerDb.query.userSettings.findFirst({
+    where: eq(schema.userSettings.userId, USER),
+  });
+  check("user_settings survives the purge", Boolean(settingsAfterPurge));
+  check(
+    "...with the BYO API key intact",
+    settingsAfterPurge?.geminiApiKeyEncrypted === "ciphertext"
+  );
+  check(
+    "...but the calendar feed token cleared",
+    settingsAfterPurge?.calendarFeedToken === null
+  );
+  await ledgerDb
+    .delete(schema.userSettings)
+    .where(eq(schema.userSettings.userId, USER));
+
+  // `keepSettings: false` — the admin console's hard delete — must leave nothing behind,
+  // including the fields the default path above deliberately preserves.
+  await ledgerDb.insert(schema.userSettings).values({
+    userId: USER,
+    email: `${USER}@example.test`,
+    geminiApiKeyEncrypted: "ciphertext",
+  });
+  await purgeUserData(USER, { keepSettings: false });
+  const settingsAfterHardDelete = await ledgerDb.query.userSettings.findFirst({
+    where: eq(schema.userSettings.userId, USER),
+  });
+  check(
+    "keepSettings: false leaves no user_settings row at all",
+    settingsAfterHardDelete === undefined
+  );
 
   // contact_tags has no user_id of its own, so the derived sweep above cannot see it.
   const db = await getDb();
