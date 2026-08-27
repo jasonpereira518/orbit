@@ -7,9 +7,20 @@
 /**
  * When the stage covers the frame and the route swap becomes invisible.
  *
- * Must stay equal to `CHRONO_OUT.shutter[1]` — the route swap happens behind
- * the opaque stage at that instant. If the two diverge, a white flash appears
- * at the swap.
+ * This one constant is load-bearing at THREE separate sync points, not one —
+ * retuning it means checking all three:
+ *   1. `CHRONO_OUT.shutter[1]` is defined in terms of it below, so the
+ *      departure cover always finishes exactly here. If it didn't, the route
+ *      swap would happen while the stage is still translucent: a white flash.
+ *   2. `coverage()` in chrono-stage.tsx uses it as the start of the arriving
+ *      window's hold-then-handoff ramp — the opacity stays pinned to fully
+ *      covered until the collapse below has had time to finish.
+ *   3. `chronoFrame`'s `"arriving"` branch uses it as the collapse's own
+ *      duration, so the spin-down and shutter-close motion is guaranteed to
+ *      finish before `coverage()` starts revealing the real page underneath.
+ * Point 1 is now structural (a derived value can't drift). Points 2 and 3 are
+ * still trusting call sites to import the constant rather than a literal —
+ * grep for `CHRONO_OPAQUE_MS` after touching either file.
  */
 export const CHRONO_OPAQUE_MS = 560;
 /** End of the deterministic outbound run, before any cruise hold. */
@@ -23,9 +34,10 @@ import { easeHouse, easeIn, lerp, span } from "@/lib/warp/choreography";
 
 /** Outbound beats, ms from launch. */
 export const CHRONO_OUT = {
-  /** The room goes dark and the stage covers the frame. Mirrors
-   *  CHRONO_OPAQUE_MS — see the comment there. */
-  shutter: [0, 560],
+  /** The room goes dark and the stage covers the frame. Derived from
+   *  CHRONO_OPAQUE_MS rather than a duplicated literal — see the comment
+   *  there for why the two must never diverge. */
+  shutter: [0, CHRONO_OPAQUE_MS],
   /** Time accelerates: the spin ramps up and the shutter opens. */
   spin: [420, 1700],
   /** The orbit grows. */

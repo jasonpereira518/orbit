@@ -18,6 +18,7 @@ import {
   ALPHA_FAST,
   ALPHA_STILL,
   CHRONO_ARRIVING_MS,
+  CHRONO_IN,
   CHRONO_INBOUND_MS,
   CHRONO_OUTBOUND_MS,
   IGNITION_FRACTIONS,
@@ -120,7 +121,11 @@ function main() {
     check(`the field never grows on the way home (t=${t})`, f.alive <= 1 + 1e-9);
   }
 
-  const mid = chronoFrame("inbound", 900, 0);
+  // The actual midpoint of the rewind window, not a stale literal — a past
+  // retune left this hardcoded at the old window's midpoint and it silently
+  // stopped being "mid-arc" when the window moved.
+  const rewindMid = (CHRONO_IN.rewind[0] + CHRONO_IN.rewind[1]) / 2;
+  const mid = chronoFrame("inbound", rewindMid, 0);
   check("the rewind is at speed mid-arc", mid.omega < 0);
   check("...and the field is thinning", mid.alive < 1);
 
