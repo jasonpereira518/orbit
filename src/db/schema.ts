@@ -960,10 +960,33 @@ export const contactEmbeddings = pgTable(
   (t) => [
     index("embeddings_user_idx").on(t.userId),
     index("embeddings_contact_idx").on(t.contactId),
-    uniqueIndex("embeddings_user_contact_source_uidx").on(
+    /**
+     * Mirrors the hand-written `CREATE UNIQUE INDEX` in `src/db/index.ts` (both the PGlite
+     * migration body and the Neon `alters` list) and in
+     * `scripts/migrate-embedding-stale.ts`. All four must agree on name AND column list.
+     *
+     * Nothing at runtime reads this declaration — Orbit's migrations are hand-written SQL,
+     * deliberately, because `drizzle-kit push` drops the runtime-managed
+     * `embedding_vector` column. But `drizzle.config.ts` points `schema` at this file and
+     * `package.json` still ships `db:push`/`db:generate`, so a stale declaration here is a
+     * loaded gun: running either would recreate whatever this says against whatever
+     * `DATABASE_URL` resolves to.
+     *
+     * `source_id` is in the key because that is the real uniqueness contract.
+     * `upsertContactEmbedding` (`src/lib/search.ts`) keys its existence check on all four
+     * columns, and `calendar-sync.ts` writes one `"meeting"` row per meeting with a
+     * distinct `source_id`. Dropping it makes the migration's dedupe delete every meeting
+     * embedding but the newest per contact, and makes each later meeting write raise a
+     * unique violation that `upsertContactEmbedding`'s blanket `catch {}` swallows.
+     * `source_id` is nullable and Postgres indexes NULLs as distinct, so rows written
+     * without one stay unconstrained — matching the writer, which skips its existence
+     * check when no `source_id` is supplied.
+     */
+    uniqueIndex("embeddings_user_contact_source_id_uidx").on(
       t.userId,
       t.contactId,
-      t.sourceType
+      t.sourceType,
+      t.sourceId
     ),
   ]
 );

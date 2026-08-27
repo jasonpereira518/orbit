@@ -17,7 +17,7 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-embedding-backfill";
 // (one `vercel env pull` away) would point that at shared data.
 delete process.env.DATABASE_URL;
 
-import { and, count, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, count, eq, inArray, isNotNull, isNull, notInArray } from "drizzle-orm";
 import type { createEmbeddingsBatch } from "../src/lib/ai";
 import { getDb } from "../src/db";
 import { contactEmbeddings, contacts, interactions, userSettings } from "../src/db/schema";
@@ -344,6 +344,58 @@ async function testMeetingEmbeddings() {
     "meeting content is the contact's name plus the meeting note",
     sample?.content === "Meeting Attendee\nMeeting: Sync 0\nLocation: Room 0",
     JSON.stringify(sample?.content)
+  );
+
+  // Recovery: an embedding row that once existed and was DELETED is indistinguishable from
+  // one that was never written, because pending-ness is a `NOT EXISTS` query rather than a
+  // flag. That is what makes this phase a repair path and not just a first-write path — it
+  // matters because the three-column index this branch replaced shipped with a dedupe that
+  // deletes every meeting embedding but the newest per contact. Deleting two of the three
+  // rows here reproduces exactly that damage.
+  const survivor = `cal:evt-2:${attendee.id}`;
+  await db
+    .delete(contactEmbeddings)
+    .where(
+      and(
+        eq(contactEmbeddings.userId, MEETING_USER),
+        eq(contactEmbeddings.sourceType, "meeting"),
+        notInArray(contactEmbeddings.sourceId, [survivor])
+      )
+    );
+  const afterDedupe = await db
+    .select({ value: count() })
+    .from(contactEmbeddings)
+    .where(
+      and(
+        eq(contactEmbeddings.userId, MEETING_USER),
+        eq(contactEmbeddings.sourceType, "meeting")
+      )
+    );
+  check(
+    "dedupe damage reproduced: one meeting embedding left of three",
+    (afterDedupe[0]?.value ?? 0) === 1,
+    `rows ${afterDedupe[0]?.value}`
+  );
+
+  const repair = await runEmbeddingBackfill(MEETING_USER, stubEmbed);
+  check(
+    "the backfill re-embeds the deleted meetings, and only those",
+    repair.embedded === MEETINGS - 1,
+    JSON.stringify(repair)
+  );
+  const afterRepair = await db
+    .select({ value: count() })
+    .from(contactEmbeddings)
+    .where(
+      and(
+        eq(contactEmbeddings.userId, MEETING_USER),
+        eq(contactEmbeddings.sourceType, "meeting")
+      )
+    );
+  check(
+    "all three meeting embeddings are back",
+    (afterRepair[0]?.value ?? 0) === MEETINGS,
+    `rows ${afterRepair[0]?.value}`
   );
 
   // Idempotence, and the property that makes the route's re-kick loop terminate: a second
