@@ -237,12 +237,18 @@ export function ChronoStage({ run }: { run: WarpRun }) {
             }
           }
 
+          // Decay unconditionally, before the off-screen cull below.
+          // `flash` has no dependency on x/y, and a star that ignites while
+          // off-screen still needs to decay in real time — otherwise it
+          // freezes at full flare and swims into view later, mid-orbit,
+          // unrelated to any burst boundary. Don't move this back down next
+          // to the drawing code.
+          const flare = s.flash;
+          if (flare > 0) s.flash = Math.max(0, flare - dt * FLASH_DECAY);
+
           const x = poleX + Math.cos(s.angle) * s.radius;
           const y = poleY + Math.sin(s.angle) * s.radius;
           if (x < -8 || x > width + 8 || y < -8 || y > height + 8) continue;
-
-          const flare = s.flash;
-          if (flare > 0) s.flash = Math.max(0, flare - dt * FLASH_DECAY);
 
           const rgb = s.gold || flare > 0.15 ? STAR_GOLD : STAR_WHITE;
           trailCtx.fillStyle = `rgba(${rgb},${0.55 + flare * 0.45})`;
