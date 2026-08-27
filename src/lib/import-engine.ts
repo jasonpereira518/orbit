@@ -40,6 +40,30 @@ export const CHUNK_SIZE = 250;
 /** Stay well under the 300s function ceiling, leaving room for the self-continuation call. */
 const TIME_BUDGET_MS = 4.5 * 60 * 1000;
 
+/**
+ * Ceiling on how many rows a single chunk's narrowing (`writeWithNarrowing`, below) may mark
+ * `failed`, shared across that chunk's create batch and its merge batch — a systemic fault
+ * can surface from either bulk write, and it's the same underlying failure either way.
+ *
+ * Genuinely bad data is rare and scattered: a handful of isolated bad rows in a quarter's
+ * worth of contacts is the expected shape narrowing exists to isolate. A systemic fault
+ * (a dropped connection, a timeout) instead fails *every* row in the chunk, and narrowing's
+ * halving-to-single-rows would otherwise mark all of them `failed` — one at a time, each
+ * carrying whatever transient error was thrown — turning a retryable blip into permanent
+ * data loss. This budget is what tells the two shapes apart. It deliberately does not try to
+ * classify the error itself (a dropped Neon connection and a PGlite timeout do not throw the
+ * same error type, and a future driver would be a third) — counting failures is reliable
+ * where sniffing error types is not.
+ *
+ * 10% of a chunk. Once spent, narrowing throws instead of marking the next row — see
+ * `runImportJob`'s `onBadRow`. That escapes `writeWithNarrowing` entirely and propagates out
+ * of `runImportJob`'s own try/catch, which fails the *import* (the old, pre-narrowing
+ * behavior) rather than the row, and leaves the rest of this chunk's rows exactly where the
+ * claim left them: `processing`, and reclaimable by the widened `IN ('pending', 'processing')`
+ * claim on the next attempt.
+ */
+export const MAX_ROW_FAILURES_PER_CHUNK = Math.floor(CHUNK_SIZE * 0.1);
+
 /** The incoming shape `findDuplicateCandidatesIndexed` already accepts. */
 export type DuplicateProbe = {
   fullName?: string | null;
@@ -165,11 +189,20 @@ async function markRowsDone(rowIds: string[], contactIdByRowId: Map<string, stri
  * is ever issued unless a write actually fails.
  *
  * A chunk where every row is bad degrades to one statement per row (the base case fires for
- * every leaf). That is the correct worst case, not a bug to cap: the alternative is failing
- * the whole chunk again, which is exactly what this function exists to stop doing. A cap
- * would just reintroduce "one bad row (or a few) costs a batch of good ones" at whatever
- * size the cap picked, and 250 one-row statements is not a cost worth guarding against — the
- * plain multi-row happy path already dominates real traffic.
+ * every leaf), and this function does not cap that on its own: capping the *split* would
+ * just reintroduce "one bad row (or a few) costs a batch of good ones" at whatever size the
+ * cap picked, and 250 one-row statements is not, by itself, a cost worth guarding against —
+ * the plain multi-row happy path already dominates real traffic.
+ *
+ * What actually needs a limit is not the splitting but the *marking*: a chunk that fails
+ * every row for a genuine, scattered reason should mark every row failed, but a chunk that
+ * fails every row because of one systemic fault (a dropped connection, a timeout) should not
+ * — that isolates nothing, it just converts a retryable failure into permanent per-row data
+ * loss. That distinction is the caller's to make, not this function's — see
+ * `MAX_ROW_FAILURES_PER_CHUNK` and the `onBadRow` built in `runImportJob`, which throws
+ * instead of marking once its budget is spent. `writeWithNarrowing` does not catch what its
+ * own `onBadRow` throws (the call sits in the `catch` block below, not inside a nested
+ * `try`), so that throw always escapes all the way out, at any recursion depth.
  *
  * `write` and `onBadRow` are expected to apply their own side effects (accounting, mapping
  * row ids to contact ids, etc.) as part of running — `writeWithNarrowing` itself only
@@ -450,6 +483,24 @@ export async function runImportJob(importId: string): Promise<void> {
       // own cap-refused tail.
       const planBlockedRows: PendingRow[] = [];
 
+      // Shared across both narrowing calls below (create and merge): a systemic fault can
+      // surface from either bulk write, and this chunk's budget is one pool, not two. See
+      // `MAX_ROW_FAILURES_PER_CHUNK` for the reasoning.
+      let chunkRowFailures = 0;
+      const onBadRow = async (item: { row: PendingRow }, err: unknown) => {
+        if (chunkRowFailures >= MAX_ROW_FAILURES_PER_CHUNK) {
+          // Marking this row would be the budget's (MAX_ROW_FAILURES_PER_CHUNK + 1)th failure
+          // this chunk. That many failures in one chunk looks like a systemic fault, not
+          // scattered bad data — escape narrowing entirely rather than keep marking rows
+          // `failed` one at a time. Re-thrown, not swallowed: `writeWithNarrowing` never
+          // catches what its own `onBadRow` throws (see its base case), so this propagates
+          // straight out to `runImportJob`'s own try/catch.
+          throw err instanceof Error ? err : new Error(String(err));
+        }
+        chunkRowFailures++;
+        await markRowFailed(item.row, err);
+      };
+
       if (toCreate.length > 0) {
         await writeWithNarrowing(
           toCreate,
@@ -476,7 +527,7 @@ export async function runImportJob(importId: string): Promise<void> {
               blockedByPlanTotal += batch.length - created.length;
             }
           },
-          async (item, err) => markRowFailed(item.row, err)
+          onBadRow
         );
       }
 
@@ -496,7 +547,7 @@ export async function runImportJob(importId: string): Promise<void> {
             contactsUpdated += batch.length;
             duplicatesFound += batch.length;
           },
-          async (item, err) => markRowFailed(item.row, err)
+          onBadRow
         );
       }
 

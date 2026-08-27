@@ -8,7 +8,12 @@
  * shares `failImport`), and both smoke guards in `scripts/` (which resolve `CHUNK_SIZE`
  * from here).
  */
-export { CHUNK_SIZE, PLAN_LIMIT_ROW_REASON, failImport } from "@/lib/import-engine";
+export {
+  CHUNK_SIZE,
+  MAX_ROW_FAILURES_PER_CHUNK,
+  PLAN_LIMIT_ROW_REASON,
+  failImport,
+} from "@/lib/import-engine";
 
 import { runImportJob } from "@/lib/import-engine";
 
