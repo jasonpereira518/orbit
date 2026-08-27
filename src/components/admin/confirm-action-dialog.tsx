@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { ADMIN_THEME_CLASS } from "@/components/admin/theme";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
@@ -93,7 +94,7 @@ export function ConfirmActionDialog({
     >
       <span onClick={() => setOpen(true)}>{trigger}</span>
 
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className={cn(ADMIN_THEME_CLASS, "sm:max-w-md")}>
         <DialogHeader>
           <DialogTitle className={cn(danger && "text-destructive")}>
             {title}

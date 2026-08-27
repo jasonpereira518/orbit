@@ -119,7 +119,8 @@ export type UserProfile = {
   imageUrl?: string;
 };
 
-export async function getCurrentUserProfile(): Promise<UserProfile | null> {
+export const getCurrentUserProfile = cache(
+  async function getCurrentUserProfile(): Promise<UserProfile | null> {
   if (isDemoMode()) {
     return {
       id: "demo-user",
@@ -159,3 +160,4 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
 
   return null;
 }
+)

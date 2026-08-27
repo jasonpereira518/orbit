@@ -1,15 +1,17 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
   Calendar,
   CircleAlert,
-  Download,
   Mail,
   Upload,
 } from "lucide-react";
 import {
   AdminPageHeader,
   AdminPanel,
+  ExportCsvLink,
+  AdminPanelSkeleton,
   AdminTable,
   EmptyState,
   MetricTile,
@@ -24,6 +26,7 @@ import {
   RetryImportButton,
 } from "@/components/admin/health-actions";
 import { getAdminHealth } from "@/lib/admin-health";
+import { getDataProtection } from "@/lib/admin-data-protection";
 import {
   getBugSignatures,
   getCronHealth,
@@ -32,6 +35,9 @@ import {
   getWebhookHealth,
 } from "@/lib/admin-system";
 import { SystemStrip } from "@/components/admin/system-strip";
+import { LiveProvider, LiveValue } from "@/components/admin/live";
+import { SCREEN_TIER } from "@/lib/admin-live-tiers";
+import { Skeleton } from "@/components/ui/skeleton";
 import { CodeDetail, MiniBars } from "@/components/admin/primitives";
 
 export const metadata = { title: "Admin · Health" };
@@ -46,29 +52,126 @@ export const metadata = { title: "Admin · Health" };
  * Every row names the account and links into its inspector, and carries the button that
  * fixes it. A triage screen you cannot act on from is a list nobody comes back to.
  */
-export default async function AdminHealthPage() {
-  // `getAdminHealth` answers "what is broken for an account". Everything below answers
-  // "what is broken about Orbit" — no person to name, no button to press, which is
-  // precisely why none of it was visible before. Each degrades independently so this page
-  // still renders if one instrumentation table is missing.
-  const [health, cron, webhooks, errors, outreach, bugs] = await Promise.all([
-    getAdminHealth(),
-    getCronHealth().catch(() => null),
-    getWebhookHealth().catch(() => null),
-    getErrorEventSummary().catch(() => null),
-    getOutreachQueueHealth().catch(() => null),
-    getBugSignatures().catch(() => null),
-  ]);
 
-  const inspector = (userId: string) =>
-    `/admin/users/${encodeURIComponent(userId)}`;
+type Health = Awaited<ReturnType<typeof getAdminHealth>>;
+type Cron = Awaited<ReturnType<typeof getCronHealth>> | null;
+type Webhooks = Awaited<ReturnType<typeof getWebhookHealth>> | null;
+type Errors = Awaited<ReturnType<typeof getErrorEventSummary>> | null;
+type Outreach = Awaited<ReturnType<typeof getOutreachQueueHealth>> | null;
+type Bugs = Awaited<ReturnType<typeof getBugSignatures>> | null;
+type Protection = Awaited<ReturnType<typeof getDataProtection>> | null;
 
-  const who = (userId: string, email: string | null) => (
-    <Link href={inspector(userId)} className="truncate hover:text-primary">
-      {email ?? userId}
-    </Link>
+const inspector = (userId: string) => `/admin/users/${encodeURIComponent(userId)}`;
+
+const who = (userId: string, email: string | null) => (
+  <Link href={inspector(userId)} className="truncate hover:text-primary">
+    {email ?? userId}
+  </Link>
+);
+
+/**
+ * NOT ASYNC, ON PURPOSE. `getAdminHealth` answers "what is broken for an account";
+ * everything else here answers "what is broken about Orbit". They are seven independent
+ * sources and this is the densest screen in the console, so each group streams behind its
+ * own boundary rather than the whole page waiting on the slowest of the seven.
+ *
+ * Every section below destructures its awaited values back to the ORIGINAL names, so the
+ * panel markup is unchanged from when it all lived in one function.
+ *
+ * Each loader keeps its own `.catch`, so a missing instrumentation table still costs only
+ * its own panel.
+ */
+export default function AdminHealthPage() {
+  const healthPromise = getAdminHealth();
+  const cronPromise = getCronHealth().catch(() => null);
+  const webhooksPromise = getWebhookHealth().catch(() => null);
+  const errorsPromise = getErrorEventSummary().catch(() => null);
+  const outreachPromise = getOutreachQueueHealth().catch(() => null);
+  const bugsPromise = getBugSignatures().catch(() => null);
+  const protectionPromise = getDataProtection().catch(() => null);
+
+  return (
+    <LiveProvider screen="health" intervalMs={SCREEN_TIER.health} initial={{}}>
+      <Suspense fallback={<HealthHeaderSkeleton />}>
+        <HealthHeader healthPromise={healthPromise} />
+      </Suspense>
+
+      <Suspense fallback={<Skeleton className="mb-6 h-12 w-full rounded-xl" />}>
+        <HealthStrip
+          cronPromise={cronPromise}
+          outreachPromise={outreachPromise}
+          webhooksPromise={webhooksPromise}
+          bugsPromise={bugsPromise}
+        />
+      </Suspense>
+
+      <div className="space-y-6">
+        <Suspense fallback={<HealthCoreSkeleton />}>
+          <HealthCore healthPromise={healthPromise} />
+        </Suspense>
+
+        <Suspense
+          fallback={
+            <div className="grid gap-6 lg:grid-cols-2">
+              <AdminPanelSkeleton title="Nightly job" />
+              <AdminPanelSkeleton title="Queued work nothing will drain" />
+            </div>
+          }
+        >
+          <CronAndQueue cronPromise={cronPromise} outreachPromise={outreachPromise} />
+        </Suspense>
+
+        <Suspense
+          fallback={
+            <div className="grid gap-6 lg:grid-cols-2">
+              <AdminPanelSkeleton title="Failures that used to vanish" />
+              <AdminPanelSkeleton title="Inbound webhooks (7 days)" />
+            </div>
+          }
+        >
+          <FailuresAndWebhooks
+            webhooksPromise={webhooksPromise}
+            errorsPromise={errorsPromise}
+          />
+        </Suspense>
+
+        <Suspense fallback={<AdminPanelSkeleton title="Known bug signatures" />}>
+          <BugSignatures bugsPromise={bugsPromise} />
+        </Suspense>
+
+        <Suspense fallback={null}>
+          <DataProtectionGroup protectionPromise={protectionPromise} />
+        </Suspense>
+      </div>
+    </LiveProvider>
   );
+}
 
+function HealthHeaderSkeleton() {
+  return (
+    <div className="mb-6">
+      <Skeleton className="h-8 w-32" />
+      <Skeleton className="mt-2 h-4 w-80" />
+    </div>
+  );
+}
+
+function HealthCoreSkeleton() {
+  return (
+    <>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-20 w-full rounded-xl" />
+        ))}
+      </div>
+      <AdminPanelSkeleton title="Accounts that cannot use AI at all" />
+      <AdminPanelSkeleton title="Failed and stalled imports" />
+    </>
+  );
+}
+
+async function HealthHeader({ healthPromise }: { healthPromise: Promise<Health> }) {
+  const health = await healthPromise;
   const totalBroken =
     health.connections.length +
     health.calendars.length +
@@ -76,30 +179,46 @@ export default async function AdminHealthPage() {
     health.missingKeyAccounts.length;
 
   return (
-    <>
       <AdminPageHeader
         title="Health"
         subtitle={
-          totalBroken === 0 ? (
-            "Nothing is failing across any account."
-          ) : (
-            <>
-              <span className="tabular-nums">{totalBroken}</span> thing
-              {totalBroken === 1 ? "" : "s"} need attention across all accounts
-            </>
-          )
+          <>
+            {totalBroken === 0 ? (
+              "Nothing is failing across any account."
+            ) : (
+              <>
+                <span className="tabular-nums">{totalBroken}</span> thing
+                {totalBroken === 1 ? "" : "s"} need attention across all accounts
+              </>
+            )}{" "}
+            · <LiveValue name="systemIssues">—</LiveValue> system issues
+          </>
         }
         action={
-          <a
-            href="/api/admin/export?dataset=health&format=csv"
-            className="inline-flex items-center gap-1.5 rounded-md border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors duration-fast hover:text-foreground"
-          >
-            <Download className="size-3" aria-hidden />
-            Export CSV
-          </a>
+          <ExportCsvLink href="/api/admin/export?dataset=health&format=csv" />
         }
       />
+  );
+}
 
+async function HealthStrip({
+  cronPromise,
+  outreachPromise,
+  webhooksPromise,
+  bugsPromise,
+}: {
+  cronPromise: Promise<Cron>;
+  outreachPromise: Promise<Outreach>;
+  webhooksPromise: Promise<Webhooks>;
+  bugsPromise: Promise<Bugs>;
+}) {
+  const [cron, outreach, webhooks, bugs] = await Promise.all([
+    cronPromise,
+    outreachPromise,
+    webhooksPromise,
+    bugsPromise,
+  ]);
+  return (
       <SystemStrip
         items={[
           {
@@ -141,8 +260,13 @@ export default async function AdminHealthPage() {
           },
         ]}
       />
+  );
+}
 
-      <div className="space-y-6">
+async function HealthCore({ healthPromise }: { healthPromise: Promise<Health> }) {
+  const health = await healthPromise;
+  return (
+    <>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <MetricTile
             label="No AI key"
@@ -434,7 +558,19 @@ export default async function AdminHealthPage() {
             </AdminTable>
           )}
         </AdminPanel>
+    </>
+  );
+}
 
+async function CronAndQueue({
+  cronPromise,
+  outreachPromise,
+}: {
+  cronPromise: Promise<Cron>;
+  outreachPromise: Promise<Outreach>;
+}) {
+  const [cron, outreach] = await Promise.all([cronPromise, outreachPromise]);
+  return (
         <div className="grid gap-6 lg:grid-cols-2">
           <AdminPanel title="Nightly job">
             {/* Nothing recorded cron runs before this, so "did it fire last night?" had no
@@ -520,7 +656,18 @@ export default async function AdminHealthPage() {
             )}
           </AdminPanel>
         </div>
+  );
+}
 
+async function FailuresAndWebhooks({
+  webhooksPromise,
+  errorsPromise,
+}: {
+  webhooksPromise: Promise<Webhooks>;
+  errorsPromise: Promise<Errors>;
+}) {
+  const [webhooks, errors] = await Promise.all([webhooksPromise, errorsPromise]);
+  return (
         <div className="grid gap-6 lg:grid-cols-2">
           <AdminPanel title="Failures that used to vanish">
             {!errors ? (
@@ -606,7 +753,13 @@ export default async function AdminHealthPage() {
             )}
           </AdminPanel>
         </div>
+  );
+}
 
+async function BugSignatures({ bugsPromise }: { bugsPromise: Promise<Bugs> }) {
+  const bugs = await bugsPromise;
+  return (
+    <>
         {bugs && (
           <AdminPanel title="Known bug signatures">
             <div className="grid gap-3 sm:grid-cols-3">
@@ -635,7 +788,151 @@ export default async function AdminHealthPage() {
             </div>
           </AdminPanel>
         )}
-      </div>
+    </>
+  );
+}
+
+async function DataProtectionGroup({
+  protectionPromise,
+}: {
+  protectionPromise: Promise<Protection>;
+}) {
+  const protection = await protectionPromise;
+  return (
+    <>
+        {/* ------------------------------------------------------- data protection ---- */}
+
+        {protection && (
+          <>
+            {/* A section heading, not a second `AdminPageHeader`. That component renders
+                an h1, and a document with two of them is wrong for a screen reader and
+                wrong for the outline — "Health" is the page; this is a group within it. */}
+            <div className="mt-2 border-t border-border/60 pt-6">
+              <h2 className="text-lg font-medium tracking-tight text-foreground">
+                Data protection
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {protection.thirdPartyRecords === null
+                  ? "What Orbit holds, and whether erasure actually works"
+                  : `${protection.thirdPartyRecords.toLocaleString()} records about people who never signed up`}
+              </p>
+            </div>
+
+            <AdminPanel title="Rows whose account no longer exists">
+              {protection.orphans.length === 0 ? (
+                <EmptyState>
+                  Nothing orphaned. Every user-scoped table is either purged on account
+                  deletion or deliberately anonymised.
+                </EmptyState>
+              ) : (
+                <>
+                  <AdminTable
+                    head={
+                      <>
+                        <Th>Table</Th>
+                        <Th numeric>Rows</Th>
+                      </>
+                    }
+                  >
+                    {protection.orphans.map((o) => (
+                      <tr
+                        key={o.table}
+                        className="border-b border-border/40 last:border-b-0"
+                      >
+                        <Td className="font-mono text-xs text-destructive">{o.table}</Td>
+                        <Td numeric>{o.rows}</Td>
+                      </tr>
+                    ))}
+                  </AdminTable>
+                  <p className="mt-3 text-xs text-destructive">
+                    These survived an account deletion. Three tables have reached production
+                    user-scoped and unpurged so far — each was invisible until something
+                    enumerated the schema rather than trusting a list.
+                  </p>
+                </>
+              )}
+              <p className="mt-3 border-t border-border/40 pt-2 text-xs text-muted-foreground">
+                Derived from <code className="font-mono">schema.ts</code> at run time, so a
+                new user-scoped table appears here the moment it holds an orphan.{" "}
+                <code className="font-mono">billing_events</code> is excluded: it is
+                anonymised rather than deleted, because financial records have to survive a
+                customer leaving.
+              </p>
+            </AdminPanel>
+
+            <div className="grid gap-6 lg:grid-cols-2">
+              <AdminPanel title="What is kept, and for how long">
+                <AdminTable
+                  head={
+                    <>
+                      <Th>Data</Th>
+                      <Th>Policy</Th>
+                      <Th numeric>Rows</Th>
+                    </>
+                  }
+                >
+                  {protection.retention.map((r) => (
+                    <tr
+                      key={r.what}
+                      className="border-b border-border/40 last:border-b-0"
+                    >
+                      <Td>{r.what}</Td>
+                      <Td
+                        className={
+                          r.keptForever ? "text-muted-foreground" : undefined
+                        }
+                      >
+                        {r.policy}
+                      </Td>
+                      <Td numeric>{r.rows === null ? "—" : r.rows}</Td>
+                    </tr>
+                  ))}
+                </AdminTable>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Contact data has no expiry. That is defensible for a CRM — remembering
+                  people is the product — but it is worth being a decision rather than an
+                  accident, given that the people being remembered did not agree to it.
+                </p>
+              </AdminPanel>
+
+              <AdminPanel title="Refused attempts to reach this console">
+                {protection.denials.length === 0 ? (
+                  <EmptyState>
+                    Nobody has been turned away. Recorded from the day the gate started
+                    logging — earlier attempts left no trace at all.
+                  </EmptyState>
+                ) : (
+                  <AdminTable
+                    head={
+                      <>
+                        <Th>Account</Th>
+                        <Th numeric>When</Th>
+                      </>
+                    }
+                  >
+                    {protection.denials.map((d, i) => (
+                      <tr
+                        key={`${d.userId}-${i}`}
+                        className="border-b border-border/40 last:border-b-0"
+                      >
+                        <Td className="font-mono text-xs">{d.userId}</Td>
+                        <Td numeric>
+                          <RelativeTime date={d.at} />
+                        </Td>
+                      </tr>
+                    ))}
+                  </AdminTable>
+                )}
+                <p className="mt-3 text-xs text-muted-foreground">
+                  The gate answers 404 rather than 403 deliberately, so a probe learns
+                  nothing — which also meant it left no trace. The response is unchanged;
+                  only the record is new. On a console with one legitimate operator, a
+                  second name here is worth reading.
+                </p>
+              </AdminPanel>
+            </div>
+          </>
+        )}
     </>
   );
 }

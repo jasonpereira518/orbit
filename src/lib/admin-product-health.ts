@@ -16,7 +16,7 @@ import {
 import { countInt, num } from "@/lib/admin-metrics";
 
 /**
- * Product reads that `/admin/growth` cannot answer from `admin-trends.ts`.
+ * Product reads that `/admin/funnel` and `/admin/product` split between them from `admin-trends.ts`.
  *
  * `admin-trends.ts` already covers adoption, activation cohorts and retention. What it
  * cannot show is what has NEVER been used (absent rows produce no group), what exists

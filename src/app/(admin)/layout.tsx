@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { AdminShell } from "@/components/admin/admin-shell";
 import { requireAdminPage } from "@/lib/admin";
 import { getCurrentUserProfile } from "@/lib/auth";
@@ -19,8 +20,29 @@ export default async function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // ONLY the gate blocks. The operator's email is chrome — it used to be awaited here,
+  // which put a second Clerk round trip (`currentUser()`, serialized after the gate's
+  // own `auth()`) on the critical path of every single navigation inside the console,
+  // to print one address in the header. It streams in now instead.
   await requireAdminPage();
-  const profile = await getCurrentUserProfile();
 
-  return <AdminShell adminEmail={profile?.email}>{children}</AdminShell>;
+  return (
+    <AdminShell
+      adminEmail={
+        <Suspense fallback={null}>
+          <AdminEmail />
+        </Suspense>
+      }
+    >
+      {children}
+    </AdminShell>
+  );
+}
+
+async function AdminEmail() {
+  const profile = await getCurrentUserProfile();
+  if (!profile?.email) return null;
+  return (
+    <span className="hidden max-w-[16rem] truncate sm:inline">{profile.email}</span>
+  );
 }

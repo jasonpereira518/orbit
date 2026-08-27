@@ -1,10 +1,10 @@
 import { AdminPageHeader, AdminPanel } from "@/components/admin/primitives";
 import { Skeleton } from "@/components/ui/skeleton";
 
-export default function AdminGrowthLoading() {
+export default function AdminFunnelLoading() {
   return (
     <>
-      <AdminPageHeader title="Growth" subtitle="Bucketing history…" />
+      <AdminPageHeader title="Funnel" subtitle="Bucketing history…" />
       <div className="space-y-6">
         <div className="grid gap-6 lg:grid-cols-2">
           <AdminPanel>

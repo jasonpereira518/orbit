@@ -75,10 +75,19 @@ export function offerForCount(
 }
 
 /** The live offer. Falls back to the intro price if the count cannot be read. */
-export async function lifetimeOffer(): Promise<LifetimeOffer> {
+/**
+ * @param soldCount An already-loaded purchase count, when the caller has one.
+ *
+ * Both `/admin` and `/admin/billing` render this beside their own
+ * `countLifetimePurchases()`, so without threading the count through, one cheap query
+ * runs twice on each of those screens.
+ */
+export async function lifetimeOffer(
+  soldCount?: Promise<number> | number
+): Promise<LifetimeOffer> {
   let sold = 0;
   try {
-    sold = await countLifetimePurchases();
+    sold = await (soldCount ?? countLifetimePurchases());
   } catch {
     // A failed count must not take the pricing page down, and the intro price is both the
     // cheaper and the currently-correct answer.
