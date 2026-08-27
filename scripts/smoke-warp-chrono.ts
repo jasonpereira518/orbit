@@ -30,6 +30,8 @@ import {
   burstForRadiusRank,
   chronoFrame,
   PART_FLIGHT_MS,
+  PART_SPREAD_MS,
+  liftScheduleForSlot,
   partDirection,
   partDistance,
   partScheduleForSlot,
@@ -110,24 +112,27 @@ function main() {
     "...and keeps igniting, so a long hold is growth and not a loop",
     heldLong.bursts > heldShort.bursts
   );
-  // A burst counter that outruns the stage's reserve is arithmetic, not
-  // growth: nothing lights, and the beat the count exists to produce silently
-  // stops happening. The reserve is what those extra bursts light, so the
-  // count must never promise more of them than there are.
-  const forever = chronoFrame("cruise", CHRONO_OUTBOUND_MS + 60_000, 0);
-  check(
-    "the hold's bursts stop at the reserve the stage actually seeds",
-    forever.bursts === IGNITION_FRACTIONS.length + CRUISE_BURSTS,
-    `${forever.bursts} vs ${IGNITION_FRACTIONS.length + CRUISE_BURSTS}`
-  );
-  // ...and the reserve is spent exactly at the cap: any shorter and the sky
-  // freezes before the provider force-resolves, any longer and the surplus
-  // levels hold stars no hold can ever reach.
+  // The load-bearing property, and the only one here that can actually fail:
+  // the LAST reserve level the stage seeds must be reachable by the counter.
+  //
+  // Two earlier checks stood here — that the count stops at CRUISE_BURSTS and
+  // that it reaches it at the cap — and neither could ever fail: both are
+  // guaranteed by `cruiseBurstsBy`'s own `Math.min` and by CRUISE_BURSTS being
+  // defined as that same floor division. A check that cannot fail is a comment
+  // wearing a check's clothes.
+  //
+  // What CAN drift is the gap between the two files. `chrono-stage.tsx` seeds
+  // reserve stars at burst index `IGNITION_FRACTIONS.length + floor(i/reserve *
+  // CRUISE_BURSTS)`, whose highest value is `+ CRUISE_BURSTS - 1`, and `isLit`
+  // needs `bursts > burst` strictly. If the counter ever stopped one short,
+  // the outermost reserve level would sit in the field forever, unlit, during
+  // exactly the long hold it exists to serve — and nothing else would notice.
+  const topReserveIndex = IGNITION_FRACTIONS.length + CRUISE_BURSTS - 1;
   const atCap = chronoFrame("cruise", CRUISE_CAP_MS, 0);
   check(
-    "the reserve lasts exactly as long as the longest possible hold",
-    atCap.bursts === IGNITION_FRACTIONS.length + CRUISE_BURSTS,
-    `held ${CRUISE_CAP_MS - CHRONO_OUTBOUND_MS}ms = ${atCap.bursts - IGNITION_FRACTIONS.length} bursts of ${CRUISE_BURSTS}`
+    "the last reserve level the stage seeds can actually light",
+    topReserveIndex < atCap.bursts,
+    `top seeded index ${topReserveIndex}, count reaches ${atCap.bursts} at the cap`
   );
   check(
     "nothing extra ignites on a fast route, where there is no hold at all",
@@ -270,13 +275,52 @@ function main() {
     partScheduleForSlot(0, SLOTS).startMs < CHRONO_IN_COVER[0],
     `last slot starts ${partScheduleForSlot(0, SLOTS).startMs}ms, cover opens ${CHRONO_IN_COVER[0]}ms`
   );
+  // The lift window covers the STAGGERED SET, so every slot's rise has to fit
+  // inside it too — and each rise has to still be running when its own flight
+  // starts, or "lift, then part" becomes "lift, pause, part" for that slot.
+  for (const slots of [SLOTS, 0, 1, 12]) {
+    for (let order = 0; order <= slots; order += 1) {
+      const rise = liftScheduleForSlot(order, slots);
+      const flight = partScheduleForSlot(order, slots);
+      check(
+        `slot ${order} of ${slots} rises inside the declared lift window`,
+        rise.startMs >= CHRONO_IN.lift[0] &&
+          rise.startMs + rise.durationMs <= CHRONO_IN.lift[1] + 1e-9,
+        `rises ${rise.startMs}-${rise.startMs + rise.durationMs}ms, window ${CHRONO_IN.lift.join("-")}ms`
+      );
+      check(
+        `slot ${order} of ${slots} is still rising when its flight starts`,
+        flight.startMs > rise.startMs &&
+          flight.startMs < rise.startMs + rise.durationMs,
+        `flight ${flight.startMs}ms, rise ${rise.startMs}-${rise.startMs + rise.durationMs}ms`
+      );
+      check(
+        `slot ${order} of ${slots} rises and flies from the same offset`,
+        near(
+          rise.startMs - CHRONO_IN.lift[0],
+          flight.startMs - CHRONO_IN.part[0]
+        )
+      );
+    }
+  }
   check(
-    "the flight begins before the rise it follows has finished, for every slot",
-    Array.from({ length: SLOTS + 1 }, (_, order) => {
-      const s = partScheduleForSlot(order, SLOTS);
-      const liftStart = CHRONO_IN.lift[0] + (s.startMs - CHRONO_IN.part[0]);
-      return s.startMs < liftStart + (CHRONO_IN.lift[1] - CHRONO_IN.lift[0]);
-    }).every(Boolean)
+    "one panel's rise is the declared window minus what the stagger costs",
+    near(
+      liftScheduleForSlot(0, SLOTS).durationMs,
+      CHRONO_IN.lift[1] - CHRONO_IN.lift[0] - PART_SPREAD_MS
+    ),
+    `${liftScheduleForSlot(0, SLOTS).durationMs}ms`
+  );
+  // One panel's rise does not vary by slot at all — it is the lift window
+  // minus the spread, and both are constants. What it DOES depend on is those
+  // two beat-table entries staying apart: retune `lift` down to the spread and
+  // every rise collapses to zero at once, silently, leaving panels that jump
+  // sideways from rest with no release. Asserting `durationMs > 0` across a
+  // list of slot counts would only assert the same constant five times.
+  check(
+    "the lift window is wider than the spread the stagger costs it",
+    CHRONO_IN.lift[1] - CHRONO_IN.lift[0] > PART_SPREAD_MS,
+    `${CHRONO_IN.lift[1] - CHRONO_IN.lift[0]}ms window, ${PART_SPREAD_MS}ms spread`
   );
   // A single-panel page has nobody to stagger against and must not be nudged.
   check(

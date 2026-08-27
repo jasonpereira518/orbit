@@ -54,8 +54,15 @@ export const CHRONO_OUT = {
 export const CHRONO_IN = {
   /** The panels rise off the page. Short, and its own beat: flying straight
    *  sideways from rest reads as a slide, whereas a rise first reads as
-   *  something releasing before it goes. */
-  lift: [0, 160],
+   *  something releasing before it goes.
+   *
+   *  This is the window for the whole STAGGERED SET, not for one panel: every
+   *  slot's rise is offset by the same amount its flight is, so the first slot
+   *  to leave rises 0-160ms and the last 80-240ms. One panel's rise is the
+   *  window minus that spread — `liftScheduleForSlot` does the arithmetic. A
+   *  window declared as one panel's 160ms would close 80ms before the set has
+   *  actually finished rising: a beat table that stops short of the beat. */
+  lift: [0, 240],
   /** The panels fly horizontally clean out of the frame, each to whichever
    *  side of the centre line it is already nearer. Overlaps the lift on
    *  purpose — the rise is still finishing as the flight begins, so the two
@@ -361,6 +368,25 @@ export function partDistance(viewportWidth: number) {
 export const PART_FLIGHT_MS = 420;
 
 /**
+ * How much later the last panel leaves than the first, in ms.
+ *
+ * Everything the `part` window has left over once one flight is accounted for.
+ * Both exit beats share it, which is what keeps a slot's rise and its flight
+ * in step: they start at the same offset into their own windows.
+ */
+export const PART_SPREAD_MS = Math.max(
+  0,
+  CHRONO_IN.part[1] - CHRONO_IN.part[0] - PART_FLIGHT_MS,
+);
+
+/** The offset into either exit window at which slot `order` begins, in ms.
+ *  Reverse order: the last panel to arrive is the first to leave. */
+function exitOffsetForSlot(order: number, maxOrder: number) {
+  const stagger = maxOrder > 0 ? PART_SPREAD_MS / maxOrder : 0;
+  return (maxOrder - order) * stagger;
+}
+
+/**
  * When the panel in assembly slot `order` starts its flight off the frame, and
  * how long that flight lasts, in ms from the start of the return arc.
  *
@@ -371,14 +397,26 @@ export const PART_FLIGHT_MS = 420;
  * together, and a cascade would turn a single gesture into a queue.
  */
 export function partScheduleForSlot(order: number, maxOrder: number) {
-  const [from, to] = CHRONO_IN.part;
-  // Never negative: a `part` window shorter than one flight would otherwise
-  // stagger the panels backwards, out of the window it is meant to fit them in.
-  const slack = Math.max(0, to - from - PART_FLIGHT_MS);
-  const stagger = maxOrder > 0 ? slack / maxOrder : 0;
   return {
-    startMs: from + (maxOrder - order) * stagger,
+    startMs: CHRONO_IN.part[0] + exitOffsetForSlot(order, maxOrder),
     durationMs: PART_FLIGHT_MS,
+  };
+}
+
+/**
+ * When the panel in assembly slot `order` starts its rise, and how long that
+ * rise lasts, in ms from the start of the return arc.
+ *
+ * Same offset as its flight, so the two beats stay in step for every slot and
+ * the rise is always still finishing as the flight begins. The duration is the
+ * declared `lift` window minus the spread the stagger costs — never negative,
+ * for the same reason `PART_SPREAD_MS` is floored.
+ */
+export function liftScheduleForSlot(order: number, maxOrder: number) {
+  const [from, to] = CHRONO_IN.lift;
+  return {
+    startMs: from + exitOffsetForSlot(order, maxOrder),
+    durationMs: Math.max(0, to - from - PART_SPREAD_MS),
   };
 }
 
