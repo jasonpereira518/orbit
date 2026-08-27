@@ -589,6 +589,11 @@ export type ImportStats = {
   recruitersFound?: number;
   /** Senders the classifier rejected or scored below the confidence floor. */
   sendersRejected?: number;
+
+  /** Wall-clock milliseconds across every invocation of this job. */
+  durationMs?: number;
+  /** SQL statements issued across every invocation. The cost this work exists to bound. */
+  statements?: number;
 };
 
 export const imports = pgTable("imports", {

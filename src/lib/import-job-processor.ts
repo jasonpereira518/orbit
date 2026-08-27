@@ -10,6 +10,7 @@ import {
 } from "@/db/schema";
 import {
   bulkMergeContactsForUser,
+  contactHeadroomForUser,
   createContactsBulkForUser,
   type ContactInput,
 } from "@/lib/contact-writes";
@@ -24,10 +25,17 @@ import {
   type DuplicateSubject,
 } from "@/lib/duplicates";
 import { parseConnectedOn } from "@/lib/linkedin-connections";
+import { startQueryCount, stopQueryCount } from "@/lib/query-counter";
 import { rebuildContactEmbeddingsBatch } from "@/lib/search";
 
-/** Rows pulled from the DB per processing loop iteration. */
-export const CHUNK_SIZE = 40;
+/**
+ * Rows pulled from the DB per processing loop iteration. Widened from 40 to cut the fixed
+ * per-chunk overhead (status re-read, pending fetch, progress update) a 500-row import
+ * pays 13 times over instead of 2. The budget guard in `scripts/smoke-import-perf.ts`,
+ * not intuition, is what actually bounds how far this can go — it asserts a statements-
+ * per-chunk ceiling that would catch a per-row regression long before chunk width would.
+ */
+export const CHUNK_SIZE = 250;
 /** Stay well under the 300s function ceiling, leaving room for the self-continuation call. */
 const TIME_BUDGET_MS = 4.5 * 60 * 1000;
 
@@ -86,6 +94,7 @@ async function markRowsDone(rowIds: string[], contactIdByRowId: Map<string, stri
 export async function runLinkedInImportJob(importId: string): Promise<void> {
   const db = await getDb();
   const jobStart = Date.now();
+  startQueryCount();
 
   const importRow = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
   if (!importRow) return;
@@ -121,9 +130,19 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
   let rowsProcessed = importRow.rowsProcessed ?? 0;
   let skippedTotal = importRow.stats?.skipped ?? 0;
   let blockedByPlanTotal = importRow.stats?.blockedByPlan ?? 0;
+  // Refreshed every loop pass from the row this job's own writes are updating, so the
+  // final completion update below folds in whatever another process wrote to `stats`
+  // (e.g. Gmail-scan-style concurrent fields) instead of the snapshot from job start,
+  // which a self-continuing job would otherwise stomp back to a stale value.
+  let latestStats = importRow.stats ?? {};
   const allTouchedContactIds = new Set<string>();
 
   try {
+    // Counted once per invocation, not once per chunk: the number only moves because this
+    // loop moves it, so re-deriving it with a full table count every chunk is a round trip
+    // spent confirming arithmetic we already did.
+    let headroom = await contactHeadroomForUser(userId);
+
     while (true) {
       if (Date.now() - jobStart > TIME_BUDGET_MS) {
         await scheduleContinuation(importId);
@@ -132,6 +151,7 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
 
       const current = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
       if (!current || current.status !== "processing") return;
+      latestStats = current.stats ?? {};
 
       const pendingRows: PendingRow[] = await db.query.importJobRows.findMany({
         where: and(eq(importJobRows.importId, importId), eq(importJobRows.status, "pending")),
@@ -209,6 +229,15 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
         }
       }
 
+      // Cancellation latency is a direct cost of the wider chunk. Classification is pure
+      // and cheap, so checking here — after the rows are sorted into create/merge/skip but
+      // before anything is written — costs one statement and halves the wait.
+      const stillRunning = await db.query.imports.findFirst({
+        where: eq(imports.id, importId),
+        columns: { status: true },
+      });
+      if (stillRunning?.status !== "processing") return;
+
       const touchedContactIds: string[] = [];
       const contactIdByRowId = new Map<string, string>();
 
@@ -225,7 +254,7 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
           userId,
           toCreate.map((item) => item.input),
           companyResolve,
-          { skipRevalidate: true, skipEmbedding: true }
+          { skipRevalidate: true, skipEmbedding: true, headroom }
         );
         created.forEach((contact, i) => {
           addToDuplicateIndex(duplicateIndex, contact);
@@ -233,6 +262,7 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
           touchedContactIds.push(contact.id);
         });
         contactsCreated += created.length;
+        if (headroom !== null) headroom = Math.max(0, headroom - created.length);
 
         if (created.length < toCreate.length) {
           planBlockedRows = toCreate
@@ -262,34 +292,38 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
       }
 
       const blockedRowIds = new Set(planBlockedRows.map((row) => row.id));
-      if (blockedRowIds.size > 0) {
-        await db
-          .update(importJobRows)
-          .set({
-            status: "skipped",
-            errorMessage: PLAN_LIMIT_ROW_REASON,
-            updatedAt: new Date(),
-          })
-          .where(inArray(importJobRows.id, [...blockedRowIds]));
-      }
+      const doneRowIds = [
+        ...toCreate
+          .map((item) => item.row.id)
+          .filter((id) => !blockedRowIds.has(id)),
+        ...toUpdate.map((item) => item.row.id),
+      ];
 
-      await markRowsDone(
-        [
-          ...toCreate
-            .map((item) => item.row.id)
-            .filter((id) => !blockedRowIds.has(id)),
-          ...toUpdate.map((item) => item.row.id),
-        ],
-        contactIdByRowId
-      );
+      // These three writes touch disjoint row sets — blockedRowIds is a subset of
+      // toCreate's rows that createContactsBulkForUser refused, doneRowIds is every
+      // toCreate/toUpdate row except those, and toSkip is rows filtered out before either
+      // bulk write ran — so there is nothing to gain from running them one after another.
+      await Promise.all([
+        blockedRowIds.size > 0
+          ? db
+              .update(importJobRows)
+              .set({
+                status: "skipped",
+                errorMessage: PLAN_LIMIT_ROW_REASON,
+                updatedAt: new Date(),
+              })
+              .where(inArray(importJobRows.id, [...blockedRowIds]))
+          : Promise.resolve(),
+        markRowsDone(doneRowIds, contactIdByRowId),
+        toSkip.length > 0
+          ? db
+              .update(importJobRows)
+              .set({ status: "skipped", updatedAt: new Date() })
+              .where(inArray(importJobRows.id, toSkip.map((row) => row.id)))
+          : Promise.resolve(),
+      ]);
 
-      if (toSkip.length > 0) {
-        await db
-          .update(importJobRows)
-          .set({ status: "skipped", updatedAt: new Date() })
-          .where(inArray(importJobRows.id, toSkip.map((row) => row.id)));
-        skippedTotal += toSkip.length;
-      }
+      if (toSkip.length > 0) skippedTotal += toSkip.length;
 
       rowsProcessed += toCreate.length + toUpdate.length;
 
@@ -317,7 +351,19 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
 
   await db
     .update(imports)
-    .set({ status: "completed", updatedAt: new Date() })
+    .set({
+      status: "completed",
+      stats: {
+        ...latestStats,
+        skipped: skippedTotal,
+        blockedByPlan: blockedByPlanTotal,
+        // Accumulated, not overwritten: a job that self-continues runs this several times
+        // and the interesting number is the total across all of them.
+        durationMs: (latestStats.durationMs ?? 0) + (Date.now() - jobStart),
+        statements: (latestStats.statements ?? 0) + stopQueryCount(),
+      },
+      updatedAt: new Date(),
+    })
     .where(eq(imports.id, importId));
 
   // Redraw the distribution once, now that every contact this import will ever add is in.

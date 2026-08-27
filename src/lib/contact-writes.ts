@@ -44,6 +44,14 @@ export type ContactWriteOptions = {
    * is about to be redrawn anyway.
    */
   skipCloseness?: boolean;
+  /**
+   * Pre-computed remaining contact allowance, or `null` for unlimited.
+   *
+   * Bulk import loops know this already — they counted once at job start and track it in
+   * memory. Without it every chunk pays a fresh `count(*)` over the whole contacts table
+   * to re-derive a number that has not changed since the previous chunk.
+   */
+  headroom?: number | null;
 };
 
 export type ContactInput = {
@@ -387,7 +395,10 @@ export async function createContactsBulkForUser(
   // Take what fits rather than failing the whole batch: a free user importing 847
   // LinkedIn connections should still get their first 100, and the caller reports the
   // shortfall by comparing `created.length` against what it passed in.
-  const headroom = await contactHeadroomForUser(userId);
+  const headroom =
+    options?.headroom !== undefined
+      ? options.headroom
+      : await contactHeadroomForUser(userId);
   if (headroom !== null && headroom < 1) return [];
   const admitted =
     headroom === null ? inputs : inputs.slice(0, headroom);
