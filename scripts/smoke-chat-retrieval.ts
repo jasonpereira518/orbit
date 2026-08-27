@@ -97,6 +97,29 @@ async function main() {
   const small = await rerankCandidates("u1", "q", pool.slice(0, 5), rerankFail);
   check("small pool skips rerank", small.length === 5);
 
+  // threshold starvation: only 2 candidates clear RERANK_MIN_RELEVANCE ->
+  // trust the model's ordering for a smaller (top-5) page instead of RRF fallback.
+  const starvedScores = pool.map((c) => ({
+    id: c.id,
+    relevance: c.id === "c7" ? 9 : c.id === "c3" ? 8 : 1,
+  }));
+  const starvedStub = (async (_u: string, _input: unknown) =>
+    JSON.stringify({ scores: starvedScores })) as never;
+  const starved = await rerankCandidates("u1", "q", pool, starvedStub);
+  check(
+    "rerank threshold starvation falls back to top-5 by score",
+    starved.length === 5 && starved[0].id === "c7" && starved[1].id === "c3"
+  );
+
+  // empty scored list from the model -> nothing clears the threshold, RRF fallback.
+  const emptyStub = (async (_u: string, _input: unknown) =>
+    JSON.stringify({ scores: [] })) as never;
+  const emptyScored = await rerankCandidates("u1", "q", pool, emptyStub);
+  check(
+    "rerank empty scores falls back to RRF order",
+    emptyScored.length === FINAL_CONTACT_COUNT && emptyScored[0].id === "c0"
+  );
+
   // ---- budget ----
   const longNotes = "x".repeat(5000);
   const budgetPool = Array.from({ length: 12 }, (_, i) => ({
@@ -121,6 +144,22 @@ async function main() {
     0
   );
   check("total context under budget", totalChars <= 48000);
+
+  // budget must STOP once exhausted, not skip an oversized contact and keep
+  // appending cheaper ones after it (that would violate rank-order serialization).
+  const stopPool = [
+    mkCandidate("s0", "Person 0"),
+    mkCandidate("s1", "Person 1"),
+    { ...mkCandidate("s2", "Person 2"), company: "x".repeat(60000) },
+    mkCandidate("s3", "Person 3"),
+    mkCandidate("s4", "Person 4"),
+  ];
+  const stopSnippets = new Map(stopPool.map((c) => [c.id, { recentMessages: [] }]));
+  const stopped = budgetContactsContext(stopPool, stopSnippets);
+  check(
+    "budget stops at first oversized contact instead of skip-and-continue",
+    stopped.length === 2 && stopped[0].id === "s0" && stopped[1].id === "s1"
+  );
 }
 
 main()

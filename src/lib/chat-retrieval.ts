@@ -209,7 +209,8 @@ export function budgetContactsContext(
 ): BudgetedContact[] {
   const out: BudgetedContact[] = [];
   let spent = 0;
-  contacts.forEach((c, index) => {
+  for (let index = 0; index < contacts.length; index++) {
+    const c = contacts[index];
     const tier = CONTEXT_TIERS.find((t) => index < t.upto)!;
     const notes = (c.notes || "").slice(0, tier.notes) || null;
     const aiSummary = (c.aiSummary || "").slice(0, tier.summary) || null;
@@ -223,7 +224,9 @@ export function budgetContactsContext(
       (notes?.length ?? 0) + (aiSummary?.length ?? 0) +
       keyFacts.join("").length + recentMessages.join("").length +
       c.tags.join("").length + 80; // formatting overhead
-    if (spent + cost > TOTAL_CONTEXT_CHAR_BUDGET && out.length > 0) return;
+    // Budget exhaustion stops serialization entirely — a later, cheaper
+    // contact must not be appended out of rank order once we've run dry.
+    if (spent + cost > TOTAL_CONTEXT_CHAR_BUDGET && out.length > 0) break;
     spent += cost;
 
     out.push({
@@ -239,6 +242,6 @@ export function budgetContactsContext(
       tags: c.tags,
       relevance: c.relevance,
     });
-  });
+  }
   return out;
 }
