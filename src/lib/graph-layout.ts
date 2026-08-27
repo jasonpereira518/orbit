@@ -250,13 +250,19 @@ function labelClear(
  * clears every already-placed star's label box; when an annulus fills up it
  * widens and the sampling continues. Deterministic and guaranteed to leave
  * breathing room between nodes.
+ *
+ * `soft` switches the radial distribution from area-uniform (a filled band
+ * with hard edges) to triangular (dense mid-band, feathered inner and outer
+ * edges) — the asteroid-belt profile the deep-space rim uses so it never
+ * reads as a crisp circle.
  */
 function scatterField(
   ids: string[],
   seedPrefix: string,
   inner: number,
   initialWidth: number,
-  avoid: Array<{ x: number; y: number }>
+  avoid: Array<{ x: number; y: number }>,
+  opts?: { soft?: boolean }
 ): { placed: Array<{ id: string; x: number; y: number }>; outer: number } {
   const placed: Array<{ id: string; x: number; y: number }> = [];
   let outer = inner + initialWidth;
@@ -267,13 +273,15 @@ function scatterField(
     let rounds = 0;
     while (!spot && rounds < 200) {
       for (let tries = 0; tries < 24 && !spot; tries++, attempt++) {
-        const u = hashUnit(`${seedPrefix}:${id}`, attempt * 2 + 1);
-        const v = hashUnit(`${seedPrefix}:${id}`, attempt * 2 + 2);
+        const u = hashUnit(`${seedPrefix}:${id}`, attempt * 3 + 1);
+        const v1 = hashUnit(`${seedPrefix}:${id}`, attempt * 3 + 2);
+        const v2 = hashUnit(`${seedPrefix}:${id}`, attempt * 3 + 3);
         const angle = u * Math.PI * 2;
-        // sqrt() → uniform density over the annulus
-        const radius = Math.sqrt(
-          inner * inner + v * (outer * outer - inner * inner)
-        );
+        // soft → triangular over the band (average of two draws);
+        // otherwise sqrt() → uniform density over the annulus.
+        const radius = opts?.soft
+          ? inner + ((v1 + v2) / 2) * (outer - inner)
+          : Math.sqrt(inner * inner + v1 * (outer * outer - inner * inner));
         const candidate = {
           x: Math.cos(angle) * radius,
           y: Math.sin(angle) * radius,
@@ -333,26 +341,38 @@ export function buildClusterGeometry(fit: ClusterFit): ClusterGeometry {
   const sin = Math.sin(rotation);
 
   const stars = shape.stars.slice(0, count);
+  // Rotated unit-scale star positions — box clearance depends on the axis
+  // alignment of each pair, so it must be measured after rotation.
+  const unit = stars.map((s) => ({
+    x: s.x * cos - s.y * sin,
+    y: s.x * sin + s.y * cos,
+  }));
   if (count > 1) {
-    let minDist = Infinity;
-    for (let i = 0; i < stars.length; i++) {
-      for (let j = i + 1; j < stars.length; j++) {
-        minDist = Math.min(
-          minDist,
-          Math.hypot(stars[i].x - stars[j].x, stars[i].y - stars[j].y)
-        );
+    // Open the figure up until its tightest pair clears both the euclidean
+    // floor and a full label box (either enough horizontal room for a label,
+    // or enough vertical room to stack them) — but never so far that one
+    // cluster swallows the sky.
+    let needed = 0;
+    for (let i = 0; i < unit.length; i++) {
+      for (let j = i + 1; j < unit.length; j++) {
+        const dx = Math.abs(unit[i].x - unit[j].x);
+        const dy = Math.abs(unit[i].y - unit[j].y);
+        const dist = Math.hypot(dx, dy);
+        if (dist < 1e-9) continue;
+        const forEuclid = FIGURE_STAR_MIN / dist;
+        const boxRatio = Math.max(dx / LABEL_CLEAR_X, dy / LABEL_CLEAR_Y);
+        const forBox = boxRatio > 1e-9 ? 1 / boxRatio : forEuclid;
+        needed = Math.max(needed, forEuclid, forBox);
       }
     }
-    if (minDist > 0 && minDist * scale < FIGURE_STAR_MIN) {
-      // Open the figure up until its tightest pair clears a label, but never
-      // so far that one cluster swallows the sky.
-      scale = Math.min(FIGURE_STAR_MIN / minDist, baseScale * FIGURE_MAX_UPSCALE);
+    if (needed > scale) {
+      scale = Math.min(needed, baseScale * FIGURE_MAX_UPSCALE);
     }
   }
 
-  const figureLocal = stars.map((s) => ({
-    x: (s.x * cos - s.y * sin) * scale,
-    y: (s.x * sin + s.y * cos) * scale,
+  const figureLocal = unit.map((s) => ({
+    x: s.x * scale,
+    y: s.y * scale,
   }));
   const figureExtent = figureLocal.reduce(
     (m, p) => Math.max(m, Math.hypot(p.x, p.y)),
@@ -411,10 +431,26 @@ export type PackedShells = {
   ordered: ClusterGeometry[];
 };
 
-/** Exact angular need between two adjacent clusters on a shell of radius R. */
+/** Per-cluster seeded radial wobble off its shell's nominal radius. */
+const SHELL_RADIAL_JITTER = 55;
+/**
+ * Extra radius gained over one full turn of a shell — every shell winds
+ * outward with the same chirality, so instead of concentric circles the sky
+ * reads as a loose spiral. Kept gentle: the point is a galaxy impression,
+ * not literal arms.
+ */
+const SHELL_SPIRAL_DRIFT = 130;
+
+/**
+ * Exact angular need between two adjacent clusters on a shell of radius R.
+ * Chord distance only grows when one of the pair sits farther out, so
+ * evaluating at the shell's minimum possible radius (nominal − jitter)
+ * stays safe under the jitter/spiral offsets.
+ */
 function pairArc(a: ClusterGeometry, b: ClusterGeometry, R: number) {
+  const rMin = Math.max(1, R - SHELL_RADIAL_JITTER);
   return (
-    2 * Math.asin(Math.min(1, (a.foot + b.foot + CLUSTER_GAP) / (2 * R)))
+    2 * Math.asin(Math.min(1, (a.foot + b.foot + CLUSTER_GAP) / (2 * rMin)))
   );
 }
 
@@ -428,17 +464,34 @@ function shellFits(items: ClusterGeometry[], R: number) {
 }
 
 /**
- * Pack clusters onto concentric shells around the sun. Greedy fill in
+ * Pack clusters onto winding shells around the sun. Greedy fill in
  * family-adjacent order: a shell accepts clusters while the exact chord-based
  * angular budget lasts, then the next shell starts beyond the previous
- * shell's outer edge. Adjacent-slot arcs are exact chord constraints and
- * shells are radially disjoint, so cluster footprints never overlap.
+ * shell's outermost possible point. Each cluster's radius is its shell's
+ * nominal radius plus a seeded wobble plus a spiral term that grows with the
+ * angle walked around the shell — so the sky reads slightly like a galaxy
+ * rather than concentric circles. Adjacent-slot arcs are exact chord
+ * constraints at worst-case radius and shells stay radially disjoint under
+ * the maximum offsets, so cluster footprints never overlap.
  */
 export function packClusterShells(geoms: ClusterGeometry[]): PackedShells {
   const centers = new Map<string, { x: number; y: number }>();
-  let prevOuter = SUN_CLEAR;
+  // Top of everything placed so far: a shell's innermost possible cluster
+  // edge (nominal − jitter − footprint) must clear this.
+  let prevTop = SUN_CLEAR;
   let idx = 0;
   let shellIndex = 0;
+
+  const place = (g: ClusterGeometry, R: number, theta: number, start: number) => {
+    const wobble =
+      (hashUnit(g.cluster.id, 41) - 0.5) * 2 * SHELL_RADIAL_JITTER;
+    const spiral = ((theta - start) / (Math.PI * 2)) * SHELL_SPIRAL_DRIFT;
+    const radius = R + wobble + spiral;
+    centers.set(g.cluster.id, {
+      x: Math.cos(theta) * radius,
+      y: Math.sin(theta) * radius,
+    });
+  };
 
   while (idx < geoms.length) {
     const items: ClusterGeometry[] = [];
@@ -447,7 +500,11 @@ export function packClusterShells(geoms: ClusterGeometry[]): PackedShells {
     while (idx < geoms.length) {
       const tentative = [...items, geoms[idx]];
       const tentativeMax = Math.max(maxFoot, geoms[idx].foot);
-      const tentativeR = prevOuter + tentativeMax + (shellIndex > 0 ? CLUSTER_GAP : 0);
+      const tentativeR =
+        prevTop +
+        SHELL_RADIAL_JITTER +
+        tentativeMax +
+        (shellIndex > 0 ? CLUSTER_GAP : 0);
       if (items.length > 0 && !shellFits(tentative, tentativeR)) break;
       items.push(geoms[idx]);
       maxFoot = tentativeMax;
@@ -458,10 +515,7 @@ export function packClusterShells(geoms: ClusterGeometry[]): PackedShells {
     // Place along the shell: exact pairwise increments plus even slack.
     const start = -Math.PI / 2 + shellIndex * 0.6;
     if (items.length === 1) {
-      centers.set(items[0].cluster.id, {
-        x: Math.cos(start) * R,
-        y: Math.sin(start) * R,
-      });
+      place(items[0], R, start, start);
     } else {
       const increments = items.map((g, i) =>
         pairArc(g, items[(i + 1) % items.length], R)
@@ -470,19 +524,16 @@ export function packClusterShells(geoms: ClusterGeometry[]): PackedShells {
       const slack = Math.max(0, Math.PI * 2 - used) / items.length;
       let theta = start;
       items.forEach((g, i) => {
-        centers.set(g.cluster.id, {
-          x: Math.cos(theta) * R,
-          y: Math.sin(theta) * R,
-        });
+        place(g, R, theta, start);
         theta += increments[i] + slack;
       });
     }
 
-    prevOuter = R + maxFoot + CLUSTER_GAP;
+    prevTop = R + SHELL_RADIAL_JITTER + SHELL_SPIRAL_DRIFT + maxFoot + CLUSTER_GAP;
     shellIndex += 1;
   }
 
-  return { centers, skyEdge: prevOuter, ordered: geoms };
+  return { centers, skyEdge: prevTop, ordered: geoms };
 }
 
 /**
@@ -524,18 +575,29 @@ export function buildHybridGraphLayout(
     }
   }
 
-  // Deep Space and singleton clusters scatter across the rim beyond the
-  // last shell — same organic field, sky-sized.
+  // Deep Space and singleton clusters drift through an asteroid belt beyond
+  // the last shell: the band is sized up front so the whole population fits
+  // at comfortable density, and the soft (triangular) radial profile leaves
+  // feathered inner/outer edges instead of a crisp circle.
   const background = contacts
     .filter((c) => !positions.has(c.id))
     .sort((a, b) => a.id.localeCompare(b.id));
   if (background.length > 0) {
+    const beltInner = skyEdge + BACKGROUND_GAP;
+    const beltWidth = Math.max(
+      BACKGROUND_FIELD_WIDTH,
+      Math.ceil(
+        (background.length * LABEL_CLEAR_X * LABEL_CLEAR_Y * 1.7) /
+          (Math.PI * 2 * beltInner)
+      )
+    );
     const { placed } = scatterField(
       background.map((c) => c.id),
       "deep-space",
-      skyEdge + BACKGROUND_GAP,
-      BACKGROUND_FIELD_WIDTH,
-      []
+      beltInner,
+      beltWidth,
+      [],
+      { soft: true }
     );
     for (const p of placed) {
       positions.set(p.id, toPosition(p.x, p.y));
