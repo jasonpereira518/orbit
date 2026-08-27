@@ -4,7 +4,13 @@
  *
  *   liftoff — the app to /pricing. A rocket. Slow out, fast home.
  *   chrono  — Settings to /upgrade. A time warp forward, told as long-exposure
- *             star trails. Symmetric: you rewind home the way you came.
+ *             star trails. You rewind home the way you came, but nowhere near
+ *             as far: at least 2810ms out — 1950ms of deterministic run, any
+ *             cruise hold on top of that, then 860ms of deceleration —
+ *             against 1150ms back. Coming home is a departure someone has
+ *             already decided on, and the beats below are not symmetric.
+ *             `outboundMs` and `inboundMs` are not comparable on their own;
+ *             see their doc comments.
  *
  * Deliberately free of React and next/* imports: the smoke script loads this
  * module directly under tsx, and a `next/dynamic` in here would take the whole
@@ -72,8 +78,9 @@ export const JOURNEYS: Record<JourneyId, Journey> = {
       opaqueMs: CHRONO_OPAQUE_MS,
       arrivingMs: CHRONO_ARRIVING_MS,
       inboundMs: CHRONO_INBOUND_MS,
-      // chrono — the page dissolving into the exposure is the shot, so the swap
-      // waits until the stage covers it again.
+      // chrono — the page leaving is the shot: the panels lift and fly out to
+      // either side of the frame, so the swap waits until the stage has come
+      // back up behind them.
       inboundPushMs: CHRONO_IN.push,
       inboundLandingMs: CHRONO_IN.landing[0],
     },
