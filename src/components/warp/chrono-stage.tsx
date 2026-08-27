@@ -29,6 +29,10 @@ type Star = {
   burst: number;
   /** 0..1 when the star has just ignited, decaying to nothing. */
   flash: number;
+  /** Whether this star's ignition flare has already been fired. Tracked
+   *  explicitly because `flash` decays back to 0, and a decayed flash is
+   *  indistinguishable from one that never fired. */
+  ignited: boolean;
   /** Position in the growth order, 0..1. On the way home the field thins from
    *  the newest backwards. */
   born: number;
@@ -160,6 +164,7 @@ export function ChronoStage({ run }: { run: WarpRun }) {
               )
             : -1,
           flash: 0,
+          ignited: false,
           born: rank,
         };
       });
@@ -220,11 +225,16 @@ export function ChronoStage({ run }: { run: WarpRun }) {
           if (s.burst >= 0) {
             const lit = f.bursts > s.burst && s.born < f.alive;
             if (!lit) {
+              s.ignited = false;
               s.flash = 0;
               continue;
             }
-            // First frame alight: flare, then decay to an ordinary star.
-            if (s.flash === 0 && f.bursts === s.burst + 1) s.flash = 1;
+            // Flare once, on the frame it comes alight — not every time the
+            // flare finishes decaying.
+            if (!s.ignited) {
+              s.ignited = true;
+              s.flash = 1;
+            }
           }
 
           const x = poleX + Math.cos(s.angle) * s.radius;
