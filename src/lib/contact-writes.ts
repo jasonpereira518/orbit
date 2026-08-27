@@ -412,9 +412,13 @@ export async function createContactsBulkForUser(
     )
   );
 
-  const values = admitted.map((input, i) =>
-    contactInsertValues(userId, input, companyFieldsList[i], now)
-  );
+  const values = admitted.map((input, i) => ({
+    ...contactInsertValues(userId, input, companyFieldsList[i], now),
+    // Flagged, not embedded. `skipEmbedding` used to mean "the caller will embed these in
+    // a batch"; it now means "the backfill will" — the same promise with the provider call
+    // moved out of the write loop.
+    ...(options?.skipEmbedding ? { embeddingStaleAt: now } : {}),
+  }));
 
   const created = await db.insert(contacts).values(values).returning();
 
@@ -532,6 +536,7 @@ export async function bulkMergeContactsForUser(
         how_met           = COALESCE(v.how_met, c.how_met),
         met_context       = COALESCE(v.met_context, c.met_context),
         date_met          = COALESCE(v.date_met, c.date_met),
+        embedding_stale_at = ${now},
         updated_at        = ${now}
     FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(
       id, company, company_id, title, email, phone, linkedin_url,

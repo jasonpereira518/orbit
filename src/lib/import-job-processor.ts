@@ -27,7 +27,6 @@ import {
 } from "@/lib/duplicates";
 import { parseConnectedOn } from "@/lib/linkedin-connections";
 import { startQueryCount, stopQueryCount } from "@/lib/query-counter";
-import { rebuildContactEmbeddingsBatch } from "@/lib/search";
 
 /**
  * Rows pulled from the DB per processing loop iteration. Widened from 40 to cut the fixed
@@ -54,6 +53,30 @@ async function scheduleContinuation(importId: string) {
     });
   } catch {
     // Best-effort — the process-stalled cron will pick this job back up.
+  }
+}
+
+/**
+ * Fire-and-forget the embedding backfill for this user.
+ *
+ * Through the route rather than inline: the import is finished from the user's point of
+ * view, and embedding a few thousand contacts can outlive this invocation. The daily cron
+ * is a backstop only — it runs at most once every 24 hours (the Hobby-plan minimum),
+ * which is far too slow to be the primary path.
+ */
+async function kickEmbeddingBackfill(userId: string) {
+  const secret = process.env.CRON_SECRET;
+  try {
+    await fetch(`${getAppBaseUrl()}/api/embeddings/backfill`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
+      },
+      body: JSON.stringify({ userId }),
+    });
+  } catch {
+    // Best-effort — the cron backstop picks up anything still flagged.
   }
 }
 
@@ -325,10 +348,7 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
         duplicatesFound += toUpdate.length;
       }
 
-      if (touchedContactIds.length > 0) {
-        await rebuildContactEmbeddingsBatch(userId, touchedContactIds);
-        for (const id of touchedContactIds) allTouchedContactIds.add(id);
-      }
+      for (const id of touchedContactIds) allTouchedContactIds.add(id);
 
       const blockedRowIds = new Set(planBlockedRows.map((row) => row.id));
       const doneRowIds = [
@@ -404,6 +424,7 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
   // duplicate as it is merged would issue extra queries per row to reach a number that is
   // immediately superseded by this recalibration.
   await recalibrateCloseness(importRow.userId).catch(() => null);
+  await kickEmbeddingBackfill(importRow.userId);
 
   revalidatePath("/");
   revalidatePath("/contacts");

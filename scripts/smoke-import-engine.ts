@@ -148,6 +148,22 @@ async function main() {
   check("50 fresh rows none merged", out.updated === 0, JSON.stringify(out));
   check("50 fresh rows none blocked", out.blockedByPlan === 0, JSON.stringify(out));
 
+  // --- created contacts are flagged for the backfill, not embedded inline ---
+  // Embeddings moved off the critical path in Task 9: the bulk create path sets
+  // `embedding_stale_at` instead of calling the AI provider, and the backfill (Task 8)
+  // is what actually clears it. Without this check, a bug that dropped the flag on one
+  // of the two bulk paths would leave half of every import silently unsearchable forever
+  // and nothing here would catch it.
+  {
+    const db = await getDb();
+    const created = await db.query.contacts.findMany({ where: eq(contacts.userId, USER) });
+    check(
+      "every created contact is flagged embedding_stale_at",
+      created.length === 50 && created.every((c) => c.embeddingStaleAt !== null),
+      `flagged ${created.filter((c) => c.embeddingStaleAt !== null).length}/${created.length}`
+    );
+  }
+
   // --- re-importing the same file merges instead of duplicating ---
   id = await seedJob(fixture(50));
   await runJob(id);
@@ -155,6 +171,18 @@ async function main() {
   check("re-import merges all 50", out.updated === 50, JSON.stringify(out));
   check("re-import creates none", out.created === 0, JSON.stringify(out));
   check("re-import blocks none", out.blockedByPlan === 0, JSON.stringify(out));
+
+  // --- merged contacts are re-flagged too: company/title changed, so the stored
+  // embedding (if any had been backfilled) is genuinely stale again ---
+  {
+    const db = await getDb();
+    const merged = await db.query.contacts.findMany({ where: eq(contacts.userId, USER) });
+    check(
+      "every merged contact is (re-)flagged embedding_stale_at",
+      merged.length === 50 && merged.every((c) => c.embeddingStaleAt !== null),
+      `flagged ${merged.filter((c) => c.embeddingStaleAt !== null).length}/${merged.length}`
+    );
+  }
 
   // --- rows with no usable name are skipped, not failed ---
   await reset();
