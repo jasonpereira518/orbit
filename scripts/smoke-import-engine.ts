@@ -19,9 +19,20 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 config();
 
+// Env reads in auth.ts and db/index.ts are lazy (inside functions), so setting these
+// after dotenv but before the src/ imports below still lands before anything reads them.
+process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke-import";
+process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-import";
+// This suite must run against the local per-worktree PGlite file, never a remote
+// database: reset() hard-deletes a user's contacts, and .env.local gaining a
+// DATABASE_URL (one `vercel env pull` away) would point that at shared data.
+delete process.env.DATABASE_URL;
+
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, imports, importJobRows, userSettings } from "../src/db/schema";
+import { isClerkConfigured, isDemoMode } from "../src/lib/auth";
+import { FREE_CONTACT_LIMIT } from "../src/lib/entitlements";
 import { runLinkedInImportJob } from "../src/lib/import-job-processor";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
@@ -113,12 +124,21 @@ async function outcome(importId: string) {
 async function main() {
   console.log("Import behavior characterization (pglite)...");
 
+  // Without this, an environment drift (Clerk keys missing) silently drops the run into
+  // demo mode against "demo-user" instead of failing loudly. Running with Clerk configured
+  // and demo mode off is also what makes every scenario below a regression test for the
+  // *ForUser call sites in import-job-processor.ts: demo mode never exercises the same
+  // identity-resolution path the self-continuation route and process-stalled cron use.
+  check("running with Clerk configured", isClerkConfigured() === true);
+  check("running outside demo mode", isDemoMode() === false);
+
   // --- all new rows ---
-  // Kept under FREE_CONTACT_LIMIT (100) on purpose: this scenario's job is to verify plain,
+  // Kept well under FREE_CONTACT_LIMIT on purpose: this scenario's job is to verify plain,
   // uncapped bulk creation, distinctly from the dedicated cap-boundary scenario below
-  // (fixture(140)). The brief originally used fixture(120), which is *above* the cap and
-  // so silently turned this into a second, smaller copy of the cap scenario — see
-  // task-1-report.md for why that was wrong and how this was corrected.
+  // (fixture(FREE_CONTACT_LIMIT + 40)). The brief originally used fixture(120), which was
+  // above the cap in effect at the time and so silently turned this into a second, smaller
+  // copy of the cap scenario — see task-1-report.md for why that was wrong and how this
+  // was corrected.
   await reset();
   let id = await seedJob(fixture(50));
   await runJob(id);
@@ -148,11 +168,18 @@ async function main() {
   check("remaining rows created", out.created === 9, JSON.stringify(out));
 
   // --- the free plan cap admits from the front and refuses the rest ---
+  // Derived from FREE_CONTACT_LIMIT rather than hardcoded so this freezes the *behavior*
+  // ("admit up to the cap, refuse the remainder") instead of a specific number — the limit
+  // has already changed once (100 here, 500 on origin/main at time of writing).
   await reset();
-  id = await seedJob(fixture(140));
+  id = await seedJob(fixture(FREE_CONTACT_LIMIT + 40));
   await runJob(id);
   out = await outcome(id);
-  check("free cap admits 100", out.created === 100, JSON.stringify(out));
+  check(
+    `free cap admits ${FREE_CONTACT_LIMIT}`,
+    out.created === FREE_CONTACT_LIMIT,
+    JSON.stringify(out)
+  );
   check("free cap blocks the rest", out.blockedByPlan === 40, JSON.stringify(out));
   check("capped import still completes", out.status === "completed", JSON.stringify(out));
 

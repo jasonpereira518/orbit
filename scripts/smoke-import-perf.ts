@@ -11,9 +11,19 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 config();
 
+// Env reads in auth.ts and db/index.ts are lazy (inside functions), so setting these
+// after dotenv but before the src/ imports below still lands before anything reads them.
+process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke-import";
+process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-import";
+// This suite must run against the local per-worktree PGlite file, never a remote
+// database: this script hard-deletes a user's contacts, and .env.local gaining a
+// DATABASE_URL (one `vercel env pull` away) would point that at shared data.
+delete process.env.DATABASE_URL;
+
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, imports, importJobRows, userSettings } from "../src/db/schema";
+import { isClerkConfigured, isDemoMode } from "../src/lib/auth";
 import { CHUNK_SIZE, runLinkedInImportJob } from "../src/lib/import-job-processor";
 import { startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { ensureUserSettings } from "../src/lib/user-settings";
@@ -51,6 +61,11 @@ async function runJob(importId: string) {
 async function main() {
   console.log("Import round-trip budget (pglite)...");
 
+  // Without this, an environment drift (Clerk keys missing) silently drops the run into
+  // demo mode against "demo-user" instead of failing loudly.
+  check("running with Clerk configured", isClerkConfigured() === true);
+  check("running outside demo mode", isDemoMode() === false);
+
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(imports).where(eq(imports.userId, USER));
@@ -63,55 +78,60 @@ async function main() {
     .set({ compedPlan: "orbit" })
     .where(eq(userSettings.userId, USER));
 
-  const [job] = await db
-    .insert(imports)
-    .values({
-      userId: USER,
-      importType: "linkedin_connections",
-      fileName: "perf.csv",
-      status: "processing",
-      totalRows: ROWS,
-      stats: {},
-    })
-    .returning();
+  // Cleanup runs in `finally` so a failed budget check (this guard's entire documented
+  // purpose, and its expected state through several of the tasks that follow) still
+  // leaves no fixture data behind under USER.
+  try {
+    const [job] = await db
+      .insert(imports)
+      .values({
+        userId: USER,
+        importType: "linkedin_connections",
+        fileName: "perf.csv",
+        status: "processing",
+        totalRows: ROWS,
+        stats: {},
+      })
+      .returning();
 
-  await db.insert(importJobRows).values(
-    Array.from({ length: ROWS }, (_, i) => ({
-      importId: job.id,
-      userId: USER,
-      rowIndex: i,
-      payload: {
-        index: i,
-        firstName: `Perf${i}`,
-        lastName: `Person${i}`,
-        email: `perf${i}@example.com`,
-        company: `Company ${i % 30}`,
-        position: `Title ${i % 12}`,
-        connectedOn: "15 Mar 2024",
-        url: `https://www.linkedin.com/in/perf-person-${i}`,
-      },
-    }))
-  );
+    await db.insert(importJobRows).values(
+      Array.from({ length: ROWS }, (_, i) => ({
+        importId: job.id,
+        userId: USER,
+        rowIndex: i,
+        payload: {
+          index: i,
+          firstName: `Perf${i}`,
+          lastName: `Person${i}`,
+          email: `perf${i}@example.com`,
+          company: `Company ${i % 30}`,
+          position: `Title ${i % 12}`,
+          connectedOn: "15 Mar 2024",
+          url: `https://www.linkedin.com/in/perf-person-${i}`,
+        },
+      }))
+    );
 
-  startQueryCount();
-  await runJob(job.id);
-  const used = stopQueryCount();
+    startQueryCount();
+    await runJob(job.id);
+    const used = stopQueryCount();
 
-  const chunks = Math.ceil(ROWS / CHUNK_SIZE);
-  // Job-level setup (contact load, company preload, final recalibration) is not per-chunk,
-  // so it gets its own small allowance rather than inflating the per-chunk budget.
-  const allowed = chunks * BUDGET_PER_CHUNK + 20;
+    const chunks = Math.ceil(ROWS / CHUNK_SIZE);
+    // Job-level setup (contact load, company preload, final recalibration) is not per-chunk,
+    // so it gets its own small allowance rather than inflating the per-chunk budget.
+    const allowed = chunks * BUDGET_PER_CHUNK + 20;
 
-  console.log(`  ${used} statements for ${ROWS} rows in ${chunks} chunk(s); budget ${allowed}`);
-  check(
-    "import stays within its round-trip budget",
-    used <= allowed,
-    `used ${used}, allowed ${allowed} (${(used / ROWS).toFixed(1)} per row)`
-  );
-
-  await db.delete(contacts).where(eq(contacts.userId, USER));
-  await db.delete(imports).where(eq(imports.userId, USER));
-  await db.delete(userSettings).where(eq(userSettings.userId, USER));
+    console.log(`  ${used} statements for ${ROWS} rows in ${chunks} chunk(s); budget ${allowed}`);
+    check(
+      "import stays within its round-trip budget",
+      used <= allowed,
+      `used ${used}, allowed ${allowed} (${(used / ROWS).toFixed(1)} per row)`
+    );
+  } finally {
+    await db.delete(contacts).where(eq(contacts.userId, USER));
+    await db.delete(imports).where(eq(imports.userId, USER));
+    await db.delete(userSettings).where(eq(userSettings.userId, USER));
+  }
   console.log("\nRound-trip budget respected.");
 }
 
