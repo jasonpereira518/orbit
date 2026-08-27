@@ -1107,9 +1107,6 @@ async function migratePglite(client: PGlite) {
   // schema-version SELECT reads the same on both drivers. Every statement here is a single
   // command, which is what `query` requires.
   await applyScaleSchema((statement) => client.query(statement));
-}
-
-/**
 
   // Admin console v2: operator suspension, plus the indexes the cross-user roster/trend
   // queries need. Same reasoning as the block above — the DDL template only helps a
