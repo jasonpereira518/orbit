@@ -3,6 +3,7 @@ import { Fraunces, Outfit } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/components/auth-provider";
 import { ThemeProvider } from "@/components/theme-provider";
+import { WarpProvider } from "@/components/warp/warp-provider";
 import "./globals.css";
 
 const outfit = Outfit({
@@ -52,7 +53,10 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <AuthProvider>
-            {children}
+            {/* Owns the app <-> /pricing lift-off. Must sit at the ROOT: those
+                two live in different route groups, so anything lower unmounts
+                mid-flight when the group swaps. */}
+            <WarpProvider>{children}</WarpProvider>
             <Toaster />
           </AuthProvider>
         </ThemeProvider>
