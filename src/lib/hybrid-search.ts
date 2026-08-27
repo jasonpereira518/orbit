@@ -1,0 +1,351 @@
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
+import {
+  getDb,
+  isPgvectorAvailable,
+  isTrigramAvailable,
+  rowsOf,
+} from "@/db";
+import { contacts, contactEmbeddings } from "@/db/schema";
+import { formatVectorLiteral } from "@/lib/pgvector";
+import { cosineSimilarity } from "@/lib/ai";
+
+export type SearchFilters = {
+  companies?: string[];
+  industries?: string[];
+  schools?: string[];
+  locations?: string[];
+  tags?: string[];
+  closenessTiers?: Array<"inner" | "mid" | "outer">;
+};
+
+export type HybridSearchOptions = {
+  query: string;
+  embedding?: number[] | null;
+  filters?: SearchFilters | null;
+  expansionTerms?: string[];
+  limit?: number;
+};
+
+export type RankedContact = {
+  id: string;
+  fullName: string;
+  preferredName: string | null;
+  company: string | null;
+  school: string | null;
+  title: string | null;
+  location: string | null;
+  email: string | null;
+  industry: string | null;
+  notes: string | null;
+  aiSummary: string | null;
+  keyFacts: string[];
+  relationshipScore: number;
+  priorityLevel: number;
+  closenessTier: string | null;
+  tags: string[];
+  rrfScore: number;
+  relevance: number;
+  matchedArms: Array<"fts" | "trigram" | "semantic">;
+};
+
+/** Standard RRF constant: dampens the gap between adjacent ranks. */
+const RRF_K = 60;
+/** Below this cosine similarity a semantic hit is noise (matches pgvectorSearchContacts). */
+const SEMANTIC_SIMILARITY_FLOOR = 0.25;
+/** ANN over-fetch multiplier: several embedding rows collapse into one contact. */
+const OVERSCAN_FOR_DEDUPE = 4;
+/** Ceiling on the JS cosine fallback scan (1,536 floats per row). */
+const IN_MEMORY_EMBEDDING_SCAN_LIMIT = 2000;
+/** A filtered result set smaller than limit/4 triggers the unfiltered recall guard. */
+const RECALL_GUARD_DIVISOR = 4;
+
+type ArmName = "fts" | "trigram" | "semantic";
+type ArmResult = { arm: ArmName; ids: string[] };
+
+function anyLike(column: SQL, values: string[]): SQL {
+  return sql`(${sql.join(
+    values.map((v) => sql`${column} like ${`%${v.toLowerCase()}%`}`),
+    sql` or `
+  )})`;
+}
+
+/** WHERE fragment over the contacts table; null when no filters are set. */
+function filterCondition(filters: SearchFilters | null | undefined): SQL | null {
+  if (!filters) return null;
+  const parts: SQL[] = [];
+  const clean = (xs?: string[]) =>
+    (xs ?? []).map((x) => x.trim()).filter((x) => x.length > 0).slice(0, 4);
+
+  const companies = clean(filters.companies);
+  if (companies.length) parts.push(anyLike(sql`lower(coalesce(contacts.company, ''))`, companies));
+  const industries = clean(filters.industries);
+  if (industries.length) parts.push(anyLike(sql`lower(coalesce(contacts.industry, ''))`, industries));
+  const schools = clean(filters.schools);
+  if (schools.length) parts.push(anyLike(sql`lower(coalesce(contacts.school, ''))`, schools));
+  const locations = clean(filters.locations);
+  if (locations.length) parts.push(anyLike(sql`lower(coalesce(contacts.location, ''))`, locations));
+
+  const tagNames = clean(filters.tags);
+  if (tagNames.length) {
+    parts.push(sql`exists (
+      select 1 from contact_tags ct
+      join tags t on t.id = ct.tag_id
+      where ct.contact_id = contacts.id
+        and (${sql.join(
+          tagNames.map((t) => sql`lower(t.name) like ${`%${t.toLowerCase()}%`}`),
+          sql` or `
+        )})
+    )`);
+  }
+
+  const tiers = (filters.closenessTiers ?? []).filter((t) =>
+    ["inner", "mid", "outer"].includes(t)
+  );
+  if (tiers.length) {
+    parts.push(sql`contacts.closeness_tier in (${sql.join(tiers.map((t) => sql`${t}`), sql`, `)})`);
+  }
+
+  if (!parts.length) return null;
+  return sql`(${sql.join(parts, sql` and `)})`;
+}
+
+async function ftsArm(
+  userId: string,
+  query: string,
+  expansionTerms: string[],
+  filter: SQL | null,
+  armLimit: number
+): Promise<string[]> {
+  const db = await getDb();
+  // websearch_to_tsquery understands OR; expansion terms widen recall without
+  // touching precision (RRF ranks the primary-term matches higher anyway).
+  const tsQuery = [query, ...expansionTerms.slice(0, 4)]
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .join(" OR ");
+  if (!tsQuery) return [];
+  const result = await db.execute(sql`
+    select contacts.id
+    from contacts
+    where contacts.user_id = ${userId}
+      and contacts.search_tsv @@ websearch_to_tsquery('simple', ${tsQuery})
+      ${filter ? sql`and ${filter}` : sql``}
+    order by ts_rank_cd(contacts.search_tsv, websearch_to_tsquery('simple', ${tsQuery})) desc
+    limit ${armLimit}
+  `);
+  return rowsOf<{ id: string }>(result).map((r) => r.id);
+}
+
+async function trigramArm(
+  userId: string,
+  query: string,
+  filter: SQL | null,
+  armLimit: number
+): Promise<string[]> {
+  if (!isTrigramAvailable()) return [];
+  const q = query.trim().toLowerCase();
+  if (q.length < 3) return [];
+  const db = await getDb();
+  const result = await db.execute(sql`
+    select contacts.id
+    from contacts
+    where contacts.user_id = ${userId}
+      and (lower(contacts.full_name) % ${q} or lower(coalesce(contacts.company, '')) % ${q})
+      ${filter ? sql`and ${filter}` : sql``}
+    order by greatest(
+      similarity(lower(contacts.full_name), ${q}),
+      similarity(lower(coalesce(contacts.company, '')), ${q})
+    ) desc
+    limit ${armLimit}
+  `);
+  return rowsOf<{ id: string }>(result).map((r) => r.id);
+}
+
+async function semanticArm(
+  userId: string,
+  embedding: number[],
+  armLimit: number
+): Promise<string[]> {
+  const db = await getDb();
+
+  if (isPgvectorAvailable()) {
+    const literal = formatVectorLiteral(embedding);
+    const scanLimit = Math.max(armLimit * OVERSCAN_FOR_DEDUPE, 50);
+    // ANN scan must be a bare ORDER BY <=> LIMIT in the innermost query or the
+    // HNSW index is unusable (see pgvectorSearchContacts in src/lib/search.ts).
+    // Contact-level filters are NOT applied here — an ANN scan cannot filter on
+    // the contacts table; filtering happens at hydration.
+    const result = await db.execute(sql`
+      select contact_id
+      from (
+        select contact_id, min(distance) as best
+        from (
+          select contact_id, embedding_vector <=> ${literal}::vector as distance
+          from contact_embeddings
+          where user_id = ${userId}
+            and embedding_vector is not null
+          order by embedding_vector <=> ${literal}::vector
+          limit ${scanLimit}
+        ) nearest
+        group by contact_id
+        having 1 - min(distance) > ${SEMANTIC_SIMILARITY_FLOOR}
+      ) ranked
+      order by best asc
+      limit ${armLimit}
+    `);
+    return rowsOf<{ contact_id: string }>(result).map((r) => r.contact_id);
+  }
+
+  // Bounded JS fallback: project only what cosine needs, hard row cap.
+  const rows = await db.query.contactEmbeddings.findMany({
+    where: eq(contactEmbeddings.userId, userId),
+    columns: { contactId: true, embedding: true },
+    limit: IN_MEMORY_EMBEDDING_SCAN_LIMIT,
+  });
+  if (rows.length === IN_MEMORY_EMBEDDING_SCAN_LIMIT) {
+    console.warn(
+      `[hybrid-search] in-memory vector fallback hit its ${IN_MEMORY_EMBEDDING_SCAN_LIMIT}-row cap; semantic results are partial.`
+    );
+  }
+  const best = new Map<string, number>();
+  for (const row of rows) {
+    const sim = cosineSimilarity(embedding, row.embedding);
+    if (sim > (best.get(row.contactId) ?? 0)) best.set(row.contactId, sim);
+  }
+  return [...best.entries()]
+    .filter(([, sim]) => sim > SEMANTIC_SIMILARITY_FLOOR)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, armLimit)
+    .map(([contactId]) => contactId);
+}
+
+function fuse(results: ArmResult[]): Map<string, { score: number; arms: ArmName[] }> {
+  const fused = new Map<string, { score: number; arms: ArmName[] }>();
+  for (const { arm, ids } of results) {
+    ids.forEach((id, index) => {
+      const entry = fused.get(id) ?? { score: 0, arms: [] };
+      entry.score += 1 / (RRF_K + index + 1);
+      entry.arms.push(arm);
+      fused.set(id, entry);
+    });
+  }
+  return fused;
+}
+
+async function runArms(
+  userId: string,
+  options: HybridSearchOptions,
+  filter: SQL | null,
+  armLimit: number
+): Promise<ArmResult[]> {
+  const [fts, trgm, vec] = await Promise.all([
+    ftsArm(userId, options.query, options.expansionTerms ?? [], filter, armLimit),
+    trigramArm(userId, options.query, filter, armLimit),
+    options.embedding?.length
+      ? semanticArm(userId, options.embedding, armLimit)
+      : Promise.resolve([]),
+  ]);
+  return [
+    { arm: "fts" as const, ids: fts },
+    { arm: "trigram" as const, ids: trgm },
+    { arm: "semantic" as const, ids: vec },
+  ];
+}
+
+export async function hybridSearchContacts(
+  userId: string,
+  options: HybridSearchOptions
+): Promise<RankedContact[]> {
+  const limit = Math.min(Math.max(options.limit ?? 12, 1), 80);
+  const armLimit = Math.max(limit * 2, 40);
+  const filter = filterCondition(options.filters);
+
+  const fused = fuse(await runArms(userId, options, filter, armLimit));
+  // The semantic arm is unfiltered (ANN can't see contact columns), so the
+  // filter is re-applied at hydration; over-fetch so post-filter still fills a page.
+  const orderedIds = [...fused.entries()]
+    .sort((a, b) => b[1].score - a[1].score)
+    .slice(0, filter ? limit * 2 : limit)
+    .map(([id]) => id);
+
+  let hydrated = await hydrate(userId, orderedIds, fused, filter);
+  hydrated = hydrated.slice(0, limit);
+
+  // Recall guard: an over-narrow filter should widen, not starve.
+  if (filter && hydrated.length < Math.ceil(limit / RECALL_GUARD_DIVISOR)) {
+    const unfiltered = await hybridSearchContacts(userId, {
+      ...options,
+      filters: null,
+    });
+    const seen = new Set(hydrated.map((h) => h.id));
+    hydrated = [...hydrated, ...unfiltered.filter((h) => !seen.has(h.id))].slice(0, limit);
+  }
+
+  const maxScore = hydrated.reduce((m, h) => Math.max(m, h.rrfScore), 0);
+  return hydrated.map((h) => ({
+    ...h,
+    relevance: maxScore > 0 ? h.rrfScore / maxScore : 0,
+  }));
+}
+
+async function hydrate(
+  userId: string,
+  orderedIds: string[],
+  fused: Map<string, { score: number; arms: ArmName[] }>,
+  filter: SQL | null
+): Promise<RankedContact[]> {
+  if (orderedIds.length === 0) return [];
+  const db = await getDb();
+  const rows = await db.query.contacts.findMany({
+    where: filter
+      ? and(eq(contacts.userId, userId), inArray(contacts.id, orderedIds), filter)
+      : and(eq(contacts.userId, userId), inArray(contacts.id, orderedIds)),
+    columns: {
+      id: true,
+      fullName: true,
+      preferredName: true,
+      company: true,
+      school: true,
+      title: true,
+      location: true,
+      email: true,
+      industry: true,
+      notes: true,
+      aiSummary: true,
+      keyFacts: true,
+      relationshipScore: true,
+      priorityLevel: true,
+      closenessTier: true,
+    },
+    with: { contactTags: { with: { tag: true } } },
+  });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const out: RankedContact[] = [];
+  for (const id of orderedIds) {
+    const row = byId.get(id);
+    if (!row) continue; // filtered out at hydration, or deleted between arm and hydrate
+    const entry = fused.get(id)!;
+    out.push({
+      id: row.id,
+      fullName: row.fullName,
+      preferredName: row.preferredName,
+      company: row.company,
+      school: row.school,
+      title: row.title,
+      location: row.location,
+      email: row.email,
+      industry: row.industry,
+      notes: row.notes,
+      aiSummary: row.aiSummary,
+      keyFacts: row.keyFacts ?? [],
+      relationshipScore: row.relationshipScore ?? 0,
+      priorityLevel: row.priorityLevel ?? 0,
+      closenessTier: row.closenessTier,
+      tags: row.contactTags?.map((ct) => ct.tag.name) ?? [],
+      rrfScore: entry.score,
+      relevance: 0, // normalized by caller
+      matchedArms: entry.arms,
+    });
+  }
+  return out;
+}
