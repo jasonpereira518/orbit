@@ -15,10 +15,12 @@ import {
   ARRIVAL_MS,
   ASCENT_MS,
   ASCENT_OPAQUE_MS,
+  REENTRY,
   REENTRY_MS,
 } from "@/lib/warp/choreography";
 import {
   CHRONO_ARRIVING_MS,
+  CHRONO_IN,
   CHRONO_INBOUND_MS,
   CHRONO_OPAQUE_MS,
   CHRONO_OUTBOUND_MS,
@@ -35,6 +37,10 @@ export type JourneyBeats = {
   arrivingMs: number;
   /** The whole return arc, start to settled. */
   inboundMs: number;
+  /** When router.back() fires on the way home. 0 = immediately. */
+  inboundPushMs: number;
+  /** When the phase flips to "landing" — the touchdown beat. */
+  inboundLandingMs: number;
 };
 
 export type Journey = {
@@ -52,6 +58,10 @@ export const JOURNEYS: Record<JourneyId, Journey> = {
       opaqueMs: ASCENT_OPAQUE_MS,
       arrivingMs: ARRIVAL_MS,
       inboundMs: REENTRY_MS,
+      // liftoff — navigates immediately: unlike the ascent there is nothing on
+      // screen worth preserving, and the app must be mounted before the judder.
+      inboundPushMs: 0,
+      inboundLandingMs: REENTRY.judder[0],
     },
   },
   chrono: {
@@ -62,6 +72,10 @@ export const JOURNEYS: Record<JourneyId, Journey> = {
       opaqueMs: CHRONO_OPAQUE_MS,
       arrivingMs: CHRONO_ARRIVING_MS,
       inboundMs: CHRONO_INBOUND_MS,
+      // chrono — the page dissolving into the exposure is the shot, so the swap
+      // waits until the stage covers it again.
+      inboundPushMs: CHRONO_IN.push,
+      inboundLandingMs: CHRONO_IN.landing[0],
     },
   },
 };

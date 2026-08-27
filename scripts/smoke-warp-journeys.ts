@@ -45,7 +45,25 @@ function main() {
       `${id} has a non-zero deceleration and return`,
       j.beats.arrivingMs > 0 && j.beats.inboundMs > 0
     );
+    check(
+      `${id} lands before its return arc ends`,
+      j.beats.inboundLandingMs < j.beats.inboundMs,
+      `landing=${j.beats.inboundLandingMs} inbound=${j.beats.inboundMs}`
+    );
+    check(
+      `${id} navigates home before it lands`,
+      j.beats.inboundPushMs < j.beats.inboundLandingMs
+    );
   }
+
+  check(
+    "the rocket still falls home immediately",
+    JOURNEYS.liftoff.beats.inboundPushMs === 0
+  );
+  check(
+    "the chrono trip waits for the stage before swapping back",
+    JOURNEYS.chrono.beats.inboundPushMs > 0
+  );
 
   /* ------------------------------------------------------------------ the gate */
 

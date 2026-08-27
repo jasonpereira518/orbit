@@ -10,62 +10,81 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentType,
 } from "react";
 import { createPortal } from "react-dom";
 import {
-  ARRIVAL_MS,
   ARRIVED_BY_WARP_KEY,
-  ASCENT_MS,
-  ASCENT_OPAQUE_MS,
   CRUISE_CAP_MS,
   REDUCED_MS,
-  REENTRY,
-  REENTRY_MS,
 } from "@/lib/warp/choreography";
+import {
+  JOURNEYS,
+  decodeArrival,
+  encodeArrival,
+  type JourneyId,
+} from "@/lib/warp/journeys";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
-
-/** The stage is the only heavy part (a canvas loop); it loads on first launch
- * and never on a page that isn't going anywhere. */
-const WarpStage = dynamic(
-  () => import("@/components/warp/warp-stage").then((m) => ({ default: m.WarpStage })),
-  { ssr: false },
-);
 
 export type WarpPhase =
   | "idle"
-  | "ascending"
+  | "outbound"
   | "cruise"
   | "arriving"
-  | "descending"
+  | "inbound"
   | "landing";
 
 export type WarpRun = {
+  /** Which journey is flying. Selects the stage and every duration. */
+  journey: JourneyId;
   phase: WarpPhase;
-  /** `performance.now()` when this run began. The stage derives every beat
-   * from elapsed time rather than from React re-renders. */
+  /** `performance.now()` when this run began. Stages derive every beat from
+   *  elapsed time rather than from React re-renders. */
   startedAt: number;
-  /** When deceleration began, once /pricing has actually painted. */
+  /** When deceleration began, once the destination has actually painted. */
   arrivingAt: number | null;
   /** Viewport point the launch fired from, for the ignition ring. */
   origin: { x: number; y: number } | null;
-  /** Collapses both arcs to a plain cross-fade. */
+  /** Collapses every arc to a plain cross-fade. */
   reduced: boolean;
 };
 
 type WarpApi = {
   run: WarpRun;
-  /** Fly to /pricing. `origin` is the clicked element's rect. */
-  launch: (origin?: DOMRect | null) => void;
-  /** Fall back into the app. Returns false if there was no warp to undo. */
+  /** Fly `journey`. `origin` is the clicked element's rect. */
+  launch: (journey: JourneyId, origin?: DOMRect | null) => void;
+  /** Reverse whichever journey delivered you. False if there was none, or if
+   *  a run is already in flight. */
   reenter: () => boolean;
-  /** Called by the arrival beacon once /pricing has mounted. */
+  /** Finish the current run now: navigate if that has not happened yet, then
+   *  settle. The escape hatch for an arc somebody has stopped wanting. */
+  skip: () => void;
+  /** Called by the arrival beacon once the destination has mounted. */
   arrive: () => void;
 };
 
-/** The only place a lift-off ever goes. */
-const WARP_DESTINATION = "/pricing";
+/** Stages are the only heavy part (a canvas loop each). Loaded per journey, so
+ *  the chrono canvas never enters the bundle for someone who only ever
+ *  launches the rocket. */
+const STAGES: Record<JourneyId, ComponentType<{ run: WarpRun }>> = {
+  liftoff: dynamic(
+    () =>
+      import("@/components/warp/liftoff-stage").then((m) => ({
+        default: m.LiftoffStage,
+      })),
+    { ssr: false },
+  ),
+  chrono: dynamic(
+    () =>
+      import("@/components/warp/chrono-stage").then((m) => ({
+        default: m.ChronoStage,
+      })),
+    { ssr: false },
+  ),
+};
 
 const IDLE: WarpRun = {
+  journey: "liftoff",
   phase: "idle",
   startedAt: 0,
   arrivingAt: null,
@@ -77,48 +96,53 @@ const WarpContext = createContext<WarpApi | null>(null);
 
 export function useWarp() {
   const ctx = useContext(WarpContext);
-  if (!ctx) {
-    throw new Error("useWarp must be used inside <WarpProvider>");
-  }
+  if (!ctx) throw new Error("useWarp must be used inside <WarpProvider>");
   return ctx;
 }
 
 /**
- * True when this visitor is standing exactly where a lift-off dropped them.
+ * Which journey — if any — dropped this visitor exactly where they stand.
  *
- * Scoped to the destination path, not a bare boolean: `BackControl` is also on
- * /upgrade and on every marketing doc, all of which are reachable from /pricing.
- * A boolean flag would fire a fall-to-Earth on /upgrade -> /pricing — a descent
- * that lands you back in space, which reads as a glitch rather than a journey.
+ * Scoped to the journey AND the destination path, not a bare boolean:
+ * `BackControl` is on /pricing, on /upgrade and on every marketing doc, all of
+ * which are reachable from each other. A boolean would fire a fall-to-Earth on
+ * /upgrade after a /pricing -> /upgrade step — a descent that lands you back
+ * in space, which reads as a glitch rather than as a journey.
  */
-export function arrivedByWarp() {
-  if (typeof window === "undefined") return false;
+export function arrivedBy(): JourneyId | null {
+  if (typeof window === "undefined") return null;
   try {
-    const from = window.sessionStorage.getItem(ARRIVED_BY_WARP_KEY);
-    return from !== null && from === window.location.pathname;
+    return decodeArrival(
+      window.sessionStorage.getItem(ARRIVED_BY_WARP_KEY),
+      window.location.pathname,
+    );
   } catch {
-    // Safari private mode throws on sessionStorage. Falling back to "no warp"
-    // costs a nicety, never a navigation.
-    return false;
+    // Safari private mode throws on sessionStorage. Falling back to "no
+    // journey" costs a nicety, never a navigation.
+    return null;
   }
 }
 
-function setArrivedByWarp(destination: string | null) {
+function setArrival(value: string | null) {
   try {
-    if (destination) window.sessionStorage.setItem(ARRIVED_BY_WARP_KEY, destination);
+    if (value) window.sessionStorage.setItem(ARRIVED_BY_WARP_KEY, value);
     else window.sessionStorage.removeItem(ARRIVED_BY_WARP_KEY);
   } catch {
-    /* see arrivedByWarp */
+    /* see arrivedBy */
   }
 }
 
 /**
- * Owns the journey between the app and /pricing.
+ * Owns both journeys between the app and the marketing world.
  *
- * Mounted in the ROOT layout, above both route groups. `/dashboard` is in
- * `(app)` and `/pricing` is in `(marketing)`, so navigating between them
- * unmounts an entire layout subtree — anything that has to survive mid-flight
- * cannot live inside either one.
+ * Mounted in the ROOT layout, above every route group: `/dashboard` is in
+ * `(app)`, `/pricing` in `(marketing)` and `/upgrade` in `(checkout)`, so
+ * navigating between them unmounts an entire layout subtree. Anything that has
+ * to survive mid-flight cannot live inside one.
+ *
+ * One phase machine serves both journeys, which is what makes them mutually
+ * exclusive by construction — Settings offers a rocket and a time warp as
+ * adjacent buttons, and two full-screen stages must never race.
  */
 export function WarpProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -128,10 +152,14 @@ export function WarpProvider({ children }: { children: React.ReactNode }) {
   // Every pending timer for the current run, cleared together on reset so a
   // second launch can never be stepped on by the first one's tail.
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
-  // /pricing may paint before the ascent finishes; remember that we can go
-  // straight to deceleration instead of holding in cruise.
+  // The destination may paint before the outbound run finishes; remember that
+  // we can go straight to deceleration instead of holding in cruise.
   const pageReady = useRef(false);
   const phaseRef = useRef<WarpPhase>("idle");
+  const journeyRef = useRef<JourneyId>("liftoff");
+  // The route swap happens on a timer, and `skip()` may need to bring it
+  // forward. Either way it must happen exactly once.
+  const navigated = useRef(false);
 
   const clearTimers = useCallback(() => {
     for (const t of timers.current) clearTimeout(t);
@@ -150,22 +178,29 @@ export function WarpProvider({ children }: { children: React.ReactNode }) {
   }, [clearTimers]);
 
   const beginArrival = useCallback(() => {
-    if (phaseRef.current !== "ascending" && phaseRef.current !== "cruise") return;
+    if (phaseRef.current !== "outbound" && phaseRef.current !== "cruise") return;
     phaseRef.current = "arriving";
     setRun((r) => ({ ...r, phase: "arriving", arrivingAt: performance.now() }));
-    after(reduced ? REDUCED_MS : ARRIVAL_MS, settle);
+    after(
+      reduced ? REDUCED_MS : JOURNEYS[journeyRef.current].beats.arrivingMs,
+      settle,
+    );
   }, [after, reduced, settle]);
 
   const launch = useCallback(
-    (origin?: DOMRect | null) => {
+    (id: JourneyId, origin?: DOMRect | null) => {
       if (phaseRef.current !== "idle") return;
+      const journey = JOURNEYS[id];
       clearTimers();
       pageReady.current = false;
-      phaseRef.current = "ascending";
-      setArrivedByWarp(WARP_DESTINATION);
+      navigated.current = false;
+      phaseRef.current = "outbound";
+      journeyRef.current = id;
+      setArrival(encodeArrival(id, journey.destination));
 
       setRun({
-        phase: "ascending",
+        journey: id,
+        phase: "outbound",
         startedAt: performance.now(),
         arrivingAt: null,
         origin: origin
@@ -174,15 +209,19 @@ export function WarpProvider({ children }: { children: React.ReactNode }) {
         reduced,
       });
 
-      // Swap the route only once the sky covers the frame. Earlier than this
-      // and the `(app)` layout — which owns the element visibly flying away —
-      // unmounts mid-flight.
-      after(reduced ? REDUCED_MS : ASCENT_OPAQUE_MS, () => router.push(WARP_DESTINATION));
+      // Swap the route only once the stage covers the frame. Earlier than this
+      // and the layout owning `[data-warp-craft]` — the element visibly leaving
+      // — unmounts mid-flight.
+      after(reduced ? REDUCED_MS : journey.beats.opaqueMs, () => {
+        if (navigated.current) return;
+        navigated.current = true;
+        router.push(journey.destination);
+      });
 
-      // End of the deterministic climb: decelerate if /pricing is already up,
-      // otherwise hold in cruise until the beacon fires.
-      after(reduced ? REDUCED_MS : ASCENT_MS, () => {
-        if (phaseRef.current !== "ascending") return;
+      // End of the deterministic run: decelerate if the destination is already
+      // up, otherwise hold in cruise until the beacon fires.
+      after(reduced ? REDUCED_MS : journey.beats.outboundMs, () => {
+        if (phaseRef.current !== "outbound") return;
         if (pageReady.current) {
           beginArrival();
           return;
@@ -204,59 +243,110 @@ export function WarpProvider({ children }: { children: React.ReactNode }) {
 
   const reenter = useCallback(() => {
     if (phaseRef.current !== "idle") return false;
+    const id = arrivedBy();
+    if (!id) return false;
+    const journey = JOURNEYS[id];
+
     clearTimers();
-    phaseRef.current = "descending";
-    setArrivedByWarp(null);
+    navigated.current = false;
+    phaseRef.current = "inbound";
+    journeyRef.current = id;
+    setArrival(null);
     setRun({
-      phase: "descending",
+      journey: id,
+      phase: "inbound",
       startedAt: performance.now(),
       arrivingAt: null,
       origin: null,
       reduced,
     });
-    // Navigate immediately: unlike the ascent there is nothing on screen worth
-    // preserving, and the app needs to be mounted before the touchdown judder.
-    router.back();
+
+    const goBack = () => {
+      if (navigated.current) return;
+      navigated.current = true;
+      router.back();
+    };
+    if (reduced || journey.beats.inboundPushMs === 0) goBack();
+    else after(journey.beats.inboundPushMs, goBack);
+
     if (!reduced) {
-      // The judder has to fire on a timer, not on mount: `(app)` remounts at
-      // whatever pace the router resolves, and a shake nobody sees (because
-      // the stage is still opaque over it) is a shake that did not happen.
-      after(REENTRY.judder[0], () => {
-        if (phaseRef.current !== "descending") return;
+      // The touchdown has to fire on a timer, not on mount: the destination
+      // layout remounts at whatever pace the router resolves, and a beat
+      // nobody sees — because the stage is still opaque over it — is a beat
+      // that did not happen.
+      after(journey.beats.inboundLandingMs, () => {
+        if (phaseRef.current !== "inbound") return;
         phaseRef.current = "landing";
         setRun((r) => ({ ...r, phase: "landing" }));
       });
     }
-    after(reduced ? REDUCED_MS : REENTRY_MS, settle);
+    after(reduced ? REDUCED_MS : journey.beats.inboundMs, settle);
     return true;
   }, [after, clearTimers, reduced, router, settle]);
 
-  // Escape completes the journey rather than abandoning it — the navigation is
+  const skip = useCallback(() => {
+    const phase = phaseRef.current;
+    if (phase === "idle") return;
+    const journey = JOURNEYS[journeyRef.current];
+    clearTimers();
+    if (!navigated.current) {
+      navigated.current = true;
+      if (phase === "inbound" || phase === "landing") router.back();
+      else router.push(journey.destination);
+    }
+    settle();
+  }, [clearTimers, router, settle]);
+
+  // Escape completes a journey rather than abandoning it — the navigation is
   // already in flight, so the only thing left to skip is the waiting.
+  //
+  // Scoped to chrono on the way home: the rocket's 750ms fall is short enough
+  // that nobody is waiting on it, and leaving it alone keeps this refactor
+  // observably invisible to the lift-off.
   useEffect(() => {
-    if (run.phase !== "cruise") return;
+    if (run.phase === "idle") return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") beginArrival();
+      if (e.key !== "Escape") return;
+      const phase = phaseRef.current;
+      if (phase === "cruise") beginArrival();
+      else if (
+        journeyRef.current === "chrono" &&
+        (phase === "inbound" || phase === "landing")
+      ) {
+        skip();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [run.phase, beginArrival]);
+  }, [run.phase, beginArrival, skip]);
 
-  // Drives the craft animation and the scroll lock from CSS. Set on <html> so
-  // the selector can reach `[data-warp-craft]` in whichever layout is mounted.
+  // Drives the departure animation and the scroll lock from CSS. Set on <html>
+  // so the selectors can reach `[data-warp-craft]` in whichever layout is
+  // mounted. The journey rides alongside the phase: both journeys share the
+  // craft element, so the liftoff rules must not fire on a chrono departure.
   useEffect(() => {
     const el = document.documentElement;
-    if (run.phase === "idle") el.removeAttribute("data-warp");
-    else el.setAttribute("data-warp", run.reduced ? "reduced" : run.phase);
-    return () => el.removeAttribute("data-warp");
-  }, [run.phase, run.reduced]);
+    if (run.phase === "idle") {
+      el.removeAttribute("data-warp");
+      el.removeAttribute("data-warp-journey");
+    } else {
+      el.setAttribute("data-warp", run.reduced ? "reduced" : run.phase);
+      el.setAttribute("data-warp-journey", run.journey);
+    }
+    return () => {
+      el.removeAttribute("data-warp");
+      el.removeAttribute("data-warp-journey");
+    };
+  }, [run.phase, run.reduced, run.journey]);
 
   useEffect(() => clearTimers, [clearTimers]);
 
   const api = useMemo<WarpApi>(
-    () => ({ run, launch, reenter, arrive }),
-    [run, launch, reenter, arrive],
+    () => ({ run, launch, reenter, skip, arrive }),
+    [run, launch, reenter, skip, arrive],
   );
+
+  const Stage = STAGES[run.journey];
 
   return (
     <WarpContext.Provider value={api}>
@@ -264,7 +354,7 @@ export function WarpProvider({ children }: { children: React.ReactNode }) {
       {/* Phase only leaves "idle" via a click, so this is unreachable during
           SSR and on the hydrating render — `document` is always there by the
           time the expression is evaluated. */}
-      {run.phase !== "idle" && createPortal(<WarpStage run={run} />, document.body)}
+      {run.phase !== "idle" && createPortal(<Stage run={run} />, document.body)}
     </WarpContext.Provider>
   );
 }

@@ -2,7 +2,7 @@
  * The one sky.
  *
  * Shared by the landing/pricing starfield (`components/landing/starfield.tsx`)
- * and the lift-off stage (`components/warp/warp-stage.tsx`). The stage's last
+ * and the lift-off stage (`components/warp/liftoff-stage.tsx`). The stage's last
  * frame cross-fades into the real starfield's first, so the two MUST agree on
  * every colour — a half-shade of drift shows up as a visible seam at exactly
  * the moment the user is looking at the sky. Change a value here, never in a

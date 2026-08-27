@@ -1211,14 +1211,17 @@ body:has(.landing-root) {
 
 /* ── Lift-off: app <-> /pricing ──
  *
- * The canvas stage (components/warp/warp-stage.tsx) paints the sky; this block
- * only moves the app itself. `WarpProvider` sets `data-warp` on <html>, so the
- * server-rendered layouts need no knowledge of the journey — they just carry
- * `data-warp-craft` on the element that flies.
+ * The canvas stage (components/warp/liftoff-stage.tsx) paints the sky; this
+ * block only moves the app itself. `WarpProvider` sets `data-warp` on <html>,
+ * so the server-rendered layouts need no knowledge of the journey — they just
+ * carry `data-warp-craft` on the element that flies.
  *
  * Percentages below mirror `lib/warp/choreography.ts`. Change one, change both:
  * ASCENT.ignition ends at 180/820 = 22%, and the whole ascend animation runs
- * for ASCENT.liftoff's 820ms. */
+ * for ASCENT.liftoff's 820ms.
+ *
+ * The selectors are journey-qualified because `/upgrade`'s time warp shares
+ * both the `data-warp` attribute and the `[data-warp-craft]` element. */
 
 @keyframes warp-craft-ascend {
   /* Engines light: a short judder before anything actually moves. */
@@ -1280,7 +1283,7 @@ body:has(.landing-root) {
   }
 }
 
-html[data-warp="ascending"] [data-warp-craft] {
+html[data-warp-journey="liftoff"][data-warp="outbound"] [data-warp-craft] {
   animation: warp-craft-ascend 820ms ease-out both;
   /* The stage portals to <body>, so it is never inside this transform — a
      transformed ancestor becomes the containing block for position:fixed and
@@ -1289,7 +1292,7 @@ html[data-warp="ascending"] [data-warp-craft] {
   will-change: transform, opacity;
 }
 
-html[data-warp="landing"] [data-warp-craft] {
+html[data-warp-journey="liftoff"][data-warp="landing"] [data-warp-craft] {
   animation: warp-craft-land 420ms cubic-bezier(0.3, 0.9, 0.4, 1) both;
   will-change: transform, opacity;
 }
