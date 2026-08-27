@@ -252,6 +252,13 @@ function completionMessage(status: ImportJobStatus): string {
       `${status.remindersCreated} reminder${status.remindersCreated === 1 ? "" : "s"} created`
     );
   }
+  // Appended last and only when nonzero, so an ordinary import's message is unchanged. This
+  // is the only place a user is told their file contained rows the database refused: chunk
+  // narrowing drops those rows to keep the rest of the import, and without this the job
+  // still reports "completed" with the failures nowhere in the UI.
+  if (status.failedRows > 0) {
+    parts.push(`${status.failedRows} row${status.failedRows === 1 ? "" : "s"} failed`);
+  }
   return `Imported: ${parts.join(", ")}`;
 }
 

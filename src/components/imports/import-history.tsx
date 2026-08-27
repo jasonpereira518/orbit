@@ -51,6 +51,8 @@ export type ImportHistoryItem = {
     // the engine, which counts interactions/reminders once generically instead of per type.
     interactionsLogged?: number;
     remindersCreated?: number;
+    /** Rows the engine isolated as unwritable — see `ImportStats.failedRows`. */
+    failedRows?: number;
     contactsEnriched?: number;
     eventsProcessed?: number;
   } | null;
@@ -114,6 +116,7 @@ export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
                         ? ` · ${h.duplicatesFound} duplicates`
                         : ""}
                       {h.stats?.skipped ? ` · ${h.stats.skipped} skipped` : ""}
+                      {h.stats?.failedRows ? ` · ${h.stats.failedRows} failed` : ""}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {formatDistanceToNow(new Date(h.createdAt), {

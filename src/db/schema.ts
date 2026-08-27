@@ -590,6 +590,18 @@ export type ImportStats = {
    * insert stopped being a plain `DO NOTHING`.
    */
   interactionsLogged?: number;
+  /**
+   * Rows the engine isolated as unwritable and marked `import_job_rows.status = 'failed'`
+   * (see `writeWithNarrowing`/`onBadRow` in `import-engine.ts`). Distinct from both
+   * `skipped` (rows that parsed but had nothing to attach to) and `blockedByPlan` (rows
+   * refused by the contact cap): these are rows the database itself rejected, and
+   * isolating them is the whole point of chunk narrowing.
+   *
+   * Without this counter the isolation is invisible — a job that dropped 20 poison rows
+   * reports "completed, 480 created" and never mentions the 20, which is worse than the
+   * pre-narrowing behavior of failing loudly.
+   */
+  failedRows?: number;
   contactsEnriched?: number;
   eventsProcessed?: number;
   /** Contact ids touched during a multi-chunk messages import. */
@@ -708,7 +720,16 @@ export type LinkedInMessageThreadRowPayload = {
   firstName: string;
   lastName: string;
   linkedinUrl: string;
-  messages: { id: string; body: string; sentAt: string }[];
+  /**
+   * `sentAt` is `null` — never a sentinel date — when the CSV's timestamp column could not
+   * be parsed. It used to be written as `new Date(0).toISOString()`, which reads downstream
+   * as a perfectly valid 1970-01-01: `messageDateRange` accepted it, so one unparseable
+   * message pinned the contact's `first_interaction_at` to the epoch, and because
+   * `bulkMergeContactsForUser` widens that column with `LEAST`, no later import could ever
+   * pull it back. `null` is excluded from the range instead, which is what "we don't know
+   * when this was sent" actually means.
+   */
+  messages: { id: string; body: string; sentAt: string | null }[];
 };
 
 /**

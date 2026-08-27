@@ -20,9 +20,14 @@ export const CALENDAR_CSV_IMPORT_TYPE = "calendar_csv";
  * attendee (see `CalendarEventRowPayload`'s doc comment), so the same `eventUid` reaches this
  * function once per matched attendee, each time with a different `contactId`. Keying on
  * `eventUid` alone would make every attendee of the same event collide on the
- * `(user_id, external_id)` unique index — the second matched attendee's insert would
- * conflict with the first's and get silently dropped by `onConflictDoNothing()`, losing that
- * attendee's meeting entirely. The (event, contact) pair is unique per attendee, so it isn't.
+ * `(user_id, external_id)` unique index. Since Task 15 that insert is an
+ * `onConflictDoUpdate`, not `onConflictDoNothing`, so the failure mode is not the silent
+ * drop this comment used to describe: two attendees of one event inside a single chunk hit
+ * "ON CONFLICT DO UPDATE command cannot affect row a second time" and the write throws —
+ * which is precisely why the engine grew an intra-batch dedupe on `externalId`. Across
+ * chunks it would be quieter and worse: the second attendee's row would overwrite the
+ * first's, so one attendee's meeting would be lost rather than logged. The (event, contact)
+ * pair is unique per attendee, so neither happens.
  */
 export function calendarMeetingExternalId(eventUid: string, contactId: string) {
   return `cal:${eventUid}:${contactId}`;

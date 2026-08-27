@@ -149,6 +149,9 @@ async function outcome(importId: string) {
     updated: row.contactsUpdated ?? 0,
     skipped: row.stats?.skipped ?? 0,
     blockedByPlan: row.stats?.blockedByPlan ?? 0,
+    failedRows: row.stats?.failedRows ?? 0,
+    rowsProcessed: row.rowsProcessed ?? 0,
+    totalRows: row.totalRows ?? 0,
   };
 }
 
@@ -373,6 +376,19 @@ async function main() {
   out = await outcome(id);
   check("import survives a bad row", out.status === "completed", JSON.stringify(out));
   check("good rows still land", out.created === 29, JSON.stringify(out));
+  // Narrowing's whole purpose is to drop the bad row instead of the import — but until this
+  // counter existed, nothing anywhere in the product counted a row-level `failed`, so a user
+  // whose import quietly dropped rows saw "completed, N created" and was never told.
+  check("the isolated row is counted in failedRows", out.failedRows === 1, JSON.stringify(out));
+  // Not the discriminating case for the progress fix — a failed row was already inside
+  // `toCreate`, so the old arithmetic counted it too. The Outlook (skipped) and calendar
+  // (unmatched) scenarios below are what actually falsify that; this pins the invariant
+  // "rowsProcessed == totalRows on a completed import" for the failure path as well.
+  check(
+    "rowsProcessed still reaches totalRows with a row isolated as failed",
+    out.rowsProcessed === 30 && out.rowsProcessed === out.totalRows,
+    JSON.stringify(out)
+  );
   {
     const db = await getDb();
     const rows = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, id) });
@@ -621,6 +637,15 @@ async function main() {
   check("outlook import completes", out.status === "completed", JSON.stringify(out));
   check("outlook creates all but the nameless row", out.created === 39, JSON.stringify(out));
   check("outlook skips the nameless row", out.skipped === 1, JSON.stringify(out));
+  // The progress bar's numerator. Before this, `rowsProcessed` advanced only by
+  // created+merged, so the skipped row would leave a completed import showing 39/40 — and
+  // the four import types that joined the engine after LinkedIn connections all counted
+  // every row before they moved onto it.
+  check(
+    "outlook rowsProcessed reaches totalRows despite the skipped row",
+    out.rowsProcessed === 40 && out.rowsProcessed === out.totalRows,
+    JSON.stringify(out)
+  );
 
   id = await seedJob(outlook, "outlook_contacts");
   await runJob(id);
@@ -725,6 +750,102 @@ async function main() {
     `firstInteractionAt: ${person0?.firstInteractionAt}`
   );
 
+  // --- widening must NEVER narrow ---
+  // The assertion above proves last_interaction_at ADVANCES, but not that it refuses to go
+  // backwards: in that fixture the incoming value was always the larger one, so an
+  // unconditional overwrite would have passed it too. This is the missing half. Re-import
+  // the same threads with a message strictly OLDER than everything already recorded and
+  // nothing newer; GREATEST must leave last_interaction_at where it is, and LEAST must pull
+  // first_interaction_at back to the older date.
+  const threadsWithOlderMessage = threads.map((t) => ({
+    ...t,
+    messages: [
+      {
+        id: `${t.conversationId}-older`,
+        body: "a much earlier message",
+        sentAt: "2019-01-05T08:00:00Z",
+      },
+    ],
+  }));
+  id = await seedJob(threadsWithOlderMessage, "linkedin_messages");
+  await runJob(id);
+  out = await outcome(id);
+  check("older-message re-import merges again", out.updated === 11, JSON.stringify(out));
+
+  const person0Older = await db4.query.contacts.findFirst({
+    where: and(
+      eq(contacts.userId, USER),
+      eq(contacts.linkedinUrl, "https://www.linkedin.com/in/msg-person-0")
+    ),
+  });
+  check(
+    "last_interaction_at does NOT narrow when an older export is re-imported",
+    person0Older?.lastInteractionAt?.toISOString().startsWith("2025-06-15") ?? false,
+    `lastInteractionAt: ${person0Older?.lastInteractionAt}`
+  );
+  check(
+    "first_interaction_at widens backwards to the older message",
+    person0Older?.firstInteractionAt?.toISOString().startsWith("2019-01-05") ?? false,
+    `firstInteractionAt: ${person0Older?.firstInteractionAt}`
+  );
+
+  // --- an unparseable message date must not become 1970 ---
+  // `startLinkedInMessagesImport` used to write `new Date(0).toISOString()` for a message
+  // whose CSV timestamp would not parse. Epoch is a perfectly valid date, so
+  // `messageDateRange` accepted it as the conversation's earliest message and stamped
+  // first_interaction_at at 1970-01-01 — and because merging widens with LEAST, no later
+  // import could ever correct it. The row now carries `sentAt: null` and is excluded from
+  // the range instead. Fresh contacts (a new conversation id and profile url), so this
+  // measures the create path with no prior value to widen against.
+  const unparseableThreads = [
+    {
+      kind: "linkedin_message_thread" as const,
+      conversationId: "conv-undated",
+      fullName: "Undated Person",
+      firstName: "Undated",
+      lastName: "Person",
+      linkedinUrl: "https://www.linkedin.com/in/undated-person",
+      messages: [
+        // What the parser produces for a timestamp it cannot read.
+        { id: "m-undated-a", body: "no date on this one", sentAt: null },
+        { id: "m-undated-b", body: "this one has a date", sentAt: "2023-08-09T12:00:00Z" },
+      ],
+    },
+  ];
+  id = await seedJob(unparseableThreads, "linkedin_messages");
+  await runJob(id);
+  out = await outcome(id);
+  check("undated-message thread imports", out.created === 1, JSON.stringify(out));
+
+  const undated = await db4.query.contacts.findFirst({
+    where: and(
+      eq(contacts.userId, USER),
+      eq(contacts.linkedinUrl, "https://www.linkedin.com/in/undated-person")
+    ),
+  });
+  check(
+    "an unparseable message date does not pin first_interaction_at to 1970",
+    (undated?.firstInteractionAt?.getUTCFullYear() ?? 0) > 1970,
+    `firstInteractionAt: ${undated?.firstInteractionAt}`
+  );
+  check(
+    "the range comes from the message that DID parse, not from a sentinel",
+    undated?.firstInteractionAt?.toISOString().startsWith("2023-08-09") ?? false,
+    `firstInteractionAt: ${undated?.firstInteractionAt}`
+  );
+  // The undated message must still be logged — excluding it from the contact's date range
+  // is not the same as dropping it. `interaction_date` is NOT NULL, so it falls back to
+  // import time, confined to that one row.
+  const [undatedLogged] = await db4
+    .select({ value: count() })
+    .from(interactions)
+    .where(eq(interactions.externalId, "m-undated-a"));
+  check(
+    "the undated message is still logged as an interaction",
+    (undatedLogged?.value ?? 0) === 1,
+    `rows ${undatedLogged?.value}`
+  );
+
   // --- Calendar: annotates people already in the network, never adds any ---
   // Calendar ingest never creates contacts (`createsContacts: false`) — it explodes each
   // windowed event into one job row per (event, attendee) pair (see `CalendarEventRowPayload`'s
@@ -808,6 +929,16 @@ async function main() {
   check(
     "stranger and ghost rows are skipped (2 of 5)",
     out.skipped === 2,
+    JSON.stringify(out)
+  );
+  // Calendar is the worst case for the old `toCreate.length + toUpdate.length` progress
+  // arithmetic: it creates nobody, so the numerator could only ever come from matched
+  // attendees, while `totalRows` counts every (event, attendee) pair. This file would have
+  // finished at 3/5 — a progress bar visibly stuck at 60% on a completed import, and a
+  // cancel message ("N of M kept") that understated by the same amount.
+  check(
+    "calendar rowsProcessed reaches totalRows even though 2 of 5 rows matched nobody",
+    out.rowsProcessed === 5 && out.rowsProcessed === out.totalRows,
     JSON.stringify(out)
   );
 

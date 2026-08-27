@@ -94,12 +94,28 @@ LinkedIn processor stops calling `rebuildContactEmbeddingsBatch` in the loop and
 flag instead; this is the one behavioral change in the phase, and it is the point of it.
 
 Step 3 below needs a unique index on `contact_embeddings (user_id, contact_id,
-source_type)` that does not exist today — only non-unique indexes on `user_id` and
-`contact_id` (`src/db/schema.ts:828`). The migration must dedupe existing rows before
+source_type, source_id)` that does not exist today — only non-unique indexes on `user_id`
+and `contact_id` (`src/db/schema.ts:828`). The migration must dedupe existing rows before
 creating it, keeping the newest per key.
 
-**Runner** (`src/lib/embedding-backfill.ts`), time-boxed with self-continuation like the
-import engine:
+`source_id` is part of that key, and dropping it would be destructive rather than merely
+imprecise. `upsertContactEmbedding` keys its own existence check on all four columns, and
+`src/lib/calendar-sync.ts` writes one `"meeting"` row per meeting with a distinct
+`source_id` — so a three-column key makes the migration's dedupe delete every meeting
+embedding except the newest per contact, and then makes each subsequent meeting write raise
+a unique violation that `upsertContactEmbedding`'s blanket `catch {}` swallows. `source_id`
+is nullable and Postgres indexes NULLs as distinct, so rows written without one stay
+unconstrained; that matches the writer, which skips its existence check when no `source_id`
+is supplied.
+
+**Runner** (`src/lib/embedding-backfill.ts`), time-boxed. It is **not** self-continuing on
+its own: it stops at its time budget and returns `remaining`, and the loop lives in
+`POST /api/embeddings/backfill`, which re-kicks itself while `remaining > 0` — the same
+division of labour as the import engine's `scheduleContinuation`. A caller that ignores
+`remaining` strands the rest of the backlog until the daily cron notices it. The daily cron
+must therefore also bound its own sweep by wall clock rather than by user count: a fixed
+number of users each free to take the runner's full internal budget overruns the route's
+300s `maxDuration`, which kills the function before `finishCronRun` can record the run.
 
 1. Claim up to 500 stale contacts for a user — 1 statement
 2. Build embedding content locally; one `createEmbeddingsBatch` per ~200 texts
@@ -107,6 +123,13 @@ import engine:
    in the same statement — this deletes `persistEmbeddingVector`'s per-row loop rather
    than working around it
 4. Clear `embedding_stale_at` — 1 statement
+5. A second phase does the same for `'meeting'` embeddings. Moving calendar onto the engine
+   removed the per-meeting `upsertContactEmbedding` call the old importer made, and
+   `src/actions/search.ts` reads every source type — so without this, meeting content
+   stops being semantically searchable. It is drained here rather than restored per row
+   for the same reason profiles are: a per-row provider round trip is the cost this whole
+   design exists to remove. Pending work is a query (`interactions` rows with no matching
+   `contact_embeddings` row), not a flag, so there is no new column to keep in sync.
 
 **Trigger:** the import job kicks `/api/embeddings/backfill` on completion, using the same
 `after()` + `CRON_SECRET` pattern as `src/app/api/imports/[id]/continue/route.ts`. The

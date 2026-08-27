@@ -11,7 +11,18 @@ import { enrichContactsFromMessages } from "@/lib/message-enrichment";
  */
 export const LINKEDIN_MESSAGES_IMPORT_TYPE = "linkedin_messages";
 
-/** Earliest and latest valid message dates in a conversation, or `null` if none parse. */
+/**
+ * Earliest and latest valid message dates in a conversation, or `null` if none parse.
+ *
+ * A message whose date could not be parsed carries `sentAt: null` and is excluded here
+ * rather than counted. This is load-bearing, not defensive: an unparseable date used to be
+ * written as the epoch, which passes every validity check there is, so a single such
+ * message dragged `earliest` to 1970-01-01 — and since `bulkMergeContactsForUser` widens
+ * `first_interaction_at` with `LEAST`, that value was permanent, uncorrectable by any
+ * later import. A conversation whose dates *all* fail to parse yields `null` for both,
+ * which the two callers below turn into `undefined` so the create path falls back through
+ * `dateMet` exactly as it does for every other importer.
+ */
 function messageDateRange(payload: LinkedInMessageThreadRowPayload): {
   earliest: Date | null;
   latest: Date | null;
@@ -19,6 +30,7 @@ function messageDateRange(payload: LinkedInMessageThreadRowPayload): {
   let earliest: Date | null = null;
   let latest: Date | null = null;
   for (const m of payload.messages) {
+    if (!m.sentAt) continue;
     const d = new Date(m.sentAt);
     if (Number.isNaN(d.getTime())) continue;
     if (!earliest || d < earliest) earliest = d;
@@ -36,9 +48,17 @@ function messageDateRange(payload: LinkedInMessageThreadRowPayload): {
  * `externalId` is the entire dedupe mechanism (see Task 14's brief): each message's `id` is
  * a hash of (conversationId, date, content) computed once at parse time, so re-importing the
  * same export produces the same `interactions.externalId` values and the engine's bulk
- * `onConflictDoNothing()` insert — which targets the real `(user_id, external_id)` unique
- * index — silently no-ops on the repeat rather than logging every message twice. No extra
- * per-chunk existence query is needed; the database does the dedupe.
+ * insert — which targets the real `(user_id, external_id)` unique index — resolves the
+ * repeat on conflict rather than logging every message twice. No extra per-chunk existence
+ * query is needed; the database does the dedupe.
+ *
+ * That insert is an `onConflictDoUpdate` since Task 15, not the `onConflictDoNothing` it
+ * was written against. Harmless here, and worth stating rather than leaving to be
+ * rediscovered: because the id already hashes the date and the content, a message whose
+ * date or content changed produces a *different* id and never conflicts at all, so the only
+ * way messages reach the conflict branch is a byte-identical re-import — where DO UPDATE
+ * writes back the values already there. `interactions` has no `updated_at` for it to touch,
+ * so the repeat is a genuine no-op either way.
  */
 export const linkedinMessagesAdapter: ImportAdapter<LinkedInMessageThreadRowPayload> = {
   identity(payload) {
@@ -105,12 +125,17 @@ export const linkedinMessagesAdapter: ImportAdapter<LinkedInMessageThreadRowPayl
     return payload.messages
       .filter((m) => m.body.trim())
       .map((m) => {
-        const date = new Date(m.sentAt);
+        // Unlike the contact-level date range above, an *interaction* row must carry some
+        // date — `interaction_date` is NOT NULL. Import time is the same fallback the
+        // pre-engine importer used (`msg.parsedDate || new Date()`), and it is confined to
+        // this one row rather than leaking into the contact's permanent
+        // `first_interaction_at`, which is what made the epoch sentinel harmful.
+        const date = m.sentAt ? new Date(m.sentAt) : null;
         return {
           userId,
           contactId,
           interactionType: "linkedin_message",
-          interactionDate: Number.isNaN(date.getTime()) ? new Date() : date,
+          interactionDate: date && !Number.isNaN(date.getTime()) ? date : new Date(),
           source: "linkedin_messages",
           externalId: m.id,
           rawNotes: m.body,

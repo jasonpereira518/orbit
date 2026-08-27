@@ -19,6 +19,7 @@ import {
 } from "@/lib/contact-writes";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { createCompanyResolver } from "@/lib/companies";
+import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { refreshOutreachSuggestions } from "@/lib/reminders";
 import {
   DUPLICATE_MERGE_CONFIDENCE,
@@ -158,30 +159,6 @@ async function scheduleContinuation(importId: string) {
 }
 
 /**
- * Fire-and-forget the embedding backfill for this user.
- *
- * Through the route rather than inline: the import is finished from the user's point of
- * view, and embedding a few thousand contacts can outlive this invocation. The daily cron
- * is a backstop only — it runs at most once every 24 hours (the Hobby-plan minimum),
- * which is far too slow to be the primary path.
- */
-async function kickEmbeddingBackfill(userId: string) {
-  const secret = process.env.CRON_SECRET;
-  try {
-    await fetch(`${getAppBaseUrl()}/api/embeddings/backfill`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
-      },
-      body: JSON.stringify({ userId }),
-    });
-  } catch {
-    // Best-effort — the cron backstop picks up anything still flagged.
-  }
-}
-
-/**
  * Shape of a row returned by the claiming `UPDATE ... RETURNING` below — the columns that
  * statement actually selects, not the full `import_job_rows` schema. `errorMessage` /
  * `createdAt` are deliberately absent: nothing downstream reads them, so there's no reason
@@ -308,6 +285,7 @@ async function markRowFailed(row: PendingRow, err: unknown) {
 type RunningTotals = {
   skipped: number;
   blockedByPlan: number;
+  failedRows: number;
   interactionsLogged: number;
   remindersCreated: number;
 };
@@ -321,6 +299,7 @@ function accumulatedStats(
     ...latestStats,
     skipped: totals.skipped,
     blockedByPlan: totals.blockedByPlan,
+    failedRows: totals.failedRows,
     interactionsLogged: totals.interactionsLogged,
     remindersCreated: totals.remindersCreated,
     durationMs: (latestStats.durationMs ?? 0) + (Date.now() - jobStart),
@@ -382,6 +361,10 @@ export async function runImportJob(importId: string): Promise<void> {
     // systemic-fault case `MAX_ROW_FAILURES_PER_CHUNK` exists to catch.
     let skippedTotal = importRow.stats?.skipped ?? 0;
     let blockedByPlanTotal = importRow.stats?.blockedByPlan ?? 0;
+    // Seeded from the persisted value for the same reason as the counters around it: a
+    // self-continuing job must report rows isolated by *earlier* invocations too, not just
+    // this one's. See `ImportStats.failedRows`.
+    let failedRowsTotal = importRow.stats?.failedRows ?? 0;
     let interactionsLoggedTotal = importRow.stats?.interactionsLogged ?? 0;
     let remindersCreatedTotal = importRow.stats?.remindersCreated ?? 0;
     // Refreshed every loop pass from the row this job's own writes are updating, so the
@@ -414,6 +397,7 @@ export async function runImportJob(importId: string): Promise<void> {
         accumulatedStats(latestStats, jobStart, {
           skipped: skippedTotal,
           blockedByPlan: blockedByPlanTotal,
+          failedRows: failedRowsTotal,
           interactionsLogged: interactionsLoggedTotal,
           remindersCreated: remindersCreatedTotal,
         })
@@ -446,6 +430,7 @@ export async function runImportJob(importId: string): Promise<void> {
               stats: accumulatedStats(latestStats, jobStart, {
                 skipped: skippedTotal,
                 blockedByPlan: blockedByPlanTotal,
+                failedRows: failedRowsTotal,
                 interactionsLogged: interactionsLoggedTotal,
                 remindersCreated: remindersCreatedTotal,
               }),
@@ -597,6 +582,10 @@ export async function runImportJob(importId: string): Promise<void> {
             throw err instanceof Error ? err : new Error(String(err));
           }
           chunkRowFailures++;
+          // `chunkRowFailures` resets per chunk (it is the budget); `failedRowsTotal` does
+          // not — it is what the user is eventually told, so it accumulates across every
+          // chunk and every invocation. See `ImportStats.failedRows`.
+          failedRowsTotal++;
           await markRowFailed(item.row, err);
         };
 
@@ -825,7 +814,27 @@ export async function runImportJob(importId: string): Promise<void> {
 
         if (toSkip.length > 0) skippedTotal += toSkip.length;
 
-        rowsProcessed += toCreate.length + toUpdate.length;
+        // Every row this chunk claimed, not just the ones that produced a contact.
+        //
+        // `toCreate.length + toUpdate.length` was carried verbatim from the LinkedIn
+        // connections processor, where nearly every row creates or merges so the
+        // undercount was invisible. It is not invisible for the four import types that
+        // joined the engine afterwards: Google/Outlook previously wrote `rows.length`,
+        // messages wrote `messagesImported`, and calendar wrote `chunkEvents.length` —
+        // all four counted every row. Calendar is the worst case, because `totalRows`
+        // counts (event, attendee) pairs while only *matched* attendees ever reach
+        // `toUpdate`: a file where 40% of attendees are known would visibly stall the
+        // progress bar at 40% and make the cancel message ("N of M kept") wrong too.
+        //
+        // Every claimed row is terminal by the time control reaches here — created or
+        // merged (`contactIdByRowId`), refused by the plan cap (`planBlockedRows`),
+        // classified out (`toSkip`), or isolated by narrowing (`markRowFailed`) — and
+        // `pendingRows` is exactly the union of those, so counting the claim is both the
+        // simplest and the only expression that cannot drift as new terminal states are
+        // added. Rows left `processing` by a chunk that threw are never counted, because
+        // that path returns via `failImport` before reaching this line, and they are
+        // re-claimed (and then counted once) on the next attempt.
+        rowsProcessed += pendingRows.length;
 
         await db
           .update(imports)
@@ -838,6 +847,7 @@ export async function runImportJob(importId: string): Promise<void> {
               ...latestStats,
               skipped: skippedTotal,
               blockedByPlan: blockedByPlanTotal,
+              failedRows: failedRowsTotal,
               interactionsLogged: interactionsLoggedTotal,
               remindersCreated: remindersCreatedTotal,
             },
@@ -853,6 +863,7 @@ export async function runImportJob(importId: string): Promise<void> {
         accumulatedStats(latestStats, jobStart, {
           skipped: skippedTotal,
           blockedByPlan: blockedByPlanTotal,
+          failedRows: failedRowsTotal,
           interactionsLogged: interactionsLoggedTotal,
           remindersCreated: remindersCreatedTotal,
         })
@@ -867,6 +878,7 @@ export async function runImportJob(importId: string): Promise<void> {
         stats: accumulatedStats(latestStats, jobStart, {
           skipped: skippedTotal,
           blockedByPlan: blockedByPlanTotal,
+          failedRows: failedRowsTotal,
           interactionsLogged: interactionsLoggedTotal,
           remindersCreated: remindersCreatedTotal,
         }),

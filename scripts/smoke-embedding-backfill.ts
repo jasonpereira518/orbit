@@ -20,13 +20,14 @@ delete process.env.DATABASE_URL;
 import { and, count, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { createEmbeddingsBatch } from "../src/lib/ai";
 import { getDb } from "../src/db";
-import { contactEmbeddings, contacts, userSettings } from "../src/db/schema";
+import { contactEmbeddings, contacts, interactions, userSettings } from "../src/db/schema";
 import { isClerkConfigured, isDemoMode } from "../src/lib/auth";
 import { runEmbeddingBackfill } from "../src/lib/embedding-backfill";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const CLAIMABLE_USER = "smoke-embedding-backfill-claimable-user";
 const DRAIN_USER = "smoke-embedding-backfill-drain-user";
+const MEETING_USER = "smoke-embedding-backfill-meeting-user";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -234,6 +235,131 @@ async function testDrainWithStubbedProvider() {
   await db.delete(userSettings).where(eq(userSettings.userId, DRAIN_USER));
 }
 
+/**
+ * Section 3: the uniqueness key, and the meeting phase that depends on it.
+ *
+ * The key is `(user_id, contact_id, source_type, source_id)`. It was briefly created on
+ * only the first three columns, which is destructive rather than merely imprecise: a
+ * contact has MANY `'meeting'` rows, one per meeting, each with its own `source_id`. Under a
+ * three-column key the migration's dedupe deletes every meeting embedding but the newest per
+ * contact, and every subsequent meeting write raises a unique violation that
+ * `upsertContactEmbedding`'s blanket `catch {}` swallows — so meeting embeddings silently
+ * stop being written, with no error anywhere. That is what the first two checks pin.
+ *
+ * The rest exercises the meeting phase, which restores the per-meeting embedding the old
+ * `confirmCalendarImport` wrote inline and moving calendar onto the engine dropped. It runs
+ * through the same stubbed `embed` seam as section 2, so the upsert, the
+ * `RETURNING source_id` join and the vector write all really execute.
+ */
+async function testMeetingEmbeddings() {
+  const db = await getDb();
+  await db.delete(contacts).where(eq(contacts.userId, MEETING_USER));
+  await db.delete(userSettings).where(eq(userSettings.userId, MEETING_USER));
+  await ensureUserSettings(MEETING_USER);
+
+  const [attendee] = await db
+    .insert(contacts)
+    .values({ userId: MEETING_USER, fullName: "Meeting Attendee" })
+    .returning();
+
+  // Three meetings with ONE contact — the exact shape a three-column key cannot express.
+  const MEETINGS = 3;
+  await db.insert(interactions).values(
+    Array.from({ length: MEETINGS }, (_, i) => ({
+      userId: MEETING_USER,
+      contactId: attendee.id,
+      interactionType: "meeting",
+      interactionDate: new Date(`2024-0${i + 1}-15T10:00:00Z`),
+      source: "calendar_import",
+      externalId: `cal:evt-${i}:${attendee.id}`,
+      rawNotes: `Meeting: Sync ${i}\nLocation: Room ${i}`,
+      aiSummary: `Sync ${i}`,
+      topics: [`Sync ${i}`],
+    }))
+  );
+
+  // A meeting from the live ICS subscription rather than an import: out of scope for this
+  // phase (it embeds itself as it is written), and the claim's `source` filter is the only
+  // thing keeping it out. Without that assertion the filter could be dropped unnoticed.
+  await db.insert(interactions).values({
+    userId: MEETING_USER,
+    contactId: attendee.id,
+    interactionType: "meeting",
+    interactionDate: new Date("2024-05-15T10:00:00Z"),
+    source: "calendar_sync",
+    externalId: `cal:evt-synced:${attendee.id}`,
+    rawNotes: "Meeting: Synced",
+  });
+
+  const first = await runEmbeddingBackfill(MEETING_USER, stubEmbed);
+  check(
+    "meeting phase embeds every imported meeting for one contact",
+    first.embedded === MEETINGS,
+    JSON.stringify(first)
+  );
+  check("meeting phase leaves nothing pending", first.remaining === 0, JSON.stringify(first));
+
+  const meetingRows = await db
+    .select({ value: count() })
+    .from(contactEmbeddings)
+    .where(
+      and(
+        eq(contactEmbeddings.userId, MEETING_USER),
+        eq(contactEmbeddings.sourceType, "meeting")
+      )
+    );
+  // The load-bearing number. Under the three-column key this is 1, not 3 — either because
+  // the second and third inserts raised a swallowed unique violation, or because a dedupe
+  // deleted them.
+  check(
+    "one 'meeting' embedding row per meeting, not one per contact",
+    (meetingRows[0]?.value ?? 0) === MEETINGS,
+    `rows ${meetingRows[0]?.value}`
+  );
+
+  const synced = await db
+    .select({ value: count() })
+    .from(contactEmbeddings)
+    .where(
+      and(
+        eq(contactEmbeddings.userId, MEETING_USER),
+        eq(contactEmbeddings.sourceId, `cal:evt-synced:${attendee.id}`)
+      )
+    );
+  check(
+    "the live-sync meeting is left to calendar-sync's own inline embed",
+    (synced[0]?.value ?? 0) === 0,
+    `rows ${synced[0]?.value}`
+  );
+
+  const sample = await db.query.contactEmbeddings.findFirst({
+    where: and(
+      eq(contactEmbeddings.userId, MEETING_USER),
+      eq(contactEmbeddings.sourceId, `cal:evt-0:${attendee.id}`)
+    ),
+  });
+  // Same content shape the old per-row importer embedded (`fullName` + newline + note), so
+  // meetings embedded before and after this change are indistinguishable to search.
+  check(
+    "meeting content is the contact's name plus the meeting note",
+    sample?.content === "Meeting Attendee\nMeeting: Sync 0\nLocation: Room 0",
+    JSON.stringify(sample?.content)
+  );
+
+  // Idempotence, and the property that makes the route's re-kick loop terminate: a second
+  // pass must find nothing pending. If the claim and the count could ever disagree, this is
+  // where it shows up as `embedded > 0` forever.
+  const second = await runEmbeddingBackfill(MEETING_USER, stubEmbed);
+  check(
+    "second pass re-embeds nothing and reports nothing remaining",
+    second.embedded === 0 && second.remaining === 0,
+    JSON.stringify(second)
+  );
+
+  await db.delete(contacts).where(eq(contacts.userId, MEETING_USER));
+  await db.delete(userSettings).where(eq(userSettings.userId, MEETING_USER));
+}
+
 async function main() {
   console.log("Embedding backfill (pglite)...");
   check("running with Clerk configured", isClerkConfigured() === true);
@@ -244,6 +370,9 @@ async function main() {
 
   console.log("\n-- drain branch (stubbed provider) --");
   await testDrainWithStubbedProvider();
+
+  console.log("\n-- meeting phase and the four-column uniqueness key --");
+  await testMeetingEmbeddings();
 
   console.log("\nBackfill checks passed.");
 }

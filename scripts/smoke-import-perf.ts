@@ -35,7 +35,7 @@ delete process.env.DATABASE_URL;
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, imports, importJobRows, userSettings } from "../src/db/schema";
+import { companies, contacts, imports, importJobRows, userSettings } from "../src/db/schema";
 import { isClerkConfigured, isDemoMode } from "../src/lib/auth";
 import { CHUNK_SIZE, runLinkedInImportJob } from "../src/lib/import-job-processor";
 import { startQueryCount, stopQueryCount } from "../src/lib/query-counter";
@@ -183,6 +183,14 @@ async function main() {
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(imports).where(eq(imports.userId, USER));
+  // `companies` too, and this is not housekeeping — it is what makes the measurement mean
+  // anything. Company resolution is the one part of a chunk whose cost depends on database
+  // state rather than on the fixture: `createCompanyResolver` preloads the user's existing
+  // companies, so leaving the previous run's rows behind measured every company as already
+  // resolved and reported a warm-cache number as if it were the cost of a real import.
+  // A first-time user's import resolves every company cold, and that is the number this
+  // guard exists to bound.
+  await db.delete(companies).where(eq(companies.userId, USER));
   await ensureUserSettings(USER);
   // The free cap would refuse most of the fixture and the import would end early, measuring
   // nothing. Comp the user to a paid plan so the whole fixture is processed (`compedPlan`
@@ -250,6 +258,7 @@ async function main() {
   } finally {
     await db.delete(contacts).where(eq(contacts.userId, USER));
     await db.delete(imports).where(eq(imports.userId, USER));
+    await db.delete(companies).where(eq(companies.userId, USER));
     await db.delete(userSettings).where(eq(userSettings.userId, USER));
   }
   console.log("\nRound-trip budgets respected.");

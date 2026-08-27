@@ -234,6 +234,13 @@ export type ImportJobStatus = {
    */
   interactionsLogged: number;
   remindersCreated: number;
+  /**
+   * Rows the engine isolated and marked `failed` rather than failing the whole import
+   * (`ImportStats.failedRows`). Surfaced so a user whose file contained unwritable rows is
+   * actually told — chunk narrowing's entire purpose is to drop those rows instead of the
+   * job, and a "completed" toast that never mentions them hides the loss.
+   */
+  failedRows: number;
 };
 
 /** Read-only status poll for a server-owned import job (see `startLinkedInImport`). */
@@ -256,6 +263,7 @@ export async function getImportJobStatus(importId: string): Promise<ImportJobSta
     errorMessage: row.errorMessage,
     interactionsLogged: row.stats?.interactionsLogged ?? 0,
     remindersCreated: row.stats?.remindersCreated ?? 0,
+    failedRows: row.stats?.failedRows ?? 0,
   };
 }
 
@@ -411,7 +419,10 @@ export async function startLinkedInMessagesImport(
             .map((m) => ({
               id: linkedInMessageExternalId(conv.conversationId, m.parsedDate, m.content),
               body: m.content,
-              sentAt: (m.parsedDate ?? new Date(0)).toISOString(),
+              // `null`, not an epoch sentinel: an unparseable date must be excluded from
+              // the conversation's date range, not silently reported as 1970 (see
+              // `LinkedInMessageThreadRowPayload.messages`).
+              sentAt: m.parsedDate ? m.parsedDate.toISOString() : null,
             })),
         },
       };

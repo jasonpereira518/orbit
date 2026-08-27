@@ -31,12 +31,21 @@ async function main() {
   // possible: nothing has ever enforced this key. Keep the newest row per key — it is the
   // one readers would have found anyway, since `findFirst` has no ORDER BY and the newest
   // row is what the last write produced.
+  //
+  // The key is (user_id, contact_id, source_type, source_id), matching the four columns
+  // `upsertContactEmbedding` keys its existence check on. Dropping `source_id` would make
+  // this DELETE destroy real data: calendar-sync writes one `"meeting"` row per meeting,
+  // each with its own `source_id`, so a three-column dedupe deletes every meeting
+  // embedding except the newest per contact. `source_id` is nullable and compared with
+  // `=`, so null-keyed rows never match and are left alone — deliberately, since the
+  // index treats NULLs as distinct and therefore does not constrain them either.
   const dedupeResult = await db.execute(sql`
     DELETE FROM contact_embeddings a
     USING contact_embeddings b
     WHERE a.user_id = b.user_id
       AND a.contact_id = b.contact_id
       AND a.source_type = b.source_type
+      AND a.source_id = b.source_id
       AND (a.created_at < b.created_at OR (a.created_at = b.created_at AND a.id < b.id))
   `);
   // `db.execute()` returns a union of PGlite's `Results` and Neon's `NeonHttpQueryResult`.
@@ -49,11 +58,16 @@ async function main() {
       : (dedupeResult.affectedRows ?? 0);
   console.log("deduped contact_embeddings, rows deleted:", deletedRows);
 
+  // An earlier revision of this script created the same-named index on three columns.
+  // Drop it by name so a database that already ran that version is corrected rather than
+  // left with the over-strict key; a no-op everywhere else.
+  await db.execute(sql`DROP INDEX IF EXISTS embeddings_user_contact_source_uidx`);
+
   await db.execute(sql`
-    CREATE UNIQUE INDEX IF NOT EXISTS embeddings_user_contact_source_uidx
-    ON contact_embeddings(user_id, contact_id, source_type)
+    CREATE UNIQUE INDEX IF NOT EXISTS embeddings_user_contact_source_id_uidx
+    ON contact_embeddings(user_id, contact_id, source_type, source_id)
   `);
-  console.log("unique index embeddings_user_contact_source_uidx ready");
+  console.log("unique index embeddings_user_contact_source_id_uidx ready");
 }
 
 main()

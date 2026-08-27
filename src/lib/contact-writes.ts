@@ -421,6 +421,10 @@ export async function createContactsBulkForUser(
   const db = await getDb();
   const now = new Date();
 
+  // Two statements for the whole batch's distinct company names, instead of up to three
+  // per row. See `CompanyResolver.prime` — without this, the `Promise.all` below makes
+  // every row sharing a not-yet-existing company miss the resolver's cache simultaneously.
+  await companyResolve.prime(admitted.map((input) => input.company));
   const companyFieldsList = await Promise.all(
     admitted.map((input) =>
       companyFieldsForWriteCached(companyResolve, input.company)
@@ -474,9 +478,6 @@ export async function createContactsBulkForUser(
  * company through the *uncached* `companyFieldsForWrite` — throwing away the resolver the
  * caller had already preloaded and spending two to three round trips per merged row.
  *
- * `undefined` means "leave alone", matching `updateContactForUser`'s `!== undefined`
- * checks: each field is passed as NULL and coalesced against the existing column.
- *
  * IMPORTANT: this is the second contact-write path in the codebase. Its column list must
  * be kept in sync by hand with `updateContactForUser` below — with two deliberate
  * exceptions. Not `relationshipScore`, because mirroring that into `statedCloseness` is
@@ -528,6 +529,10 @@ export async function bulkMergeContactsForUser(
   const db = await getDb();
   const now = new Date();
 
+  // See `createContactsBulkForUser` above, and `CompanyResolver.prime` itself.
+  await companyResolve.prime(
+    merges.map((m) => (m.input.company !== undefined ? m.input.company : null))
+  );
   const companyFields = await Promise.all(
     merges.map((m) =>
       m.input.company !== undefined
