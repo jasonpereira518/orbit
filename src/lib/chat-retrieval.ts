@@ -92,8 +92,8 @@ export async function understandQuery(
   userGoals: string[],
   completeFn: typeof completeJson = completeJson
 ): Promise<ParsedQuery> {
-  const fallback = fallbackParsedQuery(question);
-  if (question.trim().length < 8) return fallback;
+  const fallback = fallbackParsedQuery(typeof question === "string" ? question : "");
+  if (typeof question !== "string" || question.trim().length < 8) return fallback;
   try {
     const goalsBlock = userGoals.length
       ? `User context — their active networking goals:\n${userGoals.map((g) => `- ${g}`).join("\n")}\n\n`

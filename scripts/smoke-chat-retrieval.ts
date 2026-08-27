@@ -55,6 +55,10 @@ async function main() {
   }) as never;
   const degraded = await understandQuery("u1", "which of my contacts invest?", [], failStub);
   check("stage failure degrades to fallback", degraded.semanticQuery === "which of my contacts invest?");
+
+  // understandQuery with non-string question (upstream `any` leakage) -> never throws
+  const nonString = await understandQuery("u1", 42 as never, [], failStub);
+  check("non-string question never throws", nonString.semanticQuery === "");
 }
 
 main()
