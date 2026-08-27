@@ -129,7 +129,7 @@ export function NotificationsPanelButton() {
           showCloseButton
         >
           <SheetHeader className="border-b border-border/60 pr-12">
-            <SheetTitle className="font-[family-name:var(--font-display)] text-lg text-primary">
+            <SheetTitle className="font-[family-name:var(--font-display)] text-lg text-ink">
               Notifications
             </SheetTitle>
             <SheetDescription>
@@ -145,7 +145,7 @@ export function NotificationsPanelButton() {
             ) : (!data || data.totalCount === 0) && jobs.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border/70 px-4 py-10 text-center">
                 <Bell className="mx-auto h-5 w-5 text-muted-foreground" />
-                <p className="mt-3 text-sm font-medium text-primary">
+                <p className="mt-3 text-sm font-medium text-ink">
                   You&apos;re all caught up
                 </p>
                 <p className="mt-1 text-sm text-muted-foreground">
@@ -322,7 +322,7 @@ function JobRow({ job }: { job: BackgroundJob }) {
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="font-medium text-primary">
+          <p className="font-medium text-ink">
             {job.status === "running"
               ? job.cancelling
                 ? "Stopping…"

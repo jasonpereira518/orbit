@@ -18,8 +18,11 @@ function Card({
       data-size={size}
       className={cn(
         "group/card flex flex-col gap-(--card-spacing) overflow-hidden rounded-xl bg-card py-(--card-spacing) text-sm text-card-foreground ring-1 ring-foreground/10 [--card-spacing:--spacing(4)] has-data-[slot=card-footer]:pb-0 has-[>img:first-child]:pt-0 data-[size=sm]:[--card-spacing:--spacing(3)] data-[size=sm]:has-data-[slot=card-footer]:pb-0 *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl",
+        // A drop shadow barely registers on a dark ground, so dark mode gets a
+        // top-edge inner highlight instead — the surface catches light from
+        // above rather than casting a shadow no one can see.
         interactive &&
-          "transition-[box-shadow] hover:shadow-md hover:ring-foreground/15",
+          "transition-[box-shadow] hover:shadow-md hover:ring-foreground/15 dark:hover:shadow-[inset_0_1px_0_0_rgb(255_255_255/0.07),0_8px_24px_-8px_rgb(0_0_0/0.6)]",
         className
       )}
       {...props}

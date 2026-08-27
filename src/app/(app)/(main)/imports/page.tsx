@@ -27,7 +27,7 @@ export default async function ImportsPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <div>
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-primary">
+        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
           Imports
         </h1>
         <p className="mt-1 text-muted-foreground">

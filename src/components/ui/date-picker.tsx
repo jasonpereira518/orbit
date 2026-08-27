@@ -71,7 +71,7 @@ export function MonthCalendar({
   return (
     <div className={cn("w-[17.5rem]", className)}>
       <div className="mb-3 flex items-center justify-between gap-2">
-        <p className="font-[family-name:var(--font-display)] text-base text-primary">
+        <p className="font-[family-name:var(--font-display)] text-base text-ink">
           {format(month, "MMMM yyyy")}
         </p>
         <div className="flex items-center gap-0.5">

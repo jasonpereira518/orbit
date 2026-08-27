@@ -53,7 +53,7 @@ export function ProfileSettings({
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div>
-        <h2 className="text-lg font-medium text-primary">Profile and account</h2>
+        <h2 className="text-lg font-medium text-ink">Profile and account</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Your identity and sign-in for Orbit.
         </p>
@@ -74,12 +74,12 @@ export function ProfileSettings({
               className="h-12 w-12 rounded-full border border-border/60 object-cover"
             />
           ) : (
-            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border/60 bg-muted text-sm font-medium text-primary">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border/60 bg-muted text-sm font-medium text-ink">
               {profile.name.slice(0, 1).toUpperCase()}
             </div>
           )}
           <div className="min-w-0 flex-1">
-            <p className="font-medium text-primary">{profile.name}</p>
+            <p className="font-medium text-ink">{profile.name}</p>
             {profile.email && (
               <p className="text-sm text-muted-foreground">{profile.email}</p>
             )}
@@ -110,7 +110,7 @@ export function ProfileSettings({
       )}
 
       <div className="border-t border-border/60 pt-4">
-        <h3 className="text-sm font-medium text-primary">Your socials</h3>
+        <h3 className="text-sm font-medium text-ink">Your socials</h3>
         <p className="mt-1 text-xs text-muted-foreground">
           Shown when you click the sun in Constellation.
         </p>

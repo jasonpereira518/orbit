@@ -169,7 +169,7 @@ export function ProspectTable({
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-primary">
+                      <span className="font-medium text-ink">
                         {prospect.fullName}
                       </span>
                       {profileUrl ? (

@@ -37,7 +37,7 @@ export function WizardReview({
       <div className="flex items-start gap-3 rounded-2xl border border-primary/25 bg-accent/60 p-5">
         <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
         <div>
-          <p className="font-medium text-primary">Nice work</p>
+          <p className="font-medium text-ink">Nice work</p>
           <ul className="mt-1 space-y-1 text-sm text-muted-foreground">
             {results.length ? (
               results.map((r, i) => <li key={i}>{describe(r)}</li>)

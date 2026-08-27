@@ -53,7 +53,7 @@ export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div>
-        <h2 className="text-lg font-medium text-primary">Import history</h2>
+        <h2 className="text-lg font-medium text-ink">Import history</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Recent LinkedIn and calendar imports for this account.
         </p>
@@ -83,7 +83,7 @@ export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
                     </span>
                   ) : null}
                   <div className="min-w-0">
-                    <p className="font-medium text-primary">
+                    <p className="font-medium text-ink">
                       {h.fileName || "Import"}
                     </p>
                     <p className="text-xs text-muted-foreground">

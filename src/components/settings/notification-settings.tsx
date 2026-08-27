@@ -28,7 +28,7 @@ export function NotificationSettings() {
   return (
     <section className="space-y-3 rounded-2xl border border-border/70 bg-card p-6">
       <div>
-        <h2 className="text-lg font-medium text-primary">
+        <h2 className="text-lg font-medium text-ink">
           Browser & desktop notifications
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -39,7 +39,7 @@ export function NotificationSettings() {
 
       <p className="text-sm text-muted-foreground">
         Status:{" "}
-        <span className="font-medium text-foreground">
+        <span className="font-medium text-ink">
           {permission === "unsupported"
             ? "Not supported in this browser"
             : permission === "granted"
@@ -50,7 +50,7 @@ export function NotificationSettings() {
         </span>
         {" · "}
         Preference:{" "}
-        <span className="font-medium text-foreground">
+        <span className="font-medium text-ink">
           {enabled ? "On" : "Off"}
         </span>
       </p>

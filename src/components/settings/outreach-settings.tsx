@@ -30,7 +30,7 @@ export function OutreachSettings({
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div>
-        <h2 className="text-lg font-medium text-primary">Outreach integrations</h2>
+        <h2 className="text-lg font-medium text-ink">Outreach integrations</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Apollo powers people search. Resend and Twilio are optional for automated
           sending — use with caution and follow CAN-SPAM, carrier, and LinkedIn

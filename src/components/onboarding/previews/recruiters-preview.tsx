@@ -15,7 +15,7 @@ export function RecruitersPreview({ reducedMotion }: PreviewProps) {
   return (
     <div className="space-y-2.5 p-1">
       <div className="flex items-center justify-between gap-3">
-        <p className="font-[family-name:var(--font-display)] text-lg text-primary">
+        <p className="font-[family-name:var(--font-display)] text-lg text-ink">
           Recruiters
         </p>
         <div className="flex items-center gap-1.5">
@@ -86,7 +86,7 @@ export function RecruitersPreview({ reducedMotion }: PreviewProps) {
             className="flex items-center justify-between rounded-xl border border-border/60 bg-background/60 px-3 py-2"
           >
             <div>
-              <p className="text-sm font-medium text-primary">{r.name}</p>
+              <p className="text-sm font-medium text-ink">{r.name}</p>
               <p className="text-xs text-muted-foreground">{r.firm}</p>
             </div>
             <span
