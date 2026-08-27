@@ -20,7 +20,7 @@ export function DashboardGraphPreview({
       <CardHeader>
         <CardTitle className="text-base">Constellation preview</CardTitle>
         <p className="text-sm text-muted-foreground">
-          Your network at a glance — closer ties sit nearer the center
+          Your network at a glance — each constellation is a company or school
         </p>
       </CardHeader>
       <CardContent className="min-h-0 flex-1 overflow-hidden p-0 px-4 pb-2">

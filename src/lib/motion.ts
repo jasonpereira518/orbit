@@ -47,6 +47,8 @@ export const SPRING_SOFT = {
 export const CAMERA_MS = {
   move: 450,
   wide: 550,
+  /** Search flights: fast, with pan+zoom interpolated together (linear). */
+  snap: 340,
 } as const;
 
 /**

@@ -410,36 +410,27 @@
   }
 }
 
-@keyframes constellation-armglow-breathe {
-  0%,
-  100% {
-    opacity: 0.8;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-@keyframes constellation-ray-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
 @keyframes constellation-spotlight {
   0%,
   100% {
     box-shadow:
-      0 0 0 0 rgba(255, 246, 214, 0.55),
-      0 0 16px 2px rgba(255, 255, 255, 0.35);
+      0 0 0 0 rgba(255, 246, 214, 0.8),
+      0 0 20px 4px rgba(255, 255, 255, 0.5);
   }
   50% {
     box-shadow:
-      0 0 0 8px rgba(255, 246, 214, 0),
-      0 0 28px 6px rgba(255, 255, 255, 0.55);
+      0 0 0 12px rgba(255, 246, 214, 0),
+      0 0 36px 10px rgba(255, 255, 255, 0.7);
+  }
+}
+
+@keyframes constellation-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-7px);
   }
 }
 
@@ -498,16 +489,18 @@
   animation: constellation-corona 2.6s ease-in-out infinite;
 }
 
-.constellation-arm-glow {
-  animation: constellation-armglow-breathe 11s ease-in-out infinite;
-}
-
-.constellation-ray path {
-  animation: constellation-ray-in 0.24s ease-out both;
-}
-
 .constellation-spotlight-ring {
   animation: constellation-spotlight 1.8s ease-in-out infinite;
+}
+
+.constellation-bob {
+  animation: constellation-bob 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .constellation-bob {
+    animation: none;
+  }
 }
 
 .constellation-planet-enter {

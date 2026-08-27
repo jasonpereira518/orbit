@@ -14,8 +14,8 @@ export default async function GraphPage() {
           Constellation
         </h1>
         <p className="mt-0.5 max-w-xl text-sm text-muted-foreground">
-          You are the sun. People form constellations by company, then school —
-          linked to each other, not to the center.
+          You are the sun. Companies and schools form constellations around
+          you — each figure traced by its own people.
         </p>
       </div>
       <NetworkGraphLazy initialData={initialData} />
