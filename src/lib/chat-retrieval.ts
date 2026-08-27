@@ -1,5 +1,5 @@
 import { completeJson, parseAiJson } from "@/lib/ai";
-import type { SearchFilters } from "@/lib/hybrid-search";
+import type { RankedContact, SearchFilters } from "@/lib/hybrid-search";
 
 export type ParsedQuery = {
   semanticQuery: string;
@@ -113,4 +113,132 @@ export async function understandQuery(
   } catch {
     return fallback;
   }
+}
+
+export const CANDIDATE_POOL = 60;
+export const FINAL_CONTACT_COUNT = 12;
+const RERANK_TIMEOUT_MS = 6000;
+const RERANK_MIN_RELEVANCE = 3;
+const RERANK_MIN_SURVIVORS = 3;
+
+const RERANK_SYSTEM = `You score how relevant each candidate contact is to the user's question about their network.
+10 = directly answers the question. 5 = plausibly useful. 0 = unrelated.
+Judge from the card text only. Score every candidate you were given, using their exact ids.
+Return JSON: {"scores": [{"id": string, "relevance": number}]}`;
+
+function candidateCard(c: RankedContact): string {
+  const summary = (c.aiSummary || c.notes || "").replace(/\s+/g, " ").slice(0, 160);
+  return `[id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | school=${c.school || "?"} | industry=${c.industry || "?"} | tier=${c.closenessTier || "?"} | tags=${c.tags.join(",") || "-"}${summary ? ` | ${summary}` : ""}`;
+}
+
+/**
+ * Accuracy-only stage: scores candidates with a flash-tier model and keeps the
+ * best FINAL_CONTACT_COUNT. On any failure it falls back to RRF order. Never throws.
+ */
+export async function rerankCandidates(
+  userId: string,
+  question: string,
+  candidates: RankedContact[],
+  completeFn: typeof completeJson = completeJson
+): Promise<RankedContact[]> {
+  if (candidates.length <= FINAL_CONTACT_COUNT) return candidates;
+  try {
+    const content = await withTimeout(
+      completeFn(userId, {
+        operation: "chat.rerank",
+        speed: "fast",
+        temperature: 0,
+        maxOutputTokens: 2048,
+        system: RERANK_SYSTEM,
+        user: `Question: ${question}\n\nCandidates:\n${candidates.map(candidateCard).join("\n")}`,
+      }),
+      RERANK_TIMEOUT_MS
+    );
+    const parsed = parseAiJson<{ scores?: Array<{ id?: unknown; relevance?: unknown }> }>(content);
+    const byId = new Map(candidates.map((c) => [c.id, c]));
+    const scored = (parsed.scores ?? [])
+      .filter(
+        (s): s is { id: string; relevance: number } =>
+          typeof s.id === "string" && byId.has(s.id) && typeof s.relevance === "number"
+      )
+      .sort((a, b) => b.relevance - a.relevance);
+
+    const kept = scored
+      .filter((s) => s.relevance >= RERANK_MIN_RELEVANCE)
+      .slice(0, FINAL_CONTACT_COUNT)
+      .map((s) => byId.get(s.id)!);
+    if (kept.length >= RERANK_MIN_SURVIVORS) return kept;
+
+    // Threshold starved the set — trust the model's ordering for a smaller page.
+    const ordered = scored.slice(0, 5).map((s) => byId.get(s.id)!);
+    return ordered.length > 0 ? ordered : candidates.slice(0, FINAL_CONTACT_COUNT);
+  } catch {
+    return candidates.slice(0, FINAL_CONTACT_COUNT);
+  }
+}
+
+export type BudgetedContact = {
+  id: string;
+  fullName: string;
+  company: string | null;
+  title: string | null;
+  relationshipScore: number;
+  aiSummary: string | null;
+  notes: string | null;
+  keyFacts: string[];
+  recentMessages: string[];
+  tags: string[];
+  relevance: number;
+};
+
+/**
+ * Per-contact context caps by rank tier, under one total character budget
+ * (~12k tokens at 4 chars/token). Reranked survivors earned richer detail than
+ * the old flat 400-chars-of-notes: rank buys depth.
+ */
+const CONTEXT_TIERS = [
+  { upto: 4, notes: 1200, summary: 600, msgs: 8, msgChars: 320, facts: 8 },
+  { upto: 8, notes: 600, summary: 400, msgs: 4, msgChars: 280, facts: 6 },
+  { upto: Infinity, notes: 300, summary: 240, msgs: 2, msgChars: 240, facts: 4 },
+] as const;
+const TOTAL_CONTEXT_CHAR_BUDGET = 48000;
+
+export function budgetContactsContext(
+  contacts: RankedContact[],
+  snippets: Map<string, { recentMessages: string[] }>
+): BudgetedContact[] {
+  const out: BudgetedContact[] = [];
+  let spent = 0;
+  contacts.forEach((c, index) => {
+    const tier = CONTEXT_TIERS.find((t) => index < t.upto)!;
+    const notes = (c.notes || "").slice(0, tier.notes) || null;
+    const aiSummary = (c.aiSummary || "").slice(0, tier.summary) || null;
+    const keyFacts = c.keyFacts.slice(0, tier.facts);
+    const recentMessages = (snippets.get(c.id)?.recentMessages ?? [])
+      .slice(0, tier.msgs)
+      .map((m) => m.slice(0, tier.msgChars));
+
+    const cost =
+      c.fullName.length + (c.company?.length ?? 0) + (c.title?.length ?? 0) +
+      (notes?.length ?? 0) + (aiSummary?.length ?? 0) +
+      keyFacts.join("").length + recentMessages.join("").length +
+      c.tags.join("").length + 80; // formatting overhead
+    if (spent + cost > TOTAL_CONTEXT_CHAR_BUDGET && out.length > 0) return;
+    spent += cost;
+
+    out.push({
+      id: c.id,
+      fullName: c.fullName,
+      company: c.company,
+      title: c.title,
+      relationshipScore: c.relationshipScore,
+      aiSummary,
+      notes,
+      keyFacts,
+      recentMessages,
+      tags: c.tags,
+      relevance: c.relevance,
+    });
+  });
+  return out;
 }

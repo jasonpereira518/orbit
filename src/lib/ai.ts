@@ -1323,11 +1323,11 @@ export async function chatWithNetwork(
       const messages =
         c.recentMessages && c.recentMessages.length
           ? `Recent LinkedIn messages:\n${c.recentMessages
-              .slice(0, 6)
+              .slice(0, 8)
               .map((m) => `- ${m}`)
               .join("\n")}`
           : "";
-      return `${i + 1}. [id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | score=${c.relationshipScore} | tags=${c.tags.join(", ")} | relevance=${c.relevance.toFixed(2)}\nSummary: ${c.aiSummary || "n/a"}\nNotes: ${(c.notes || "").slice(0, 400)}${facts ? `\n${facts}` : ""}${messages ? `\n${messages}` : ""}`;
+      return `${i + 1}. [id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | score=${c.relationshipScore} | tags=${c.tags.join(", ")} | relevance=${c.relevance.toFixed(2)}\nSummary: ${c.aiSummary || "n/a"}\nNotes: ${(c.notes || "").slice(0, 1200)}${facts ? `\n${facts}` : ""}${messages ? `\n${messages}` : ""}`;
     })
     .join("\n\n");
 

@@ -4,10 +4,14 @@
  * Run: npx tsx scripts/smoke-chat-retrieval.ts
  */
 import {
+  budgetContactsContext,
   fallbackParsedQuery,
+  FINAL_CONTACT_COUNT,
+  rerankCandidates,
   sanitizeParsedQuery,
   understandQuery,
 } from "../src/lib/chat-retrieval";
+import type { RankedContact } from "../src/lib/hybrid-search";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -59,6 +63,64 @@ async function main() {
   // understandQuery with non-string question (upstream `any` leakage) -> never throws
   const nonString = await understandQuery("u1", 42 as never, [], failStub);
   check("non-string question never throws", nonString.semanticQuery === "");
+
+  // ---- rerank ----
+  const mkCandidate = (id: string, name: string): RankedContact => ({
+    id, fullName: name, preferredName: null, company: null, school: null,
+    title: null, location: null, email: null, industry: null, notes: null,
+    aiSummary: null, keyFacts: [], relationshipScore: 5, priorityLevel: 1,
+    closenessTier: null, tags: [], rrfScore: 0.02, relevance: 0.9,
+    matchedArms: ["fts"], filterMatched: true,
+  });
+  const pool = Array.from({ length: 20 }, (_, i) => mkCandidate(`c${i}`, `Person ${i}`));
+
+  const rerankStub = (async (_u: string, _input: unknown) =>
+    JSON.stringify({
+      scores: [
+        { id: "c7", relevance: 9 },
+        { id: "c3", relevance: 8 },
+        { id: "c19", relevance: 7 },
+        { id: "c0", relevance: 2 },          // below threshold
+        { id: "hallucinated", relevance: 10 }, // not a candidate
+      ],
+    })) as never;
+  const reranked = await rerankCandidates("u1", "q", pool, rerankStub);
+  check("rerank orders by relevance", reranked[0].id === "c7" && reranked[1].id === "c3");
+  check("rerank drops below-threshold", !reranked.some((c) => c.id === "c0"));
+  check("rerank drops hallucinated ids", !reranked.some((c) => c.id === "hallucinated"));
+  check("rerank caps at FINAL_CONTACT_COUNT", reranked.length <= FINAL_CONTACT_COUNT);
+
+  const rerankFail = (async () => { throw new Error("down"); }) as never;
+  const fallbackOrder = await rerankCandidates("u1", "q", pool, rerankFail);
+  check("rerank failure falls back to RRF order", fallbackOrder.length === FINAL_CONTACT_COUNT && fallbackOrder[0].id === "c0");
+
+  const small = await rerankCandidates("u1", "q", pool.slice(0, 5), rerankFail);
+  check("small pool skips rerank", small.length === 5);
+
+  // ---- budget ----
+  const longNotes = "x".repeat(5000);
+  const budgetPool = Array.from({ length: 12 }, (_, i) => ({
+    ...mkCandidate(`b${i}`, `Person ${i}`),
+    notes: longNotes,
+    keyFacts: Array.from({ length: 12 }, (_, j) => `fact ${j}`),
+  }));
+  const snippets = new Map(
+    budgetPool.map((c) => [
+      c.id,
+      { recentMessages: Array.from({ length: 10 }, (_, j) => "m".repeat(400) + j) },
+    ])
+  );
+  const budgeted = budgetContactsContext(budgetPool, snippets);
+  check("budget keeps order", budgeted[0].id === "b0");
+  check("top tier gets more notes than tail", budgeted[0].notes!.length > budgeted[11].notes!.length);
+  check("messages trimmed per tier", budgeted[0].recentMessages.length <= 8 && budgeted[11].recentMessages.length <= 2);
+  const totalChars = budgeted.reduce(
+    (n, c) =>
+      n + (c.notes?.length ?? 0) + (c.aiSummary?.length ?? 0) +
+      c.recentMessages.join("").length + c.keyFacts.join("").length,
+    0
+  );
+  check("total context under budget", totalChars <= 48000);
 }
 
 main()
