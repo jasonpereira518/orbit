@@ -1,7 +1,13 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Eye, KeyRound, RotateCcw } from "lucide-react";
-import { PageExitOnBack } from "@/components/motion/page-exit-on-back";
-import { Reveal } from "@/components/motion/reveal";
+import { OrbitLogo } from "@/components/orbit-logo";
+import {
+  HeaderPanel,
+  Panel,
+  TransitionBackControl,
+  UpgradeTransition,
+} from "@/components/motion/upgrade-transition";
 import { UpgradePlanCards } from "@/components/pricing/upgrade-plan-cards";
 import { getLifetimeAvailability } from "@/actions/billing";
 import { requireUserId } from "@/lib/auth";
@@ -37,6 +43,13 @@ const TRUST = [
   },
 ];
 
+/**
+ * Panel stagger slots, top to bottom: header and heading peel off to the left, the
+ * billing toggle to the right, the two plan cards split apart from the same slot, and the
+ * trust row closes it out to the right — see `upgrade-transition.tsx` for the choreography
+ * itself. `UpgradeTransition`'s `maxOrder` below must stay in step with the highest slot
+ * used here (currently the trust row's 4).
+ */
 export default async function UpgradePage({
   searchParams,
 }: {
@@ -62,32 +75,50 @@ export default async function UpgradePage({
     // No starfield here: a payment page should feel steady, and a moving background behind
     // a card form is friction dressed as delight.
     <div className="landing-root relative min-h-screen overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
-      <PageExitOnBack>
+      <UpgradeTransition maxOrder={4}>
+        <HeaderPanel
+          order={0}
+          dir="left"
+          className="relative z-10 mx-auto flex w-full max-w-4xl items-center justify-between gap-4 px-6 py-6 md:px-8"
+        >
+          <div className="flex items-center gap-4">
+            <TransitionBackControl />
+            <Link
+              href="/"
+              className="flex items-center gap-2.5 transition-opacity hover:opacity-80"
+              aria-label="Orbit home"
+            >
+              <OrbitLogo size="sm" />
+              <span className="font-[family-name:var(--font-display)] text-[17px] tracking-tight text-[#e8f3f1]">
+                Orbit
+              </span>
+            </Link>
+          </div>
+        </HeaderPanel>
+
         <main className="mx-auto w-full max-w-4xl px-6 pb-24 md:px-8">
-          <Reveal className="reveal-celestial">
+          <Panel order={1} dir="left">
             <h1 className={`${HEADING} text-[clamp(28px,4vw,42px)]`}>
               {hasPro || hasLifetime
                 ? "You're already on a paid plan."
                 : "Pick how you'd like to pay."}
             </h1>
-          </Reveal>
+          </Panel>
 
-          <Reveal className="reveal-celestial mt-12 block" delay={60}>
-            <UpgradePlanCards
-              initialPeriod={params.period === "annual" ? "annual" : "monthly"}
-              hasPro={hasPro}
-              hasLifetime={hasLifetime}
-              proCheckoutConfigured={isProCheckoutConfigured()}
-              lifetimePurchasable={lifetime.purchasable}
-              lifetimeOffer={{
-                priceUsd: offer.priceUsd,
-                compareAtUsd: offer.compareAtUsd,
-              }}
-            />
-          </Reveal>
+          <UpgradePlanCards
+            initialPeriod={params.period === "annual" ? "annual" : "monthly"}
+            hasPro={hasPro}
+            hasLifetime={hasLifetime}
+            proCheckoutConfigured={isProCheckoutConfigured()}
+            lifetimePurchasable={lifetime.purchasable}
+            lifetimeOffer={{
+              priceUsd: offer.priceUsd,
+              compareAtUsd: offer.compareAtUsd,
+            }}
+          />
 
           {!hasPro && !hasLifetime && (
-            <Reveal className="reveal-celestial mt-14 block">
+            <Panel order={4} dir="right" className="mt-14 block">
               <ul className="grid gap-6 sm:grid-cols-3">
                 {TRUST.map(({ icon: Icon, title, body }) => (
                   <li key={title} className="flex gap-3.5">
@@ -104,10 +135,10 @@ export default async function UpgradePage({
                   </li>
                 ))}
               </ul>
-            </Reveal>
+            </Panel>
           )}
         </main>
-      </PageExitOnBack>
+      </UpgradeTransition>
     </div>
   );
 }
