@@ -43,7 +43,30 @@ export type NetworkMetrics = {
   totalPeerEdges: number;
   avgPeerDegree: number;
   degreeBuckets: { none: number; oneToTwo: number; threePlus: number };
+  /**
+   * How many contacts the peer-link figures were actually computed over.
+   *
+   * Equal to `totalContacts` for most networks. Above `METRICS_MAX_CONTACTS` the link
+   * analysis runs on the closest contacts only — see the note there — and the peer-link
+   * stats describe that subset while `tierCounts` and `totalContacts` still describe
+   * everyone. Surfaced rather than hidden so a caller can say so.
+   */
+  metricsSampleSize: number;
 };
+
+/**
+ * Ceiling on how many contacts the peer-link analysis considers.
+ *
+ * `buildPeerEdges({ metrics: true })` compares every pair of contacts, so its cost grows
+ * with the square of the network: 2,000 contacts is two million comparisons, 5,000 is
+ * twelve and a half million — and this runs on the dashboard's render path, on every load.
+ *
+ * The cap is applied by closeness, so what survives is the part of the network the reader
+ * cares about. "How interconnected are the people I actually know" is the question the
+ * chart answers; the thousand acquaintances imported from a CSV and never touched since
+ * were only ever adding cost to it.
+ */
+export const METRICS_MAX_CONTACTS = 750;
 
 export type ContactWithNetwork = ClosenessContact & {
   id: string;
@@ -322,7 +345,20 @@ export function computeNetworkMetrics(
     sharedInterests: c.sharedInterests ?? null,
   }));
 
-  const peerEdges = buildPeerEdges(graphContacts, { metrics: true });
+  // Only the closest `METRICS_MAX_CONTACTS` take part in the all-pairs link analysis.
+  // Sorting by the already-computed score is O(n log n); comparing every pair is O(n²).
+  const sampled =
+    graphContacts.length <= METRICS_MAX_CONTACTS
+      ? graphContacts
+      : [...graphContacts]
+          .sort(
+            (a, b) =>
+              (scores.get(b.id)?.closeness ?? 0) - (scores.get(a.id)?.closeness ?? 0)
+          )
+          .slice(0, METRICS_MAX_CONTACTS);
+  const sampledIds = new Set(sampled.map((c) => c.id));
+
+  const peerEdges = buildPeerEdges(sampled, { metrics: true });
   const degrees = peerDegreeMap(peerEdges);
 
   const tierCounts = { inner: 0, mid: 0, outer: 0 };
@@ -337,9 +373,13 @@ export function computeNetworkMetrics(
     // distribution to the same shape no matter how healthy the network is.
     tierCounts[closenessTier(breakdown.raw)] += 1;
     const peerDegree = degrees.get(c.id) || 0;
-    if (peerDegree === 0) degreeBuckets.none += 1;
-    else if (peerDegree <= 2) degreeBuckets.oneToTwo += 1;
-    else degreeBuckets.threePlus += 1;
+    // Bucketed over the sampled set only. Counting an unsampled contact as "no links"
+    // would not mean they have none — it would mean nobody looked.
+    if (sampledIds.has(c.id)) {
+      if (peerDegree === 0) degreeBuckets.none += 1;
+      else if (peerDegree <= 2) degreeBuckets.oneToTwo += 1;
+      else degreeBuckets.threePlus += 1;
+    }
 
     contactsWithNetwork.push({
       ...c,
@@ -352,8 +392,9 @@ export function computeNetworkMetrics(
   }
 
   const totalPeerDegree = [...degrees.values()].reduce((a, b) => a + b, 0);
-  const avgPeerDegree =
-    contacts.length > 0 ? totalPeerDegree / contacts.length : 0;
+  // Averaged over the contacts that were actually analysed, not the whole network — the
+  // divisor has to match the numerator or the figure drops as unanalysed contacts are added.
+  const avgPeerDegree = sampled.length > 0 ? totalPeerDegree / sampled.length : 0;
 
   return {
     metrics: {
@@ -362,6 +403,7 @@ export function computeNetworkMetrics(
       totalPeerEdges: peerEdges.length,
       avgPeerDegree: Math.round(avgPeerDegree * 10) / 10,
       degreeBuckets,
+      metricsSampleSize: sampled.length,
     },
     contactsWithNetwork,
   };

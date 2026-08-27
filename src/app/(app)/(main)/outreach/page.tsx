@@ -23,7 +23,7 @@ export default async function OutreachPage() {
           "Reply tracking and per-campaign quality scores",
           "Sequenced follow-ups that stop when someone replies",
         ]}
-        note="Included in Orbit Pro and Orbit Lifetime. On Orbit Lifetime you supply your own Apollo, Resend, and Twilio keys."
+        note="Both send email and SMS on Orbit's credits. On Orbit Lifetime you supply your own Apollo key for prospect search."
       />
     );
   }

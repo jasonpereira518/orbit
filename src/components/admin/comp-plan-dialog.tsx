@@ -21,6 +21,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { setCompAction } from "@/actions/admin";
 import { toast } from "@/lib/toast";
+import { PlanBadge } from "@/components/admin/primitives";
 import { PLAN_LABELS, type Plan } from "@/lib/plan-limits";
 import type { PlanSource } from "@/lib/entitlements";
 import { cn } from "@/lib/utils";
@@ -31,12 +32,12 @@ type Choice = "lifetime" | "orbit" | "none";
  * The cost asymmetry here is the whole reason this is a dialog rather than a two-item menu,
  * because it runs exactly opposite to intuition:
  *
- *  - Comping LIFETIME is free to Orbit. `entitlementsForPlan` gives it
- *    `canUseHostedSends: false` (a one-time payment must never buy an open-ended metered
- *    liability), and `countLifetimePurchases()` counts `lifetime_purchased_at`, which a
- *    comp never sets — so it does not consume a paid seat either.
- *  - Comping ORBIT PRO costs real money. It sets `canUseHostedSends: true`, unlocking
- *    Orbit's own Resend and Twilio credits, and Jason pays for every send.
+ *  - Comping LIFETIME is nearly free to Orbit. `entitlementsForPlan` gives it
+ *    `canUseHostedEnrichment: false`, so it never touches Orbit's Apollo credits — the one
+ *    metered cost with no ceiling. It does get `canUseHostedSending`, but every plan is
+ *    capped at `DAILY_SEND_LIMIT` a day, so that exposure is bounded and knowable.
+ *  - Comping ORBIT PRO costs real money. It sets `canUseHostedEnrichment: true`, unlocking
+ *    Orbit's own Apollo credits, which nothing in the product rate-limits.
  *
  * "Lifetime sounds more generous" is exactly backwards, so the dialog says so out loud.
  */
@@ -52,8 +53,8 @@ const CHOICES: Array<{
     tag: { label: "recommended", tone: "good" },
     lines: [
       "Everything uncapped, permanently.",
-      "Costs Orbit nothing — they bring their own send keys.",
-      "Does not consume a paid Lifetime seat.",
+      "Enrichment stays on their own Apollo key — the one uncapped cost.",
+      "Sending is included, but capped per day like every plan.",
     ],
   },
   {
@@ -61,8 +62,8 @@ const CHOICES: Array<{
     title: "Orbit Pro",
     tag: { label: "costs you money", tone: "warn" },
     lines: [
-      "Everything in Lifetime, plus outreach on Orbit's own Resend and Twilio credits.",
-      "You pay for every email and SMS they send.",
+      "Everything in Lifetime, plus enrichment on Orbit's own Apollo credits.",
+      "You pay for every prospect search and enrichment they run, with no daily ceiling.",
     ],
   },
   {
@@ -75,6 +76,9 @@ const CHOICES: Array<{
   },
 ];
 
+/** Used when the operator does not type one. Recorded verbatim, so it says what it is. */
+const DEFAULT_REASON = "Set from the admin console";
+
 export function CompPlanButton(props: {
   targetUserId: string;
   email: string | null;
@@ -82,13 +86,35 @@ export function CompPlanButton(props: {
   currentSource: PlanSource;
   contactCount: number;
   compedNote: string | null;
-  variant: "menu" | "button";
+  /**
+   * `badge` turns the plan cell itself into the trigger, which is the roster's one-click
+   * path: the plan is the thing being looked at, so it is also the thing to click. `menu`
+   * and `button` remain for the `⋯` overflow and the account page header.
+   */
+  variant: "menu" | "button" | "badge";
 }) {
   const [open, setOpen] = useState(false);
 
   return (
     <>
-      {props.variant === "menu" ? (
+      {props.variant === "badge" ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label={`Change plan for ${props.email ?? props.targetUserId}`}
+          className="rounded-md transition-opacity duration-fast hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        >
+          <PlanBadge
+            plan={props.currentPlan}
+            source={props.currentSource}
+            title={
+              props.compedNote
+                ? `Comped — ${props.compedNote}. Click to change.`
+                : "Click to change this plan"
+            }
+          />
+        </button>
+      ) : props.variant === "menu" ? (
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -147,17 +173,18 @@ function CompPlanDialog({
   const [pending, startTransition] = useTransition();
 
   const submit = () => {
-    if (!reason.trim()) {
-      toast.error("Add a reason — future-you will want to know why.");
-      return;
-    }
+    // Prefilled rather than demanded. `setCompAction` still rejects an empty reason — the
+    // audit row and `comped_note` both need one — but making the operator type a sentence
+    // before every plan change turned a one-click job into a form. The default is honest
+    // about what happened; anything more specific is worth typing, and still can be.
+    const note = reason.trim() || DEFAULT_REASON;
 
     startTransition(async () => {
       try {
         const result = await setCompAction({
           targetUserId,
           plan: choice === "none" ? null : choice,
-          reason,
+          reason: note,
         });
         toast.success(
           choice === "none"
@@ -253,11 +280,12 @@ function CompPlanDialog({
             rows={2}
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder="Beta feedback — found the import bug"
+            placeholder={DEFAULT_REASON}
             className="mt-1 text-sm"
           />
           <p className="mt-1 text-xs text-muted-foreground">
-            Only you ever see this. Stored on the account and in the audit trail.
+            Optional. Only you ever see this — it is stored on the account and in the audit
+            trail, and answers &ldquo;why is this one free?&rdquo; six months from now.
           </p>
         </div>
 

@@ -15,7 +15,8 @@ import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { ArrowUp, Loader2, RotateCcw, Search, Sparkles, X } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
-import { askNetwork } from "@/actions/chat";
+import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
+import { askNetwork, createChatThread } from "@/actions/chat";
 import { getAskBarContact } from "@/actions/contacts";
 import { searchDashboardContacts } from "@/actions/search";
 import { createReminder } from "@/actions/reminders";
@@ -87,6 +88,7 @@ export function FloatingAskBar() {
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<number | null>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
+  const chatThreadIdRef = useRef<string | null>(null);
 
   const [open, setOpen] = useState(false);
   const [hidden, setHidden] = useState(false);
@@ -150,6 +152,14 @@ export function FloatingAskBar() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [focusBar, open]);
+
+  useEffect(() => {
+    function onOpenRequest() {
+      focusBar();
+    }
+    window.addEventListener(OPEN_ASK_BAR_EVENT, onOpenRequest);
+    return () => window.removeEventListener(OPEN_ASK_BAR_EVENT, onOpenRequest);
+  }, [focusBar]);
 
   const chatPendingRef = useRef(chatPending);
   chatPendingRef.current = chatPending;
@@ -258,6 +268,13 @@ export function FloatingAskBar() {
     return true;
   }
 
+  const ensureChatThread = useCallback(async () => {
+    if (chatThreadIdRef.current) return chatThreadIdRef.current;
+    const created = await createChatThread();
+    chatThreadIdRef.current = created.id;
+    return created.id;
+  }, []);
+
   const sendQuestion = useCallback(
     (raw: string) => {
       const q = raw.trim();
@@ -277,10 +294,8 @@ export function FloatingAskBar() {
       const contactId = activeContactId;
       startChat(async () => {
         try {
-          const res = await askNetwork(
-            q,
-            contactId ? { contactId } : undefined
-          );
+          const threadId = await ensureChatThread();
+          const res = await askNetwork(q, { threadId, contactId: contactId ?? undefined });
           if (!res.ok) {
             toast.error(res.error);
             setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
@@ -304,13 +319,14 @@ export function FloatingAskBar() {
         }
       });
     },
-    [activeContactId, chatPending]
+    [activeContactId, chatPending, ensureChatThread]
   );
 
   function clearThread() {
     setMessages([]);
     setQuery("");
     setHits([]);
+    chatThreadIdRef.current = null;
   }
 
   const showPanel = open;
@@ -333,8 +349,13 @@ export function FloatingAskBar() {
       }
       transition={{ duration: DUR.slow, ease: EASE_HOUSE }}
       className={cn(
-        "pointer-events-none fixed inset-x-0 z-50 flex justify-center px-4",
-        "bottom-[calc(4.5rem+env(safe-area-inset-bottom))] md:bottom-5",
+        "pointer-events-none fixed inset-x-0 z-50 justify-center px-4",
+        // On mobile the bar is intrusive if left permanently floating above
+        // the bottom nav — keep it fully out of the layout there until the
+        // "Ask your network" item in the More sheet opens it. Desktop keeps
+        // the persistent collapsed pill.
+        open ? "flex" : "hidden md:flex",
+        "bottom-[calc(7.5rem+env(safe-area-inset-bottom))] md:bottom-5",
         !visible && "pointer-events-none"
       )}
       aria-hidden={!visible}

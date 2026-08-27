@@ -179,25 +179,72 @@ function StepMarker({
 
 /** Below lg the ring can't shrink without going illegible, so the loop
  * becomes a vertical timeline — same beat (it builds as you scroll),
- * different geometry. The spine draws down as the steps light. */
-function timelineWindow(index: number): [number, number] {
-  return [0.15 + index * 0.14, 0.35 + index * 0.14];
+ * different geometry. One dot runs down the spine, trailing a filled line
+ * behind it, and each step lights as the dot lands on its marker. */
+
+/** Scrub range the dot travels over. The margins keep it from sitting exactly
+ * on the first/last marker at the very ends of the range, where sub-pixel
+ * scroll jitter would make it look stuck. */
+const DOT_RUN: [number, number] = [0.04, 0.96];
+/** How far ahead of the dot a step starts fading up, and how long the marker
+ * takes to fill once the dot is on it. */
+const COPY_LEAD = 0.07;
+const MARK_FILL = 0.02;
+
+/** Centre of each marker, in px from the top of the list. */
+function useMarkerOffsets(listRef: React.RefObject<HTMLOListElement | null>) {
+  const [marks, setMarks] = useState<number[]>([]);
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const measure = () => {
+      const top = list.getBoundingClientRect().top;
+      const next = Array.from(
+        list.querySelectorAll<HTMLElement>("[data-step-marker]"),
+        (el) => {
+          const r = el.getBoundingClientRect();
+          return r.top - top + r.height / 2;
+        }
+      );
+      // Measured rather than assumed even spacing: the bodies wrap to
+      // different heights, so evenly-spaced windows drifted off the markers.
+      setMarks((prev) =>
+        prev.length === next.length &&
+        prev.every((v, i) => Math.abs(v - next[i]!) < 0.5)
+          ? prev
+          : next
+      );
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(list);
+    return () => ro.disconnect();
+  }, [listRef]);
+
+  return marks;
 }
 
 function StepRow({
   step,
-  index,
   p,
+  arrival,
   reduced,
 }: {
   step: Step;
-  index: number;
   p: MotionValue<number>;
+  arrival: number;
   reduced: boolean;
 }) {
-  const [a, b] = timelineWindow(index);
-  const opacity = useTransform(p, (v) => scrub01(v, a, b));
-  const x = useTransform(p, (v) => 14 * (1 - scrub01(v, a, b)));
+  const opacity = useTransform(p, (v) =>
+    scrub01(v, arrival - COPY_LEAD, arrival + MARK_FILL)
+  );
+  const x = useTransform(p, (v) =>
+    14 * (1 - scrub01(v, arrival - COPY_LEAD, arrival + MARK_FILL))
+  );
+  const lit = useTransform(p, (v) =>
+    scrub01(v, arrival - MARK_FILL, arrival + MARK_FILL)
+  );
 
   return (
     <motion.li
@@ -205,10 +252,20 @@ function StepRow({
       style={reduced ? undefined : { opacity, x }}
     >
       <span
+        data-step-marker
         aria-hidden="true"
-        className="relative z-10 mt-1.5 h-3 w-3 shrink-0 rounded-full"
-        style={{ background: step.dot, boxShadow: step.glow }}
-      />
+        className="relative z-10 mt-1.5 h-3 w-3 shrink-0 rounded-full border border-[#e8f3f1]/25 bg-[#03050c]"
+      >
+        {/* Fills in as the dot lands, in that step's colour. */}
+        <motion.span
+          className="absolute inset-[2px] rounded-full"
+          style={{
+            background: step.dot,
+            boxShadow: step.glow,
+            ...(reduced ? { opacity: 1 } : { opacity: lit }),
+          }}
+        />
+      </span>
       <div>
         <p className={KICKER_CLASS}>{step.kicker}</p>
         <p className={TITLE_CLASS}>{step.title}</p>
@@ -220,38 +277,61 @@ function StepRow({
 
 function MobileTimeline({ reduced }: { reduced: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLOListElement>(null);
+  const marks = useMarkerOffsets(listRef);
+
+  // Completes while the whole timeline is still comfortably on screen — the
+  // old "end center" range ran on for another half viewport after the last
+  // step had already lit.
   const { scrollYProgress: p } = useScroll({
     target: ref,
-    offset: ["start end", "end center"],
+    offset: ["start 0.9", "end 0.8"],
   });
-  const spineDraw = useTransform(p, (v) => scrub01(v, 0.12, 0.9));
+
+  const first = marks[0] ?? 0;
+  const last = marks.length ? marks[marks.length - 1]! : 0;
+  const travel = Math.max(0, last - first);
+
+  const dotY = useTransform(
+    p,
+    (v) => first + travel * scrub01(v, ...DOT_RUN)
+  );
+  const fillH = useTransform(dotY, (y) => Math.max(0, y - first));
 
   return (
     <div ref={ref} className="relative mt-12 lg:hidden">
-      <svg
+      {/* Track, then the filled length the dot leaves behind it. Both span
+       * marker-to-marker rather than the list box, so the line starts and
+       * stops on a step instead of floating past the ends. */}
+      <div
         aria-hidden="true"
-        viewBox="0 0 1 100"
-        preserveAspectRatio="none"
-        className="absolute left-[5.5px] top-2 h-[calc(100%-1rem)] w-px overflow-visible"
-      >
-        <motion.line
-          x1={0.5}
-          y1={0}
-          x2={0.5}
-          y2={100}
-          stroke="rgba(232,243,241,0.16)"
-          strokeWidth={1}
-          vectorEffect="non-scaling-stroke"
-          style={reduced ? undefined : { pathLength: spineDraw }}
+        className="absolute left-[5.5px] w-px bg-[#e8f3f1]/[0.14]"
+        style={{ top: first, height: travel }}
+      />
+      <motion.div
+        aria-hidden="true"
+        className="absolute left-[5.5px] w-px bg-[linear-gradient(to_bottom,rgba(232,243,241,0.45),rgba(242,193,78,0.75))]"
+        style={{ top: first, height: reduced ? travel : fillH }}
+      />
+      {!reduced && travel > 0 && (
+        <motion.span
+          aria-hidden="true"
+          className="absolute left-[6px] top-0 z-20 block h-[9px] w-[9px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#f2c14e] shadow-[0_0_12px_rgba(242,193,78,0.85)]"
+          style={{ y: dotY }}
         />
-      </svg>
-      <ol className="space-y-6">
+      )}
+      <ol ref={listRef} className="space-y-6">
         {STEPS.map((step, index) => (
           <StepRow
             key={step.title}
             step={step}
-            index={index}
             p={p}
+            arrival={
+              travel > 0
+                ? DOT_RUN[0] +
+                  (DOT_RUN[1] - DOT_RUN[0]) * ((marks[index]! - first) / travel)
+                : index / Math.max(1, STEPS.length - 1)
+            }
             reduced={reduced}
           />
         ))}
@@ -426,7 +506,13 @@ function EarthJourney({ reduced, isLg }: { reduced: boolean; isLg: boolean }) {
       className={reduced ? "hidden" : "hidden lg:block"}
       style={reduced ? undefined : { height: `${PIN_SVH}svh` }}
     >
-      <div ref={frameRef} className="sticky top-0 h-svh overflow-hidden">
+      {/* select-none: the whole frame is a drag surface for the globe, and a
+          pull that leaves a trail of highlighted step copy behind it reads as
+          the page breaking rather than as the planet being turned. */}
+      <div
+        ref={frameRef}
+        className="sticky top-0 h-svh select-none overflow-hidden"
+      >
         {/* Ring furniture sits under Earth: it passes in front of the dashed
             line and the markers it stamps, and covers the sun at both the
             opening hold and the full-bleed finale. */}
@@ -484,12 +570,12 @@ export function LandingHowItWorks() {
   // works" pill for the whole pin.
   return (
     <section
-      aria-labelledby="landing-how-heading"
+      aria-labelledby="how-heading"
       className="landing-scene scene-how relative z-10"
     >
       <div
-        id="landing-how"
-        className="mx-auto w-full max-w-6xl px-6 pt-20 md:px-10 md:pt-24"
+        id="how"
+        className="mx-auto w-full max-w-6xl px-8 pt-20 md:px-10 md:pt-24"
       >
         <Reveal className="reveal-celestial">
           <p className="text-xs uppercase tracking-[0.18em] text-[#f2c14e]">
@@ -498,7 +584,7 @@ export function LandingHowItWorks() {
         </Reveal>
         <Reveal className="reveal-celestial" delay={80}>
           <h2
-            id="landing-how-heading"
+            id="how-heading"
             className="mt-3 max-w-[18ch] font-[family-name:var(--font-display)] text-[clamp(30px,4.4vw,50px)] font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]"
           >
             From a conversation to a callback.
@@ -512,7 +598,7 @@ export function LandingHowItWorks() {
       {/* Padding is for the mobile timeline only — at lg this wrapper is
           empty (the timeline is lg:hidden) and its bottom padding was pure
           dead space between the departing globe and the next scene. */}
-      <div className="mx-auto w-full max-w-6xl px-6 pb-20 md:px-10 md:pb-24 lg:pb-0">
+      <div className="mx-auto w-full max-w-6xl px-8 pb-20 md:px-10 md:pb-24 lg:pb-0">
         <MobileTimeline reduced={reduced} />
       </div>
     </section>

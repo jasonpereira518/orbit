@@ -10,9 +10,6 @@
 /** House easing curve, as a motion/react ease array. */
 export const EASE_HOUSE = [0.22, 1, 0.36, 1] as const;
 
-/** House easing curve, as CSS. */
-export const EASE_HOUSE_CSS = "cubic-bezier(0.22, 1, 0.36, 1)";
-
 /** Durations in seconds, for motion/react `transition.duration`. */
 export const DUR = {
   fast: 0.12,
@@ -41,6 +38,13 @@ export const SPRING_SOFT = {
   type: "spring",
   stiffness: 170,
   damping: 22,
+} as const;
+
+/** Snappy squish for whileTap press feedback (bottom-nav Capture button). */
+export const SPRING_TAP = {
+  type: "spring",
+  stiffness: 600,
+  damping: 30,
 } as const;
 
 /** React Flow camera tween durations (ms). */

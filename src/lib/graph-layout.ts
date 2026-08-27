@@ -16,6 +16,7 @@ import {
   mixWithWhite,
   withAlpha,
 } from "@/lib/school-color";
+import { hashUnit } from "@/lib/hash";
 
 export { orderConstellationMembers };
 
@@ -191,14 +192,6 @@ function isOverdue(nextFollowUpAt: Date | string | null | undefined) {
       ? new Date(nextFollowUpAt)
       : nextFollowUpAt;
   return d.getTime() < Date.now();
-}
-
-function hashUnit(id: string, salt = 0) {
-  let h = salt * 2654435761;
-  for (let i = 0; i < id.length; i++) {
-    h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  }
-  return (h % 10000) / 10000;
 }
 
 type PolarPosition = { x: number; y: number; angle: number; radius: number };

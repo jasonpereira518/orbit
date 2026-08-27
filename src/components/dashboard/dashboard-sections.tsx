@@ -11,11 +11,14 @@ import { GenerateFollowUpsButton } from "@/components/dashboard/generate-follow-
 import { GoalsSummary } from "@/components/dashboard/goals-summary";
 import { NetworkDepthChart } from "@/components/dashboard/network-depth-chart";
 import { NetworkStatsCard } from "@/components/dashboard/network-stats-card";
+import { PlanLaunchCard } from "@/components/dashboard/plan-launch-card";
 import { RemindersDashboardCard } from "@/components/dashboard/reminders-dashboard-card";
 import { SuggestedOutreachCard } from "@/components/dashboard/suggested-outreach-card";
 import { OutreachPerformanceCard } from "@/components/outreach/outreach-performance-card";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { requireUserId } from "@/lib/auth";
+import { getEntitlements } from "@/lib/entitlements";
 
 /**
  * Async server sections for the streamed dashboard. Every bundle section
@@ -327,6 +330,9 @@ export async function RecentlyUpdatedSection({
 
 export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
   const { data, networkStats } = await bundle;
+  // Both are request-cached (`cache()`), and the layout above has already
+  // resolved them for the sidebar's tier ring — so this costs nothing extra.
+  const { plan } = await getEntitlements(await requireUserId());
   return (
     <div className="reveal-mount space-y-8" style={revealDelay(240)}>
       <GoalsSummary
@@ -342,6 +348,11 @@ export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
       />
 
       <NetworkStatsCard stats={networkStats} />
+
+      {/* Foot of the dashboard on purpose: prominent enough to find, far
+          enough down that it isn't the first thing between you and your
+          follow-ups. */}
+      <PlanLaunchCard plan={plan} />
     </div>
   );
 }

@@ -3,9 +3,9 @@ import {
   Users,
   Sparkles,
   Upload,
+  Bell,
   MessageSquare,
   Network,
-  UsersRound,
   Send,
 } from "lucide-react";
 
@@ -13,13 +13,14 @@ export const TOUR_INTERVAL_MS = 7000;
 
 export type TourNavKey =
   | "welcome"
+  | "dashboard"
   | "contacts"
+  | "recruiters"
   | "capture"
   | "imports"
+  | "reminders"
   | "chat"
   | "graph"
-  | "dashboard"
-  | "recruiters"
   | "outreach";
 
 export type TourHotspot = {
@@ -38,19 +39,23 @@ export type TourStep = {
   hotspots?: TourHotspot[];
 };
 
-/** Core loop items (before the Extras divider in the tour sidebar). */
+/**
+ * Core loop items (before the Extras divider in the tour sidebar), in the same order
+ * as the real app sidebar (`APP_NAV_CORE`). Recruiters has no entry here — it's a
+ * toggle inside Contacts, not its own destination.
+ */
 export const TOUR_NAV_CORE = [
+  { key: "dashboard" as const, label: "Dashboard", icon: LayoutDashboard },
   { key: "contacts" as const, label: "Contacts", icon: Users },
   { key: "capture" as const, label: "Capture", icon: Sparkles },
   { key: "imports" as const, label: "Imports", icon: Upload },
+  { key: "reminders" as const, label: "Reminders", icon: Bell },
   { key: "chat" as const, label: "Chat", icon: MessageSquare },
   { key: "graph" as const, label: "Constellation", icon: Network },
-  { key: "dashboard" as const, label: "Dashboard", icon: LayoutDashboard },
 ];
 
-/** Extra feature items (after the Extras divider). */
+/** Extra feature items (after the Extras divider), matching `APP_NAV_EXTRAS`. */
 export const TOUR_NAV_EXTRAS = [
-  { key: "recruiters" as const, label: "Recruiters", icon: UsersRound },
   { key: "outreach" as const, label: "Outreach", icon: Send },
 ];
 
@@ -66,6 +71,16 @@ export const TOUR_STEPS: TourStep[] = [
     ],
   },
   {
+    id: "dashboard",
+    navKey: "dashboard",
+    title: "Your dashboard",
+    body: "Follow-ups, dormant ties, and outreach suggestions — in one place.",
+    hotspots: [
+      { id: "due", label: "See who's due a follow-up." },
+      { id: "suggestion", label: "AI suggests who to reach out to." },
+    ],
+  },
+  {
     id: "contacts",
     navKey: "contacts",
     title: "Your contacts",
@@ -74,6 +89,21 @@ export const TOUR_STEPS: TourStep[] = [
       { id: "search", label: "Search anyone in your network." },
       { id: "contact", label: "Open a person for full context." },
       { id: "score", label: "Closeness score at a glance." },
+    ],
+  },
+  {
+    id: "recruiters",
+    // Highlights Contacts, not a "Recruiters" pill — the real sidebar has no such
+    // destination. This step lives right after Contacts because that's where the
+    // toggle actually is.
+    navKey: "contacts",
+    title: "Recruiters",
+    body: "Flip the toggle inside Contacts to track recruiters. Share your list to see everyone else's, scan Gmail for threads, and draft outreach you review before it sends.",
+    hotspots: [
+      { id: "toggle", label: "This toggle lives inside Contacts — not its own tab." },
+      { id: "sharing", label: "Share your list to unlock the shared pool." },
+      { id: "scan", label: "Scan your whole mailbox for recruiter threads." },
+      { id: "compose", label: "Draft outreach — you review before anything sends." },
     ],
   },
   {
@@ -90,11 +120,22 @@ export const TOUR_STEPS: TourStep[] = [
     id: "imports",
     navKey: "imports",
     title: "Import your world",
-    body: "Bring in LinkedIn connections, messages, or calendar meetings.",
+    body: "Bring in LinkedIn connections, messages, or calendar meetings — it all feeds your searchable Knowledge base too.",
     hotspots: [
       { id: "linkedin", label: "Import LinkedIn connections." },
       { id: "messages", label: "Enrich from message threads." },
       { id: "calendar", label: "Sync meetings from your calendar." },
+    ],
+  },
+  {
+    id: "reminders",
+    navKey: "reminders",
+    title: "Reminders",
+    body: "Everything due or overdue lands here — filter by status and clear it in one click.",
+    hotspots: [
+      { id: "status", label: "Filter by Active, Done, or All." },
+      { id: "reminder", label: "Overdue and type badges at a glance." },
+      { id: "actions", label: "Mark done or snooze a week, right from the list." },
     ],
   },
   {
@@ -115,27 +156,6 @@ export const TOUR_STEPS: TourStep[] = [
     hotspots: [
       { id: "figure", label: "People linked into a constellation." },
       { id: "spica", label: "Brightest stars are your closest ties." },
-    ],
-  },
-  {
-    id: "dashboard",
-    navKey: "dashboard",
-    title: "Your dashboard",
-    body: "Follow-ups, dormant ties, and outreach suggestions — in one place.",
-    hotspots: [
-      { id: "due", label: "See who's due a follow-up." },
-      { id: "suggestion", label: "AI suggests who to reach out to." },
-    ],
-  },
-  {
-    id: "recruiters",
-    navKey: "recruiters",
-    title: "Recruiters",
-    body: "Track recruiters and unlock contact details when you log an interaction — or import from Gmail.",
-    hotspots: [
-      { id: "toggle", label: "Switch between Contacts and Recruiters." },
-      { id: "recruiter", label: "Open a recruiter to log outreach." },
-      { id: "gmail", label: "Import recruiter threads from Gmail." },
     ],
   },
   {

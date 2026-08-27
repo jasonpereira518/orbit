@@ -46,6 +46,7 @@
   --color-landing-accent: #f2c14e;
   --color-landing-button-surface: #eef7f4;
   --color-landing-button-label: #0f2e28;
+  --color-tier-lifetime: var(--tier-lifetime);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -98,6 +99,12 @@
   --import-connections: #5b5fc7;
   --import-messages: #c2694a;
   --import-calendar: #b8873a;
+  /* Orbit Pro reads as `--primary` (the product's own color, per the pricing
+     tiers). Orbit Lifetime gets this dedicated gold so paywalled surfaces can
+     name which tier(s) unlock a feature without borrowing a hue that already
+     means something else (chart series, calendar import, etc). Dark enough
+     for 4.5:1 text contrast on a light card, not just icon-level contrast. */
+  --tier-lifetime: #8a6423;
   --radius: 0.625rem;
   --sidebar: #f7f8f6;
   --sidebar-foreground: #1a1c1a;
@@ -150,6 +157,9 @@
   --import-connections: #9b9ff5;
   --import-messages: #e08a68;
   --import-calendar: #d9a855;
+  /* Brighter on a dark card so it keeps 4.5:1 text contrast (#8a6423 would
+     read as near-black here). */
+  --tier-lifetime: #f2c14e;
   --sidebar: #272727;
   --sidebar-foreground: #f0f0f0;
   --sidebar-primary: #599de7;
@@ -351,6 +361,55 @@
   .liquid-glass:hover {
     background: color-mix(in oklab, var(--sidebar) 86%, transparent);
   }
+}
+
+/* Pill-shaped, absolutely-positioned variant of .liquid-glass, for
+ * floating surfaces that detach from screen edges (mobile bottom nav).
+ * Same sheen/blur/border as .liquid-glass, but with a lighter fill than
+ * the base panel — leans toward see-through glass rather than a fully
+ * frosted tinted panel, without going fully transparent — and no outer
+ * drop-shadow: against a light fill the blurred shadow read as a
+ * dark haze floating under the bar rather than a grounded shadow, so only
+ * the hairline inset highlights (top sheen + bottom edge) are kept for
+ * definition. Combined selector (not a bare class) so specificity (0,2,0)
+ * reliably beats both .liquid-glass (0,1,0) and .dark .liquid-glass
+ * (0,2,0, but declared earlier so loses the source-order tiebreak),
+ * independent of Tailwind's layered utilities. */
+.liquid-glass.liquid-glass-pill {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: linear-gradient(
+    165deg,
+    rgba(255, 255, 255, 0.5) 0%,
+    rgba(255, 255, 255, 0.32) 42%,
+    rgba(247, 248, 246, 0.28) 100%
+  );
+  border-color: rgba(255, 255, 255, 0.45);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.65) inset,
+    0 -1px 0 0 rgba(15, 61, 62, 0.04) inset;
+}
+
+.liquid-glass.liquid-glass-pill::before {
+  opacity: 0.85;
+}
+
+.dark .liquid-glass.liquid-glass-pill {
+  background: linear-gradient(
+    165deg,
+    rgba(55, 55, 55, 0.5) 0%,
+    rgba(39, 39, 39, 0.38) 45%,
+    rgba(32, 32, 32, 0.32) 100%
+  );
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.14) inset,
+    0 -1px 0 0 rgba(0, 0, 0, 0.25) inset;
+}
+
+.dark .liquid-glass.liquid-glass-pill::before {
+  opacity: 0.85;
 }
 
 @keyframes trash-wiggle {
@@ -722,6 +781,24 @@
   animation: landing-solar-enter 0.9s var(--ease-house) 0.15s both;
 }
 
+/* Orbit Lifetime's badge is the one place the brand gold appears as a surface
+ * rather than as text, so it gets a metal glint: one band crosses the pill and
+ * then rests off-frame for most of the cycle, which reads as material catching
+ * light rather than as something still loading. */
+@keyframes plan-badge-glint {
+  0% {
+    transform: translateX(-160%);
+  }
+  55%,
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.plan-badge-glint {
+  animation: plan-badge-glint 4.5s var(--ease-house) infinite;
+}
+
 @keyframes landing-credit-shimmer {
   0% {
     background-position: 120% 50%;
@@ -817,6 +894,82 @@
   user-select: none;
 }
 
+/* ── Marketing documents (privacy / terms / contact) ──
+   These pages sit on the landing page's dark space canvas rather than the
+   app theme, so their body copy is styled here instead of with per-element
+   utility classes — the documents are long and mostly plain prose. */
+
+.doc-prose {
+  color: #9aada8;
+  font-size: 1rem;
+  line-height: 1.8;
+}
+
+.doc-prose > * + * {
+  margin-top: 1rem;
+}
+
+.doc-prose strong {
+  color: #e8f3f1;
+  font-weight: 500;
+}
+
+.doc-prose a {
+  color: #f2c14e;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-color: rgba(242, 193, 78, 0.35);
+  transition: text-decoration-color 0.2s ease;
+}
+
+.doc-prose a:hover {
+  text-decoration-color: rgba(242, 193, 78, 0.9);
+}
+
+.doc-prose ul {
+  display: grid;
+  gap: 0.625rem;
+}
+
+.doc-prose li {
+  position: relative;
+  padding-left: 1.375rem;
+}
+
+.doc-prose li::before {
+  content: "";
+  position: absolute;
+  left: 0.3rem;
+  top: 0.78em;
+  height: 5px;
+  width: 5px;
+  border-radius: 999px;
+  background: rgba(242, 193, 78, 0.55);
+}
+
+.doc-prose code {
+  border-radius: 0.375rem;
+  border: 1px solid rgba(232, 243, 241, 0.1);
+  background: rgba(232, 243, 241, 0.05);
+  padding: 0.1rem 0.375rem;
+  font-size: 0.875em;
+  color: #e8f3f1;
+}
+
+/* Native disclosure widget used for the contact page FAQ. */
+.doc-faq summary::-webkit-details-marker {
+  display: none;
+}
+
+.doc-faq summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.doc-faq[open] .doc-faq-chevron {
+  transform: rotate(180deg);
+}
+
 /* ── Staged reveals ──
  * .reveal-mount plays on insertion (page mount OR streamed Suspense swap —
  * swaps happen pre-hydration, so this must stay pure CSS). Stagger siblings
@@ -906,6 +1059,27 @@
   }
   .scene-finale {
     --scene-size: 820px;
+  }
+}
+
+/* Below md the mobile pass changed these scenes' heights: constellations lost
+ * ~200px of padding, while comets (badge wraps to its own line) and finale
+ * (closing CTA is now visible, stacked) grew. Measured at 320/375/767 with
+ * content-visibility forced visible, then biased up to the tallest in range —
+ * under-estimating is what makes scroll anchoring jump past a section.
+ * The 64rem block above still owns 768-1023. */
+@media (width < 48rem) {
+  .scene-constellations {
+    --scene-size: 840px;
+  }
+  .scene-comets {
+    --scene-size: 660px;
+  }
+  .scene-features {
+    --scene-size: 3500px;
+  }
+  .scene-finale {
+    --scene-size: 1200px;
   }
 }
 
@@ -1026,5 +1200,124 @@ body:has(.landing-root) {
     background: none;
     color: #6d807c;
     -webkit-text-fill-color: #6d807c;
+  }
+
+  /* The band is only ever decoration over a gold that already reads on its own,
+     so it simply leaves rather than parking mid-sweep. */
+  .plan-badge-glint {
+    display: none;
+  }
+}
+
+/* ── Lift-off: app <-> /pricing ──
+ *
+ * The canvas stage (components/warp/warp-stage.tsx) paints the sky; this block
+ * only moves the app itself. `WarpProvider` sets `data-warp` on <html>, so the
+ * server-rendered layouts need no knowledge of the journey — they just carry
+ * `data-warp-craft` on the element that flies.
+ *
+ * Percentages below mirror `lib/warp/choreography.ts`. Change one, change both:
+ * ASCENT.ignition ends at 180/820 = 22%, and the whole ascend animation runs
+ * for ASCENT.liftoff's 820ms. */
+
+@keyframes warp-craft-ascend {
+  /* Engines light: a short judder before anything actually moves. */
+  0% {
+    transform: perspective(1100px) translate3d(0, 0, 0) rotateX(0deg) scale(1);
+    opacity: 1;
+  }
+  5% {
+    transform: perspective(1100px) translate3d(0, 4px, 0) rotateX(0deg) scale(1);
+  }
+  11% {
+    transform: perspective(1100px) translate3d(0, -3px, 0) rotateX(0deg) scale(1);
+  }
+  16% {
+    transform: perspective(1100px) translate3d(0, 2px, 0) rotateX(0deg) scale(1);
+  }
+  /* Release. Accelerating from here so it reads as the camera climbing away,
+     not as a panel sliding down a track. */
+  22% {
+    transform: perspective(1100px) translate3d(0, 0, 0) rotateX(0deg) scale(1);
+    opacity: 1;
+    animation-timing-function: cubic-bezier(0.55, 0, 0.85, 0.2);
+  }
+  /* Negative rotateX tips the top edge toward the viewer — what you see
+     looking DOWN on something you have just risen above. */
+  100% {
+    transform: perspective(1100px) translate3d(0, 46vh, -420px) rotateX(-16deg)
+      scale(0.94);
+    opacity: 0;
+  }
+}
+
+/* Touchdown. Drops the last few pixels and rattles: three shrinking bounces,
+   mostly lateral. Deliberately less graceful than the launch. */
+@keyframes warp-craft-land {
+  0% {
+    transform: translate3d(0, -14px, 0);
+    opacity: 0.25;
+  }
+  30% {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+  42% {
+    transform: translate3d(7px, 3px, 0);
+  }
+  56% {
+    transform: translate3d(-5px, -2px, 0);
+  }
+  70% {
+    transform: translate3d(3px, 2px, 0);
+  }
+  85% {
+    transform: translate3d(-2px, -1px, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+}
+
+html[data-warp="ascending"] [data-warp-craft] {
+  animation: warp-craft-ascend 820ms ease-out both;
+  /* The stage portals to <body>, so it is never inside this transform — a
+     transformed ancestor becomes the containing block for position:fixed and
+     would drag the whole sky down with the dashboard. */
+  transform-origin: 50% 45%;
+  will-change: transform, opacity;
+}
+
+html[data-warp="landing"] [data-warp-craft] {
+  animation: warp-craft-land 420ms cubic-bezier(0.3, 0.9, 0.4, 1) both;
+  will-change: transform, opacity;
+}
+
+/* Nothing underneath the sky should react to a stray click or hover while the
+   journey is running; the canvas itself swallows pointer events. */
+html[data-warp] [data-warp-craft] {
+  pointer-events: none;
+}
+
+/* The launch pad on the dashboard: a horizon that lifts on hover. */
+@keyframes warp-pad-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(0, -3px, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* `data-warp="reduced"` never matches the rules above, so the craft simply
+     never animates. This is the belt-and-braces for a stale attribute: without
+     it the global 0.01ms clamp would snap the craft straight to the ascend
+     animation's end state — flown away and invisible. */
+  html[data-warp] [data-warp-craft] {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
   }
 }

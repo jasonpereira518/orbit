@@ -2,7 +2,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AlertTriangle, ArrowLeft, CircleAlert } from "lucide-react";
 import {
-  AdminPageHeader,
   AdminPanel,
   AdminTable,
   DefinitionRow,
@@ -14,9 +13,21 @@ import {
   Th,
 } from "@/components/admin/primitives";
 import { CompPlanButton } from "@/components/admin/comp-plan-dialog";
-import { RevealContactButton } from "@/components/admin/reveal-contact";
+import { CopyId } from "@/components/admin/copy-id";
+import { ContactsFilterBar } from "@/components/admin/contacts-filter-bar";
+import { AccountDangerZone } from "@/components/admin/account-actions";
+import { Pager } from "@/components/admin/pager";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getAuditTrail } from "@/actions/admin";
-import { getAdminUserDetail } from "@/lib/admin-user-detail";
+import { requireAdminUserId } from "@/lib/admin";
+import { displayName, fullName, initialsFor } from "@/lib/admin-metrics";
+import { recordAccountView } from "@/lib/admin-operations";
+import {
+  ADMIN_CONTACTS_PAGE_SIZE,
+  getAdminUserDetail,
+  listAdminContacts,
+} from "@/lib/admin-user-detail";
+import { loadAdminTimeline } from "@/lib/admin-timeline";
 import { formatCostMicros } from "@/lib/ai-pricing";
 import { cn } from "@/lib/utils";
 
@@ -32,6 +43,7 @@ const SECTIONS = [
   { id: "timeline", label: "Timeline" },
   { id: "contacts", label: "Contacts" },
   { id: "audit", label: "Audit trail" },
+  { id: "actions", label: "Danger zone" },
 ];
 
 /**
@@ -44,22 +56,56 @@ const SECTIONS = [
  */
 export default async function AdminUserDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ userId: string }>;
+  searchParams: Promise<{
+    contactsPage?: string;
+    contactsQ?: string;
+    before?: string;
+  }>;
 }) {
   const { userId } = await params;
+  const query = await searchParams;
   const decoded = decodeURIComponent(userId);
+
+  const adminUserId = await requireAdminUserId();
 
   const detail = await getAdminUserDetail(decoded);
   if (!detail) notFound();
 
-  const audit = await getAuditTrail(decoded).catch(() => []);
+  // Opening an account is itself a recorded act. This is what remains of the reveal gate:
+  // the operator no longer justifies a look, but the look is still on the record. Throttled
+  // to one row an hour inside `recordAccountView`, and it never throws.
+  await recordAccountView(adminUserId, decoded);
+
+  const contactsPage = Math.max(
+    Number.parseInt(query.contactsPage ?? "1", 10) || 1,
+    1
+  );
+  const contactsQ = query.contactsQ?.trim() ?? "";
+  const before = query.before ? new Date(query.before) : null;
+
+  const [audit, contactPage, timeline] = await Promise.all([
+    getAuditTrail(decoded).catch(() => []),
+    listAdminContacts(decoded, {
+      page: contactsPage,
+      pageSize: ADMIN_CONTACTS_PAGE_SIZE,
+      search: contactsQ,
+    }),
+    loadAdminTimeline(decoded, {
+      before: before && !Number.isNaN(before.getTime()) ? before : null,
+    }),
+  ]);
+
   const { identity, billing, configuration, footprint, health, usage } = detail;
+  const name = fullName(identity);
 
   const ent = billing.entitlements;
   const entitlementFlags: Array<[string, boolean]> = [
     ["outreach", ent.canUseOutreach],
-    ["hosted sends", ent.canUseHostedSends],
+    ["hosted sending", ent.canUseHostedSending],
+    ["hosted enrichment", ent.canUseHostedEnrichment],
     ["recruiters", ent.canUseRecruiters],
     ["sync", ent.canUseSync],
     ["extension", ent.canUseExtension],
@@ -74,23 +120,49 @@ export default async function AdminUserDetailPage({
         <ArrowLeft className="size-3" aria-hidden /> All users
       </Link>
 
-      <AdminPageHeader
-        title={identity.email ?? "Account"}
-        subtitle={
-          <span className="font-mono text-xs">{identity.userId}</span>
-        }
-        action={
-          <CompPlanButton
-            targetUserId={identity.userId}
-            email={identity.email}
-            currentPlan={billing.plan}
-            currentSource={billing.source}
-            contactCount={footprint.contacts}
-            compedNote={billing.compedNote}
-            variant="button"
-          />
-        }
-      />
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-3">
+          {/* Clerk's CDN host is not in `images.remotePatterns`, so this is a plain <img>
+              via the Avatar primitive rather than next/image. The fallback carries the
+              weight for every account that predates the identity mirror. */}
+          <Avatar size="lg" className="shrink-0">
+            {identity.imageUrl && (
+              <AvatarImage
+                src={identity.imageUrl}
+                alt=""
+                referrerPolicy="no-referrer"
+              />
+            )}
+            <AvatarFallback>{initialsFor(identity)}</AvatarFallback>
+          </Avatar>
+
+          <div className="min-w-0">
+            <h1 className="truncate font-[family-name:var(--font-display)] text-2xl text-primary">
+              {displayName(identity)}
+            </h1>
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+              {/* Only when the title is already the name — otherwise this repeats it. */}
+              {name && identity.email && <span>{identity.email}</span>}
+              <CopyId value={identity.userId} />
+              {identity.suspendedAt && (
+                <span className="rounded-md bg-destructive/10 px-1.5 py-0.5 text-destructive">
+                  suspended
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <CompPlanButton
+          targetUserId={identity.userId}
+          email={identity.email}
+          currentPlan={billing.plan}
+          currentSource={billing.source}
+          contactCount={footprint.contacts}
+          compedNote={billing.compedNote}
+          variant="button"
+        />
+      </div>
 
       <div className="flex gap-8">
         <nav
@@ -277,11 +349,11 @@ export default async function AdminUserDetailPage({
                     </span>
                   ))}
                 </div>
-                {ent.canUseHostedSends && (
+                {ent.canUseHostedEnrichment && (
                   <p className="mt-2 flex items-center gap-1.5 text-xs text-destructive">
                     <AlertTriangle className="size-3" aria-hidden />
-                    Hosted sends are on — outreach from this account bills Orbit&apos;s
-                    Resend/Twilio credits.
+                    Hosted enrichment is on — this account bills Orbit&apos;s Apollo
+                    credits, and enrichment has no per-day ceiling.
                   </p>
                 )}
               </div>
@@ -337,7 +409,14 @@ export default async function AdminUserDetailPage({
                 <DefinitionRow label="Interactions">
                   {footprint.interactions}
                 </DefinitionRow>
-                <DefinitionRow label="Reminders">{footprint.reminders}</DefinitionRow>
+                <DefinitionRow label="Reminders">
+                  {footprint.reminders}
+                  {footprint.remindersPending > 0 &&
+                    ` (${footprint.remindersPending} pending)`}
+                </DefinitionRow>
+                <DefinitionRow label="Suggested reminders">
+                  {footprint.suggestedReminders}
+                </DefinitionRow>
                 <DefinitionRow label="Tags">{footprint.tags}</DefinitionRow>
                 <DefinitionRow label="Chat threads">
                   {footprint.chatThreads}
@@ -351,6 +430,19 @@ export default async function AdminUserDetailPage({
                 </DefinitionRow>
                 <DefinitionRow label="Suggestions">
                   {footprint.suggestions}
+                </DefinitionRow>
+                <DefinitionRow label="Outreach campaigns">
+                  {footprint.outreachCampaigns}
+                  {footprint.outreachProspects > 0 &&
+                    ` · ${footprint.outreachProspects} prospects`}
+                </DefinitionRow>
+                {/* Hosted sends run on Orbit's own Resend and Twilio credits, so this is
+                    the one footprint number that costs money. */}
+                <DefinitionRow label="Outreach sent">
+                  {footprint.outreachMessagesSent}
+                </DefinitionRow>
+                <DefinitionRow label="Recruiter links">
+                  {footprint.recruiterLinks}
                 </DefinitionRow>
                 <DefinitionRow label="First contact">
                   {footprint.firstContactAt ? (
@@ -463,7 +555,7 @@ export default async function AdminUserDetailPage({
           <section id="config" className="scroll-mt-20">
             <AdminPanel title="Configuration">
               {/*
-                Booleans only. Never call decryptKey() in admin code — not behind a reveal,
+                Booleans only. Never call decryptOrNull() in admin code — not behind a reveal,
                 not in a log line. If a key is broken, the error message diagnoses it.
               */}
               <dl>
@@ -518,74 +610,145 @@ export default async function AdminUserDetailPage({
 
           <section id="timeline" className="scroll-mt-20">
             <AdminPanel title="Activity timeline">
-              {detail.timeline.length === 0 ? (
+              {timeline.entries.length === 0 ? (
                 <EmptyState>No recorded activity.</EmptyState>
               ) : (
-                <ul className="space-y-1 text-sm">
-                  {detail.timeline.map((entry, i) => (
-                    <li
-                      key={i}
-                      className="flex items-baseline justify-between gap-4 border-b border-border/40 py-1 last:border-b-0"
+                <>
+                  <ul className="space-y-1 text-sm">
+                    {timeline.entries.map((entry, i) => (
+                      <li
+                        key={`${entry.resourceId ?? i}-${entry.kind}`}
+                        className="flex items-baseline justify-between gap-4 border-b border-border/40 py-1 last:border-b-0"
+                      >
+                        <span className="min-w-0">
+                          <span
+                            className={cn(
+                              "mr-2 inline-block w-20 shrink-0 text-xs",
+                              entry.kind === "admin"
+                                ? "text-accent-foreground"
+                                : "text-muted-foreground"
+                            )}
+                          >
+                            {entry.kind}
+                          </span>
+                          {entry.label}
+                          {/* System output only — import and sync errors, never prose. */}
+                          {entry.detail && (
+                            <span className="ml-2 text-xs text-destructive">
+                              {entry.detail}
+                            </span>
+                          )}
+                        </span>
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          <RelativeTime date={entry.at} /> ago
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  {/* Keyset, not OFFSET: the feed grows at the head while you page. */}
+                  {timeline.hasMore && (
+                    <Link
+                      href={`/admin/users/${encodeURIComponent(identity.userId)}?before=${encodeURIComponent(
+                        timeline.entries[timeline.entries.length - 1].at.toISOString()
+                      )}#timeline`}
+                      className="mt-3 block border-t border-border/40 pt-2 text-xs text-muted-foreground hover:text-primary"
                     >
-                      {/* Structural label only — never a contact name or a message body. */}
-                      <span>{entry.label}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        <RelativeTime date={entry.at} /> ago
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                      Older activity →
+                    </Link>
+                  )}
+                  {before && (
+                    <Link
+                      href={`/admin/users/${encodeURIComponent(identity.userId)}#timeline`}
+                      className="mt-1 block text-xs text-muted-foreground hover:text-primary"
+                    >
+                      ← Back to the latest
+                    </Link>
+                  )}
+                </>
               )}
             </AdminPanel>
           </section>
 
           <section id="contacts" className="scroll-mt-20">
             <AdminPanel
-              title={`Contacts (${detail.contactTotal})`}
+              title={`Contacts (${contactPage.total})`}
               action={
                 <span className="text-xs text-muted-foreground">
-                  names masked · reveal is logged
+                  this view is logged
                 </span>
               }
             >
-              {detail.contacts.length === 0 ? (
-                <EmptyState>No contacts.</EmptyState>
+              <div className="mb-3">
+                <ContactsFilterBar userId={identity.userId} q={contactsQ} />
+              </div>
+
+              {contactPage.rows.length === 0 ? (
+                <EmptyState>
+                  {contactsQ ? `No contacts match "${contactsQ}".` : "No contacts."}
+                </EmptyState>
               ) : (
-                <AdminTable
-                  head={
-                    <>
-                      <Th>Contact</Th>
-                      <Th>Company</Th>
-                      <Th>Title</Th>
-                      <Th numeric>Logged</Th>
-                      <Th numeric>Added</Th>
-                      <Th />
-                    </>
-                  }
-                >
-                  {detail.contacts.map((contact) => (
-                    <tr
-                      key={contact.id}
-                      className="border-b border-border/40 last:border-b-0"
-                    >
-                      <Td className="font-mono text-xs text-muted-foreground">
-                        {contact.maskedName}
-                      </Td>
-                      <Td>{contact.company ?? "—"}</Td>
-                      <Td>{contact.title ?? "—"}</Td>
-                      <Td numeric>{contact.interactionCount}</Td>
-                      <Td numeric>
-                        <RelativeTime date={contact.createdAt} />
-                      </Td>
-                      <Td className="text-right">
-                        <RevealContactButton
-                          targetUserId={identity.userId}
-                          contactId={contact.id}
-                        />
-                      </Td>
-                    </tr>
-                  ))}
-                </AdminTable>
+                <>
+                  <AdminTable
+                    head={
+                      <>
+                        <Th>Contact</Th>
+                        <Th>Email</Th>
+                        <Th>Company</Th>
+                        <Th>Title</Th>
+                        <Th numeric>Logged</Th>
+                        <Th numeric>Added</Th>
+                      </>
+                    }
+                  >
+                    {contactPage.rows.map((contact) => (
+                      <tr
+                        key={contact.id}
+                        className="border-b border-border/40 last:border-b-0 hover:bg-muted/40"
+                      >
+                        <Td>
+                          <Link
+                            href={`/admin/users/${encodeURIComponent(identity.userId)}/contacts/${contact.id}`}
+                            className="hover:text-primary"
+                          >
+                            {contact.name}
+                          </Link>
+                        </Td>
+                        <Td className="max-w-48">
+                          <span className="block truncate">
+                            {contact.email ?? "—"}
+                          </span>
+                        </Td>
+                        <Td>{contact.company ?? "—"}</Td>
+                        <Td>{contact.title ?? "—"}</Td>
+                        <Td numeric>{contact.interactionCount}</Td>
+                        <Td numeric>
+                          <RelativeTime date={contact.createdAt} />
+                        </Td>
+                      </tr>
+                    ))}
+                  </AdminTable>
+
+                  <div className="mt-3">
+                    <Pager
+                      page={contactPage.page}
+                      pageCount={Math.max(
+                        1,
+                        Math.ceil(contactPage.total / contactPage.pageSize)
+                      )}
+                      total={contactPage.total}
+                      pageSize={contactPage.pageSize}
+                      label="contacts"
+                      hrefFor={(target) => {
+                        const params = new URLSearchParams({
+                          contactsPage: String(target),
+                        });
+                        if (contactsQ) params.set("contactsQ", contactsQ);
+                        return `/admin/users/${encodeURIComponent(identity.userId)}?${params.toString()}#contacts`;
+                      }}
+                    />
+                  </div>
+                </>
               )}
             </AdminPanel>
           </section>
@@ -617,6 +780,16 @@ export default async function AdminUserDetailPage({
                 </ul>
               )}
             </AdminPanel>
+          </section>
+
+          <section id="actions" className="scroll-mt-20">
+            <AccountDangerZone
+              targetUserId={identity.userId}
+              email={identity.email}
+              suspendedAt={identity.suspendedAt}
+              suspendedReason={identity.suspendedReason}
+              contactCount={footprint.contacts}
+            />
           </section>
         </div>
       </div>

@@ -28,11 +28,18 @@ export function LandingAuthControls({
   demoMode,
   signedIn = false,
   variant,
+  mobileVisible = false,
 }: {
   clerkOn: boolean;
   demoMode: boolean;
   signedIn?: boolean;
   variant: "header" | "hero";
+  /**
+   * Hero variant only. Off by default, so /pricing, /contact and the docs
+   * pages keep today's "hidden below sm" behavior untouched. On, the buttons
+   * stack full-width below sm — a real tap target instead of nothing.
+   */
+  mobileVisible?: boolean;
 }) {
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
@@ -43,7 +50,9 @@ export function LandingAuthControls({
   const ghost = variant === "header" ? ghostClass : ctaGhostClass;
   const wrapClass =
     variant === "hero"
-      ? "hidden sm:flex sm:w-auto sm:flex-row sm:gap-3"
+      ? mobileVisible
+        ? "flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:gap-3"
+        : "hidden sm:flex sm:w-auto sm:flex-row sm:gap-3"
       : "flex items-center gap-2 sm:gap-3";
 
   if (!clerkOn) {

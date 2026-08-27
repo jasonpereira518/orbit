@@ -65,17 +65,17 @@ export function SceneFeatures() {
   // filling the top of the frame, so a full py-24 here opened a dead gap.
   return (
     <section
-      aria-labelledby="landing-features-heading"
-      className="landing-scene scene-features relative z-10 px-6 py-24 md:px-10 lg:pt-10"
+      aria-labelledby="features-heading"
+      className="landing-scene scene-features relative z-10 px-8 py-24 md:px-10 lg:pt-10"
     >
       <div className="mx-auto w-full max-w-6xl">
-        <div id="landing-features" className="max-w-xl">
+        <div id="features" className="max-w-xl">
           <Reveal className="reveal-celestial">
             <p className={KICKER}>How it helps your search</p>
           </Reveal>
           <Reveal className="reveal-celestial" delay={80}>
             <h2
-              id="landing-features-heading"
+              id="features-heading"
               className="mt-3 font-[family-name:var(--font-display)] text-[clamp(30px,4.4vw,50px)] font-normal leading-[1.15] tracking-[-0.025em] text-[#e8f3f1]"
             >
               Every person who could help you, remembered.
@@ -86,7 +86,7 @@ export function SceneFeatures() {
         <div className="mt-12 space-y-6">
           {FEATURES.map((feature, i) => (
             <Reveal key={feature.kicker} className="reveal-celestial">
-              <div className="landing-glass rounded-3xl p-6 md:p-8 lg:p-10">
+              <div className="landing-glass rounded-3xl p-5 md:p-8 lg:p-10">
                 <div className="grid items-center gap-8 lg:grid-cols-2 lg:gap-12">
                   <div className={cn(i % 2 === 1 && "lg:order-2")}>
                     <p className={KICKER}>{feature.kicker}</p>

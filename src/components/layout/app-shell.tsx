@@ -14,6 +14,7 @@ import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar"
 import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
 import { ThemeSync } from "@/components/theme-sync";
 import { cn } from "@/lib/utils";
+import type { Plan } from "@/lib/plan-limits";
 import type { ThemePreference } from "@/lib/theme";
 
 const FloatingAskBar = dynamic(
@@ -29,11 +30,13 @@ export function AppShell({
   clerkOn,
   demoMode,
   theme,
+  plan,
 }: {
   children: React.ReactNode;
   clerkOn: boolean;
   demoMode: boolean;
   theme: ThemePreference | null;
+  plan: Plan;
 }) {
   const pathname = usePathname();
   const isOnboarding = pathname === "/onboarding";
@@ -59,33 +62,32 @@ export function AppShell({
 
   return (
     <MotionConfig reducedMotion="user">
-      <div
-        className={cn(
-          "flex bg-background",
-          isViewportLocked ? "h-dvh overflow-hidden" : "min-h-screen",
-        )}
-      >
+      {/* data-warp-craft: the thing that drops away on lift-off and takes
+          the touchdown judder on re-entry. Driven by `html[data-warp]` in
+          globals.css so the server layout needs no knowledge of the journey. */}
+      <div data-warp-craft className="flex h-dvh overflow-hidden bg-background">
         <ThemeSync theme={theme} />
         <AvatarBackfill />
         <DueNotificationsWatcher />
         <ImportJobWatcher />
         <GlobalJobProgressBar />
         <div
-          className="sticky top-0 z-40 hidden h-dvh shrink-0 p-3 md:block lg:p-4"
+          className="hidden h-dvh shrink-0 p-3 md:block lg:p-4"
           style={{ viewTransitionName: "app-sidebar" }}
         >
           <AppSidebar
             pathname={pathname}
             clerkOn={clerkOn}
             demoMode={demoMode}
+            plan={plan}
           />
         </div>
         <main
           className={cn(
-            "relative flex min-h-0 flex-1 flex-col",
+            "relative flex h-dvh min-h-0 flex-1 flex-col",
             isViewportLocked
-              ? "h-dvh overflow-hidden"
-              : "min-h-screen overflow-auto",
+              ? "overflow-hidden"
+              : "overflow-y-auto overscroll-contain",
           )}
         >
           <header
@@ -97,7 +99,7 @@ export function AppShell({
               className="flex items-center gap-2.5"
               title="Back to landing page"
             >
-              <OrbitLogo size="md" />
+              <OrbitLogo size="md" plan={plan} />
               <span className="font-[family-name:var(--font-display)] text-lg leading-none text-primary">
                 Orbit
               </span>
@@ -113,10 +115,10 @@ export function AppShell({
             className={cn(
               "mx-auto flex w-full max-w-6xl flex-col px-4 py-6 md:px-10 md:py-8",
               isViewportLocked
-                ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-8"
+                ? "min-h-0 flex-1 overflow-hidden pb-[calc(5.25rem+env(safe-area-inset-bottom))] md:pb-8"
                 : isSettings
-                  ? "flex-1 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-8"
-                  : "flex-1 pb-[calc(9.5rem+env(safe-area-inset-bottom))] md:pb-24",
+                  ? "flex-1 pb-[calc(5.25rem+env(safe-area-inset-bottom))] md:pb-8"
+                  : "flex-1 pb-[calc(10.25rem+env(safe-area-inset-bottom))] md:pb-24",
               isConstellation && "py-4 md:py-5",
             )}
           >

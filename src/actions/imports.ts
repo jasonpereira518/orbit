@@ -23,10 +23,7 @@ import {
 } from "@/lib/duplicates";
 import { createContactIfRoom, updateContact } from "@/actions/contacts";
 import { runLinkedInImportJob } from "@/lib/import-job-processor";
-import {
-  parseConnectedOn,
-  parseLinkedInConnectionsCsv,
-} from "@/lib/linkedin-connections";
+import { parseLinkedInConnectionsCsv } from "@/lib/linkedin-connections";
 import {
   parseLinkedInMessagesCsv,
   participantIdentity,
@@ -101,7 +98,19 @@ function hasEncodingArtifacts(rows: { firstName: string; lastName: string; compa
 
 export async function previewLinkedInCsv(csvText: string) {
   const userId = await requireUserId();
-  const { columns, rows, warnings } = parseLinkedInConnectionsCsv(csvText);
+  // parseLinkedInConnectionsCsv throws for expected validation failures (empty
+  // file, wrong export type, no rows found). Server Actions strip thrown error
+  // messages in production, replacing them with a generic digest — so those
+  // failures must come back as data, not a throw, to reach the client's toast.
+  let parsed: ReturnType<typeof parseLinkedInConnectionsCsv>;
+  try {
+    parsed = parseLinkedInConnectionsCsv(csvText);
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : "Failed to parse CSV",
+    };
+  }
+  const { columns, rows, warnings } = parsed;
   if (hasEncodingArtifacts(rows)) {
     warnings.push(
       "Some characters may not have decoded correctly — if names look garbled, re-export the CSV with UTF-8 encoding."
@@ -315,168 +324,6 @@ export async function cancelImportSession(importId: string) {
   revalidatePath("/graph");
   revalidatePath("/chat");
   return updated;
-}
-
-export async function confirmLinkedInImport(
-  csvText: string,
-  fileName: string,
-  selectedIds?: string[],
-  options?: ImportChunkOptions
-) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const finalize = options?.finalize !== false;
-  const writeOpts = { skipRevalidate: true };
-
-  const importRow = await resolveImportRow(
-    userId,
-    { importType: "linkedin_connections", fileName },
-    options?.importId
-  );
-
-  try {
-    const { rows } = parseLinkedInConnectionsCsv(csvText);
-    const selected =
-      selectedIds === undefined
-        ? new Set(rows.map((_, i) => String(i)))
-        : new Set(selectedIds);
-
-    let created = 0;
-    let blockedByPlan = 0;
-    let updated = 0;
-    let duplicates = 0;
-    let skipped = 0;
-    let processed = 0;
-
-    const existing = await db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
-    });
-
-    for (let index = 0; index < rows.length; index++) {
-      if (!selected.has(String(index))) continue;
-
-      const row = rows[index];
-      const fullName = `${row.firstName} ${row.lastName}`.trim();
-      if (!fullName) {
-        skipped++;
-        continue;
-      }
-
-      processed++;
-      const connectedOn = parseConnectedOn(row.connectedOn);
-      const dups = findDuplicateCandidates(existing, {
-        fullName,
-        email: row.email,
-        linkedinUrl: row.url,
-        company: row.company,
-        title: row.position,
-      });
-
-      if (dups[0] && dups[0].confidence >= DUPLICATE_MERGE_CONFIDENCE) {
-        duplicates++;
-        await updateContact(
-          dups[0].contact.id,
-          {
-            company: row.company || undefined,
-            title: row.position || undefined,
-            email: row.email || undefined,
-            linkedinUrl: row.url || undefined,
-            firstName: row.firstName || undefined,
-            lastName: row.lastName || undefined,
-            source: "linkedin",
-            dateMet: connectedOn || undefined,
-            howMet: "LinkedIn connection",
-            metContext: "online",
-          },
-          writeOpts
-        );
-        updated++;
-      } else {
-        const contact = await createContactIfRoom(
-          {
-            fullName,
-            firstName: row.firstName,
-            lastName: row.lastName,
-            company: row.company || undefined,
-            title: row.position || undefined,
-            email: row.email || undefined,
-            linkedinUrl: row.url || undefined,
-            source: "linkedin",
-            // No statedCloseness: nobody has rated these people, and saying
-            // "2 out of 5" about two thousand strangers is exactly the
-            // assumption this change removes. `contactInsertValues` coalesces
-            // `input.relationshipScore ?? 2`, so the legacy column still reads
-            // 2 — which is precisely why `resolveStatedStrength` refuses to
-            // treat a 2 as an assessment.
-            firstInteractionAt: connectedOn ?? undefined,
-            dateMet: connectedOn,
-            howMet: "LinkedIn connection",
-            metContext: "online",
-            tagNames: ["linkedin"],
-          },
-          writeOpts
-        );
-        if (!contact) {
-          blockedByPlan++;
-        } else {
-          existing.push(contact as (typeof existing)[number]);
-          created++;
-        }
-      }
-    }
-
-    const contactsCreated = (importRow.contactsCreated ?? 0) + created;
-    const contactsUpdated = (importRow.contactsUpdated ?? 0) + updated;
-    const duplicatesFound = (importRow.duplicatesFound ?? 0) + duplicates;
-    const rowsProcessed = (importRow.rowsProcessed ?? 0) + processed;
-    const stats = mergeStats(importRow.stats, { skipped, blockedByPlan });
-
-    await db
-      .update(imports)
-      .set({
-        status: finalize ? "completed" : "processing",
-        rowsProcessed,
-        contactsCreated,
-        contactsUpdated,
-        duplicatesFound,
-        stats,
-        errorMessage: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(imports.id, importRow.id));
-
-    if (finalize) {
-      revalidatePath("/");
-      revalidatePath("/contacts");
-      revalidatePath("/imports");
-      revalidatePath("/graph");
-      revalidatePath("/knowledge");
-      revalidatePath("/chat");
-    }
-
-    return {
-      importId: importRow.id,
-      rowsProcessed,
-      contactsCreated,
-      contactsUpdated,
-      duplicatesFound,
-      skipped,
-      blockedByPlan: stats.blockedByPlan ?? 0,
-      chunkCreated: created,
-      chunkUpdated: updated,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Import failed";
-    await db
-      .update(imports)
-      .set({
-        status: "failed",
-        errorMessage: message.slice(0, 500),
-        updatedAt: new Date(),
-      })
-      .where(eq(imports.id, importRow.id));
-    throw err;
-  }
 }
 
 export async function previewLinkedInMessagesCsv(csvText: string) {

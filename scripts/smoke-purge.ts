@@ -82,6 +82,46 @@ async function seed() {
 
   await db.insert(schema.userGoals).values({ userId: USER, text: "meet more people" });
 
+  await db.insert(schema.feedback).values({
+    userId: USER,
+    kind: "churn_reason",
+    text: "their own words about Orbit",
+  });
+
+  await db.insert(schema.gateEvents).values({
+    userId: USER,
+    feature: "contacts",
+    plan: "free",
+  });
+
+  // Anonymised rather than deleted on purge — see `purgeUserData`. The count below is
+  // `WHERE user_id = USER`, so nulling the column satisfies the no-leak check honestly.
+  await db.insert(schema.billingEvents).values({
+    source: "clerk",
+    eventId: `${USER}-evt`,
+    kind: "new",
+    userId: USER,
+    mrrDeltaCents: 500,
+    effectiveAt: now,
+  });
+
+  await db.insert(schema.closenessCohorts).values({
+    userId: USER,
+    snapshot: {
+      n: 1,
+      evidencedN: 1,
+      coverage: 1,
+      relativeWeight: 0,
+      quantiles: [0.5],
+      averageRaw: 0.5,
+      maxCompany: 1,
+      maxSchool: 1,
+      userDomain: null,
+      mailConnected: false,
+    },
+    contactCount: 1,
+  });
+
   await db.insert(schema.interactions).values({
     userId: USER,
     contactId: contact.id,
@@ -160,6 +200,16 @@ async function seed() {
     .insert(schema.userRecruiterLinks)
     .values({ userId: USER, recruiterId: recruiter.id });
 
+  // Carries the user's own prose to a named third party, plus the Gmail ids that locate it
+  // in a real mailbox. Exactly the class of row this suite exists to catch.
+  await db.insert(schema.recruiterMessages).values({
+    userId: USER,
+    recruiterId: recruiter.id,
+    intent: "set_up_chat",
+    subject: "Following up on the role",
+    body: "prose the user wrote about a real person",
+  });
+
   for (const table of [schema.gmailConnections, schema.outlookConnections]) {
     await db.insert(table).values({
       userId: USER,
@@ -180,6 +230,13 @@ async function seed() {
     content: "a private question about my network",
   });
 
+  await db.insert(schema.errorEvents).values({
+    userId: USER,
+    source: "oauth.gmail.callback",
+    kind: "token_exchange_failed",
+    message: "system error text",
+  });
+
   await db.insert(schema.usageEvents).values({
     userId: USER,
     operation: "capture.parse",
@@ -196,8 +253,14 @@ async function main() {
   const tables = userScopedTables();
   console.log(`Seeding one row in each of ${tables.length} user-scoped tables…`);
 
-  // Start clean in case a previous run died mid-way.
+  // Start clean in case a previous run died mid-way. The billing row needs deleting by
+  // hand: purge anonymises it rather than removing it, so it survives its own cleanup and
+  // the unique `(source, event_id)` index would reject the next run's insert.
   await purgeUserData(USER).catch(() => {});
+  await (await getDb())
+    .delete(schema.billingEvents)
+    .where(eq(schema.billingEvents.eventId, `${USER}-evt`))
+    .catch(() => {});
   const { recruiterId } = await seed();
 
   console.log("\nSeeded");
@@ -227,6 +290,22 @@ async function main() {
     }
   }
   check("no user-scoped table retains rows", leaked === 0, `${leaked} table(s) leaked`);
+
+  // The one table that is anonymised rather than deleted. Asserting the row SURVIVES is
+  // as important as asserting the others are gone: if a future edit "tidies" this into a
+  // delete, the no-leak sweep above would still pass and Orbit would quietly lose its
+  // accounting history every time a customer left.
+  const ledgerDb = await getDb();
+  const kept = await ledgerDb
+    .select()
+    .from(schema.billingEvents)
+    .where(eq(schema.billingEvents.eventId, `${USER}-evt`));
+  check("billing_events survives the purge", kept.length === 1);
+  check("...with the personal link severed", kept[0]?.userId === null);
+  check("...and the money intact", kept[0]?.mrrDeltaCents === 500);
+  await ledgerDb
+    .delete(schema.billingEvents)
+    .where(eq(schema.billingEvents.eventId, `${USER}-evt`));
 
   // contact_tags has no user_id of its own, so the derived sweep above cannot see it.
   const db = await getDb();
