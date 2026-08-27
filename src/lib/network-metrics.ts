@@ -1,6 +1,8 @@
-import { orderConstellationMembers, type EdgeKind, type GraphContactInput, type LayoutEdge } from "@/lib/graph-layout";
-import { buildConstellationClusters } from "@/lib/constellation-clusters";
-import { assignClusterShapes } from "@/lib/constellation-shapes";
+import type { EdgeKind, GraphContactInput, LayoutEdge } from "@/lib/graph-layout";
+import {
+  buildConstellationFit,
+  constellationFitEdges,
+} from "@/lib/constellation-fit";
 import {
   closenessTier,
   computeClosenessForAll,
@@ -206,10 +208,9 @@ function addSoftKnowsEdges(
  * company/school clusters plus soft knows (not sparse star paths).
  */
 /**
- * Peer edges between contacts. Constellation figures are traced by each
- * cluster's top members only (shapes are capped at FIGURE_STAR_MAX stars via
- * the shared assignClusterShapes/orderConstellationMembers helpers, keeping
- * these lines in lockstep with star placement in graph-layout).
+ * Peer edges between contacts. Constellation figure lines come straight from
+ * buildConstellationFit — the same member↔star assignment that places stars
+ * in graph-layout — so lines and stars cannot drift apart.
  */
 export function buildPeerEdges(
   contacts: GraphContactInput[],
@@ -222,11 +223,8 @@ export function buildPeerEdges(
   const edges: PeerEdge[] = [];
   const seenPairs = new Set<string>();
 
-  const { clusters, byContactId } = buildConstellationClusters(contacts);
-  const contactsById = new Map(contacts.map((c) => [c.id, c]));
-  const shapes = assignClusterShapes(
-    clusters.map((c) => ({ id: c.id, contactIds: c.contactIds }))
-  );
+  const fit = buildConstellationFit(contacts);
+  const { clusters, byContactId } = fit;
 
   if (options?.metrics) {
     for (const cluster of clusters) {
@@ -251,29 +249,12 @@ export function buildPeerEdges(
     return edges;
   }
 
-  for (const cluster of clusters) {
-    if (cluster.count < 2 || cluster.kind === "other") continue;
-    const group = cluster.contactIds
-      .map((id) => contactsById.get(id))
-      .filter((c): c is GraphContactInput => Boolean(c));
-    if (group.length < 2) continue;
-
-    const ordered = orderConstellationMembers(group);
-    const reason = clusterReason(cluster.kind);
-
-    // Edges follow the same real constellation figure used for placement
-    const shape = shapes.get(cluster.id);
-    if (!shape) continue;
-    for (const [ai, bi] of shape.edges) {
-      const a = ordered[ai];
-      const b = ordered[bi];
-      if (!a || !b) continue;
-      addPeerEdge(edges, seenPairs, a.id, b.id, {
-        kind: "constellation",
-        reason,
-        company: cluster.name,
-      });
-    }
+  for (const fitEdge of constellationFitEdges(fit)) {
+    addPeerEdge(edges, seenPairs, fitEdge.source, fitEdge.target, {
+      kind: "constellation",
+      reason: clusterReason(fitEdge.clusterKind),
+      company: fitEdge.clusterName,
+    });
   }
 
   if (options?.constellationOnly) {

@@ -37,6 +37,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { ExtensionPromo } from "@/components/notifications/extension-promo";
 import {
   dismissBackgroundJob,
   useActiveBackgroundJobCount,
@@ -136,7 +137,9 @@ export function NotificationsPanelButton() {
             </SheetDescription>
           </SheetHeader>
 
-          <div className="flex-1 overflow-y-auto px-4 py-4">
+          <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+            {data && <ExtensionPromo canUseExtension={data.canUseExtension} />}
+
             {loading && !data ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
             ) : (!data || data.totalCount === 0) && jobs.length === 0 ? (

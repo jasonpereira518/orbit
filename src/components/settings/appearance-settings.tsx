@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useSyncExternalStore, useTransition } from "react";
 import { Monitor, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { saveThemePreference } from "@/actions/settings";
@@ -18,6 +18,15 @@ const OPTIONS: Array<{
   { value: "system", label: "System", icon: Monitor },
 ];
 
+/** False during SSR and the hydrating render, true afterwards. */
+function useHydrated() {
+  return useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  );
+}
+
 export function AppearanceSettings({
   initialTheme,
 }: {
@@ -25,7 +34,15 @@ export function AppearanceSettings({
 }) {
   const { theme, setTheme } = useTheme();
   const [pending, start] = useTransition();
-  const active = (theme as ThemePreference | undefined) || initialTheme || "system";
+  const hydrated = useHydrated();
+
+  // next-themes reads localStorage, so `theme` is undefined during SSR and
+  // resolved on the client. Trusting it before hydration would highlight a
+  // different button than the server markup does — a hydration mismatch on the
+  // Button className. Stay on the server-known value until hydration finishes.
+  const active: ThemePreference = hydrated
+    ? (theme as ThemePreference | undefined) || initialTheme || "system"
+    : initialTheme || "system";
 
   function select(next: ThemePreference) {
     setTheme(next);

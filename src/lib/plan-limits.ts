@@ -13,7 +13,7 @@
 
 export type Plan = "free" | "orbit" | "lifetime";
 
-export const FREE_CONTACT_LIMIT = 100;
+export const FREE_CONTACT_LIMIT = 500;
 
 /**
  * Orbit Lifetime is an introductory price, NOT a limited number of seats.
