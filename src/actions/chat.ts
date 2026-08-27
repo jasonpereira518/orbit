@@ -6,11 +6,19 @@ import {
   chatMessages,
   chatThreads,
   interactions,
+  userGoals,
   type ChatRecommendation,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { chatWithNetwork } from "@/lib/ai";
-import { semanticSearchContacts } from "@/lib/search";
+import { getQueryEmbedding } from "@/lib/embedding-cache";
+import { hybridSearchContacts, type RankedContact } from "@/lib/hybrid-search";
+import {
+  budgetContactsContext,
+  CANDIDATE_POOL,
+  rerankCandidates,
+  understandQuery,
+} from "@/lib/chat-retrieval";
 import { isRecruiterIntent } from "@/lib/recruiters";
 import { loadRecruitersForChat } from "@/actions/recruiters";
 
@@ -176,7 +184,30 @@ export async function askNetwork(
       });
     }
 
-    const retrieved = await semanticSearchContacts(userId, q, 12);
+    // Stage 0 + 1 in parallel: the query embedding (cached) and the flash-tier
+    // query parse. Both are accuracy-only — either can fail without blocking.
+    const activeGoals = await db.query.userGoals.findMany({
+      where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
+      columns: { text: true },
+      limit: 5,
+    });
+    const [queryEmbedding, parsedQuery] = await Promise.all([
+      getQueryEmbedding(userId, q).catch(() => null),
+      understandQuery(userId, q, activeGoals.map((g) => g.text)),
+    ]);
+
+    // Stage 2: wide retrieval. Lexical arms use the raw question (names are
+    // typed verbatim); the parse contributes filters and expansion terms.
+    const candidates = await hybridSearchContacts(userId, {
+      query: q,
+      embedding: queryEmbedding,
+      filters: parsedQuery.filters,
+      expansionTerms: parsedQuery.expansionTerms,
+      limit: CANDIDATE_POOL,
+    });
+
+    // Stage 3: flash-tier rerank down to the answer set.
+    const retrieved = await rerankCandidates(userId, q, candidates);
 
     if (focusContactId) {
       const { contacts: contactsTable } = await import("@/db/schema");
@@ -188,25 +219,30 @@ export async function askNetwork(
         with: { contactTags: { with: { tag: true } } },
       });
       if (focused) {
-        const focusEntry = {
+        const focusEntry: RankedContact = {
           id: focused.id,
           fullName: focused.fullName,
+          preferredName: focused.preferredName,
           company: focused.company,
+          school: focused.school,
           title: focused.title,
-          relationshipScore: focused.relationshipScore,
-          aiSummary: focused.aiSummary,
+          location: focused.location,
+          email: focused.email,
+          industry: focused.industry,
           notes: focused.notes,
+          aiSummary: focused.aiSummary,
           keyFacts: focused.keyFacts || [],
+          relationshipScore: focused.relationshipScore,
+          priorityLevel: focused.priorityLevel,
+          closenessTier: focused.closenessTier,
           tags: focused.contactTags.map((ct) => ct.tag.name),
+          rrfScore: 1,
           relevance: 1,
+          matchedArms: [],
+          filterMatched: true,
         };
         const without = retrieved.filter((c) => c.id !== focusContactId);
-        retrieved.splice(
-          0,
-          retrieved.length,
-          focusEntry as (typeof retrieved)[number],
-          ...without.slice(0, 11)
-        );
+        retrieved.splice(0, retrieved.length, focusEntry, ...without.slice(0, 11));
       }
     }
 
@@ -247,22 +283,13 @@ export async function askNetwork(
       ...recruitersForChat.map((r) => r.score)
     );
 
+    // Stage 4 prep: context sized by rank under a total budget.
+    const budgeted = budgetContactsContext(retrieved, snippets);
+
     const result = await chatWithNetwork(
       userId,
       scopedQuestion,
-      retrieved.map((c) => ({
-        id: c.id,
-        fullName: c.fullName,
-        company: c.company,
-        title: c.title,
-        relationshipScore: c.relationshipScore,
-        aiSummary: c.aiSummary,
-        notes: c.notes,
-        keyFacts: c.keyFacts || [],
-        recentMessages: snippets.get(c.id)?.recentMessages || [],
-        tags: c.tags,
-        relevance: c.relevance,
-      })),
+      budgeted,
       priorTurns,
       recruitersForChat.map((r) => ({
         id: r.id,
