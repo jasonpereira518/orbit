@@ -114,12 +114,15 @@ export function UpgradeTransition({
   const navigateRef = useRef<() => void>(() => {});
 
   // sessionStorage cannot be read during render without breaking hydration —
-  // same reason `usePrefersReducedMotion` starts false and corrects itself. The
-  // switch is invisible because it happens while the stage is still fully
+  // same reason `usePrefersReducedMotion` starts false and corrects itself.
+  // The switch is invisible because it happens while the stage is still fully
   // opaque over this page: the assembly's first frames are behind the sky, the
   // same trick that hides /pricing's skeleton during a cruise hold.
   useEffect(() => {
-    if (arrivedBy() === "chrono") setMode("resolve");
+    const resolveMode = () => {
+      if (arrivedBy() === "chrono") setMode("resolve");
+    };
+    resolveMode();
   }, []);
 
   function startExit(navigate: () => void) {
