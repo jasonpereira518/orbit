@@ -128,6 +128,23 @@ function filterCondition(filters: SearchFilters | null | undefined): SQL | null 
   return sql`(${sql.join(parts, sql` and `)})`;
 }
 
+const FTS_STOPWORDS = new Set([
+  "the", "a", "an", "and", "or", "but", "of", "to", "in", "on", "at", "for", "with", "from",
+  "who", "whom", "whose", "what", "which", "where", "when", "why", "how",
+  "do", "does", "did", "is", "are", "was", "were", "be", "been", "being",
+  "i", "me", "my", "we", "our", "you", "your", "they", "them", "their", "it", "its",
+  "know", "knows", "anyone", "someone", "somebody", "people", "person", "contact", "contacts",
+  "can", "could", "would", "should", "have", "has", "had", "that", "this", "these", "those",
+]);
+
+/** Content-bearing tokens from a natural-language query, for OR-expansion. */
+function contentTokens(query: string): string[] {
+  return [...new Set(
+    query.toLowerCase().split(/[^a-z0-9]+/)
+      .filter((t) => t.length >= 3 && !FTS_STOPWORDS.has(t))
+  )].slice(0, 8);
+}
+
 async function ftsArm(
   userId: string,
   query: string,
@@ -138,7 +155,21 @@ async function ftsArm(
   const db = await getDb();
   // websearch_to_tsquery understands OR; expansion terms widen recall without
   // touching precision (RRF ranks the primary-term matches higher anyway).
-  const tsQuery = [query, ...expansionTerms.slice(0, 4)]
+  //
+  // websearch_to_tsquery ANDs every word within a single alternative, and the
+  // generated search_tsv column intentionally uses the 'simple' config (see
+  // SCALE_DDL) so names/companies aren't stemmed — but 'simple' also carries no
+  // stopword dictionary. A full-sentence question ("who do I know at Stripe?")
+  // therefore requires the row to contain "who", "do", "i", "know" and "at" as
+  // literal lexemes, which it almost never does, so the raw-query alternative is
+  // effectively dead for anything but a name typed verbatim. For queries with 3+
+  // tokens, OR in each individual content-bearing token (stopwords stripped) as
+  // its own alternative so the query becomes lexically reachable again; ts_rank_cd
+  // still ranks the fuller (raw-query) match higher when it does hit, and RRF
+  // fusion bounds how much noise the loosened single-token alternatives can add.
+  const tokens = query.trim().split(/\s+/).filter(Boolean);
+  const extraTerms = tokens.length >= 3 ? contentTokens(query) : [];
+  const tsQuery = [query, ...expansionTerms.slice(0, 4), ...extraTerms]
     .map((t) => t.trim())
     .filter(Boolean)
     .join(" OR ");

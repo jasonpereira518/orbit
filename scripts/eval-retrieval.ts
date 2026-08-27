@@ -5,6 +5,10 @@
  * Stop dev servers on .data/pglite first (PGlite is single-writer).
  * Run: npx tsx scripts/eval-retrieval.ts
  */
+import { config } from "dotenv";
+config({ path: ".env.local" });
+config();
+
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { and, eq } from "drizzle-orm";
