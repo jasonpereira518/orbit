@@ -31,12 +31,12 @@ import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
  * time to resolve behind cover instead of exposing the pre-navigation page for
  * a frame.
  *
- * Enough on its own for three of the four legs: the liftoff arcs and chrono's
- * outbound are all opaque within their first frames, so by the time skip can
- * be pressed there is already a cover to keep up. Chrono's way home is the
- * exception and this window does nothing for it unaided — the cover there sits
- * at 0 until CHRONO_IN_COVER opens, and holding a TRANSPARENT canvas up for
- * 120ms hides nothing. That leg needs the pin; see `WarpRun.covered`.
+ * Enough on its own only where the stage is already opaque when skip lands.
+ * On liftoff's return that holds: the canvas sits at full cover until the
+ * judder begins, so this window just keeps it there. On chrono's way home it
+ * does not — the cover there is at 0 until CHRONO_IN_COVER opens at 480ms,
+ * and holding a TRANSPARENT canvas up for 120ms hides nothing. That leg needs
+ * the pin; see `WarpRun.covered`.
  */
 const SKIP_COVER_MS = 120;
 
@@ -335,13 +335,16 @@ export function WarpProvider({ children }: { children: React.ReactNode }) {
     // is the whole margin available without the provider reaching across into
     // the stage's canvas directly.
     //
-    // Scoped to that one leg. The liftoff arcs and chrono's outbound are
-    // covered by their own shutter within the first frames, and pinning them
-    // would only rob them of a cross-fade they already do correctly. Reduced
-    // motion is excluded because the pin sits ABOVE the reduced branch in
-    // `coverage()`: it would replace that path's fade with a hard cut to an
-    // opaque full-viewport canvas, which is the luminance jump the preference
-    // is asking to avoid.
+    // Scoped to that one leg, which is also the only leg skip() can be reached
+    // on today: BackControl ignores a press during a chrono outbound and
+    // Escape routes "cruise" to beginArrival() instead. The gate is therefore
+    // belt-and-braces for a future caller, and it is the right shape for one —
+    // chrono's outbound cover ramps across its first 560ms and a pin would cut
+    // that ramp off, while liftoff's arcs are already at full cover and need
+    // nothing. Reduced motion is excluded because the pin sits ABOVE the
+    // reduced branch in `coverage()`: it would replace that path's fade with a
+    // hard cut to an opaque full-viewport canvas, which is the luminance jump
+    // the preference is asking to avoid.
     if (homeward && journeyRef.current === "chrono" && !run.reduced) {
       setRun((r) => (r.covered ? r : { ...r, covered: true }));
     }

@@ -135,9 +135,10 @@ const RESOLVE_EASE = [0.22, 0.61, 0.36, 1] as const;
  * `motion-utils/dist/es/easing/ease.mjs` for the JS path and
  * `motion-dom/.../waapi/easing/supported.mjs`, which maps the same name to
  * CSS `ease-in`, for the WAAPI one. Its initial velocity is exactly zero.
- * By the time the flight starts the rise is 75% through an easeOut and so
- * visually finished, which leaves the first frames of the flight as the only
- * thing on screen — and easeIn spends them barely moving: 0.28% of the
+ * By the time the flight starts the rise is 75% of the way through an easeOut
+ * — 16.3px of its 18px, with 1.7px left to travel — so it is visually done,
+ * and the first frames of the flight are the only thing left on screen. easeIn
+ * spends them barely moving: 0.28% of the
  * distance on frame one, 1.09% on frame two, or 4px then 16px on a 1440px
  * viewport. The beat has to read as "lift, THEN fly", and a beat that has to
  * be legible cannot begin with nothing happening.
