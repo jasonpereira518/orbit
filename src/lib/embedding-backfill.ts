@@ -22,8 +22,15 @@ const EMBED_BATCH = 200;
 /** Leaves room under the 300s ceiling for a self-continuation request. */
 const TIME_BUDGET_MS = 4.5 * 60 * 1000;
 
+/**
+ * `embed` defaults to the real provider call; the smoke test overrides it with a
+ * deterministic stub so the upsert, RETURNING mapping, chunked vector write, and flag
+ * clear all run under test without needing a live AI key. Every real caller gets the
+ * default, so this changes no production behavior.
+ */
 export async function runEmbeddingBackfill(
-  userId: string
+  userId: string,
+  embed: typeof createEmbeddingsBatch = createEmbeddingsBatch
 ): Promise<{ embedded: number; remaining: number }> {
   const db = await getDb();
   const start = Date.now();
@@ -54,7 +61,7 @@ export async function runEmbeddingBackfill(
       const slice = entries.slice(i, i + EMBED_BATCH);
       // Deliberately not caught: a provider failure must leave `embedding_stale_at` set so
       // the next pass retries. Swallowing it here would silently drop the work.
-      const vectors = await createEmbeddingsBatch(
+      const vectors = await embed(
         userId,
         slice.map((entry) => entry.content)
       );
