@@ -228,12 +228,14 @@ async function main() {
     })
     .returning();
 
-  const [csvJob] = await db
+  // A client-driven kind: it has no server runner, so there is nothing to resume. Google
+  // and Outlook contacts moved onto the resumable engine and are no longer examples of this.
+  const [clientJob] = await db
     .insert(imports)
     .values({
       userId: TARGET,
-      importType: "google_contacts",
-      fileName: "contacts.csv",
+      importType: "linkedin_messages",
+      fileName: "messages.csv",
       status: "failed",
     })
     .returning();
@@ -243,7 +245,7 @@ async function main() {
     () =>
       actions.retryImport(ADMIN, {
         targetUserId: TARGET,
-        importId: csvJob.id,
+        importId: clientJob.id,
         reason: "user asked",
       }),
     /re-uploaded/i
@@ -271,13 +273,38 @@ async function main() {
   check("retry clears the error message", retried?.errorMessage === null);
   check("retry writes an audit row", (await auditRows("import.retry")).length === 1);
 
+  // Google and Outlook contacts stage `import_job_rows` through the same engine now, so a
+  // retry has to reach them too — the operator's only alternative is waiting on the cron.
+  const [googleJob] = await db
+    .insert(imports)
+    .values({
+      userId: TARGET,
+      importType: "google_contacts",
+      fileName: "google-contacts",
+      status: "failed",
+      errorMessage: "boom",
+    })
+    .returning();
+  await actions.retryImport(ADMIN, {
+    targetUserId: TARGET,
+    importId: googleJob.id,
+    reason: "connector import died mid-run",
+  });
+  const retriedGoogle = await db.query.imports.findFirst({
+    where: eq(imports.id, googleJob.id),
+  });
+  check(
+    "a Google contacts import can be re-armed",
+    retriedGoogle?.status === "processing" && retriedGoogle?.errorMessage === null
+  );
+
   await actions.cancelImport(ADMIN, {
     targetUserId: TARGET,
-    importId: csvJob.id,
+    importId: clientJob.id,
     reason: "wedged, user starting over",
   });
   const cancelled = await db.query.imports.findFirst({
-    where: eq(imports.id, csvJob.id),
+    where: eq(imports.id, clientJob.id),
   });
   check("cancel sets the status", cancelled?.status === "cancelled");
   check("cancel writes an audit row", (await auditRows("import.cancel")).length === 1);
