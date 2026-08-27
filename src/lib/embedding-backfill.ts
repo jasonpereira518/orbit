@@ -9,7 +9,7 @@
  * Time-boxed and self-continuing, the same shape as the import engine — a user with
  * thousands of stale contacts must not need a single invocation to hold them all.
  */
-import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { contacts } from "@/db/schema";
 import { createEmbeddingsBatch } from "@/lib/ai";
@@ -37,6 +37,12 @@ export async function runEmbeddingBackfill(
   let embedded = 0;
 
   while (Date.now() - start < TIME_BUDGET_MS) {
+    // Snapshot the claim moment before reading, and condition both clears below on it. A
+    // contact re-stamped (e.g. by a merge) while this pass is embedding it gets a fresh
+    // `embedding_stale_at` strictly after this snapshot — that later write must survive
+    // the clear, or the contact ends up permanently marked fresh while its stored
+    // embedding still reflects the pre-merge content it had when this pass claimed it.
+    const claimedAt = new Date();
     const stale = await db.query.contacts.findMany({
       where: and(eq(contacts.userId, userId), isNotNull(contacts.embeddingStaleAt)),
       orderBy: [asc(contacts.embeddingStaleAt)],
@@ -101,7 +107,12 @@ export async function runEmbeddingBackfill(
       await db
         .update(contacts)
         .set({ embeddingStaleAt: null })
-        .where(inArray(contacts.id, slice.map((entry) => entry.contactId)));
+        .where(
+          and(
+            inArray(contacts.id, slice.map((entry) => entry.contactId)),
+            lte(contacts.embeddingStaleAt, claimedAt)
+          )
+        );
 
       embedded += slice.length;
     }
@@ -110,7 +121,7 @@ export async function runEmbeddingBackfill(
       await db
         .update(contacts)
         .set({ embeddingStaleAt: null })
-        .where(inArray(contacts.id, emptyIds));
+        .where(and(inArray(contacts.id, emptyIds), lte(contacts.embeddingStaleAt, claimedAt)));
     }
   }
 

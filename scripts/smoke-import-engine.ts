@@ -164,6 +164,19 @@ async function main() {
     );
   }
 
+  // Clear the flag before re-importing. Without this, the check below would pass even if
+  // `bulkMergeContactsForUser` never touched `embedding_stale_at` at all — creation already
+  // left every row non-null, and nothing between here and there would clear it, so a
+  // non-null read afterward would prove nothing about the merge path specifically. Nulling
+  // it here means only the merge itself can make the post-merge check pass.
+  {
+    const db = await getDb();
+    await db
+      .update(contacts)
+      .set({ embeddingStaleAt: null })
+      .where(eq(contacts.userId, USER));
+  }
+
   // --- re-importing the same file merges instead of duplicating ---
   id = await seedJob(fixture(50));
   await runJob(id);
@@ -172,8 +185,10 @@ async function main() {
   check("re-import creates none", out.created === 0, JSON.stringify(out));
   check("re-import blocks none", out.blockedByPlan === 0, JSON.stringify(out));
 
-  // --- merged contacts are re-flagged too: company/title changed, so the stored
-  // embedding (if any had been backfilled) is genuinely stale again ---
+  // --- merges re-stamp the flag on their own: company/title changed, so the stored
+  // embedding is genuinely stale again. The flag was nulled immediately above, so a
+  // non-null read here can only be explained by bulkMergeContactsForUser itself setting
+  // it during this merge, not by a stale leftover from creation. ---
   {
     const db = await getDb();
     const merged = await db.query.contacts.findMany({ where: eq(contacts.userId, USER) });
