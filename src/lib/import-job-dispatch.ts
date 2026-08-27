@@ -1,13 +1,19 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { imports } from "@/db/schema";
-import { runLinkedInImportJob } from "@/lib/import-job-processor";
+import { LINKEDIN_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-connections";
+import { runImportJob } from "@/lib/import-engine";
 import {
   GMAIL_SCAN_IMPORT_TYPE,
   runGmailRecruiterScanJob,
 } from "@/lib/gmail-scan-processor";
 
-export const LINKEDIN_IMPORT_TYPE = "linkedin_connections";
+/**
+ * Re-exported from the LinkedIn adapter, which is where the constant now lives: the adapter
+ * registry has to key on it, and importing it from here would close a cycle
+ * (dispatch -> engine -> registry -> dispatch). Every existing call site keeps working.
+ */
+export { LINKEDIN_IMPORT_TYPE };
 
 /**
  * Import types that own their own server-side processing and can therefore be resumed.
@@ -39,7 +45,7 @@ export async function runImportJobById(importId: string): Promise<void> {
     case GMAIL_SCAN_IMPORT_TYPE:
       return runGmailRecruiterScanJob(importId);
     case LINKEDIN_IMPORT_TYPE:
-      return runLinkedInImportJob(importId);
+      return runImportJob(importId);
     default:
       // Client-driven kinds (e.g. the LinkedIn messages import) have no server runner.
       return;
