@@ -1,29 +1,19 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { toast } from "@/lib/toast";
-import {
-  previewCalendarImport,
-  confirmCalendarImport,
-} from "@/actions/imports";
+import { previewCalendarImport } from "@/actions/imports";
 import { CALENDAR_BACKFILL_DAYS } from "@/lib/calendar-import";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CalendarSubscribePanel } from "@/components/imports/calendar-subscribe-panel";
 import {
   BusyHint,
-  CALENDAR_BATCH_SIZE,
   ImportFilePicker,
   ImportProgress,
-  type ImportProgressState,
 } from "@/components/imports/import-utils";
-import {
-  finishBackgroundJob,
-  startBackgroundJob,
-  updateBackgroundJob,
-} from "@/lib/background-jobs";
+import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 
 type CalendarPreview = Awaited<ReturnType<typeof previewCalendarImport>>;
 
@@ -50,10 +40,8 @@ export function CalendarImportSection({
 }: {
   calendarSubscriptions?: CalendarSub[];
 }) {
-  const router = useRouter();
+  const job = useImportJob();
   const [pending, start] = useTransition();
-  const [importProgress, setImportProgress] =
-    useState<ImportProgressState | null>(null);
 
   const [calendarText, setCalendarText] = useState("");
   const [calendarKind, setCalendarKind] = useState<"ics" | "csv">("ics");
@@ -62,7 +50,27 @@ export function CalendarImportSection({
     useState<CalendarPreview | null>(null);
   const [createFollowUps, setCreateFollowUps] = useState(true);
 
-  const busy = pending || importProgress !== null;
+  const calendarJob =
+    job?.kind === "calendar" && job.status === "running" ? job : null;
+  const importProgress = calendarJob?.progress ?? null;
+  const busy = pending || job?.status === "running";
+
+  // Clear local review UI once this job finishes — toasts are handled globally by
+  // ImportJobWatcher, same as every other import section on the poll flow.
+  useEffect(() => {
+    if (!job || job.kind !== "calendar") return;
+    if (
+      job.status !== "completed" &&
+      job.status !== "failed" &&
+      job.status !== "cancelled"
+    )
+      return;
+    queueMicrotask(() => {
+      setCalendarPreview(null);
+      setCalendarText("");
+      setCalendarFileName(null);
+    });
+  }, [job]);
 
   return (
     <div className="space-y-6">
@@ -137,84 +145,22 @@ export function CalendarImportSection({
           <Button
             disabled={!calendarText || busy}
             className="bg-primary text-primary-foreground hover:bg-primary/90"
-            onClick={async () => {
+            onClick={() => {
               if (busy) return;
-              const jobId = `calendar-import-${Date.now()}`;
               try {
-                let importId: string | undefined;
-                let offset = 0;
-                let total = 0;
-                let meetingsLogged = 0;
-                let contactsMatched = 0;
-
-                const startedAt = Date.now();
-                setImportProgress({
-                  done: 0,
-                  total: 1,
-                  label: "events",
-                  startedAt,
-                });
-                startBackgroundJob({
-                  id: jobId,
-                  kind: "calendar-import",
-                  label: "Importing calendar",
-                  done: 0,
-                  total: 1,
-                  startedAt,
-                });
-
-                do {
-                  const res = await confirmCalendarImport({
-                    kind: calendarKind,
-                    text: calendarText,
-                    fileName: calendarFileName || "calendar.ics",
-                    createFollowUps,
-                    importId,
-                    finalize: false,
-                    chunk: {
-                      offset,
-                      limit: CALENDAR_BATCH_SIZE,
-                    },
-                  });
-                  importId = res.importId;
-                  total = res.totalWindowed;
-                  meetingsLogged += res.meetingsLogged;
-                  contactsMatched += res.contactsMatched;
-                  offset += res.eventsProcessed;
-                  const done = Math.min(offset, Math.max(total, 1));
-                  const boundedTotal = Math.max(total, 1);
-                  setImportProgress({
-                    done,
-                    total: boundedTotal,
-                    label: total === 1 ? "event" : "events",
-                    startedAt,
-                  });
-                  updateBackgroundJob(jobId, { done, total: boundedTotal });
-                } while (offset < total);
-
-                await confirmCalendarImport({
-                  kind: calendarKind,
+                startImportJob({
+                  kind: "calendar",
+                  calendarKind,
                   text: calendarText,
                   fileName: calendarFileName || "calendar.ics",
                   createFollowUps,
-                  importId,
-                  finalize: true,
-                  chunk: { offset: total, limit: 0 },
                 });
-
-                const resultMessage = `Logged ${meetingsLogged} meetings across ${contactsMatched} contacts`;
-                toast.success(resultMessage);
-                finishBackgroundJob(jobId, { status: "completed", resultMessage });
+                // Clear the review list immediately; progress lives in the runner.
                 setCalendarPreview(null);
                 setCalendarText("");
                 setCalendarFileName(null);
-                router.refresh();
               } catch (err) {
-                const message = err instanceof Error ? err.message : "Import failed";
-                toast.error(message);
-                finishBackgroundJob(jobId, { status: "failed", error: message });
-              } finally {
-                setImportProgress(null);
+                toast.error(err instanceof Error ? err.message : "Import failed");
               }
             }}
           >

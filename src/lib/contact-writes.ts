@@ -88,8 +88,23 @@ export type ContactInput = {
    * `dateMet`). Used by importers that know the real relationship age — e.g.
    * a LinkedIn "Connected On" date — so that age-based scoring isn't blind to
    * imported history.
+   *
+   * On create this is a direct override (see `contactInsertValues`). On merge
+   * (`bulkMergeContactsForUser`) it WIDENS rather than overwrites: the merge SQL takes
+   * `LEAST(existing, incoming)`, so a re-import can only push this earlier, never later —
+   * an import re-discovering an older message than it saw last time should not make the
+   * relationship look younger than the last import already established.
    */
   firstInteractionAt?: string | Date | null;
+  /**
+   * Merge-only widening input for `last_interaction_at` — there is no create-time
+   * equivalent (`contactInsertValues` derives `last_interaction_at` from `dateMet` on
+   * create; see its comment). `bulkMergeContactsForUser` takes `GREATEST(existing,
+   * incoming)`, so a re-import can only push this later, never earlier: a CSV re-exported
+   * six months later, with six months of new conversation, should advance recency scoring
+   * to the newest message it found, not leave it frozen at the first import.
+   */
+  lastInteractionAt?: string | Date | null;
   howMet?: string;
   notes?: string;
   aiSummary?: string;
@@ -406,6 +421,10 @@ export async function createContactsBulkForUser(
   const db = await getDb();
   const now = new Date();
 
+  // Two statements for the whole batch's distinct company names, instead of up to three
+  // per row. See `CompanyResolver.prime` — without this, the `Promise.all` below makes
+  // every row sharing a not-yet-existing company miss the resolver's cache simultaneously.
+  await companyResolve.prime(admitted.map((input) => input.company));
   const companyFieldsList = await Promise.all(
     admitted.map((input) =>
       companyFieldsForWriteCached(companyResolve, input.company)
@@ -459,14 +478,19 @@ export async function createContactsBulkForUser(
  * company through the *uncached* `companyFieldsForWrite` — throwing away the resolver the
  * caller had already preloaded and spending two to three round trips per merged row.
  *
- * `undefined` means "leave alone", matching `updateContactForUser`'s `!== undefined`
- * checks: each field is passed as NULL and coalesced against the existing column.
- *
  * IMPORTANT: this is the second contact-write path in the codebase. Its column list must
- * be kept in sync by hand with `updateContactForUser` below. Deliberately narrow — it
- * carries only the fields importers actually merge, and notably NOT `relationshipScore`,
- * because mirroring that into `statedCloseness` is reserved for a human moving the slider
- * (see the comment on `relationshipScore` in `updateContactForUser`).
+ * be kept in sync by hand with `updateContactForUser` below — with two deliberate
+ * exceptions. Not `relationshipScore`, because mirroring that into `statedCloseness` is
+ * reserved for a human moving the slider (see the comment on `relationshipScore` in
+ * `updateContactForUser`). And not `firstInteractionAt`/`lastInteractionAt`: those two use
+ * WIDEN, not COALESCE-set-or-leave-alone (see below), which is import-merge-specific
+ * semantics that make no sense for a person editing a contact by hand — `updateContactForUser`
+ * does not write either column at all, on purpose, and should not gain matching
+ * `LEAST`/`GREATEST` clauses just to "stay in sync."
+ *
+ * `undefined` means "leave alone", matching `updateContactForUser`'s `!== undefined`
+ * checks: each field is passed as NULL and coalesced against the existing column. The two
+ * interaction-timestamp columns are the one exception to "leave alone" — see below.
  *
  * KNOWN LIMITATION: COALESCE cannot tell "this field was explicitly normalized/resolved to
  * null" apart from "this field was never mentioned" — both arrive as SQL NULL in the VALUES
@@ -483,6 +507,18 @@ export async function createContactsBulkForUser(
  * importer needs to clear one of these fields during a merge, this silently keeps the stale
  * value instead; that importer needs a different encoding here (e.g. a sentinel that
  * distinguishes "clear" from "leave alone"), not a fix to this comment.
+ *
+ * `first_interaction_at`/`last_interaction_at` deliberately do NOT follow the
+ * set-or-leave-alone rule above — they WIDEN via `LEAST`/`GREATEST` instead of `COALESCE`.
+ * An import merging in more history should only ever grow the known interaction window,
+ * never narrow or clobber it: a messages CSV re-exported six months later, carrying six
+ * months of new conversation, must be able to push `last_interaction_at` forward even
+ * though the column is already non-null (ruling out COALESCE, which only fires on NULL),
+ * and a re-import that happens not to mention an earlier/later date than what is already
+ * stored must leave both columns exactly where they are (ruling out a plain overwrite).
+ * `LEAST`/`GREATEST` ignore NULL operands and return the non-null one — verified against
+ * this project's own PGlite, not assumed — so an input that supplies neither leaves both
+ * columns untouched, and one that supplies only a later date advances only that side.
  */
 export async function bulkMergeContactsForUser(
   userId: string,
@@ -493,6 +529,10 @@ export async function bulkMergeContactsForUser(
   const db = await getDb();
   const now = new Date();
 
+  // See `createContactsBulkForUser` above, and `CompanyResolver.prime` itself.
+  await companyResolve.prime(
+    merges.map((m) => (m.input.company !== undefined ? m.input.company : null))
+  );
   const companyFields = await Promise.all(
     merges.map((m) =>
       m.input.company !== undefined
@@ -517,7 +557,9 @@ export async function bulkMergeContactsForUser(
       ${v.source ?? null}::text,
       ${v.howMet ?? null}::text,
       ${normalizeMetContext(v.metContext)}::text,
-      ${safeTimestamp(v.dateMet)}::timestamptz
+      ${safeTimestamp(v.dateMet)}::timestamptz,
+      ${safeTimestamp(v.firstInteractionAt)}::timestamptz,
+      ${safeTimestamp(v.lastInteractionAt)}::timestamptz
     )`;
   });
 
@@ -536,11 +578,16 @@ export async function bulkMergeContactsForUser(
         how_met           = COALESCE(v.how_met, c.how_met),
         met_context       = COALESCE(v.met_context, c.met_context),
         date_met          = COALESCE(v.date_met, c.date_met),
+        -- WIDEN, not set-or-leave-alone — see this function's doc comment. A re-import
+        -- can only push the known interaction window outward, never narrow it.
+        first_interaction_at = LEAST(c.first_interaction_at, v.first_interaction_at),
+        last_interaction_at  = GREATEST(c.last_interaction_at, v.last_interaction_at),
         embedding_stale_at = ${now},
         updated_at        = ${now}
     FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(
       id, company, company_id, title, email, phone, linkedin_url,
-      first_name, last_name, profile_image_url, source, how_met, met_context, date_met
+      first_name, last_name, profile_image_url, source, how_met, met_context, date_met,
+      first_interaction_at, last_interaction_at
     )
     WHERE c.id = v.id AND c.user_id = ${userId}
   `);

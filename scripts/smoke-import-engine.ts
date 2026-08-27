@@ -29,13 +29,16 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-import";
 delete process.env.DATABASE_URL;
 
 import crypto from "node:crypto";
-import { count, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
   contacts,
   imports,
   importJobRows,
+  interactions,
+  reminders,
   userSettings,
+  type CalendarEventRowPayload,
   type ImportJobRowPayload,
 } from "../src/db/schema";
 import { isClerkConfigured, isDemoMode } from "../src/lib/auth";
@@ -74,6 +77,7 @@ async function runJob(importId: string) {
 
 async function reset() {
   const db = await getDb();
+  await db.delete(interactions).where(eq(interactions.userId, USER));
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(imports).where(eq(imports.userId, USER));
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
@@ -145,6 +149,9 @@ async function outcome(importId: string) {
     updated: row.contactsUpdated ?? 0,
     skipped: row.stats?.skipped ?? 0,
     blockedByPlan: row.stats?.blockedByPlan ?? 0,
+    failedRows: row.stats?.failedRows ?? 0,
+    rowsProcessed: row.rowsProcessed ?? 0,
+    totalRows: row.totalRows ?? 0,
   };
 }
 
@@ -369,6 +376,19 @@ async function main() {
   out = await outcome(id);
   check("import survives a bad row", out.status === "completed", JSON.stringify(out));
   check("good rows still land", out.created === 29, JSON.stringify(out));
+  // Narrowing's whole purpose is to drop the bad row instead of the import — but until this
+  // counter existed, nothing anywhere in the product counted a row-level `failed`, so a user
+  // whose import quietly dropped rows saw "completed, N created" and was never told.
+  check("the isolated row is counted in failedRows", out.failedRows === 1, JSON.stringify(out));
+  // Not the discriminating case for the progress fix — a failed row was already inside
+  // `toCreate`, so the old arithmetic counted it too. The Outlook (skipped) and calendar
+  // (unmatched) scenarios below are what actually falsify that; this pins the invariant
+  // "rowsProcessed == totalRows on a completed import" for the failure path as well.
+  check(
+    "rowsProcessed still reaches totalRows with a row isolated as failed",
+    out.rowsProcessed === 30 && out.rowsProcessed === out.totalRows,
+    JSON.stringify(out)
+  );
   {
     const db = await getDb();
     const rows = await db.query.importJobRows.findMany({ where: eq(importJobRows.importId, id) });
@@ -617,6 +637,15 @@ async function main() {
   check("outlook import completes", out.status === "completed", JSON.stringify(out));
   check("outlook creates all but the nameless row", out.created === 39, JSON.stringify(out));
   check("outlook skips the nameless row", out.skipped === 1, JSON.stringify(out));
+  // The progress bar's numerator. Before this, `rowsProcessed` advanced only by
+  // created+merged, so the skipped row would leave a completed import showing 39/40 — and
+  // the four import types that joined the engine after LinkedIn connections all counted
+  // every row before they moved onto it.
+  check(
+    "outlook rowsProcessed reaches totalRows despite the skipped row",
+    out.rowsProcessed === 40 && out.rowsProcessed === out.totalRows,
+    JSON.stringify(out)
+  );
 
   id = await seedJob(outlook, "outlook_contacts");
   await runJob(id);
@@ -626,6 +655,538 @@ async function main() {
     "outlook re-import creates the no-email row again instead of merging it",
     out.created === 1,
     JSON.stringify(out)
+  );
+
+  // --- LinkedIn messages: creates contacts AND logs interactions ---
+  await reset();
+  const threads = Array.from({ length: 12 }, (_, i) => ({
+    kind: "linkedin_message_thread" as const,
+    conversationId: `conv-${i}`,
+    fullName: `Msg Person ${i}`,
+    firstName: "Msg",
+    lastName: `Person ${i}`,
+    // The row with no profile URL is the one today's importer skips; keep that.
+    linkedinUrl: i === 4 ? "" : `https://www.linkedin.com/in/msg-person-${i}`,
+    messages: [
+      { id: `m-${i}-a`, body: "first message", sentAt: "2024-03-01T10:00:00Z" },
+      { id: `m-${i}-b`, body: "second message", sentAt: "2024-03-02T10:00:00Z" },
+    ],
+  }));
+
+  id = await seedJob(threads, "linkedin_messages");
+  await runJob(id);
+  out = await outcome(id);
+  check("messages import completes", out.status === "completed", JSON.stringify(out));
+  check("thread without a profile url is skipped", out.skipped === 1, JSON.stringify(out));
+  check("remaining threads create contacts", out.created === 11, JSON.stringify(out));
+
+  const db4 = await getDb();
+  const [logged] = await db4
+    .select({ value: count() })
+    .from(interactions)
+    .where(eq(interactions.userId, USER));
+  check("two messages logged per thread", (logged?.value ?? 0) === 22, `rows ${logged?.value}`);
+
+  // Re-importing the same export must merge the people and log nothing twice.
+  id = await seedJob(threads, "linkedin_messages");
+  await runJob(id);
+  out = await outcome(id);
+  check("messages re-import merges", out.updated === 11, JSON.stringify(out));
+  const [loggedAgain] = await db4
+    .select({ value: count() })
+    .from(interactions)
+    .where(eq(interactions.userId, USER));
+  check(
+    "re-import logs no duplicate messages",
+    (loggedAgain?.value ?? 0) === 22,
+    `rows ${loggedAgain?.value}`
+  );
+
+  // --- a later re-import carrying genuinely new messages advances last_interaction_at ---
+  // Proves the bulkMergeContactsForUser fix (LEAST/GREATEST widening): a CSV re-exported
+  // months later, with new conversation, must push last_interaction_at forward instead of
+  // leaving recency scoring frozen at whatever the first import saw. Every non-skipped
+  // thread gets one additional message strictly newer than anything in `threads` above.
+  const threadsWithNewerMessages = threads.map((t) => ({
+    ...t,
+    messages: [
+      ...t.messages,
+      {
+        id: `${t.conversationId}-newer`,
+        body: "a much later message",
+        sentAt: "2025-06-15T09:00:00Z",
+      },
+    ],
+  }));
+  id = await seedJob(threadsWithNewerMessages, "linkedin_messages");
+  await runJob(id);
+  out = await outcome(id);
+  check("newer-message re-import merges again", out.updated === 11, JSON.stringify(out));
+
+  const [loggedThird] = await db4
+    .select({ value: count() })
+    .from(interactions)
+    .where(eq(interactions.userId, USER));
+  check(
+    "the genuinely new message is logged once per thread, not skipped as a duplicate",
+    (loggedThird?.value ?? 0) === 22 + 11,
+    `rows ${loggedThird?.value}`
+  );
+
+  const person0 = await db4.query.contacts.findFirst({
+    where: and(
+      eq(contacts.userId, USER),
+      eq(contacts.linkedinUrl, "https://www.linkedin.com/in/msg-person-0")
+    ),
+  });
+  check(
+    "last_interaction_at advances to the newest message a later re-import found",
+    person0?.lastInteractionAt?.toISOString().startsWith("2025-06-15") ?? false,
+    `lastInteractionAt: ${person0?.lastInteractionAt}`
+  );
+  check(
+    "first_interaction_at is untouched — widening only ever moves it earlier, never later",
+    person0?.firstInteractionAt?.toISOString().startsWith("2024-03-01") ?? false,
+    `firstInteractionAt: ${person0?.firstInteractionAt}`
+  );
+
+  // --- widening must NEVER narrow ---
+  // The assertion above proves last_interaction_at ADVANCES, but not that it refuses to go
+  // backwards: in that fixture the incoming value was always the larger one, so an
+  // unconditional overwrite would have passed it too. This is the missing half. Re-import
+  // the same threads with a message strictly OLDER than everything already recorded and
+  // nothing newer; GREATEST must leave last_interaction_at where it is, and LEAST must pull
+  // first_interaction_at back to the older date.
+  const threadsWithOlderMessage = threads.map((t) => ({
+    ...t,
+    messages: [
+      {
+        id: `${t.conversationId}-older`,
+        body: "a much earlier message",
+        sentAt: "2019-01-05T08:00:00Z",
+      },
+    ],
+  }));
+  id = await seedJob(threadsWithOlderMessage, "linkedin_messages");
+  await runJob(id);
+  out = await outcome(id);
+  check("older-message re-import merges again", out.updated === 11, JSON.stringify(out));
+
+  const person0Older = await db4.query.contacts.findFirst({
+    where: and(
+      eq(contacts.userId, USER),
+      eq(contacts.linkedinUrl, "https://www.linkedin.com/in/msg-person-0")
+    ),
+  });
+  check(
+    "last_interaction_at does NOT narrow when an older export is re-imported",
+    person0Older?.lastInteractionAt?.toISOString().startsWith("2025-06-15") ?? false,
+    `lastInteractionAt: ${person0Older?.lastInteractionAt}`
+  );
+  check(
+    "first_interaction_at widens backwards to the older message",
+    person0Older?.firstInteractionAt?.toISOString().startsWith("2019-01-05") ?? false,
+    `firstInteractionAt: ${person0Older?.firstInteractionAt}`
+  );
+
+  // --- an unparseable message date must not become 1970 ---
+  // `startLinkedInMessagesImport` used to write `new Date(0).toISOString()` for a message
+  // whose CSV timestamp would not parse. Epoch is a perfectly valid date, so
+  // `messageDateRange` accepted it as the conversation's earliest message and stamped
+  // first_interaction_at at 1970-01-01 — and because merging widens with LEAST, no later
+  // import could ever correct it. The row now carries `sentAt: null` and is excluded from
+  // the range instead. Fresh contacts (a new conversation id and profile url), so this
+  // measures the create path with no prior value to widen against.
+  const unparseableThreads = [
+    {
+      kind: "linkedin_message_thread" as const,
+      conversationId: "conv-undated",
+      fullName: "Undated Person",
+      firstName: "Undated",
+      lastName: "Person",
+      linkedinUrl: "https://www.linkedin.com/in/undated-person",
+      messages: [
+        // What the parser produces for a timestamp it cannot read.
+        { id: "m-undated-a", body: "no date on this one", sentAt: null },
+        { id: "m-undated-b", body: "this one has a date", sentAt: "2023-08-09T12:00:00Z" },
+      ],
+    },
+  ];
+  id = await seedJob(unparseableThreads, "linkedin_messages");
+  await runJob(id);
+  out = await outcome(id);
+  check("undated-message thread imports", out.created === 1, JSON.stringify(out));
+
+  const undated = await db4.query.contacts.findFirst({
+    where: and(
+      eq(contacts.userId, USER),
+      eq(contacts.linkedinUrl, "https://www.linkedin.com/in/undated-person")
+    ),
+  });
+  check(
+    "an unparseable message date does not pin first_interaction_at to 1970",
+    (undated?.firstInteractionAt?.getUTCFullYear() ?? 0) > 1970,
+    `firstInteractionAt: ${undated?.firstInteractionAt}`
+  );
+  check(
+    "the range comes from the message that DID parse, not from a sentinel",
+    undated?.firstInteractionAt?.toISOString().startsWith("2023-08-09") ?? false,
+    `firstInteractionAt: ${undated?.firstInteractionAt}`
+  );
+  // The undated message must still be logged — excluding it from the contact's date range
+  // is not the same as dropping it. `interaction_date` is NOT NULL, so it falls back to
+  // import time, confined to that one row.
+  const [undatedLogged] = await db4
+    .select({ value: count() })
+    .from(interactions)
+    .where(eq(interactions.externalId, "m-undated-a"));
+  check(
+    "the undated message is still logged as an interaction",
+    (undatedLogged?.value ?? 0) === 1,
+    `rows ${undatedLogged?.value}`
+  );
+
+  // --- Calendar: annotates people already in the network, never adds any ---
+  // Calendar ingest never creates contacts (`createsContacts: false`) — it explodes each
+  // windowed event into one job row per (event, attendee) pair (see `CalendarEventRowPayload`'s
+  // doc comment) rather than widening the adapter seam to `identity(): DuplicateProbe[]` for
+  // this one consumer. `calendarRow` builds one such row.
+  function calendarRow(over: Partial<CalendarEventRowPayload>): CalendarEventRowPayload {
+    return {
+      kind: "calendar_event",
+      eventUid: "evt",
+      summary: "Meeting",
+      description: "",
+      location: "",
+      start: "2024-04-01T15:00:00Z",
+      end: "2024-04-01T16:00:00Z",
+      attendeeName: "",
+      attendeeEmail: "",
+      createFollowUps: false,
+      ...over,
+    };
+  }
+
+  await reset();
+  // Seed the network first — calendar matching has nothing to match against otherwise.
+  const known = await seedJob(fixture(5));
+  await runJob(known);
+
+  const db5 = await getDb();
+  const [beforeContacts] = await db5
+    .select({ value: count() })
+    .from(contacts)
+    .where(eq(contacts.userId, USER));
+
+  const calendarRows: CalendarEventRowPayload[] = [
+    // One attendee, matches an existing contact — one meeting.
+    calendarRow({
+      eventUid: "evt-known",
+      summary: "Coffee",
+      start: "2024-04-01T15:00:00Z",
+      attendeeName: "First0 Last0",
+      attendeeEmail: "person0@example.com",
+    }),
+    // One attendee, matches nobody — skipped, no meeting.
+    calendarRow({
+      eventUid: "evt-stranger",
+      summary: "Webinar",
+      start: "2024-04-02T15:00:00Z",
+      attendeeName: "Nobody Here",
+      attendeeEmail: "nobody@example.com",
+    }),
+    // Same event, three attendees: two match, one doesn't. This is the assertion that
+    // proves the pair model — a multi-attendee event must log one meeting per matched
+    // attendee, not one meeting for the whole event.
+    calendarRow({
+      eventUid: "evt-team",
+      summary: "Team sync",
+      start: "2024-04-03T15:00:00Z",
+      attendeeName: "First1 Last1",
+      attendeeEmail: "person1@example.com",
+    }),
+    calendarRow({
+      eventUid: "evt-team",
+      summary: "Team sync",
+      start: "2024-04-03T15:00:00Z",
+      attendeeName: "First2 Last2",
+      attendeeEmail: "person2@example.com",
+    }),
+    calendarRow({
+      eventUid: "evt-team",
+      summary: "Team sync",
+      start: "2024-04-03T15:00:00Z",
+      attendeeName: "Ghost Attendee",
+      attendeeEmail: "ghost@example.com",
+    }),
+  ];
+
+  id = await seedJob(calendarRows, "calendar_ics");
+  await runJob(id);
+  out = await outcome(id);
+  check("calendar import completes", out.status === "completed", JSON.stringify(out));
+  check("calendar creates nobody", out.created === 0, JSON.stringify(out));
+  check(
+    "stranger and ghost rows are skipped (2 of 5)",
+    out.skipped === 2,
+    JSON.stringify(out)
+  );
+  // Calendar is the worst case for the old `toCreate.length + toUpdate.length` progress
+  // arithmetic: it creates nobody, so the numerator could only ever come from matched
+  // attendees, while `totalRows` counts every (event, attendee) pair. This file would have
+  // finished at 3/5 — a progress bar visibly stuck at 60% on a completed import, and a
+  // cancel message ("N of M kept") that understated by the same amount.
+  check(
+    "calendar rowsProcessed reaches totalRows even though 2 of 5 rows matched nobody",
+    out.rowsProcessed === 5 && out.rowsProcessed === out.totalRows,
+    JSON.stringify(out)
+  );
+
+  const [afterContacts] = await db5
+    .select({ value: count() })
+    .from(contacts)
+    .where(eq(contacts.userId, USER));
+  check(
+    "calendar cannot grow the network",
+    afterContacts?.value === beforeContacts?.value,
+    `${beforeContacts?.value} -> ${afterContacts?.value}`
+  );
+
+  const [meetings] = await db5
+    .select({ value: count() })
+    .from(interactions)
+    .where(eq(interactions.userId, USER));
+  check(
+    "the multi-attendee event logs one meeting per matched attendee (3 total: 1 known + 2 team)",
+    (meetings?.value ?? 0) === 3,
+    `rows ${meetings?.value}`
+  );
+
+  // `calendarRow()` defaults `createFollowUps` to false, and every row above used that
+  // default — closes the gap where a broken gate that ignored the flag entirely and always
+  // created reminders would still pass every other check in this file.
+  const [remindersWithFollowUpsOff] = await db5
+    .select({ value: count() })
+    .from(reminders)
+    .where(eq(reminders.userId, USER));
+  check(
+    "createFollowUps: false creates no reminders",
+    (remindersWithFollowUpsOff?.value ?? 0) === 0,
+    `rows ${remindersWithFollowUpsOff?.value}`
+  );
+
+  // Re-uploading the same file must not double-log any meeting.
+  id = await seedJob(calendarRows, "calendar_ics");
+  await runJob(id);
+  const [meetingsAgain] = await db5
+    .select({ value: count() })
+    .from(interactions)
+    .where(eq(interactions.userId, USER));
+  check(
+    "re-upload logs no duplicate meetings",
+    (meetingsAgain?.value ?? 0) === 3,
+    `rows ${meetingsAgain?.value}`
+  );
+
+  // --- a re-synced event whose time changed updates the interaction, not just dedupes it ---
+  // Task 15's review caught that the engine's original `onConflictDoNothing()` kept the
+  // *stale* row on a conflict — a real regression vs. the per-row importer this task
+  // replaced, which explicitly updated `interactionDate` on a repeat. The engine now uses
+  // `onConflictDoUpdate` on `(user_id, external_id)`, so the same event re-uploaded with a
+  // different `start` must move the stored `interactionDate`, not leave it frozen.
+  const rescheduled = calendarRow({
+    eventUid: "evt-known",
+    summary: "Coffee (rescheduled)",
+    start: "2024-04-08T15:00:00Z",
+    attendeeName: "First0 Last0",
+    attendeeEmail: "person0@example.com",
+  });
+  id = await seedJob([rescheduled], "calendar_ics");
+  await runJob(id);
+  const [meetingsAfterReschedule] = await db5
+    .select({ value: count() })
+    .from(interactions)
+    .where(eq(interactions.userId, USER));
+  check(
+    "rescheduling still logs no duplicate row",
+    (meetingsAfterReschedule?.value ?? 0) === 3,
+    `rows ${meetingsAfterReschedule?.value}`
+  );
+  const rescheduledInteraction = await db5.query.interactions.findFirst({
+    where: eq(interactions.externalId, "cal:evt-known:" + (await db5.query.contacts.findFirst({
+      where: and(eq(contacts.userId, USER), eq(contacts.fullName, "First0 Last0")),
+    }))?.id),
+  });
+  check(
+    "the interaction date advanced to the rescheduled time, not the original",
+    rescheduledInteraction?.interactionDate?.toISOString().startsWith("2024-04-08") ?? false,
+    `interactionDate: ${rescheduledInteraction?.interactionDate}`
+  );
+  check(
+    "the interaction content refreshed too",
+    rescheduledInteraction?.aiSummary === "Coffee (rescheduled)",
+    `aiSummary: ${rescheduledInteraction?.aiSummary}`
+  );
+
+  // --- two rows in the same chunk resolving to the same contact must not fail the import ---
+  // `peopleFromEvent`'s dedupe (src/lib/calendar-import.ts) only catches attendee entries
+  // that resolve to the *same* identity key (same email, or same normalized name — see
+  // `personIdentityKey`). It does not, and structurally cannot, catch two entries that
+  // resolve to the same *contact* by two different routes — one email-only, one name-only —
+  // both matching the same existing person. That produces two job rows with the same
+  // `cal:eventUid:contactId` externalId in one chunk, which `ON CONFLICT DO UPDATE` (unlike
+  // the `DO NOTHING` it replaced) errors on unless the engine dedupes its own batch first.
+  const sameContactTwoWays = [
+    calendarRow({
+      eventUid: "evt-two-routes",
+      summary: "Ambiguous attendee",
+      start: "2024-04-05T15:00:00Z",
+      attendeeName: "",
+      attendeeEmail: "person0@example.com",
+    }),
+    calendarRow({
+      eventUid: "evt-two-routes",
+      summary: "Ambiguous attendee",
+      start: "2024-04-05T15:00:00Z",
+      attendeeName: "First0 Last0",
+      attendeeEmail: "",
+    }),
+  ];
+  id = await seedJob(sameContactTwoWays, "calendar_ics");
+  await runJob(id);
+  out = await outcome(id);
+  check(
+    "an event matching the same contact two different ways still completes",
+    out.status === "completed",
+    JSON.stringify(out)
+  );
+  const [meetingsAfterAmbiguous] = await db5
+    .select({ value: count() })
+    .from(interactions)
+    .where(eq(interactions.userId, USER));
+  check(
+    "it logs exactly one meeting, not two",
+    (meetingsAfterAmbiguous?.value ?? 0) === meetingsAfterReschedule!.value! + 1,
+    `before ${meetingsAfterReschedule?.value}, after ${meetingsAfterAmbiguous?.value}`
+  );
+
+  // --- the free plan cap is never consulted, even when it's already exhausted ---
+  // `createsContacts: false` is supposed to skip `contactHeadroomForUser` entirely (see
+  // `runImportJob`), not just happen to never hit it because nothing gets created. Proving
+  // that black-box: fill the free cap past its limit with contacts that have nothing to do
+  // with the calendar file, then confirm a calendar import matching a *different*,
+  // already-existing contact still logs its meeting and blocks nothing. A cap-consulting
+  // import would refuse this outright — the fixture user is on the free plan.
+  {
+    const filler = Array.from({ length: FREE_CONTACT_LIMIT }, (_, i) => ({
+      userId: USER,
+      fullName: `Cap Filler ${i}`,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }));
+    await db5.insert(contacts).values(filler);
+  }
+  id = await seedJob(
+    [
+      calendarRow({
+        eventUid: "evt-cap-check",
+        summary: "One more coffee",
+        start: "2024-04-04T15:00:00Z",
+        attendeeName: "First3 Last3",
+        attendeeEmail: "person3@example.com",
+      }),
+    ],
+    "calendar_ics"
+  );
+  await runJob(id);
+  out = await outcome(id);
+  check(
+    "calendar import still completes with the free cap already full",
+    out.status === "completed",
+    JSON.stringify(out)
+  );
+  check(
+    "calendar import blocks nothing even with the cap exhausted",
+    out.blockedByPlan === 0,
+    JSON.stringify(out)
+  );
+  const [meetingsAfterCapFill] = await db5
+    .select({ value: count() })
+    .from(interactions)
+    .where(eq(interactions.userId, USER));
+  check(
+    "the matched attendee's meeting still logs with the cap exhausted",
+    (meetingsAfterCapFill?.value ?? 0) === meetingsAfterAmbiguous!.value! + 1,
+    `before ${meetingsAfterAmbiguous?.value}, after ${meetingsAfterCapFill?.value}`
+  );
+
+  // --- calendar_csv runs the same adapter as calendar_ics ---
+  await reset();
+  const known2 = await seedJob(fixture(3));
+  await runJob(known2);
+  id = await seedJob(
+    [
+      calendarRow({
+        eventUid: "evt-csv",
+        summary: "CSV coffee",
+        attendeeName: "First0 Last0",
+        attendeeEmail: "person0@example.com",
+      }),
+    ],
+    "calendar_csv"
+  );
+  await runJob(id);
+  out = await outcome(id);
+  check("calendar_csv import completes", out.status === "completed", JSON.stringify(out));
+  check("calendar_csv creates nobody", out.created === 0, JSON.stringify(out));
+
+  // --- follow-up reminders survive the move onto the engine ---
+  // `createFollowUps` gates a second bulk insert in the engine's chunk loop (see
+  // `ImportAdapter.reminders`), separate from the interactions insert. A recent past
+  // meeting with `createFollowUps: true` must produce exactly one `post_meeting` reminder,
+  // and re-uploading the same file must not double it.
+  await reset();
+  const known3 = await seedJob(fixture(2));
+  await runJob(known3);
+  const recentPastMeeting = calendarRow({
+    eventUid: "evt-followup",
+    summary: "Recent coffee",
+    start: new Date(Date.now() - 3 * 86400000).toISOString(),
+    attendeeName: "First0 Last0",
+    attendeeEmail: "person0@example.com",
+    createFollowUps: true,
+  });
+  id = await seedJob([recentPastMeeting], "calendar_ics");
+  await runJob(id);
+  const db6 = await getDb();
+  const [remindersLogged] = await db6
+    .select({ value: count() })
+    .from(reminders)
+    .where(eq(reminders.userId, USER));
+  check(
+    "createFollowUps logs one post-meeting reminder",
+    (remindersLogged?.value ?? 0) === 1,
+    `rows ${remindersLogged?.value}`
+  );
+  const followUp = await db6.query.reminders.findFirst({
+    where: eq(reminders.userId, USER),
+  });
+  check(
+    "the reminder is typed post_meeting and tied to the matched contact",
+    followUp?.reminderType === "post_meeting" && followUp?.contactId != null,
+    JSON.stringify(followUp)
+  );
+
+  id = await seedJob([recentPastMeeting], "calendar_ics");
+  await runJob(id);
+  const [remindersAgain] = await db6
+    .select({ value: count() })
+    .from(reminders)
+    .where(eq(reminders.userId, USER));
+  check(
+    "re-upload logs no duplicate reminder",
+    (remindersAgain?.value ?? 0) === 1,
+    `rows ${remindersAgain?.value}`
   );
 
   await reset();

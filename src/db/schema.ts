@@ -578,6 +578,30 @@ export type ImportStats = {
   messagesImported?: number;
   meetingsLogged?: number;
   remindersCreated?: number;
+  /**
+   * Interactions the engine's bulk insert actually wrote this run (see
+   * `ImportAdapter.interactions` in `import-engine.ts`) — every adapter that produces
+   * interaction rows shares this one counter rather than each getting its own per-type field
+   * the way `messagesImported`/`meetingsLogged` used to (and, once an import type moved onto
+   * the engine, silently stopped being written — see those two fields' history). Counts rows
+   * the insert's `ON CONFLICT DO UPDATE ... RETURNING` touched, which includes both brand-new
+   * interactions and existing ones refreshed by a re-upload — see that insert's own comment
+   * for why "touched this run," not "brand-new only," is the honest thing to count once the
+   * insert stopped being a plain `DO NOTHING`.
+   */
+  interactionsLogged?: number;
+  /**
+   * Rows the engine isolated as unwritable and marked `import_job_rows.status = 'failed'`
+   * (see `writeWithNarrowing`/`onBadRow` in `import-engine.ts`). Distinct from both
+   * `skipped` (rows that parsed but had nothing to attach to) and `blockedByPlan` (rows
+   * refused by the contact cap): these are rows the database itself rejected, and
+   * isolating them is the whole point of chunk narrowing.
+   *
+   * Without this counter the isolation is invisible — a job that dropped 20 poison rows
+   * reports "completed, 480 created" and never mentions the 20, which is worse than the
+   * pre-narrowing behavior of failing loudly.
+   */
+  failedRows?: number;
   contactsEnriched?: number;
   eventsProcessed?: number;
   /** Contact ids touched during a multi-chunk messages import. */
@@ -680,11 +704,73 @@ export type OutlookContactRowPayload = {
   phone: string;
 };
 
+/**
+ * One resolved conversation from a LinkedIn Messages export, snapshotted once at parse
+ * time so the engine never re-parses the CSV or re-fetches contacts per conversation.
+ * `messages[].id` is a hash of (conversationId, date, content) computed at parse time —
+ * see `linkedInMessageExternalId` in `src/actions/imports.ts` — and is carried straight
+ * through to `interactions.externalId`, which is the entire dedupe mechanism for a
+ * re-imported CSV: `linkedinUrl: ""` marks a conversation with no resolvable LinkedIn
+ * profile, which the adapter's `identity()` turns into a skipped row.
+ */
+export type LinkedInMessageThreadRowPayload = {
+  kind: "linkedin_message_thread";
+  conversationId: string;
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  linkedinUrl: string;
+  /**
+   * `sentAt` is `null` — never a sentinel date — when the CSV's timestamp column could not
+   * be parsed. It used to be written as `new Date(0).toISOString()`, which reads downstream
+   * as a perfectly valid 1970-01-01: `messageDateRange` accepted it, so one unparseable
+   * message pinned the contact's `first_interaction_at` to the epoch, and because
+   * `bulkMergeContactsForUser` widens that column with `LEAST`, no later import could ever
+   * pull it back. `null` is excluded from the range instead, which is what "we don't know
+   * when this was sent" actually means.
+   */
+  messages: { id: string; body: string; sentAt: string | null }[];
+};
+
+/**
+ * One (calendar event, attendee) pair — the unit of work for a calendar import.
+ *
+ * Calendar ingest never creates contacts (`createsContacts: false` on the adapter): it only
+ * annotates people already in the network, matching each attendee against the duplicate
+ * index and logging a meeting where one matches. The adapter seam takes one identity per row
+ * (`identity(payload): DuplicateProbe | null`), and a calendar event has N attendees — rather
+ * than widen the seam to `identities(): DuplicateProbe[]` for this one consumer,
+ * `confirmCalendarImport` explodes each windowed event into one job row per (event, attendee)
+ * pair, organizer included. Progress therefore counts pairs, not events: a 100-event file
+ * with 3 attendees each is 300 rows.
+ *
+ * `eventUid` plus the contact id the engine resolves is what keys `interactions.externalId`
+ * (see `calendarMeetingExternalId` in `src/lib/import-adapters/calendar.ts`) — that pair, not
+ * `eventUid` alone, is what keeps N attendees of the same event from colliding on the
+ * `(user_id, external_id)` unique index.
+ */
+export type CalendarEventRowPayload = {
+  kind: "calendar_event";
+  eventUid: string;
+  summary: string;
+  description: string;
+  location: string;
+  start: string | null;
+  end: string | null;
+  attendeeName: string;
+  attendeeEmail: string;
+  /** Snapshotted once at ingest (from the confirm call's own option) so the per-row adapter
+   *  functions don't need any job-level state beyond the payload. */
+  createFollowUps: boolean;
+};
+
 export type ImportJobRowPayload =
   | LinkedInImportRowPayload
   | GmailSenderRowPayload
   | GoogleContactRowPayload
-  | OutlookContactRowPayload;
+  | OutlookContactRowPayload
+  | LinkedInMessageThreadRowPayload
+  | CalendarEventRowPayload;
 
 export function isGmailSenderRow(
   payload: ImportJobRowPayload
@@ -874,10 +960,33 @@ export const contactEmbeddings = pgTable(
   (t) => [
     index("embeddings_user_idx").on(t.userId),
     index("embeddings_contact_idx").on(t.contactId),
-    uniqueIndex("embeddings_user_contact_source_uidx").on(
+    /**
+     * Mirrors the hand-written `CREATE UNIQUE INDEX` in `src/db/index.ts` (both the PGlite
+     * migration body and the Neon `alters` list) and in
+     * `scripts/migrate-embedding-stale.ts`. All four must agree on name AND column list.
+     *
+     * Nothing at runtime reads this declaration — Orbit's migrations are hand-written SQL,
+     * deliberately, because `drizzle-kit push` drops the runtime-managed
+     * `embedding_vector` column. But `drizzle.config.ts` points `schema` at this file and
+     * `package.json` still ships `db:push`/`db:generate`, so a stale declaration here is a
+     * loaded gun: running either would recreate whatever this says against whatever
+     * `DATABASE_URL` resolves to.
+     *
+     * `source_id` is in the key because that is the real uniqueness contract.
+     * `upsertContactEmbedding` (`src/lib/search.ts`) keys its existence check on all four
+     * columns, and `calendar-sync.ts` writes one `"meeting"` row per meeting with a
+     * distinct `source_id`. Dropping it makes the migration's dedupe delete every meeting
+     * embedding but the newest per contact, and makes each later meeting write raise a
+     * unique violation that `upsertContactEmbedding`'s blanket `catch {}` swallows.
+     * `source_id` is nullable and Postgres indexes NULLs as distinct, so rows written
+     * without one stay unconstrained — matching the writer, which skips its existence
+     * check when no `source_id` is supplied.
+     */
+    uniqueIndex("embeddings_user_contact_source_id_uidx").on(
       t.userId,
       t.contactId,
-      t.sourceType
+      t.sourceType,
+      t.sourceId
     ),
   ]
 );

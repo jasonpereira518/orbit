@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   follow_up_status text DEFAULT 'none',
   ai_summary text,
   notes text,
+  embedding_stale_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -595,7 +596,7 @@ CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action,
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 10;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1113,8 +1114,18 @@ async function migratePglite(client: PGlite) {
 
   // Embedding staleness: imports flag contacts here instead of embedding inline, and a
   // separate backfill drains them. The dedupe is safe to re-run — it only ever deletes rows
-  // that lose the (user_id, contact_id, source_type) tiebreak, and once the unique index
-  // exists no more duplicates can be created for it to find.
+  // that lose the (user_id, contact_id, source_type, source_id) tiebreak, and once the
+  // unique index exists no more duplicates can be created for it to find.
+  //
+  // The key includes `source_id` because that is the real uniqueness contract:
+  // `upsertContactEmbedding` (src/lib/search.ts) keys its existence check on all four
+  // columns, and calendar-sync writes one `"meeting"` row per meeting with a distinct
+  // `source_id`. A three-column key would both delete every meeting embedding but the
+  // newest and make every subsequent meeting write raise a unique violation that
+  // `upsertContactEmbedding`'s catch swallows. `source_id` is nullable and Postgres
+  // indexes NULLs as distinct by default, so rows with a null `source_id` are simply
+  // unconstrained — which matches the writer, since `upsertContactEmbedding` skips its
+  // existence check entirely when no `source_id` is supplied.
   await ensureColumn(client, "contacts", "embedding_stale_at", "timestamptz");
 
   try {
@@ -1133,16 +1144,27 @@ async function migratePglite(client: PGlite) {
       WHERE a.user_id = b.user_id
         AND a.contact_id = b.contact_id
         AND a.source_type = b.source_type
+        AND a.source_id = b.source_id
         AND (a.created_at < b.created_at OR (a.created_at = b.created_at AND a.id < b.id))
     `);
   } catch {
     // Nothing to dedupe
   }
 
+  // An earlier revision of this migration created the same-named index on only three
+  // columns. Drop it by name before creating the correct one, or a database that already
+  // migrated keeps the over-strict key forever. Both statements are no-ops once the
+  // four-column index is in place.
+  try {
+    await client.exec(`DROP INDEX IF EXISTS embeddings_user_contact_source_uidx`);
+  } catch {
+    // Index may not exist
+  }
+
   try {
     await client.exec(
-      `CREATE UNIQUE INDEX IF NOT EXISTS embeddings_user_contact_source_uidx
-       ON contact_embeddings(user_id, contact_id, source_type)`
+      `CREATE UNIQUE INDEX IF NOT EXISTS embeddings_user_contact_source_id_uidx
+       ON contact_embeddings(user_id, contact_id, source_type, source_id)`
     );
   } catch {
     // Index may already exist
@@ -1410,8 +1432,17 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     ...ADMIN_V2_STATEMENTS,
     // Embedding staleness: imports flag contacts here instead of embedding inline, and a
     // separate backfill drains them. The dedupe is safe to re-run — it only ever deletes
-    // rows that lose the (user_id, contact_id, source_type) tiebreak, and once the unique
-    // index exists no more duplicates can be created for it to find.
+    // rows that lose the (user_id, contact_id, source_type, source_id) tiebreak, and once
+    // the unique index exists no more duplicates can be created for it to find.
+    //
+    // `source_id` is part of the key because that is the real uniqueness contract:
+    // `upsertContactEmbedding` keys its existence check on all four columns, and
+    // calendar-sync writes one `"meeting"` row per meeting with a distinct `source_id`.
+    // The DROP is load-bearing: an earlier revision created this same-named index on only
+    // three columns, which would delete every meeting embedding but the newest and then
+    // make each subsequent meeting write raise a swallowed unique violation. NULL
+    // `source_id`s index as distinct (Postgres default), so unkeyed rows stay
+    // unconstrained — matching the writer, which skips its existence check without one.
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS embedding_stale_at timestamptz`,
     `CREATE INDEX IF NOT EXISTS contacts_embedding_stale_idx
      ON contacts(user_id) WHERE embedding_stale_at IS NOT NULL`,
@@ -1420,9 +1451,11 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
      WHERE a.user_id = b.user_id
        AND a.contact_id = b.contact_id
        AND a.source_type = b.source_type
+       AND a.source_id = b.source_id
        AND (a.created_at < b.created_at OR (a.created_at = b.created_at AND a.id < b.id))`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS embeddings_user_contact_source_uidx
-     ON contact_embeddings(user_id, contact_id, source_type)`,
+    `DROP INDEX IF EXISTS embeddings_user_contact_source_uidx`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS embeddings_user_contact_source_id_uidx
+     ON contact_embeddings(user_id, contact_id, source_type, source_id)`,
   ];
 
   for (const statement of alters) {

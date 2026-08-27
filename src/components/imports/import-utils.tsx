@@ -13,9 +13,6 @@ export type ImportProgressState = {
   startedAt: number;
 };
 
-export const IMPORT_BATCH_SIZE = 8;
-export const CALENDAR_BATCH_SIZE = 12;
-
 export async function readCsvOrZipMessages(file: File): Promise<{
   text: string;
   fileName: string;
