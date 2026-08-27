@@ -24,6 +24,18 @@
  *    re-throws anything else — the DB row is already in its final state by the time
  *    `revalidatePath` runs, which is what every assertion here checks.
  *
+ * !!! WARNING — THIS SCRIPT WIPES ALL LOCAL "demo-user" DATA ON EVERY RUN !!!
+ * "demo-user" is not a private test fixture — it's the shared identity any developer
+ * running the app locally without Clerk lands in, and the one `scripts/seed-demo.ts`,
+ * `scripts/seed-graph-fixture.ts`, and `scripts/seed-scale.ts` seed persistent data under.
+ * `reset()` below deletes all of that user's contacts/imports/user_settings, and running
+ * this script leaves demo-user with none of it left. If you had local demo data, restore
+ * it afterward with `npm run db:seed` (or `db:seed:graph`).
+ * This dependence on "demo-user" is temporary: Task 2 switches the processor to call
+ * `createContactsBulkForUser`/`updateContactForUser` with `importRow.userId` directly
+ * instead of going through `requireUserId()`, which removes the need for demo mode
+ * entirely and lets `USER` become a private, non-destructive literal again.
+ *
  * Run: NODE_ENV=development npx tsx scripts/smoke-import-engine.ts
  */
 // `NODE_ENV` is typed read-only (Next's global augmentation); route the write through an
@@ -66,6 +78,9 @@ async function runJob(importId: string) {
 }
 
 async function reset() {
+  // Destructive on purpose, and destructive of shared data: USER is "demo-user" (see file
+  // header), so this wipes any local demo seed data every time this script runs. Temporary
+  // until Task 2 removes the demo-mode dependence.
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(imports).where(eq(imports.userId, USER));
@@ -132,30 +147,27 @@ async function main() {
   console.log("Import behavior characterization (pglite)...");
 
   // --- all new rows ---
-  // NOTE: 120 > FREE_CONTACT_LIMIT (100). The brief assumed all 120 fresh rows would be
-  // created on a fresh free-plan account, but the plan cap applies here exactly as it
-  // does in the dedicated cap scenario below: a fresh account only has 100 rows of
-  // headroom, so 100 are created and the remaining 20 are blocked by plan, not created.
-  // This is corrected behavior, not a relaxed assertion — see task-1-report.md.
+  // Kept under FREE_CONTACT_LIMIT (100) on purpose: this scenario's job is to verify plain,
+  // uncapped bulk creation, distinctly from the dedicated cap-boundary scenario below
+  // (fixture(140)). The brief originally used fixture(120), which is *above* the cap and
+  // so silently turned this into a second, smaller copy of the cap scenario — see
+  // task-1-report.md for why that was wrong and how this was corrected.
   await reset();
-  let id = await seedJob(fixture(120));
+  let id = await seedJob(fixture(50));
   await runJob(id);
   let out = await outcome(id);
-  check("120 fresh rows complete", out.status === "completed", JSON.stringify(out));
-  check("120 fresh rows create up to the free cap", out.created === 100, JSON.stringify(out));
-  check("120 fresh rows none merged", out.updated === 0, JSON.stringify(out));
-  check("120 fresh rows: the other 20 are blocked by plan", out.blockedByPlan === 20, JSON.stringify(out));
+  check("50 fresh rows complete", out.status === "completed", JSON.stringify(out));
+  check("50 fresh rows all created", out.created === 50, JSON.stringify(out));
+  check("50 fresh rows none merged", out.updated === 0, JSON.stringify(out));
+  check("50 fresh rows none blocked", out.blockedByPlan === 0, JSON.stringify(out));
 
   // --- re-importing the same file merges instead of duplicating ---
-  // Only the 100 rows actually created above have a duplicate to match against; the other
-  // 20 were never created, so re-importing them is indistinguishable from importing them
-  // for the first time — they hit the (still full) cap again rather than merging.
-  id = await seedJob(fixture(120));
+  id = await seedJob(fixture(50));
   await runJob(id);
   out = await outcome(id);
-  check("re-import merges the 100 that exist", out.updated === 100, JSON.stringify(out));
+  check("re-import merges all 50", out.updated === 50, JSON.stringify(out));
   check("re-import creates none", out.created === 0, JSON.stringify(out));
-  check("re-import blocks the 20 that were never created", out.blockedByPlan === 20, JSON.stringify(out));
+  check("re-import blocks none", out.blockedByPlan === 0, JSON.stringify(out));
 
   // --- rows with no usable name are skipped, not failed ---
   await reset();
