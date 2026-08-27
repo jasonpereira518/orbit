@@ -19,6 +19,22 @@
 - **No test framework.** Tests are `scripts/smoke-*.ts` run with `npx tsx`, using the local `check(label, condition, detail?)` helper pattern from `scripts/smoke-entitlements.ts`.
 - **Verification gate for every commit:** `npx tsc --noEmit` exits 0, and `npm run lint` does not increase the existing error count. Note: a worktree has no `node_modules` of its own — symlink the main checkout's, or `tsc`/`eslint` silently no-op and exit 0.
 - **Behavior is frozen.** Every phase must leave `created / updated / skipped / blockedByPlan` counts identical for the same input. Task 1 exists to prove that.
+- **Smoke scripts must assert their environment, not assume it.** Every `scripts/smoke-import-*.ts`
+  sets dummy Clerk keys, then asserts `isClerkConfigured() === true` and `isDemoMode() === false`
+  at the top of `main()`. `isDemoMode()` is `!isClerkConfigured() && NODE_ENV === "development"`,
+  so without the assertion an environment change silently returns the suite to demo mode's
+  `demo-user` and every scenario passes vacuously — an invisible failure. Established in Task 2.
+- **Smoke scripts must `delete process.env.DATABASE_URL`** after the dotenv `config()` calls.
+  These scripts call `reset()` helpers that hard-delete a user's contacts; without this they run
+  against whatever `DATABASE_URL` points at. This worktree's `.env.local` happens to lack one, but
+  a sibling worktree's points at Neon — the exposure is one `vercel env pull` away. Established in
+  Task 2.
+- **Never hardcode `FREE_CONTACT_LIMIT`.** Derive every cap-dependent fixture size from the
+  constant itself (`FREE_CONTACT_LIMIT + 40` for the over-cap case). It is `100` on this branch and
+  `500` on `origin/main`, so a hardcoded test freezes the wrong thing and breaks on merge.
+  Established in Task 2.
+- **This branch is ~11 commits behind `origin/main`** and deliberately stays there until after
+  Task 15. Re-check `origin/main` before opening a PR.
 - Preserved invariants throughout: plan-cap headroom admits from the front and marks overflow rows `skipped` with `PLAN_LIMIT_ROW_REASON`; per-row closeness scoring stays skipped; `recalibrateCloseness` runs exactly once at job end; the `PER_CONTACT_REVALIDATE_LIMIT` guard stays.
 
 ## File Structure
@@ -602,7 +618,13 @@ export async function bulkMergeContactsForUser(
 
 - [ ] **Step 2: Use it in the processor**
 
-Replace the `for (const item of toUpdate) { await updateContact(...) }` loop in `src/lib/import-job-processor.ts` with:
+**Note on what Task 2 already changed:** that loop now calls `updateContactForUser(userId, ...)`,
+not `updateContact(...)` — Task 2 switched both write call sites off the `requireUserId()`-based
+wrappers to fix a production bug where import resumption failed with no Clerk session. The loop is
+still per-row, which is what you are removing; only the callee's name and its first argument differ
+from what is written below.
+
+Replace the `for (const item of toUpdate) { await updateContactForUser(...) }` loop in `src/lib/import-job-processor.ts` with:
 
 ```ts
       if (toUpdate.length > 0) {
@@ -620,7 +642,7 @@ Replace the `for (const item of toUpdate) { await updateContact(...) }` loop in 
       }
 ```
 
-Drop the now-unused `updateContact` import. Note the merge patch no longer passes `skipCloseness` / `skipEmbedding` / `skipRevalidate` — the bulk path does none of those things by construction, which is the point. The comment explaining why closeness is deferred belongs on the recalibration call at the end of the job; move it there if it was attached to the old loop.
+Drop the now-unused `updateContactForUser` import if nothing else in the file uses it. Note the merge patch no longer passes `skipCloseness` / `skipEmbedding` / `skipRevalidate` — the bulk path does none of those things by construction, which is the point. The comment explaining why closeness is deferred belongs on the recalibration call at the end of the job; move it there if it was attached to the old loop.
 
 - [ ] **Step 3: Verify**
 
@@ -1655,7 +1677,10 @@ git commit -m "fix: claim import rows before writing so interrupted chunks resum
   await reset();
   const poisoned = fixture(30);
   // A value the database will refuse. The other 29 rows are fine.
-  poisoned[7].email = "bad value@example.com";
+  // NOT a merely odd-looking string: Postgres accepts spaces and unusual characters in
+  // `text` happily, and a test whose poison is inert passes vacuously while reporting that
+  // chunk narrowing works. A NUL byte is the reliable choice — Postgres rejects it in text.
+  poisoned[7].firstName = `bad${String.fromCharCode(0)}name`;
   id = await seedJob(poisoned);
   await runLinkedInImportJob(id);
   out = await outcome(id);
@@ -1668,7 +1693,10 @@ git commit -m "fix: claim import rows before writing so interrupted chunks resum
 ```bash
 npx tsx scripts/smoke-import-engine.ts
 ```
-Expected: FAIL with `status === "failed"` — the chunk's insert threw and `failImport` caught it at the top level. If the NUL byte does not actually error under PGlite, substitute something that does (an oversized `first_name`, for instance); the point is a row the database refuses, not a specific value.
+Expected: FAIL with `status === "failed"` — the chunk's insert threw and `failImport` caught it at the top level. **You must confirm the poison row genuinely fails before writing the assertions.** Insert that one
+row on its own and watch it error. If the NUL byte does not error under PGlite, find a value that
+does. A poison-row test whose poison is inert is worse than no test: it reports a safety property
+that was never exercised, and this test is the only thing standing behind chunk narrowing.
 
 - [ ] **Step 3: Add chunk narrowing**
 
