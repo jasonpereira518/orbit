@@ -1,7 +1,7 @@
-import { and, count, inArray, lt, eq } from "drizzle-orm";
+import { and, count, inArray, isNotNull, lt, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
-import { errorEvents, imports, usageEvents } from "@/db/schema";
+import { contacts, errorEvents, imports, usageEvents } from "@/db/schema";
 import {
   RESUMABLE_IMPORT_TYPES,
   runImportJobById,
@@ -13,6 +13,7 @@ import {
 } from "@/lib/cron-runs";
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { findStaleCohorts } from "@/lib/closeness-materialize";
+import { runEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { backfillEmbeddingVectors, neonClient } from "@/db";
 
 export const maxDuration = 300;
@@ -35,6 +36,9 @@ const USAGE_EVENT_RETENTION_DAYS = 180;
 
 /** Networks recalibrated per run. Bounded so one huge orbit cannot eat the invocation. */
 const RECALIBRATE_BATCH = 25;
+
+/** Users whose stale embeddings are drained per run. Backstop only — see the try block below. */
+const EMBED_BACKFILL_USERS = 10;
 
 /**
  * Shorter than usage events, because the two answer different questions: usage feeds cost
@@ -88,6 +92,7 @@ export async function GET(request: Request) {
     errorEventsPruned: 0,
     cohortsRecalibrated: 0,
     embeddingsBackfilled: 0,
+    embeddingsGenerated: 0,
   };
 
   try {
@@ -154,6 +159,22 @@ export async function GET(request: Request) {
       // vector search until it is picked up here.
       const neonSql = neonClient();
       if (neonSql) stats.embeddingsBackfilled = await backfillEmbeddingVectors(neonSql);
+    } catch {
+      status = "partial";
+    }
+
+    try {
+      // Backstop only — imports kick the backfill directly on completion. This catches
+      // users whose kick was lost along with the invocation that sent it.
+      const staleUsers = await db
+        .selectDistinct({ userId: contacts.userId })
+        .from(contacts)
+        .where(isNotNull(contacts.embeddingStaleAt))
+        .limit(EMBED_BACKFILL_USERS);
+      for (const { userId: staleUser } of staleUsers) {
+        const res = await runEmbeddingBackfill(staleUser).catch(() => null);
+        stats.embeddingsGenerated += res?.embedded ?? 0;
+      }
     } catch {
       status = "partial";
     }
