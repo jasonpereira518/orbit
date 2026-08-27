@@ -35,6 +35,7 @@ import {
 import {
   mapCalendarCsvRow,
   parseIcsEvents,
+  peopleFromEvent,
   windowCalendarEvents,
   type ParsedCalendarEvent,
 } from "@/lib/calendar-import";
@@ -223,6 +224,16 @@ export type ImportJobStatus = {
   contactsUpdated: number;
   duplicatesFound: number;
   errorMessage: string | null;
+  /**
+   * The engine's own counters (`ImportStats.interactionsLogged`/`remindersCreated` —
+   * see `src/db/schema.ts`) for how many interaction/reminder rows this job's bulk inserts
+   * actually wrote. Surfaced here so the poll UI can report the number a calendar or
+   * LinkedIn-messages import's user actually cares about — meetings/messages logged — rather
+   * than only `contactsCreated`/`contactsUpdated`, which for a `createsContacts: false`
+   * import like calendar never move the "created" half at all.
+   */
+  interactionsLogged: number;
+  remindersCreated: number;
 };
 
 /** Read-only status poll for a server-owned import job (see `startLinkedInImport`). */
@@ -243,6 +254,8 @@ export async function getImportJobStatus(importId: string): Promise<ImportJobSta
     contactsUpdated: row.contactsUpdated ?? 0,
     duplicatesFound: row.duplicatesFound ?? 0,
     errorMessage: row.errorMessage,
+    interactionsLogged: row.stats?.interactionsLogged ?? 0,
+    remindersCreated: row.stats?.remindersCreated ?? 0,
   };
 }
 
@@ -419,12 +432,6 @@ export async function listImports() {
     where: eq(imports.userId, userId),
     orderBy: (i, { desc }) => [desc(i.createdAt)],
   });
-}
-
-function peopleFromEvent(event: ParsedCalendarEvent) {
-  const people: Array<{ name: string; email: string }> = [...event.attendees];
-  if (event.organizer) people.push(event.organizer);
-  return people.filter((p) => p.email || p.name);
 }
 
 export async function previewCalendarImport(payload: {

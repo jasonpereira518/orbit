@@ -831,6 +831,19 @@ async function main() {
     `rows ${meetings?.value}`
   );
 
+  // `calendarRow()` defaults `createFollowUps` to false, and every row above used that
+  // default — closes the gap where a broken gate that ignored the flag entirely and always
+  // created reminders would still pass every other check in this file.
+  const [remindersWithFollowUpsOff] = await db5
+    .select({ value: count() })
+    .from(reminders)
+    .where(eq(reminders.userId, USER));
+  check(
+    "createFollowUps: false creates no reminders",
+    (remindersWithFollowUpsOff?.value ?? 0) === 0,
+    `rows ${remindersWithFollowUpsOff?.value}`
+  );
+
   // Re-uploading the same file must not double-log any meeting.
   id = await seedJob(calendarRows, "calendar_ics");
   await runJob(id);
@@ -842,6 +855,88 @@ async function main() {
     "re-upload logs no duplicate meetings",
     (meetingsAgain?.value ?? 0) === 3,
     `rows ${meetingsAgain?.value}`
+  );
+
+  // --- a re-synced event whose time changed updates the interaction, not just dedupes it ---
+  // Task 15's review caught that the engine's original `onConflictDoNothing()` kept the
+  // *stale* row on a conflict — a real regression vs. the per-row importer this task
+  // replaced, which explicitly updated `interactionDate` on a repeat. The engine now uses
+  // `onConflictDoUpdate` on `(user_id, external_id)`, so the same event re-uploaded with a
+  // different `start` must move the stored `interactionDate`, not leave it frozen.
+  const rescheduled = calendarRow({
+    eventUid: "evt-known",
+    summary: "Coffee (rescheduled)",
+    start: "2024-04-08T15:00:00Z",
+    attendeeName: "First0 Last0",
+    attendeeEmail: "person0@example.com",
+  });
+  id = await seedJob([rescheduled], "calendar_ics");
+  await runJob(id);
+  const [meetingsAfterReschedule] = await db5
+    .select({ value: count() })
+    .from(interactions)
+    .where(eq(interactions.userId, USER));
+  check(
+    "rescheduling still logs no duplicate row",
+    (meetingsAfterReschedule?.value ?? 0) === 3,
+    `rows ${meetingsAfterReschedule?.value}`
+  );
+  const rescheduledInteraction = await db5.query.interactions.findFirst({
+    where: eq(interactions.externalId, "cal:evt-known:" + (await db5.query.contacts.findFirst({
+      where: and(eq(contacts.userId, USER), eq(contacts.fullName, "First0 Last0")),
+    }))?.id),
+  });
+  check(
+    "the interaction date advanced to the rescheduled time, not the original",
+    rescheduledInteraction?.interactionDate?.toISOString().startsWith("2024-04-08") ?? false,
+    `interactionDate: ${rescheduledInteraction?.interactionDate}`
+  );
+  check(
+    "the interaction content refreshed too",
+    rescheduledInteraction?.aiSummary === "Coffee (rescheduled)",
+    `aiSummary: ${rescheduledInteraction?.aiSummary}`
+  );
+
+  // --- two rows in the same chunk resolving to the same contact must not fail the import ---
+  // `peopleFromEvent`'s dedupe (src/lib/calendar-import.ts) only catches attendee entries
+  // that resolve to the *same* identity key (same email, or same normalized name — see
+  // `personIdentityKey`). It does not, and structurally cannot, catch two entries that
+  // resolve to the same *contact* by two different routes — one email-only, one name-only —
+  // both matching the same existing person. That produces two job rows with the same
+  // `cal:eventUid:contactId` externalId in one chunk, which `ON CONFLICT DO UPDATE` (unlike
+  // the `DO NOTHING` it replaced) errors on unless the engine dedupes its own batch first.
+  const sameContactTwoWays = [
+    calendarRow({
+      eventUid: "evt-two-routes",
+      summary: "Ambiguous attendee",
+      start: "2024-04-05T15:00:00Z",
+      attendeeName: "",
+      attendeeEmail: "person0@example.com",
+    }),
+    calendarRow({
+      eventUid: "evt-two-routes",
+      summary: "Ambiguous attendee",
+      start: "2024-04-05T15:00:00Z",
+      attendeeName: "First0 Last0",
+      attendeeEmail: "",
+    }),
+  ];
+  id = await seedJob(sameContactTwoWays, "calendar_ics");
+  await runJob(id);
+  out = await outcome(id);
+  check(
+    "an event matching the same contact two different ways still completes",
+    out.status === "completed",
+    JSON.stringify(out)
+  );
+  const [meetingsAfterAmbiguous] = await db5
+    .select({ value: count() })
+    .from(interactions)
+    .where(eq(interactions.userId, USER));
+  check(
+    "it logs exactly one meeting, not two",
+    (meetingsAfterAmbiguous?.value ?? 0) === meetingsAfterReschedule!.value! + 1,
+    `before ${meetingsAfterReschedule?.value}, after ${meetingsAfterAmbiguous?.value}`
   );
 
   // --- the free plan cap is never consulted, even when it's already exhausted ---
@@ -890,8 +985,8 @@ async function main() {
     .where(eq(interactions.userId, USER));
   check(
     "the matched attendee's meeting still logs with the cap exhausted",
-    (meetingsAfterCapFill?.value ?? 0) === 4,
-    `rows ${meetingsAfterCapFill?.value}`
+    (meetingsAfterCapFill?.value ?? 0) === meetingsAfterAmbiguous!.value! + 1,
+    `before ${meetingsAfterAmbiguous?.value}, after ${meetingsAfterCapFill?.value}`
   );
 
   // --- calendar_csv runs the same adapter as calendar_ics ---

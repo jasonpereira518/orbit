@@ -228,6 +228,34 @@ async function pollServerOwnedImportJob(
 }
 
 /**
+ * Builds the completion toast text from a finished job's counters. Generic across every
+ * server-owned kind rather than switching on `kind` — `contactsCreated`/`contactsUpdated`
+ * alone told the whole story for LinkedIn/Google/Outlook contacts, but say nothing useful
+ * for calendar (`createsContacts: false` — `contactsCreated` is always 0) or LinkedIn
+ * messages (the number someone actually cares about is messages logged, not contacts
+ * touched). `interactionsLogged`/`remindersCreated` come from `ImportStats` (see
+ * `src/db/schema.ts`) via `getImportJobStatus`, and are appended only when nonzero so a
+ * plain contacts import's message is unchanged.
+ */
+function completionMessage(status: ImportJobStatus): string {
+  const parts = [
+    `${status.contactsCreated} created`,
+    `${status.contactsUpdated} updated`,
+  ];
+  if (status.interactionsLogged > 0) {
+    parts.push(
+      `${status.interactionsLogged} interaction${status.interactionsLogged === 1 ? "" : "s"} logged`
+    );
+  }
+  if (status.remindersCreated > 0) {
+    parts.push(
+      `${status.remindersCreated} reminder${status.remindersCreated === 1 ? "" : "s"} created`
+    );
+  }
+  return `Imported: ${parts.join(", ")}`;
+}
+
+/**
  * Starts a server-owned import job (LinkedIn connections, Google contacts, Outlook
  * contacts — anything the resumable engine drives) and polls it to completion, updating
  * the shared snapshot as it goes. `start` is expected to insert the `imports`/
@@ -316,7 +344,7 @@ async function runServerOwnedImportJob(
     kind,
     status: "completed",
     progress: null,
-    resultMessage: `Imported: ${status.contactsCreated} created, ${status.contactsUpdated} updated`,
+    resultMessage: completionMessage(status),
   });
 }
 
@@ -331,11 +359,17 @@ export function startImportJob(input: ImportJobInput) {
 
   cancelJobId = null;
   const jobId = `import-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  // Calendar has no `ids` — a whole file is confirmed at once, not a selected subset — so
-  // it seeds a placeholder total of 1 "event" here; `runServerOwnedImportJob` corrects it to
-  // the server's real row count (pairs, not events — see `CalendarEventRowPayload`) right
-  // after `start()` resolves, same as every other kind's placeholder gets corrected.
-  const label = input.kind === "calendar" ? "event" : input.ids.length === 1 ? "person" : "people";
+  // Calendar has no `ids` — a whole file is confirmed at once, not a selected subset — so it
+  // seeds a placeholder total of 1 here; `runServerOwnedImportJob` corrects it to the
+  // server's real row count right after `start()` resolves, same as every other kind's
+  // placeholder gets corrected. The label is "attendees", not "events": `totalRows` counts
+  // (event, attendee) pairs (see `CalendarEventRowPayload`'s doc comment), so an "events"
+  // label would understate the total for any multi-attendee file — a 100-event file with 3
+  // attendees each is 300 rows, not 100. Fixed at the plural, same simplification every
+  // other kind's label already makes (no live re-pluralization as `total` changes) — the
+  // singular ("1 attendee") only shows for the placeholder tick before the real total lands.
+  const label =
+    input.kind === "calendar" ? "attendees" : input.ids.length === 1 ? "person" : "people";
   const total = input.kind === "calendar" ? 1 : input.ids.length;
 
   // Fire-and-forget — callers should not await completion for navigation safety.
@@ -370,7 +404,7 @@ export function startImportJob(input: ImportJobInput) {
       }
 
       if (input.kind === "calendar") {
-        await runServerOwnedImportJob(jobId, "calendar", "event", 1, () =>
+        await runServerOwnedImportJob(jobId, "calendar", label, total, () =>
           confirmCalendarImport({
             kind: input.calendarKind,
             text: input.text,

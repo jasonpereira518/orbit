@@ -578,6 +578,18 @@ export type ImportStats = {
   messagesImported?: number;
   meetingsLogged?: number;
   remindersCreated?: number;
+  /**
+   * Interactions the engine's bulk insert actually wrote this run (see
+   * `ImportAdapter.interactions` in `import-engine.ts`) — every adapter that produces
+   * interaction rows shares this one counter rather than each getting its own per-type field
+   * the way `messagesImported`/`meetingsLogged` used to (and, once an import type moved onto
+   * the engine, silently stopped being written — see those two fields' history). Counts rows
+   * the insert's `ON CONFLICT DO UPDATE ... RETURNING` touched, which includes both brand-new
+   * interactions and existing ones refreshed by a re-upload — see that insert's own comment
+   * for why "touched this run," not "brand-new only," is the honest thing to count once the
+   * insert stopped being a plain `DO NOTHING`.
+   */
+  interactionsLogged?: number;
   contactsEnriched?: number;
   eventsProcessed?: number;
   /** Contact ids touched during a multi-chunk messages import. */

@@ -301,16 +301,28 @@ async function markRowFailed(row: PendingRow, err: unknown) {
  * time-budget return exits the function before the loop can break into the completion
  * path — so this constraint holds without extra bookkeeping.
  */
+/** The running totals `accumulatedStats` folds into a job's persisted `stats`. Grouped into
+ *  one object rather than four positional args, now that the reminders/interactions counts
+ *  (Task 15's review) joined `skipped`/`blockedByPlan` — a positional signature that already
+ *  needed a doc comment to keep its call sites straight is the wrong shape to keep growing. */
+type RunningTotals = {
+  skipped: number;
+  blockedByPlan: number;
+  interactionsLogged: number;
+  remindersCreated: number;
+};
+
 function accumulatedStats(
   latestStats: ImportStats,
   jobStart: number,
-  skippedTotal: number,
-  blockedByPlanTotal: number
+  totals: RunningTotals
 ): ImportStats {
   return {
     ...latestStats,
-    skipped: skippedTotal,
-    blockedByPlan: blockedByPlanTotal,
+    skipped: totals.skipped,
+    blockedByPlan: totals.blockedByPlan,
+    interactionsLogged: totals.interactionsLogged,
+    remindersCreated: totals.remindersCreated,
     durationMs: (latestStats.durationMs ?? 0) + (Date.now() - jobStart),
     statements: (latestStats.statements ?? 0) + stopQueryCount(),
   };
@@ -370,6 +382,8 @@ export async function runImportJob(importId: string): Promise<void> {
     // systemic-fault case `MAX_ROW_FAILURES_PER_CHUNK` exists to catch.
     let skippedTotal = importRow.stats?.skipped ?? 0;
     let blockedByPlanTotal = importRow.stats?.blockedByPlan ?? 0;
+    let interactionsLoggedTotal = importRow.stats?.interactionsLogged ?? 0;
+    let remindersCreatedTotal = importRow.stats?.remindersCreated ?? 0;
     // Refreshed every loop pass from the row this job's own writes are updating, so the
     // final completion update below folds in whatever another process wrote to `stats`
     // (e.g. Gmail-scan-style concurrent fields) instead of the snapshot from job start,
@@ -397,7 +411,12 @@ export async function runImportJob(importId: string): Promise<void> {
       await failImport(
         importId,
         err,
-        accumulatedStats(latestStats, jobStart, skippedTotal, blockedByPlanTotal)
+        accumulatedStats(latestStats, jobStart, {
+          skipped: skippedTotal,
+          blockedByPlan: blockedByPlanTotal,
+          interactionsLogged: interactionsLoggedTotal,
+          remindersCreated: remindersCreatedTotal,
+        })
       );
       return;
     }
@@ -424,7 +443,12 @@ export async function runImportJob(importId: string): Promise<void> {
           await db
             .update(imports)
             .set({
-              stats: accumulatedStats(latestStats, jobStart, skippedTotal, blockedByPlanTotal),
+              stats: accumulatedStats(latestStats, jobStart, {
+                skipped: skippedTotal,
+                blockedByPlan: blockedByPlanTotal,
+                interactionsLogged: interactionsLoggedTotal,
+                remindersCreated: remindersCreatedTotal,
+              }),
               updatedAt: new Date(),
             })
             .where(eq(imports.id, importId));
@@ -628,22 +652,37 @@ export async function runImportJob(importId: string): Promise<void> {
 
         // One insert for the whole chunk, not one per row: an importer that logs a meeting or
         // a message per row is exactly the shape that made this pipeline per-row in the first
-        // place. `onConflictDoNothing` leans on the soft-unique (user_id, external_id) index
-        // the interactions table already carries for import dedupe, so a retried chunk
-        // re-inserting rows it already wrote is a no-op rather than a failed import.
+        // place. Targets the soft-unique (user_id, external_id) index the interactions table
+        // already carries for import dedupe, so a retried chunk re-inserting rows it already
+        // wrote updates them in place rather than failing or silently ignoring new data.
         //
-        // Untargeted `onConflictDoNothing()` keeps the *stale* row on a conflict rather than
-        // updating it — deliberately left that way here (carried from Task 10's review, and
-        // re-examined for the calendar adapter added in Task 15, the first `createsContacts:
-        // false` consumer of this insert). For calendar specifically: a re-synced event whose
-        // *time* changed keeps the old interaction date instead of picking up the new one.
-        // Accepted for the same reason the LinkedIn messages adapter accepted the equivalent
-        // gap in Task 14 — this is a one-time file upload, not a live sync (Orbit already has
-        // a separate live calendar-subscription sync path, `calendar-sync.ts`, for that case),
-        // so "re-upload the exact same export" is the only re-run this path actually has to
-        // get right, and it does (see the smoke test's "re-upload logs no duplicate meeting").
-        // An upload where the *same* event's time silently changed between two uploads of
-        // what's nominally the same file is not a scenario worth an UPSERT for.
+        // `onConflictDoUpdate`, not `onConflictDoNothing` — Task 10 originally left this
+        // untargeted-DoNothing (keeping the *stale* row on a conflict), and Task 15's review
+        // caught that this was a real regression for calendar specifically: the per-row
+        // importer it replaced had an explicit `if (prior) -> UPDATE` branch, so a re-synced
+        // event whose *time* changed used to pick up the new date and now didn't. Fixed by
+        // updating on conflict instead of re-documenting the gap.
+        //
+        // Verified safe for the other `interactions()` producer, LinkedIn messages: its
+        // `externalId` (`li-msg:conv:date:hash(content)` — see `linkedInMessageExternalId` in
+        // `src/actions/imports.ts`) is itself a function of the date and content, so a message
+        // whose date or content changed produces a *different* id and never conflicts at all
+        // — it's a plain insert. The only way to hit the conflict branch for messages is a
+        // byte-identical re-import, where `DO UPDATE` writes back the exact values already
+        // there — a genuine no-op (`interactions` has no `updated_at` column for this to even
+        // touch). The messages re-import scenario in `smoke-import-engine.ts` (interaction
+        // count unchanged across two runs) still passes with this change, confirming it.
+        //
+        // `targetWhere` mirrors the partial index's own `WHERE external_id IS NOT NULL` —
+        // Postgres requires the ON CONFLICT clause to match a partial unique index's
+        // predicate exactly, or it won't recognize the index as a valid arbiter.
+        //
+        // `.returning()` feeds `interactionsLoggedTotal` below (see its own comment) — every
+        // row DO UPDATE touches is returned, whether it inserted or updated, so the count
+        // reflects "interactions this run wrote," not "brand-new rows only." (Called bare, not
+        // `.returning({ id })` — passing an explicit field selector here defeats Drizzle's
+        // overload resolution after `.onConflictDoUpdate()` in this TS version; bare is
+        // functionally identical for a count, just returns every column instead of one.)
         if (adapter.interactions) {
           const interactionRows: InteractionInsert[] = [];
           for (const row of pendingRows) {
@@ -654,7 +693,43 @@ export async function runImportJob(importId: string): Promise<void> {
             );
           }
           if (interactionRows.length > 0) {
-            await db.insert(interactions).values(interactionRows).onConflictDoNothing();
+            // `ON CONFLICT DO UPDATE` — unlike the `DO NOTHING` this replaced — errors if a
+            // single INSERT's own VALUES list would affect the same conflict target twice
+            // ("ON CONFLICT DO UPDATE command cannot affect row a second time"), rather than
+            // silently letting the second row's insert be swallowed. Two rows in this same
+            // chunk *can* share an externalId: for calendar, two attendee entries for one
+            // event that don't share an exact resolved identity (e.g. one email-only, one
+            // name-only — see `personIdentityKey` in `calendar-import.ts` for that limit) can
+            // still both match the *same* existing contact via the duplicate index, producing
+            // the same `cal:eventUid:contactId`. Deduping here (last one in row order wins)
+            // keeps the batch always valid without a per-row existence check; it's a
+            // safety net for adapters, not a substitute for deduping at the source the way
+            // `peopleFromEvent` does for calendar's actual, expected case (the organizer also
+            // listed as an attendee).
+            const byExternalId = new Map<string, InteractionInsert>();
+            const noExternalId: InteractionInsert[] = [];
+            for (const row of interactionRows) {
+              if (row.externalId) byExternalId.set(row.externalId, row);
+              else noExternalId.push(row);
+            }
+            const dedupedInteractionRows = [...byExternalId.values(), ...noExternalId];
+
+            const loggedInteractions = await db
+              .insert(interactions)
+              .values(dedupedInteractionRows)
+              .onConflictDoUpdate({
+                target: [interactions.userId, interactions.externalId],
+                targetWhere: sql`${interactions.externalId} is not null`,
+                set: {
+                  interactionDate: sql`excluded.interaction_date`,
+                  rawNotes: sql`excluded.raw_notes`,
+                  aiSummary: sql`excluded.ai_summary`,
+                  topics: sql`excluded.topics`,
+                  source: sql`excluded.source`,
+                },
+              })
+              .returning();
+            interactionsLoggedTotal += loggedInteractions.length;
           }
         }
 
@@ -701,7 +776,11 @@ export async function runImportJob(importId: string): Promise<void> {
               (r) => !existingKeys.has(`${r.contactId}::${r.description ?? ""}`)
             );
             if (newReminders.length > 0) {
-              await db.insert(reminders).values(newReminders);
+              const insertedReminders = await db
+                .insert(reminders)
+                .values(newReminders)
+                .returning();
+              remindersCreatedTotal += insertedReminders.length;
             }
           }
         }
@@ -759,6 +838,8 @@ export async function runImportJob(importId: string): Promise<void> {
               ...latestStats,
               skipped: skippedTotal,
               blockedByPlan: blockedByPlanTotal,
+              interactionsLogged: interactionsLoggedTotal,
+              remindersCreated: remindersCreatedTotal,
             },
             errorMessage: null,
             updatedAt: new Date(),
@@ -769,7 +850,12 @@ export async function runImportJob(importId: string): Promise<void> {
       await failImport(
         importId,
         err,
-        accumulatedStats(latestStats, jobStart, skippedTotal, blockedByPlanTotal)
+        accumulatedStats(latestStats, jobStart, {
+          skipped: skippedTotal,
+          blockedByPlan: blockedByPlanTotal,
+          interactionsLogged: interactionsLoggedTotal,
+          remindersCreated: remindersCreatedTotal,
+        })
       );
       return;
     }
@@ -778,7 +864,12 @@ export async function runImportJob(importId: string): Promise<void> {
       .update(imports)
       .set({
         status: "completed",
-        stats: accumulatedStats(latestStats, jobStart, skippedTotal, blockedByPlanTotal),
+        stats: accumulatedStats(latestStats, jobStart, {
+          skipped: skippedTotal,
+          blockedByPlan: blockedByPlanTotal,
+          interactionsLogged: interactionsLoggedTotal,
+          remindersCreated: remindersCreatedTotal,
+        }),
         updatedAt: new Date(),
       })
       .where(eq(imports.id, importId));

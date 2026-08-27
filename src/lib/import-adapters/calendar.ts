@@ -138,7 +138,7 @@ export const calendarAdapter: ImportAdapter<CalendarEventRowPayload> = {
         userId,
         contactId,
         title: `Follow up after ${payload.summary || "meeting"}`,
-        description: `Event ${payload.eventUid}`,
+        description: `You met with ${payload.attendeeName || "them"}. Event ${payload.eventUid}`,
         dueDate: due,
         status: "pending",
         reminderType: "post_meeting",
