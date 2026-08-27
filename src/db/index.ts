@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   follow_up_status text DEFAULT 'none',
   ai_summary text,
   notes text,
+  embedding_stale_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -595,7 +596,7 @@ CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action,
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
