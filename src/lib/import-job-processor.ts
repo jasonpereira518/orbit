@@ -10,8 +10,8 @@ import {
   type LinkedInImportRowPayload,
 } from "@/db/schema";
 import {
+  bulkMergeContactsForUser,
   createContactsBulkForUser,
-  updateContactForUser,
   type ContactInput,
 } from "@/lib/contact-writes";
 import { getAppBaseUrl } from "@/lib/app-url";
@@ -234,19 +234,18 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
         }
       }
 
-      for (const item of toUpdate) {
-        await updateContactForUser(userId, item.contactId, item.input, {
-          skipRevalidate: true,
-          skipEmbedding: true,
-          // The whole network is recalibrated when the import finishes. Scoring each
-          // duplicate as it is merged would issue several extra queries per row to reach a
-          // number that is immediately superseded.
-          skipCloseness: true,
-        });
-        contactIdByRowId.set(item.row.id, item.contactId);
-        touchedContactIds.push(item.contactId);
-        contactsUpdated += 1;
-        duplicatesFound += 1;
+      if (toUpdate.length > 0) {
+        await bulkMergeContactsForUser(
+          userId,
+          toUpdate.map((item) => ({ contactId: item.contactId, input: item.input })),
+          companyResolve
+        );
+        for (const item of toUpdate) {
+          contactIdByRowId.set(item.row.id, item.contactId);
+          touchedContactIds.push(item.contactId);
+        }
+        contactsUpdated += toUpdate.length;
+        duplicatesFound += toUpdate.length;
       }
 
       if (touchedContactIds.length > 0) {
@@ -315,7 +314,10 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
 
   // Redraw the distribution once, now that every contact this import will ever add is in.
   // Closeness is cohort-relative, so importing 3,000 people moves where all the existing
-  // ones sit; doing it per chunk would recompute the same thing dozens of times over.
+  // ones sit; doing it per chunk would recompute the same thing dozens of times over. This
+  // is also why neither the create nor the merge path scores rows as they land: scoring a
+  // duplicate as it is merged would issue extra queries per row to reach a number that is
+  // immediately superseded by this recalibration.
   await recalibrateCloseness(importRow.userId).catch(() => null);
 
   revalidatePath("/");
