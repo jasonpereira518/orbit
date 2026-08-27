@@ -6,6 +6,7 @@ import {
   contacts,
   imports,
   importJobRows,
+  type ImportStats,
   type LinkedInImportRowPayload,
 } from "@/db/schema";
 import {
@@ -86,6 +87,33 @@ async function markRowsDone(rowIds: string[], contactIdByRowId: Map<string, stri
 }
 
 /**
+ * Folds this invocation's cost into whatever `stats` the row already carried, rather than
+ * overwriting it. A self-continuing job runs this once per invocation — at the time-budget
+ * early return and again (or instead) at completion — and the interesting number is the
+ * total across every invocation, not just the one that happened to finish the job.
+ *
+ * Stops the query counter as a side effect, so call this at most once per invocation: once
+ * stopped, a second call in the same invocation would sum in an empty (zeroed) count rather
+ * than a real one. The two call sites in `runLinkedInImportJob` are mutually exclusive —
+ * the time-budget return exits the function before the loop can break into the completion
+ * path — so this constraint holds without extra bookkeeping.
+ */
+function accumulatedStats(
+  latestStats: ImportStats,
+  jobStart: number,
+  skippedTotal: number,
+  blockedByPlanTotal: number
+): ImportStats {
+  return {
+    ...latestStats,
+    skipped: skippedTotal,
+    blockedByPlan: blockedByPlanTotal,
+    durationMs: (latestStats.durationMs ?? 0) + (Date.now() - jobStart),
+    statements: (latestStats.statements ?? 0) + stopQueryCount(),
+  };
+}
+
+/**
  * Processes pending `import_job_rows` for a LinkedIn connections import job in
  * time-boxed chunks. Safe to call repeatedly (self-continuation, cron resume,
  * manual retry) — it always re-reads job/row status from the DB rather than
@@ -145,6 +173,17 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
 
     while (true) {
       if (Date.now() - jobStart > TIME_BUDGET_MS) {
+        // Persist this invocation's cost before handing off, or it is lost: this
+        // invocation never reaches the completion write below, and the next invocation's
+        // own `startQueryCount()` resets the in-memory counter to zero. Without this write,
+        // a job spanning N invocations would report only the cost of its last one.
+        await db
+          .update(imports)
+          .set({
+            stats: accumulatedStats(latestStats, jobStart, skippedTotal, blockedByPlanTotal),
+            updatedAt: new Date(),
+          })
+          .where(eq(imports.id, importId));
         await scheduleContinuation(importId);
         return;
       }
@@ -335,7 +374,7 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
           contactsUpdated,
           duplicatesFound,
           stats: {
-            ...(current.stats ?? {}),
+            ...latestStats,
             skipped: skippedTotal,
             blockedByPlan: blockedByPlanTotal,
           },
@@ -353,15 +392,7 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
     .update(imports)
     .set({
       status: "completed",
-      stats: {
-        ...latestStats,
-        skipped: skippedTotal,
-        blockedByPlan: blockedByPlanTotal,
-        // Accumulated, not overwritten: a job that self-continues runs this several times
-        // and the interesting number is the total across all of them.
-        durationMs: (latestStats.durationMs ?? 0) + (Date.now() - jobStart),
-        statements: (latestStats.statements ?? 0) + stopQueryCount(),
-      },
+      stats: accumulatedStats(latestStats, jobStart, skippedTotal, blockedByPlanTotal),
       updatedAt: new Date(),
     })
     .where(eq(imports.id, importId));

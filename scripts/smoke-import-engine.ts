@@ -33,7 +33,7 @@ import { getDb } from "../src/db";
 import { contacts, imports, importJobRows, userSettings } from "../src/db/schema";
 import { isClerkConfigured, isDemoMode } from "../src/lib/auth";
 import { FREE_CONTACT_LIMIT } from "../src/lib/entitlements";
-import { runLinkedInImportJob } from "../src/lib/import-job-processor";
+import { CHUNK_SIZE, runLinkedInImportJob } from "../src/lib/import-job-processor";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const USER = "smoke-import-engine-user";
@@ -182,6 +182,43 @@ async function main() {
   );
   check("free cap blocks the rest", out.blockedByPlan === 40, JSON.stringify(out));
   check("capped import still completes", out.status === "completed", JSON.stringify(out));
+
+  // --- the cap still binds correctly when it exhausts mid-run and must carry across a
+  // chunk boundary, rather than being re-derived (and silently reset) at the top of the
+  // next chunk ---
+  // `FREE_CONTACT_LIMIT + 40` above collapses to a single chunk at this branch's CHUNK_SIZE,
+  // so it never exercises the pre-computed `headroom` option being decremented in one chunk
+  // and reused (not reset) in the next — the highest-risk path this task's headroom-hoist
+  // change touches. `+ 300` is sized to span multiple chunks under both this branch's cap
+  // (100 -> 400 rows -> 2 chunks at CHUNK_SIZE 250) and origin/main's (500 -> 800 rows -> 4
+  // chunks), so it stays a real multi-chunk scenario if either constant moves again.
+  await reset();
+  const multiChunkRows = FREE_CONTACT_LIMIT + 300;
+  const observedChunks = Math.ceil(multiChunkRows / CHUNK_SIZE);
+  check(
+    "multi-chunk cap fixture actually spans more than one chunk",
+    observedChunks > 1,
+    `rows ${multiChunkRows}, CHUNK_SIZE ${CHUNK_SIZE}, chunks ${observedChunks}`
+  );
+  console.log(`  multi-chunk cap fixture: ${multiChunkRows} rows across ${observedChunks} chunks`);
+  id = await seedJob(fixture(multiChunkRows));
+  await runJob(id);
+  out = await outcome(id);
+  check(
+    `multi-chunk cap admits exactly ${FREE_CONTACT_LIMIT} across the chunk boundary`,
+    out.created === FREE_CONTACT_LIMIT,
+    JSON.stringify(out)
+  );
+  check(
+    "multi-chunk cap blocks the remainder (exhausted headroom carried into the next chunk, not reset)",
+    out.blockedByPlan === multiChunkRows - FREE_CONTACT_LIMIT,
+    JSON.stringify(out)
+  );
+  check(
+    "multi-chunk capped import still completes",
+    out.status === "completed",
+    JSON.stringify(out)
+  );
 
   // --- resume is idempotent: a second run adds nothing ---
   const before = out.created;
