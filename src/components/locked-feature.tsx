@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Lock } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { WarpLink } from "@/components/warp/warp-link";
 import { type Plan } from "@/lib/plan-limits";
 import { PlanBadge } from "@/components/plan-badge";
 
@@ -63,7 +64,7 @@ export function LockedFeature({
       {note && <p className="text-xs text-muted-foreground">{note}</p>}
 
       <div className="flex flex-wrap items-center justify-center gap-3">
-        <Link
+        <WarpLink
           href="/pricing"
           className={cn(
             buttonVariants({ size: "sm" }),
@@ -71,7 +72,7 @@ export function LockedFeature({
           )}
         >
           See plans
-        </Link>
+        </WarpLink>
         <Link
           href="/settings#settings-plan"
           className={cn(buttonVariants({ variant: "outline", size: "sm" }))}

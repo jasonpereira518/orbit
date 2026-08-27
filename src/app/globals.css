@@ -1215,3 +1215,116 @@ body:has(.landing-root) {
     display: none;
   }
 }
+
+/* ── Lift-off: app <-> /pricing ──
+ *
+ * The canvas stage (components/warp/warp-stage.tsx) paints the sky; this block
+ * only moves the app itself. `WarpProvider` sets `data-warp` on <html>, so the
+ * server-rendered layouts need no knowledge of the journey — they just carry
+ * `data-warp-craft` on the element that flies.
+ *
+ * Percentages below mirror `lib/warp/choreography.ts`. Change one, change both:
+ * ASCENT.ignition ends at 180/820 = 22%, and the whole ascend animation runs
+ * for ASCENT.liftoff's 820ms. */
+
+@keyframes warp-craft-ascend {
+  /* Engines light: a short judder before anything actually moves. */
+  0% {
+    transform: perspective(1100px) translate3d(0, 0, 0) rotateX(0deg) scale(1);
+    opacity: 1;
+  }
+  5% {
+    transform: perspective(1100px) translate3d(0, 4px, 0) rotateX(0deg) scale(1);
+  }
+  11% {
+    transform: perspective(1100px) translate3d(0, -3px, 0) rotateX(0deg) scale(1);
+  }
+  16% {
+    transform: perspective(1100px) translate3d(0, 2px, 0) rotateX(0deg) scale(1);
+  }
+  /* Release. Accelerating from here so it reads as the camera climbing away,
+     not as a panel sliding down a track. */
+  22% {
+    transform: perspective(1100px) translate3d(0, 0, 0) rotateX(0deg) scale(1);
+    opacity: 1;
+    animation-timing-function: cubic-bezier(0.55, 0, 0.85, 0.2);
+  }
+  /* Negative rotateX tips the top edge toward the viewer — what you see
+     looking DOWN on something you have just risen above. */
+  100% {
+    transform: perspective(1100px) translate3d(0, 46vh, -420px) rotateX(-16deg)
+      scale(0.94);
+    opacity: 0;
+  }
+}
+
+/* Touchdown. Drops the last few pixels and rattles: three shrinking bounces,
+   mostly lateral. Deliberately less graceful than the launch. */
+@keyframes warp-craft-land {
+  0% {
+    transform: translate3d(0, -14px, 0);
+    opacity: 0.25;
+  }
+  30% {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+  42% {
+    transform: translate3d(7px, 3px, 0);
+  }
+  56% {
+    transform: translate3d(-5px, -2px, 0);
+  }
+  70% {
+    transform: translate3d(3px, 2px, 0);
+  }
+  85% {
+    transform: translate3d(-2px, -1px, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+}
+
+html[data-warp="ascending"] [data-warp-craft] {
+  animation: warp-craft-ascend 820ms ease-out both;
+  /* The stage portals to <body>, so it is never inside this transform — a
+     transformed ancestor becomes the containing block for position:fixed and
+     would drag the whole sky down with the dashboard. */
+  transform-origin: 50% 45%;
+  will-change: transform, opacity;
+}
+
+html[data-warp="landing"] [data-warp-craft] {
+  animation: warp-craft-land 420ms cubic-bezier(0.3, 0.9, 0.4, 1) both;
+  will-change: transform, opacity;
+}
+
+/* Nothing underneath the sky should react to a stray click or hover while the
+   journey is running; the canvas itself swallows pointer events. */
+html[data-warp] [data-warp-craft] {
+  pointer-events: none;
+}
+
+/* The launch pad on the dashboard: a horizon that lifts on hover. */
+@keyframes warp-pad-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(0, -3px, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* `data-warp="reduced"` never matches the rules above, so the craft simply
+     never animates. This is the belt-and-braces for a stale attribute: without
+     it the global 0.01ms clamp would snap the craft straight to the ascend
+     animation's end state — flown away and invisible. */
+  html[data-warp] [data-warp-craft] {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+}
