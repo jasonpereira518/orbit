@@ -1,15 +1,10 @@
 import { createHash } from "node:crypto";
-import { eq, and, ilike, inArray, sql } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import { getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import { contactEmbeddings, contacts } from "@/db/schema";
 import { metContextLabel } from "@/lib/met-context";
-import { createEmbedding, createEmbeddingsBatch, cosineSimilarity } from "@/lib/ai";
+import { createEmbedding, createEmbeddingsBatch } from "@/lib/ai";
 import { formatVectorLiteral } from "@/lib/pgvector";
-import {
-  ERROR_SOURCES,
-  recordErrorEvent,
-  shouldRecordThrottled,
-} from "@/lib/error-events";
 
 export function computeContentHash(content: string): string {
   return createHash("sha256").update(content).digest("hex");
@@ -103,15 +98,6 @@ const OVERSCAN_FOR_DEDUPE = 4;
 /** Below this cosine similarity a hit is noise rather than a weak match. */
 const SEMANTIC_SIMILARITY_FLOOR = 0.25;
 
-/**
- * Ceiling on the in-memory cosine fallback. Each row holds a 1,536-float array, so this is
- * about not materialising the entire embedding table in Node when pgvector is missing.
- */
-const IN_MEMORY_EMBEDDING_SCAN_LIMIT = 2000;
-
-/** Ceiling on embedding rows pulled for the literal-text boost. */
-const CONTENT_BOOST_LIMIT = 200;
-
 export async function pgvectorSearchContacts(
   userId: string,
   queryEmbedding: number[],
@@ -161,177 +147,6 @@ export async function pgvectorSearchContacts(
     contactId: row.contact_id,
     similarity: Number(row.similarity) || 0,
   }));
-}
-
-function inMemorySemanticScores(
-  queryEmbedding: number[],
-  embeddings: Array<{ contactId: string; embedding: number[] }>
-) {
-  const scoreByContact = new Map<string, number>();
-  for (const row of embeddings) {
-    const sim = cosineSimilarity(queryEmbedding, row.embedding);
-    const prev = scoreByContact.get(row.contactId) ?? 0;
-    if (sim > prev) scoreByContact.set(row.contactId, sim);
-  }
-  return scoreByContact;
-}
-
-export async function semanticSearchContacts(
-  userId: string,
-  query: string,
-  limit = 12
-) {
-  const db = await getDb();
-  const allContacts = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    with: {
-      contactTags: { with: { tag: true } },
-    },
-  });
-
-  let queryEmbedding: number[] | null = null;
-  try {
-    queryEmbedding = await createEmbedding(userId, query);
-  } catch {
-    // fall through to keyword search
-  }
-
-  const q = query.toLowerCase();
-  const scoreByContact = new Map<string, number>();
-
-  if (queryEmbedding) {
-    if (isPgvectorAvailable()) {
-      try {
-        const pgHits = await pgvectorSearchContacts(
-          userId,
-          queryEmbedding,
-          limit * 2
-        );
-        for (const hit of pgHits) {
-          scoreByContact.set(hit.contactId, hit.similarity);
-        }
-      } catch (err) {
-        // pgvector query can fail on Neon (extension/dim); fall back below.
-        // Throttled: this fires per search, so a broken index would otherwise write a
-        // row for every query.
-        if (shouldRecordThrottled(ERROR_SOURCES.searchPgvector)) {
-          await recordErrorEvent({
-            source: ERROR_SOURCES.searchPgvector,
-            kind: "query_failed",
-            userId,
-            message: err,
-          });
-        }
-      }
-    }
-
-    // Prefer one embedding read for both vector scores (fallback) and content boost.
-    let embeddingRows:
-      | Array<{ contactId: string; embedding: number[]; content: string | null }>
-      | null = null;
-
-    if (scoreByContact.size === 0) {
-      // The fallback for when pgvector is unavailable — always the case on local PGlite
-      // (no vector extension in the pinned version), and also on any Neon DB where the
-      // extension failed to install. Every row carries a 1,536-float JSONB array, so this
-      // is capped: uncapped, a 5,000-contact network materialises tens of millions of
-      // floats in Node to score one query.
-      embeddingRows = await db.query.contactEmbeddings.findMany({
-        where: eq(contactEmbeddings.userId, userId),
-        columns: { contactId: true, embedding: true, content: true },
-        limit: IN_MEMORY_EMBEDDING_SCAN_LIMIT,
-      });
-      if (embeddingRows.length === IN_MEMORY_EMBEDDING_SCAN_LIMIT) {
-        console.warn(
-          `[search] in-memory vector fallback hit its ${IN_MEMORY_EMBEDDING_SCAN_LIMIT}-row cap; results are partial. Enable pgvector for complete semantic search.`
-        );
-      }
-      const inMemory = inMemorySemanticScores(queryEmbedding, embeddingRows);
-      for (const [contactId, sim] of inMemory) {
-        scoreByContact.set(contactId, sim);
-      }
-    }
-
-    // Also boost contacts whose stored embedding text mentions the query (covers LinkedIn
-    // message chunks even when the vector score is middling).
-    //
-    // Matched in Postgres rather than by reading every embedding row and calling
-    // `String.includes` on it. The old shape ran a second unconditional full read of
-    // `contact_embeddings` even when the pgvector search above had already succeeded, purely
-    // to find the handful of rows that mention the query.
-    const contentRows =
-      embeddingRows ??
-      (await db.query.contactEmbeddings.findMany({
-        where: and(
-          eq(contactEmbeddings.userId, userId),
-          ilike(contactEmbeddings.content, `%${query.trim()}%`)
-        ),
-        columns: { contactId: true, content: true },
-        limit: CONTENT_BOOST_LIMIT,
-      }));
-    for (const row of contentRows) {
-      const hay = (row.content || "").toLowerCase();
-      if (!hay) continue;
-      let bump = 0;
-      if (hay.includes(q)) bump = 0.35;
-      else {
-        for (const token of q.split(/\s+/).filter((t) => t.length > 2)) {
-          if (hay.includes(token)) bump += 0.08;
-        }
-      }
-      if (bump > 0) {
-        scoreByContact.set(
-          row.contactId,
-          Math.max(scoreByContact.get(row.contactId) ?? 0, bump)
-        );
-      }
-    }
-  }
-  const results = allContacts
-    .map((c) => {
-      let score = scoreByContact.get(c.id) ?? 0;
-      const haystack = [
-        c.fullName,
-        c.preferredName,
-        c.company,
-        c.title,
-        c.location,
-        c.email,
-        c.phone,
-        c.website,
-        c.aiSummary,
-        c.notes,
-        c.industry,
-        c.metContext,
-        c.howMet,
-        ...(c.keyFacts || []),
-        ...(c.opportunities || []),
-        ...(c.sharedInterests || []),
-        ...(c.contactTags?.map((ct) => ct.tag.name) || []),
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-
-      if (haystack.includes(q)) score = Math.max(score, 0.55);
-      for (const token of q.split(/\s+/).filter((t) => t.length > 2)) {
-        if (haystack.includes(token)) score += 0.08;
-      }
-
-      score += (c.relationshipScore || 0) * 0.03;
-      score += (c.priorityLevel || 0) * 0.02;
-
-      return {
-        ...c,
-        tags: c.contactTags?.map((ct) => ct.tag.name) || [],
-        relevance: Math.min(score, 1),
-      };
-    })
-    .filter((c) => c.relevance > 0.05)
-    .sort((a, b) => b.relevance - a.relevance)
-    .slice(0, limit);
-
-  return results;
 }
 
 type ContactEmbeddingSource = {
