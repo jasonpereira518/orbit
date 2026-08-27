@@ -1,9 +1,10 @@
 "use client";
 
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useRef } from "react";
 import { AlertTriangle, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useEtaCountdown } from "@/lib/use-eta-countdown";
 
 export type ImportProgressState = {
   done: number;
@@ -11,6 +12,15 @@ export type ImportProgressState = {
   label: string;
   /** Epoch ms when the import started — used for ETA. */
   startedAt: number;
+  /**
+   * Records actually written so far, when that differs from `done`. `done` counts source
+   * rows consumed — including duplicates and skipped rows — so it moves faster than the
+   * number of contacts (or, for calendar, meetings) a user actually ends up with. Omit for
+   * import kinds that can't report it incrementally.
+   */
+  imported?: number;
+  /** Caption for `imported`, e.g. "contacts imported" or "meetings logged". */
+  importedLabel?: string;
 };
 
 export async function readCsvOrZipMessages(file: File): Promise<{
@@ -90,142 +100,116 @@ export function ImportFilePicker({
   );
 }
 
-function formatEta(seconds: number | null) {
-  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return null;
-  const whole = Math.max(0, Math.ceil(seconds));
-  if (whole <= 1) return "about 1s left";
-  if (whole < 60) return `${whole}s left`;
-  const minutes = Math.floor(whole / 60);
-  const rem = whole % 60;
-  if (minutes < 60) {
-    return rem > 0 ? `${minutes}m ${rem}s left` : `${minutes}m left`;
-  }
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  return mins > 0 ? `${hours}h ${mins}m left` : `${hours}h left`;
-}
-
+/**
+ * The section shown while an import is running.
+ *
+ * Two numbers, because they answer different questions and users ask both. `imported` is
+ * what they got — records actually written. `done`/`total` is how far along the source file
+ * is, and it moves faster: a duplicate or skipped row advances the file without adding a
+ * record. Showing only the row counter is what made a finished import look like it had lost
+ * people. `imported` is optional — calendar's one-time upload doesn't create contacts at all,
+ * and older callers may not have a live count to report — so the section still degrades
+ * gracefully to just the row counter when it's absent.
+ *
+ * The countdown comes from `useEtaCountdown`, shared with the bottom-right job widget so
+ * there is exactly one ETA algorithm in the codebase and it is guaranteed to never tick up.
+ */
 export function ImportProgress({
   done,
   total,
   label,
   startedAt,
+  imported,
+  importedLabel,
   onCancel,
   cancelling = false,
 }: ImportProgressState & {
   onCancel?: () => void;
   cancelling?: boolean;
 }) {
-  const [now, setNow] = useState(() => Date.now());
-  const [etaEndAt, setEtaEndAt] = useState<number | null>(null);
-  const rateEmaRef = useRef<number | null>(null);
-  const lastDoneRef = useRef(0);
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  const eta = useEtaCountdown({
+    active: !cancelling && done > 0 && done < total,
+    done,
+    total,
+    startedAt,
+  });
 
-  // Tick often so the countdown updates smoothly between import batches.
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 250);
-    return () => window.clearInterval(id);
-  }, []);
-
-  // New import run — reset ETA state.
-  useEffect(() => {
-    rateEmaRef.current = null;
-    lastDoneRef.current = 0;
-    setEtaEndAt(null);
-  }, [startedAt]);
-
-  // Recalibrate the finish deadline when more items complete.
-  useEffect(() => {
-    if (done <= 0 || done >= total) {
-      if (done >= total) setEtaEndAt(null);
-      return;
-    }
-
-    const elapsedMs = Date.now() - startedAt;
-    if (elapsedMs < 500) return;
-
-    const instantRate = done / elapsedMs; // items per ms
-    if (instantRate <= 0) return;
-
-    rateEmaRef.current =
-      rateEmaRef.current == null
-        ? instantRate
-        : rateEmaRef.current * 0.55 + instantRate * 0.45;
-
-    const remainingMs = (total - done) / rateEmaRef.current;
-
-    setEtaEndAt((prev) => {
-      if (prev == null) {
-        lastDoneRef.current = done;
-        return Date.now() + remainingMs;
-      }
-      // Same progress snapshot — keep counting down the existing deadline.
-      if (lastDoneRef.current === done) return prev;
-
-      // Progress advanced — blend so the displayed time doesn't jump.
-      const oldRemaining = Math.max(0, prev - Date.now());
-      const blended = oldRemaining * 0.4 + remainingMs * 0.6;
-      lastDoneRef.current = done;
-      return Date.now() + blended;
-    });
-  }, [done, total, startedAt]);
-
-  const secondsLeft =
-    etaEndAt != null ? Math.max(0, (etaEndAt - now) / 1000) : null;
-  const etaLabel =
-    cancelling
-      ? "Stopping…"
-      : done > 0 && done < total
-        ? formatEta(secondsLeft) ?? (etaEndAt == null ? null : "a few seconds")
-        : null;
+  const countdown = cancelling
+    ? "Stopping…"
+    : done === 0
+      ? "Estimating…"
+      : (eta ?? "Estimating…");
 
   return (
-    <div
-      className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/40 px-4 py-3"
+    <section
+      className="space-y-4 rounded-2xl border border-border/70 bg-card p-5"
       role="status"
       aria-live="polite"
     >
-      <Loader2 className="size-4 shrink-0 animate-spin text-primary" />
-      <div className="min-w-0 flex-1 space-y-2">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-          <p className="text-sm font-medium">
-            {cancelling ? "Stopping import…" : "Importing…"} {done} of {total}{" "}
-            {label}
-          </p>
-          {etaLabel ? (
-            <p className="text-xs tabular-nums text-muted-foreground">
-              {etaLabel}
-            </p>
-          ) : !cancelling && done === 0 ? (
-            <p className="text-xs text-muted-foreground">Estimating…</p>
-          ) : null}
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Loader2 className="size-4 shrink-0 animate-spin text-primary" />
+          <h3 className="truncate text-sm font-medium text-primary">
+            {cancelling ? "Stopping import…" : "Import in progress"}
+          </h3>
         </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-border/80">
-          <div
-            className="h-full rounded-full bg-primary transition-[width] duration-slow ease-house"
-            style={{ width: `${pct}%` }}
-          />
+        {onCancel ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="-mr-1 -mt-1 shrink-0 text-muted-foreground hover:text-foreground"
+            disabled={cancelling}
+            onClick={onCancel}
+            aria-label="Stop import"
+            title="Stop import"
+          >
+            <X className="size-4" />
+          </Button>
+        ) : null}
+      </div>
+
+      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
+        {imported != null ? (
+          <div>
+            <p className="text-2xl font-medium tabular-nums text-primary">
+              {imported.toLocaleString()}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {importedLabel ?? (imported === 1 ? "contact imported" : "contacts imported")}
+            </p>
+          </div>
+        ) : (
+          <p className="text-sm font-medium">
+            {cancelling ? "Stopping import…" : "Importing…"} {done} of {total} {label}
+          </p>
+        )}
+        <div className="text-right">
+          {imported != null ? (
+            <p className="text-sm tabular-nums text-muted-foreground">
+              {done.toLocaleString()} of {total.toLocaleString()} {label}
+            </p>
+          ) : null}
+          <p className="text-xs tabular-nums text-muted-foreground">
+            {pct}% · {countdown}
+          </p>
         </div>
       </div>
-      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-        {pct}%
-      </span>
-      {onCancel ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className="shrink-0 text-muted-foreground hover:text-foreground"
-          disabled={cancelling}
-          onClick={onCancel}
-          aria-label="Stop import"
-          title="Stop import"
-        >
-          <X className="size-4" />
-        </Button>
-      ) : null}
-    </div>
+
+      <div
+        className="h-1.5 overflow-hidden rounded-full bg-border/80"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={pct}
+      >
+        <div
+          className="h-full rounded-full bg-primary transition-[width] duration-slow ease-house"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </section>
   );
 }
 

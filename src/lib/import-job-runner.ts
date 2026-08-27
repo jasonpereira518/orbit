@@ -67,6 +67,29 @@ function emit() {
   for (const listener of listeners) listener();
 }
 
+/**
+ * What "imported" means for a given kind, read off the same `ImportJobStatus` the poll loop
+ * already has. Calendar is the one kind where `contactsCreated`/`contactsUpdated` never move
+ * (it logs meetings, not contacts — see `createsContacts: false` on its adapter), so showing
+ * "0 contacts imported" for the whole run would be actively misleading there.
+ */
+function importedLabelFor(kind: ServerOwnedKind): string {
+  return kind === "calendar" ? "meetings logged" : "contacts imported";
+}
+
+function importedFigure(
+  kind: ServerOwnedKind,
+  status: Pick<ImportJobStatus, "contactsCreated" | "contactsUpdated" | "interactionsLogged">
+): { imported: number; importedLabel: string } {
+  return {
+    imported:
+      kind === "calendar"
+        ? status.interactionsLogged
+        : status.contactsCreated + status.contactsUpdated,
+    importedLabel: importedLabelFor(kind),
+  };
+}
+
 function importJobLabel(kind: ImportJobKind) {
   switch (kind) {
     case "connections":
@@ -92,6 +115,8 @@ function mirrorToBackgroundJobs(next: ImportJobSnapshot | null) {
     const done = next.progress?.done ?? 0;
     const total = next.progress?.total ?? 0;
     const startedAt = next.progress?.startedAt ?? Date.now();
+    const imported = next.progress?.imported;
+    const importedLabel = next.progress?.importedLabel;
     if (!getBackgroundJob(backgroundJobId)) {
       startBackgroundJob({
         id: backgroundJobId,
@@ -100,11 +125,19 @@ function mirrorToBackgroundJobs(next: ImportJobSnapshot | null) {
         done,
         total,
         startedAt,
+        imported,
+        importedLabel,
         cancelling: next.cancelling,
         onCancel: cancelImportJob,
       });
     } else {
-      updateBackgroundJob(backgroundJobId, { done, total, cancelling: next.cancelling });
+      updateBackgroundJob(backgroundJobId, {
+        done,
+        total,
+        imported,
+        importedLabel,
+        cancelling: next.cancelling,
+      });
     }
     return;
   }
@@ -215,6 +248,7 @@ async function pollServerOwnedImportJob(
         total: status.totalRows,
         label,
         startedAt,
+        ...importedFigure(kind, status),
       },
     });
 
@@ -291,11 +325,12 @@ async function runServerOwnedImportJob(
   start: () => Promise<{ importId: string; totalRows: number }>
 ): Promise<void> {
   const startedAt = Date.now();
+  const importedLabel = importedLabelFor(kind);
   setSnapshot({
     id: jobId,
     kind,
     status: "running",
-    progress: { done: 0, total, label, startedAt },
+    progress: { done: 0, total, label, startedAt, imported: 0, importedLabel },
   });
 
   const { importId, totalRows } = await start();
@@ -305,7 +340,7 @@ async function runServerOwnedImportJob(
     id: jobId,
     kind,
     status: "running",
-    progress: { done: 0, total: totalRows, label, startedAt },
+    progress: { done: 0, total: totalRows, label, startedAt, imported: 0, importedLabel },
   });
 
   const result = await pollServerOwnedImportJob(jobId, kind, importId, label, startedAt);
