@@ -36,7 +36,9 @@ import {
   imports,
   importJobRows,
   interactions,
+  reminders,
   userSettings,
+  type CalendarEventRowPayload,
   type ImportJobRowPayload,
 } from "../src/db/schema";
 import { isClerkConfigured, isDemoMode } from "../src/lib/auth";
@@ -721,6 +723,244 @@ async function main() {
     "first_interaction_at is untouched — widening only ever moves it earlier, never later",
     person0?.firstInteractionAt?.toISOString().startsWith("2024-03-01") ?? false,
     `firstInteractionAt: ${person0?.firstInteractionAt}`
+  );
+
+  // --- Calendar: annotates people already in the network, never adds any ---
+  // Calendar ingest never creates contacts (`createsContacts: false`) — it explodes each
+  // windowed event into one job row per (event, attendee) pair (see `CalendarEventRowPayload`'s
+  // doc comment) rather than widening the adapter seam to `identity(): DuplicateProbe[]` for
+  // this one consumer. `calendarRow` builds one such row.
+  function calendarRow(over: Partial<CalendarEventRowPayload>): CalendarEventRowPayload {
+    return {
+      kind: "calendar_event",
+      eventUid: "evt",
+      summary: "Meeting",
+      description: "",
+      location: "",
+      start: "2024-04-01T15:00:00Z",
+      end: "2024-04-01T16:00:00Z",
+      attendeeName: "",
+      attendeeEmail: "",
+      createFollowUps: false,
+      ...over,
+    };
+  }
+
+  await reset();
+  // Seed the network first — calendar matching has nothing to match against otherwise.
+  const known = await seedJob(fixture(5));
+  await runJob(known);
+
+  const db5 = await getDb();
+  const [beforeContacts] = await db5
+    .select({ value: count() })
+    .from(contacts)
+    .where(eq(contacts.userId, USER));
+
+  const calendarRows: CalendarEventRowPayload[] = [
+    // One attendee, matches an existing contact — one meeting.
+    calendarRow({
+      eventUid: "evt-known",
+      summary: "Coffee",
+      start: "2024-04-01T15:00:00Z",
+      attendeeName: "First0 Last0",
+      attendeeEmail: "person0@example.com",
+    }),
+    // One attendee, matches nobody — skipped, no meeting.
+    calendarRow({
+      eventUid: "evt-stranger",
+      summary: "Webinar",
+      start: "2024-04-02T15:00:00Z",
+      attendeeName: "Nobody Here",
+      attendeeEmail: "nobody@example.com",
+    }),
+    // Same event, three attendees: two match, one doesn't. This is the assertion that
+    // proves the pair model — a multi-attendee event must log one meeting per matched
+    // attendee, not one meeting for the whole event.
+    calendarRow({
+      eventUid: "evt-team",
+      summary: "Team sync",
+      start: "2024-04-03T15:00:00Z",
+      attendeeName: "First1 Last1",
+      attendeeEmail: "person1@example.com",
+    }),
+    calendarRow({
+      eventUid: "evt-team",
+      summary: "Team sync",
+      start: "2024-04-03T15:00:00Z",
+      attendeeName: "First2 Last2",
+      attendeeEmail: "person2@example.com",
+    }),
+    calendarRow({
+      eventUid: "evt-team",
+      summary: "Team sync",
+      start: "2024-04-03T15:00:00Z",
+      attendeeName: "Ghost Attendee",
+      attendeeEmail: "ghost@example.com",
+    }),
+  ];
+
+  id = await seedJob(calendarRows, "calendar_ics");
+  await runJob(id);
+  out = await outcome(id);
+  check("calendar import completes", out.status === "completed", JSON.stringify(out));
+  check("calendar creates nobody", out.created === 0, JSON.stringify(out));
+  check(
+    "stranger and ghost rows are skipped (2 of 5)",
+    out.skipped === 2,
+    JSON.stringify(out)
+  );
+
+  const [afterContacts] = await db5
+    .select({ value: count() })
+    .from(contacts)
+    .where(eq(contacts.userId, USER));
+  check(
+    "calendar cannot grow the network",
+    afterContacts?.value === beforeContacts?.value,
+    `${beforeContacts?.value} -> ${afterContacts?.value}`
+  );
+
+  const [meetings] = await db5
+    .select({ value: count() })
+    .from(interactions)
+    .where(eq(interactions.userId, USER));
+  check(
+    "the multi-attendee event logs one meeting per matched attendee (3 total: 1 known + 2 team)",
+    (meetings?.value ?? 0) === 3,
+    `rows ${meetings?.value}`
+  );
+
+  // Re-uploading the same file must not double-log any meeting.
+  id = await seedJob(calendarRows, "calendar_ics");
+  await runJob(id);
+  const [meetingsAgain] = await db5
+    .select({ value: count() })
+    .from(interactions)
+    .where(eq(interactions.userId, USER));
+  check(
+    "re-upload logs no duplicate meetings",
+    (meetingsAgain?.value ?? 0) === 3,
+    `rows ${meetingsAgain?.value}`
+  );
+
+  // --- the free plan cap is never consulted, even when it's already exhausted ---
+  // `createsContacts: false` is supposed to skip `contactHeadroomForUser` entirely (see
+  // `runImportJob`), not just happen to never hit it because nothing gets created. Proving
+  // that black-box: fill the free cap past its limit with contacts that have nothing to do
+  // with the calendar file, then confirm a calendar import matching a *different*,
+  // already-existing contact still logs its meeting and blocks nothing. A cap-consulting
+  // import would refuse this outright — the fixture user is on the free plan.
+  {
+    const filler = Array.from({ length: FREE_CONTACT_LIMIT }, (_, i) => ({
+      userId: USER,
+      fullName: `Cap Filler ${i}`,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }));
+    await db5.insert(contacts).values(filler);
+  }
+  id = await seedJob(
+    [
+      calendarRow({
+        eventUid: "evt-cap-check",
+        summary: "One more coffee",
+        start: "2024-04-04T15:00:00Z",
+        attendeeName: "First3 Last3",
+        attendeeEmail: "person3@example.com",
+      }),
+    ],
+    "calendar_ics"
+  );
+  await runJob(id);
+  out = await outcome(id);
+  check(
+    "calendar import still completes with the free cap already full",
+    out.status === "completed",
+    JSON.stringify(out)
+  );
+  check(
+    "calendar import blocks nothing even with the cap exhausted",
+    out.blockedByPlan === 0,
+    JSON.stringify(out)
+  );
+  const [meetingsAfterCapFill] = await db5
+    .select({ value: count() })
+    .from(interactions)
+    .where(eq(interactions.userId, USER));
+  check(
+    "the matched attendee's meeting still logs with the cap exhausted",
+    (meetingsAfterCapFill?.value ?? 0) === 4,
+    `rows ${meetingsAfterCapFill?.value}`
+  );
+
+  // --- calendar_csv runs the same adapter as calendar_ics ---
+  await reset();
+  const known2 = await seedJob(fixture(3));
+  await runJob(known2);
+  id = await seedJob(
+    [
+      calendarRow({
+        eventUid: "evt-csv",
+        summary: "CSV coffee",
+        attendeeName: "First0 Last0",
+        attendeeEmail: "person0@example.com",
+      }),
+    ],
+    "calendar_csv"
+  );
+  await runJob(id);
+  out = await outcome(id);
+  check("calendar_csv import completes", out.status === "completed", JSON.stringify(out));
+  check("calendar_csv creates nobody", out.created === 0, JSON.stringify(out));
+
+  // --- follow-up reminders survive the move onto the engine ---
+  // `createFollowUps` gates a second bulk insert in the engine's chunk loop (see
+  // `ImportAdapter.reminders`), separate from the interactions insert. A recent past
+  // meeting with `createFollowUps: true` must produce exactly one `post_meeting` reminder,
+  // and re-uploading the same file must not double it.
+  await reset();
+  const known3 = await seedJob(fixture(2));
+  await runJob(known3);
+  const recentPastMeeting = calendarRow({
+    eventUid: "evt-followup",
+    summary: "Recent coffee",
+    start: new Date(Date.now() - 3 * 86400000).toISOString(),
+    attendeeName: "First0 Last0",
+    attendeeEmail: "person0@example.com",
+    createFollowUps: true,
+  });
+  id = await seedJob([recentPastMeeting], "calendar_ics");
+  await runJob(id);
+  const db6 = await getDb();
+  const [remindersLogged] = await db6
+    .select({ value: count() })
+    .from(reminders)
+    .where(eq(reminders.userId, USER));
+  check(
+    "createFollowUps logs one post-meeting reminder",
+    (remindersLogged?.value ?? 0) === 1,
+    `rows ${remindersLogged?.value}`
+  );
+  const followUp = await db6.query.reminders.findFirst({
+    where: eq(reminders.userId, USER),
+  });
+  check(
+    "the reminder is typed post_meeting and tied to the matched contact",
+    followUp?.reminderType === "post_meeting" && followUp?.contactId != null,
+    JSON.stringify(followUp)
+  );
+
+  id = await seedJob([recentPastMeeting], "calendar_ics");
+  await runJob(id);
+  const [remindersAgain] = await db6
+    .select({ value: count() })
+    .from(reminders)
+    .where(eq(reminders.userId, USER));
+  check(
+    "re-upload logs no duplicate reminder",
+    (remindersAgain?.value ?? 0) === 1,
+    `rows ${remindersAgain?.value}`
   );
 
   await reset();

@@ -86,6 +86,8 @@ function tabForImportJobKind(kind: ImportJobKind): ImportTab | null {
       return "connections";
     case "messages":
       return "messages";
+    case "calendar":
+      return "calendar";
   }
 }
 

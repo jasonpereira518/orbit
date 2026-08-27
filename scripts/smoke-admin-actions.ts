@@ -228,16 +228,19 @@ async function main() {
     })
     .returning();
 
-  // A client-driven kind: it has no server runner, so there is nothing to resume. LinkedIn
-  // connections, Google/Outlook contacts, and (as of Task 14) LinkedIn messages all moved
-  // onto the resumable engine and are no longer examples of this — calendar imports are the
-  // only kind still client-driven, batch by batch.
+  // A client-driven kind: it has no server runner, so there is nothing to resume. As of
+  // Task 15 (calendar moving onto the resumable engine, the last kind still client-driven
+  // batch by batch), there is no real import type left that this is true of — every one of
+  // them now stages `import_job_rows` and runs through the engine. The guard this proves
+  // still has to hold for whatever the *next* one-off/legacy type turns out to be, so this
+  // uses a made-up type that is deliberately absent from `RESUMABLE_IMPORT_TYPES` rather
+  // than a real (and, as of this task, wrong) example.
   const [clientJob] = await db
     .insert(imports)
     .values({
       userId: TARGET,
-      importType: "calendar_csv",
-      fileName: "calendar.csv",
+      importType: "legacy_manual_export",
+      fileName: "export.csv",
       status: "failed",
     })
     .returning();

@@ -699,12 +699,45 @@ export type LinkedInMessageThreadRowPayload = {
   messages: { id: string; body: string; sentAt: string }[];
 };
 
+/**
+ * One (calendar event, attendee) pair — the unit of work for a calendar import.
+ *
+ * Calendar ingest never creates contacts (`createsContacts: false` on the adapter): it only
+ * annotates people already in the network, matching each attendee against the duplicate
+ * index and logging a meeting where one matches. The adapter seam takes one identity per row
+ * (`identity(payload): DuplicateProbe | null`), and a calendar event has N attendees — rather
+ * than widen the seam to `identities(): DuplicateProbe[]` for this one consumer,
+ * `confirmCalendarImport` explodes each windowed event into one job row per (event, attendee)
+ * pair, organizer included. Progress therefore counts pairs, not events: a 100-event file
+ * with 3 attendees each is 300 rows.
+ *
+ * `eventUid` plus the contact id the engine resolves is what keys `interactions.externalId`
+ * (see `calendarMeetingExternalId` in `src/lib/import-adapters/calendar.ts`) — that pair, not
+ * `eventUid` alone, is what keeps N attendees of the same event from colliding on the
+ * `(user_id, external_id)` unique index.
+ */
+export type CalendarEventRowPayload = {
+  kind: "calendar_event";
+  eventUid: string;
+  summary: string;
+  description: string;
+  location: string;
+  start: string | null;
+  end: string | null;
+  attendeeName: string;
+  attendeeEmail: string;
+  /** Snapshotted once at ingest (from the confirm call's own option) so the per-row adapter
+   *  functions don't need any job-level state beyond the payload. */
+  createFollowUps: boolean;
+};
+
 export type ImportJobRowPayload =
   | LinkedInImportRowPayload
   | GmailSenderRowPayload
   | GoogleContactRowPayload
   | OutlookContactRowPayload
-  | LinkedInMessageThreadRowPayload;
+  | LinkedInMessageThreadRowPayload
+  | CalendarEventRowPayload;
 
 export function isGmailSenderRow(
   payload: ImportJobRowPayload

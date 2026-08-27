@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 import {
   cancelImportSession,
+  confirmCalendarImport,
   confirmGoogleContactsImport,
   confirmOutlookContactsImport,
   getImportJobStatus,
@@ -28,7 +29,8 @@ export type ImportJobKind =
   | "connections"
   | "messages"
   | "google_contacts"
-  | "outlook_contacts";
+  | "outlook_contacts"
+  | "calendar";
 
 export type ImportJobSnapshot = {
   id: string;
@@ -45,7 +47,14 @@ export type ImportJobInput =
   | { kind: "connections"; csvText: string; fileName: string; ids: string[] }
   | { kind: "messages"; csvText: string; fileName: string; ids: string[] }
   | { kind: "google_contacts"; ids: string[] }
-  | { kind: "outlook_contacts"; ids: string[] };
+  | { kind: "outlook_contacts"; ids: string[] }
+  | {
+      kind: "calendar";
+      calendarKind: "ics" | "csv";
+      text: string;
+      fileName: string;
+      createFollowUps: boolean;
+    };
 
 type Listener = () => void;
 
@@ -68,6 +77,8 @@ function importJobLabel(kind: ImportJobKind) {
       return "Importing Google contacts";
     case "outlook_contacts":
       return "Importing Outlook contacts";
+    case "calendar":
+      return "Importing calendar";
   }
 }
 
@@ -161,8 +172,13 @@ type PollOutcome =
   | { outcome: "done"; status: ImportJobStatus };
 
 /** The subset of `ImportJobKind` that names a server-owned import — every kind as of
- *  Task 14, all processed by the resumable engine (Tasks 10-14). */
-type ServerOwnedKind = "connections" | "messages" | "google_contacts" | "outlook_contacts";
+ *  Task 15, all processed by the resumable engine (Tasks 10-15). */
+type ServerOwnedKind =
+  | "connections"
+  | "messages"
+  | "google_contacts"
+  | "outlook_contacts"
+  | "calendar";
 
 /** Polls a server-owned import job's status until it leaves "processing"/"pending". */
 async function pollServerOwnedImportJob(
@@ -315,8 +331,12 @@ export function startImportJob(input: ImportJobInput) {
 
   cancelJobId = null;
   const jobId = `import-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const label = input.ids.length === 1 ? "person" : "people";
-  const total = input.ids.length;
+  // Calendar has no `ids` — a whole file is confirmed at once, not a selected subset — so
+  // it seeds a placeholder total of 1 "event" here; `runServerOwnedImportJob` corrects it to
+  // the server's real row count (pairs, not events — see `CalendarEventRowPayload`) right
+  // after `start()` resolves, same as every other kind's placeholder gets corrected.
+  const label = input.kind === "calendar" ? "event" : input.ids.length === 1 ? "person" : "people";
+  const total = input.kind === "calendar" ? 1 : input.ids.length;
 
   // Fire-and-forget — callers should not await completion for navigation safety.
   void (async () => {
@@ -345,6 +365,18 @@ export function startImportJob(input: ImportJobInput) {
       if (input.kind === "messages") {
         await runServerOwnedImportJob(jobId, "messages", label, total, () =>
           startLinkedInMessagesImport(input.csvText, input.fileName, input.ids)
+        );
+        return;
+      }
+
+      if (input.kind === "calendar") {
+        await runServerOwnedImportJob(jobId, "calendar", "event", 1, () =>
+          confirmCalendarImport({
+            kind: input.calendarKind,
+            text: input.text,
+            fileName: input.fileName,
+            createFollowUps: input.createFollowUps,
+          })
         );
         return;
       }

@@ -10,22 +10,18 @@ import {
   gmailConnections,
   imports,
   importJobRows,
-  interactions,
   outlookConnections,
-  reminders,
-  type ImportStats,
+  type CalendarEventRowPayload,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import {
-  DUPLICATE_MERGE_CONFIDENCE,
-  daysAgo,
-  findDuplicateCandidates,
-} from "@/lib/duplicates";
+import { DUPLICATE_MERGE_CONFIDENCE, findDuplicateCandidates } from "@/lib/duplicates";
 import { runLinkedInImportJob } from "@/lib/import-job-processor";
 import {
   GOOGLE_CONTACTS_IMPORT_TYPE,
   OUTLOOK_CONTACTS_IMPORT_TYPE,
   LINKEDIN_MESSAGES_IMPORT_TYPE,
+  CALENDAR_ICS_IMPORT_TYPE,
+  CALENDAR_CSV_IMPORT_TYPE,
   runImportJobById,
 } from "@/lib/import-job-dispatch";
 import { parseLinkedInConnectionsCsv } from "@/lib/linkedin-connections";
@@ -36,38 +32,17 @@ import {
   nameFromLinkedInSlug,
   type ParsedLinkedInMessage,
 } from "@/lib/linkedin-messages";
-import { refreshOutreachSuggestions } from "@/lib/reminders";
 import {
   mapCalendarCsvRow,
   parseIcsEvents,
   windowCalendarEvents,
   type ParsedCalendarEvent,
 } from "@/lib/calendar-import";
-import { upsertContactEmbedding } from "@/lib/search";
 import { fetchGooglePeopleContacts, getValidAccessToken, hasContactsScope } from "@/lib/gmail";
 import {
   fetchOutlookContacts,
   getValidAccessToken as getValidOutlookAccessToken,
 } from "@/lib/outlook";
-
-function mergeStats(
-  prev: ImportStats | null | undefined,
-  next: ImportStats
-): ImportStats {
-  const base = prev ?? {};
-  return {
-    skipped: (base.skipped ?? 0) + (next.skipped ?? 0),
-    blockedByPlan: (base.blockedByPlan ?? 0) + (next.blockedByPlan ?? 0),
-    messagesImported:
-      (base.messagesImported ?? 0) + (next.messagesImported ?? 0),
-    meetingsLogged: (base.meetingsLogged ?? 0) + (next.meetingsLogged ?? 0),
-    remindersCreated:
-      (base.remindersCreated ?? 0) + (next.remindersCreated ?? 0),
-    contactsEnriched:
-      (base.contactsEnriched ?? 0) + (next.contactsEnriched ?? 0),
-    eventsProcessed: (base.eventsProcessed ?? 0) + (next.eventsProcessed ?? 0),
-  };
-}
 
 function simpleHash(input: string) {
   let h = 0;
@@ -90,10 +65,6 @@ function linkedInMessageExternalId(
   content: string
 ) {
   return `li-msg:${conversationId}:${date ? date.toISOString() : "unknown"}:${simpleHash(content.slice(0, 240))}`;
-}
-
-function calendarMeetingExternalId(eventUid: string, contactId: string) {
-  return `cal:${eventUid}:${contactId}`;
 }
 
 /** Replacement-character artifacts from decoding a non-UTF8 export as UTF-8. */
@@ -273,49 +244,6 @@ export async function getImportJobStatus(importId: string): Promise<ImportJobSta
     duplicatesFound: row.duplicatesFound ?? 0,
     errorMessage: row.errorMessage,
   };
-}
-
-export type ImportChunkOptions = {
-  /** Continue an existing import session across client-side batches. */
-  importId?: string;
-  /** When false, leave status as processing so more chunks can run. Default true. */
-  finalize?: boolean;
-};
-
-async function resolveImportRow(
-  userId: string,
-  values: {
-    importType: string;
-    fileName: string;
-  },
-  importId?: string
-) {
-  const db = await getDb();
-  if (importId) {
-    const existing = await db.query.imports.findFirst({
-      where: and(eq(imports.id, importId), eq(imports.userId, userId)),
-    });
-    if (!existing) throw new Error("Import session not found");
-    if (
-      existing.status === "failed" ||
-      existing.status === "completed" ||
-      existing.status === "cancelled"
-    ) {
-      throw new Error(`Import session already ${existing.status}`);
-    }
-    return existing;
-  }
-  const [created] = await db
-    .insert(imports)
-    .values({
-      userId,
-      importType: values.importType,
-      fileName: values.fileName,
-      status: "processing",
-      stats: {},
-    })
-    .returning();
-  return created;
 }
 
 /** Stop a processing import; rows already written are kept. */
@@ -591,298 +519,116 @@ export async function previewCalendarImport(payload: {
   };
 }
 
+/**
+ * Starts a server-owned calendar import: parses and windows the file once, explodes every
+ * windowed event into one job row per (event, attendee) pair — see
+ * `CalendarEventRowPayload`'s doc comment for why a pair, not one row per event — and hands
+ * them to the engine in the background via `after()`. Survives tab close/navigation — the
+ * client should poll `getImportJobStatus`, same as `startLinkedInImport`.
+ *
+ * This replaces an importer the client drove chunk by chunk (`chunk: { offset, limit }`),
+ * accumulating `meetingsLogged`/`contactsMatched` across calls and re-querying every one of
+ * the user's contacts on every chunk to check `dups[0].confidence < 0.6` and read
+ * `lastInteractionAt`/`firstInteractionAt` off whichever contact matched. The engine's own
+ * duplicate index (built once per job) and `calendarAdapter.toMerge`'s
+ * `bulkMergeContactsForUser`-based widening (see that adapter's comments) replace both of
+ * those, the same shape as `confirmGoogleContactsImport` and `startLinkedInMessagesImport`.
+ */
 export async function confirmCalendarImport(payload: {
   kind: "ics" | "csv";
   text: string;
   fileName: string;
   createFollowUps?: boolean;
-  importId?: string;
-  finalize?: boolean;
-  /** Process only a slice of windowed events (for progress UI). */
-  chunk?: { offset: number; limit: number };
-}) {
+}): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
   const db = await getDb();
   const createFollowUps = payload.createFollowUps !== false;
-  const finalize = payload.finalize !== false;
 
-  const importRow = await resolveImportRow(
-    userId,
-    {
-      importType: payload.kind === "ics" ? "calendar_ics" : "calendar_csv",
-      fileName: payload.fileName,
-    },
-    payload.importId
-  );
-
-  try {
-    let events: ParsedCalendarEvent[] = [];
-    if (payload.kind === "ics") {
-      events = parseIcsEvents(payload.text);
-    } else {
-      const parsed = Papa.parse<Record<string, string>>(payload.text, {
-        header: true,
-        skipEmptyLines: true,
-      });
-      events = parsed.data.map((row, i) => {
-        const mapped = mapCalendarCsvRow(row);
-        const attendees = mapped.attendees
-          .split(/[,;]/)
-          .map((part) => {
-            const emailMatch = part.match(/([\w.+-]+@[\w.-]+)/);
-            return {
-              name: part.replace(/<[^>]+>/, "").trim(),
-              email: (emailMatch?.[1] || "").toLowerCase(),
-            };
-          })
-          .filter((p) => p.email || p.name);
-        return {
-          uid: `csv-${i}-${mapped.summary}`,
-          summary: mapped.summary,
-          description: mapped.description,
-          location: mapped.location,
-          start: mapped.start,
-          end: mapped.end,
-          attendees,
-          organizer: null,
-        } satisfies ParsedCalendarEvent;
-      });
-    }
-
-    const now = Date.now();
-    // Same one-time-upload backfill window as previewCalendarImport, so a
-    // confirm always processes exactly what the preview showed.
-    const windowed = windowCalendarEvents(events);
-
-    const chunkEvents = payload.chunk
-      ? windowed.slice(
-          payload.chunk.offset,
-          payload.chunk.offset + payload.chunk.limit
-        )
-      : windowed;
-
-    // Full rows needed here, not just DuplicateSubject: below this reads
-    // contact.lastInteractionAt/firstInteractionAt to merge meeting timestamps.
-    const existing = await db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
+  let events: ParsedCalendarEvent[] = [];
+  if (payload.kind === "ics") {
+    events = parseIcsEvents(payload.text);
+  } else {
+    const parsed = Papa.parse<Record<string, string>>(payload.text, {
+      header: true,
+      skipEmptyLines: true,
     });
-
-    let meetingsLogged = 0;
-    let remindersCreated = 0;
-    let skipped = 0;
-    const touched = new Set<string>(
-      importRow.stats?.touchedContactIds ?? []
-    );
-
-    for (const event of chunkEvents) {
-      const people = peopleFromEvent(event);
-      if (!people.length) {
-        skipped++;
-        continue;
-      }
-
-      const eventDate = event.start || new Date();
-      const isPast = eventDate.getTime() <= now;
-
-      for (const person of people) {
-        const dups = findDuplicateCandidates(existing, {
-          fullName: person.name || undefined,
-          email: person.email || undefined,
-        });
-
-        // Only log meetings for people already in the network
-        if (!dups[0] || dups[0].confidence < 0.6) {
-          continue;
-        }
-
-        const contact = dups[0].contact;
-        touched.add(contact.id);
-
-        const note = [
-          event.summary ? `Meeting: ${event.summary}` : "Calendar meeting",
-          event.location ? `Location: ${event.location}` : "",
-          event.description ? event.description.slice(0, 500) : "",
-        ]
-          .filter(Boolean)
-          .join("\n");
-
-        const externalId = calendarMeetingExternalId(event.uid, contact.id);
-        const prior = await db.query.interactions.findFirst({
-          where: and(
-            eq(interactions.userId, userId),
-            eq(interactions.externalId, externalId)
-          ),
-        });
-
-        if (prior) {
-          await db
-            .update(interactions)
-            .set({
-              interactionDate: eventDate,
-              rawNotes: note,
-              aiSummary: event.summary || "Calendar meeting",
-              topics: event.summary ? [event.summary] : [],
-              source: "calendar_import",
-            })
-            .where(eq(interactions.id, prior.id));
-          await db
-            .update(contacts)
-            .set({
-              lastInteractionAt:
-                !contact.lastInteractionAt ||
-                eventDate > contact.lastInteractionAt
-                  ? eventDate
-                  : contact.lastInteractionAt,
-              firstInteractionAt:
-                !contact.firstInteractionAt ||
-                eventDate < contact.firstInteractionAt
-                  ? eventDate
-                  : contact.firstInteractionAt,
-              email: contact.email || person.email || undefined,
-              updatedAt: new Date(),
-            })
-            .where(
-              and(eq(contacts.id, contact.id), eq(contacts.userId, userId))
-            );
-          skipped++;
-          continue;
-        }
-
-        await db.insert(interactions).values({
-          userId,
-          contactId: contact.id,
-          interactionType: "meeting",
-          interactionDate: eventDate,
-          source: "calendar_import",
-          externalId,
-          rawNotes: note,
-          aiSummary: event.summary || "Calendar meeting",
-          topics: event.summary ? [event.summary] : [],
-        });
-        meetingsLogged++;
-
-        await db
-          .update(contacts)
-          .set({
-            lastInteractionAt:
-              !contact.lastInteractionAt ||
-              eventDate > contact.lastInteractionAt
-                ? eventDate
-                : contact.lastInteractionAt,
-            firstInteractionAt:
-              !contact.firstInteractionAt ||
-              eventDate < contact.firstInteractionAt
-                ? eventDate
-                : contact.firstInteractionAt,
-            email: contact.email || person.email || undefined,
-            updatedAt: new Date(),
-          })
-          .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
-
-        await upsertContactEmbedding(
-          userId,
-          contact.id,
-          "meeting",
-          `${contact.fullName}\n${note}`,
-          externalId
-        );
-
-        if (createFollowUps && isPast && daysAgo(eventDate) <= 21) {
-          const existingReminder = await db.query.reminders.findFirst({
-            where: and(
-              eq(reminders.userId, userId),
-              eq(reminders.contactId, contact.id),
-              eq(reminders.reminderType, "post_meeting")
-            ),
-          });
-          const alreadyForEvent =
-            existingReminder &&
-            (existingReminder.description || "").includes(event.uid);
-
-          if (!alreadyForEvent) {
-            const due = new Date(eventDate);
-            due.setDate(due.getDate() + 2);
-            if (due.getTime() < now) {
-              due.setTime(now + 2 * 86400000);
-            }
-            await db.insert(reminders).values({
-              userId,
-              contactId: contact.id,
-              title: `Follow up after ${event.summary || "meeting"}`,
-              description: `You met with ${contact.fullName}. Event ${event.uid}`,
-              dueDate: due,
-              status: "pending",
-              reminderType: "post_meeting",
-              actionKind: "follow_up",
-              createdBy: "import",
-            });
-            remindersCreated++;
-          }
-        }
-      }
-    }
-
-    const rowsProcessed =
-      (importRow.rowsProcessed ?? 0) + chunkEvents.length;
-    const stats = {
-      ...mergeStats(importRow.stats, {
-        skipped,
-        meetingsLogged,
-        remindersCreated,
-        eventsProcessed: chunkEvents.length,
-      }),
-      touchedContactIds: [...touched],
-    };
-
-    await db
-      .update(imports)
-      .set({
-        status: finalize ? "completed" : "processing",
-        rowsProcessed,
-        contactsCreated: 0,
-        contactsUpdated: touched.size,
-        duplicatesFound: stats.skipped ?? 0,
-        stats,
-        errorMessage: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(imports.id, importRow.id));
-
-    if (finalize) {
-      try {
-        await refreshOutreachSuggestions(userId);
-      } catch {
-        // non-fatal
-      }
-
-      revalidatePath("/");
-      revalidatePath("/contacts");
-      revalidatePath("/imports");
-      revalidatePath("/graph");
-      for (const id of touched) revalidatePath(`/contacts/${id}`);
-    }
-
-    return {
-      importId: importRow.id,
-      eventsProcessed: chunkEvents.length,
-      totalWindowed: windowed.length,
-      meetingsLogged,
-      contactsMatched: touched.size,
-      remindersCreated,
-      skipped,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Import failed";
-    await db
-      .update(imports)
-      .set({
-        status: "failed",
-        errorMessage: message.slice(0, 500),
-        updatedAt: new Date(),
-      })
-      .where(eq(imports.id, importRow.id));
-    throw err;
+    events = parsed.data.map((row, i) => {
+      const mapped = mapCalendarCsvRow(row);
+      const attendees = mapped.attendees
+        .split(/[,;]/)
+        .map((part) => {
+          const emailMatch = part.match(/([\w.+-]+@[\w.-]+)/);
+          return {
+            name: part.replace(/<[^>]+>/, "").trim(),
+            email: (emailMatch?.[1] || "").toLowerCase(),
+          };
+        })
+        .filter((p) => p.email || p.name);
+      return {
+        uid: `csv-${i}-${mapped.summary}`,
+        summary: mapped.summary,
+        description: mapped.description,
+        location: mapped.location,
+        start: mapped.start,
+        end: mapped.end,
+        attendees,
+        organizer: null,
+      } satisfies ParsedCalendarEvent;
+    });
   }
+
+  // Same one-time-upload backfill window as previewCalendarImport, so a confirm always
+  // processes exactly what the preview showed.
+  const windowed = windowCalendarEvents(events);
+
+  // One row per (event, attendee) pair — see `CalendarEventRowPayload`'s doc comment. An
+  // event with no attendees and no organizer contributes no rows at all, same as it
+  // contributed nothing for the old importer's per-event `people.length === 0` skip.
+  const rowPayloads: CalendarEventRowPayload[] = [];
+  for (const event of windowed) {
+    for (const person of peopleFromEvent(event)) {
+      rowPayloads.push({
+        kind: "calendar_event",
+        eventUid: event.uid,
+        summary: event.summary,
+        description: event.description,
+        location: event.location,
+        start: event.start ? event.start.toISOString() : null,
+        end: event.end ? event.end.toISOString() : null,
+        attendeeName: person.name,
+        attendeeEmail: person.email,
+        createFollowUps,
+      });
+    }
+  }
+
+  const [importRow] = await db
+    .insert(imports)
+    .values({
+      userId,
+      importType: payload.kind === "ics" ? CALENDAR_ICS_IMPORT_TYPE : CALENDAR_CSV_IMPORT_TYPE,
+      fileName: payload.fileName,
+      status: "processing",
+      totalRows: rowPayloads.length,
+      stats: {},
+    })
+    .returning();
+
+  if (rowPayloads.length > 0) {
+    await db.insert(importJobRows).values(
+      rowPayloads.map((rowPayload, index) => ({
+        importId: importRow.id,
+        userId,
+        rowIndex: index,
+        payload: rowPayload,
+      }))
+    );
+  }
+
+  after(() => runImportJobById(importRow.id).catch(() => {}));
+  revalidatePath("/imports");
+
+  return { importId: importRow.id, totalRows: rowPayloads.length };
 }
 
 export type GoogleContactPerson = {

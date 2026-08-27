@@ -1,4 +1,4 @@
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { getDb, rowsOf } from "@/db";
@@ -7,6 +7,7 @@ import {
   imports,
   importJobRows,
   interactions,
+  reminders,
   type ImportJobRowPayload,
   type ImportStats,
 } from "@/db/schema";
@@ -75,6 +76,7 @@ export type DuplicateProbe = {
 };
 
 export type InteractionInsert = typeof interactions.$inferInsert;
+export type ReminderInsert = typeof reminders.$inferInsert;
 
 /**
  * Everything an import type has to say about its own rows.
@@ -96,8 +98,35 @@ export type ImportAdapter<P> = {
    * cannot push a free user over their contact limit, because it adds no contacts.
    */
   createsContacts?: boolean;
+  /**
+   * Confidence floor at/above which a match routes to `toMerge` instead of (for a
+   * `createsContacts: false` adapter) `skipped`. Defaults to `DUPLICATE_MERGE_CONFIDENCE`
+   * (0.85) — the bar for treating two rows as "the same person," which is what every
+   * contact-creating adapter needs before it merges instead of creating a duplicate.
+   *
+   * A `createsContacts: false` adapter is not making that call. Calendar match confidence
+   * (0.6, the weakest tier `findDuplicateCandidatesIndexed` produces — a bare full-name hit)
+   * only means "this attendee correlates with this known contact," not "these two rows
+   * describe the same person to merge." Logging a meeting against the wrong same-named
+   * contact is a much smaller mistake than silently merging two different people's contact
+   * records, which is why calendar can afford a floor the create-side adapters cannot.
+   * `toMerge` still runs for a calendar match — the widen-on-merge machinery
+   * (`bulkMergeContactsForUser`'s `LEAST`/`GREATEST` on the interaction timestamps) is
+   * exactly what a matched-but-not-merged row needs, it just needs it at a lower bar.
+   */
+  matchConfidence?: number;
   /** Interaction rows to bulk-insert for this payload, once its contact id is known. */
   interactions?(payload: P, contactId: string, userId: string): InteractionInsert[];
+  /**
+   * Reminder rows to bulk-insert for this payload, once its contact id is known — a second
+   * bulk insert alongside `interactions`, not folded into it (they're different tables).
+   * `reminders` carries no soft-unique column to `onConflictDoNothing()` against the way
+   * `interactions.externalId` does, so the engine dedupes these itself with one bulk
+   * `SELECT` per chunk, scoped to the contacts this chunk actually touched, matching on the
+   * exact (contactId, description) pair — deterministic per adapter row, so a re-uploaded
+   * file reproduces the same candidates and they're filtered out rather than inserted again.
+   */
+  reminders?(payload: P, contactId: string, userId: string): ReminderInsert[];
   /**
    * Optional once-per-job finalization step, called after the chunk loop completes with
    * every contact id this job touched (created or merged) across every chunk. Non-fatal —
@@ -328,6 +357,9 @@ export async function runImportJob(importId: string): Promise<void> {
     const adapter = getAdapter(importRow.importType);
     if (!adapter) return;
     const createsContacts = adapter.createsContacts !== false;
+    // See `ImportAdapter.matchConfidence`'s doc comment for why this floor is not always
+    // `DUPLICATE_MERGE_CONFIDENCE`.
+    const matchConfidence = adapter.matchConfidence ?? DUPLICATE_MERGE_CONFIDENCE;
 
     const userId = importRow.userId;
 
@@ -485,7 +517,7 @@ export async function runImportJob(importId: string): Promise<void> {
 
           const dups = findDuplicateCandidatesIndexed(duplicateIndex, probe);
 
-          if (dups[0] && dups[0].confidence >= DUPLICATE_MERGE_CONFIDENCE) {
+          if (dups[0] && dups[0].confidence >= matchConfidence) {
             toUpdate.push({
               row,
               contactId: dups[0].contact.id,
@@ -599,6 +631,19 @@ export async function runImportJob(importId: string): Promise<void> {
         // place. `onConflictDoNothing` leans on the soft-unique (user_id, external_id) index
         // the interactions table already carries for import dedupe, so a retried chunk
         // re-inserting rows it already wrote is a no-op rather than a failed import.
+        //
+        // Untargeted `onConflictDoNothing()` keeps the *stale* row on a conflict rather than
+        // updating it — deliberately left that way here (carried from Task 10's review, and
+        // re-examined for the calendar adapter added in Task 15, the first `createsContacts:
+        // false` consumer of this insert). For calendar specifically: a re-synced event whose
+        // *time* changed keeps the old interaction date instead of picking up the new one.
+        // Accepted for the same reason the LinkedIn messages adapter accepted the equivalent
+        // gap in Task 14 — this is a one-time file upload, not a live sync (Orbit already has
+        // a separate live calendar-subscription sync path, `calendar-sync.ts`, for that case),
+        // so "re-upload the exact same export" is the only re-run this path actually has to
+        // get right, and it does (see the smoke test's "re-upload logs no duplicate meeting").
+        // An upload where the *same* event's time silently changed between two uploads of
+        // what's nominally the same file is not a scenario worth an UPSERT for.
         if (adapter.interactions) {
           const interactionRows: InteractionInsert[] = [];
           for (const row of pendingRows) {
@@ -610,6 +655,54 @@ export async function runImportJob(importId: string): Promise<void> {
           }
           if (interactionRows.length > 0) {
             await db.insert(interactions).values(interactionRows).onConflictDoNothing();
+          }
+        }
+
+        // Adapter-specific reminders (today, only the calendar adapter's post-meeting
+        // follow-ups). A second bulk insert, not folded into the one above — `reminders` and
+        // `interactions` are different tables. Unlike `interactions.externalId`, `reminders`
+        // has no soft-unique column to lean an `onConflictDoNothing()` on, so this does its
+        // own bulk dedupe: one `SELECT` scoped to the contacts this chunk actually touched,
+        // then an exact (contactId, description) match against the candidates. That pair is
+        // deterministic per adapter row (same event + same contact -> same description), so a
+        // re-uploaded file reproduces byte-identical candidates and they're filtered out
+        // rather than inserted a second time — no per-row existence check needed.
+        if (adapter.reminders) {
+          const reminderRows: ReminderInsert[] = [];
+          for (const row of pendingRows) {
+            const contactId = contactIdByRowId.get(row.id);
+            if (!contactId) continue;
+            reminderRows.push(
+              ...adapter.reminders(row.payload as ImportJobRowPayload, contactId, userId)
+            );
+          }
+          if (reminderRows.length > 0) {
+            const candidateContactIds = [
+              ...new Set(
+                reminderRows
+                  .map((r) => r.contactId)
+                  .filter((cid): cid is string => typeof cid === "string")
+              ),
+            ];
+            const existingReminders =
+              candidateContactIds.length > 0
+                ? await db.query.reminders.findMany({
+                    where: and(
+                      eq(reminders.userId, userId),
+                      inArray(reminders.contactId, candidateContactIds)
+                    ),
+                    columns: { contactId: true, description: true },
+                  })
+                : [];
+            const existingKeys = new Set(
+              existingReminders.map((r) => `${r.contactId}::${r.description ?? ""}`)
+            );
+            const newReminders = reminderRows.filter(
+              (r) => !existingKeys.has(`${r.contactId}::${r.description ?? ""}`)
+            );
+            if (newReminders.length > 0) {
+              await db.insert(reminders).values(newReminders);
+            }
           }
         }
 
