@@ -1297,8 +1297,15 @@ html[data-warp-journey="liftoff"][data-warp="landing"] [data-warp-craft] {
   will-change: transform, opacity;
 }
 
-/* Nothing underneath the sky should react to a stray click or hover while the
-   journey is running; the canvas itself swallows pointer events. */
+/* Nothing on the ORIGIN page should react to a stray click or hover while the
+   journey is running. This rule reaches the origin only: the destination
+   mounts in a different layout and never carries [data-warp-craft].
+   Destinations are covered — or not — by their own stage:
+     liftoff — the canvas is pointer-events:none throughout, so /pricing stays
+       clickable underneath it. Cosmetic; there is nothing there to mis-click.
+     chrono  — the canvas takes pointer events while it is actually covering
+       (see COVER_BLOCKS_CLICKS in chrono-stage.tsx), because /upgrade's cover
+       hides live checkout buttons. */
 html[data-warp] [data-warp-craft] {
   pointer-events: none;
 }

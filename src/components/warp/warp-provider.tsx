@@ -314,7 +314,10 @@ export function WarpProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (run.phase === "idle") return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      // `repeat` matters: holding Escape down through a rewind would re-arm
+      // skip()'s cover timer on every auto-repeat, keeping the app shell
+      // covered — and unclickable — until the key came back up.
+      if (e.key !== "Escape" || e.repeat) return;
       const phase = phaseRef.current;
       if (phase === "cruise") beginArrival();
       else if (

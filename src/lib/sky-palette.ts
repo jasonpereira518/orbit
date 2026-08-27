@@ -1,12 +1,19 @@
 /**
  * The one sky.
  *
- * Shared by the landing/pricing starfield (`components/landing/starfield.tsx`)
- * and the lift-off stage (`components/warp/liftoff-stage.tsx`). The stage's last
- * frame cross-fades into the real starfield's first, so the two MUST agree on
- * every colour — a half-shade of drift shows up as a visible seam at exactly
- * the moment the user is looking at the sky. Change a value here, never in a
- * consumer.
+ * Shared by the landing/pricing/upgrade starfield
+ * (`components/landing/starfield.tsx`) and BOTH warp stages — the lift-off
+ * (`components/warp/liftoff-stage.tsx`) and the time warp
+ * (`components/warp/chrono-stage.tsx`). Each stage's last frame cross-fades
+ * into the real starfield's first, so all three MUST agree on every colour — a
+ * half-shade of drift shows up as a visible seam at exactly the moment the
+ * user is looking at the sky.
+ *
+ * The chrono stage is the strictest consumer: it does not merely end on the
+ * same sky, it paints `paintSpace` as its own base layer for the whole run and
+ * then dissolves off the top of an identical image underneath. Any drift there
+ * is a step change in the middle of the payoff shot rather than a seam at its
+ * edge. Change a value here, never in a consumer.
  */
 
 /** Star body colours, as `r, g, b` triplets ready for `rgba(${X}, a)`. */
