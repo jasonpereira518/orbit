@@ -385,58 +385,110 @@ export function drawRocket(
   ctx.restore();
 }
 
+
 /* ── Planets ───────────────────────────────────────────────────────────── */
+
+/** A surface feature: [x, y, radius, colour], all three geometry values in
+ * units of the planet's own radius so a definition scales at any size. */
+export type Spot = [number, number, number, string];
 
 export type PlanetDef = {
   /** Sunlit side. */
   lit: string;
-  /** Shadowed side, and the base the bands sit on. */
+  /** Shadowed side, and the base any bands sit on. */
   dark: string;
-  /** Horizontal cloud bands, as [offset from centre, half-height, colour]. */
+  /** Latitude bands, as [offset from centre, half-height, colour]. */
   bands?: [number, number, string][];
-  ring?: { inner: number; outer: number; tilt: number; color: string };
+  /** Named features — a red spot, a polar cap, a crater field. */
+  spots?: Spot[];
+  ring?: { inner: number; outer: number; tilt: number; color: string; rot?: number };
 };
 
-/** A small, deliberately non-solar-system cast. These are set dressing for a
- * climb out of one gravity well, not an orrery — they only need to read as
- * "other worlds, far away" in the second and a half they are on screen. */
+/**
+ * The road out, in the order you'd actually leave.
+ *
+ * Real bodies rather than invented ones: passing Saturn only lands if the
+ * viewer recognises Saturn, and recognition is doing most of the work in the
+ * second and a half each of these is on screen. They are stylised, not
+ * accurate — the point is legibility at speed.
+ */
 export const PLANET_KINDS: Record<string, PlanetDef> = {
-  ringed: {
-    lit: "#e6cf9e",
-    dark: "#8a7448",
-    bands: [
-      [-0.34, 0.09, "rgba(150, 124, 74, 0.4)"],
-      [0.06, 0.13, "rgba(247, 231, 190, 0.32)"],
-      [0.44, 0.1, "rgba(140, 116, 70, 0.36)"],
-    ],
-    ring: { inner: 1.35, outer: 2.05, tilt: 0.34, color: "216, 198, 156" },
-  },
-  jovian: {
-    lit: "#d99a6c",
-    dark: "#7a4a34",
-    bands: [
-      [-0.42, 0.08, "rgba(120, 70, 48, 0.45)"],
-      [-0.1, 0.11, "rgba(240, 200, 168, 0.3)"],
-      [0.28, 0.09, "rgba(126, 74, 50, 0.42)"],
-      [0.58, 0.07, "rgba(238, 196, 160, 0.24)"],
-    ],
-  },
-  ice: {
-    lit: "#9fd4e4",
-    dark: "#2f6a86",
-  },
-  rust: {
-    lit: "#c9714a",
-    dark: "#6d3320",
-  },
   moon: {
-    lit: "#d3d6da",
-    dark: "#6a6e75",
+    lit: "#dcdee2",
+    dark: "#6d7178",
+    // Craters. A plain grey ball survives a distant pass and nothing closer.
+    spots: [
+      [-0.3, -0.22, 0.2, "rgba(120, 124, 132, 0.55)"],
+      [0.24, 0.12, 0.26, "rgba(126, 130, 138, 0.5)"],
+      [-0.1, 0.44, 0.15, "rgba(114, 118, 126, 0.6)"],
+      [0.52, -0.38, 0.12, "rgba(120, 124, 132, 0.5)"],
+      [-0.56, 0.2, 0.1, "rgba(118, 122, 130, 0.5)"],
+      [0.08, -0.56, 0.09, "rgba(124, 128, 136, 0.45)"],
+      [0.38, 0.52, 0.08, "rgba(116, 120, 128, 0.5)"],
+    ],
+  },
+  mars: {
+    lit: "#dc8a5c",
+    dark: "#7b3a22",
+    spots: [
+      // Northern cap, then the dark volcanic plains that give Mars its blotches.
+      [0.0, -0.78, 0.36, "rgba(238, 240, 244, 0.85)"],
+      [0.0, 0.86, 0.24, "rgba(236, 238, 242, 0.6)"],
+      [-0.34, 0.06, 0.3, "rgba(122, 62, 40, 0.5)"],
+      [0.3, 0.3, 0.24, "rgba(112, 56, 36, 0.45)"],
+      [0.44, -0.3, 0.16, "rgba(126, 66, 42, 0.4)"],
+    ],
+  },
+  jupiter: {
+    lit: "#edd3ab",
+    dark: "#8d6140",
+    bands: [
+      [-0.56, 0.09, "rgba(150, 106, 70, 0.45)"],
+      [-0.28, 0.11, "rgba(248, 232, 200, 0.34)"],
+      [0.02, 0.09, "rgba(158, 108, 68, 0.42)"],
+      [0.3, 0.12, "rgba(246, 226, 192, 0.3)"],
+      [0.6, 0.09, "rgba(146, 100, 64, 0.4)"],
+    ],
+    // The Great Red Spot is the whole reason Jupiter is recognisable at a glance.
+    spots: [[0.3, 0.2, 0.2, "rgba(198, 96, 62, 0.85)"]],
+  },
+  saturn: {
+    lit: "#e9d4a6",
+    dark: "#8d774b",
+    bands: [
+      [-0.36, 0.1, "rgba(154, 128, 78, 0.36)"],
+      [0.04, 0.13, "rgba(250, 234, 196, 0.3)"],
+      [0.44, 0.1, "rgba(144, 120, 74, 0.34)"],
+    ],
+    ring: { inner: 1.32, outer: 2.1, tilt: 0.3, color: "220, 202, 160" },
+  },
+  uranus: {
+    lit: "#addfe8",
+    dark: "#3f8496",
+    // Steeply tilted rings — the thing everybody half-remembers about Uranus.
+    // Not fully vertical: past about 1.2rad the front/back split degenerates
+    // into a crescent that reads as a bite taken out of the planet.
+    ring: { inner: 1.42, outer: 1.58, tilt: 0.46, color: "170, 206, 216", rot: 1.12 },
+  },
+  neptune: {
+    lit: "#5f93da",
+    dark: "#1f3f7c",
+    bands: [
+      [-0.3, 0.08, "rgba(140, 178, 232, 0.26)"],
+      [0.34, 0.09, "rgba(28, 56, 104, 0.34)"],
+    ],
+    spots: [[-0.26, 0.18, 0.19, "rgba(20, 40, 88, 0.72)"]],
   },
 };
 
-/** A distant world. Rings are split around the body so the back half is
- * occluded — the one detail that stops a ringed planet reading as a sticker. */
+/**
+ * A world, at whatever size the flyby has it.
+ *
+ * Rings are split around the body so the back half is occluded — the one
+ * detail that stops a ringed planet reading as a sticker. Spots are
+ * foreshortened toward the limb so they sit ON the sphere instead of on a
+ * flat disc painted to look like one.
+ */
 export function drawPlanet(
   ctx: CanvasRenderingContext2D,
   o: { x: number; y: number; r: number; alpha: number; def: PlanetDef },
@@ -450,10 +502,16 @@ export function drawPlanet(
     if (!def.ring) return;
     ctx.save();
     ctx.translate(o.x, o.y);
-    ctx.rotate(-0.22);
+    ctx.rotate(def.ring.rot ?? -0.22);
     ctx.scale(1, def.ring.tilt);
     ctx.beginPath();
-    ctx.arc(0, 0, (o.r * (def.ring.inner + def.ring.outer)) / 2, front ? 0 : Math.PI, front ? Math.PI : TAU);
+    ctx.arc(
+      0,
+      0,
+      (o.r * (def.ring.inner + def.ring.outer)) / 2,
+      front ? 0 : Math.PI,
+      front ? Math.PI : Math.PI * 2,
+    );
     ctx.strokeStyle = `rgba(${def.ring.color}, 0.55)`;
     ctx.lineWidth = o.r * (def.ring.outer - def.ring.inner);
     ctx.stroke();
@@ -475,22 +533,65 @@ export function drawPlanet(
   body.addColorStop(1, "#08111f");
   ctx.fillStyle = body;
   ctx.beginPath();
-  ctx.arc(o.x, o.y, o.r, 0, TAU);
+  ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
   ctx.fill();
 
-  if (def.bands) {
+  if (def.bands || def.spots) {
     ctx.save();
     ctx.beginPath();
-    ctx.arc(o.x, o.y, o.r, 0, TAU);
+    ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
     ctx.clip();
-    for (const [off, half, color] of def.bands) {
+
+    for (const [off, half, color] of def.bands ?? []) {
       ctx.fillStyle = color;
       ctx.beginPath();
-      ctx.ellipse(o.x, o.y + o.r * off, o.r * 1.05, o.r * half, 0, 0, TAU);
+      ctx.ellipse(o.x, o.y + o.r * off, o.r * 1.05, o.r * half, 0, 0, Math.PI * 2);
       ctx.fill();
     }
+
+    for (const [sx, sy, sr, color] of def.spots ?? []) {
+      const d2 = sx * sx + sy * sy;
+      if (d2 >= 1) continue;
+      // Squash along the radial direction by how far around the sphere the
+      // feature sits: dead centre keeps its shape, the limb flattens to a line.
+      const fore = Math.sqrt(1 - d2);
+      ctx.save();
+      ctx.translate(o.x + sx * o.r, o.y + sy * o.r);
+      ctx.rotate(Math.atan2(sy, sx));
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, sr * o.r);
+      g.addColorStop(0, color);
+      g.addColorStop(0.78, color);
+      g.addColorStop(1, color.replace(/[\d.]+\)$/, "0)"));
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, sr * o.r * fore, sr * o.r, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
     ctx.restore();
   }
+
+  // Terminator, so a close pass has a lit side and a dark one.
+  const night = ctx.createRadialGradient(
+    o.x - o.r * 0.4,
+    o.y - o.r * 0.42,
+    o.r * 0.06,
+    o.x,
+    o.y,
+    o.r * 1.04,
+  );
+  night.addColorStop(0, "rgba(0, 0, 0, 0)");
+  night.addColorStop(0.52, "rgba(3, 7, 18, 0.06)");
+  night.addColorStop(0.78, "rgba(3, 7, 18, 0.3)");
+  night.addColorStop(1, "rgba(1, 3, 10, 0.72)");
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.fillStyle = night;
+  ctx.fillRect(o.x - o.r, o.y - o.r, o.r * 2, o.r * 2);
+  ctx.restore();
 
   ringPath(true);
   ctx.restore();

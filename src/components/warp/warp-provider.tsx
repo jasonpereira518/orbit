@@ -139,6 +139,9 @@ export function WarpProvider({ children }: { children: React.ReactNode }) {
   // straight to deceleration instead of holding in cruise.
   const pageReady = useRef(false);
   const phaseRef = useRef<WarpPhase>("idle");
+  // Skipping before the route has swapped would arrive at a page that was never
+  // asked for, so the skip has to be able to force the push forward.
+  const pushedRef = useRef(false);
 
   const clearTimers = useCallback(() => {
     for (const t of timers.current) clearTimeout(t);
@@ -168,6 +171,7 @@ export function WarpProvider({ children }: { children: React.ReactNode }) {
       if (phaseRef.current !== "idle") return;
       clearTimers();
       pageReady.current = false;
+      pushedRef.current = false;
       phaseRef.current = "ascending";
       setArrivedByWarp(WARP_DESTINATION);
 
@@ -184,7 +188,11 @@ export function WarpProvider({ children }: { children: React.ReactNode }) {
       // Swap the route only once the sky covers the frame. Earlier than this
       // and the `(app)` layout — which owns the element visibly flying away —
       // unmounts mid-flight.
-      after(reduced ? REDUCED_MS : ASCENT_OPAQUE_MS, () => router.push(WARP_DESTINATION));
+      after(reduced ? REDUCED_MS : ASCENT_OPAQUE_MS, () => {
+        if (pushedRef.current) return;
+        pushedRef.current = true;
+        router.push(WARP_DESTINATION);
+      });
 
       // End of the deterministic climb: decelerate if /pricing is already up,
       // otherwise hold in cruise until the beacon fires.
@@ -203,6 +211,23 @@ export function WarpProvider({ children }: { children: React.ReactNode }) {
     },
     [after, beginArrival, clearTimers, reduced, router],
   );
+
+  /**
+   * Cut the journey short and land now.
+   *
+   * Seven seconds is a long time to hold somebody who has seen it before, so
+   * any key or pointer press ends it. The navigation is not abandoned — if the
+   * push has not fired yet it is brought forward, because arriving early at the
+   * page you were still standing on would be worse than the wait.
+   */
+  const skip = useCallback(() => {
+    if (phaseRef.current !== "ascending" && phaseRef.current !== "cruise") return;
+    if (!pushedRef.current) {
+      pushedRef.current = true;
+      router.push(WARP_DESTINATION);
+    }
+    beginArrival();
+  }, [beginArrival, router]);
 
   const arrive = useCallback(() => {
     pageReady.current = true;
@@ -239,16 +264,24 @@ export function WarpProvider({ children }: { children: React.ReactNode }) {
     return true;
   }, [after, clearTimers, reduced, router, settle]);
 
-  // Escape completes the journey rather than abandoning it — the navigation is
-  // already in flight, so the only thing left to skip is the waiting.
+  // Any input ends the trip early. Deliberately not just Escape: somebody who
+  // wants out reaches for whatever is nearest, and on a touch screen there is
+  // no Escape at all.
   useEffect(() => {
-    if (run.phase !== "cruise") return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") beginArrival();
+    if (run.phase !== "ascending" && run.phase !== "cruise") return;
+    // The click that launched can still be delivering its own pointerup/click,
+    // and a launch that cancels itself on the way up is not a feature.
+    const armAt = run.startedAt + 500;
+    const onInput = () => {
+      if (performance.now() >= armAt) skip();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [run.phase, beginArrival]);
+    window.addEventListener("keydown", onInput);
+    window.addEventListener("pointerdown", onInput);
+    return () => {
+      window.removeEventListener("keydown", onInput);
+      window.removeEventListener("pointerdown", onInput);
+    };
+  }, [run.phase, run.startedAt, skip]);
 
   // Drives the craft animation and the scroll lock from CSS. Set on <html> so
   // the selector can reach `[data-warp-craft]` in whichever layout is mounted.

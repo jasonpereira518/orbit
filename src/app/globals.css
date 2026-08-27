@@ -1224,8 +1224,8 @@ body:has(.landing-root) {
  * `data-warp-craft` on the element that flies.
  *
  * Percentages below mirror `lib/warp/choreography.ts`. Change one, change both:
- * the animation runs for ASCENT.liftoff's full 1150ms, and ASCENT.ignition
- * ends at 250/1150 = 22% of it — the judder is over before anything moves. */
+ * the animation runs for ASCENT.departure's full 1200ms, and ASCENT.ignition
+ * ends at 300/1200 = 25% of it — the judder is over before anything moves. */
 
 @keyframes warp-craft-ascend {
   /* Engines light: a short judder before anything actually moves. */
@@ -1233,18 +1233,18 @@ body:has(.landing-root) {
     transform: perspective(1100px) translate3d(0, 0, 0) rotateX(0deg) scale(1);
     opacity: 1;
   }
-  5% {
+  6% {
     transform: perspective(1100px) translate3d(0, 4px, 0) rotateX(0deg) scale(1);
   }
-  11% {
+  12% {
     transform: perspective(1100px) translate3d(0, -3px, 0) rotateX(0deg) scale(1);
   }
-  16% {
+  18% {
     transform: perspective(1100px) translate3d(0, 2px, 0) rotateX(0deg) scale(1);
   }
   /* Release. Accelerating from here so it reads as the camera climbing away,
      not as a panel sliding down a track. */
-  22% {
+  25% {
     transform: perspective(1100px) translate3d(0, 0, 0) rotateX(0deg) scale(1);
     opacity: 1;
     animation-timing-function: cubic-bezier(0.55, 0, 0.85, 0.2);
@@ -1288,7 +1288,7 @@ body:has(.landing-root) {
 }
 
 html[data-warp="ascending"] [data-warp-craft] {
-  animation: warp-craft-ascend 1150ms ease-out both;
+  animation: warp-craft-ascend 1200ms ease-out both;
   /* The stage portals to <body>, so it is never inside this transform — a
      transformed ancestor becomes the containing block for position:fixed and
      would drag the whole sky down with the dashboard. */
@@ -1297,7 +1297,7 @@ html[data-warp="ascending"] [data-warp-craft] {
 }
 
 html[data-warp="landing"] [data-warp-craft] {
-  animation: warp-craft-land 400ms cubic-bezier(0.3, 0.9, 0.4, 1) both;
+  animation: warp-craft-land 360ms cubic-bezier(0.3, 0.9, 0.4, 1) both;
   will-change: transform, opacity;
 }
 

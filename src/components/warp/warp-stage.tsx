@@ -4,10 +4,12 @@ import { useEffect, useRef } from "react";
 import {
   ARRIVAL_MS,
   ASCENT,
-  ASCENT_ALTITUDE,
-  ASCENT_DISTANCE,
   ASCENT_MS,
   ASCENT_OPAQUE_MS,
+  EARTH_FADE,
+  EARTH_RECEDE,
+  FLYBYS,
+  FLYBY_DEPTH,
   REENTRY,
   REENTRY_MS,
   REDUCED_MS,
@@ -41,50 +43,37 @@ type Star = { x: number; y: number; depth: number; r: number; gold: boolean };
 type Cloud = { x: number; y: number; r: number; a: number; speed: number };
 type Sat = { x: number; s: number; phase: number; spin: number };
 
-/** One star per this many px2 of viewport, capped for ultrawide displays.
- * Lower than the landing starfield's: this loop also carries a planet, four
- * satellites and a rocket, so the field gives up some density for headroom. */
 const STAR_AREA = 2600;
 const STAR_CAP = 700;
 const CLOUD_COUNT = 7;
 
-/** Peak field speed, in px/frame at depth 1. Depth divides it, so the nearest
- * stars run ~3x this and the farthest barely drift. Kept modest on purpose:
- * long uniform streaks at speed stop reading as travel and start reading as
- * heavy rain falling down the screen. */
+/** Peak field speed, in px/frame at depth 1. Kept modest: long uniform streaks
+ * stop reading as travel and start reading as heavy rain down the screen. */
 const TOP_SPEED = 25;
-/** Streak length per unit of per-frame travel, and its ceiling in px. Both
- * deliberately short — the trail is a smear behind a moving point, not a line. */
 const TRAIL = 1.35;
 const TRAIL_CAP = 105;
-/** How much of the altitude ramp fits on one screen. Smaller = the sky changes
- * faster as you climb; larger = a longer, softer gradient. */
+/** How much of the altitude ramp fits on one screen. Descent only — the climb
+ * starts above the atmosphere now and never touches this. */
 const RAMP_BAND = 0.42;
 
-/**
- * Satellites, as fractions of the viewport width. Phases stagger their
- * entrances across the orbit band so they read as scattered traffic rather
- * than as a formation flying past in step.
- */
+/** Low-orbit traffic, as fractions of viewport width. Phases stagger their
+ * entrances so they read as scattered rather than as a formation. */
 const SATELLITES: Sat[] = [
   { x: 0.22, s: 1.15, phase: 0.0, spin: 0.9 },
-  { x: 0.74, s: 0.85, phase: 0.28, spin: -1.3 },
-  { x: 0.46, s: 0.6, phase: 0.52, spin: 1.7 },
-  { x: 0.88, s: 1.0, phase: 0.74, spin: -0.7 },
+  { x: 0.74, s: 0.85, phase: 0.3, spin: -1.3 },
+  { x: 0.46, s: 0.6, phase: 0.56, spin: 1.7 },
+  { x: 0.88, s: 1.0, phase: 0.78, spin: -0.7 },
 ];
 
-/**
- * Distant worlds. `at` is when each fades in, `drift` how fast it slides down
- * the frame — slower is farther, which is the only depth cue a flat canvas
- * gets. The moon arrives with Earth; the rest belong to deep space.
- */
-const BODIES = [
-  { kind: "moon", x: 0.86, y: 0.5, r: 0.055, drift: 0.5, at: 2050 },
-  { kind: "ringed", x: 0.79, y: 0.2, r: 0.115, drift: 0.2, at: 2450 },
-  { kind: "jovian", x: 0.15, y: 0.44, r: 0.085, drift: 0.28, at: 2600 },
-  { kind: "ice", x: 0.36, y: 0.13, r: 0.045, drift: 0.14, at: 2750 },
-  { kind: "rust", x: 0.6, y: 0.62, r: 0.032, drift: 0.4, at: 2900 },
-] as const;
+/** Coming home you pass the outer worlds again, fast and in reverse order.
+ * Three is all a 1.5s fall has room for, and they have to be done before
+ * Earth swells past about 0.6 of the fall — after that it simply occludes
+ * them, and a pass nobody can see is a pass not worth drawing. */
+const RETURN_PASSES = [
+  { kind: "neptune", at: 0.16, side: 1, close: 0.5, lateral: 0.44 },
+  { kind: "uranus", at: 0.34, side: -1, close: 0.42, lateral: 0.5 },
+  { kind: "saturn", at: 0.52, side: 1, close: 0.78, lateral: 0.36 },
+];
 
 function clamp01(v: number) {
   return Math.min(1, Math.max(0, v));
@@ -98,16 +87,14 @@ function clamp01(v: number) {
  * is nowhere near enough to drive an animation. `run` is read through a ref so
  * a phase change never restarts the loop mid-flight.
  *
- * The climb is staged as overlapping bands (see `choreography.ts`): cloud deck,
- * thinning air, low orbit, deep space, then the jump out. Each band owns a few
- * props, and they cross-fade rather than cut, so nothing ever pops in.
+ * The climb starts above the atmosphere: the dashboard falls away to uncover an
+ * Earth that already fills the frame, black opens around it as we pull back,
+ * and then six worlds are passed one at a time. The atmosphere ramp survives
+ * only on the way down, where you actually fall through air.
  */
 export function WarpStage({ run }: { run: WarpRun }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const runRef = useRef(run);
-  // The loop reads phase through a ref so a transition never restarts it
-  // mid-flight. Synced after commit rather than during render; the loop picks
-  // the new value up on its next frame, which is 16ms it will never notice.
   useEffect(() => {
     runRef.current = run;
   }, [run]);
@@ -124,17 +111,9 @@ export function WarpStage({ run }: { run: WarpRun }) {
     let dpr = 1;
     let stars: Star[] = [];
     let clouds: Cloud[] = [];
-    const drift = BODIES.map(() => 0);
-    // The deep-space base (gradient + nebulae) is several full-screen radial
-    // fills — far too expensive per frame, so it is rendered once per resize
-    // and blitted. It is also the exact image the real starfield paints, which
-    // is what makes the handoff at the end of the ascent invisible.
     let space: HTMLCanvasElement | null = null;
-    // Earth's surface never changes, only its size. Painted once, ever.
     const earthTex = makeEarthTexture();
 
-    // Read once: the ramp has to start from wherever the user actually is, or
-    // a dark-mode dashboard washes out to a bright blue sky and reads as a bug.
     const night = document.documentElement.classList.contains("dark");
     const ramp = night ? ATMOSPHERE_NIGHT : ATMOSPHERE;
     const groundHex =
@@ -143,10 +122,9 @@ export function WarpStage({ run }: { run: WarpRun }) {
         .trim() || (night ? "#272727" : "#fbfbf9");
     const ground = hexToRgb(groundHex.startsWith("#") ? groundHex : night ? "#272727" : "#fbfbf9");
 
-    /** A zero-size viewport at mount (a hidden tab being restored, a prerender)
-     * produces a zero-size layer, and drawImage throws InvalidStateError on
-     * those — which would take down the page tree rather than just the sky.
-     * The resize listener repairs the layer once real dimensions arrive. */
+    /** A zero-size viewport at mount produces a zero-size layer, and drawImage
+     * throws InvalidStateError on those — taking down the page tree rather than
+     * just the sky. The resize listener repairs it once dimensions arrive. */
     function hasSpace() {
       return space !== null && space.width > 0 && space.height > 0;
     }
@@ -178,8 +156,6 @@ export function WarpStage({ run }: { run: WarpRun }) {
       stars = Array.from({ length: count }, () => ({
         x: Math.random() * width,
         y: Math.random() * height,
-        // Biased toward the far field so most stars drift and only a few tear
-        // past — an evenly distributed depth reads as noise, not as parallax.
         depth: 0.35 + Math.pow(Math.random(), 0.6) * 1.5,
         r: Math.random() * 1.3 + 0.35,
         gold: Math.random() < 0.05,
@@ -194,10 +170,23 @@ export function WarpStage({ run }: { run: WarpRun }) {
       }));
     }
 
-    /** Sky, sampled as a vertical window over the altitude ramp. */
+    /** Deep space, plus a brief bleed of the app's own background at the very
+     * start so the reveal doesn't hard-cut from a light dashboard to black. */
+    function paintBackdrop(seam: number) {
+      if (hasSpace()) ctx!.drawImage(space!, 0, 0, width, height);
+      else {
+        ctx!.fillStyle = DEEP_SPACE;
+        ctx!.fillRect(0, 0, width, height);
+      }
+      if (seam > 0.002) {
+        ctx!.fillStyle = `rgba(${ground[0]}, ${ground[1]}, ${ground[2]}, ${seam})`;
+        ctx!.fillRect(0, 0, width, height);
+      }
+    }
+
+    /** Sky sampled as a vertical window over the altitude ramp. Descent only. */
     function paintSky(altitude: number) {
       const g = ctx!.createLinearGradient(0, 0, 0, height);
-      // u runs 0 (vacuum) -> 1 (ground). Climbing slides the window up the ramp.
       const uBottom = 1 - altitude + RAMP_BAND * 0.35;
       const uTop = uBottom - RAMP_BAND;
       for (let i = 0; i <= 6; i++) {
@@ -208,15 +197,6 @@ export function WarpStage({ run }: { run: WarpRun }) {
       ctx!.fillStyle = g;
       ctx!.fillRect(0, 0, width, height);
 
-      // Right at the ground, blend toward the app's own background so the very
-      // first frames of the climb leave the dashboard rather than replacing it.
-      const seam = 1 - clamp01(altitude / 0.16);
-      if (seam > 0) {
-        ctx!.fillStyle = `rgba(${ground[0]}, ${ground[1]}, ${ground[2]}, ${seam * 0.9})`;
-        ctx!.fillRect(0, 0, width, height);
-      }
-
-      // Cross-fade into the real starfield's exact background as we reach vacuum.
       const mix = clamp01((altitude - 0.7) / 0.3);
       if (mix > 0 && hasSpace()) {
         ctx!.globalAlpha = mix;
@@ -243,16 +223,13 @@ export function WarpStage({ run }: { run: WarpRun }) {
       }
     }
 
-    /** Warm ground haze below, for the stretch before Earth's limb takes over. */
     function paintHorizon(a: number, altitude: number) {
       if (a <= 0.002) return;
-      const cx = width * 0.5;
-      const cy = height * (1.06 + altitude * 0.22);
-      const rx = width * (1.15 - altitude * 0.45);
       ctx!.save();
       ctx!.globalCompositeOperation = "screen";
-      ctx!.translate(cx, cy);
+      ctx!.translate(width * 0.5, height * (1.06 + altitude * 0.22));
       ctx!.scale(1, 0.36);
+      const rx = width * (1.15 - altitude * 0.45);
       const g = ctx!.createRadialGradient(0, 0, 0, 0, 0, rx);
       g.addColorStop(0, `rgba(${HORIZON_GOLD}, ${a * 0.55})`);
       g.addColorStop(0.45, `rgba(${HORIZON_GOLD}, ${a * 0.22})`);
@@ -264,11 +241,6 @@ export function WarpStage({ run }: { run: WarpRun }) {
       ctx!.restore();
     }
 
-    /**
-     * The field. Motion is vertical — we are climbing, not jumping to
-     * lightspeed — with a slight outward drift from a vanishing point above
-     * frame, which is what a wide lens does to a sky you are rising through.
-     */
     function paintStars(alpha: number, speed: number, dt: number) {
       if (alpha <= 0.002) return;
       const vpx = width * 0.5;
@@ -294,8 +266,6 @@ export function WarpStage({ run }: { run: WarpRun }) {
           const dir = Math.sign(v);
           const g = ctx!.createLinearGradient(s.x, s.y - tail * dir, s.x, s.y);
           g.addColorStop(0, `rgba(${color}, 0)`);
-          // Dimmer than the point it trails from: a bright trail at this
-          // density is what turns a star field into weather.
           g.addColorStop(1, `rgba(${color}, ${a * 0.55})`);
           ctx!.strokeStyle = g;
           ctx!.lineWidth = s.r * 1.1;
@@ -313,32 +283,71 @@ export function WarpStage({ run }: { run: WarpRun }) {
       }
     }
 
-    /** Distant worlds, fading in and sliding slowly down as we rise past them. */
-    function paintBodies(elapsed: number, dt: number, falling: boolean) {
-      BODIES.forEach((b, i) => {
-        // Falling: they are already there when the descent starts and thin out
-        // as we drop back into air. Climbing: each fades in on its own cue.
-        const alpha = falling
-          ? 1 - span(elapsed, [60, REENTRY.fall[1] * 0.8])
-          : span(elapsed, [b.at, b.at + 520]);
-        if (alpha <= 0.002) return;
-        drift[i] += b.drift * dt * (falling ? -1.8 : 1);
-        drawPlanet(ctx!, {
-          x: width * b.x,
-          y: height * b.y + drift[i],
-          r: height * b.r,
-          alpha,
-          def: PLANET_KINDS[b.kind],
-        });
+    /**
+     * One world, passed.
+     *
+     * Distance falls exponentially across the window, so `1/z` — which drives
+     * both the radius and how far the world swings off the centre line — hangs
+     * almost still in the distance and then arrives all at once. That late
+     * rush is the whole difference between a flyby and a slide.
+     *
+     * `up` mirrors the vertical for the trip home, where worlds come at you
+     * from below and leave past the top.
+     */
+    function paintPass(
+      kind: string,
+      p: number,
+      side: number,
+      close: number,
+      lateral: number,
+      up: boolean,
+    ) {
+      if (p <= 0 || p >= 1) return;
+      // 1/z, normalised: ~0.04 at the far end, 1 at closest approach.
+      const k = Math.pow(FLYBY_DEPTH, p) / FLYBY_DEPTH;
+      // Travel has to outrun the world's own radius. A body is dropped the
+      // moment its window ends, so if it hasn't cleared the frame by then it
+      // pops out of existence mid-shot — which is exactly what a 1.1-screen
+      // Saturn did on a fixed 1.15-screen travel. Clearing needs
+      // (1 - vp + close) screens; the rest is margin.
+      const vp = -0.2;
+      const travel = 1.5 + close;
+      drawPlanet(ctx!, {
+        x: width * 0.5 + side * width * lateral * k,
+        y: up
+          ? height * (1 - vp) - height * travel * k // rises from below, exits past the top
+          : height * vp + height * travel * k, // drops from above, exits past the bottom
+        r: close * height * k,
+        // A world never fades out — it leaves because it is behind you.
+        alpha: span(p, [0, 0.12]),
+        def: PLANET_KINDS[kind],
       });
     }
 
-    /** Orbital traffic. Stationary in space, so it slides down past a climber. */
+    function paintTour(elapsed: number) {
+      for (const f of FLYBYS) {
+        paintPass(
+          f.kind,
+          span(elapsed, [f.at - f.lead, f.at + f.trail]),
+          f.side,
+          f.close,
+          f.lateral,
+          false,
+        );
+      }
+    }
+
+    function paintReturnPasses(fall: number) {
+      for (const f of RETURN_PASSES) {
+        paintPass(f.kind, span(fall, [f.at - 0.2, f.at + 0.2]), f.side, f.close, f.lateral, true);
+      }
+    }
+
+    /** Low-orbit traffic, sliding down past a climber. */
     function paintSatellites(elapsed: number, now: number) {
-      const band = span(elapsed, ASCENT.orbit);
+      const band = span(elapsed, [1150, 2900]);
       if (band <= 0 || band >= 1) return;
       for (const sat of SATELLITES) {
-        // Each satellite runs its own pass through the frame, offset by phase.
         const p = band * 1.55 - sat.phase;
         if (p <= 0 || p >= 1) continue;
         drawSatellite(ctx!, {
@@ -351,60 +360,56 @@ export function WarpStage({ run }: { run: WarpRun }) {
       }
     }
 
-    /** Another launch, racing ahead of us and pulling away into the dark. */
+    /** Another craft, leaving with us and pulling ahead into the dark. */
     function paintRocket(elapsed: number, now: number) {
-      const p = span(elapsed, [900, 2500]);
+      const p = span(elapsed, [1250, 2700]);
       if (p <= 0 || p >= 1) return;
       drawRocket(ctx!, {
         x: width * (0.24 + 0.06 * p),
-        y: height * (1.05 - 0.88 * easeHouse(p)),
-        s: 1.6 - 1.25 * p,
+        y: height * (1.05 - 0.9 * easeHouse(p)),
+        s: 1.5 - 1.2 * p,
         alpha: Math.min(span(p, [0, 0.1]), 1 - span(p, [0.8, 1])),
         flicker: 0.5 + 0.5 * Math.sin(now * 0.035),
       });
     }
 
-    /** The planet we are leaving. At the start `r` is several screens wide, so
-     * only a shallow arc of the limb shows; the curvature appears on its own
-     * as it shrinks, which is the whole "pulling away" read. */
-    function paintEarth(d: number, alpha: number) {
-      // Starting radius is a compromise. Bigger reads as a flatter, more
-      // planet-sized limb — but the surface is a 448px texture, so every extra
-      // screen of radius is another multiple of upscale blur, and past about
-      // 1.6 screens the reveal stops reading as "a planet below us" and starts
-      // reading as "one enormous green continent".
-      const r = height * (1.6 - 1.45 * d);
-      const top = height * (0.58 + 0.08 * d);
+    /**
+     * The planet you are leaving.
+     *
+     * At `e = 0` the disc is 1.9 screens across with its top edge off the top
+     * of the frame — it covers every pixel, which is the point. Interpolating
+     * the TOP edge rather than the centre is what keeps the limb sliding down
+     * into view as it shrinks, instead of the whole thing collapsing inward.
+     */
+    function paintEarth(e: number, alpha: number) {
+      const r = height * (1.5 - 1.38 * e);
+      const top = height * (-0.5 + 1.22 * e);
       drawEarth(ctx!, earthTex, {
         cx: width * 0.5,
         cy: top + r,
         r,
         alpha,
-        rim: 0.4 + 0.6 * clamp01(d / 0.35),
+        rim: clamp01((e - 0.06) / 0.3),
       });
     }
 
-    /** Expanding ring from the button that was actually pressed, so the launch
-     * visibly originates from the user's own click rather than from nowhere. */
     function paintIgnition(elapsed: number, origin: { x: number; y: number } | null) {
       if (!origin) return;
-      const t = span(elapsed, [0, 560]);
+      const t = span(elapsed, [0, 620]);
       if (t >= 1) return;
-      const r = 18 + easeHouse(t) * 300;
-      const a = (1 - t) * 0.5;
       ctx!.save();
       ctx!.globalCompositeOperation = "screen";
-      ctx!.strokeStyle = `rgba(${HORIZON_GOLD}, ${a})`;
+      ctx!.strokeStyle = `rgba(${HORIZON_GOLD}, ${(1 - t) * 0.5})`;
       ctx!.lineWidth = 2 * (1 - t) + 0.5;
       ctx!.beginPath();
-      ctx!.arc(origin.x, origin.y, r, 0, Math.PI * 2);
+      ctx!.arc(origin.x, origin.y, 18 + easeHouse(t) * 320, 0, Math.PI * 2);
       ctx!.stroke();
       ctx!.restore();
     }
 
-    /** A soft glow bleeding in from one edge. `reach` is how far across the
-     * frame it carries — anything much past a third stops reading as a glow
-     * and starts reading as the black of space being washed out to grey. */
+    /** A soft glow bleeding in from one edge. `reach` is how far it carries —
+     * much past a third and it stops reading as a glow and starts reading as
+     * the black of space being washed out to grey. */
     function paintWash(alpha: number, color: string, fromTop: boolean, reach = 0.34) {
       if (alpha <= 0.002) return;
       const g = ctx!.createLinearGradient(
@@ -422,9 +427,9 @@ export function WarpStage({ run }: { run: WarpRun }) {
       ctx!.restore();
     }
 
-    /** Vignette that closes in over the first stretch of the climb: the sky
-     * takes the edges of the frame first and the centre last, so the dashboard
-     * stays visible while it falls instead of being cut to black. */
+    /** Vignette closing in over the departure: the sky takes the edges of the
+     * frame first and the centre last, so the dashboard stays visible while it
+     * falls instead of being cut away. */
     function applyReveal(reveal: number) {
       if (reveal >= 1) return;
       const cx = width * 0.5;
@@ -443,8 +448,6 @@ export function WarpStage({ run }: { run: WarpRun }) {
 
     function frame(now: number) {
       const state = runRef.current;
-      // Normalised to 60fps so speeds stay physical on 120Hz displays and
-      // degrade gracefully if a frame is dropped.
       const dt = Math.min(3, (now - last) / 16.6667);
       last = now;
       const elapsed = now - state.startedAt;
@@ -452,9 +455,6 @@ export function WarpStage({ run }: { run: WarpRun }) {
       ctx!.clearRect(0, 0, width, height);
 
       if (state.reduced) {
-        // No motion at all: a calm hold on the destination's own background.
-        // It still covers the route swap, so reduced-motion users get the
-        // benefit of the transition (no skeleton flash) without the journey.
         if (hasSpace()) ctx!.drawImage(space!, 0, 0, width, height);
         else {
           ctx!.fillStyle = DEEP_SPACE;
@@ -473,27 +473,26 @@ export function WarpStage({ run }: { run: WarpRun }) {
       }
 
       if (state.phase === "descending" || state.phase === "landing") {
-        // Falling: the ramp runs backwards and Earth swells to fill the frame.
         const fall = span(elapsed, REENTRY.fall);
-        const altitude = 1 - easeIn(fall);
-        const d = 1 - easeIn(fall);
-        const speed = -TOP_SPEED * 1.15 * (1 - easeHouse(fall));
+        // Air only shows up in the last third; before that we are still in space.
+        const altitude = 1 - easeIn(clamp01((fall - 0.55) / 0.45));
+        const e = 1 - easeIn(fall);
 
-        paintSky(altitude);
-        paintStars(clamp01(altitude / 0.5), speed, dt);
-        paintBodies(elapsed, dt, true);
-        paintEarth(d, 1 - span(fall, [0.72, 1]));
+        if (altitude > 0.995) paintBackdrop(0);
+        else paintSky(altitude);
+        paintStars(clamp01(altitude / 0.5), -TOP_SPEED * 1.15 * (1 - easeHouse(fall)), dt);
+        paintReturnPasses(fall);
+        paintEarth(e, 1 - span(fall, [0.86, 1]));
         paintClouds(clamp01((0.5 - Math.abs(altitude - 0.22)) / 0.3), -34, dt);
-        paintHorizon(0.5 * span(fall, [0.55, 1]), altitude);
-        // Retro burn overhead, then the heat shield glowing beneath us.
+        paintHorizon(0.5 * span(fall, [0.72, 1]), altitude);
         paintWash((1 - span(elapsed, REENTRY.retroBurn)) * 0.34, "255, 246, 224", true);
         paintWash(
-          0.5 * Math.sin(Math.PI * span(elapsed, [60, REENTRY.judder[0] + 120])),
+          0.5 * Math.sin(Math.PI * span(elapsed, [REENTRY.fall[1] * 0.45, REENTRY.judder[0] + 140])),
           REENTRY_BURN,
           false,
           0.55,
         );
-        canvas!.style.opacity = String(1 - span(elapsed, [REENTRY.judder[0], REENTRY_MS - 80]));
+        canvas!.style.opacity = String(1 - span(elapsed, [REENTRY.judder[0], REENTRY_MS - 120]));
         raf = requestAnimationFrame(frame);
         return;
       }
@@ -502,49 +501,28 @@ export function WarpStage({ run }: { run: WarpRun }) {
       const climbing = state.phase === "ascending";
       const decelerating = state.phase === "arriving" && state.arrivingAt !== null;
       const sinceArrive = decelerating ? now - state.arrivingAt! : 0;
-
-      // Altitude drives the air; distance drives the bodies. They are separate
-      // because the sky stops changing long before Earth stops shrinking.
-      const altitude = climbing ? Math.pow(span(elapsed, ASCENT_ALTITUDE), 1.3) : 1;
-      const distance = climbing ? easeHouse(span(elapsed, ASCENT_DISTANCE)) : 1;
+      // Cruise and arrival hold at the end of the flight plan.
+      const t = climbing ? elapsed : ASCENT_MS;
 
       let speed: number;
-      if (climbing) {
-        // Held low until orbit: streaking stars while we are still in the
-        // clouds would say "lightspeed" over a picture that says "weather".
-        speed = 1.5 + (TOP_SPEED - 1.5) * easeIn(span(elapsed, [ASCENT.orbit[0], ASCENT_MS]));
-      } else if (decelerating) {
-        // Streaks contract back to points, and the field is left drifting at
-        // the same lazy pace the real starfield holds.
+      if (decelerating) {
         speed = 1.2 + (TOP_SPEED - 1.2) * (1 - easeHouse(span(sinceArrive, [0, ARRIVAL_MS * 0.8])));
       } else {
-        speed = TOP_SPEED; // cruise
+        // Held low while Earth still fills the frame — streaks over a planet
+        // that is right there read as rain on a window, not as travel.
+        speed = 3 + (TOP_SPEED - 3) * easeIn(span(t, [ASCENT.recede[0], ASCENT_MS]));
       }
 
-      // Back to front: sky, far field, worlds, then whatever is closest.
-      paintSky(altitude);
-      paintStars(clamp01((altitude - 0.25) / 0.35), speed, dt);
-      paintBodies(climbing ? elapsed : ASCENT_MS, dt, false);
-      paintEarth(distance, climbing ? span(elapsed, [ASCENT_DISTANCE[0] - 120, ASCENT_DISTANCE[0] + 400]) : 1);
-      paintSatellites(climbing ? elapsed : ASCENT_MS, now);
-      paintRocket(climbing ? elapsed : ASCENT_MS, now);
+      const earth = easeHouse(span(t, EARTH_RECEDE));
+
+      paintBackdrop(climbing ? 1 - span(elapsed, [0, 520]) : 0);
+      paintStars(clamp01(span(t, [ASCENT.recede[0], ASCENT.recede[1]])), speed, dt);
+      paintEarth(earth, 1 - span(t, EARTH_FADE));
+      paintSatellites(t, now);
+      paintRocket(t, now);
+      paintTour(t);
 
       if (climbing) {
-        const troposphere = ASCENT.troposphere;
-        paintClouds(
-          Math.min(
-            span(elapsed, [troposphere[0], troposphere[0] + 260]),
-            1 - span(elapsed, [troposphere[1] - 520, troposphere[1]]),
-          ),
-          8 + 52 * easeIn(clamp01(altitude / 0.6)),
-          dt,
-        );
-        // Ground haze hands over to Earth's own limb rather than both showing.
-        paintHorizon(
-          0.6 * span(altitude, [0.12, 0.4]) * (1 - span(elapsed, [1250, 1850])),
-          altitude,
-        );
-        // A single bloom as we punch out of the atmosphere.
         paintWash(
           0.11 * Math.sin(Math.PI * span(elapsed, [ASCENT.vacuum[0], ASCENT_MS + 150])),
           "255, 248, 232",
@@ -562,8 +540,6 @@ export function WarpStage({ run }: { run: WarpRun }) {
       raf = requestAnimationFrame(frame);
     }
 
-    // Listener first, so if the viewport is zero-sized at mount the resize
-    // event that gives it real dimensions can still repair the field.
     window.addEventListener("resize", resize);
     resize();
     raf = requestAnimationFrame(frame);
@@ -578,9 +554,6 @@ export function WarpStage({ run }: { run: WarpRun }) {
     <canvas
       ref={canvasRef}
       aria-hidden
-      // Above every other layer in the app (the ask bar sits at z-50, view
-      // transition groups at 60). This is a full-screen takeover, and it
-      // swallows stray clicks aimed at the page it is covering.
       className="fixed inset-0 z-[9999] h-full w-full"
     />
   );

@@ -18,7 +18,7 @@
  * Long on purpose: this is a trip from the ground to deep space, and every
  * band below needs room to be read as a place rather than a colour. Anything
  * under ~3s turns the whole climb into one blue-to-black smear. */
-export const ASCENT_MS = 3800;
+export const ASCENT_MS = 7000;
 
 /**
  * When the stage is fully opaque and the route swap becomes invisible.
@@ -36,50 +36,80 @@ export const ARRIVAL_MS = 500;
  * Hard ceiling on the cruise hold. A route that never resolves must not strand
  * anyone on a black screen, so the stage force-resolves regardless.
  */
-export const CRUISE_CAP_MS = 6000;
+export const CRUISE_CAP_MS = 9500;
 
 /** The fall home, start to settled. Still a quarter of the climb: you fall
  * back to Earth, you don't tour it. */
-export const REENTRY_MS = 900;
+export const REENTRY_MS = 1500;
 
 /**
- * Ascent beats, in ms from launch. Heavily overlapped on purpose: each band
- * is already arriving while the one before it is still leaving, which is what
- * makes the climb continuous instead of a slideshow of five separate scenes.
+ * Ascent beats, in ms from launch.
+ *
+ * There is no sky ramp any more: the trip starts above the atmosphere with
+ * Earth already filling the frame, so the old ground/cloud/stratosphere bands
+ * are gone and the budget goes to the tour instead.
  */
 export const ASCENT = {
   /** Engines light; the dashboard judders but has not moved yet. */
-  ignition: [0, 250],
-  /** The dashboard drops away beneath the camera. */
-  liftoff: [200, 1150],
-  /** Cloud deck, rushing down past us. */
-  troposphere: [300, 1700],
-  /** Sky goes navy, the air thins, another rocket races ahead. */
-  stratosphere: [1150, 2450],
-  /** Earth's limb below, satellites drifting up past the camera. */
-  orbit: [1550, 3200],
-  /** Earth is a marble; planets hang in the distance. */
-  deepSpace: [2400, ASCENT_MS],
+  ignition: [0, 300],
+  /** The dashboard drops away, uncovering an Earth that already fills the frame. */
+  departure: [200, 1200],
+  /** Earth shrinks to a globe low in frame; satellites and a departing craft. */
+  recede: [1000, 2300],
+  /** Six worlds, passed one at a time. */
+  tour: [2100, 6900],
   /** Stars stretch out and we punch into the dark. */
-  vacuum: [3150, ASCENT_MS],
+  vacuum: [6400, ASCENT_MS],
 } as const;
 
-/** Height through the atmosphere: drives the sky ramp, clouds and horizon.
- * Tops out well before the climb ends — you are in vacuum for the last third. */
-export const ASCENT_ALTITUDE = [250, 2400] as const;
+/** Earth's retreat, from edge-to-edge down to a marble. Its own window because
+ * it starts before the tour and has to be finished well before the tour ends. */
+export const EARTH_RECEDE = [850, 3900] as const;
+/** ...and then it is simply too far to still be drawing. */
+export const EARTH_FADE = [3500, 4400] as const;
 
-/** Distance from the planet: drives Earth's size and the far bodies. Kept
- * separate from altitude because the sky stops changing long before Earth
- * stops shrinking. */
-export const ASCENT_DISTANCE = [1550, ASCENT_MS] as const;
+/**
+ * The road out.
+ *
+ * `at` is the moment of closest approach, `side` which way it sweeps, `close`
+ * its radius at that moment as a fraction of viewport height — over 1.0 means
+ * it crops the frame. `lateral` is how far out it swings; a small value keeps
+ * a big planet near the middle so it fills the screen rather than sliding off
+ * the corner early.
+ *
+ * Jupiter and Saturn are the hero passes. Uranus and Neptune deliberately go
+ * quiet, so the last stretch has somewhere to build from.
+ */
+export const FLYBYS = [
+  { kind: "moon", at: 2500, side: 1, close: 0.55, lateral: 0.42, lead: 640, trail: 700 },
+  { kind: "mars", at: 3250, side: -1, close: 0.55, lateral: 0.5, lead: 640, trail: 700 },
+  { kind: "jupiter", at: 4100, side: 1, close: 1.5, lateral: 0.3, lead: 700, trail: 760 },
+  { kind: "saturn", at: 5000, side: -1, close: 1.1, lateral: 0.34, lead: 700, trail: 760 },
+  { kind: "uranus", at: 5750, side: 1, close: 0.45, lateral: 0.52, lead: 620, trail: 680 },
+  { kind: "neptune", at: 6350, side: -1, close: 0.62, lateral: 0.46, lead: 620, trail: 650 },
+] as const;
+
+/**
+ * How far away a world starts, relative to its closest approach.
+ *
+ * Distance falls exponentially across a flyby — constant speed in log space —
+ * which is what produces the accelerating whoosh. A linear ramp slides; this
+ * one hangs in the distance and then arrives all at once.
+ *
+ * Tuned down from 26: that was so back-loaded each world spent most of its
+ * window as a speck, and the frame went bare in the gaps between passes. Lower
+ * means worlds arrive with more presence and overlap each other; much lower
+ * and the approach stops accelerating and starts sliding.
+ */
+export const FLYBY_DEPTH = 15;
 
 /** Re-entry beats, in ms from the moment Back is pressed. */
 export const REENTRY = {
-  retroBurn: [0, 160],
-  /** Earth swelling back up to fill the frame, then the air, then the ground. */
-  fall: [100, 640],
-  judder: [500, 800],
-  settle: [780, REENTRY_MS],
+  retroBurn: [0, 200],
+  /** Worlds rushing back past, then Earth swelling, then air, then ground. */
+  fall: [120, 1150],
+  judder: [1000, 1360],
+  settle: [1340, REENTRY_MS],
 } as const;
 
 /** Reduced motion collapses both arcs to a plain cross-fade. */
