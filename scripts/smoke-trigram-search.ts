@@ -25,9 +25,17 @@ async function main() {
       WHERE tablename = 'contacts' AND indexname = 'contacts_name_trgm'`)
   );
   check("contacts_name_trgm exists", idx.length === 1);
+  // Two separate assertions, not one substring test: a regression that lowers only one
+  // column (e.g. reverting `company` to a raw expression) must fail here, not slip through
+  // because "lower(" still appears somewhere else in the indexdef.
   check(
-    "index is on lower() expressions",
-    /lower\(/.test(idx[0].indexdef),
+    "index lowers full_name",
+    /lower\(\(?full_name\)?(::text)?\)/.test(idx[0].indexdef),
+    idx[0]?.indexdef
+  );
+  check(
+    "index lowers company",
+    /lower\(\(?coalesce\(company,\s*''(::text)?\)\)?(::text)?\)/i.test(idx[0].indexdef),
     idx[0]?.indexdef
   );
 
