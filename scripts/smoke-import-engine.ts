@@ -541,10 +541,19 @@ async function main() {
   }
 
   // --- Google contacts run the same engine, keyed on email ---
-  // Google/Outlook rows carry no LinkedIn URL, and often no email either — this fixture
-  // always has one so it can freeze the "re-import merges" behavior specifically. A
-  // name-only row still gets exercised above: the blank-name row (index 5) proves the
-  // no-identity skip path works the same way it does for LinkedIn.
+  // Google/Outlook rows carry no LinkedIn URL, and often no email at all — most of this
+  // fixture keeps one so it can freeze the "re-import merges" behavior specifically, but
+  // row 6 deliberately has neither email, company, nor title (name only), to freeze the
+  // *other* documented behavior: a name-only row's identity() still returns a probe (just
+  // fullName), which can only match on the weak byName tier (0.6 confidence, below the 0.85
+  // merge floor) — so it creates again on re-import instead of merging. Company/title also
+  // have to be blanked, not just email: duplicates.ts's byNameCompany/byNameTitle tiers
+  // (0.9/0.85) fire on an exact company or title match too, and this row's company/title
+  // would otherwise exactly match its own first-run contact on the second import, masking
+  // the weak-tier behavior this row exists to freeze. See the "no dropped identity for
+  // no-email rows" reasoning in src/lib/import-adapters/google-contacts.ts. A name-only row
+  // still gets exercised above too: the blank-name row (index 5) proves the no-identity skip
+  // path works the same way it does for LinkedIn.
   await reset();
   const google = Array.from({ length: 40 }, (_, i) => ({
     kind: "google_contact" as const,
@@ -559,6 +568,9 @@ async function main() {
     photoUrl: "",
   }));
   google[5].fullName = "   ";
+  google[6].email = "";
+  google[6].company = "";
+  google[6].title = "";
 
   id = await seedJob(google, "google_contacts");
   await runJob(id);
@@ -567,14 +579,21 @@ async function main() {
   check("google creates all but the nameless row", out.created === 39, JSON.stringify(out));
   check("google skips the nameless row", out.skipped === 1, JSON.stringify(out));
 
-  // Re-running the same export must merge on email, not duplicate.
+  // Re-running the same export must merge on email, not duplicate — except the no-email
+  // row, which has no strong-enough identity to merge confidently and creates again.
   id = await seedJob(google, "google_contacts");
   await runJob(id);
   out = await outcome(id);
-  check("google re-import merges", out.updated === 39, JSON.stringify(out));
-  check("google re-import creates none", out.created === 0, JSON.stringify(out));
+  check("google re-import merges every row with an email", out.updated === 38, JSON.stringify(out));
+  check(
+    "google re-import creates the no-email row again instead of merging it",
+    out.created === 1,
+    JSON.stringify(out)
+  );
 
   // --- Outlook contacts: same engine, same email-keyed identity, different payload shape ---
+  // Same name-only row as the Google fixture above (row 6, no email/company/title) — see
+  // that block's comment for why it must create again on re-import rather than merge.
   await reset();
   const outlook = Array.from({ length: 40 }, (_, i) => ({
     kind: "outlook_contact" as const,
@@ -588,6 +607,9 @@ async function main() {
     phone: "",
   }));
   outlook[5].fullName = "   ";
+  outlook[6].email = "";
+  outlook[6].company = "";
+  outlook[6].title = "";
 
   id = await seedJob(outlook, "outlook_contacts");
   await runJob(id);
@@ -599,8 +621,12 @@ async function main() {
   id = await seedJob(outlook, "outlook_contacts");
   await runJob(id);
   out = await outcome(id);
-  check("outlook re-import merges", out.updated === 39, JSON.stringify(out));
-  check("outlook re-import creates none", out.created === 0, JSON.stringify(out));
+  check("outlook re-import merges every row with an email", out.updated === 38, JSON.stringify(out));
+  check(
+    "outlook re-import creates the no-email row again instead of merging it",
+    out.created === 1,
+    JSON.stringify(out)
+  );
 
   await reset();
   const db = await getDb();

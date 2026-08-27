@@ -18,6 +18,7 @@ import {
 } from "@/lib/contact-writes";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { createCompanyResolver } from "@/lib/companies";
+import { refreshOutreachSuggestions } from "@/lib/reminders";
 import {
   DUPLICATE_MERGE_CONFIDENCE,
   addToDuplicateIndex,
@@ -285,21 +286,29 @@ export async function runImportJob(importId: string): Promise<void> {
   const jobStart = Date.now();
   startQueryCount();
 
+  // Every early return below this point must call `stopQueryCount()` first.
+  // `startQueryCount()` above already armed the module-global counter; any return that skips
+  // `stopQueryCount()` leaves it armed indefinitely, silently misattributing whatever
+  // unrelated work runs next in this process to *this* invocation's count, until some future
+  // `startQueryCount()` finally zeroes it again. The `!importRow` and terminal-status returns
+  // just below are the most reachable of the three: the self-continuation route and the
+  // stalled-job cron both re-dispatch by `importId` alone, so re-running an already-finished
+  // or since-deleted job is an expected, everyday occurrence, not an edge case.
   const importRow = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
-  if (!importRow) return;
-  if (["completed", "failed", "cancelled"].includes(importRow.status)) return;
+  if (!importRow) {
+    stopQueryCount();
+    return;
+  }
+  if (["completed", "failed", "cancelled"].includes(importRow.status)) {
+    stopQueryCount();
+    return;
+  }
 
   // Resolved once, from the type recorded on the job row. Import kinds with no server-side
   // runner (the client-driven ones) resolve to `null` and are left alone rather than being
   // pushed through a loop that has no idea what their payloads mean.
   const adapter = getAdapter(importRow.importType);
   if (!adapter) {
-    // `startQueryCount()` above already armed the module-global counter. Without stopping
-    // it here, it stays armed and keeps ticking on whatever unrelated work runs next in
-    // this process, until some future `startQueryCount()` zeroes it again — silently
-    // misattributing those statements to that next count. This path was unreachable while
-    // only LinkedIn was registered; registering Google/Outlook (and any client-driven type
-    // with no server runner) makes it reachable.
     stopQueryCount();
     return;
   }
@@ -651,6 +660,17 @@ export async function runImportJob(importId: string): Promise<void> {
       updatedAt: new Date(),
     })
     .where(eq(imports.id, importId));
+
+  // The per-row confirm actions this engine replaced (Google/Outlook contacts, and before
+  // them LinkedIn connections) each refreshed outreach suggestions once the import finished,
+  // non-fatally — a stray suggestion-generation bug was never worth failing an otherwise-
+  // successful import over. This is that same finalization step, now owned by the engine
+  // instead of duplicated per import type. It incidentally gives LinkedIn CSV imports (which
+  // never called it, in either the old per-row path or here until now) the same refresh
+  // Google/Outlook contacts and every other import type already had — a deliberate
+  // improvement, not scope creep: it's the one finalization step every import type is
+  // supposed to get, not something specific to this task's two new adapters.
+  await refreshOutreachSuggestions(importRow.userId).catch(() => null);
 
   // Redraw the distribution once, now that every contact this import will ever add is in.
   // Closeness is cohort-relative, so importing 3,000 people moves where all the existing

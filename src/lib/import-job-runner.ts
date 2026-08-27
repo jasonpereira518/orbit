@@ -310,14 +310,36 @@ async function pollServerOwnedImportJob(
  * the shared snapshot as it goes. `start` is expected to insert the `imports`/
  * `import_job_rows` snapshot and kick the background run, exactly like `startLinkedInImport`
  * and the `confirm*ContactsImport` actions do.
+ *
+ * The snapshot is seeded as `running` *before* `start()` is awaited, not after. `start()` is
+ * the caller's async action call — the first `await` in this function — so if nothing sets
+ * the snapshot until after it resolves, every check further down that guards on
+ * `snapshot?.id !== jobId` (including the one in `pollServerOwnedImportJob`, and the
+ * catch-all in `startImportJob`) sees the *pre-import* snapshot: `null` initially, or a
+ * stale id left over from a previous job (`clearImportJob` only nulls it out ~50ms after a
+ * terminal job, not synchronously). Either way `snapshot?.id !== jobId` is true, so the
+ * function returns immediately after `start()` resolves — no progress, no poll, no
+ * completion toast, and any error `start()` throws is swallowed by the same guard in the
+ * `catch` block below. Seeding first closes that gap: by the time `start()`'s promise
+ * settles (success or throw), `snapshot.id` already equals `jobId`. `totalRows` isn't known
+ * yet at seed time, so the caller's own `ids.length` (`total`) stands in until the
+ * post-`start()` `setSnapshot` corrects it with the server's real count.
  */
 async function runServerOwnedImportJob(
   jobId: string,
   kind: ServerOwnedKind,
   label: string,
+  total: number,
   start: () => Promise<{ importId: string; totalRows: number }>
 ): Promise<void> {
   const startedAt = Date.now();
+  setSnapshot({
+    id: jobId,
+    kind,
+    status: "running",
+    progress: { done: 0, total, label, startedAt },
+  });
+
   const { importId, totalRows } = await start();
 
   if (snapshot?.id !== jobId) return;
@@ -394,21 +416,21 @@ export function startImportJob(input: ImportJobInput) {
   void (async () => {
     try {
       if (input.kind === "connections") {
-        await runServerOwnedImportJob(jobId, "connections", label, () =>
+        await runServerOwnedImportJob(jobId, "connections", label, total, () =>
           startLinkedInImport(input.csvText, input.fileName, input.ids)
         );
         return;
       }
 
       if (input.kind === "google_contacts") {
-        await runServerOwnedImportJob(jobId, "google_contacts", label, () =>
+        await runServerOwnedImportJob(jobId, "google_contacts", label, total, () =>
           confirmGoogleContactsImport(input.ids)
         );
         return;
       }
 
       if (input.kind === "outlook_contacts") {
-        await runServerOwnedImportJob(jobId, "outlook_contacts", label, () =>
+        await runServerOwnedImportJob(jobId, "outlook_contacts", label, total, () =>
           confirmOutlookContactsImport(input.ids)
         );
         return;
