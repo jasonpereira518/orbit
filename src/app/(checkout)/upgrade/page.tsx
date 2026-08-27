@@ -105,7 +105,13 @@ export default async function UpgradePage({
           </div>
         </HeaderPanel>
 
-        <main className="mx-auto w-full max-w-4xl px-6 pb-24 md:px-8">
+        {/* `relative z-10` is load-bearing, not decoration: the permanent
+            <LandingStarfield /> is a position:fixed canvas painting an opaque
+            gradient, so a static <main> would be painted straight over — a
+            positioned z-auto element paints above non-positioned in-flow
+            content whatever the DOM order. /pricing's <main> carries the same
+            pair for the same reason. */}
+        <main className="relative z-10 mx-auto w-full max-w-4xl px-6 pb-24 md:px-8">
           <Panel order={1}>
             <h1 className={`${HEADING} text-[clamp(28px,4vw,42px)]`}>
               {hasPro || hasLifetime
