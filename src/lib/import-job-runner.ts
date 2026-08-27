@@ -4,16 +4,13 @@ import { useSyncExternalStore } from "react";
 import {
   cancelImportSession,
   confirmGoogleContactsImport,
-  confirmLinkedInMessagesImport,
   confirmOutlookContactsImport,
   getImportJobStatus,
   startLinkedInImport,
+  startLinkedInMessagesImport,
   type ImportJobStatus,
 } from "@/actions/imports";
-import {
-  IMPORT_BATCH_SIZE,
-  type ImportProgressState,
-} from "@/components/imports/import-utils";
+import { type ImportProgressState } from "@/components/imports/import-utils";
 import {
   finishBackgroundJob,
   getBackgroundJob,
@@ -32,14 +29,6 @@ export type ImportJobKind =
   | "messages"
   | "google_contacts"
   | "outlook_contacts";
-
-/** Job kinds whose import is server-owned and processed by the resumable engine — as
- *  opposed to "messages", which is still driven client-side, batch by batch. */
-const SERVER_OWNED_KINDS = new Set<ImportJobKind>([
-  "connections",
-  "google_contacts",
-  "outlook_contacts",
-]);
 
 export type ImportJobSnapshot = {
   id: string;
@@ -62,7 +51,6 @@ type Listener = () => void;
 
 let snapshot: ImportJobSnapshot | null = null;
 const listeners = new Set<Listener>();
-let beforeUnloadBound = false;
 /** Job id that should stop after the current in-flight chunk. */
 let cancelJobId: string | null = null;
 
@@ -123,21 +111,6 @@ function setSnapshot(next: ImportJobSnapshot | null) {
   emit();
 }
 
-function onBeforeUnload(event: BeforeUnloadEvent) {
-  // Server-owned imports (connections, Google/Outlook contacts) run on the engine and
-  // survive navigation/tab close — only warn for the still-client-driven messages import.
-  if (snapshot?.status === "running" && !SERVER_OWNED_KINDS.has(snapshot.kind)) {
-    event.preventDefault();
-    event.returnValue = "";
-  }
-}
-
-function ensureBeforeUnload() {
-  if (beforeUnloadBound || typeof window === "undefined") return;
-  beforeUnloadBound = true;
-  window.addEventListener("beforeunload", onBeforeUnload);
-}
-
 export function getImportJobSnapshot() {
   return snapshot;
 }
@@ -182,80 +155,14 @@ async function markSessionCancelled(importId: string | undefined) {
   }
 }
 
-async function runBatches(
-  ids: string[],
-  label: string,
-  jobId: string,
-  kind: ImportJobKind,
-  runChunk: (
-    chunk: string[],
-    opts: { importId?: string; finalize: boolean }
-  ) => Promise<{ importId: string }>
-): Promise<{ importId?: string; done: number; cancelled: boolean }> {
-  const total = ids.length;
-  const startedAt = Date.now();
-  let importId: string | undefined;
-  let done = 0;
-
-  setSnapshot({
-    id: jobId,
-    kind,
-    status: "running",
-    progress: { done: 0, total, label, startedAt },
-  });
-
-  for (let i = 0; i < ids.length; i += IMPORT_BATCH_SIZE) {
-    if (snapshot?.id !== jobId || isCancelRequested(jobId)) {
-      return { importId, done, cancelled: true };
-    }
-
-    const chunk = ids.slice(i, i + IMPORT_BATCH_SIZE);
-    // Never finalize here if we might cancel — cancel path marks the session.
-    const isLast = i + IMPORT_BATCH_SIZE >= ids.length;
-    const last = await runChunk(chunk, {
-      importId,
-      finalize: isLast && !isCancelRequested(jobId),
-    });
-    importId = last.importId;
-    done = Math.min(i + chunk.length, total);
-
-    if (snapshot?.id !== jobId) {
-      return { importId, done, cancelled: true };
-    }
-
-    setSnapshot({
-      id: jobId,
-      kind,
-      status: "running",
-      cancelling: isCancelRequested(jobId),
-      progress: {
-        done,
-        total,
-        label,
-        startedAt,
-      },
-    });
-
-    if (isCancelRequested(jobId)) {
-      return { importId, done, cancelled: true };
-    }
-
-    await new Promise<void>((resolve) => {
-      window.setTimeout(resolve, 0);
-    });
-  }
-
-  return { importId, done, cancelled: false };
-}
-
 type PollOutcome =
   | { outcome: "stale" }
   | { outcome: "cancelled" }
   | { outcome: "done"; status: ImportJobStatus };
 
-/** The subset of `ImportJobKind` that names a server-owned import — one the resumable
- *  engine (Tasks 10-13) processes, rather than the still-client-driven "messages" import. */
-type ServerOwnedKind = "connections" | "google_contacts" | "outlook_contacts";
+/** The subset of `ImportJobKind` that names a server-owned import — every kind as of
+ *  Task 14, all processed by the resumable engine (Tasks 10-14). */
+type ServerOwnedKind = "connections" | "messages" | "google_contacts" | "outlook_contacts";
 
 /** Polls a server-owned import job's status until it leaves "processing"/"pending". */
 async function pollServerOwnedImportJob(
@@ -406,7 +313,6 @@ export function startImportJob(input: ImportJobInput) {
     throw new Error("An import is already running. Wait for it to finish.");
   }
 
-  ensureBeforeUnload();
   cancelJobId = null;
   const jobId = `import-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const label = input.ids.length === 1 ? "person" : "people";
@@ -436,55 +342,12 @@ export function startImportJob(input: ImportJobInput) {
         return;
       }
 
-      let messagesImported = 0;
-      let contactsCreated = 0;
-      let enrichmentTotal = 0;
-      const result = await runBatches(
-        input.ids,
-        label,
-        jobId,
-        "messages",
-        async (chunk, opts) => {
-          const res = await confirmLinkedInMessagesImport(
-            input.csvText,
-            input.fileName,
-            chunk,
-            opts
-          );
-          messagesImported += res.chunkMessagesImported;
-          contactsCreated = res.contactsCreated;
-          enrichmentTotal += res.enrichment?.contactsEnriched ?? 0;
-          return res;
-        }
-      );
-      if (snapshot?.id !== jobId) return;
-
-      if (result.cancelled) {
-        await markSessionCancelled(result.importId);
-        cancelJobId = null;
-        setSnapshot({
-          id: jobId,
-          kind: "messages",
-          status: "cancelled",
-          progress: null,
-          resultMessage: `Import stopped. ${result.done} of ${total} ${label} kept${
-            messagesImported > 0 ? ` · ${messagesImported} messages` : ""
-          }.`,
-        });
+      if (input.kind === "messages") {
+        await runServerOwnedImportJob(jobId, "messages", label, total, () =>
+          startLinkedInMessagesImport(input.csvText, input.fileName, input.ids)
+        );
         return;
       }
-
-      setSnapshot({
-        id: jobId,
-        kind: "messages",
-        status: "completed",
-        progress: null,
-        resultMessage: `Imported ${messagesImported} messages · ${contactsCreated} contacts created`,
-        enrichmentMessage:
-          enrichmentTotal > 0
-            ? `Enriched ${enrichmentTotal} contacts for chat & follow-ups`
-            : undefined,
-      });
     } catch (err) {
       if (snapshot?.id !== jobId) return;
       cancelJobId = null;

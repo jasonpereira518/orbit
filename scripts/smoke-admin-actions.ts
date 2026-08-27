@@ -228,14 +228,16 @@ async function main() {
     })
     .returning();
 
-  // A client-driven kind: it has no server runner, so there is nothing to resume. Google
-  // and Outlook contacts moved onto the resumable engine and are no longer examples of this.
+  // A client-driven kind: it has no server runner, so there is nothing to resume. LinkedIn
+  // connections, Google/Outlook contacts, and (as of Task 14) LinkedIn messages all moved
+  // onto the resumable engine and are no longer examples of this — calendar imports are the
+  // only kind still client-driven, batch by batch.
   const [clientJob] = await db
     .insert(imports)
     .values({
       userId: TARGET,
-      importType: "linkedin_messages",
-      fileName: "messages.csv",
+      importType: "calendar_csv",
+      fileName: "calendar.csv",
       status: "failed",
     })
     .returning();

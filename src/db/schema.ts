@@ -680,11 +680,31 @@ export type OutlookContactRowPayload = {
   phone: string;
 };
 
+/**
+ * One resolved conversation from a LinkedIn Messages export, snapshotted once at parse
+ * time so the engine never re-parses the CSV or re-fetches contacts per conversation.
+ * `messages[].id` is a hash of (conversationId, date, content) computed at parse time —
+ * see `linkedInMessageExternalId` in `src/actions/imports.ts` — and is carried straight
+ * through to `interactions.externalId`, which is the entire dedupe mechanism for a
+ * re-imported CSV: `linkedinUrl: ""` marks a conversation with no resolvable LinkedIn
+ * profile, which the adapter's `identity()` turns into a skipped row.
+ */
+export type LinkedInMessageThreadRowPayload = {
+  kind: "linkedin_message_thread";
+  conversationId: string;
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  linkedinUrl: string;
+  messages: { id: string; body: string; sentAt: string }[];
+};
+
 export type ImportJobRowPayload =
   | LinkedInImportRowPayload
   | GmailSenderRowPayload
   | GoogleContactRowPayload
-  | OutlookContactRowPayload;
+  | OutlookContactRowPayload
+  | LinkedInMessageThreadRowPayload;
 
 export function isGmailSenderRow(
   payload: ImportJobRowPayload

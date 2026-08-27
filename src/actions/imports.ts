@@ -21,11 +21,11 @@ import {
   daysAgo,
   findDuplicateCandidates,
 } from "@/lib/duplicates";
-import { createContactIfRoom, updateContact } from "@/actions/contacts";
 import { runLinkedInImportJob } from "@/lib/import-job-processor";
 import {
   GOOGLE_CONTACTS_IMPORT_TYPE,
   OUTLOOK_CONTACTS_IMPORT_TYPE,
+  LINKEDIN_MESSAGES_IMPORT_TYPE,
   runImportJobById,
 } from "@/lib/import-job-dispatch";
 import { parseLinkedInConnectionsCsv } from "@/lib/linkedin-connections";
@@ -36,7 +36,6 @@ import {
   nameFromLinkedInSlug,
   type ParsedLinkedInMessage,
 } from "@/lib/linkedin-messages";
-import { enrichContactsFromMessages } from "@/lib/message-enrichment";
 import { refreshOutreachSuggestions } from "@/lib/reminders";
 import {
   mapCalendarCsvRow,
@@ -78,12 +77,19 @@ function simpleHash(input: string) {
   return Math.abs(h).toString(36);
 }
 
+/**
+ * Deterministic across re-imports of the same CSV: same conversation, same message date,
+ * same content hashes to the same id every time, with no dependence on wall-clock time even
+ * when `date` is null (an unparseable date in the export). That determinism is what makes
+ * this id safe to carry straight through to `interactions.externalId` — see
+ * `linkedinMessagesAdapter` — as the sole dedupe key for a re-imported conversation.
+ */
 function linkedInMessageExternalId(
   conversationId: string,
-  date: Date,
+  date: Date | null,
   content: string
 ) {
-  return `li-msg:${conversationId}:${date.toISOString()}:${simpleHash(content.slice(0, 240))}`;
+  return `li-msg:${conversationId}:${date ? date.toISOString() : "unknown"}:${simpleHash(content.slice(0, 240))}`;
 }
 
 function calendarMeetingExternalId(eventUid: string, contactId: string) {
@@ -384,328 +390,98 @@ export async function previewLinkedInMessagesCsv(csvText: string) {
   };
 }
 
-export async function confirmLinkedInMessagesImport(
+/**
+ * Starts a server-owned LinkedIn messages import: parses the CSV and resolves every
+ * conversation's primary participant exactly **once**, writes one job row per selected
+ * conversation, and hands them to the engine in the background via `after()`. Survives tab
+ * close/navigation — the client should poll `getImportJobStatus`, same as `startLinkedInImport`.
+ *
+ * This replaces an importer that re-uploaded and re-parsed the whole CSV, and re-fetched
+ * every contact, once per client-side batch of `IMPORT_BATCH_SIZE` conversations. Parsing
+ * once here and letting the engine's own chunked, resumable loop (Tasks 10-13) own the
+ * duplicate matching and the writes is what fixes that — the same shape as
+ * `confirmGoogleContactsImport` and `confirmOutlookContactsImport`.
+ *
+ * `resolveConversations` is called with an empty `existing` list rather than a real contacts
+ * fetch: its `match` field (used by the old per-row importer to decide create-vs-merge) is
+ * unused here — the engine's own indexed duplicate matching (`identity()` below) makes that
+ * decision instead, from one bulk contacts query per job rather than one per conversation.
+ * Everything else `resolveConversations` computes (primary participant, display name,
+ * per-conversation message grouping) is still needed and is CPU-only, not a DB round trip.
+ */
+export async function startLinkedInMessagesImport(
   csvText: string,
   fileName: string,
-  selectedConversationIds?: string[],
-  options?: ImportChunkOptions
-) {
+  selectedConversationIds?: string[]
+): Promise<{ importId: string; totalRows: number }> {
   const userId = await requireUserId();
   const db = await getDb();
-  const finalize = options?.finalize !== false;
-  const writeOpts = { skipRevalidate: true };
 
-  const importRow = await resolveImportRow(
-    userId,
-    { importType: "linkedin_messages", fileName },
-    options?.importId
+  const { messages } = parseLinkedInMessagesCsv(csvText);
+  const conversations = resolveConversations(messages, []);
+  const selected =
+    selectedConversationIds === undefined
+      ? null
+      : new Set(selectedConversationIds);
+  const selectedConversations = selected
+    ? conversations.filter((c) => selected.has(c.conversationId))
+    : conversations;
+
+  if (selectedConversations.length === 0) {
+    throw new Error("No conversations selected to import");
+  }
+
+  const byConv = new Map<string, ParsedLinkedInMessage[]>();
+  for (const m of messages) {
+    const list = byConv.get(m.conversationId) || [];
+    list.push(m);
+    byConv.set(m.conversationId, list);
+  }
+
+  const [importRow] = await db
+    .insert(imports)
+    .values({
+      userId,
+      importType: LINKEDIN_MESSAGES_IMPORT_TYPE,
+      fileName,
+      status: "processing",
+      totalRows: selectedConversations.length,
+      stats: {},
+    })
+    .returning();
+
+  await db.insert(importJobRows).values(
+    selectedConversations.map((conv, index) => {
+      const identity = participantIdentity(conv);
+      const msgs = byConv.get(conv.conversationId) || [];
+      return {
+        importId: importRow.id,
+        userId,
+        rowIndex: index,
+        payload: {
+          kind: "linkedin_message_thread" as const,
+          conversationId: conv.conversationId,
+          fullName: identity?.fullName ?? "",
+          firstName: identity?.firstName ?? "",
+          lastName: identity?.lastName ?? "",
+          linkedinUrl: identity?.linkedinUrl ?? "",
+          messages: msgs
+            .filter((m) => m.content.trim())
+            .map((m) => ({
+              id: linkedInMessageExternalId(conv.conversationId, m.parsedDate, m.content),
+              body: m.content,
+              sentAt: (m.parsedDate ?? new Date(0)).toISOString(),
+            })),
+        },
+      };
+    })
   );
 
-  try {
-    const { messages } = parseLinkedInMessagesCsv(csvText);
-    let existing = await db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
-    });
+  after(() => runImportJobById(importRow.id).catch(() => {}));
 
-    const conversations = resolveConversations(messages, existing);
-    const selected =
-      selectedConversationIds === undefined
-        ? null
-        : new Set(selectedConversationIds);
+  revalidatePath("/imports");
 
-    const byConv = new Map<string, ParsedLinkedInMessage[]>();
-    for (const m of messages) {
-      const list = byConv.get(m.conversationId) || [];
-      list.push(m);
-      byConv.set(m.conversationId, list);
-    }
-
-    let created = 0;
-    let blockedByPlan = 0;
-    let updated = 0;
-    let duplicates = 0;
-    let messagesImported = 0;
-    let skipped = 0;
-    const touchedContactIds = new Set<string>();
-
-    for (const conv of conversations) {
-      if (selected && !selected.has(conv.conversationId)) continue;
-
-      const msgs = byConv.get(conv.conversationId) || [];
-      let contactId = conv.match?.contactId;
-
-      if (!contactId) {
-        const identity = participantIdentity(conv);
-        if (!identity?.linkedinUrl) {
-          skipped += msgs.length;
-          continue;
-        }
-
-        const contact = await createContactIfRoom(
-          {
-            fullName: identity.fullName,
-            firstName: identity.firstName,
-            lastName: identity.lastName,
-            linkedinUrl: identity.linkedinUrl,
-            source: "linkedin_messages",
-            relationshipScore: 2,
-            howMet: "LinkedIn messages",
-            metContext: "online",
-            tagNames: ["linkedin", "messages"],
-          },
-          writeOpts
-        );
-        if (!contact) {
-          blockedByPlan++;
-          continue;
-        }
-        contactId = contact.id;
-        existing = [...existing, contact as (typeof existing)[number]];
-        created++;
-      } else {
-        duplicates++;
-        const identity = participantIdentity(conv);
-        await updateContact(
-          contactId,
-          {
-            linkedinUrl: identity?.linkedinUrl || undefined,
-            source: "linkedin_messages",
-          },
-          writeOpts
-        );
-        updated++;
-      }
-
-      touchedContactIds.add(contactId);
-
-      const existingInteractions = await db.query.interactions.findMany({
-        where: and(
-          eq(interactions.userId, userId),
-          eq(interactions.contactId, contactId),
-          eq(interactions.source, "linkedin_messages_import")
-        ),
-      });
-      const existingExternalIds = new Set(
-        existingInteractions
-          .map((i) => i.externalId)
-          .filter((id): id is string => Boolean(id))
-      );
-      // Legacy dedupe for rows imported before externalId
-      const existingLegacyKeys = new Set(
-        existingInteractions.map(
-          (i) =>
-            `${i.interactionDate?.toISOString() || ""}|${(i.rawNotes || "").slice(0, 200)}`
-        )
-      );
-
-      let earliest: Date | null = null;
-      let latest: Date | null = null;
-
-      for (const msg of msgs) {
-        if (!msg.content.trim()) {
-          skipped++;
-          continue;
-        }
-        const date = msg.parsedDate || new Date();
-        const externalId = linkedInMessageExternalId(
-          conv.conversationId,
-          date,
-          msg.content
-        );
-        const legacyKey = `${date.toISOString()}|${msg.content.slice(0, 200)}`;
-        if (
-          existingExternalIds.has(externalId) ||
-          existingLegacyKeys.has(legacyKey)
-        ) {
-          skipped++;
-          continue;
-        }
-
-        const fromLabel = msg.from || "LinkedIn";
-        try {
-          await db.insert(interactions).values({
-            userId,
-            contactId,
-            interactionType: "linkedin_message",
-            interactionDate: date,
-            source: "linkedin_messages_import",
-            externalId,
-            rawNotes: msg.content,
-            aiSummary: `${fromLabel}: ${msg.content.slice(0, 240)}`,
-            topics: msg.subject ? [msg.subject] : [],
-          });
-        } catch {
-          // Unique (user_id, external_id) race / re-import
-          skipped++;
-          continue;
-        }
-        messagesImported++;
-        existingExternalIds.add(externalId);
-        existingLegacyKeys.add(legacyKey);
-
-        if (!earliest || date < earliest) earliest = date;
-        if (!latest || date > latest) latest = date;
-      }
-
-      // Derive scannable timeline events (reach-out, meetings, in-person)
-      try {
-        const { extractLinkedInTimelineEvents } = await import(
-          "@/lib/linkedin-timeline-events"
-        );
-        const timelineEvents = await extractLinkedInTimelineEvents(
-          userId,
-          conv.conversationId,
-          msgs.map((m) => ({
-            from: m.from,
-            content: m.content,
-            parsedDate: m.parsedDate,
-          }))
-        );
-        for (const ev of timelineEvents) {
-          if (existingExternalIds.has(ev.externalId)) continue;
-          try {
-            await db.insert(interactions).values({
-              userId,
-              contactId,
-              interactionType: ev.interactionType,
-              interactionDate: ev.interactionDate,
-              source: "linkedin_messages_import",
-              externalId: ev.externalId,
-              rawNotes: ev.rawNotes,
-              aiSummary: ev.summary,
-              topics: [],
-              sameDayOrder: 0,
-            });
-            existingExternalIds.add(ev.externalId);
-            if (!earliest || ev.interactionDate < earliest) {
-              earliest = ev.interactionDate;
-            }
-            if (!latest || ev.interactionDate > latest) {
-              latest = ev.interactionDate;
-            }
-          } catch {
-            // dedupe race
-          }
-        }
-      } catch {
-        // Enrichment is best-effort; raw messages already imported
-      }
-
-      if (earliest || latest) {
-        const contact = existing.find((c) => c.id === contactId);
-        await db
-          .update(contacts)
-          .set({
-            firstInteractionAt:
-              contact?.firstInteractionAt && earliest
-                ? contact.firstInteractionAt < earliest
-                  ? contact.firstInteractionAt
-                  : earliest
-                : earliest || contact?.firstInteractionAt || null,
-            lastInteractionAt:
-              contact?.lastInteractionAt && latest
-                ? contact.lastInteractionAt > latest
-                  ? contact.lastInteractionAt
-                  : latest
-                : latest || contact?.lastInteractionAt || null,
-            updatedAt: new Date(),
-          })
-          .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
-      }
-    }
-
-    const contactsCreated = (importRow.contactsCreated ?? 0) + created;
-    const contactsUpdated = (importRow.contactsUpdated ?? 0) + updated;
-    const duplicatesFound = (importRow.duplicatesFound ?? 0) + duplicates;
-    const rowsProcessed = (importRow.rowsProcessed ?? 0) + messagesImported;
-    const touchedAll = new Set([
-      ...(importRow.stats?.touchedContactIds ?? []),
-      ...touchedContactIds,
-    ]);
-    let stats = mergeStats(importRow.stats, {
-      skipped,
-      blockedByPlan,
-      messagesImported,
-    });
-    stats = {
-      ...stats,
-      touchedContactIds: [...touchedAll],
-    };
-
-    let enrichment: Awaited<
-      ReturnType<typeof enrichContactsFromMessages>
-    > | null = null;
-
-    if (finalize) {
-      try {
-        enrichment = await enrichContactsFromMessages(userId, [...touchedAll]);
-        if (enrichment?.contactsEnriched) {
-          stats = {
-            ...stats,
-            contactsEnriched:
-              (stats.contactsEnriched ?? 0) + enrichment.contactsEnriched,
-          };
-        }
-      } catch {
-        enrichment = null;
-      }
-
-      try {
-        await refreshOutreachSuggestions(userId);
-      } catch {
-        // non-fatal
-      }
-    }
-
-    await db
-      .update(imports)
-      .set({
-        status: finalize ? "completed" : "processing",
-        rowsProcessed,
-        contactsCreated,
-        contactsUpdated,
-        duplicatesFound,
-        stats,
-        errorMessage: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(imports.id, importRow.id));
-
-    if (finalize) {
-      revalidatePath("/");
-      revalidatePath("/contacts");
-      revalidatePath("/imports");
-      revalidatePath("/graph");
-      revalidatePath("/chat");
-      revalidatePath("/knowledge");
-      for (const id of touchedAll) revalidatePath(`/contacts/${id}`);
-    }
-
-    return {
-      importId: importRow.id,
-      rowsProcessed,
-      messagesImported,
-      contactsCreated,
-      contactsUpdated,
-      duplicatesFound,
-      skipped,
-      enrichment,
-      chunkMessagesImported: messagesImported,
-      chunkCreated: created,
-      chunkUpdated: updated,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Import failed";
-    await db
-      .update(imports)
-      .set({
-        status: "failed",
-        errorMessage: message.slice(0, 500),
-        updatedAt: new Date(),
-      })
-      .where(eq(imports.id, importRow.id));
-    throw err;
-  }
+  return { importId: importRow.id, totalRows: selectedConversations.length };
 }
 
 export async function listImports() {

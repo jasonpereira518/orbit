@@ -35,6 +35,7 @@ import {
   contacts,
   imports,
   importJobRows,
+  interactions,
   userSettings,
   type ImportJobRowPayload,
 } from "../src/db/schema";
@@ -74,6 +75,7 @@ async function runJob(importId: string) {
 
 async function reset() {
   const db = await getDb();
+  await db.delete(interactions).where(eq(interactions.userId, USER));
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(imports).where(eq(imports.userId, USER));
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
@@ -626,6 +628,51 @@ async function main() {
     "outlook re-import creates the no-email row again instead of merging it",
     out.created === 1,
     JSON.stringify(out)
+  );
+
+  // --- LinkedIn messages: creates contacts AND logs interactions ---
+  await reset();
+  const threads = Array.from({ length: 12 }, (_, i) => ({
+    kind: "linkedin_message_thread" as const,
+    conversationId: `conv-${i}`,
+    fullName: `Msg Person ${i}`,
+    firstName: "Msg",
+    lastName: `Person ${i}`,
+    // The row with no profile URL is the one today's importer skips; keep that.
+    linkedinUrl: i === 4 ? "" : `https://www.linkedin.com/in/msg-person-${i}`,
+    messages: [
+      { id: `m-${i}-a`, body: "first message", sentAt: "2024-03-01T10:00:00Z" },
+      { id: `m-${i}-b`, body: "second message", sentAt: "2024-03-02T10:00:00Z" },
+    ],
+  }));
+
+  id = await seedJob(threads, "linkedin_messages");
+  await runJob(id);
+  out = await outcome(id);
+  check("messages import completes", out.status === "completed", JSON.stringify(out));
+  check("thread without a profile url is skipped", out.skipped === 1, JSON.stringify(out));
+  check("remaining threads create contacts", out.created === 11, JSON.stringify(out));
+
+  const db4 = await getDb();
+  const [logged] = await db4
+    .select({ value: count() })
+    .from(interactions)
+    .where(eq(interactions.userId, USER));
+  check("two messages logged per thread", (logged?.value ?? 0) === 22, `rows ${logged?.value}`);
+
+  // Re-importing the same export must merge the people and log nothing twice.
+  id = await seedJob(threads, "linkedin_messages");
+  await runJob(id);
+  out = await outcome(id);
+  check("messages re-import merges", out.updated === 11, JSON.stringify(out));
+  const [loggedAgain] = await db4
+    .select({ value: count() })
+    .from(interactions)
+    .where(eq(interactions.userId, USER));
+  check(
+    "re-import logs no duplicate messages",
+    (loggedAgain?.value ?? 0) === 22,
+    `rows ${loggedAgain?.value}`
   );
 
   await reset();

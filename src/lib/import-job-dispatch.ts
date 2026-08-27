@@ -4,6 +4,7 @@ import { imports } from "@/db/schema";
 import { LINKEDIN_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-connections";
 import { GOOGLE_CONTACTS_IMPORT_TYPE } from "@/lib/import-adapters/google-contacts";
 import { OUTLOOK_CONTACTS_IMPORT_TYPE } from "@/lib/import-adapters/outlook-contacts";
+import { LINKEDIN_MESSAGES_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-messages";
 import { runImportJob } from "@/lib/import-engine";
 import {
   GMAIL_SCAN_IMPORT_TYPE,
@@ -15,7 +16,12 @@ import {
  * registry has to key on them, and importing them from here would close a cycle
  * (dispatch -> engine -> registry -> dispatch). Every existing call site keeps working.
  */
-export { LINKEDIN_IMPORT_TYPE, GOOGLE_CONTACTS_IMPORT_TYPE, OUTLOOK_CONTACTS_IMPORT_TYPE };
+export {
+  LINKEDIN_IMPORT_TYPE,
+  GOOGLE_CONTACTS_IMPORT_TYPE,
+  OUTLOOK_CONTACTS_IMPORT_TYPE,
+  LINKEDIN_MESSAGES_IMPORT_TYPE,
+};
 
 /**
  * Import types that own their own server-side processing and can therefore be resumed.
@@ -27,6 +33,7 @@ export const RESUMABLE_IMPORT_TYPES = [
   LINKEDIN_IMPORT_TYPE,
   GOOGLE_CONTACTS_IMPORT_TYPE,
   OUTLOOK_CONTACTS_IMPORT_TYPE,
+  LINKEDIN_MESSAGES_IMPORT_TYPE,
   GMAIL_SCAN_IMPORT_TYPE,
 ] as const;
 
@@ -51,9 +58,10 @@ export async function runImportJobById(importId: string): Promise<void> {
     case LINKEDIN_IMPORT_TYPE:
     case GOOGLE_CONTACTS_IMPORT_TYPE:
     case OUTLOOK_CONTACTS_IMPORT_TYPE:
+    case LINKEDIN_MESSAGES_IMPORT_TYPE:
       return runImportJob(importId);
     default:
-      // Client-driven kinds (e.g. the LinkedIn messages import) have no server runner.
+      // Import types with no server-side runner land here — none remain today.
       return;
   }
 }
