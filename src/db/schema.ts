@@ -345,6 +345,16 @@ export const contacts = pgTable(
 
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+
+    /**
+     * Set when a write changed text the contact's embedding is built from.
+     *
+     * Imports no longer embed inline — they flag rows here and a backfill claims them. NULL
+     * means "the stored embedding matches the current content", which is also true of a
+     * contact that was never embedded and has no embedding row at all; the backfill treats
+     * both the same way.
+     */
+    embeddingStaleAt: timestamp("embedding_stale_at", { withTimezone: true }),
   },
   (t) => [
     index("contacts_user_id_idx").on(t.userId),
@@ -833,6 +843,11 @@ export const contactEmbeddings = pgTable(
   (t) => [
     index("embeddings_user_idx").on(t.userId),
     index("embeddings_contact_idx").on(t.contactId),
+    uniqueIndex("embeddings_user_contact_source_uidx").on(
+      t.userId,
+      t.contactId,
+      t.sourceType
+    ),
   ]
 );
 

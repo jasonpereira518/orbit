@@ -595,7 +595,7 @@ CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action,
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1111,6 +1111,43 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "signup_landing_path", "text");
   await ensureColumn(client, "user_settings", "signup_attributed_at", "timestamptz");
 
+  // Embedding staleness: imports flag contacts here instead of embedding inline, and a
+  // separate backfill drains them. The dedupe is safe to re-run — it only ever deletes rows
+  // that lose the (user_id, contact_id, source_type) tiebreak, and once the unique index
+  // exists no more duplicates can be created for it to find.
+  await ensureColumn(client, "contacts", "embedding_stale_at", "timestamptz");
+
+  try {
+    await client.exec(
+      `CREATE INDEX IF NOT EXISTS contacts_embedding_stale_idx
+       ON contacts(user_id) WHERE embedding_stale_at IS NOT NULL`
+    );
+  } catch {
+    // Index may already exist
+  }
+
+  try {
+    await client.exec(`
+      DELETE FROM contact_embeddings a
+      USING contact_embeddings b
+      WHERE a.user_id = b.user_id
+        AND a.contact_id = b.contact_id
+        AND a.source_type = b.source_type
+        AND (a.created_at < b.created_at OR (a.created_at = b.created_at AND a.id < b.id))
+    `);
+  } catch {
+    // Nothing to dedupe
+  }
+
+  try {
+    await client.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS embeddings_user_contact_source_uidx
+       ON contact_embeddings(user_id, contact_id, source_type)`
+    );
+  } catch {
+    // Index may already exist
+  }
+
   // `query` rather than `exec`: it returns `{ rows }`, which `rowsOf` understands, so the
   // schema-version SELECT reads the same on both drivers. Every statement here is a single
   // command, which is what `query` requires.
@@ -1374,6 +1411,21 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_reason text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_by text`,
     ...ADMIN_V2_STATEMENTS,
+    // Embedding staleness: imports flag contacts here instead of embedding inline, and a
+    // separate backfill drains them. The dedupe is safe to re-run — it only ever deletes
+    // rows that lose the (user_id, contact_id, source_type) tiebreak, and once the unique
+    // index exists no more duplicates can be created for it to find.
+    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS embedding_stale_at timestamptz`,
+    `CREATE INDEX IF NOT EXISTS contacts_embedding_stale_idx
+     ON contacts(user_id) WHERE embedding_stale_at IS NOT NULL`,
+    `DELETE FROM contact_embeddings a
+     USING contact_embeddings b
+     WHERE a.user_id = b.user_id
+       AND a.contact_id = b.contact_id
+       AND a.source_type = b.source_type
+       AND (a.created_at < b.created_at OR (a.created_at = b.created_at AND a.id < b.id))`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS embeddings_user_contact_source_uidx
+     ON contact_embeddings(user_id, contact_id, source_type)`,
   ];
 
   for (const statement of alters) {
