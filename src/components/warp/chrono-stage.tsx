@@ -281,6 +281,18 @@ export function ChronoStage({ run }: { run: WarpRun }) {
     function coverage(now: number) {
       const r = runRef.current;
       const elapsed = now - r.startedAt;
+      // `skip()` has brought the route swap forward. The inbound cover is
+      // deliberately down until CHRONO_IN_COVER opens so the exit can be seen,
+      // which means a skip inside that window would swap the route through a
+      // clear canvas. Pin it, and stay pinned for the rest of the run: the
+      // stage unmounts SKIP_COVER_MS later, and un-pinning before then would
+      // reopen the very frame this exists to close.
+      //
+      // Above the reduced branch on purpose — a pinned run must be opaque
+      // whatever else is true — and that is precisely why `skip()` never sets
+      // the flag on a reduced run: a hard cut to opaque is what that path
+      // exists to avoid. The two halves have to be read together.
+      if (r.covered) return 1;
       if (r.reduced) {
         // Exactly the liftoff stage's reduced path, and for its reason: a
         // full-viewport cut to an opaque deep-space canvas and a cut back out
@@ -403,11 +415,17 @@ export function ChronoStage({ run }: { run: WarpRun }) {
   }, []);
 
   return (
+    // No `pointer-events-none` class: the frame loop owns that property (see
+    // COVER_BLOCKS_CLICKS), and a class setting it too would read as the
+    // authority while being silently overridden by the inline style — an
+    // invitation to "tidy away" the per-frame assignment and hand /upgrade's
+    // live checkout buttons back to a blind click under an opaque cover. The
+    // initial value lives in the same style object the loop writes to.
     <canvas
       ref={canvasRef}
       aria-hidden="true"
-      className="pointer-events-none fixed inset-0 z-[100] h-full w-full"
-      style={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] h-full w-full"
+      style={{ opacity: 0, pointerEvents: "none" }}
     />
   );
 }

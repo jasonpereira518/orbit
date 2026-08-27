@@ -26,9 +26,18 @@ import {
 } from "@/lib/warp/journeys";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
-/** How long the stage stays up after `skip()` navigates, so the route swap
- *  has time to resolve behind cover instead of exposing the pre-navigation
- *  page for a frame. */
+/**
+ * How long the stage stays up after `skip()` navigates, so the route swap has
+ * time to resolve behind cover instead of exposing the pre-navigation page for
+ * a frame.
+ *
+ * Enough on its own for three of the four legs: the liftoff arcs and chrono's
+ * outbound are all opaque within their first frames, so by the time skip can
+ * be pressed there is already a cover to keep up. Chrono's way home is the
+ * exception and this window does nothing for it unaided — the cover there sits
+ * at 0 until CHRONO_IN_COVER opens, and holding a TRANSPARENT canvas up for
+ * 120ms hides nothing. That leg needs the pin; see `WarpRun.covered`.
+ */
 const SKIP_COVER_MS = 120;
 
 export type WarpPhase =
@@ -52,6 +61,20 @@ export type WarpRun = {
   origin: { x: number; y: number } | null;
   /** Collapses every arc to a plain cross-fade. */
   reduced: boolean;
+  /**
+   * Set by `skip()` when it brings a chrono rewind's route swap forward.
+   *
+   * The stage must pin itself fully opaque for the rest of the run when this
+   * is true. `SKIP_COVER_MS` was written when the inbound cover was opaque
+   * from frame one, so bringing the navigation forward was safe on its own;
+   * it no longer is — the cover now stays at 0 until 480ms so the panels can
+   * be seen leaving, and a skip at t=150 would otherwise swap the route with
+   * no cover at all: panels frozen mid-flight, hard cut to the origin page.
+   * Forcing the cover rather than deferring the navigation on purpose —
+   * "stop waiting" is the entire point of skip, and a delayed button reads as
+   * a broken one.
+   */
+  covered: boolean;
 };
 
 type WarpApi = {
@@ -95,6 +118,7 @@ const IDLE: WarpRun = {
   arrivingAt: null,
   origin: null,
   reduced: false,
+  covered: false,
 };
 
 const WarpContext = createContext<WarpApi | null>(null);
@@ -212,6 +236,7 @@ export function WarpProvider({ children }: { children: React.ReactNode }) {
           ? { x: origin.left + origin.width / 2, y: origin.top + origin.height / 2 }
           : null,
         reduced,
+        covered: false,
       });
 
       // Swap the route only once the stage covers the frame. Earlier than this
@@ -264,6 +289,7 @@ export function WarpProvider({ children }: { children: React.ReactNode }) {
       arrivingAt: null,
       origin: null,
       reduced,
+      covered: false,
     });
 
     const goBack = () => {
@@ -293,17 +319,42 @@ export function WarpProvider({ children }: { children: React.ReactNode }) {
     const phase = phaseRef.current;
     if (phase === "idle") return;
     const journey = JOURNEYS[journeyRef.current];
+    const homeward = phase === "inbound" || phase === "landing";
     clearTimers();
+    // Raise the cover BEFORE the swap, not after it. On the chrono way home
+    // the stage is deliberately transparent until CHRONO_IN_COVER opens, so
+    // the panels can be seen leaving; a skip at t=150 would otherwise swap the
+    // route through a clear canvas.
+    //
+    // Ordering, stated honestly: this does NOT commit atomically with the
+    // navigation. The pin travels state -> render -> the stage's `runRef` sync
+    // effect -> the next rAF frame, so it lands about a frame from here. What
+    // it beats is `router.back()`, which only calls `history.back()`: the
+    // popstate arrives in a later task and the destination's own render and
+    // paint are later still. Setting it first is what buys that margin, and it
+    // is the whole margin available without the provider reaching across into
+    // the stage's canvas directly.
+    //
+    // Scoped to that one leg. The liftoff arcs and chrono's outbound are
+    // covered by their own shutter within the first frames, and pinning them
+    // would only rob them of a cross-fade they already do correctly. Reduced
+    // motion is excluded because the pin sits ABOVE the reduced branch in
+    // `coverage()`: it would replace that path's fade with a hard cut to an
+    // opaque full-viewport canvas, which is the luminance jump the preference
+    // is asking to avoid.
+    if (homeward && journeyRef.current === "chrono" && !run.reduced) {
+      setRun((r) => (r.covered ? r : { ...r, covered: true }));
+    }
     if (!navigated.current) {
       navigated.current = true;
-      if (phase === "inbound" || phase === "landing") router.back();
+      if (homeward) router.back();
       else router.push(journey.destination);
     }
     // Stay covering the frame a beat longer: settling in the same tick as the
     // navigation would unmount the stage before the route swap resolves,
     // flashing whatever page is still underneath.
     after(SKIP_COVER_MS, settle);
-  }, [after, clearTimers, router, settle]);
+  }, [after, clearTimers, router, run.reduced, settle]);
 
   // Escape completes a journey rather than abandoning it — the navigation is
   // already in flight, so the only thing left to skip is the waiting.
