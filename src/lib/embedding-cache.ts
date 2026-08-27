@@ -12,6 +12,8 @@ type Entry = { value: number[]; expiresAt: number };
 const MAX_ENTRIES = 500;
 const TTL_MS = 60 * 60 * 1000;
 
+let nowFn: () => number = Date.now;
+
 const globalForCache = globalThis as unknown as {
   orbitQueryEmbeddingCache?: Map<string, Entry>;
 };
@@ -40,7 +42,7 @@ export async function getQueryEmbedding(
 ): Promise<number[]> {
   const key = cacheKey(userId, query);
   const store = cache();
-  const now = Date.now();
+  const now = nowFn();
 
   const hit = store.get(key);
   if (hit && hit.expiresAt > now) {
@@ -62,4 +64,8 @@ export async function getQueryEmbedding(
 
 export function __clearEmbeddingCacheForTests() {
   cache().clear();
+}
+
+export function __setNowForTests(fn: (() => number) | null) {
+  nowFn = fn ?? Date.now;
 }
