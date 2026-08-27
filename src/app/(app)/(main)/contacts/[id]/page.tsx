@@ -3,13 +3,11 @@ import {
   getContact,
   getContactFollowUpSendOptions,
   listRelatedContacts,
-  listMutualContacts,
 } from "@/actions/contacts";
 import { ContactFollowUpSection } from "@/components/contacts/contact-follow-up-section";
 import { ContactProfileHero } from "@/components/contacts/contact-profile-hero";
 import { ContactProfileOverview } from "@/components/contacts/contact-profile-overview";
 import { ContactRelatedPeople } from "@/components/contacts/contact-related-people";
-import { ContactMutualPeople } from "@/components/contacts/contact-mutual-people";
 import { ContactRemindersSection } from "@/components/contacts/contact-reminders-section";
 import { ContactStatPills } from "@/components/contacts/contact-stat-pills";
 import { ContactTimeline } from "@/components/contacts/contact-timeline";
@@ -35,7 +33,6 @@ export default async function ContactDetailPage({
   // failure the section simply doesn't render.
   const sendOptionsPromise = getContactFollowUpSendOptions(id).catch(() => null);
   const relatedPromise = listRelatedContacts(id, 6).catch(() => []);
-  const mutualsPromise = listMutualContacts(id, 6).catch(() => []);
   // Closeness is relative, so even a single-contact page needs the whole
   // orbit's distribution. Cached per request, and shared with any other
   // surface on this page that scores contacts.
@@ -225,12 +222,8 @@ export default async function ContactDetailPage({
         <ContactRemindersSection reminders={contact.reminders ?? []} />
       </Reveal>
 
-      {/* No fallbacks here: these sections render nothing when empty, and a
+      {/* No fallback here: this section renders nothing when empty, and a
           skeleton that can collapse into nothing reads as a glitch. */}
-      <Suspense fallback={null}>
-        <StreamedMutuals mutuals={mutualsPromise} subjectName={displayName} />
-      </Suspense>
-
       <Suspense fallback={null}>
         <StreamedRelated people={relatedPromise} subjectName={displayName} />
       </Suspense>
@@ -255,22 +248,6 @@ async function StreamedFollowUp({
   return (
     <div className="reveal-mount">
       <ContactFollowUpSection {...rest} sendOptions={resolved} />
-    </div>
-  );
-}
-
-async function StreamedMutuals({
-  mutuals,
-  subjectName,
-}: {
-  mutuals: ReturnType<typeof listMutualContacts>;
-  subjectName: string;
-}) {
-  const resolved = await mutuals;
-  if (resolved.length === 0) return null;
-  return (
-    <div className="reveal-mount">
-      <ContactMutualPeople mutuals={resolved} subjectName={subjectName} />
     </div>
   );
 }
