@@ -82,3 +82,8 @@ export function easeIn(t: number) {
 export function judder(t: number) {
   return Math.sin(t * Math.PI * 6) * Math.pow(1 - t, 2.2);
 }
+
+/** Linear blend. `t` is expected pre-clamped by `span`. */
+export function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t;
+}
