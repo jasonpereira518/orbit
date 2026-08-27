@@ -14,8 +14,8 @@ import { motion } from "motion/react";
 import { BackControl } from "@/components/pricing/back-control";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import {
-  CHRONO_IN,
   CHRONO_RESOLVE,
+  liftScheduleForSlot,
   partDirection,
   partDistance,
   partScheduleForSlot,
@@ -113,20 +113,56 @@ const RESOLVE_EASE = [0.22, 0.61, 0.36, 1] as const;
  * tidy, but it is also 380ms of nothing much happening at the exact moment
  * someone has asked to leave. Two beats instead.
  *
- * The rise matters more than its 160ms suggests. Flying straight sideways from
- * rest reads as a slide — a thing on a track — whereas lifting first reads as
- * something releasing before it goes, and the release is what makes the flight
- * feel like the panel's own move rather than the page scrolling sideways.
+ * The rise matters more than its length suggests. Flying straight sideways
+ * from rest reads as a slide — a thing on a track — whereas lifting first
+ * reads as something releasing before it goes, and the release is what makes
+ * the flight feel like the panel's own move rather than the page scrolling
+ * sideways. Its length and its delay come from `liftScheduleForSlot`, which
+ * takes the same per-slot offset the flight does, so the two beats stay in
+ * step whatever the slot count.
  *
- * Then the flight, eased IN so it accelerates away instead of coasting to the
- * edge, and far enough to clear the frame whatever the panel's width. Its
- * length and its reverse stagger both come from `partScheduleForSlot`, which
- * fits the whole cohort inside `CHRONO_IN.part` — so the cover cannot come up
- * over a panel that has not left yet, for any slot count. */
-const LIFT_DURATION = (CHRONO_IN.lift[1] - CHRONO_IN.lift[0]) / 1000;
+ * Then the flight, accelerating away instead of coasting to the edge — on
+ * PART_EASE, which is deliberately NOT Motion's "easeIn" — and far enough to
+ * clear the frame whatever the panel's width. Its length and its reverse
+ * stagger both come from `partScheduleForSlot`, which fits the whole cohort
+ * inside `CHRONO_IN.part` — so the cover cannot come up over a panel that has
+ * not left yet, for any slot count. */
+/**
+ * The flight's curve. Accelerating, but NOT from a standstill.
+ *
+ * Was the string `"easeIn"`, which Motion resolves to
+ * `cubicBezier(0.42, 0, 1, 1)` — checked, not assumed: see
+ * `motion-utils/dist/es/easing/ease.mjs` for the JS path and
+ * `motion-dom/.../waapi/easing/supported.mjs`, which maps the same name to
+ * CSS `ease-in`, for the WAAPI one. Its initial velocity is exactly zero.
+ * By the time the flight starts the rise is 75% through an easeOut and so
+ * visually finished, which leaves the first frames of the flight as the only
+ * thing on screen — and easeIn spends them barely moving: 0.28% of the
+ * distance on frame one, 1.09% on frame two, or 4px then 16px on a 1440px
+ * viewport. The beat has to read as "lift, THEN fly", and a beat that has to
+ * be legible cannot begin with nothing happening.
+ *
+ * This curve starts at 0.32x the flight's average velocity rather than 0x and
+ * finishes at 1.55x rather than easeIn's 1.71x, accelerating monotonically
+ * throughout — so the panel commits on the first frame and is still plainly
+ * speeding up when it leaves. Frame one goes from 0.28% to 1.38% of the
+ * distance; one tenth of the way in, from 1.70% to 3.89%.
+ *
+ * At the HALFWAY point it is 34.2% against easeIn's 31.5% — barely moved, and
+ * deliberately. The defect is the standstill at the top of the move, not the
+ * shape of the middle; a curve flattened enough to shift the midpoint much
+ * would be trading the acceleration this flight is supposed to have for a
+ * constant-speed slide, which is the "thing on a track" reading the rise
+ * exists to prevent.
+ *
+ * Every number here is computed off the curve, not observed. Nothing in this
+ * feature has been seen running.
+ */
+const PART_EASE = [0.25, 0.08, 0.55, 0.3] as const;
 /** How far a panel rises before it goes. Larger than the assembly's brick lift:
  *  that one is a piece coming off its studs, this is a release, and it has to
- *  register inside 160ms against a flight that is about to cross the screen. */
+ *  register inside one rise — `liftScheduleForSlot`, 160ms at the beats as
+ *  they stand — against a flight that is about to cross the screen. */
 const PART_RISE = -18;
 /**
  * The tail of the flight over which opacity finally gives out.
@@ -181,7 +217,13 @@ export function UpgradeTransition({
   // Only "inbound" and "landing" are the rewind home — "cruise" and
   // "arriving" belong to the outbound trip that condenses this page IN, and
   // must not be mistaken for the rewind that takes it back out.
+  // `!reduced` is not defensive tidiness. Every other branch in this file gates
+  // on it, and this one moves six panels a full viewport width sideways —
+  // exactly the class of motion the preference exists to suppress. Without it a
+  // motion-sensitive visitor gets the largest translation on the whole page.
+  // Falling through leaves the page still, and it simply unmounts at the swap.
   const rewinding =
+    !reduced &&
     run.journey === "chrono" &&
     (run.phase === "inbound" || run.phase === "landing");
   /**
@@ -317,26 +359,37 @@ function usePanelMotionProps(
       // so the spread is derived from the room the window actually has. The
       // lift takes the same offset, so the two beats stay in step.
       const flight = partScheduleForSlot(order, maxOrder);
+      const rise = liftScheduleForSlot(order, maxOrder);
       const flightDelay = flight.startMs / 1000;
       const flightDuration = flight.durationMs / 1000;
-      const delay = (flight.startMs - CHRONO_IN.part[0]) / 1000;
       return {
         initial: false,
         animate: {
           y: PART_RISE,
           // Measured after mount, so "away from the centre of the screen" is
           // the layout's own answer rather than an assumption about it.
+          //
+          // `innerWidth` here on purpose, unlike the `clientWidth` the CENTRE
+          // is measured against in `usePartDirection`. This is a travel
+          // distance with only a floor to satisfy — far enough to clear the
+          // frame — so a scrollbar's 7-8px of over-travel is free, and the
+          // panel is long gone by the time it matters. The centre has no such
+          // slack: it is compared against a 2px epsilon.
           x: partDir.current * partDistance(window.innerWidth),
           opacity: 0,
         },
         // One target, three clocks. The rise is short and eased OUT so it
-        // settles into the flight; the flight is long and eased IN so it
-        // accelerates off the edge; opacity holds through both and only gives
+        // settles into the flight; the flight is long and accelerates off the
+        // edge on PART_EASE; opacity holds through both and only gives
         // out over the last fraction, which is what keeps the panel a solid
         // object leaving rather than a ghost fading sideways.
         transition: {
-          y: { duration: LIFT_DURATION, ease: "easeOut", delay },
-          x: { duration: flightDuration, ease: "easeIn", delay: flightDelay },
+          y: {
+            duration: rise.durationMs / 1000,
+            ease: "easeOut",
+            delay: rise.startMs / 1000,
+          },
+          x: { duration: flightDuration, ease: PART_EASE, delay: flightDelay },
           opacity: {
             duration: PART_FADE_DURATION,
             ease: "linear",
@@ -427,9 +480,17 @@ function usePartDirection<T extends HTMLElement>(order: number) {
     const el = ref.current;
     if (!el) return;
     const box = el.getBoundingClientRect();
+    // `clientWidth`, NOT `innerWidth`. innerWidth includes a space-taking
+    // scrollbar (Windows and Linux always; macOS whenever "Show scroll bars" is
+    // set to Always), so on those platforms its half is 7-8px right of where a
+    // centred `mx-auto` band actually sits. That is four times
+    // PART_CENTRED_EPSILON, so every full-width section would measure as
+    // left-of-centre and the four of them would leave as one slab — the exact
+    // outcome the parity fallback exists to prevent. Invisible on a Mac with
+    // overlay scrollbars, which is why it would never surface locally.
     direction.current = partDirection(
       box.left + box.width / 2,
-      window.innerWidth / 2,
+      document.documentElement.clientWidth / 2,
       order,
     );
   }, [order]);
