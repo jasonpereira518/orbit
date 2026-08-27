@@ -141,13 +141,13 @@ export function UpgradePlanCards({
   return (
     <div className="mt-12 space-y-8">
       {showToggle && (
-        <Panel order={2} dir="right" className="flex justify-center">
+        <Panel order={2} className="flex justify-center">
           <BillingToggle period={period} onChange={setPeriod} />
         </Panel>
       )}
 
       <div className="grid gap-5 md:grid-cols-2 md:gap-6">
-        <Panel order={3} dir="left" className="h-full">
+        <Panel order={3} className="h-full">
           <PlanCard
             plan={proForPeriod}
             accent={ACCENT.orbit}
@@ -176,7 +176,7 @@ export function UpgradePlanCards({
           />
         </Panel>
 
-        <Panel order={3} dir="right" className="h-full">
+        <Panel order={4} className="h-full">
           <PlanCard
             plan={lifetime}
             accent={ACCENT.lifetime}
