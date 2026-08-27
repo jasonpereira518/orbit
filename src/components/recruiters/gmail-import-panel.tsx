@@ -170,7 +170,7 @@ export function GmailImportPanel({
     <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="font-[family-name:var(--font-display)] text-lg text-primary">
+          <h2 className="font-[family-name:var(--font-display)] text-lg text-ink">
             Gmail
           </h2>
           <p className="mt-0.5 max-w-prose text-sm text-muted-foreground">

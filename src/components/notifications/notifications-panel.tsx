@@ -37,6 +37,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { ExtensionPromo } from "@/components/notifications/extension-promo";
 import {
   dismissBackgroundJob,
   useActiveBackgroundJobCount,
@@ -128,7 +129,7 @@ export function NotificationsPanelButton() {
           showCloseButton
         >
           <SheetHeader className="border-b border-border/60 pr-12">
-            <SheetTitle className="font-[family-name:var(--font-display)] text-lg text-primary">
+            <SheetTitle className="font-[family-name:var(--font-display)] text-lg text-ink">
               Notifications
             </SheetTitle>
             <SheetDescription>
@@ -136,13 +137,15 @@ export function NotificationsPanelButton() {
             </SheetDescription>
           </SheetHeader>
 
-          <div className="flex-1 overflow-y-auto px-4 py-4">
+          <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+            {data && <ExtensionPromo canUseExtension={data.canUseExtension} />}
+
             {loading && !data ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
             ) : (!data || data.totalCount === 0) && jobs.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border/70 px-4 py-10 text-center">
                 <Bell className="mx-auto h-5 w-5 text-muted-foreground" />
-                <p className="mt-3 text-sm font-medium text-primary">
+                <p className="mt-3 text-sm font-medium text-ink">
                   You&apos;re all caught up
                 </p>
                 <p className="mt-1 text-sm text-muted-foreground">
@@ -319,7 +322,7 @@ function JobRow({ job }: { job: BackgroundJob }) {
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="font-medium text-primary">
+          <p className="font-medium text-ink">
             {job.status === "running"
               ? job.cancelling
                 ? "Stopping…"

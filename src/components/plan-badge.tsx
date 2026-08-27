@@ -7,10 +7,11 @@ import { PLAN_LABELS, type Plan } from "@/lib/plan-limits";
  * Lifetime" chip looks the same whether it is naming a paywall's unlock tiers
  * (`LockedFeature`) or a user's current plan (`PlanSettings`).
  *
- * Orbit Pro is a dedicated blue (`#599de7`, matching the ring in orbit-logo.tsx and
- * the pricing page's Orbit Pro card) rather than `--primary`: primary is teal in the
- * light theme, which is also the app's everyday chrome color, so a badge in that
- * color didn't read as a distinct tier. Orbit Lifetime gets `--tier-lifetime`, a
+ * Orbit Pro is a dedicated blue (`--brand-pro`, matching the ring in orbit-logo.tsx
+ * and the pricing page's Orbit Pro card) rather than `--primary`: primary is the
+ * app's everyday chrome color in both themes, so a badge in it didn't read as a
+ * distinct tier. The text uses `--tier-pro`, the theme-aware variant, because the
+ * flat brand blue only clears 2.7:1 on a light card. Orbit Lifetime gets `--tier-lifetime`, a
  * gold kept separate from `--chart-4` on purpose: the chart tokens flip hue between
  * themes (gold in light, blue in dark), which would make the Lifetime badge
  * silently match the Pro badge in dark mode.
@@ -18,7 +19,7 @@ import { PLAN_LABELS, type Plan } from "@/lib/plan-limits";
 const TIER_ACCENT: Partial<Record<Plan, { icon: LucideIcon; className: string }>> = {
   orbit: {
     icon: Sparkles,
-    className: "border-[#599de7]/35 bg-[#599de7]/10 text-[#2f68b0] dark:text-[#599de7]",
+    className: "border-brand-pro/35 bg-brand-pro/10 text-tier-pro",
   },
   lifetime: {
     icon: Crown,

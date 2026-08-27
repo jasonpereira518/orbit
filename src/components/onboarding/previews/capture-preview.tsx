@@ -6,7 +6,7 @@ import type { PreviewProps } from "@/components/onboarding/tour-config";
 export function CapturePreview({ reducedMotion }: PreviewProps) {
   return (
     <div className="space-y-3 p-1">
-      <p className="font-[family-name:var(--font-display)] text-lg text-primary">
+      <p className="font-[family-name:var(--font-display)] text-lg text-ink">
         Capture
       </p>
       <motion.div

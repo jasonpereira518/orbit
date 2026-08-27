@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { MotionConfig } from "motion/react";
 import { AppSidebar } from "@/components/layout/app-sidebar";
+import { AppStarfield } from "@/components/layout/app-starfield";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
@@ -62,8 +63,17 @@ export function AppShell({
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="flex h-dvh overflow-hidden bg-background">
+      {/* data-warp-craft: the thing that drops away on lift-off and takes
+          the touchdown judder on re-entry. Driven by `html[data-warp]` in
+          globals.css so the server layout needs no knowledge of the journey. */}
+      {/* Transparent in dark so the portalled starfield behind this tree
+          shows through; the body still paints `--background` either way. */}
+      <div
+        data-warp-craft
+        className="flex h-dvh overflow-hidden bg-background dark:bg-transparent"
+      >
         <ThemeSync theme={theme} />
+        <AppStarfield />
         <AvatarBackfill />
         <DueNotificationsWatcher />
         <ImportJobWatcher />
@@ -97,7 +107,7 @@ export function AppShell({
               title="Back to landing page"
             >
               <OrbitLogo size="md" plan={plan} />
-              <span className="font-[family-name:var(--font-display)] text-lg leading-none text-primary">
+              <span className="font-[family-name:var(--font-display)] text-lg leading-none text-ink">
                 Orbit
               </span>
             </Link>

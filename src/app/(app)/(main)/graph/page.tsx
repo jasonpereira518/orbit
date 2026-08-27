@@ -10,12 +10,12 @@ export default async function GraphPage() {
         <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-primary">
           Star chart
         </p>
-        <h1 className="mt-0.5 font-[family-name:var(--font-display)] text-2xl text-primary md:text-3xl">
+        <h1 className="mt-0.5 font-[family-name:var(--font-display)] text-2xl text-ink md:text-3xl">
           Constellation
         </h1>
         <p className="mt-0.5 max-w-xl text-sm text-muted-foreground">
-          You are the sun. People form constellations by company, then school —
-          linked to each other, not to the center.
+          You are the sun. Companies and schools form constellations around
+          you — each figure traced by its own people.
         </p>
       </div>
       <NetworkGraphLazy initialData={initialData} />

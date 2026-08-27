@@ -26,6 +26,16 @@ const AUTO_SUGGESTION_TYPES = [
 
 const MAX_AUTO_SUGGESTIONS = 12;
 
+/**
+ * The dashboard's "Constellation preview" card is a decorative, non-interactive
+ * glance at the network (no search/filter UI) — it doesn't need every contact,
+ * just enough to read as a constellation. Capping it keeps the dashboard's
+ * render/layout cost bounded regardless of network size, instead of paying
+ * the full graph's DOM cost on every dashboard load. Closest ties first,
+ * matching the card's own "closer ties sit nearer the center" framing.
+ */
+const GRAPH_PREVIEW_CONTACT_CAP = 150;
+
 const AUTO_TYPE_PRIORITY: Record<(typeof AUTO_SUGGESTION_TYPES)[number], number> = {
   post_event: 3,
   linkedin_thread_quiet: 2,
@@ -557,6 +567,17 @@ export async function getDashboardData(
   const strongTies =
     networkMetrics.tierCounts.inner + networkMetrics.tierCounts.mid;
 
+  const graphPreviewContacts =
+    graphContacts.length > GRAPH_PREVIEW_CONTACT_CAP
+      ? [...graphContacts]
+          .sort(
+            (a, b) =>
+              (b.orbitScore ?? b.relationshipScore ?? 0) -
+              (a.orbitScore ?? a.relationshipScore ?? 0)
+          )
+          .slice(0, GRAPH_PREVIEW_CONTACT_CAP)
+      : graphContacts;
+
   return {
     stats: {
       totalContacts: allContactRows.length,
@@ -578,7 +599,7 @@ export async function getDashboardData(
     contactById,
     // Layout (nodes/edges) is computed client-side in NetworkGraph from contacts.
     graphPreview: {
-      contacts: graphContacts,
+      contacts: graphPreviewContacts,
       companies,
       schools,
       tags,

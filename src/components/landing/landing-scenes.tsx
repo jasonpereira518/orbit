@@ -5,6 +5,7 @@ import { LandingAuthControls } from "@/components/landing/landing-auth-controls"
 import { WaitlistForm } from "@/components/landing/waitlist-form";
 import { Reveal } from "@/components/motion/reveal";
 import { OrbitLogo } from "@/components/orbit-logo";
+import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
 
 // All narrative copy is server-rendered here so it ships in the document;
 // <Reveal> only choreographs when it becomes visible.
@@ -136,7 +137,7 @@ export function SceneFinale({
           </Reveal>
           <Reveal className="reveal-celestial" delay={100}>
             <p className={BODY}>
-              Free for your first 100 contacts. Connect LinkedIn and Gmail once,
+              Free for your first {FREE_CONTACT_LIMIT} contacts. Connect LinkedIn and Gmail once,
               and Orbit runs the follow-up loop while you keep interviewing.{" "}
               <Link
                 href="/pricing"

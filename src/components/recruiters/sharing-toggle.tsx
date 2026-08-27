@@ -63,7 +63,7 @@ export function RecruiterSharingToggle({ enabled }: { enabled: boolean }) {
             )}
           </div>
           <div className="min-w-0">
-            <h2 className="font-medium text-primary">
+            <h2 className="font-medium text-ink">
               {on ? "Sharing with the pool" : "Your list is private"}
             </h2>
             <p className="mt-1 max-w-prose text-sm text-muted-foreground">

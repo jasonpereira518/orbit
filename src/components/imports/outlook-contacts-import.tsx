@@ -81,7 +81,7 @@ export function OutlookContactsImport() {
   if (!status.configured) {
     return (
       <section className="space-y-2 rounded-2xl border border-dashed border-border/70 bg-card/50 p-6">
-        <h2 className="text-lg font-medium text-primary">Outlook Contacts</h2>
+        <h2 className="text-lg font-medium text-ink">Outlook Contacts</h2>
         <p className="text-sm text-muted-foreground">
           Set <code className="text-xs">MICROSOFT_CLIENT_ID</code>,{" "}
           <code className="text-xs">MICROSOFT_CLIENT_SECRET</code>, and{" "}
@@ -95,7 +95,7 @@ export function OutlookContactsImport() {
     <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-medium text-primary">Outlook Contacts</h2>
+          <h2 className="text-lg font-medium text-ink">Outlook Contacts</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             {status.connected
               ? `Connected as ${status.emailAddress}`

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Check } from "lucide-react";
 import { BillingToggle } from "@/components/pricing/billing-toggle";
 import { LifetimeCheckoutButton } from "@/components/pricing/lifetime-checkout-button";
+import { Panel } from "@/components/motion/upgrade-transition";
 import { PlanPriceDisplay } from "@/components/pricing/plan-price";
 import { ProCheckoutButton } from "@/components/pricing/pro-checkout-button";
 import { planCopyWithOffer, type BillingPeriod, type PlanCopy } from "@/lib/plan-copy";
@@ -19,10 +20,10 @@ import { cn } from "@/lib/utils";
  */
 const ACCENT = {
   orbit: {
-    surface: "border-[#599de7]/40 bg-[#070b18]/80",
-    tick: "text-[#599de7]",
+    surface: "border-brand-pro/40 bg-[#070b18]/80",
+    tick: "text-brand-pro",
     glow: "radial-gradient(circle, rgba(89,157,231,0.20), transparent 68%)",
-    badge: { label: "Most popular", className: "bg-[#599de7] text-[#081326]" },
+    badge: { label: "Most popular", className: "bg-brand-pro text-[#081326]" },
   },
   lifetime: {
     surface: "border-[#f2c14e]/40 bg-[#070b18]/80",
@@ -138,52 +139,60 @@ export function UpgradePlanCards({
   const showToggle = !hasPro && !hasLifetime;
 
   return (
-    <div className="space-y-8">
-      {showToggle && <BillingToggle period={period} onChange={setPeriod} />}
+    <div className="mt-12 space-y-8">
+      {showToggle && (
+        <Panel order={2} className="flex justify-center">
+          <BillingToggle period={period} onChange={setPeriod} />
+        </Panel>
+      )}
 
       <div className="grid gap-5 md:grid-cols-2 md:gap-6">
-        <PlanCard
-          plan={proForPeriod}
-          accent={ACCENT.orbit}
-          footer={
-            hasPro ? (
-              <CardNotice>
-                This is your current plan. Manage or cancel it in{" "}
-                <Link href="/settings#settings-plan" className="text-[#e8f3f1] underline underline-offset-4">
-                  Settings
-                </Link>
-                .
-              </CardNotice>
-            ) : hasLifetime ? (
-              <CardNotice>
-                Already covered by Orbit Lifetime, minus contact enrichment on
-                Orbit&apos;s credits.
-              </CardNotice>
-            ) : proCheckoutConfigured ? (
-              <ProCheckoutButton period={period} />
-            ) : (
-              <p className="rounded-xl border border-dashed border-[#e8f3f1]/[0.14] p-4 text-center text-sm text-[#9aada8]">
-                Subscription checkout is unavailable in this environment.
-              </p>
-            )
-          }
-        />
+        <Panel order={3} className="h-full">
+          <PlanCard
+            plan={proForPeriod}
+            accent={ACCENT.orbit}
+            footer={
+              hasPro ? (
+                <CardNotice>
+                  This is your current plan. Manage or cancel it in{" "}
+                  <Link href="/settings#settings-plan" className="text-[#e8f3f1] underline underline-offset-4">
+                    Settings
+                  </Link>
+                  .
+                </CardNotice>
+              ) : hasLifetime ? (
+                <CardNotice>
+                  Already covered by Orbit Lifetime, minus contact enrichment on
+                  Orbit&apos;s credits.
+                </CardNotice>
+              ) : proCheckoutConfigured ? (
+                <ProCheckoutButton period={period} />
+              ) : (
+                <p className="rounded-xl border border-dashed border-[#e8f3f1]/[0.14] p-4 text-center text-sm text-[#9aada8]">
+                  Subscription checkout is unavailable in this environment.
+                </p>
+              )
+            }
+          />
+        </Panel>
 
-        <PlanCard
-          plan={lifetime}
-          accent={ACCENT.lifetime}
-          footer={
-            hasLifetime ? (
-              <CardNotice>Yours permanently. Nothing further to pay.</CardNotice>
-            ) : lifetimePurchasable ? (
-              <LifetimeCheckoutButton priceUsd={lifetimeOffer.priceUsd} />
-            ) : (
-              <p className="rounded-xl border border-dashed border-[#f2c14e]/35 px-4 py-3 text-center text-sm text-[#f2c14e]">
-                Not on sale yet
-              </p>
-            )
-          }
-        />
+        <Panel order={4} className="h-full">
+          <PlanCard
+            plan={lifetime}
+            accent={ACCENT.lifetime}
+            footer={
+              hasLifetime ? (
+                <CardNotice>Yours permanently. Nothing further to pay.</CardNotice>
+              ) : lifetimePurchasable ? (
+                <LifetimeCheckoutButton priceUsd={lifetimeOffer.priceUsd} />
+              ) : (
+                <p className="rounded-xl border border-dashed border-[#f2c14e]/35 px-4 py-3 text-center text-sm text-[#f2c14e]">
+                  Not on sale yet
+                </p>
+              )
+            }
+          />
+        </Panel>
       </div>
     </div>
   );

@@ -224,7 +224,7 @@ export function WizardTriage({ onDone }: { onDone: () => void }) {
               size="default"
             />
             <div className="min-w-0 flex-1">
-              <p className="truncate font-medium text-primary">
+              <p className="truncate font-medium text-ink">
                 {c.fullName}
               </p>
               <p className="truncate text-xs text-muted-foreground">

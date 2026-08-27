@@ -182,7 +182,7 @@ function StickyMiniBar({
           size="sm"
           className="size-9 shrink-0"
         />
-        <p className="min-w-0 flex-1 truncate font-[family-name:var(--font-display)] text-lg text-primary">
+        <p className="min-w-0 flex-1 truncate font-[family-name:var(--font-display)] text-lg text-ink">
           {displayName}
           {role ? (
             <>
@@ -379,7 +379,7 @@ export function ContactProfileHero({
           <div className="min-w-0 flex-1">
             {/* Sentinel: when this leaves the viewport top, show the mini-bar */}
             <div ref={sentinelRef} className="h-px w-px" aria-hidden />
-            <h1 className="font-[family-name:var(--font-display)] text-3xl text-primary sm:text-4xl">
+            <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink sm:text-4xl">
               {displayName}
             </h1>
             {preferredName && preferredName !== fullName ? (

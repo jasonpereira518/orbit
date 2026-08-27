@@ -5,8 +5,8 @@
 export function DashboardHeader() {
   return (
     <header className="reveal-mount space-y-2">
-      <p className="text-sm font-medium text-primary">Your network</p>
-      <h1 className="font-[family-name:var(--font-display)] text-4xl tracking-tight text-primary">
+      <p className="text-sm font-medium text-ink">Your network</p>
+      <h1 className="font-[family-name:var(--font-display)] text-4xl tracking-tight text-ink">
         Stay in orbit
       </h1>
       <p className="max-w-xl text-muted-foreground">

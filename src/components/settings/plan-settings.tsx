@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Check, Sparkles } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { WarpLink } from "@/components/warp/warp-link";
 import { planCopy } from "@/lib/plan-copy";
 import type { Plan } from "@/lib/plan-limits";
 import type { Entitlements, PlanSource } from "@/lib/entitlements";
@@ -18,8 +19,8 @@ const SOURCE_NOTE: Record<PlanSource, string | null> = {
  * product itself runs on, Orbit Lifetime in the gold the marketing site reserves
  * for offers, Free deliberately recessed — restated for app chrome.
  *
- * The pricing page can hardcode `#599de7` and `#f2c14e` because it only ever sits
- * on a dark starfield. This card sits on `--card` in either theme, which splits
+ * The pricing page can use the flat `--brand-pro` and `#f2c14e` because it only ever
+ * sits on a dark starfield. This card sits on `--card` in either theme, which splits
  * the gold in two: as a *surface* it can be the real brand gold, because the text
  * riding on it is near-black; as *text* on a white card it cannot, since `#f2c14e`
  * is 1.8:1 there. So the badge carries the bright metal and the ticks carry a
@@ -51,19 +52,19 @@ const TIER_ACCENT: Record<
     glint: false,
   },
   orbit: {
-    // A dedicated blue rather than `--primary`: primary is teal in the light
-    // theme, which is also the app's everyday chrome color (headings, links,
-    // buttons) — a badge in that color didn't read as a distinct tier, just
-    // as more of the same UI. `#599de7` matches the ring in orbit-logo.tsx
-    // and the pricing page's Orbit Pro card, so "blue" means the same tier
-    // everywhere.
-    ring: "border-[#5b9de6]/40 dark:border-[#599de7]/45",
-    wash: "bg-[#5b9de6]/15 dark:bg-[#599de7]/12",
+    // A dedicated blue rather than `--primary`: primary is the app's everyday
+    // chrome color (links, buttons, focus rings) in both themes — a badge in it
+    // didn't read as a distinct tier, just as more of the same UI. `--brand-pro`
+    // matches the ring in orbit-logo.tsx and the pricing page's Orbit Pro card,
+    // so "blue" means the same tier everywhere. `ink` uses the theme-aware
+    // `--tier-pro` instead, since the flat blue is only 2.7:1 on a light card.
+    ring: "border-brand-pro/40 dark:border-brand-pro/45",
+    wash: "bg-brand-pro/15 dark:bg-brand-pro/12",
     // Same vertical-ramp technique as Lifetime's gold: a light edge and a
     // shaded one for the glint to travel between.
     badge: "bg-gradient-to-b from-[#8ec4f5] to-[#5b9de6] text-[#0f2e4d] shadow-sm",
-    ink: "text-[#2f68b0] dark:text-[#599de7]",
-    meter: "bg-[#5b9de6] dark:bg-[#599de7]",
+    ink: "text-tier-pro",
+    meter: "bg-brand-pro",
     glint: true,
   },
   lifetime: {
@@ -118,7 +119,7 @@ export function PlanSettings({
       <div className="relative space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-lg font-medium text-primary">Pricing Plan</h2>
+            <h2 className="text-lg font-medium text-ink">Pricing Plan</h2>
             <p className="mt-1 text-sm text-muted-foreground">{copy.tagline}</p>
           </div>
           <span
@@ -187,7 +188,7 @@ export function PlanSettings({
             Read from the same copy the pricing page renders, so the two cannot
             describe a tier differently. */}
         <div className="border-t border-border/60 pt-4">
-          <h3 className="text-sm font-medium text-primary">
+          <h3 className="text-sm font-medium text-ink">
             What&apos;s included
           </h3>
           {/* Columns, not a two-column grid. A grid ties both cells of a row to
@@ -226,12 +227,12 @@ export function PlanSettings({
               Upgrade
             </Link>
           )}
-          <Link
+          <WarpLink
             href="/pricing"
             className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
           >
             {isFree ? "Compare plans" : "See all plans"}
-          </Link>
+          </WarpLink>
         </div>
       </div>
     </section>

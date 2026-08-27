@@ -30,7 +30,7 @@ export default async function NewContactPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-primary">
+        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
           Add contact
         </h1>
         <p className="mt-1 text-muted-foreground">

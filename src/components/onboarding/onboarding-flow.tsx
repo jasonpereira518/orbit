@@ -195,7 +195,7 @@ export function OnboardingFlow({
                 {offerFor ? "One more thing" : `Step ${stepIndex + 1} of ${LAST_INDEX + 1}`}
               </p>
               <h1
-                className="mt-1 font-[family-name:var(--font-display)] text-2xl tracking-tight text-primary sm:text-3xl"
+                className="mt-1 font-[family-name:var(--font-display)] text-2xl tracking-tight text-ink sm:text-3xl"
                 aria-live="polite"
               >
                 {offerFor ? "Want a 2-minute guided setup?" : step.title}
@@ -382,7 +382,7 @@ function OfferStep({
           <Sparkles className="h-5 w-5" />
         </span>
         <span>
-          <span className="block font-medium text-primary">
+          <span className="block font-medium text-ink">
             Guided setup walks you through it
           </span>
           <span className="mt-1 block text-sm text-muted-foreground">

@@ -596,7 +596,7 @@ CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action,
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1174,9 +1174,6 @@ async function migratePglite(client: PGlite) {
   // schema-version SELECT reads the same on both drivers. Every statement here is a single
   // command, which is what `query` requires.
   await applyScaleSchema((statement) => client.query(statement));
-}
-
-/**
 
   // Admin console v2: operator suspension, plus the indexes the cross-user roster/trend
   // queries need. Same reasoning as the block above — the DDL template only helps a

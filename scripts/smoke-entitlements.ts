@@ -110,13 +110,13 @@ async function main() {
 
   check("headroom is 1", (await contactHeadroomForUser(USER)) === 1);
 
-  const last = await createContactForUser(USER, { fullName: "Contact Number 100" }, WRITE_OPTS);
-  check("contact #100 saved", Boolean(last?.id));
+  const last = await createContactForUser(USER, { fullName: `Contact Number ${FREE_CONTACT_LIMIT}` }, WRITE_OPTS);
+  check(`contact #${FREE_CONTACT_LIMIT} saved`, Boolean(last?.id));
   check(`count is ${FREE_CONTACT_LIMIT}`, (await contactCount()) === FREE_CONTACT_LIMIT);
 
   let threw: unknown = null;
   try {
-    await createContactForUser(USER, { fullName: "Contact Number 101" }, WRITE_OPTS);
+    await createContactForUser(USER, { fullName: `Contact Number ${FREE_CONTACT_LIMIT + 1}` }, WRITE_OPTS);
   } catch (err) {
     threw = err;
   }

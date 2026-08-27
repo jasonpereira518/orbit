@@ -688,10 +688,16 @@ export async function listNotificationPanel() {
   const userId = await requireUserId();
   const db = await getDb();
   const { aiSuggestions, suggestedReminders } = await import("@/db/schema");
+  const { getEntitlements } = await import("@/lib/entitlements");
   const now = new Date();
 
-  const [pendingReminders, contactRows, suggestions, datedSuggestions] =
-    await Promise.all([
+  const [
+    pendingReminders,
+    contactRows,
+    suggestions,
+    datedSuggestions,
+    entitlements,
+  ] = await Promise.all([
     db.query.reminders.findMany({
       where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
       orderBy: (r, { asc: ascOrder }) => [ascOrder(r.dueDate)],
@@ -725,6 +731,7 @@ export async function listNotificationPanel() {
       orderBy: (s, { asc: ascOrder }) => [ascOrder(s.dueDate)],
       limit: 25,
     }),
+    getEntitlements(userId),
   ]);
 
   type PanelItem = {
@@ -831,7 +838,14 @@ export async function listNotificationPanel() {
 
   const dueCount = items.filter((i) => i.urgency === "due").length;
 
-  return { items, dueCount, totalCount: items.length };
+  return {
+    items,
+    dueCount,
+    totalCount: items.length,
+    // Drives the extension promo in the panel: paid plans get an install link,
+    // everyone else gets the pitch and a route to the plans page.
+    canUseExtension: entitlements.canUseExtension,
+  };
 }
 
 /** Lightweight payload for browser/desktop notification polling. */

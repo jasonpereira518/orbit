@@ -66,7 +66,7 @@ export function DueFollowUpRow({
       <div className="flex items-start justify-between gap-3">
         <Link href={`/contacts/${id}`} className="min-w-0 hover:underline">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="font-medium text-primary">{fullName}</p>
+            <p className="font-medium text-ink">{fullName}</p>
             {tier && <ClosenessTierBadge tier={tier} />}
           </div>
           {meta.length > 0 && (
