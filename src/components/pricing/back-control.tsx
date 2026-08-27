@@ -58,6 +58,13 @@ export function BackControl({
         // start together; it returns false when no journey delivered this
         // visitor, in which case the plain navigation still has to happen.
         if (reenter()) return;
+        // Let a page play an exit transition first; it owns the timing and
+        // calls navigate() when it is ready. Pages that pass nothing keep the
+        // instant behaviour.
+        if (onBeforeNavigate) {
+          onBeforeNavigate(navigate);
+          return;
+        }
         router.back();
       }}
       className="group -ml-2 inline-flex items-center gap-2 rounded-lg border border-transparent px-2.5 py-1.5 text-sm text-[#9aada8] transition-colors duration-200 hover:border-[#e8f3f1]/25 hover:bg-[#e8f3f1]/10 hover:text-[#e8f3f1] hover:shadow-[0_0_0_1px_rgba(232,243,241,0.06)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#f2c14e]"
