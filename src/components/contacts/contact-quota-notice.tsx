@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
  * Shows how much of a capped plan's contact allowance is used, and turns into an upgrade
  * prompt as it fills. Renders nothing on an uncapped plan.
  *
- * Deliberately understated until it matters: a user at 12 of 100 does not need to be sold
+ * Deliberately understated until it matters: a user at 12 of 500 does not need to be sold
  * anything, so this stays a quiet line until the last quarter of the allowance.
  */
 export function ContactQuotaNotice({
