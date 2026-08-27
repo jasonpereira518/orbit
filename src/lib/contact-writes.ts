@@ -452,6 +452,22 @@ export async function createContactsBulkForUser(
  * carries only the fields importers actually merge, and notably NOT `relationshipScore`,
  * because mirroring that into `statedCloseness` is reserved for a human moving the slider
  * (see the comment on `relationshipScore` in `updateContactForUser`).
+ *
+ * KNOWN LIMITATION: COALESCE cannot tell "this field was explicitly normalized/resolved to
+ * null" apart from "this field was never mentioned" — both arrive as SQL NULL in the VALUES
+ * tuple, so this path can only set a column or leave it alone, never clear one. Four fields
+ * can legitimately resolve to null from a defined input, and for all four that null is
+ * indistinguishable from absence here: `company`/`companyId` (an unresolvable or blank name
+ * resolves to `{company: null, companyId: null}` via `companyFieldsForWriteCached`),
+ * `metContext` (an invalid string normalizes to null via `normalizeMetContext`),
+ * `profileImageUrl`, and `dateMet` (both typed nullable on `ContactInput`).
+ * `updateContactForUser` does not have this problem — its `!== undefined` checks see the
+ * whole patch object, including a null-valued one, and apply it — so it can clear any of
+ * these where this path cannot. It stays safe only because today's one caller (the LinkedIn
+ * merge builder in `import-job-processor.ts`) never asks to clear any of them. The day an
+ * importer needs to clear one of these fields during a merge, this silently keeps the stale
+ * value instead; that importer needs a different encoding here (e.g. a sentinel that
+ * distinguishes "clear" from "leave alone"), not a fix to this comment.
  */
 export async function bulkMergeContactsForUser(
   userId: string,

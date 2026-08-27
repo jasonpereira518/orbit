@@ -31,6 +31,48 @@ import { ensureUserSettings } from "../src/lib/user-settings";
 const USER = "smoke-import-perf-user";
 const ROWS = 500;
 
+// A fresh import is overwhelmingly creates, so the fixture must not accidentally manufacture
+// duplicates. An earlier version used `Perf${i} Person${i}` names: consecutive numeric
+// suffixes (e.g. "Perf100 Person100" vs "Perf400 Person400") sit right at the fuzzy-name
+// threshold (nameSimilarity >= 0.88, see src/lib/duplicates.ts), and `company: i % 30` /
+// `title: i % 12` supplied the same-company/same-title condition that tier also requires —
+// together they made most of the 500 rows resolve as merges instead of creates, which is not
+// the workload this guard exists to bound. FIRST_NAMES/LAST_NAMES below are real, distinct
+// words (not shared numeric stems) so no two of the 500 generated full names come close to
+// the fuzzy threshold; COMPANY_MOD/TITLE_MOD are primes unrelated to the name grid so company
+// and title never happen to realign with it either.
+const FIRST_NAMES = [
+  "Olivia", "Liam", "Emma", "Noah", "Ava", "Ethan", "Sophia", "Mason",
+  "Isabella", "Lucas", "Mia", "Elijah", "Amelia", "Oliver", "Harper",
+  "Benjamin", "Evelyn", "James", "Abigail", "Henry", "Emily", "Alexander",
+  "Ella", "Michael", "Scarlett",
+];
+const LAST_NAMES = [
+  "Nguyen", "Garcia", "Patel", "Kowalski", "Johansson", "Okafor", "Silva",
+  "Andersson", "Tanaka", "Kim", "Rossi", "Dubois", "Haddad", "Novak",
+  "Larsen", "Petrov", "Costa", "Ibrahim", "Fischer", "Yamada",
+];
+const COMPANY_MOD = 41;
+const TITLE_MOD = 17;
+
+/** One fixture row: a genuinely distinct person, not a numeric variation on the same name. */
+function fixtureRow(i: number) {
+  // (i % 25, floor(i / 25)) is a bijection over the 500-row range onto the full 25x20 name
+  // grid, so every (firstName, lastName) pair below is used exactly once — no repeats.
+  const firstName = FIRST_NAMES[i % FIRST_NAMES.length];
+  const lastName = LAST_NAMES[Math.floor(i / FIRST_NAMES.length) % LAST_NAMES.length];
+  return {
+    index: i,
+    firstName,
+    lastName,
+    email: `perf${i}@example.com`,
+    company: `Company ${i % COMPANY_MOD}`,
+    position: `Title ${i % TITLE_MOD}`,
+    connectedOn: "15 Mar 2024",
+    url: `https://www.linkedin.com/in/perf-person-${i}`,
+  };
+}
+
 /**
  * Statements a chunk may cost, end to end. Derived from the spec's budget table (~10) with
  * headroom for driver-level chatter. Raising this number is a design decision, not a test
@@ -99,16 +141,7 @@ async function main() {
         importId: job.id,
         userId: USER,
         rowIndex: i,
-        payload: {
-          index: i,
-          firstName: `Perf${i}`,
-          lastName: `Person${i}`,
-          email: `perf${i}@example.com`,
-          company: `Company ${i % 30}`,
-          position: `Title ${i % 12}`,
-          connectedOn: "15 Mar 2024",
-          url: `https://www.linkedin.com/in/perf-person-${i}`,
-        },
+        payload: fixtureRow(i),
       }))
     );
 
