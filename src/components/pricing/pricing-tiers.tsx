@@ -1,80 +1,20 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { motion } from "motion/react";
 import { Check } from "lucide-react";
+import { BillingToggle } from "@/components/pricing/billing-toggle";
 import { LifetimeCheckoutButton } from "@/components/pricing/lifetime-checkout-button";
 import { PlanPriceDisplay } from "@/components/pricing/plan-price";
 import { cn } from "@/lib/utils";
-import {
-  ANNUAL_SAVING_PERCENT,
-  planCopyWithOffer,
-  type BillingPeriod,
-} from "@/lib/plan-copy";
+import { planCopyWithOffer, type BillingPeriod } from "@/lib/plan-copy";
 import { type Plan } from "@/lib/plan-limits";
 
-function BillingToggle({
-  period,
-  onChange,
-}: {
-  period: BillingPeriod;
-  onChange: (next: BillingPeriod) => void;
-}) {
-  const name = useId();
-
-  // Native radios inside a fieldset: arrow-key navigation, grouping, and the
-  // checked state all come from the platform rather than from re-implemented ARIA.
-  return (
-    <fieldset className="mx-auto w-fit">
-      <legend className="sr-only">Billing period</legend>
-      <div className="flex items-center gap-1 rounded-full border border-[#e8f3f1]/[0.12] bg-[#05070f]/70 p-1 backdrop-blur-sm">
-        {(["monthly", "annual"] as const).map((value) => {
-          const selected = period === value;
-          return (
-            <label
-              key={value}
-              className={cn(
-                "relative cursor-pointer rounded-full px-4 py-2 text-sm transition-colors",
-                selected ? "text-[#0f2e28]" : "text-[#9aada8] hover:text-[#e8f3f1]",
-                "focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[#f2c14e]"
-              )}
-            >
-              <input
-                type="radio"
-                name={name}
-                value={value}
-                checked={selected}
-                onChange={() => onChange(value)}
-                className="sr-only"
-              />
-              {selected && (
-                <motion.span
-                  layoutId="pricing-period-pill"
-                  className="absolute inset-0 -z-10 rounded-full bg-[#eef7f4]"
-                  transition={{ type: "spring", stiffness: 380, damping: 32 }}
-                />
-              )}
-              <span className="relative whitespace-nowrap">
-                {value === "monthly" ? "Monthly" : "Annual"}
-                {value === "annual" && (
-                  <span
-                    className={cn(
-                      "ml-1.5 text-xs",
-                      selected ? "text-[#0f2e28]/70" : "text-[#f2c14e]"
-                    )}
-                  >
-                    −{ANNUAL_SAVING_PERCENT}%
-                  </span>
-                )}
-              </span>
-            </label>
-          );
-        })}
-      </div>
-    </fieldset>
-  );
-}
+/**
+ * Where signed-out buyers land after creating the account they need to buy: back here,
+ * with the toggle and cards fresh in mind, rather than into onboarding.
+ */
+const SIGN_UP_FROM_PRICING = "/sign-up?redirect_url=/pricing";
 
 function TierCta({
   planId,
@@ -134,7 +74,7 @@ function TierCta({
       // rather than into a Stripe session with nobody to grant the plan to.
       return (
         <Link
-          href="/sign-up"
+          href={SIGN_UP_FROM_PRICING}
           className={cn(
             base,
             "bg-[#f2c14e] font-medium text-[#241a00] hover:opacity-90"
@@ -151,7 +91,7 @@ function TierCta({
   if (planId === "free") {
     return (
       <Link
-        href={signedIn ? "/dashboard" : "/sign-up"}
+        href={signedIn ? "/dashboard" : SIGN_UP_FROM_PRICING}
         className={cn(
           base,
           "border border-[#e8f3f1]/[0.18] text-[#e8f3f1] hover:opacity-80"
@@ -162,14 +102,15 @@ function TierCta({
     );
   }
 
-  // The chosen period rides along in the URL. Clerk's PricingTable has no prop to
-  // preselect it, so /upgrade states it in copy rather than pretending it carried over.
+  // The chosen period rides along in the URL, and /upgrade's Orbit Pro section honours
+  // it directly via ProCheckoutButton — real Stripe subscription checkout, not Clerk's
+  // PricingTable, which had no way to preselect a period at all.
   const upgradeHref =
     period === "annual" ? "/upgrade?period=annual" : "/upgrade";
 
   return (
     <Link
-      href={signedIn ? upgradeHref : "/sign-up"}
+      href={signedIn ? upgradeHref : SIGN_UP_FROM_PRICING}
       className={cn(
         base,
         "bg-[#eef7f4] text-[#0f2e28] hover:opacity-90"
@@ -183,8 +124,10 @@ function TierCta({
 /**
  * Each tier owns an accent rather than a single `featured` boolean, because the two paid
  * tiers now say different things: Orbit Pro is the default path (Orbit's own primary blue,
- * centred and lifted on wide screens), while Orbit Lifetime is the value play (the gold
- * accent the rest of the marketing site reserves for offers, plus the only badge).
+ * centred and lifted on wide screens, badged "Most popular"), while Orbit Lifetime is the
+ * value play (the gold accent the rest of the marketing site reserves for offers, badged
+ * "Best Value"). The two badges carry two different messages in two different colours —
+ * social proof against value — so neither dilutes the other.
  * Free stays deliberately recessed — dimmer border, no glow, muted ticks.
  */
 const TIER_ACCENT: Record<
@@ -194,7 +137,7 @@ const TIER_ACCENT: Record<
     tick: string;
     /** Soft wash behind the card's own translucent background. */
     glow: string | null;
-    badge: string | null;
+    badge: { label: string; className: string } | null;
     /** The centre column reads as the recommendation through position alone. */
     raised: boolean;
   }
@@ -213,14 +156,14 @@ const TIER_ACCENT: Record<
     surface: "border-[#599de7]/40 bg-[#070b18]/80 hover:border-[#599de7]/75",
     tick: "text-[#599de7]",
     glow: "radial-gradient(circle, rgba(89,157,231,0.20), transparent 68%)",
-    badge: null,
+    badge: { label: "Most popular", className: "bg-[#599de7] text-[#081326]" },
     raised: true,
   },
   lifetime: {
     surface: "border-[#f2c14e]/40 bg-[#070b18]/80 hover:border-[#f2c14e]/75",
     tick: "text-[#f2c14e]",
     glow: "radial-gradient(circle, rgba(242,193,78,0.15), transparent 68%)",
-    badge: "Best Value",
+    badge: { label: "Best Value", className: "bg-[#f2c14e] text-[#241a00]" },
     raised: false,
   },
 };
@@ -280,8 +223,13 @@ export function PricingTiers({
                 />
               )}
               {accent.badge && (
-                <p className="absolute -top-3 left-7 rounded-full bg-[#f2c14e] px-3 py-1 text-xs font-medium text-[#241a00]">
-                  {accent.badge}
+                <p
+                  className={cn(
+                    "absolute -top-3 left-7 rounded-full px-3 py-1 text-xs font-medium",
+                    accent.badge.className
+                  )}
+                >
+                  {accent.badge.label}
                 </p>
               )}
 

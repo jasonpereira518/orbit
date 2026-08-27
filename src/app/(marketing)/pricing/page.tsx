@@ -7,6 +7,7 @@ import { Reveal } from "@/components/motion/reveal";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
 import { BackControl } from "@/components/pricing/back-control";
+import { WarpArrivalBeacon } from "@/components/warp/warp-arrival-beacon";
 import { PlanComparison } from "@/components/pricing/plan-comparison";
 import { PricingFaq } from "@/components/pricing/pricing-faq";
 import { PricingTiers } from "@/components/pricing/pricing-tiers";
@@ -67,7 +68,7 @@ export default async function PricingPage() {
 
   // What Lifetime costs today. Read from the sale count rather than hardcoded, so the
   // struck-through comparison stops being shown the moment it stops being true — a
-  // permanent "was $49" beside a price that is simply $25 is a fake discount.
+  // permanent "was $75" beside a price that is simply $25 is a fake discount.
   const offer = await lifetimeOffer();
 
   const currentPlan = await (async (): Promise<Plan | null> => {
@@ -89,6 +90,10 @@ export default async function PricingPage() {
     // renders position:fixed, so this root must stay free of transform/filter.
     <div className="landing-root relative overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
       <LandingStarfield />
+      {/* Ends the lift-off's cruise hold. Until this mounts the stage keeps the
+          sky moving, which is what covers this page's auth() + two DB reads
+          instead of flashing PricingPageSkeleton. No-op on a direct load. */}
+      <WarpArrivalBeacon />
 
       <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-6 py-6 md:px-10">
         <div className="flex items-center gap-4">

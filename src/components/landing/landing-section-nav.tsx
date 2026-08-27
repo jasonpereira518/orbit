@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, type MouseEvent } from "react";
+import Link from "next/link";
 import {
   LayoutGroup,
   motion,
@@ -171,6 +172,15 @@ export function LandingSectionNav({
           />
         ))}
       </LayoutGroup>
+      {/* A route change, not a scroll target: it sits outside the LayoutGroup so the
+          active-section indicator never tries to travel onto it, and outside
+          LANDING_SECTIONS so the scroll-spy never claims it. */}
+      <Link
+        href="/pricing"
+        className="relative inline-flex shrink-0 items-center rounded-lg px-2 py-1 text-xs text-[#9aada8] transition-colors hover:text-[#e8f3f1] sm:px-2.5 sm:text-sm"
+      >
+        Pricing
+      </Link>
     </nav>
   );
 }

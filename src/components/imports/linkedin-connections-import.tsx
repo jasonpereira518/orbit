@@ -19,7 +19,8 @@ import {
   useImportJob,
 } from "@/lib/import-job-runner";
 
-type ConnectionsPreview = Awaited<ReturnType<typeof previewLinkedInCsv>>;
+type PreviewResult = Awaited<ReturnType<typeof previewLinkedInCsv>>;
+type ConnectionsPreview = Exclude<PreviewResult, { error: string }>;
 type ConnectionPerson = ConnectionsPreview["people"][number];
 
 export function LinkedInConnectionsImport() {
@@ -97,6 +98,7 @@ export function LinkedInConnectionsImport() {
               const text = await file.text();
               setCsvText(text);
               const res = await previewLinkedInCsv(text);
+              if ("error" in res) throw new Error(res.error);
               applyPreview(res);
               toast.success(`Loaded ${res.totalRows} people`);
             } catch (err) {
@@ -121,6 +123,7 @@ export function LinkedInConnectionsImport() {
             start(async () => {
               try {
                 const res = await previewLinkedInCsv(csvText);
+                if ("error" in res) throw new Error(res.error);
                 applyPreview(res);
                 toast.success(`Loaded ${res.totalRows} people`);
               } catch (err) {

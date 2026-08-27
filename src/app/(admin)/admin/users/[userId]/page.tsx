@@ -14,6 +14,7 @@ import {
 } from "@/components/admin/primitives";
 import { CompPlanButton } from "@/components/admin/comp-plan-dialog";
 import { CopyId } from "@/components/admin/copy-id";
+import { ContactsFilterBar } from "@/components/admin/contacts-filter-bar";
 import { AccountDangerZone } from "@/components/admin/account-actions";
 import { Pager } from "@/components/admin/pager";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -58,7 +59,11 @@ export default async function AdminUserDetailPage({
   searchParams,
 }: {
   params: Promise<{ userId: string }>;
-  searchParams: Promise<{ contactsPage?: string; before?: string }>;
+  searchParams: Promise<{
+    contactsPage?: string;
+    contactsQ?: string;
+    before?: string;
+  }>;
 }) {
   const { userId } = await params;
   const query = await searchParams;
@@ -78,6 +83,7 @@ export default async function AdminUserDetailPage({
     Number.parseInt(query.contactsPage ?? "1", 10) || 1,
     1
   );
+  const contactsQ = query.contactsQ?.trim() ?? "";
   const before = query.before ? new Date(query.before) : null;
 
   const [audit, contactPage, timeline] = await Promise.all([
@@ -85,6 +91,7 @@ export default async function AdminUserDetailPage({
     listAdminContacts(decoded, {
       page: contactsPage,
       pageSize: ADMIN_CONTACTS_PAGE_SIZE,
+      search: contactsQ,
     }),
     loadAdminTimeline(decoded, {
       before: before && !Number.isNaN(before.getTime()) ? before : null,
@@ -672,8 +679,14 @@ export default async function AdminUserDetailPage({
                 </span>
               }
             >
+              <div className="mb-3">
+                <ContactsFilterBar userId={identity.userId} q={contactsQ} />
+              </div>
+
               {contactPage.rows.length === 0 ? (
-                <EmptyState>No contacts.</EmptyState>
+                <EmptyState>
+                  {contactsQ ? `No contacts match "${contactsQ}".` : "No contacts."}
+                </EmptyState>
               ) : (
                 <>
                   <AdminTable
@@ -726,9 +739,13 @@ export default async function AdminUserDetailPage({
                       total={contactPage.total}
                       pageSize={contactPage.pageSize}
                       label="contacts"
-                      hrefFor={(target) =>
-                        `/admin/users/${encodeURIComponent(identity.userId)}?contactsPage=${target}#contacts`
-                      }
+                      hrefFor={(target) => {
+                        const params = new URLSearchParams({
+                          contactsPage: String(target),
+                        });
+                        if (contactsQ) params.set("contactsQ", contactsQ);
+                        return `/admin/users/${encodeURIComponent(identity.userId)}?${params.toString()}#contacts`;
+                      }}
                     />
                   </div>
                 </>

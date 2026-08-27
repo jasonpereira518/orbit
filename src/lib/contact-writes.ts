@@ -385,7 +385,7 @@ export async function createContactsBulkForUser(
   if (inputs.length === 0) return [];
 
   // Take what fits rather than failing the whole batch: a free user importing 847
-  // LinkedIn connections should still get their first 100, and the caller reports the
+  // LinkedIn connections should still get their first 500, and the caller reports the
   // shortfall by comparing `created.length` against what it passed in.
   const headroom = await contactHeadroomForUser(userId);
   if (headroom !== null && headroom < 1) return [];

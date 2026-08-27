@@ -13,13 +13,7 @@
 
 export type Plan = "free" | "orbit" | "lifetime";
 
-/**
- * Slug of the recurring plan in the Clerk Dashboard. Overridable so a differently named
- * plan (or a staging instance) does not require a code change.
- */
-export const ORBIT_PLAN_SLUG = process.env.CLERK_ORBIT_PLAN_SLUG || "orbit";
-
-export const FREE_CONTACT_LIMIT = 100;
+export const FREE_CONTACT_LIMIT = 500;
 
 /**
  * Orbit Lifetime is an introductory price, NOT a limited number of seats.
@@ -38,7 +32,7 @@ export const FREE_CONTACT_LIMIT = 100;
  * a number changed here alone would make the page advertise a price nobody is charged.
  */
 export const LIFETIME_INTRO_PRICE = 25;
-export const LIFETIME_STANDARD_PRICE = 49;
+export const LIFETIME_STANDARD_PRICE = 75;
 export const LIFETIME_INTRO_SEATS = 100;
 
 export const PLAN_LABELS: Record<Plan, string> = {
