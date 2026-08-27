@@ -286,412 +286,429 @@ export async function runImportJob(importId: string): Promise<void> {
   const jobStart = Date.now();
   startQueryCount();
 
-  // Every early return below this point must call `stopQueryCount()` first.
-  // `startQueryCount()` above already armed the module-global counter; any return that skips
-  // `stopQueryCount()` leaves it armed indefinitely, silently misattributing whatever
-  // unrelated work runs next in this process to *this* invocation's count, until some future
-  // `startQueryCount()` finally zeroes it again. The `!importRow` and terminal-status returns
-  // just below are the most reachable of the three: the self-continuation route and the
-  // stalled-job cron both re-dispatch by `importId` alone, so re-running an already-finished
-  // or since-deleted job is an expected, everyday occurrence, not an edge case.
-  const importRow = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
-  if (!importRow) {
-    stopQueryCount();
-    return;
-  }
-  if (["completed", "failed", "cancelled"].includes(importRow.status)) {
-    stopQueryCount();
-    return;
-  }
-
-  // Resolved once, from the type recorded on the job row. Import kinds with no server-side
-  // runner (the client-driven ones) resolve to `null` and are left alone rather than being
-  // pushed through a loop that has no idea what their payloads mean.
-  const adapter = getAdapter(importRow.importType);
-  if (!adapter) {
-    stopQueryCount();
-    return;
-  }
-  const createsContacts = adapter.createsContacts !== false;
-
-  const userId = importRow.userId;
-
-  let existingContacts: DuplicateSubject[];
-  let duplicateIndex: DuplicateIndex;
-  let companyResolve: Awaited<ReturnType<typeof createCompanyResolver>>;
+  // Everything below runs inside this try so the `finally` is the *only* thing any exit
+  // path — an early return, a caught failure, cancellation mid-loop, or a bug that throws
+  // past both inner try/catches — has to get right to stop the counter. `startQueryCount()`
+  // above already armed the module-global counter; leaving it armed past this invocation
+  // silently misattributes whatever unrelated work runs next in this process to *this*
+  // invocation's count, until some future `startQueryCount()` finally zeroes it again. A
+  // structural guarantee here is deliberately preferred over "every return must remember to
+  // call `stopQueryCount()`" as a rule to follow: a documented rule the code doesn't enforce
+  // is worse than an undocumented gap, because the next reader trusts the comment instead of
+  // checking every exit path against it. `stopQueryCount()` is safe to call more than once
+  // per invocation (calling it again after it's already stopped just returns the same frozen
+  // count), so this `finally` composes cleanly with the explicit calls below that capture the
+  // count into a failed job's own `stats` before this backstop re-stops it.
   try {
-    existingContacts = await db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
-      columns: {
-        id: true,
-        fullName: true,
-        email: true,
-        linkedinUrl: true,
-        company: true,
-        title: true,
-      },
-    });
-    duplicateIndex = buildDuplicateIndex(existingContacts);
-    companyResolve = await createCompanyResolver(userId);
-  } catch (err) {
-    await failImport(importId, err);
-    return;
-  }
+    const importRow = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
+    if (!importRow) return;
+    // The self-continuation route and the stalled-job cron both re-dispatch by `importId`
+    // alone, so re-running an already-finished or since-deleted job is an expected, everyday
+    // occurrence here, not an edge case.
+    if (["completed", "failed", "cancelled"].includes(importRow.status)) return;
 
-  let contactsCreated = importRow.contactsCreated ?? 0;
-  let contactsUpdated = importRow.contactsUpdated ?? 0;
-  let duplicatesFound = importRow.duplicatesFound ?? 0;
-  let rowsProcessed = importRow.rowsProcessed ?? 0;
-  let skippedTotal = importRow.stats?.skipped ?? 0;
-  let blockedByPlanTotal = importRow.stats?.blockedByPlan ?? 0;
-  // Refreshed every loop pass from the row this job's own writes are updating, so the
-  // final completion update below folds in whatever another process wrote to `stats`
-  // (e.g. Gmail-scan-style concurrent fields) instead of the snapshot from job start,
-  // which a self-continuing job would otherwise stomp back to a stale value.
-  let latestStats = importRow.stats ?? {};
-  const allTouchedContactIds = new Set<string>();
+    // Resolved once, from the type recorded on the job row. Import kinds with no server-side
+    // runner (the client-driven ones) resolve to `null` and are left alone rather than being
+    // pushed through a loop that has no idea what their payloads mean.
+    const adapter = getAdapter(importRow.importType);
+    if (!adapter) return;
+    const createsContacts = adapter.createsContacts !== false;
 
-  try {
-    // Counted once per invocation, not once per chunk: the number only moves because this
-    // loop moves it, so re-deriving it with a full table count every chunk is a round trip
-    // spent confirming arithmetic we already did. An adapter that creates no contacts skips
-    // the count entirely — it is a statement spent bounding something that cannot happen.
-    let headroom = createsContacts ? await contactHeadroomForUser(userId) : null;
+    const userId = importRow.userId;
 
-    while (true) {
-      if (Date.now() - jobStart > TIME_BUDGET_MS) {
-        // Persist this invocation's cost before handing off, or it is lost: this
-        // invocation never reaches the completion write below, and the next invocation's
-        // own `startQueryCount()` resets the in-memory counter to zero. Without this write,
-        // a job spanning N invocations would report only the cost of its last one.
+    // Hoisted above the setup try/catch (rather than declared where they're first mutated,
+    // further down) so that catch can fold this invocation's query cost into the failed
+    // job's own `stats` via `accumulatedStats` — a failed import's cost up to the point of
+    // failure is arguably the most interesting number it has, particularly for the
+    // systemic-fault case `MAX_ROW_FAILURES_PER_CHUNK` exists to catch.
+    let skippedTotal = importRow.stats?.skipped ?? 0;
+    let blockedByPlanTotal = importRow.stats?.blockedByPlan ?? 0;
+    // Refreshed every loop pass from the row this job's own writes are updating, so the
+    // final completion update below folds in whatever another process wrote to `stats`
+    // (e.g. Gmail-scan-style concurrent fields) instead of the snapshot from job start,
+    // which a self-continuing job would otherwise stomp back to a stale value.
+    let latestStats = importRow.stats ?? {};
+
+    let existingContacts: DuplicateSubject[];
+    let duplicateIndex: DuplicateIndex;
+    let companyResolve: Awaited<ReturnType<typeof createCompanyResolver>>;
+    try {
+      existingContacts = await db.query.contacts.findMany({
+        where: eq(contacts.userId, userId),
+        columns: {
+          id: true,
+          fullName: true,
+          email: true,
+          linkedinUrl: true,
+          company: true,
+          title: true,
+        },
+      });
+      duplicateIndex = buildDuplicateIndex(existingContacts);
+      companyResolve = await createCompanyResolver(userId);
+    } catch (err) {
+      await failImport(
+        importId,
+        err,
+        accumulatedStats(latestStats, jobStart, skippedTotal, blockedByPlanTotal)
+      );
+      return;
+    }
+
+    let contactsCreated = importRow.contactsCreated ?? 0;
+    let contactsUpdated = importRow.contactsUpdated ?? 0;
+    let duplicatesFound = importRow.duplicatesFound ?? 0;
+    let rowsProcessed = importRow.rowsProcessed ?? 0;
+    const allTouchedContactIds = new Set<string>();
+
+    try {
+      // Counted once per invocation, not once per chunk: the number only moves because this
+      // loop moves it, so re-deriving it with a full table count every chunk is a round trip
+      // spent confirming arithmetic we already did. An adapter that creates no contacts skips
+      // the count entirely — it is a statement spent bounding something that cannot happen.
+      let headroom = createsContacts ? await contactHeadroomForUser(userId) : null;
+
+      while (true) {
+        if (Date.now() - jobStart > TIME_BUDGET_MS) {
+          // Persist this invocation's cost before handing off, or it is lost: this
+          // invocation never reaches the completion write below, and the next invocation's
+          // own `startQueryCount()` resets the in-memory counter to zero. Without this write,
+          // a job spanning N invocations would report only the cost of its last one.
+          await db
+            .update(imports)
+            .set({
+              stats: accumulatedStats(latestStats, jobStart, skippedTotal, blockedByPlanTotal),
+              updatedAt: new Date(),
+            })
+            .where(eq(imports.id, importId));
+          await scheduleContinuation(importId);
+          return;
+        }
+
+        const current = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
+        if (!current || current.status !== "processing") return;
+        latestStats = current.stats ?? {};
+
+        /**
+         * Claim the next chunk in the same statement that reads it.
+         *
+         * `neon-http` has no transactions, so a crash between "insert contacts" and "mark
+         * rows done" would otherwise leave rows `pending` and re-create their contacts on
+         * resume. Claiming first means an interrupted chunk is left `processing`, and a
+         * resumed job re-runs those rows through the duplicate index — which now matches the
+         * contact that was created and merges instead of duplicating. Self-healing for any
+         * row carrying a LinkedIn URL or an email; a name-only row can still duplicate,
+         * which is strictly better than the alternative and worth knowing about.
+         *
+         * It also costs nothing: one UPDATE replaces one SELECT.
+         */
+        const claimed = await db.execute(sql`
+          UPDATE import_job_rows SET status = 'processing', updated_at = ${new Date()}
+          WHERE id IN (
+            SELECT id FROM import_job_rows
+            WHERE import_id = ${importId} AND status IN ('pending', 'processing')
+            ORDER BY row_index
+            LIMIT ${CHUNK_SIZE}
+          )
+          RETURNING id, row_index, payload, status, contact_id
+        `);
+
+        // Raw SQL returns actual Postgres column names (snake_case), not Drizzle's camelCase
+        // mapping — the loop below reads `rowIndex`/`contactId` on `PendingRow`, so those are
+        // mapped explicitly rather than assumed. `rowsOf` normalizes the driver-dependent
+        // shape: an array on `neon-http`, `{ rows }` on PGlite.
+        const pendingRows: PendingRow[] = rowsOf<{
+          id: string;
+          row_index: number;
+          payload: ImportJobRowPayload | string;
+          status: string;
+          contact_id: string | null;
+        }>(claimed).map((row) => ({
+          id: row.id,
+          importId,
+          userId,
+          rowIndex: row.row_index,
+          // `db.execute` is a raw driver call, so it skips Drizzle's own jsonb column mapping
+          // (`PgJsonb.mapFromDriverValue`), which defensively `JSON.parse`s a string payload
+          // rather than assuming the driver already decoded it. Matched here for the same
+          // reason: whether `jsonb` comes back pre-parsed or as text is driver-specific, and
+          // getting this wrong would silently break every downstream `adapter.identity()`
+          // call rather than throw.
+          payload: (typeof row.payload === "string"
+            ? JSON.parse(row.payload)
+            : row.payload) as ImportJobRowPayload,
+          status: row.status,
+          contactId: row.contact_id,
+        }));
+
+        // `UPDATE ... RETURNING` does not guarantee its output is in the claiming subquery's
+        // `ORDER BY row_index` — that clause only bounds *which* rows are claimed, not the
+        // order they come back in. Classification below is order-independent, but
+        // `createContactsBulkForUser` admits from the front of `toCreate` under the plan cap,
+        // and `toCreate` is built by iterating `pendingRows` — so an unsorted claim would make
+        // "which contacts get admitted" depend on arbitrary RETURNING order instead of file
+        // order. Sorting once here is what makes every "from the front" guarantee downstream
+        // (the cap, and narrowing's recursive front/back split below) actually mean file order.
+        pendingRows.sort((a, b) => a.rowIndex - b.rowIndex);
+
+        if (pendingRows.length === 0) break;
+
+        const toCreate: { row: PendingRow; input: ContactInput }[] = [];
+        const toUpdate: { row: PendingRow; contactId: string; input: Partial<ContactInput> }[] = [];
+        const toSkip: PendingRow[] = [];
+
+        for (const row of pendingRows) {
+          // The adapter was chosen from this job's own `importType` and the rows belong to
+          // that job, so the payload union is narrowed once here rather than at each of the
+          // dozen field reads inside the adapter.
+          const payload = row.payload as ImportJobRowPayload;
+          const probe = adapter.identity(payload);
+          if (!probe) {
+            toSkip.push(row);
+            continue;
+          }
+
+          const dups = findDuplicateCandidatesIndexed(duplicateIndex, probe);
+
+          if (dups[0] && dups[0].confidence >= DUPLICATE_MERGE_CONFIDENCE) {
+            toUpdate.push({
+              row,
+              contactId: dups[0].contact.id,
+              input: adapter.toMerge(payload, dups[0].contact),
+            });
+          } else if (createsContacts) {
+            toCreate.push({ row, input: adapter.toCreate(payload) });
+          } else {
+            // An annotate-only import (calendar) has nobody to attach this row to. It still
+            // has to reach a terminal status: the loop re-queries pending rows every pass, so
+            // leaving it pending would spin until the time budget and then reschedule forever.
+            toSkip.push(row);
+          }
+        }
+
+        // Cancellation latency is a direct cost of the wider chunk. Classification is pure
+        // and cheap, so checking here — after the rows are sorted into create/merge/skip but
+        // before anything is written — costs one statement and halves the wait.
+        const stillRunning = await db.query.imports.findFirst({
+          where: eq(imports.id, importId),
+          columns: { status: true },
+        });
+        if (stillRunning?.status !== "processing") return;
+
+        const touchedContactIds: string[] = [];
+        const contactIdByRowId = new Map<string, string>();
+
+        // `createContactsBulk` admits only what the plan's contact headroom allows, taking
+        // from the front, so anything past `created.length` was refused by the cap rather
+        // than failed. These rows must reach a terminal status: the loop re-queries pending
+        // rows every pass, so leaving them pending would spin until the time budget and then
+        // reschedule forever. They are marked `skipped` with a reason, and counted under
+        // `blockedByPlan` so the UI can offer an upgrade instead of reporting an error.
+        //
+        // Accumulated with `push` rather than a single assignment because `writeWithNarrowing`
+        // can call this batch's write callback more than once (once per surviving sub-batch
+        // after a poison row is isolated), and each successful sub-batch can contribute its
+        // own cap-refused tail.
+        const planBlockedRows: PendingRow[] = [];
+
+        // Shared across both narrowing calls below (create and merge): a systemic fault can
+        // surface from either bulk write, and this chunk's budget is one pool, not two. See
+        // `MAX_ROW_FAILURES_PER_CHUNK` for the reasoning.
+        let chunkRowFailures = 0;
+        const onBadRow = async (item: { row: PendingRow }, err: unknown) => {
+          if (chunkRowFailures >= MAX_ROW_FAILURES_PER_CHUNK) {
+            // Marking this row would be the budget's (MAX_ROW_FAILURES_PER_CHUNK + 1)th failure
+            // this chunk. That many failures in one chunk looks like a systemic fault, not
+            // scattered bad data — escape narrowing entirely rather than keep marking rows
+            // `failed` one at a time. Re-thrown, not swallowed: `writeWithNarrowing` never
+            // catches what its own `onBadRow` throws (see its base case), so this propagates
+            // straight out to `runImportJob`'s own try/catch.
+            throw err instanceof Error ? err : new Error(String(err));
+          }
+          chunkRowFailures++;
+          await markRowFailed(item.row, err);
+        };
+
+        if (toCreate.length > 0) {
+          await writeWithNarrowing(
+            toCreate,
+            async (batch) => {
+              const created = await createContactsBulkForUser(
+                userId,
+                batch.map((item) => item.input),
+                companyResolve,
+                { skipRevalidate: true, skipEmbedding: true, headroom }
+              );
+              // Only reached once the insert has actually succeeded — a batch whose insert
+              // throws is caught by `writeWithNarrowing`, which retries smaller slices of the
+              // same `batch`, so nothing here may run for a batch that didn't really write.
+              created.forEach((contact, i) => {
+                addToDuplicateIndex(duplicateIndex, contact);
+                contactIdByRowId.set(batch[i].row.id, contact.id);
+                touchedContactIds.push(contact.id);
+              });
+              contactsCreated += created.length;
+              if (headroom !== null) headroom = Math.max(0, headroom - created.length);
+
+              if (created.length < batch.length) {
+                planBlockedRows.push(...batch.slice(created.length).map((item) => item.row));
+                blockedByPlanTotal += batch.length - created.length;
+              }
+            },
+            onBadRow
+          );
+        }
+
+        if (toUpdate.length > 0) {
+          await writeWithNarrowing(
+            toUpdate,
+            async (batch) => {
+              await bulkMergeContactsForUser(
+                userId,
+                batch.map((item) => ({ contactId: item.contactId, input: item.input })),
+                companyResolve
+              );
+              for (const item of batch) {
+                contactIdByRowId.set(item.row.id, item.contactId);
+                touchedContactIds.push(item.contactId);
+              }
+              contactsUpdated += batch.length;
+              duplicatesFound += batch.length;
+            },
+            onBadRow
+          );
+        }
+
+        // One insert for the whole chunk, not one per row: an importer that logs a meeting or
+        // a message per row is exactly the shape that made this pipeline per-row in the first
+        // place. `onConflictDoNothing` leans on the soft-unique (user_id, external_id) index
+        // the interactions table already carries for import dedupe, so a retried chunk
+        // re-inserting rows it already wrote is a no-op rather than a failed import.
+        if (adapter.interactions) {
+          const interactionRows: InteractionInsert[] = [];
+          for (const row of pendingRows) {
+            const contactId = contactIdByRowId.get(row.id);
+            if (!contactId) continue;
+            interactionRows.push(
+              ...adapter.interactions(row.payload as ImportJobRowPayload, contactId, userId)
+            );
+          }
+          if (interactionRows.length > 0) {
+            await db.insert(interactions).values(interactionRows).onConflictDoNothing();
+          }
+        }
+
+        for (const id of touchedContactIds) allTouchedContactIds.add(id);
+
+        const blockedRowIds = new Set(planBlockedRows.map((row) => row.id));
+        // Every row that actually got a contact id — via a successful create or a successful
+        // merge — is in `contactIdByRowId`, and nothing else is: a cap-refused row is never
+        // passed to `createContactsBulkForUser` for a batch beyond `created.length`, and a
+        // narrowed-out poison row's batch throws before this map is ever touched for it. So
+        // this is simply every row this chunk actually wrote, independent of how narrowing
+        // split the batches to get there — no need to separately subtract blocked/failed rows
+        // from `toCreate`/`toUpdate` the way a pre-narrowing "all or nothing" write allowed.
+        const doneRowIds = [...contactIdByRowId.keys()];
+
+        // These three writes touch disjoint row sets — blockedRowIds is a subset of
+        // toCreate's rows that createContactsBulkForUser refused, doneRowIds is every row that
+        // was actually created or merged, and toSkip is rows filtered out before either bulk
+        // write ran. (Rows narrowing isolated as poison are already terminal — `markRowFailed`
+        // wrote them directly — and appear in none of these three sets.) So there is nothing
+        // to gain from running these three writes one after another.
+        await Promise.all([
+          blockedRowIds.size > 0
+            ? db
+                .update(importJobRows)
+                .set({
+                  status: "skipped",
+                  errorMessage: PLAN_LIMIT_ROW_REASON,
+                  updatedAt: new Date(),
+                })
+                .where(inArray(importJobRows.id, [...blockedRowIds]))
+            : Promise.resolve(),
+          markRowsDone(doneRowIds, contactIdByRowId),
+          toSkip.length > 0
+            ? db
+                .update(importJobRows)
+                .set({ status: "skipped", updatedAt: new Date() })
+                .where(inArray(importJobRows.id, toSkip.map((row) => row.id)))
+            : Promise.resolve(),
+        ]);
+
+        if (toSkip.length > 0) skippedTotal += toSkip.length;
+
+        rowsProcessed += toCreate.length + toUpdate.length;
+
         await db
           .update(imports)
           .set({
-            stats: accumulatedStats(latestStats, jobStart, skippedTotal, blockedByPlanTotal),
+            rowsProcessed,
+            contactsCreated,
+            contactsUpdated,
+            duplicatesFound,
+            stats: {
+              ...latestStats,
+              skipped: skippedTotal,
+              blockedByPlan: blockedByPlanTotal,
+            },
+            errorMessage: null,
             updatedAt: new Date(),
           })
           .where(eq(imports.id, importId));
-        await scheduleContinuation(importId);
-        return;
       }
-
-      const current = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
-      if (!current || current.status !== "processing") return;
-      latestStats = current.stats ?? {};
-
-      /**
-       * Claim the next chunk in the same statement that reads it.
-       *
-       * `neon-http` has no transactions, so a crash between "insert contacts" and "mark
-       * rows done" would otherwise leave rows `pending` and re-create their contacts on
-       * resume. Claiming first means an interrupted chunk is left `processing`, and a
-       * resumed job re-runs those rows through the duplicate index — which now matches the
-       * contact that was created and merges instead of duplicating. Self-healing for any
-       * row carrying a LinkedIn URL or an email; a name-only row can still duplicate,
-       * which is strictly better than the alternative and worth knowing about.
-       *
-       * It also costs nothing: one UPDATE replaces one SELECT.
-       */
-      const claimed = await db.execute(sql`
-        UPDATE import_job_rows SET status = 'processing', updated_at = ${new Date()}
-        WHERE id IN (
-          SELECT id FROM import_job_rows
-          WHERE import_id = ${importId} AND status IN ('pending', 'processing')
-          ORDER BY row_index
-          LIMIT ${CHUNK_SIZE}
-        )
-        RETURNING id, row_index, payload, status, contact_id
-      `);
-
-      // Raw SQL returns actual Postgres column names (snake_case), not Drizzle's camelCase
-      // mapping — the loop below reads `rowIndex`/`contactId` on `PendingRow`, so those are
-      // mapped explicitly rather than assumed. `rowsOf` normalizes the driver-dependent
-      // shape: an array on `neon-http`, `{ rows }` on PGlite.
-      const pendingRows: PendingRow[] = rowsOf<{
-        id: string;
-        row_index: number;
-        payload: ImportJobRowPayload | string;
-        status: string;
-        contact_id: string | null;
-      }>(claimed).map((row) => ({
-        id: row.id,
+    } catch (err) {
+      await failImport(
         importId,
-        userId,
-        rowIndex: row.row_index,
-        // `db.execute` is a raw driver call, so it skips Drizzle's own jsonb column mapping
-        // (`PgJsonb.mapFromDriverValue`), which defensively `JSON.parse`s a string payload
-        // rather than assuming the driver already decoded it. Matched here for the same
-        // reason: whether `jsonb` comes back pre-parsed or as text is driver-specific, and
-        // getting this wrong would silently break every downstream `adapter.identity()`
-        // call rather than throw.
-        payload: (typeof row.payload === "string"
-          ? JSON.parse(row.payload)
-          : row.payload) as ImportJobRowPayload,
-        status: row.status,
-        contactId: row.contact_id,
-      }));
-
-      // `UPDATE ... RETURNING` does not guarantee its output is in the claiming subquery's
-      // `ORDER BY row_index` — that clause only bounds *which* rows are claimed, not the
-      // order they come back in. Classification below is order-independent, but
-      // `createContactsBulkForUser` admits from the front of `toCreate` under the plan cap,
-      // and `toCreate` is built by iterating `pendingRows` — so an unsorted claim would make
-      // "which contacts get admitted" depend on arbitrary RETURNING order instead of file
-      // order. Sorting once here is what makes every "from the front" guarantee downstream
-      // (the cap, and narrowing's recursive front/back split below) actually mean file order.
-      pendingRows.sort((a, b) => a.rowIndex - b.rowIndex);
-
-      if (pendingRows.length === 0) break;
-
-      const toCreate: { row: PendingRow; input: ContactInput }[] = [];
-      const toUpdate: { row: PendingRow; contactId: string; input: Partial<ContactInput> }[] = [];
-      const toSkip: PendingRow[] = [];
-
-      for (const row of pendingRows) {
-        // The adapter was chosen from this job's own `importType` and the rows belong to
-        // that job, so the payload union is narrowed once here rather than at each of the
-        // dozen field reads inside the adapter.
-        const payload = row.payload as ImportJobRowPayload;
-        const probe = adapter.identity(payload);
-        if (!probe) {
-          toSkip.push(row);
-          continue;
-        }
-
-        const dups = findDuplicateCandidatesIndexed(duplicateIndex, probe);
-
-        if (dups[0] && dups[0].confidence >= DUPLICATE_MERGE_CONFIDENCE) {
-          toUpdate.push({
-            row,
-            contactId: dups[0].contact.id,
-            input: adapter.toMerge(payload, dups[0].contact),
-          });
-        } else if (createsContacts) {
-          toCreate.push({ row, input: adapter.toCreate(payload) });
-        } else {
-          // An annotate-only import (calendar) has nobody to attach this row to. It still
-          // has to reach a terminal status: the loop re-queries pending rows every pass, so
-          // leaving it pending would spin until the time budget and then reschedule forever.
-          toSkip.push(row);
-        }
-      }
-
-      // Cancellation latency is a direct cost of the wider chunk. Classification is pure
-      // and cheap, so checking here — after the rows are sorted into create/merge/skip but
-      // before anything is written — costs one statement and halves the wait.
-      const stillRunning = await db.query.imports.findFirst({
-        where: eq(imports.id, importId),
-        columns: { status: true },
-      });
-      if (stillRunning?.status !== "processing") return;
-
-      const touchedContactIds: string[] = [];
-      const contactIdByRowId = new Map<string, string>();
-
-      // `createContactsBulk` admits only what the plan's contact headroom allows, taking
-      // from the front, so anything past `created.length` was refused by the cap rather
-      // than failed. These rows must reach a terminal status: the loop re-queries pending
-      // rows every pass, so leaving them pending would spin until the time budget and then
-      // reschedule forever. They are marked `skipped` with a reason, and counted under
-      // `blockedByPlan` so the UI can offer an upgrade instead of reporting an error.
-      //
-      // Accumulated with `push` rather than a single assignment because `writeWithNarrowing`
-      // can call this batch's write callback more than once (once per surviving sub-batch
-      // after a poison row is isolated), and each successful sub-batch can contribute its
-      // own cap-refused tail.
-      const planBlockedRows: PendingRow[] = [];
-
-      // Shared across both narrowing calls below (create and merge): a systemic fault can
-      // surface from either bulk write, and this chunk's budget is one pool, not two. See
-      // `MAX_ROW_FAILURES_PER_CHUNK` for the reasoning.
-      let chunkRowFailures = 0;
-      const onBadRow = async (item: { row: PendingRow }, err: unknown) => {
-        if (chunkRowFailures >= MAX_ROW_FAILURES_PER_CHUNK) {
-          // Marking this row would be the budget's (MAX_ROW_FAILURES_PER_CHUNK + 1)th failure
-          // this chunk. That many failures in one chunk looks like a systemic fault, not
-          // scattered bad data — escape narrowing entirely rather than keep marking rows
-          // `failed` one at a time. Re-thrown, not swallowed: `writeWithNarrowing` never
-          // catches what its own `onBadRow` throws (see its base case), so this propagates
-          // straight out to `runImportJob`'s own try/catch.
-          throw err instanceof Error ? err : new Error(String(err));
-        }
-        chunkRowFailures++;
-        await markRowFailed(item.row, err);
-      };
-
-      if (toCreate.length > 0) {
-        await writeWithNarrowing(
-          toCreate,
-          async (batch) => {
-            const created = await createContactsBulkForUser(
-              userId,
-              batch.map((item) => item.input),
-              companyResolve,
-              { skipRevalidate: true, skipEmbedding: true, headroom }
-            );
-            // Only reached once the insert has actually succeeded — a batch whose insert
-            // throws is caught by `writeWithNarrowing`, which retries smaller slices of the
-            // same `batch`, so nothing here may run for a batch that didn't really write.
-            created.forEach((contact, i) => {
-              addToDuplicateIndex(duplicateIndex, contact);
-              contactIdByRowId.set(batch[i].row.id, contact.id);
-              touchedContactIds.push(contact.id);
-            });
-            contactsCreated += created.length;
-            if (headroom !== null) headroom = Math.max(0, headroom - created.length);
-
-            if (created.length < batch.length) {
-              planBlockedRows.push(...batch.slice(created.length).map((item) => item.row));
-              blockedByPlanTotal += batch.length - created.length;
-            }
-          },
-          onBadRow
-        );
-      }
-
-      if (toUpdate.length > 0) {
-        await writeWithNarrowing(
-          toUpdate,
-          async (batch) => {
-            await bulkMergeContactsForUser(
-              userId,
-              batch.map((item) => ({ contactId: item.contactId, input: item.input })),
-              companyResolve
-            );
-            for (const item of batch) {
-              contactIdByRowId.set(item.row.id, item.contactId);
-              touchedContactIds.push(item.contactId);
-            }
-            contactsUpdated += batch.length;
-            duplicatesFound += batch.length;
-          },
-          onBadRow
-        );
-      }
-
-      // One insert for the whole chunk, not one per row: an importer that logs a meeting or
-      // a message per row is exactly the shape that made this pipeline per-row in the first
-      // place. `onConflictDoNothing` leans on the soft-unique (user_id, external_id) index
-      // the interactions table already carries for import dedupe, so a retried chunk
-      // re-inserting rows it already wrote is a no-op rather than a failed import.
-      if (adapter.interactions) {
-        const interactionRows: InteractionInsert[] = [];
-        for (const row of pendingRows) {
-          const contactId = contactIdByRowId.get(row.id);
-          if (!contactId) continue;
-          interactionRows.push(
-            ...adapter.interactions(row.payload as ImportJobRowPayload, contactId, userId)
-          );
-        }
-        if (interactionRows.length > 0) {
-          await db.insert(interactions).values(interactionRows).onConflictDoNothing();
-        }
-      }
-
-      for (const id of touchedContactIds) allTouchedContactIds.add(id);
-
-      const blockedRowIds = new Set(planBlockedRows.map((row) => row.id));
-      // Every row that actually got a contact id — via a successful create or a successful
-      // merge — is in `contactIdByRowId`, and nothing else is: a cap-refused row is never
-      // passed to `createContactsBulkForUser` for a batch beyond `created.length`, and a
-      // narrowed-out poison row's batch throws before this map is ever touched for it. So
-      // this is simply every row this chunk actually wrote, independent of how narrowing
-      // split the batches to get there — no need to separately subtract blocked/failed rows
-      // from `toCreate`/`toUpdate` the way a pre-narrowing "all or nothing" write allowed.
-      const doneRowIds = [...contactIdByRowId.keys()];
-
-      // These three writes touch disjoint row sets — blockedRowIds is a subset of
-      // toCreate's rows that createContactsBulkForUser refused, doneRowIds is every row that
-      // was actually created or merged, and toSkip is rows filtered out before either bulk
-      // write ran. (Rows narrowing isolated as poison are already terminal — `markRowFailed`
-      // wrote them directly — and appear in none of these three sets.) So there is nothing
-      // to gain from running these three writes one after another.
-      await Promise.all([
-        blockedRowIds.size > 0
-          ? db
-              .update(importJobRows)
-              .set({
-                status: "skipped",
-                errorMessage: PLAN_LIMIT_ROW_REASON,
-                updatedAt: new Date(),
-              })
-              .where(inArray(importJobRows.id, [...blockedRowIds]))
-          : Promise.resolve(),
-        markRowsDone(doneRowIds, contactIdByRowId),
-        toSkip.length > 0
-          ? db
-              .update(importJobRows)
-              .set({ status: "skipped", updatedAt: new Date() })
-              .where(inArray(importJobRows.id, toSkip.map((row) => row.id)))
-          : Promise.resolve(),
-      ]);
-
-      if (toSkip.length > 0) skippedTotal += toSkip.length;
-
-      rowsProcessed += toCreate.length + toUpdate.length;
-
-      await db
-        .update(imports)
-        .set({
-          rowsProcessed,
-          contactsCreated,
-          contactsUpdated,
-          duplicatesFound,
-          stats: {
-            ...latestStats,
-            skipped: skippedTotal,
-            blockedByPlan: blockedByPlanTotal,
-          },
-          errorMessage: null,
-          updatedAt: new Date(),
-        })
-        .where(eq(imports.id, importId));
+        err,
+        accumulatedStats(latestStats, jobStart, skippedTotal, blockedByPlanTotal)
+      );
+      return;
     }
-  } catch (err) {
-    await failImport(importId, err);
-    return;
-  }
 
-  await db
-    .update(imports)
-    .set({
-      status: "completed",
-      stats: accumulatedStats(latestStats, jobStart, skippedTotal, blockedByPlanTotal),
-      updatedAt: new Date(),
-    })
-    .where(eq(imports.id, importId));
+    await db
+      .update(imports)
+      .set({
+        status: "completed",
+        stats: accumulatedStats(latestStats, jobStart, skippedTotal, blockedByPlanTotal),
+        updatedAt: new Date(),
+      })
+      .where(eq(imports.id, importId));
 
-  // The per-row confirm actions this engine replaced (Google/Outlook contacts, and before
-  // them LinkedIn connections) each refreshed outreach suggestions once the import finished,
-  // non-fatally — a stray suggestion-generation bug was never worth failing an otherwise-
-  // successful import over. This is that same finalization step, now owned by the engine
-  // instead of duplicated per import type. It incidentally gives LinkedIn CSV imports (which
-  // never called it, in either the old per-row path or here until now) the same refresh
-  // Google/Outlook contacts and every other import type already had — a deliberate
-  // improvement, not scope creep: it's the one finalization step every import type is
-  // supposed to get, not something specific to this task's two new adapters.
-  await refreshOutreachSuggestions(importRow.userId).catch(() => null);
+    // The per-row confirm actions this engine replaced (Google/Outlook contacts, and before
+    // them LinkedIn connections) each refreshed outreach suggestions once the import finished,
+    // non-fatally — a stray suggestion-generation bug was never worth failing an otherwise-
+    // successful import over. This is that same finalization step, now owned by the engine
+    // instead of duplicated per import type. It incidentally gives LinkedIn CSV imports (which
+    // never called it, in either the old per-row path or here until now) the same refresh
+    // Google/Outlook contacts and every other import type already had — a deliberate
+    // improvement, not scope creep: it's the one finalization step every import type is
+    // supposed to get, not something specific to this task's two new adapters.
+    await refreshOutreachSuggestions(importRow.userId).catch(() => null);
 
-  // Redraw the distribution once, now that every contact this import will ever add is in.
-  // Closeness is cohort-relative, so importing 3,000 people moves where all the existing
-  // ones sit; doing it per chunk would recompute the same thing dozens of times over. This
-  // is also why neither the create nor the merge path scores rows as they land: scoring a
-  // duplicate as it is merged would issue extra queries per row to reach a number that is
-  // immediately superseded by this recalibration.
-  await recalibrateCloseness(importRow.userId).catch(() => null);
-  await kickEmbeddingBackfill(importRow.userId);
+    // Redraw the distribution once, now that every contact this import will ever add is in.
+    // Closeness is cohort-relative, so importing 3,000 people moves where all the existing
+    // ones sit; doing it per chunk would recompute the same thing dozens of times over. This
+    // is also why neither the create nor the merge path scores rows as they land: scoring a
+    // duplicate as it is merged would issue extra queries per row to reach a number that is
+    // immediately superseded by this recalibration.
+    await recalibrateCloseness(importRow.userId).catch(() => null);
+    await kickEmbeddingBackfill(importRow.userId);
 
-  revalidatePath("/");
-  revalidatePath("/contacts");
-  revalidatePath("/imports");
-  revalidatePath("/graph");
-  revalidatePath("/knowledge");
-  revalidatePath("/chat");
-  // Not one revalidation per imported contact. Those paths are dynamic and nobody is
-  // holding a cached render of a contact page they have never opened, so a large import
-  // was issuing thousands of calls to invalidate nothing.
-  if (allTouchedContactIds.size <= PER_CONTACT_REVALIDATE_LIMIT) {
-    for (const id of allTouchedContactIds) revalidatePath(`/contacts/${id}`);
+    revalidatePath("/");
+    revalidatePath("/contacts");
+    revalidatePath("/imports");
+    revalidatePath("/graph");
+    revalidatePath("/knowledge");
+    revalidatePath("/chat");
+    // Not one revalidation per imported contact. Those paths are dynamic and nobody is
+    // holding a cached render of a contact page they have never opened, so a large import
+    // was issuing thousands of calls to invalidate nothing.
+    if (allTouchedContactIds.size <= PER_CONTACT_REVALIDATE_LIMIT) {
+      for (const id of allTouchedContactIds) revalidatePath(`/contacts/${id}`);
+    }
+  } finally {
+    stopQueryCount();
   }
 }
 
@@ -702,11 +719,24 @@ export async function runImportJob(importId: string): Promise<void> {
 const PER_CONTACT_REVALIDATE_LIMIT = 50;
 
 /** Exported so the Gmail recruiter scan runner shares one job-failure path. */
-export async function failImport(importId: string, err: unknown) {
+export async function failImport(
+  importId: string,
+  err: unknown,
+  stats?: ImportStats
+) {
   const message = err instanceof Error ? err.message : "Import failed";
   const db = await getDb();
   await db
     .update(imports)
-    .set({ status: "failed", errorMessage: message.slice(0, 500), updatedAt: new Date() })
+    .set({
+      status: "failed",
+      errorMessage: message.slice(0, 500),
+      updatedAt: new Date(),
+      // Optional and additive: the Gmail recruiter scan runner shares this failure path but
+      // has no query-count stats of its own to report, so it calls this with the two-arg
+      // form and `stats` stays undefined — Drizzle's partial `.set()` just omits the column
+      // from the update rather than nulling out whatever `stats` the row already carried.
+      ...(stats ? { stats } : {}),
+    })
     .where(eq(imports.id, importId));
 }
