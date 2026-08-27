@@ -718,6 +718,14 @@ export async function previewCalendarImport(payload: {
   const db = await getDb();
   const existing = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
+    columns: {
+      id: true,
+      fullName: true,
+      email: true,
+      linkedinUrl: true,
+      company: true,
+      title: true,
+    },
   });
 
   let events: ParsedCalendarEvent[] = [];
@@ -864,6 +872,8 @@ export async function confirmCalendarImport(payload: {
         )
       : windowed;
 
+    // Full rows needed here, not just DuplicateSubject: below this reads
+    // contact.lastInteractionAt/firstInteractionAt to merge meeting timestamps.
     const existing = await db.query.contacts.findMany({
       where: eq(contacts.userId, userId),
     });
@@ -1125,6 +1135,14 @@ export async function previewGoogleContacts(): Promise<{
 
   const existing = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
+    columns: {
+      id: true,
+      fullName: true,
+      email: true,
+      linkedinUrl: true,
+      company: true,
+      title: true,
+    },
   });
 
   const people = googleContacts.map((p) => {
@@ -1170,6 +1188,14 @@ export async function confirmGoogleContactsImport(selectedIds: string[]) {
 
   const existing = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
+    columns: {
+      id: true,
+      fullName: true,
+      email: true,
+      linkedinUrl: true,
+      company: true,
+      title: true,
+    },
   });
 
   let created = 0;
@@ -1289,6 +1315,14 @@ export async function previewOutlookContacts(): Promise<{
 
   const existing = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
+    columns: {
+      id: true,
+      fullName: true,
+      email: true,
+      linkedinUrl: true,
+      company: true,
+      title: true,
+    },
   });
 
   const people = outlookContacts.map((p) => {
@@ -1333,6 +1367,14 @@ export async function confirmOutlookContactsImport(selectedIds: string[]) {
 
   const existing = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
+    columns: {
+      id: true,
+      fullName: true,
+      email: true,
+      linkedinUrl: true,
+      company: true,
+      title: true,
+    },
   });
 
   let created = 0;

@@ -6,7 +6,6 @@ import {
   contacts,
   imports,
   importJobRows,
-  type Contact,
   type LinkedInImportRowPayload,
 } from "@/db/schema";
 import {
@@ -22,6 +21,7 @@ import {
   buildDuplicateIndex,
   findDuplicateCandidatesIndexed,
   type DuplicateIndex,
+  type DuplicateSubject,
 } from "@/lib/duplicates";
 import { parseConnectedOn } from "@/lib/linkedin-connections";
 import { rebuildContactEmbeddingsBatch } from "@/lib/search";
@@ -93,12 +93,20 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
 
   const userId = importRow.userId;
 
-  let existingContacts: Contact[];
+  let existingContacts: DuplicateSubject[];
   let duplicateIndex: DuplicateIndex;
   let companyResolve: Awaited<ReturnType<typeof createCompanyResolver>>;
   try {
     existingContacts = await db.query.contacts.findMany({
       where: eq(contacts.userId, userId),
+      columns: {
+        id: true,
+        fullName: true,
+        email: true,
+        linkedinUrl: true,
+        company: true,
+        title: true,
+      },
     });
     duplicateIndex = buildDuplicateIndex(existingContacts);
     companyResolve = await createCompanyResolver(userId);
