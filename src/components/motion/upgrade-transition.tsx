@@ -11,7 +11,7 @@ import {
 import { motion } from "motion/react";
 import { BackControl } from "@/components/pricing/back-control";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
-import { CHRONO_IN, tangentForSlot } from "@/lib/warp/chrono";
+import { CHRONO_IN, CHRONO_RESOLVE, tangentForSlot } from "@/lib/warp/chrono";
 import { arrivedBy, useWarp } from "@/components/warp/warp-provider";
 
 /**
@@ -33,7 +33,12 @@ import { arrivedBy, useWarp } from "@/components/warp/warp-provider";
  *
  * "resolve" is the other arrival, produced only by the Settings time warp (a chrono
  * journey). Someone who time-warped in did not watch this page being built, so panels
- * condense out of the star trails instead of being placed — see the constants below. Back
+ * condense out of the star trails instead of being placed — see the constants below.
+ * Crucially the entrance is driven by the RUN'S PHASE, not by this component mounting:
+ * the page mounts behind a fully opaque stage, up to a second before the arcs start
+ * collapsing, so panels hold smeared until deceleration begins and then sharpen across
+ * the stage's reveal. Sharpening on mount would finish the whole entrance behind cover,
+ * which is "sky cleared, then page faded in" — the thing this arrival is not. Back
  * in this mode is the provider's rewind, not the assembly played backwards: there is no
  * click handler here, because `BackControl` owns Back. Instead the panels watch
  * `useWarp().run.phase` and, once it enters the inbound leg (`inbound` or `landing`),
@@ -75,8 +80,18 @@ const ENTRY_FADE_DURATION = 0.09;
  * Faster than the assembly and eased rather than sprung: a spring's overshoot
  * is the click of a brick seating, which is the wrong verb for something that
  * was already there when you arrived. */
-const RESOLVE_STAGGER = 0.045;
-const RESOLVE_DURATION = 0.26;
+const RESOLVE_STAGGER = CHRONO_RESOLVE.stagger / 1000;
+const RESOLVE_DURATION = CHRONO_RESOLVE.duration / 1000;
+/**
+ * Held smeared until deceleration begins, then released after this long.
+ *
+ * The entrance used to run on MOUNT, which is up to a second before the stage
+ * starts lifting: the panels were fully resolved before anything could be seen
+ * of them, which is "sky cleared, then page faded in" — the one thing this
+ * arrival is not supposed to be. Keyed off the run's phase instead, and offset
+ * so the sharpening lands inside the reveal window rather than in front of it.
+ */
+const RESOLVE_LEAD = CHRONO_RESOLVE.lead / 1000;
 const RESOLVE_BLUR = 8;
 const RESOLVE_OFFSET = 14;
 const RESOLVE_SCALE = 1.015;
@@ -96,6 +111,11 @@ type TransitionState = {
   /** True once a chrono rewind is under way and the panels should smear back
    *  into the exposure. */
   rewinding: boolean;
+  /** True while the warp that is delivering this page is still outbound: the
+   *  panels sit smeared behind full cover, waiting to be released. */
+  holding: boolean;
+  /** Seconds to wait, once released, before the first panel sharpens. */
+  resolveLead: number;
   startExit: (navigate: () => void) => void;
 };
 
@@ -127,15 +147,46 @@ export function UpgradeTransition({
   const rewinding =
     run.journey === "chrono" &&
     (run.phase === "inbound" || run.phase === "landing");
+  /**
+   * Whether this page mounted into a warp that is still on its way here.
+   *
+   * Captured once, at mount, and never recomputed. A chrono arrival mounts
+   * mid-run behind full cover and its panels must wait for the reveal; every
+   * other route into resolve mode — a reload after a warp, a run that was
+   * skipped or had already settled — has no reveal to wait behind and must
+   * resolve at once. `useState`'s lazy initialiser rather than a ref so
+   * nothing is written during a render, and constant rather than derived
+   * per-render so the delay cannot change underneath a running animation when
+   * the run settles to "idle" partway through the sharpening.
+   */
+  const [arrivedMidRun] = useState(
+    () =>
+      run.journey === "chrono" &&
+      (run.phase === "outbound" || run.phase === "cruise"),
+  );
+  const holding =
+    mode === "resolve" &&
+    !reduced &&
+    arrivedMidRun &&
+    (run.phase === "outbound" || run.phase === "cruise");
+  const resolveLead = arrivedMidRun && !reduced ? RESOLVE_LEAD : 0;
   // Captured at click time and run once every piece has lifted away — a ref because
   // invoking it must never itself trigger a re-render.
   const navigateRef = useRef<() => void>(() => {});
+  // The pending exit navigation. Held so a second Back press can cancel it
+  // instead of racing it, and so leaving the page cancels it outright.
+  const exitTimer = useRef<number | null>(null);
 
   // sessionStorage cannot be read during render without breaking hydration —
   // same reason `usePrefersReducedMotion` starts false and corrects itself.
   // The switch is invisible because it happens while the stage is still fully
   // opaque over this page: the assembly's first frames are behind the sky, the
   // same trick that hides /pricing's skeleton during a cruise hold.
+  //
+  // The wrapper is not indirection for its own sake and does not inline:
+  // `react-hooks/set-state-in-effect` flags a bare setState in an effect body,
+  // and the repo's lint budget has no room for one. Verified — removing it
+  // costs exactly one error.
   useEffect(() => {
     const resolveMode = () => {
       if (arrivedBy() === "chrono") setMode("resolve");
@@ -143,21 +194,50 @@ export function UpgradeTransition({
     resolveMode();
   }, []);
 
+  // Leaving by any other door — the "Orbit home" link beside Back, say —
+  // must take the pending navigation with it. Otherwise the timer fires from
+  // whatever page the visitor chose instead and yanks them back to /upgrade.
+  useEffect(
+    () => () => {
+      if (exitTimer.current !== null) window.clearTimeout(exitTimer.current);
+    },
+    [],
+  );
+
   function startExit(navigate: () => void) {
     navigateRef.current = navigate;
     if (reduced || exiting) {
+      // A second press means "stop waiting", so it still leaves immediately —
+      // but the first press's timer has to be cancelled first, or both fire
+      // and the visitor goes back TWO entries.
+      if (exitTimer.current !== null) {
+        window.clearTimeout(exitTimer.current);
+        exitTimer.current = null;
+      }
       navigate();
       return;
     }
     setExiting(true);
     // The last piece to start is order 0, delayed by the full stagger run.
     const totalMs = (maxOrder * EXIT_STAGGER + EXIT_DURATION) * 1000;
-    window.setTimeout(() => navigateRef.current(), totalMs);
+    exitTimer.current = window.setTimeout(() => {
+      exitTimer.current = null;
+      navigateRef.current();
+    }, totalMs);
   }
 
   return (
     <TransitionContext.Provider
-      value={{ exiting, reduced, maxOrder, mode, rewinding, startExit }}
+      value={{
+        exiting,
+        reduced,
+        maxOrder,
+        mode,
+        rewinding,
+        holding,
+        resolveLead,
+        startExit,
+      }}
     >
       {children}
     </TransitionContext.Provider>
@@ -175,7 +255,8 @@ export function TransitionBackControl() {
 }
 
 function usePanelMotionProps(order: number) {
-  const { exiting, reduced, maxOrder, mode, rewinding } = usePanelTransition();
+  const { exiting, reduced, maxOrder, mode, rewinding, holding, resolveLead } =
+    usePanelTransition();
 
   if (mode === "resolve") {
     const t = tangentForSlot(order, maxOrder);
@@ -201,13 +282,29 @@ function usePanelMotionProps(order: number) {
       } as const;
     }
 
+    if (holding) {
+      // Still outbound: hold smeared behind the fully opaque stage. This is a
+      // snap, not an animation — nothing can see it — and animating TO the
+      // smeared state rather than initialising at it is also what sidesteps
+      // Motion capturing `initial` exactly once, at a mount where this page's
+      // mode was still "assemble" and the smear would never have been applied.
+      return {
+        initial: false,
+        animate: smeared,
+        transition: { duration: 0 },
+      } as const;
+    }
+
     return {
       initial: reduced ? false : smeared,
       animate: { opacity: 1, filter: "blur(0px)", scale: 1, x: 0, y: 0 },
       transition: {
         duration: RESOLVE_DURATION,
         ease: RESOLVE_EASE,
-        delay: order * RESOLVE_STAGGER,
+        // `resolveLead` is 0 unless a warp is actually landing this page; when
+        // one is, it puts the sharpening inside the reveal window instead of
+        // finishing before it opens.
+        delay: resolveLead + order * RESOLVE_STAGGER,
       },
     } as const;
   }
