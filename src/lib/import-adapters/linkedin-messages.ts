@@ -79,7 +79,7 @@ export const linkedinMessagesAdapter: ImportAdapter<LinkedInMessageThreadRowPayl
   },
 
   toMerge(payload) {
-    const { latest } = messageDateRange(payload);
+    const { earliest, latest } = messageDateRange(payload);
     return {
       linkedinUrl: payload.linkedinUrl || undefined,
       firstName: payload.firstName || undefined,
@@ -87,11 +87,17 @@ export const linkedinMessagesAdapter: ImportAdapter<LinkedInMessageThreadRowPayl
       source: "linkedin_messages",
       howMet: "LinkedIn messages",
       metContext: "online",
-      // Matches the LinkedIn connections adapter: `bulkMergeContactsForUser`'s SET clause
-      // only ever touches `date_met` on merge, never firstInteractionAt/lastInteractionAt
-      // directly (see its own doc comment) — a pre-existing limitation of that path, not
-      // something introduced here.
+      // `date_met` still only fills in if unset (COALESCE) — harmless here since create
+      // already populated it, kept for parity with the LinkedIn connections adapter.
       dateMet: latest ? latest.toISOString() : undefined,
+      // `firstInteractionAt`/`lastInteractionAt` WIDEN on merge (LEAST/GREATEST in
+      // `bulkMergeContactsForUser` — see its doc comment), not COALESCE-set-once. This is
+      // the fix for the real regression the old per-row importer didn't have: re-exporting
+      // the same conversation six months later, with six months of new messages, now
+      // advances `last_interaction_at` to the newest message this run found, instead of
+      // leaving recency scoring frozen at whatever the first import saw.
+      firstInteractionAt: earliest ?? undefined,
+      lastInteractionAt: latest ?? undefined,
     };
   },
 

@@ -29,7 +29,7 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-import";
 delete process.env.DATABASE_URL;
 
 import crypto from "node:crypto";
-import { count, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
   contacts,
@@ -673,6 +673,54 @@ async function main() {
     "re-import logs no duplicate messages",
     (loggedAgain?.value ?? 0) === 22,
     `rows ${loggedAgain?.value}`
+  );
+
+  // --- a later re-import carrying genuinely new messages advances last_interaction_at ---
+  // Proves the bulkMergeContactsForUser fix (LEAST/GREATEST widening): a CSV re-exported
+  // months later, with new conversation, must push last_interaction_at forward instead of
+  // leaving recency scoring frozen at whatever the first import saw. Every non-skipped
+  // thread gets one additional message strictly newer than anything in `threads` above.
+  const threadsWithNewerMessages = threads.map((t) => ({
+    ...t,
+    messages: [
+      ...t.messages,
+      {
+        id: `${t.conversationId}-newer`,
+        body: "a much later message",
+        sentAt: "2025-06-15T09:00:00Z",
+      },
+    ],
+  }));
+  id = await seedJob(threadsWithNewerMessages, "linkedin_messages");
+  await runJob(id);
+  out = await outcome(id);
+  check("newer-message re-import merges again", out.updated === 11, JSON.stringify(out));
+
+  const [loggedThird] = await db4
+    .select({ value: count() })
+    .from(interactions)
+    .where(eq(interactions.userId, USER));
+  check(
+    "the genuinely new message is logged once per thread, not skipped as a duplicate",
+    (loggedThird?.value ?? 0) === 22 + 11,
+    `rows ${loggedThird?.value}`
+  );
+
+  const person0 = await db4.query.contacts.findFirst({
+    where: and(
+      eq(contacts.userId, USER),
+      eq(contacts.linkedinUrl, "https://www.linkedin.com/in/msg-person-0")
+    ),
+  });
+  check(
+    "last_interaction_at advances to the newest message a later re-import found",
+    person0?.lastInteractionAt?.toISOString().startsWith("2025-06-15") ?? false,
+    `lastInteractionAt: ${person0?.lastInteractionAt}`
+  );
+  check(
+    "first_interaction_at is untouched — widening only ever moves it earlier, never later",
+    person0?.firstInteractionAt?.toISOString().startsWith("2024-03-01") ?? false,
+    `firstInteractionAt: ${person0?.firstInteractionAt}`
   );
 
   await reset();
