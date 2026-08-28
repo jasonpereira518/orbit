@@ -24,9 +24,17 @@ import { cn } from "@/lib/utils";
 export function AdminShell({
   children,
   adminEmail,
+  hiddenSurfaceCount = 0,
 }: {
   children: React.ReactNode;
   adminEmail?: string | null;
+  /**
+   * How many surfaces are currently hidden from users. Rides in the nav on EVERY admin
+   * screen, not just /admin/product, because operators are exempt from their own toggles —
+   * so without this the only visible trace of a forgotten one is on the page you would
+   * already have to be looking at.
+   */
+  hiddenSurfaceCount?: number;
 }) {
   const pathname = usePathname();
 
@@ -72,6 +80,14 @@ export function AdminShell({
                   <span className="relative flex items-center gap-1.5">
                     <item.icon className="size-3.5" aria-hidden />
                     {item.label}
+                    {item.href === "/admin/product" && hiddenSurfaceCount > 0 && (
+                      <span
+                        title={`${hiddenSurfaceCount} surface${hiddenSurfaceCount === 1 ? "" : "s"} hidden from users`}
+                        className="rounded-full bg-accent/25 px-1.5 text-[0.625rem] font-medium tabular-nums text-accent-foreground"
+                      >
+                        {hiddenSurfaceCount}
+                      </span>
+                    )}
                   </span>
                 </Link>
               );

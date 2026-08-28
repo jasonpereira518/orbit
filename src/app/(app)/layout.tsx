@@ -9,6 +9,7 @@ import {
   isDemoMode,
 } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { resolveThemePreference } from "@/lib/theme";
 
 /**
@@ -58,8 +59,22 @@ export default async function AppLayout({
   // same `user_settings` row bootstrapped above, so this costs nothing extra per request.
   const { plan } = await getEntitlements(userId);
 
+  // Which surfaces this viewer may see. Resolved here, in the one server layout that wraps
+  // the whole product, because the nav lives in client components that cannot read the
+  // database themselves. `hiddenForUsers` rides along so an exempt operator can be shown a
+  // "Hidden" tag on items their users are not getting — see `AppSidebar`.
+  const visibility = await resolveSurfaceVisibility(userId);
+
   return (
-    <AppShell clerkOn={clerkOn} demoMode={demoMode} theme={theme} plan={plan}>
+    <AppShell
+      clerkOn={clerkOn}
+      demoMode={demoMode}
+      theme={theme}
+      plan={plan}
+      hidden={[...visibility.hidden]}
+      hiddenForUsers={[...visibility.hiddenForUsers]}
+      viewingAsUser={visibility.viewingAsUser}
+    >
       {/* Renders nothing; keeps `last_active_at` fresh enough for the admin roster to
           answer "active now". One per tab, not one per route. */}
       <PresenceHeartbeat />

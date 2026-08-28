@@ -7,7 +7,7 @@ import {
   contacts,
   interactions,
 } from "@/db/schema";
-import { requireUserId } from "@/lib/auth";
+import { requireUserForSurface } from "@/lib/plan-guards";
 
 export type KnowledgeKind =
   | "message"
@@ -48,7 +48,7 @@ function iso(d: Date | null | undefined) {
 }
 
 export async function getKnowledgeBase(): Promise<KnowledgeBasePayload> {
-  const userId = await requireUserId();
+  const userId = await requireUserForSurface("page.knowledge");
   const db = await getDb();
 
   const [allContacts, allInteractions, embeddingCountRow] = await Promise.all([

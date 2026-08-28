@@ -574,6 +574,11 @@ CREATE TABLE IF NOT EXISTS gate_events (
 CREATE INDEX IF NOT EXISTS gate_events_feature_created_idx ON gate_events(feature, created_at);
 CREATE INDEX IF NOT EXISTS gate_events_user_created_idx ON gate_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action, created_at);
+CREATE TABLE IF NOT EXISTS app_surface_flags (
+  surface_key text PRIMARY KEY,
+  hidden_at timestamptz NOT NULL DEFAULT now(),
+  hidden_by text NOT NULL
+);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -596,7 +601,7 @@ CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action,
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a

@@ -1,6 +1,7 @@
 import { AdminShell } from "@/components/admin/admin-shell";
 import { requireAdminPage } from "@/lib/admin";
 import { getCurrentUserProfile } from "@/lib/auth";
+import { getHiddenSurfaceKeys } from "@/lib/surface-visibility";
 
 /**
  * Its own route group, outside `(app)` — so it inherits neither the product shell nor the
@@ -20,7 +21,14 @@ export default async function AdminLayout({
   children: React.ReactNode;
 }) {
   await requireAdminPage();
-  const profile = await getCurrentUserProfile();
+  const [profile, hidden] = await Promise.all([
+    getCurrentUserProfile(),
+    getHiddenSurfaceKeys(),
+  ]);
 
-  return <AdminShell adminEmail={profile?.email}>{children}</AdminShell>;
+  return (
+    <AdminShell adminEmail={profile?.email} hiddenSurfaceCount={hidden.size}>
+      {children}
+    </AdminShell>
+  );
 }
