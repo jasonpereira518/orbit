@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { motion, type PanInfo } from "motion/react";
 import { CheckCircle2, Loader2, X, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useEtaCountdown } from "@/lib/use-eta-countdown";
 import { toast } from "@/lib/toast";
 import {
   dismissBackgroundJob,
@@ -127,9 +128,14 @@ function JobRow({ job }: { job: BackgroundJob }) {
             </div>
             <p className="text-xs tabular-nums text-muted-foreground">
               {determinate
-                ? `${job.done} of ${job.total} · ${pct}%${etaLabel ? ` · ${etaLabel}` : ""}`
+                ? `${job.done.toLocaleString()} of ${job.total.toLocaleString()} · ${pct}%${etaLabel ? ` · ${etaLabel}` : ""}`
                 : "Working…"}
             </p>
+            {job.imported != null ? (
+              <p className="text-xs tabular-nums text-muted-foreground">
+                {job.imported.toLocaleString()} {job.importedLabel ?? "imported"}
+              </p>
+            ) : null}
           </div>
         )}
       </div>
@@ -164,105 +170,14 @@ function JobRow({ job }: { job: BackgroundJob }) {
   );
 }
 
-// EMA blend weight given to each new throughput sample vs. the running
-// average — mirrors the ETA smoothing already used for import progress bars
-// (see components/imports/import-utils.tsx), just re-derived here because
-// this version adds the never-increases guarantee below.
-const RATE_EMA_NEW_WEIGHT = 0.45;
-const ETA_MIN_ELAPSED_MS = 500;
-const ETA_TICK_MS = 250;
-// When the latest estimate would require the countdown to jump up, decay it
-// at this fraction of real time instead — visibly still counting down, just
-// slower, so it never appears to gain time.
-const ETA_SLOWDOWN_FACTOR = 0.25;
-
-/** Estimated time remaining for a determinate running job, formatted for
- * display. Based on a smoothed (EMA) recent-throughput rate, and guaranteed
- * to never tick upward — if the job falls behind pace the countdown decays
- * more slowly instead of jumping to a larger number. */
+/** Estimated time remaining for a running job, formatted for display. Guaranteed to never
+ * tick upward — see `useEtaCountdown`, which this and the in-page import progress card share
+ * so there's exactly one countdown algorithm in the codebase. */
 function useJobEtaLabel(job: BackgroundJob): string | null {
-  const { done, total, startedAt, status } = job;
-  const active = status === "running" && total > 0 && done > 0 && done < total;
-
-  const [displayRemainingMs, setDisplayRemainingMs] = useState<number | null>(null);
-  const rateEmaRef = useRef<number | null>(null);
-  const lastDoneRef = useRef(0);
-  const lastTickRef = useRef<number | null>(null);
-  const knownStartedAtRef = useRef<number | null>(null);
-
-  // One effect owns the whole lifecycle (rate tracking + the tick interval)
-  // so "this is a fresh run" can be decided once and threaded through to the
-  // interval's setState callback, instead of resetting display state from a
-  // separate effect body.
-  useEffect(() => {
-    if (!active) return;
-
-    const isNewRun = knownStartedAtRef.current !== startedAt;
-    if (isNewRun) {
-      knownStartedAtRef.current = startedAt;
-      rateEmaRef.current = null;
-      lastDoneRef.current = 0;
-      lastTickRef.current = null;
-    }
-
-    if (lastDoneRef.current !== done) {
-      const elapsedMs = Date.now() - startedAt;
-      if (elapsedMs >= ETA_MIN_ELAPSED_MS) {
-        lastDoneRef.current = done;
-        const instantRate = done / elapsedMs; // items per ms
-        if (instantRate > 0) {
-          rateEmaRef.current =
-            rateEmaRef.current == null
-              ? instantRate
-              : rateEmaRef.current * (1 - RATE_EMA_NEW_WEIGHT) +
-                instantRate * RATE_EMA_NEW_WEIGHT;
-        }
-      }
-    }
-
-    const id = window.setInterval(() => {
-      const nowTick = Date.now();
-      const tickDeltaMs =
-        lastTickRef.current == null ? 0 : Math.max(0, nowTick - lastTickRef.current);
-      lastTickRef.current = nowTick;
-
-      const rate = rateEmaRef.current;
-      if (rate == null || rate <= 0) return;
-      const targetRemainingMs = (total - done) / rate;
-
-      setDisplayRemainingMs((prev) => {
-        if (isNewRun || prev == null) return targetRemainingMs;
-        const naturalNext = prev - tickDeltaMs;
-        const onPaceOrAhead = targetRemainingMs <= naturalNext;
-        const effectiveDelta = onPaceOrAhead
-          ? tickDeltaMs
-          : tickDeltaMs * ETA_SLOWDOWN_FACTOR;
-        return Math.max(0, prev - effectiveDelta);
-      });
-    }, ETA_TICK_MS);
-
-    return () => window.clearInterval(id);
-  }, [active, done, total, startedAt]);
-
-  // Stale once the job stops being active — the guard below hides it
-  // immediately regardless, so there's nothing to reset here.
-  if (!active) return null;
-  return formatEtaSeconds(
-    displayRemainingMs != null ? displayRemainingMs / 1000 : null
-  );
-}
-
-function formatEtaSeconds(seconds: number | null): string | null {
-  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return null;
-  const whole = Math.max(0, Math.ceil(seconds));
-  if (whole <= 1) return "~1s left";
-  if (whole < 60) return `~${whole}s left`;
-  const minutes = Math.floor(whole / 60);
-  const rem = whole % 60;
-  if (minutes < 60) {
-    return rem > 0 ? `~${minutes}m ${rem}s left` : `~${minutes}m left`;
-  }
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  return mins > 0 ? `~${hours}h ${mins}m left` : `~${hours}h left`;
+  return useEtaCountdown({
+    active: job.status === "running" && job.total > 0 && job.done > 0 && job.done < job.total,
+    done: job.done,
+    total: job.total,
+    startedAt: job.startedAt,
+  });
 }

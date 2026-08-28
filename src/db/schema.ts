@@ -1584,6 +1584,26 @@ export const gateEvents = pgTable(
   ]
 );
 
+/**
+ * Surfaces an operator has hidden from every user. The one genuinely global table in the
+ * schema — no `user_id`, because the whole point is that it applies to everybody.
+ *
+ * PRESENCE IS THE FLAG: a row exists only for a hidden surface, and unhiding deletes it.
+ * Storing a boolean per surface instead would mean seeding a row for every entry in
+ * `SURFACES`, so adding a surface to that registry would need a migration before it could
+ * be toggled. This way the registry is free to grow in a single commit.
+ *
+ * `surface_key` is a key from `@/lib/surfaces` and deliberately has no foreign key to
+ * anything — a key retired from the registry leaves a harmless orphan row rather than
+ * blocking the deploy that retired it.
+ */
+export const appSurfaceFlags = pgTable("app_surface_flags", {
+  surfaceKey: text("surface_key").primaryKey(),
+  hiddenAt: timestamp("hidden_at", { withTimezone: true }).defaultNow().notNull(),
+  /** The admin who hid it. Kept for the audit trail's benefit, not read by the app. */
+  hiddenBy: text("hidden_by").notNull(),
+});
+
 export const contactsRelations = relations(contacts, ({ many }) => ({
   interactions: many(interactions),
   reminders: many(reminders),

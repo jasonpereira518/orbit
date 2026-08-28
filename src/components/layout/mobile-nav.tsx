@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { clerkAppearance } from "@/lib/clerk-appearance";
+import { isHrefHidden } from "@/lib/surfaces";
 import { SPRING_PILL, SPRING_TAP } from "@/lib/motion";
 import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
 
@@ -34,9 +35,12 @@ type DraggableEntry = { type: "more" } | { type: "link"; href: string };
 export function MobileNav({
   clerkOn,
   demoMode,
+  hidden,
 }: {
   clerkOn: boolean;
   demoMode: boolean;
+  /** Surfaces hidden from this viewer. Empty for an exempt operator. */
+  hidden: ReadonlySet<string>;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -44,9 +48,29 @@ export function MobileNav({
   const reducedMotion = useReducedMotion();
   const pillTransition = reducedMotion ? { duration: 0 } : SPRING_PILL;
 
-  const moreActive = MOBILE_MORE_NAV.some((item) =>
-    isNavActive(pathname, item.href)
+  /**
+   * Both lists, filtered, BEFORE anything derives an index from them.
+   *
+   * The sliding pill is pure index math over `draggableEntries`, and `entryCursor` in the
+   * render below walks the bottom bar in lockstep with it. Filtering at the point of
+   * render instead would leave the two walking different lists, and the pill would land
+   * on the wrong tab. Everything downstream reads these, never the module constants.
+   */
+  const moreNav = useMemo(
+    () => MOBILE_MORE_NAV.filter((item) => !isHrefHidden(item.href, hidden)),
+    [hidden]
   );
+  const bottomNav = useMemo(
+    () =>
+      MOBILE_BOTTOM_NAV.filter((item) =>
+        // "More" is a door to the overflow sheet: with nothing left behind it, it opens
+        // onto an empty sheet.
+        "id" in item ? moreNav.length > 0 : !isHrefHidden(item.href, hidden)
+      ),
+    [hidden, moreNav]
+  );
+
+  const moreActive = moreNav.some((item) => isNavActive(pathname, item.href));
 
   // Capture keeps its own permanent circle rather than joining the shared
   // sliding highlight, so it's excluded from the draggable set — the drag
@@ -54,7 +78,7 @@ export function MobileNav({
   // neighboring item is closer.
   const draggableEntries = useMemo<DraggableEntry[]>(() => {
     const entries: DraggableEntry[] = [];
-    for (const item of MOBILE_BOTTOM_NAV) {
+    for (const item of bottomNav) {
       if ("id" in item) {
         entries.push({ type: "more" });
       } else if (item.href !== "/capture") {
@@ -62,7 +86,7 @@ export function MobileNav({
       }
     }
     return entries;
-  }, []);
+  }, [bottomNav]);
 
   const activeEntryIndex = draggableEntries.findIndex((entry) =>
     entry.type === "more" ? moreActive : isNavActive(pathname, entry.href)
@@ -212,7 +236,7 @@ export function MobileNav({
             onClickCapture={handleClickCapture}
             onDragStart={(e) => e.preventDefault()}
           >
-            {MOBILE_BOTTOM_NAV.map((item) => {
+            {bottomNav.map((item) => {
               if ("id" in item && item.id === "more") {
                 entryCursor += 1;
                 const myIndex = entryCursor;
@@ -355,7 +379,7 @@ export function MobileNav({
               <Sparkles className="h-5 w-5 shrink-0" />
               Ask your network
             </button>
-            {MOBILE_MORE_NAV.map((item) => {
+            {moreNav.map((item) => {
               const active = isNavActive(pathname, item.href);
               const Icon = item.icon;
               return (

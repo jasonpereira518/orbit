@@ -15,6 +15,14 @@ export type BackgroundJob = {
   done: number;
   total: number;
   startedAt: number;
+  /**
+   * Records actually written so far, when that differs from `done` (an import's `done`
+   * counts source rows, including duplicates — this is what the user actually got). Omit
+   * for jobs where the two are the same thing.
+   */
+  imported?: number;
+  /** Caption for `imported`, e.g. "contacts imported". */
+  importedLabel?: string;
   resultMessage?: string;
   error?: string;
   cancelling?: boolean;

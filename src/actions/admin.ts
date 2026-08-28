@@ -2,6 +2,7 @@
 
 import { desc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { after } from "next/server";
 import { getDb } from "@/db";
 import { adminAuditLog, userSettings } from "@/db/schema";
@@ -10,6 +11,10 @@ import * as ops from "@/lib/admin-operations";
 import { recordAdminAction } from "@/lib/admin-operations";
 import { resolvePlan } from "@/lib/entitlements";
 import { setCompedPlan } from "@/lib/user-settings";
+import {
+  setSurfaceHidden,
+  VIEW_AS_USER_COOKIE,
+} from "@/lib/surface-visibility";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -201,5 +206,70 @@ export async function hardDeleteAccountAction(input: {
   const adminUserId = await requireAdminUserId();
   await ops.hardDeleteAccount(adminUserId, input);
   revalidateAdmin();
+  return { ok: true };
+}
+
+/**
+ * Hide or unhide one surface for every user at once.
+ *
+ * Not destructive and not rate-limited: it writes or deletes a single row in
+ * `app_surface_flags` and the opposite click undoes it exactly. That is why, unlike
+ * suspension or deletion, it takes no reason string. It is still audited — a surface that
+ * silently vanished from the product with no record of who did it would be indistinguishable
+ * from a bug.
+ *
+ * `revalidatePath("/", "layout")` rather than a list of routes: the app shell reads the
+ * hidden set to build the sidebar, so a stale layout cache would keep serving a nav item
+ * for a page that now refuses to render.
+ */
+export async function setSurfaceHiddenAction(input: {
+  surfaceKey: string;
+  hidden: boolean;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+
+  await setSurfaceHidden(adminUserId, input.surfaceKey, input.hidden);
+
+  revalidatePath("/", "layout");
+  revalidatePath("/admin/product");
+  return { ok: true };
+}
+
+/**
+ * Enter or leave "view as a general user" for this browser session.
+ *
+ * Admins are exempt from surface hiding so they can inspect a hidden page before releasing
+ * it; this drops that exemption for the operator's own session so they see precisely what
+ * a user sees. It changes nothing for anybody else, and grants nothing — it can only take
+ * access away from the caller — but it is gated and audited like every other operator
+ * action, because "when was I last looking at the product as a user" is a question worth
+ * being able to answer.
+ *
+ * Session-length (no `maxAge`) on purpose: a preview mode that outlived the browser would
+ * eventually be mistaken for the product being broken.
+ */
+export async function setViewAsUserAction(input: {
+  on: boolean;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  const store = await cookies();
+
+  if (input.on) {
+    store.set(VIEW_AS_USER_COOKIE, "1", {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      secure: process.env.NODE_ENV === "production",
+    });
+  } else {
+    store.delete(VIEW_AS_USER_COOKIE);
+  }
+
+  await recordAdminAction({
+    adminUserId,
+    action: input.on ? "product.view_as_user.enter" : "product.view_as_user.exit",
+  });
+
+  revalidatePath("/", "layout");
   return { ok: true };
 }
