@@ -1,6 +1,6 @@
 {
   "name": "orbit-extension",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "Orbit browser extension \u2014 see who you already know on the pages you're reading.",

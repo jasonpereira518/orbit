@@ -20,12 +20,12 @@ Load `dist/` via `chrome://extensions` → Developer mode → **Load unpacked**.
 
 ### `dev` and `build` write to the same `dist/`
 
-This trips everyone once. `npm run dev` does **not** bundle the popup — it
-writes a `dist/` whose popup page loads from the Vite dev server, so the panel
+This trips everyone once. `npm run dev` does **not** bundle the panel — it
+writes a `dist/` whose panel page loads from the Vite dev server, so the panel
 only works while that server is running. Stop the server (or run `dev` and then
 walk away) and clicking the icon gives:
 
-> Cannot connect to http://localhost:5173/src/popup/index.html. Make sure Vite
+> Cannot connect to http://localhost:5173/src/panel/index.html. Make sure Vite
 > is running, then reload the extension.
 
 That is not a broken build — it's the dev shim with nothing behind it. Fix:
@@ -36,8 +36,40 @@ npm run build     # overwrite dist/ with a real, self-contained bundle
 
 then hit **Reload** on the extension card in `chrome://extensions`.
 
-So: `npm run dev` while you're iterating on the popup (keep it running),
+So: `npm run dev` while you're iterating on the panel (keep it running),
 `npm run build` whenever you actually want to *use* the extension.
+
+## Production build & release
+
+Everything a store build needs lives in the committed `.env.production`
+(nothing in it is secret — see the file's header). `vite build` runs in
+production mode, which reads it and swaps in the live app URL, `pk_live_` key,
+and production Clerk host; `manifest.config.ts` refuses the build outright if
+any of those is missing or still pointing at localhost, and `npm run zip`
+re-checks the emitted manifest before packaging.
+
+```bash
+npm run zip    # build + verify + release/orbit-<version>.zip
+```
+
+Bump `version` in `package.json` (plain x.y.z) before each store upload; the
+manifest and the zip name both derive from it.
+
+Server-side prerequisites (Vercel env, production only — preview hosts are
+dynamic and can't be allowlisted): `EXTENSION_ORIGIN=chrome-extension://<id>`.
+The web app's own origin is re-added automatically from `APP_BASE_URL` /
+the Vercel production domain, so keep that accurate.
+
+### Bundle size, for the curious reviewer
+
+`dist/` looks large for what the panel does. Two deliberate reasons:
+`@clerk/chrome-extension` always emits Clerk's full UI as lazy-loaded chunks
+(they are never fetched at runtime — the panel uses only `ClerkProvider` and
+`useAuth` — but they ship in the package), and sourcemaps are included on
+purpose: the Chrome Web Store forbids *obfuscation*, not minification, and maps
+let a reviewer read exactly what runs. Swapping to Clerk's headless client
+would shed the chunks but forfeit the `syncHost` session-sharing flow; a
+follow-up, not a launch risk.
 
 ### Environment
 

@@ -1,5 +1,4 @@
 import type {
-  ContactSearchResponse,
   ExtensionResponse,
   FollowUpRequest,
   FollowUpResponse,
@@ -102,13 +101,8 @@ export function createApi(getToken: TokenGetter) {
     followUp: (body: FollowUpRequest, signal?: AbortSignal) =>
       post<FollowUpResponse>("/follow-ups", body, signal),
 
-    searchContacts: (q: string, signal?: AbortSignal) =>
-      request<ContactSearchResponse>(
-        `/contacts?q=${encodeURIComponent(q)}`,
-        { method: "GET" },
-        getToken,
-        signal
-      ),
+    // GET /contacts?q= exists server-side but has no client here yet: it is
+    // the seam for a future "link this page to an existing contact" flow.
   };
 }
 

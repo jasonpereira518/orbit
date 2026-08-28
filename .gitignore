@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example
+# Committed on purpose: production build inputs for the extension are all
+# public values (publishable key, site URL, the ID-pinning PUBLIC key).
+!extension/.env.production
 
 # local PGlite database
 .data/

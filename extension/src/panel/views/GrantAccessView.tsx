@@ -103,7 +103,7 @@ export function GrantAccessView({
       <div className="mt-5">
         <MicroLabel className="mb-1.5">Sites</MicroLabel>
         <ul className="space-y-1">
-          {KNOWN_SITES.filter((s) => s.label !== "Twitter").map((s) => {
+          {KNOWN_SITES.map((s) => {
             const on = granted.includes(s.origin);
             return (
               <li

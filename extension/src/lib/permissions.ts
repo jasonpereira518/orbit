@@ -15,11 +15,15 @@
  * haven't seen yet.
  */
 
-/** The sites Orbit knows how to read deeply. */
+/**
+ * The sites Orbit knows how to read deeply. Must stay in lockstep with
+ * `optional_host_permissions` in manifest.config.ts — an origin that is
+ * requestable but not shown here would be granted invisibly by "allow all".
+ * (twitter.com is deliberately absent from both: it only 301s to x.com.)
+ */
 export const KNOWN_SITES = [
   { origin: "https://*.linkedin.com/*", label: "LinkedIn" },
   { origin: "https://x.com/*", label: "X" },
-  { origin: "https://twitter.com/*", label: "Twitter" },
   { origin: "https://mail.google.com/*", label: "Gmail" },
 ] as const;
 
