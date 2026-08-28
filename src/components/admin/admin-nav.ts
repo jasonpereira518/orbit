@@ -1,5 +1,13 @@
 import type { LucideIcon } from "lucide-react";
-import { Activity, Gauge, ScrollText, TrendingUp, Users, Wallet } from "lucide-react";
+import {
+  Activity,
+  Gauge,
+  LayoutTemplate,
+  ScrollText,
+  TrendingUp,
+  Users,
+  Wallet,
+} from "lucide-react";
 
 export type AdminNavItem = {
   href: string;
@@ -20,6 +28,9 @@ export const ADMIN_NAV: AdminNavItem[] = [
   // "What is broken across everyone, right now" — the cross-account view of signals the
   // inspector only ever showed one account at a time.
   { href: "/admin/health", label: "Health", icon: Activity },
+  // The only screen in the console that changes the product rather than reporting on it:
+  // which pages, dashboard cards, and settings sections every user can see.
+  { href: "/admin/product", label: "Product", icon: LayoutTemplate },
   // Trends live here rather than on the overview, which stays triage-only by design.
   { href: "/admin/growth", label: "Growth", icon: TrendingUp },
   // Route is /admin/billing, but the screen covers money in AND money out — "Billing"

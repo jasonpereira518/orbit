@@ -8,11 +8,11 @@ import {
   interactions,
   type ChatRecommendation,
 } from "@/db/schema";
-import { requireUserId } from "@/lib/auth";
 import { chatWithNetwork } from "@/lib/ai";
 import { semanticSearchContacts } from "@/lib/search";
 import { isRecruiterIntent } from "@/lib/recruiters";
 import { loadRecruitersForChat } from "@/actions/recruiters";
+import { requireUserForSurface } from "@/lib/plan-guards";
 
 const TITLE_MAX = 72;
 const PRIOR_TURN_LIMIT = 8;
@@ -60,7 +60,7 @@ function titleFromQuestion(question: string) {
 }
 
 export async function listChatThreads() {
-  const userId = await requireUserId();
+  const userId = await requireUserForSurface("page.chat");
   const db = await getDb();
   return db.query.chatThreads.findMany({
     where: eq(chatThreads.userId, userId),
@@ -75,7 +75,7 @@ export async function listChatThreads() {
 }
 
 export async function getChatThread(threadId: string) {
-  const userId = await requireUserId();
+  const userId = await requireUserForSurface("page.chat");
   const db = await getDb();
 
   const thread = await db.query.chatThreads.findFirst({
@@ -96,7 +96,7 @@ export async function getChatThread(threadId: string) {
 
 export async function createChatThread() {
   try {
-    const userId = await requireUserId();
+    const userId = await requireUserForSurface("page.chat");
     const db = await getDb();
     const [row] = await db.insert(chatThreads).values({ userId }).returning();
     if (!row) throw new Error("Could not create chat thread");
@@ -113,7 +113,7 @@ export async function createChatThread() {
 }
 
 export async function deleteChatThread(threadId: string) {
-  const userId = await requireUserId();
+  const userId = await requireUserForSurface("page.chat");
   const db = await getDb();
   const existing = await db.query.chatThreads.findFirst({
     where: and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)),
@@ -131,7 +131,7 @@ export async function askNetwork(
   options?: { threadId?: string; contactId?: string }
 ) {
   try {
-    const userId = await requireUserId();
+    const userId = await requireUserForSurface("page.chat");
     const db = await getDb();
     const q = question.trim();
     if (!q) throw new Error("Question is required");
