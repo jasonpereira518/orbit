@@ -1,0 +1,158 @@
+/*
+ * GENERATED — do not edit by hand.
+ * Copied from src/app/globals.css by scripts/tokens.mjs.
+ * Run `npm run tokens:sync` after changing the app's tokens;
+ * `npm run check:tokens` fails the build if these drift.
+ */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans), "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-display), "Fraunces", ui-serif, Georgia, serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-import-connections: var(--import-connections);
+  --color-import-messages: var(--import-messages);
+  --color-import-calendar: var(--import-calendar);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-landing-accent: #f2c14e;
+  --color-landing-button-surface: #eef7f4;
+  --color-landing-button-label: #0f2e28;
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+}
+@theme {
+  --transition-duration-fast: 120ms; /* hover, press, tooltips, exits */
+  --transition-duration-base: 180ms; /* overlays, toggles, small enters */
+  --transition-duration-slow: 320ms; /* page/section reveals */
+  --transition-duration-celestial: 700ms; /* landing + constellation set-pieces */
+
+  --ease-house: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Retime every bare `transition-*` utility (~100 call sites) onto the
+   * interaction tier in one place. */
+  --default-transition-duration: 120ms;
+  --default-transition-timing-function: cubic-bezier(0, 0, 0.2, 1);
+}
+:root {
+  --background: #fbfbf9;
+  --foreground: #1a1c1a;
+  --card: #ffffff;
+  --card-foreground: #1a1c1a;
+  --popover: #ffffff;
+  --popover-foreground: #1a1c1a;
+  --primary: #0f3d3e;
+  --primary-foreground: #e8f3f1;
+  --secondary: #eef1ec;
+  --secondary-foreground: #1a1c1a;
+  --muted: #f0f2ee;
+  --muted-foreground: #5f6760;
+  --accent: #e7f0ee;
+  --accent-foreground: #0f3d3e;
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: #e4e7e1;
+  --input: #e4e7e1;
+  --ring: #0f3d3e;
+  --chart-1: #0f3d3e;
+  --chart-2: #3d7a6c;
+  --chart-3: #7aa896;
+  --chart-4: #c4a35a;
+  --chart-5: #8b5e3c;
+  --import-connections: #5b5fc7;
+  --import-messages: #c2694a;
+  --import-calendar: #b8873a;
+  --radius: 0.625rem;
+  --sidebar: #f7f8f6;
+  --sidebar-foreground: #1a1c1a;
+  --sidebar-primary: #0f3d3e;
+  --sidebar-primary-foreground: #e8f3f1;
+  --sidebar-accent: #ffffff;
+  --sidebar-accent-foreground: #0f3d3e;
+  --sidebar-border: #e4e7e1;
+  --sidebar-ring: #0f3d3e;
+  /* Percentage-sized radial gradients scale off the *whole page's*
+     height (this wrapper spans every section), so a single one
+     collapses to flat background almost immediately once content
+     grows past one screen. Using fixed/vh-based sizes and stacking a
+     few glows at different scroll depths keeps the ambient light
+     visible the whole way down instead of fading out after the hero. */
+  --landing-page-gradient: radial-gradient(
+      1100px 900px at 64% 220px,
+      #111c33 0%,
+      transparent 72%
+    ),
+    radial-gradient(1000px 850px at 30% 110vh, #101a30 0%, transparent 72%),
+    radial-gradient(1000px 850px at 70% 190vh, #0d1626 0%, transparent 72%);
+  color-scheme: light;
+}
+.dark {
+  --background: #272727;
+  --foreground: #f0f0f0;
+  --card: #303030;
+  --card-foreground: #f0f0f0;
+  --popover: #303030;
+  --popover-foreground: #f0f0f0;
+  --primary: #599de7;
+  --primary-foreground: #0f1720;
+  --secondary: #353535;
+  --secondary-foreground: #f0f0f0;
+  --muted: #333333;
+  --muted-foreground: #a8a8a8;
+  --accent: #2d3a48;
+  --accent-foreground: #599de7;
+  --destructive: oklch(0.65 0.2 25);
+  --border: #3d3d3d;
+  --input: #3d3d3d;
+  --ring: #599de7;
+  --chart-1: #599de7;
+  --chart-2: #7bb0ec;
+  --chart-3: #9dc4f1;
+  --chart-4: #3d7fc7;
+  --chart-5: #b8d4f5;
+  --import-connections: #9b9ff5;
+  --import-messages: #e08a68;
+  --import-calendar: #d9a855;
+  --sidebar: #272727;
+  --sidebar-foreground: #f0f0f0;
+  --sidebar-primary: #599de7;
+  --sidebar-primary-foreground: #0f1720;
+  --sidebar-accent: #353535;
+  --sidebar-accent-foreground: #599de7;
+  --sidebar-border: #3d3d3d;
+  --sidebar-ring: #599de7;
+  color-scheme: dark;
+}
+.reveal-mount {
+  animation: reveal-rise var(--transition-duration-slow) var(--ease-house)
+    var(--reveal-delay, 0ms) both;
+}

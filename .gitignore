@@ -43,3 +43,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# browser extension (separate project — own lockfile, not deployed)
+extension/node_modules/
+extension/dist/
+extension/release/
+extension/*.zip
+# Intermediate build output: the injected IIFE is emitted into public/ so the
+# main build copies it into dist as a static asset.
+extension/public/inject/
+*.pem
