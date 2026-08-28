@@ -32,21 +32,21 @@ export const SHAKE_MS = 380;
 /** The headline slams in just after the flash peak, revealed by it. */
 export const HEADLINE_AT = 2960;
 
-/** The held beat ends here; the first perk card launches. */
+/** The held beat ends here; the first perk is written in. */
 export const CASCADE_START = 3650;
 
-/** Per-card launch spacing — each perk lands as its own moment. */
-export const CARD_STAGGER_MS = 240;
+/** Per-perk spacing — each one is written in as its own moment. */
+export const PERK_STAGGER_MS = 240;
 
-/** One card's flight from launch to seated. */
-export const CARD_FLIGHT_MS = 550;
+/** How long one perk takes to settle once its beat lands. */
+export const PERK_SETTLE_MS = 550;
 
-export function cardAt(i: number) {
-  return CASCADE_START + i * CARD_STAGGER_MS;
+export function perkAt(i: number) {
+  return CASCADE_START + i * PERK_STAGGER_MS;
 }
 
 export function cascadeEnd(perkCount: number) {
-  return cardAt(Math.max(0, perkCount - 1)) + CARD_FLIGHT_MS;
+  return perkAt(Math.max(0, perkCount - 1)) + PERK_SETTLE_MS;
 }
 
 /** Breather between the last card seating and the star contracting. */
@@ -84,8 +84,17 @@ export const SKIPPABLE_FROM = IGNITE + SHAKE_MS;
 /** Reduced motion collapses the whole arc to a plain fade, warp parity. */
 export const REDUCED_MS = 200;
 
-/** Dismissal fade, stage to gone. */
+/** Dismissal fade, veil to gone. */
 export const EXIT_MS = 320;
+
+/**
+ * The handoff: the mark flies from the middle of the stage to the app's own
+ * logo and takes its place. Longer than the veil fade on purpose — the veil
+ * is gone by ~320ms and the mark keeps travelling over the live app, which
+ * is what makes it read as the same object arriving rather than as an
+ * overlay closing.
+ */
+export const HANDOFF_MS = 760;
 
 /**
  * The locally-remembered plan the watcher compares against. Deliberately not

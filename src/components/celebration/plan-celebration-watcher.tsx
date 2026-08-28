@@ -229,10 +229,19 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Fired as the mark starts flying home, while the veil still covers the
+  // app: the shell re-renders wearing the new tier (sidebar logo ring, plan
+  // badges, gates) with the whole flight left to land it, so the mark
+  // dissolves into a logo that already matches it.
+  const onHandoff = useCallback(() => {
+    router.refresh();
+  }, [router]);
+
   const onDone = useCallback(() => {
     setActive(null);
-    // The veil lifts onto a shell that already wears the new tier: sidebar
-    // logo ring, plan badges, gates.
+    // A handoff already refreshed; this covers the plain-fade exits (reduced
+    // motion, or no app logo laid out to fly to). `refresh` de-dupes an
+    // in-flight request, so the double call is free.
     router.refresh();
   }, [router]);
 
@@ -242,6 +251,7 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
       key={active.key}
       theme={tierTheme(active.plan)}
       startAt={active.startAt}
+      onHandoff={onHandoff}
       onDone={onDone}
     />,
     document.body,

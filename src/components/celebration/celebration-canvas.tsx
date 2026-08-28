@@ -5,17 +5,16 @@ import type { RefObject } from "react";
 import { easeHouse, easeIn } from "@/lib/warp/choreography";
 import {
   ACCRETE,
-  CARD_FLIGHT_MS,
   COLLAPSE,
   IGNITE,
   RING_SWEEP_MS,
-  cardAt,
+  perkAt,
   finaleAt,
   restAt,
 } from "@/lib/celebration/choreography";
 import type { CelebrationPhase } from "@/lib/celebration/choreography";
 import type { TierTheme } from "@/lib/celebration/tier-theme";
-import { cardFlight, stageLayout } from "@/lib/celebration/stage-layout";
+import { stageLayout } from "@/lib/celebration/stage-layout";
 import type { StageLayout } from "@/lib/celebration/stage-layout";
 
 /**
@@ -393,20 +392,18 @@ export function CelebrationCanvas({
           ctx.stroke();
         }
 
-        // Cascade guide arcs: each card's approach curve ghosts in for its
-        // flight, then fades. Desktop only — narrow cards travel in flow.
-        if (!layout.narrow) {
-          for (let i = 0; i < n; i++) {
-            const ft = (t - cardAt(i)) / CARD_FLIGHT_MS;
-            if (ft <= 0 || ft >= 1.6) continue;
-            const path = cardFlight(layout, i, n);
-            ctx.beginPath();
-            ctx.strokeStyle = `rgba(${glow}, ${0.08 * (1 - Math.abs(ft - 0.5))})`;
-            ctx.lineWidth = 1;
-            ctx.moveTo(path.sx, path.sy);
-            ctx.quadraticCurveTo(path.mx, path.my, path.ex, path.ey);
-            ctx.stroke();
-          }
+        // Cascade pulses: the star answers each perk as it is written in —
+        // one short ring per beat, so the list reads as something the star is
+        // emitting rather than as UI arriving on its own schedule.
+        for (let i = 0; i < n; i++) {
+          const pt = (t - perkAt(i)) / 520;
+          if (pt <= 0 || pt >= 1) continue;
+          const eased = easeHouse(pt);
+          ctx.beginPath();
+          ctx.strokeStyle = `rgba(${glow}, ${0.28 * (1 - eased)})`;
+          ctx.lineWidth = 1.6 * (1 - eased) + 0.4;
+          ctx.arc(cx, cy, coreR * (1 + eased * 1.6), 0, Math.PI * 2);
+          ctx.stroke();
         }
 
         // The burning star — contracting into a point through the finale so

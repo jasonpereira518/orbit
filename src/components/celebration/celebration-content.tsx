@@ -1,18 +1,22 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { CARD_FLIGHT_MS, CARD_STAGGER_MS } from "@/lib/celebration/choreography";
+import { PERK_STAGGER_MS } from "@/lib/celebration/choreography";
 import type { CelebrationPhase } from "@/lib/celebration/choreography";
 import type { TierTheme } from "@/lib/celebration/tier-theme";
-import { HERO_LOGO_PX, cardFlight } from "@/lib/celebration/stage-layout";
+import { HERO_LOGO_PX } from "@/lib/celebration/stage-layout";
 import type { StageLayout } from "@/lib/celebration/stage-layout";
 import { EASE_HOUSE } from "@/lib/motion";
 import { OrbitLogo } from "@/components/orbit-logo";
 
 /**
- * The DOM half of the celebration: kicker, metallic headline, perk cards on
- * their orbital flights, the finale mark, dismiss button. The canvas behind
- * it owns the sky; this file owns the words.
+ * The DOM half of the celebration: kicker, metallic headline, the perk
+ * manifest, the finale mark, the dismiss button. The canvas behind it owns
+ * the sky; this file owns the words.
+ *
+ * Everything below the star lives in ONE absolutely-positioned flow column
+ * rather than being placed line by line: a perk that wraps to two lines then
+ * pushes the welcome line down instead of landing on top of it.
  *
  * `skipped` means the rest state was reached by a skip rather than by playing
  * through — every staggered entrance REMOUNTS under a `skipped`-keyed `key`
@@ -27,11 +31,16 @@ import { OrbitLogo } from "@/components/orbit-logo";
 /** The one hard spring for celebratory entries. */
 const ENTRY_SPRING = { type: "spring", stiffness: 620, damping: 30, mass: 0.7 } as const;
 
+/** Softer spring for the manifest — perks are written in, not slammed in. */
+const PERK_SPRING = { type: "spring", stiffness: 320, damping: 26, mass: 0.6 } as const;
+
 export function CelebrationContent({
   theme,
   phase,
   collapsed,
   skipped,
+  /** The mark has left the stage for the app's own logo; stop drawing it. */
+  handoff,
   layout,
   onDismiss,
 }: {
@@ -39,13 +48,13 @@ export function CelebrationContent({
   phase: CelebrationPhase;
   collapsed: boolean;
   skipped: boolean;
+  handoff: boolean;
   layout: StageLayout;
   onDismiss: () => void;
 }) {
   const slammed = phase !== "accrete";
   const cascading = phase === "cascade" || phase === "finale" || phase === "rest";
   const finale = phase === "finale" || phase === "rest";
-  const n = theme.perks.length;
   const played = skipped ? "skipped" : "played";
 
   const metalGradient = `linear-gradient(180deg, ${theme.metal.sheen} 0%, ${theme.metal.hi} 38%, ${theme.metal.lo} 100%)`;
@@ -73,120 +82,115 @@ export function CelebrationContent({
         )}
       </AnimatePresence>
 
-      {/* The name, in tier metal. */}
+      {/* The column: name, manifest, welcome. */}
       {slammed && (
         <div
-          className="absolute inset-x-0 px-6 text-center"
-          style={{ top: layout.headlineTop }}
+          className="absolute left-1/2 flex -translate-x-1/2 flex-col items-center"
+          style={{ top: layout.headlineTop, width: layout.columnWidth }}
         >
+          {/* The name, in tier metal. A geometric sans at heavy weight and
+              open tracking — a display serif reads as an invitation, and this
+              beat is a trophy. */}
           <motion.h1
             key={`headline-${played}`}
             initial={skipped ? false : { scale: 1.6, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ ...ENTRY_SPRING, opacity: { duration: 0.09 } }}
-            className="inline-block whitespace-nowrap bg-clip-text font-[family-name:var(--font-display)] font-semibold uppercase leading-none tracking-tight text-transparent"
+            className="whitespace-nowrap bg-clip-text font-[family-name:var(--font-sans)] font-extrabold uppercase leading-none text-transparent"
             style={{
               fontSize: layout.narrow
-                ? "clamp(1.9rem, 8.5vw, 2.5rem)"
+                ? "clamp(1.75rem, 8vw, 2.375rem)"
                 : "clamp(2.5rem, 5vw, 4rem)",
+              letterSpacing: layout.narrow ? "0.01em" : "0.02em",
               backgroundImage: metalGradient,
               filter: `drop-shadow(0 2px 28px rgba(${theme.glowRgb}, 0.45))`,
             }}
           >
             {theme.name}
           </motion.h1>
+
+          {/* The manifest. Each perk is written in on its own beat: the
+              spark lands, the words resolve out of the tier's own light, and
+              a hairline rules itself in underneath. Deliberately not cards —
+              chrome around every line turned the reward into a receipt. */}
+          {cascading && (
+            <ul
+              className={
+                layout.narrow
+                  ? "mt-4 flex w-full flex-col gap-0.5"
+                  : "mt-7 grid w-full grid-cols-2 gap-x-8 gap-y-1"
+              }
+            >
+              {theme.perks.map((perk, i) => {
+                const delay = skipped ? 0 : (i * PERK_STAGGER_MS) / 1000;
+                // Desktop columns converge inward; the narrow list all
+                // arrives from the same side, which reads as a list.
+                const from = layout.narrow ? -14 : i % 2 === 0 ? -18 : 18;
+                return (
+                  <motion.li
+                    key={`${played}-${perk}`}
+                    className="relative flex items-center gap-3 py-1.5"
+                    initial={skipped ? false : { opacity: 0, x: from, y: 6 }}
+                    animate={{ opacity: 1, x: 0, y: 0 }}
+                    transition={{ ...PERK_SPRING, delay }}
+                  >
+                    <PerkSpark theme={theme} skipped={skipped} delay={delay} />
+                    <motion.span
+                      className={
+                        layout.narrow
+                          ? "text-[13px] leading-snug"
+                          : "text-sm leading-snug"
+                      }
+                      initial={skipped ? false : { color: theme.metal.sheen }}
+                      animate={{ color: "rgba(255, 255, 255, 0.9)" }}
+                      transition={{ duration: 0.7, delay: delay + 0.12 }}
+                    >
+                      {perk}
+                    </motion.span>
+                    {/* The rule draws itself under the line, fading out
+                        toward the far end so it reads as light, not a border. */}
+                    <motion.span
+                      aria-hidden
+                      className="absolute inset-x-0 bottom-0 h-px origin-left"
+                      style={{
+                        backgroundImage: `linear-gradient(90deg, rgba(${theme.glowRgb}, 0.55), rgba(${theme.glowRgb}, 0))`,
+                      }}
+                      initial={skipped ? false : { scaleX: 0, opacity: 0 }}
+                      animate={{ scaleX: 1, opacity: 1 }}
+                      transition={{
+                        duration: 0.45,
+                        ease: EASE_HOUSE,
+                        delay: delay + 0.06,
+                      }}
+                    />
+                  </motion.li>
+                );
+              })}
+            </ul>
+          )}
+
+          {finale && (
+            <motion.p
+              key={`welcome-${played}`}
+              className={
+                layout.narrow
+                  ? "mt-5 text-center text-sm text-white/80"
+                  : "mt-8 text-center text-base text-white/80"
+              }
+              initial={skipped ? false : { opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, ease: EASE_HOUSE, delay: skipped ? 0 : 0.4 }}
+            >
+              {theme.welcome}
+            </motion.p>
+          )}
         </div>
       )}
 
-      {/* Perk cards. Desktop: orbital flights into two flanking columns.
-          Narrow: a stacked list with short slides — off-screen flights on a
-          phone strand cards mid-air on dropped frames. */}
-      {cascading &&
-        (layout.narrow ? (
-          <ul
-            className="absolute inset-x-6 flex flex-col gap-1.5"
-            style={{ top: layout.headlineTop + 44 }}
-          >
-            {theme.perks.map((perk, i) => (
-              <motion.li
-                key={`${played}-${perk}`}
-                initial={skipped ? false : { opacity: 0, y: 22, scale: 0.94 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                transition={{
-                  ...ENTRY_SPRING,
-                  delay: skipped ? 0 : (i * CARD_STAGGER_MS) / 1000,
-                  opacity: {
-                    duration: 0.09,
-                    delay: skipped ? 0 : (i * CARD_STAGGER_MS) / 1000,
-                  },
-                }}
-                className="flex items-center gap-2.5 rounded-xl border px-3 py-2 backdrop-blur-md"
-                style={{
-                  borderColor: `rgba(${theme.glowRgb}, 0.35)`,
-                  backgroundColor: `rgba(${theme.deepRgb}, 0.55)`,
-                }}
-              >
-                <PerkDot theme={theme} />
-                <span className="text-xs text-white/90">{perk}</span>
-              </motion.li>
-            ))}
-          </ul>
-        ) : (
-          <ul className="absolute inset-0">
-            {theme.perks.map((perk, i) => {
-              const slot = layout.cardSlot(i, n);
-              const flight = cardFlight(layout, i, n);
-              const delay = skipped ? 0 : (i * CARD_STAGGER_MS) / 1000;
-              return (
-                <motion.li
-                  key={`${played}-${perk}`}
-                  className="absolute flex items-center gap-3 rounded-xl border px-4 py-2.5 backdrop-blur-md"
-                  style={{
-                    left: slot.x - layout.cardWidth / 2,
-                    top: slot.y - 24,
-                    width: layout.cardWidth,
-                    borderColor: `rgba(${theme.glowRgb}, 0.35)`,
-                    backgroundColor: `rgba(${theme.deepRgb}, 0.55)`,
-                  }}
-                  initial={
-                    skipped
-                      ? false
-                      : {
-                          x: flight.sx - flight.ex,
-                          y: flight.sy - flight.ey,
-                          opacity: 0,
-                          scale: 0.85,
-                        }
-                  }
-                  animate={
-                    skipped
-                      ? { x: 0, y: 0, opacity: 1, scale: 1 }
-                      : {
-                          x: [flight.sx - flight.ex, flight.mx - flight.ex, 0],
-                          y: [flight.sy - flight.ey, flight.my - flight.ey, 0],
-                          opacity: [0, 1, 1],
-                          scale: [0.85, 0.96, 1],
-                        }
-                  }
-                  transition={{
-                    duration: skipped ? 0 : CARD_FLIGHT_MS / 1000,
-                    times: [0, 0.55, 1],
-                    ease: EASE_HOUSE,
-                    delay,
-                    opacity: { duration: 0.12, delay },
-                  }}
-                >
-                  <PerkDot theme={theme} />
-                  <span className="text-sm leading-snug text-white/90">{perk}</span>
-                </motion.li>
-              );
-            })}
-          </ul>
-        ))}
-
       {/* Finale: the star has contracted into the mark; its plan ring is
-          being lit by the canvas sweep around this exact spot. */}
-      {finale && (
+          being lit by the canvas sweep around this exact spot. Once the
+          handoff starts, the flying copy outside the veil owns the mark. */}
+      {finale && !handoff && (
         <motion.div
           key={`logo-${played}`}
           className="absolute"
@@ -196,26 +200,14 @@ export function CelebrationContent({
           }}
           initial={skipped ? false : { opacity: 0, scale: 0.6 }}
           animate={{ opacity: 1, scale: 1 }}
-          transition={{ ...ENTRY_SPRING, delay: skipped ? 0 : 0.15, opacity: { duration: 0.2, delay: skipped ? 0 : 0.15 } }}
+          transition={{
+            ...ENTRY_SPRING,
+            delay: skipped ? 0 : 0.15,
+            opacity: { duration: 0.2, delay: skipped ? 0 : 0.15 },
+          }}
         >
           <OrbitLogo size="hero" plan={theme.plan} />
         </motion.div>
-      )}
-      {finale && (
-        <motion.p
-          key={`welcome-${played}`}
-          className={
-            layout.narrow
-              ? "absolute inset-x-6 bottom-28 text-center text-sm text-white/80"
-              : "absolute inset-x-0 px-6 text-center text-base text-white/80"
-          }
-          style={layout.narrow ? undefined : { top: layout.headlineTop + 110 }}
-          initial={skipped ? false : { opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: EASE_HOUSE, delay: skipped ? 0 : 0.4 }}
-        >
-          {theme.welcome}
-        </motion.p>
       )}
 
       <div className="absolute inset-x-0 bottom-[max(2.5rem,env(safe-area-inset-bottom))] flex justify-center">
@@ -253,15 +245,29 @@ export function CelebrationContent({
   );
 }
 
-function PerkDot({ theme }: { theme: TierTheme }) {
+/** Lands hot and settles — the same idea as the star, three orders of
+ * magnitude smaller. */
+function PerkSpark({
+  theme,
+  skipped,
+  delay,
+}: {
+  theme: TierTheme;
+  skipped: boolean;
+  delay: number;
+}) {
   return (
-    <span
+    <motion.span
       aria-hidden
-      className="h-2 w-2 shrink-0 rounded-full"
-      style={{
-        backgroundColor: theme.metal.sheen,
-        boxShadow: `0 0 12px 3px rgba(${theme.glowRgb}, 0.7)`,
-      }}
+      className="h-1.5 w-1.5 shrink-0 rounded-full"
+      style={{ backgroundColor: theme.metal.sheen }}
+      initial={
+        skipped
+          ? false
+          : { scale: 0.2, boxShadow: `0 0 22px 7px rgba(${theme.glowRgb}, 0.9)` }
+      }
+      animate={{ scale: 1, boxShadow: `0 0 10px 2px rgba(${theme.glowRgb}, 0.6)` }}
+      transition={{ ...PERK_SPRING, delay }}
     />
   );
 }

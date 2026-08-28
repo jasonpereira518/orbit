@@ -1,10 +1,11 @@
 /**
  * The celebration's sound, synthesized — the repo ships no audio assets and
- * this keeps it that way. Six voices for the new arc: a rising sweep under
+ * this keeps it that way. Deliberately restrained: a soft rising sweep under
  * the accretion (scored to cut to silence at the collapse — the cut IS the
- * anticipation), a detonation-plus-shimmer at ignition, a pentatonic pluck
- * per perk card, a rising swell under the ring sweep, a two-note bell when
- * the ring completes, and a warm pad at rest.
+ * anticipation), one impact at ignition, a quiet pluck per perk, a short
+ * swell under the ring sweep, a two-note bell when it completes, and a warm
+ * pad at rest. Every level is set to be noticed once, not endured — a
+ * celebration nobody can mute is a celebration nobody wants twice.
  *
  * Sound here is strictly best-effort. The comped path arrives with no user
  * gesture, so the context may sit suspended until the viewer's first
@@ -60,7 +61,7 @@ export function createSting(): Sting {
     ctx = new AudioContext();
     void ctx.resume().catch(() => {});
     master = ctx.createGain();
-    master.gain.value = 0.5;
+    master.gain.value = 0.3;
     master.connect(ctx.destination);
   } catch {
     return NOOP;
@@ -108,7 +109,7 @@ export function createSting(): Sting {
       const end = t + ms / 1000;
       const rise = ctx.createGain();
       rise.gain.setValueAtTime(0.0001, t);
-      rise.gain.exponentialRampToValueAtTime(0.28, end - 0.45);
+      rise.gain.exponentialRampToValueAtTime(0.14, end - 0.45);
       // The last 450ms ramp all the way down: COLLAPSE is scored as silence.
       rise.gain.exponentialRampToValueAtTime(0.0001, end);
       rise.connect(master);
@@ -127,22 +128,18 @@ export function createSting(): Sting {
       noise.start(t);
       noise.stop(end + 0.05);
 
-      // Gravity: two detuned sawtooth risers climbing an octave underneath.
-      const sources: AudioScheduledSourceNode[] = [noise];
-      for (const detune of [-6, 6]) {
-        const osc = ctx.createOscillator();
-        osc.type = "sawtooth";
-        osc.detune.value = detune;
-        osc.frequency.setValueAtTime(110, t);
-        osc.frequency.exponentialRampToValueAtTime(220, end);
-        const oscGain = ctx.createGain();
-        oscGain.gain.value = 0.22;
-        osc.connect(oscGain).connect(rise);
-        osc.start(t);
-        osc.stop(end + 0.05);
-        sources.push(osc);
-      }
-      sustain(rise, sources);
+      // Gravity: one soft sine underneath, an octave climb. Deliberately not
+      // a detuned sawtooth pair — that reads as dread, not anticipation.
+      const hum = ctx.createOscillator();
+      hum.type = "sine";
+      hum.frequency.setValueAtTime(110, t);
+      hum.frequency.exponentialRampToValueAtTime(220, end);
+      const humGain = ctx.createGain();
+      humGain.gain.value = 0.3;
+      hum.connect(humGain).connect(rise);
+      hum.start(t);
+      hum.stop(end + 0.05);
+      sustain(rise, [noise, hum]);
     }),
 
     ignite: guarded(() => {
@@ -155,7 +152,7 @@ export function createSting(): Sting {
       band.frequency.value = 2000;
       band.Q.value = 1;
       const crackGain = ctx.createGain();
-      crackGain.gain.setValueAtTime(0.5, t);
+      crackGain.gain.setValueAtTime(0.3, t);
       crackGain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
       crack.connect(band).connect(crackGain).connect(master);
       crack.start(t);
@@ -166,27 +163,25 @@ export function createSting(): Sting {
       sub.frequency.setValueAtTime(90, t);
       sub.frequency.exponentialRampToValueAtTime(34, t + 0.65);
       const subGain = ctx.createGain();
-      subGain.gain.setValueAtTime(0.45, t);
+      subGain.gain.setValueAtTime(0.3, t);
       subGain.gain.exponentialRampToValueAtTime(0.001, t + 0.65);
       sub.connect(subGain).connect(master);
       sub.start(t);
       sub.stop(t + 0.7);
 
-      // The shimmer: a late harmonic bloom — root-fifth-octave, plus a high
-      // airy cluster for stardust. Long tails, so a skip must be able to cut
-      // them.
+      // The shimmer: a late harmonic bloom. Long tails, so a skip must be
+      // able to cut them.
       const bloom = ctx.createGain();
       bloom.gain.value = 1;
       bloom.connect(master);
       const bloomSources: AudioScheduledSourceNode[] = [];
       const b = t + 0.08;
+      // Root, fifth, octave — no high airy cluster. Three voices land as a
+      // chord; six landed as a synth pad nobody asked for.
       for (const [freq, gain, decay] of [
-        [220, 0.1, 1.8],
-        [330, 0.08, 1.8],
-        [440, 0.07, 1.8],
-        [2500, 0.02, 1.2],
-        [3300, 0.016, 1.2],
-        [4100, 0.012, 1.2],
+        [220, 0.07, 1.6],
+        [330, 0.05, 1.6],
+        [440, 0.04, 1.6],
       ] as const) {
         const osc = ctx.createOscillator();
         osc.type = "sine";
@@ -209,22 +204,11 @@ export function createSting(): Sting {
       osc.type = "triangle";
       osc.frequency.value = 440 * step;
       const gain = ctx.createGain();
-      gain.gain.setValueAtTime(0.12, t);
+      gain.gain.setValueAtTime(0.075, t);
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
       osc.connect(gain).connect(master);
       osc.start(t);
       osc.stop(t + 0.2);
-      // A breath of air on the attack.
-      const air = ctx.createBufferSource();
-      air.buffer = noiseBuffer(0.04);
-      const hp = ctx.createBiquadFilter();
-      hp.type = "highpass";
-      hp.frequency.value = 4000;
-      const airGain = ctx.createGain();
-      airGain.gain.setValueAtTime(0.06, t);
-      airGain.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
-      air.connect(hp).connect(airGain).connect(master);
-      air.start(t);
     }),
 
     finaleSwell: guarded(() => {
@@ -238,7 +222,7 @@ export function createSting(): Sting {
       band.Q.value = 1.4;
       const gain = ctx.createGain();
       gain.gain.setValueAtTime(0.0001, t);
-      gain.gain.exponentialRampToValueAtTime(0.22, t + 0.4);
+      gain.gain.exponentialRampToValueAtTime(0.12, t + 0.4);
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
       swell.connect(band).connect(gain).connect(master);
       swell.start(t);
@@ -256,7 +240,7 @@ export function createSting(): Sting {
         osc.type = "sine";
         osc.frequency.value = freq;
         const gain = ctx.createGain();
-        gain.gain.setValueAtTime(0.12, start);
+        gain.gain.setValueAtTime(0.085, start);
         gain.gain.exponentialRampToValueAtTime(0.001, start + 1.6);
         osc.connect(gain).connect(master);
         osc.start(start);
@@ -266,7 +250,7 @@ export function createSting(): Sting {
         partial.type = "sine";
         partial.frequency.value = freq * 2.76;
         const pGain = ctx.createGain();
-        pGain.gain.setValueAtTime(0.03, start);
+        pGain.gain.setValueAtTime(0.02, start);
         pGain.gain.exponentialRampToValueAtTime(0.001, start + 0.8);
         partial.connect(pGain).connect(master);
         partial.start(start);
@@ -278,7 +262,7 @@ export function createSting(): Sting {
       const t = ctx.currentTime;
       const pad = ctx.createGain();
       pad.gain.setValueAtTime(0.0001, t);
-      pad.gain.exponentialRampToValueAtTime(0.14, t + 0.5);
+      pad.gain.exponentialRampToValueAtTime(0.085, t + 0.5);
       pad.gain.exponentialRampToValueAtTime(0.0001, t + 3.1);
       pad.connect(master);
       const sources: AudioScheduledSourceNode[] = [];

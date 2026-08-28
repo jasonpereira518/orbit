@@ -7,24 +7,30 @@ import {
   COLLAPSE,
   ENTER_FADE_MS,
   EXIT_MS,
+  HANDOFF_MS,
   IGNITE,
   REDUCED_MS,
   RING_SWEEP_MS,
   SHAKE_MS,
   SKIPPABLE_FROM,
-  cardAt,
+  perkAt,
   finaleAt,
   restAt,
 } from "@/lib/celebration/choreography";
 import type { CelebrationPhase } from "@/lib/celebration/choreography";
 import type { TierTheme } from "@/lib/celebration/tier-theme";
 import { createSting, type Sting } from "@/lib/celebration/sting";
-import { stageLayout } from "@/lib/celebration/stage-layout";
+import {
+  HERO_LOGO_PX,
+  findAppLogoTarget,
+  stageLayout,
+} from "@/lib/celebration/stage-layout";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { EASE_HOUSE } from "@/lib/motion";
 import { CelebrationCanvas } from "@/components/celebration/celebration-canvas";
 import { CelebrationContent } from "@/components/celebration/celebration-content";
 import { CelebrationReduced } from "@/components/celebration/celebration-reduced";
+import { OrbitLogo } from "@/components/orbit-logo";
 
 /**
  * The full-screen takeover. Sits one layer below warp's z-[9999] — if a warp
@@ -43,10 +49,15 @@ export function CelebrationStage({
   /** "ignite" when restarting mid-play for an even higher tier — the
    * anticipation was already spent on the first accretion. */
   startAt = "accrete",
+  onHandoff,
   onDone,
 }: {
   theme: TierTheme;
   startAt?: "accrete" | "ignite";
+  /** Fired when the mark starts flying home, while the veil still covers the
+   * app — the caller uses it to refresh the shell so the mark lands on a
+   * logo already wearing the new tier's ring. */
+  onHandoff?: () => void;
   onDone: () => void;
 }) {
   const reduced = usePrefersReducedMotion();
@@ -56,6 +67,13 @@ export function CelebrationStage({
   const [collapsed, setCollapsed] = useState(startAt === "ignite");
   const [skipped, setSkipped] = useState(false);
   const [exiting, setExiting] = useState(false);
+  // Set when the mark is in flight to the app's own logo: the delta and
+  // scale that take it there.
+  const [handoff, setHandoff] = useState<{
+    dx: number;
+    dy: number;
+    scale: number;
+  } | null>(null);
   // First paint is transparent so the veil fades up from the app beneath it.
   const [entered, setEntered] = useState(false);
   // The stage renders client-only (dynamic ssr:false), so window is real here.
@@ -75,6 +93,11 @@ export function CelebrationStage({
   // the arc effect before anything reads it (render must stay pure).
   const t0Ref = useRef(0);
   const exitingRef = useRef(false);
+  // Read inside `dismiss` without making it depend on every resize.
+  const layoutRef = useRef(layout);
+  useEffect(() => {
+    layoutRef.current = layout;
+  }, [layout]);
 
   const perkCount = theme.perks.length;
 
@@ -89,8 +112,28 @@ export function CelebrationStage({
     clearTimers();
     stingRef.current?.stopAll();
     setExiting(true);
+
+    // The mark hands itself off: it flies out of the middle of the stage and
+    // lands on the app's own logo, which is where the user will look for
+    // their tier from now on. Reduced motion never flies anything across the
+    // screen, and a stage that never reached the finale has no mark to send.
+    const target =
+      reduced || phaseRef.current !== "rest" ? null : findAppLogoTarget();
+    if (target) {
+      const l = layoutRef.current;
+      setHandoff({
+        dx: target.cx - l.cx,
+        dy: target.cy - l.cy,
+        scale: target.size / HERO_LOGO_PX,
+      });
+      // Refresh the shell now, under the veil, so the logo being flown into
+      // already wears the new ring when the flight lands on it.
+      onHandoff?.();
+      timers.current.push(setTimeout(onDone, HANDOFF_MS));
+      return;
+    }
     timers.current.push(setTimeout(onDone, reduced ? REDUCED_MS : EXIT_MS));
-  }, [clearTimers, onDone, reduced]);
+  }, [clearTimers, onDone, onHandoff, reduced]);
 
   const skipToRest = useCallback(() => {
     if (phaseRef.current === "rest" || exitingRef.current) return;
@@ -139,7 +182,7 @@ export function CelebrationStage({
     });
     at(CASCADE_START, () => setPhase("cascade"));
     for (let i = 0; i < perkCount; i++) {
-      at(cardAt(i), () => sting.tick(i));
+      at(perkAt(i), () => sting.tick(i));
     }
     at(finaleAt(perkCount), () => {
       setPhase("finale");
@@ -236,61 +279,104 @@ export function CelebrationStage({
   const shaken = phase !== "accrete" && !skipped;
 
   return (
-    <div
-      ref={rootRef}
-      tabIndex={-1}
-      role="dialog"
-      aria-modal="true"
-      aria-label={`You now have ${theme.name}`}
-      onClick={onAdvance}
-      className="fixed inset-0 z-[9998] h-full w-full touch-none overscroll-none outline-none"
-      style={style}
-    >
-      {reduced ? (
-        <CelebrationReduced theme={theme} onDismiss={dismiss} />
-      ) : (
-        <>
-          <motion.div
-            // The ignition shakes the whole composition — sky included —
-            // never the page behind it.
-            className="absolute inset-0"
-            initial={false}
-            animate={
-              shaken
-                ? { x: [0, -7, 6, -4, 3, 0], y: [0, 4, -5, 2, -1, 0] }
-                : { x: 0, y: 0 }
-            }
-            transition={{ duration: SHAKE_MS / 1000, ease: "easeOut" }}
-          >
-            <CelebrationCanvas theme={theme} phaseRef={phaseRef} t0Ref={t0Ref} />
-            <CelebrationContent
-              theme={theme}
-              phase={phase}
-              collapsed={collapsed}
-              skipped={skipped}
-              layout={layout}
-              onDismiss={dismiss}
-            />
-          </motion.div>
-
-          {/* Impact flash: white with a breath of the tier colour, gone fast. */}
-          <AnimatePresence>
-            {phase === "ignite" && !skipped && (
-              <motion.div
-                aria-hidden
-                className="pointer-events-none absolute inset-0"
-                style={{
-                  background: `radial-gradient(circle at ${layout.cx}px ${layout.cy}px, rgba(255,255,255,0.98), rgba(${theme.glowRgb}, 0.55) 42%, transparent 72%)`,
-                }}
-                initial={{ opacity: 0.95 }}
-                animate={{ opacity: 0 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.45, ease: EASE_HOUSE }}
+    <>
+      <div
+        ref={rootRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`You now have ${theme.name}`}
+        onClick={onAdvance}
+        className={`fixed inset-0 z-[9998] h-full w-full touch-none overscroll-none outline-none ${
+          exiting ? "pointer-events-none" : ""
+        }`}
+        style={style}
+      >
+        {reduced ? (
+          <CelebrationReduced theme={theme} onDismiss={dismiss} />
+        ) : (
+          <>
+            <motion.div
+              // The ignition shakes the whole composition — sky included —
+              // never the page behind it.
+              className="absolute inset-0"
+              initial={false}
+              animate={
+                shaken
+                  ? { x: [0, -7, 6, -4, 3, 0], y: [0, 4, -5, 2, -1, 0] }
+                  : { x: 0, y: 0 }
+              }
+              transition={{ duration: SHAKE_MS / 1000, ease: "easeOut" }}
+            >
+              <CelebrationCanvas theme={theme} phaseRef={phaseRef} t0Ref={t0Ref} />
+              <CelebrationContent
+                theme={theme}
+                phase={phase}
+                collapsed={collapsed}
+                skipped={skipped}
+                handoff={handoff !== null}
+                layout={layout}
+                onDismiss={dismiss}
               />
-            )}
-          </AnimatePresence>
-        </>
+            </motion.div>
+
+            {/* Impact flash: white with a breath of the tier colour, gone fast. */}
+            <AnimatePresence>
+              {phase === "ignite" && !skipped && (
+                <motion.div
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0"
+                  style={{
+                    background: `radial-gradient(circle at ${layout.cx}px ${layout.cy}px, rgba(255,255,255,0.98), rgba(${theme.glowRgb}, 0.55) 42%, transparent 72%)`,
+                  }}
+                  initial={{ opacity: 0.95 }}
+                  animate={{ opacity: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.45, ease: EASE_HOUSE }}
+                />
+              )}
+            </AnimatePresence>
+          </>
+        )}
+      </div>
+
+      {/* The handoff. Rendered outside the veil so it keeps travelling after
+          the veil has faded, over the live app — the mark leaves the
+          celebration and lands on the logo the user will see from now on. */}
+      {handoff && (
+        <motion.div
+          aria-hidden
+          className="pointer-events-none fixed z-[9998]"
+          style={{
+            left: layout.cx - HERO_LOGO_PX / 2,
+            top: layout.cy - HERO_LOGO_PX / 2,
+          }}
+          initial={{ x: 0, y: 0, scale: 1 }}
+          animate={{ x: handoff.dx, y: handoff.dy, scale: [1, 1.1, handoff.scale] }}
+          transition={{
+            duration: HANDOFF_MS / 1000,
+            ease: EASE_HOUSE,
+            // A breath of anticipation before it goes — the mark gathers
+            // itself rather than simply being tweened away.
+            scale: {
+              duration: HANDOFF_MS / 1000,
+              times: [0, 0.14, 1],
+              ease: EASE_HOUSE,
+            },
+          }}
+        >
+          <motion.div
+            style={{ filter: `drop-shadow(0 0 26px rgba(${theme.glowRgb}, 0.75))` }}
+            initial={{ opacity: 1 }}
+            animate={{ opacity: 0 }}
+            // Fades only at the very end, on top of the app's own logo, so
+            // the swap is a dissolve between two identical marks.
+            transition={{ duration: 0.18, delay: (HANDOFF_MS - 180) / 1000 }}
+          >
+            <OrbitLogo size="hero" plan={theme.plan} />
+          </motion.div>
+        </motion.div>
       )}
-    </div>
+    </>
   );
 }

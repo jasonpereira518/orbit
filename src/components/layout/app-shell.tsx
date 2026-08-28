@@ -138,7 +138,9 @@ export function AppShell({
                 className="flex items-center gap-2.5"
                 title="Back to landing page"
               >
-                <OrbitLogo size="md" plan={plan} />
+                <span data-app-logo className="inline-flex shrink-0">
+                  <OrbitLogo size="md" plan={plan} />
+                </span>
                 <span className="font-[family-name:var(--font-display)] text-lg leading-none text-ink">
                   Orbit
                 </span>
