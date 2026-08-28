@@ -11,6 +11,7 @@ import { ViewAsUserBanner } from "@/components/layout/view-as-user-banner";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
+import { PlanCelebrationWatcher } from "@/components/celebration/plan-celebration-watcher";
 import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
 import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar";
 import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
@@ -104,6 +105,7 @@ export function AppShell({
           <AppStarfield />
           <AvatarBackfill />
           <DueNotificationsWatcher />
+          <PlanCelebrationWatcher plan={plan} />
           <ImportJobWatcher />
           <GlobalJobProgressBar />
           <div
