@@ -37,7 +37,14 @@ npm run build     # overwrite dist/ with a real, self-contained bundle
 then hit **Reload** on the extension card in `chrome://extensions`.
 
 So: `npm run dev` while you're iterating on the panel (keep it running),
-`npm run build` whenever you actually want to *use* the extension.
+`npm run build:dev` whenever you actually want to *use* the extension
+against your local server.
+
+`npm run build` (no `:dev`) is the release build — Vite defaults to
+production mode, which reads the committed `.env.production` and ignores
+`.env`/`.env.local` entirely. That's deliberate for store releases (see
+below), but it means a plain `npm run build` will NOT pick up a local
+`VITE_ORBIT_APP_URL` even if `.env` sets one — use `build:dev` for that.
 
 ## Production build & release
 

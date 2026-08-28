@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "npm run check:tokens && npm run build:inject && vite build",
+    "build:dev": "npm run check:tokens && npm run build:inject && vite build --mode development",
     "build:inject": "vite build --config vite.inject.config.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
