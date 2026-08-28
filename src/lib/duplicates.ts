@@ -10,7 +10,7 @@ import type { Contact } from "@/db/schema";
  */
 export type DuplicateSubject = Pick<
   Contact,
-  "id" | "fullName" | "email" | "linkedinUrl" | "company" | "title"
+  "id" | "fullName" | "email" | "linkedinUrl" | "xHandle" | "company" | "title"
 >;
 
 /** Confidence at/above which a duplicate match is treated as an auto-merge, not just a hint. */
@@ -67,6 +67,25 @@ export function linkedinSlug(url: string | null | undefined) {
 }
 
 /**
+ * Reduce anything that identifies an X/Twitter account to a bare lowercase
+ * handle: a full profile URL on either domain, an "@handle", or a bare handle.
+ * Returns "" when the input isn't a usable handle, so callers can treat empty
+ * as "no signal" rather than matching everything together.
+ *
+ * Mirrored byte-for-byte in the extension's `extension/src/inject/dom/url.ts`;
+ * change both together.
+ */
+export function normalizeXHandle(value: string | null | undefined) {
+  if (!value) return "";
+  const trimmed = value.trim();
+  const fromUrl = trimmed.match(
+    /(?:^|\/\/|\.)(?:x|twitter)\.com\/(?:#!\/)?@?([A-Za-z0-9_]{1,15})(?:[/?#]|$)/i
+  );
+  const raw = fromUrl ? fromUrl[1] : trimmed.replace(/^@/, "");
+  return /^[A-Za-z0-9_]{1,15}$/.test(raw) ? raw.toLowerCase() : "";
+}
+
+/**
  * Generic over `T` (defaulting to `DuplicateSubject`) so a caller that still has full
  * `Contact` rows in hand (e.g. `calendar-sync.ts`, which reads fields duplicate detection
  * itself never touches) gets `contact: Contact` back, while a caller that queried only the
@@ -84,6 +103,7 @@ export function findDuplicateCandidates<T extends DuplicateSubject>(
     fullName?: string | null;
     email?: string | null;
     linkedinUrl?: string | null;
+    xHandle?: string | null;
     company?: string | null;
     title?: string | null;
   }
@@ -92,12 +112,17 @@ export function findDuplicateCandidates<T extends DuplicateSubject>(
   const name = normalize(incoming.fullName);
   const email = normalize(incoming.email);
   const linkedin = linkedinSlug(incoming.linkedinUrl);
+  const xHandle = normalizeXHandle(incoming.xHandle);
   const company = normalize(incoming.company);
   const title = normalize(incoming.title);
 
   for (const contact of existing) {
     if (linkedin && linkedinSlug(contact.linkedinUrl) === linkedin) {
       matches.push({ contact, reason: "Same LinkedIn URL", confidence: 0.98 });
+      continue;
+    }
+    if (xHandle && normalizeXHandle(contact.xHandle) === xHandle) {
+      matches.push({ contact, reason: "Same X handle", confidence: 0.97 });
       continue;
     }
     if (email && normalize(contact.email) === email) {
@@ -161,6 +186,7 @@ export function findDuplicateCandidates<T extends DuplicateSubject>(
  */
 export type DuplicateIndex = {
   byLinkedin: Map<string, DuplicateSubject[]>;
+  byX: Map<string, DuplicateSubject[]>;
   byEmail: Map<string, DuplicateSubject[]>;
   byNameCompany: Map<string, DuplicateSubject[]>;
   byNameTitle: Map<string, DuplicateSubject[]>;
@@ -193,6 +219,7 @@ function fuzzyBucketKey(fullName: string | null | undefined) {
 export function buildDuplicateIndex(existing: DuplicateSubject[]): DuplicateIndex {
   const index: DuplicateIndex = {
     byLinkedin: new Map(),
+    byX: new Map(),
     byEmail: new Map(),
     byNameCompany: new Map(),
     byNameTitle: new Map(),
@@ -204,10 +231,12 @@ export function buildDuplicateIndex(existing: DuplicateSubject[]): DuplicateInde
     const name = normalize(contact.fullName);
     const email = normalize(contact.email);
     const linkedin = linkedinSlug(contact.linkedinUrl);
+    const xHandle = normalizeXHandle(contact.xHandle);
     const company = normalize(contact.company);
     const title = normalize(contact.title);
 
     if (linkedin) pushTo(index.byLinkedin, linkedin, contact);
+    if (xHandle) pushTo(index.byX, xHandle, contact);
     if (email) pushTo(index.byEmail, email, contact);
     if (name && company) pushTo(index.byNameCompany, compositeKey(name, company), contact);
     if (name && title) pushTo(index.byNameTitle, compositeKey(name, title), contact);
@@ -223,10 +252,12 @@ export function addToDuplicateIndex(index: DuplicateIndex, contact: DuplicateSub
   const name = normalize(contact.fullName);
   const email = normalize(contact.email);
   const linkedin = linkedinSlug(contact.linkedinUrl);
+  const xHandle = normalizeXHandle(contact.xHandle);
   const company = normalize(contact.company);
   const title = normalize(contact.title);
 
   if (linkedin) pushTo(index.byLinkedin, linkedin, contact);
+  if (xHandle) pushTo(index.byX, xHandle, contact);
   if (email) pushTo(index.byEmail, email, contact);
   if (name && company) pushTo(index.byNameCompany, compositeKey(name, company), contact);
   if (name && title) pushTo(index.byNameTitle, compositeKey(name, title), contact);
@@ -241,6 +272,7 @@ export function findDuplicateCandidatesIndexed(
     fullName?: string | null;
     email?: string | null;
     linkedinUrl?: string | null;
+    xHandle?: string | null;
     company?: string | null;
     title?: string | null;
   }
@@ -248,6 +280,7 @@ export function findDuplicateCandidatesIndexed(
   const name = normalize(incoming.fullName);
   const email = normalize(incoming.email);
   const linkedin = linkedinSlug(incoming.linkedinUrl);
+  const xHandle = normalizeXHandle(incoming.xHandle);
   const company = normalize(incoming.company);
   const title = normalize(incoming.title);
 
@@ -263,6 +296,7 @@ export function findDuplicateCandidatesIndexed(
   };
 
   if (linkedin) addAll(index.byLinkedin.get(linkedin), "Same LinkedIn URL", 0.98);
+  if (xHandle) addAll(index.byX.get(xHandle), "Same X handle", 0.97);
   if (email) addAll(index.byEmail.get(email), "Same email", 0.95);
   if (name && company)
     addAll(index.byNameCompany.get(compositeKey(name, company)), "Same name + company", 0.9);

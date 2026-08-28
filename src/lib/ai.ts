@@ -239,6 +239,27 @@ export async function getAiConfig(userId: string) {
   return { provider, model, apiKey, settings, keyOwner };
 }
 
+/**
+ * Whether this user can make AI calls at all, without throwing.
+ *
+ * `getAiConfig` throws when no key is configured, which is the right shape for
+ * call sites that need the key but wrong for ones that need to *decide* — the
+ * extension has to degrade to heuristics rather than surface an error, since
+ * having no key is a normal state (env keys are ignored on Vercel).
+ */
+export async function getAiCapability(userId: string): Promise<{
+  hasKey: boolean;
+  provider: AiProvider;
+}> {
+  const settings = await loadSettings(userId);
+  const provider = resolveAiProvider(settings?.aiProvider);
+  return { hasKey: Boolean(getProviderApiKey(provider, settings)), provider };
+}
+
+export async function userHasAiKey(userId: string): Promise<boolean> {
+  return (await getAiCapability(userId)).hasKey;
+}
+
 /** Resolve which embedding API to use for semantic search. */
 export async function resolveEmbeddingBackend(userId: string): Promise<{
   backend: EmbeddingBackend;

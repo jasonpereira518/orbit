@@ -66,6 +66,7 @@ export type ContactInput = {
   email?: string;
   phone?: string;
   linkedinUrl?: string;
+  xHandle?: string;
   website?: string;
   profileImageUrl?: string | null;
   relationshipScore?: number;
@@ -255,6 +256,7 @@ function contactInsertValues(
     email: input.email,
     phone: input.phone,
     linkedinUrl: input.linkedinUrl,
+    xHandle: input.xHandle,
     website: input.website,
     profileImageUrl: input.profileImageUrl ?? null,
     relationshipScore: input.relationshipScore ?? 2,
@@ -626,6 +628,7 @@ export async function updateContactForUser(
       ...(input.linkedinUrl !== undefined
         ? { linkedinUrl: input.linkedinUrl }
         : {}),
+      ...(input.xHandle !== undefined ? { xHandle: input.xHandle } : {}),
       ...(input.website !== undefined ? { website: input.website } : {}),
       ...(input.profileImageUrl !== undefined
         ? { profileImageUrl: input.profileImageUrl }

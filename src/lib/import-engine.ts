@@ -384,6 +384,7 @@ export async function runImportJob(importId: string): Promise<void> {
           fullName: true,
           email: true,
           linkedinUrl: true,
+          xHandle: true,
           company: true,
           title: true,
         },
