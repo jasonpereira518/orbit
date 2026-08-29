@@ -126,6 +126,19 @@ export function CelebrationStage({
         dy: target.cy - l.cy,
         scale: target.size / HERO_LOGO_PX,
       });
+      // The app's own logo steps aside for the whole flight — otherwise it
+      // already shows the new ring (the shell refreshes below) while a
+      // second mark is still crossing the screen toward it, which reads as
+      // a duplicate rather than an arrival. It fades back in on its own
+      // 180ms transition (see globals.css) timed to land exactly as the
+      // flying mark below starts its own matching fade-out.
+      document.documentElement.setAttribute("data-celebration-handoff", "");
+      timers.current.push(
+        setTimeout(
+          () => document.documentElement.removeAttribute("data-celebration-handoff"),
+          HANDOFF_MS - 180,
+        ),
+      );
       // Refresh the shell now, under the veil, so the logo being flown into
       // already wears the new ring when the flight lands on it.
       onHandoff?.();
@@ -263,6 +276,10 @@ export function CelebrationStage({
       cancelAnimationFrame(raf);
       clearTimeout(fallback);
       document.documentElement.removeAttribute("data-celebration");
+      // Safety net: the scheduled removal in `dismiss` normally clears this
+      // first, but an unmount that skips that timer (StrictMode, a forced
+      // remount mid-flight) must not leave the app's own logo hidden forever.
+      document.documentElement.removeAttribute("data-celebration-handoff");
       previous?.focus?.();
     };
   }, []);
