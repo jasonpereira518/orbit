@@ -1,5 +1,6 @@
 import type { LinkedInMessageThreadRowPayload } from "@/db/schema";
 import type { ImportAdapter, InteractionInsert } from "@/lib/import-engine";
+import { kickLinkedInTimelineBackfill } from "@/lib/linkedin-timeline-backfill";
 import { enrichContactsFromMessages } from "@/lib/message-enrichment";
 
 /**
@@ -158,5 +159,12 @@ export const linkedinMessagesAdapter: ImportAdapter<LinkedInMessageThreadRowPayl
   async finalize(userId, contactIds) {
     if (contactIds.length === 0) return;
     await enrichContactsFromMessages(userId, contactIds);
+    // Timeline-event derivation (reach-out / meeting / in-person) is kicked, not run: it is
+    // one AI completion per contact with no cap, so running it here would do inline what
+    // `enrichContactsFromMessages` above only gets away with by silently capping itself at
+    // 40 contacts. `kickLinkedInTimelineBackfill` hands it to a time-boxed, self-continuing
+    // runner that finishes the whole set across as many invocations as it takes — see
+    // `src/lib/linkedin-timeline-backfill.ts` for why it cannot live on this seam.
+    await kickLinkedInTimelineBackfill(userId);
   },
 };

@@ -14,6 +14,10 @@ import {
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { findStaleCohorts } from "@/lib/closeness-materialize";
 import { kickEmbeddingBackfill, runEmbeddingBackfill } from "@/lib/embedding-backfill";
+import {
+  kickLinkedInTimelineBackfill,
+  usersWithPendingTimelineEvents,
+} from "@/lib/linkedin-timeline-backfill";
 import { backfillEmbeddingVectors, neonClient } from "@/db";
 
 export const maxDuration = 300;
@@ -39,6 +43,17 @@ const RECALIBRATE_BATCH = 25;
 
 /** Users listed per run for the embedding backstop — see the try block below. */
 const EMBED_BACKFILL_USERS = 25;
+
+/**
+ * Users handed to the LinkedIn timeline backfill per run.
+ *
+ * Kicked, never run inline — unlike the embedding sweep below, which does drain work here
+ * under a wall-clock budget. Timeline derivation costs one AI completion per contact, so
+ * even a single user's backlog can exceed this route's whole 300s, and this route has a
+ * job-resumption backstop to get to. The route it kicks is self-continuing and has its own
+ * 300s per invocation, which is where that work belongs.
+ */
+const TIMELINE_BACKFILL_USERS = 25;
 
 /**
  * Wall-clock ceiling on the whole embedding sweep, and on any single user inside it.
@@ -113,6 +128,8 @@ export async function GET(request: Request) {
     /** Users handed to the self-continuing backfill route because this run could not
      *  finish them inside `EMBED_SWEEP_BUDGET_MS`. */
     embeddingBackfillsKicked: 0,
+    /** Users handed to the self-continuing LinkedIn timeline-event backfill route. */
+    timelineBackfillsKicked: 0,
   };
 
   try {
@@ -211,6 +228,20 @@ export async function GET(request: Request) {
           stats.embeddingBackfillsKicked += 1;
           await kickEmbeddingBackfill(staleUser);
         }
+      }
+    } catch {
+      status = "partial";
+    }
+
+    try {
+      // Backstop only — the LinkedIn messages adapter's `finalize` kicks this directly when
+      // an import completes. This catches users whose kick was lost along with the
+      // invocation that sent it, and users whose backlog outlived the kick chain.
+      for (const pendingUser of await usersWithPendingTimelineEvents(
+        TIMELINE_BACKFILL_USERS
+      )) {
+        await kickLinkedInTimelineBackfill(pendingUser);
+        stats.timelineBackfillsKicked += 1;
       }
     } catch {
       status = "partial";
