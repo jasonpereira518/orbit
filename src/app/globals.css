@@ -232,17 +232,17 @@
    accent-foreground = primary) just re-hued to YC's signature orange
    instead of Orbit's teal/blue. */
 .yc-theme {
-  --primary: #c2410c;
-  --primary-foreground: #fdecd8;
-  --accent: #fdecd8;
-  --accent-foreground: #c2410c;
+  --primary: #f26625;
+  --primary-foreground: #fff3e9;
+  --accent: #ffeede;
+  --accent-foreground: #f26625;
 }
 
 .dark .yc-theme {
-  --primary: #ffa15c;
-  --primary-foreground: #1a0900;
-  --accent: #3d2410;
-  --accent-foreground: #ffa15c;
+  --primary: #ff9152;
+  --primary-foreground: #2a1000;
+  --accent: #47280f;
+  --accent-foreground: #ff9152;
 }
 
 @layer base {
