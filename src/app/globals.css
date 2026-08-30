@@ -222,6 +222,29 @@
   color-scheme: dark;
 }
 
+/* YC-mode admin console. Same scoping approach as `.dark`: applied on the
+   AdminShell wrapper only when the operator has toggled YC mode on
+   (`src/components/admin/admin-shell.tsx`), so it retints just that
+   subtree's accent/primary — never `--ink`, which stays untouched, so
+   headings and body text are unaffected (see the split documented in
+   `:root` above). Values mirror the existing token relationship exactly
+   (primary = strong hue, accent = pale tint of the same hue,
+   accent-foreground = primary) just re-hued to YC's signature orange
+   instead of Orbit's teal/blue. */
+.yc-theme {
+  --primary: #c2410c;
+  --primary-foreground: #fdecd8;
+  --accent: #fdecd8;
+  --accent-foreground: #c2410c;
+}
+
+.dark .yc-theme {
+  --primary: #ffa15c;
+  --primary-foreground: #1a0900;
+  --accent: #3d2410;
+  --accent-foreground: #ffa15c;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
