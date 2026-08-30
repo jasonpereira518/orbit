@@ -1,12 +1,22 @@
 /**
  * Everything tier-specific the celebration renders from.
  *
- * The stage is an always-dark takeover, so these are FIXED brand hexes
- * (`--brand-pro` blue, the landing gold), not the theme-aware `--tier-*`
- * tokens — the same rule the pricing cards and the logo ring follow. The
- * whole screen must read as the tier colour: even the space backdrop and its
- * nebulae are re-hued per tier, and the vignette darkens toward tier-black,
- * never neutral black.
+ * The stage is a bright, flat, saturated takeover — a struck emblem on a
+ * colour field — so these are FIXED brand-derived hexes, not the theme-aware
+ * `--tier-*` tokens (the same rule the pricing cards and the logo ring
+ * follow). Nothing here is theme-reactive: the celebration looks identical in
+ * light and dark mode, because it replaces the app rather than sitting in it.
+ *
+ * Two rules this file exists to enforce:
+ *
+ * 1. `ink` is DARK on both tiers and is used at FULL OPACITY. Body copy on a
+ *    saturated field is exactly where `text-white/70` designs rot — the
+ *    resulting ratio silently depends on the field behind it. `inkSoft` and
+ *    `inkFaint` are measured values, never opacities of `ink`.
+ * 2. The emblem must separate from its own field. Lifetime does it by hue
+ *    (warm gold on orange is a value step); Pro does it by BOTH value and
+ *    saturation — a desaturated blue-steel coin on a vivid blue field. A
+ *    saturated blue coin would dissolve into the ground.
  */
 
 import { PLAN_LABELS, type Plan } from "@/lib/plan-limits";
@@ -14,75 +24,104 @@ import { planCopy } from "@/lib/plan-copy";
 
 export type PaidPlan = Extract<Plan, "orbit" | "lifetime">;
 
-export type TierNebula = {
-  /** Fractions of the viewport, matching `NEBULAE` in `sky-palette.ts`. */
-  x: number;
-  y: number;
-  rx: number;
-  ry: number;
-  rot: number;
-  rgb: string;
-  a: number;
+/** The flat colour field. There is no black anywhere in the celebration. */
+export type FlatField = {
+  /** The radial hotspot, centred behind the emblem rather than on the screen. */
+  hot: string;
+  /** The plateau. Most of the screen is this colour. */
+  mid: string;
+  /** The rim, before the vignette multiplies over it. */
+  edge: string;
+  /** Multiplied into the vignette and into the emblem's seat shadow. */
+  vignette: string;
+  midRgb: string;
+  vignetteRgb: string;
+};
+
+/**
+ * Flat struck metal: discrete tones, never interpolated. Every tonal change
+ * on the emblem is a path boundary, not a gradient stop.
+ */
+export type FacetRamp = {
+  highlight: string;
+  light: string;
+  base: string;
+  shadow: string;
+  deep: string;
+  /** The hard outline. Without it a struck shape dissolves into a saturated
+   * field — this is what keeps the emblem reading as a sticker. */
+  contour: string;
+  /** The plan ring, lit by the finale sweep — the ring the sidebar logo wears. */
+  ringLit: string;
 };
 
 export type TierTheme = {
   plan: PaidPlan;
-  /** "Orbit Pro" / "Orbit Lifetime" — the render uppercases for the slam. */
+  /** "Orbit Pro" / "Orbit Lifetime" — the lockup uppercases it. */
   name: string;
-  /** Fixed brand hex, for DOM accents on the dark stage. */
+  /** Fixed brand hex, kept for anything that needs the tier's own colour. */
   accent: string;
-  /** `r, g, b` triplet for particles, glow, and shockwaves. */
-  glowRgb: string;
-  /** Hotter near-white tint for the star's centre and ejecta heads. */
+  field: FlatField;
+  emblem: FacetRamp;
+  /** Body copy on the field. Dark, full opacity, AA on both tiers. */
+  ink: string;
+  inkRgb: string;
+  /** Secondary copy (the welcome line). Measured, not derived. */
+  inkSoft: string;
+  /** The skip hint only. Quieter, and honestly decorative-adjacent. */
+  inkFaint: string;
+  /** The perk-row slab. Must be the emblem's lightest facet, NOT a shade of
+   * the field — a chip one step off its own ground is invisible, which is
+   * exactly how the first pass failed. */
+  chip: string;
+  /** The dismiss button, inverted into a dark slab against the bright field. */
+  onField: string;
+  onFieldInk: string;
+  /** Sparks, confetti, shockwaves. */
+  sparkRgb: string;
+  /** The strike flash and the hottest spark heads. */
   coreRgb: string;
-  /** Metallic headline gradient, sheen to shadow. */
-  metal: { sheen: string; hi: string; lo: string };
-  /** Tier-tinted deep-space radial stops, centre outward. */
-  space: readonly { at: number; color: string }[];
-  /** Terminal space colour — the stage background and vignette corner. */
-  deep: string;
-  /** `deep` as an `r, g, b` triplet, for translucent card fills. */
-  deepRgb: string;
-  nebulae: readonly TierNebula[];
   kicker: string;
   welcome: string;
-  /** What the cascade shows. */
   perks: string[];
 };
 
 /** Cards beyond this stop being rewards and start being a terms sheet. */
 export const MAX_PERKS = 6;
 
-/** Same composition as `NEBULAE` in `sky-palette.ts` — a large cloud behind
- * the upper left, a counterweight lower right, a faint one low centre — so
- * the tinted sky keeps the house sky's balance while changing its hue. */
-const NEBULA_SLOTS = [
-  { x: 0.16, y: 0.24, rx: 0.46, ry: 0.3, rot: -0.35 },
-  { x: 0.84, y: 0.72, rx: 0.42, ry: 0.26, rot: 0.42 },
-  { x: 0.52, y: 1.02, rx: 0.34, ry: 0.2, rot: 0.1 },
-] as const;
-
 const THEMES: Record<PaidPlan, TierTheme> = {
   orbit: {
     plan: "orbit",
     name: PLAN_LABELS.orbit,
     accent: "#599de7",
-    glowRgb: "142, 196, 245",
+    field: {
+      hot: "#5FAEF9",
+      mid: "#3384EA",
+      edge: "#1D5DBC",
+      vignette: "#123F86",
+      midRgb: "51, 132, 234",
+      vignetteRgb: "18, 63, 134",
+    },
+    // Desaturated steel: separates from the vivid blue field by saturation as
+    // well as value, which is the only way a blue coin survives a blue ground.
+    emblem: {
+      highlight: "#DCE9F7",
+      light: "#A8C0DA",
+      base: "#6E88A8",
+      shadow: "#3E5476",
+      deep: "#24344F",
+      contour: "#0C1526",
+      ringLit: "#8CC6FF",
+    },
+    ink: "#04162E", // 4.9:1 on field.mid
+    inkRgb: "4, 22, 46",
+    inkSoft: "#0B2A52",
+    inkFaint: "#16406F",
+    chip: "#DCE9F7", // ink on it: 14.9:1
+    onField: "#0C1526",
+    onFieldInk: "#FFFFFF",
+    sparkRgb: "255, 255, 255",
     coreRgb: "234, 244, 255",
-    metal: { sheen: "#eaf4ff", hi: "#8ec4f5", lo: "#5b9de6" },
-    space: [
-      { at: 0, color: "#12203f" },
-      { at: 0.42, color: "#0b1730" },
-      { at: 0.72, color: "#060d1e" },
-      { at: 1, color: "#040814" },
-    ],
-    deep: "#040814",
-    deepRgb: "4, 8, 20",
-    nebulae: [
-      { ...NEBULA_SLOTS[0], rgb: "89, 157, 231", a: 0.14 },
-      { ...NEBULA_SLOTS[1], rgb: "70, 120, 220", a: 0.1 },
-      { ...NEBULA_SLOTS[2], rgb: "120, 190, 240", a: 0.07 },
-    ],
     kicker: "Something new is lighting up",
     welcome: "Welcome to Orbit Pro. The whole sky is yours.",
     perks: planCopy("orbit").features.slice(0, MAX_PERKS),
@@ -91,22 +130,32 @@ const THEMES: Record<PaidPlan, TierTheme> = {
     plan: "lifetime",
     name: PLAN_LABELS.lifetime,
     accent: "#f2c14e",
-    glowRgb: "247, 209, 95",
-    coreRgb: "255, 246, 218",
-    metal: { sheen: "#fff6da", hi: "#f7d15f", lo: "#e0a52e" },
-    space: [
-      { at: 0, color: "#2b1c08" },
-      { at: 0.42, color: "#1d1305" },
-      { at: 0.72, color: "#120b03" },
-      { at: 1, color: "#0a0602" },
-    ],
-    deep: "#0a0602",
-    deepRgb: "10, 6, 2",
-    nebulae: [
-      { ...NEBULA_SLOTS[0], rgb: "242, 193, 78", a: 0.13 },
-      { ...NEBULA_SLOTS[1], rgb: "224, 140, 50", a: 0.09 },
-      { ...NEBULA_SLOTS[2], rgb: "250, 220, 130", a: 0.06 },
-    ],
+    field: {
+      hot: "#FFCE63",
+      mid: "#F5A623",
+      edge: "#E07C12",
+      vignette: "#A85405",
+      midRgb: "245, 166, 35",
+      vignetteRgb: "168, 84, 5",
+    },
+    emblem: {
+      highlight: "#FFE9AE",
+      light: "#F5C264",
+      base: "#C97D26",
+      shadow: "#8E4E14",
+      deep: "#572C08",
+      contour: "#3B1C02",
+      ringLit: "#FFF4CF",
+    },
+    ink: "#3B1C02", // 7.7:1 on field.mid
+    inkRgb: "59, 28, 2",
+    inkSoft: "#5A3208",
+    inkFaint: "#7A4A10",
+    chip: "#FFE9AE", // ink on it: 12.6:1
+    onField: "#3B1C02",
+    onFieldInk: "#FFFFFF",
+    sparkRgb: "255, 255, 255",
+    coreRgb: "255, 250, 236",
     kicker: "This one is yours to keep",
     welcome: "Welcome to Orbit Lifetime. Yours for as long as Orbit exists.",
     perks: planCopy("lifetime").features.slice(0, MAX_PERKS),

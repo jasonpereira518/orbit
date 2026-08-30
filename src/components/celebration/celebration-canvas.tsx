@@ -8,41 +8,46 @@ import {
   COLLAPSE,
   IGNITE,
   RING_SWEEP_MS,
-  perkAt,
   finaleAt,
+  perkAt,
   restAt,
 } from "@/lib/celebration/choreography";
 import type { CelebrationPhase } from "@/lib/celebration/choreography";
 import type { TierTheme } from "@/lib/celebration/tier-theme";
 import { stageLayout } from "@/lib/celebration/stage-layout";
 import type { StageLayout } from "@/lib/celebration/stage-layout";
+import {
+  MARK_RATIO,
+  drawEmblem,
+  drawMarkSkeleton,
+  sparkPath,
+} from "@/lib/celebration/emblem";
 
 /**
- * The celebration's sky: one canvas, one rAF, every beat derived from
- * elapsed celebration time (warp-stage's contract). Phase and t0 arrive
- * through refs so a React phase change never restarts the loop — the loop
- * derives everything from `t` and a pair of one-shot latches.
+ * The celebration's field and its emblem: one canvas, one rAF, every beat
+ * derived from elapsed celebration time. Phase and t0 arrive through refs so
+ * a React phase change never restarts the loop — the loop derives everything
+ * from `t` and a pair of one-shot latches.
  *
  * The clock: `t = phase === "rest" ? max(raw, restAt) : raw`. A skip jumps
  * forward, never freezes, and both latches fire off `t` — so a skip lands on
  * exactly the composition a full play arrives at, minus the transients that
  * would already be dead (their latches spawn nothing when they fire late).
  *
- * The "every pixel tinted" guarantee lives here: a static tier-hued space
- * base (rebuilt only on resize), a per-frame energy glow that surges the
- * tier colour with the arc, and ambient stars tinted `glowRgb`, never pure
- * white.
+ * The field is two offscreen bakes, dim and lit, cross-faded by `energy`.
+ * That is what makes the ignition flip the whole screen bright: there is no
+ * additive surge anywhere, just a blend between two versions of the same
+ * ground, which can never mud because one is literally the other darkened.
  */
 
-type DiscParticle = {
+type Shard = {
   angle: number;
-  /** Distance from the star centre, px. */
   radius: number;
-  size: number;
-  /** Previous painted position, for motion streaks. */
-  px: number;
-  py: number;
-  seeded: boolean;
+  speed: number;
+  len: number;
+  spin: number;
+  spinRate: number;
+  tone: number;
 };
 
 type Spark = {
@@ -55,25 +60,30 @@ type Spark = {
   hot: boolean;
 };
 
-type AmbientStar = {
-  angle: number;
-  radius: number;
-  size: number;
-  twinkle: number;
+type Confetto = {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  w: number;
+  h: number;
+  spin: number;
+  spinRate: number;
+  tone: number;
+  life: number;
+  maxLife: number;
 };
 
-/** Disc tilt: y compressed and the whole ellipse rotated a touch. */
-const TILT_Y = 0.38;
-const TILT_ROT = -0.2;
-
-const DISC_AREA = 4500; // px² per disc particle
-const DISC_CAP = 420;
-const AMBIENT_AREA = 9000;
-const AMBIENT_CAP = 180;
+/** Flat shapes read far busier than dust, so there are a fifth as many. */
+const SHARD_AREA = 16000;
+const SHARD_CAP = 120;
 const EJECTA_COUNT = 160;
+const CONFETTI_COUNT = 36;
 const GLINT_COUNT = 12;
-/** A latch firing later than this spawns no transients — they'd be dead. */
+/** A latch firing this far past its beat spawns nothing — the transient it
+ * would have thrown is already notionally over. */
 const LATCH_FRESH_MS = 600;
+const RAY_COUNT = 24;
 
 export function CelebrationCanvas({
   theme,
@@ -92,69 +102,52 @@ export function CelebrationCanvas({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const glow = theme.glowRgb;
-    const core = theme.coreRgb;
+    let layout: StageLayout = stageLayout(window.innerWidth, window.innerHeight);
     const n = theme.perks.length;
     const FINALE = finaleAt(n);
     const REST = restAt(n);
     const SWEEP_DONE = FINALE + RING_SWEEP_MS;
 
-    let layout: StageLayout = stageLayout(window.innerWidth, window.innerHeight);
     let raf = 0;
-    let background: HTMLCanvasElement | null = null;
-    let disc: DiscParticle[] = [];
+    let shards: Shard[] = [];
     let sparks: Spark[] = [];
-    let ambient: AmbientStar[] = [];
+    let confetti: Confetto[] = [];
+    let bgLit: HTMLCanvasElement | null = null;
+    let bgDim: HTMLCanvasElement | null = null;
     let ignited = false;
     let glinted = false;
     let lastFrame = performance.now();
+    // An accumulator rather than `now * k`, so the rays can change speed at
+    // the ignition without the whole fan jumping.
+    let rayAngle = 0;
+    let tiltKick = 0;
+    let kickedThrough = -1;
 
-    function maxR() {
-      return Math.hypot(layout.width, layout.height) / 2;
-    }
+    const maxR = () => Math.hypot(layout.width, layout.height) / 2;
 
-    /** Tilted-ellipse projection of a disc particle's polar position. */
-    function discXY(p: { angle: number; radius: number }) {
-      const ex = Math.cos(p.angle) * p.radius;
-      const ey = Math.sin(p.angle) * p.radius * TILT_Y;
-      const cosT = Math.cos(TILT_ROT);
-      const sinT = Math.sin(TILT_ROT);
-      return {
-        x: layout.cx + ex * cosT - ey * sinT,
-        y: layout.cy + ex * sinT + ey * cosT,
-      };
-    }
-
-    function spawnDisc(): DiscParticle {
+    function spawnShard(): Shard {
+      const markR = layout.emblemR * MARK_RATIO;
       return {
         angle: Math.random() * Math.PI * 2,
-        radius: layout.coreR * (1.6 + Math.random() * 2.4),
-        size: 0.6 + Math.random() * 1.3,
-        px: 0,
-        py: 0,
-        seeded: false,
-      };
-    }
-
-    function spawnAmbient(): AmbientStar {
-      return {
-        angle: Math.random() * Math.PI * 2,
-        radius: maxR() * (0.15 + Math.random() * 0.95),
-        size: 0.5 + Math.random() * 1.2,
-        twinkle: Math.random() * Math.PI * 2,
+        radius: markR * (2.6 + Math.random() * 3.2),
+        speed: 0,
+        len: 7 + Math.random() * 11,
+        spin: Math.random() * Math.PI * 2,
+        spinRate: (Math.random() - 0.5) * 6,
+        tone: Math.floor(Math.random() * 3),
       };
     }
 
     function spawnSparks(count: number, x: number, y: number, power: number) {
       for (let i = 0; i < count; i++) {
-        const angle = Math.random() * Math.PI * 2;
-        const speed = power * (0.3 + Math.random() * 0.7);
-        const maxLife = 0.5 + Math.random() * 0.6;
+        const a = Math.random() * Math.PI * 2;
+        const s = power * (0.25 + Math.random() * 0.75);
+        const maxLife = 0.5 + Math.random() * 0.8;
         sparks.push({
           x,
           y,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
+          vx: Math.cos(a) * s,
+          vy: Math.sin(a) * s,
           life: maxLife,
           maxLife,
           hot: i % 4 === 0,
@@ -162,366 +155,453 @@ export function CelebrationCanvas({
       }
     }
 
+    function spawnConfetti(x: number, y: number) {
+      for (let i = 0; i < CONFETTI_COUNT; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const s = 620 * (0.3 + Math.random() * 0.7);
+        const maxLife = 1.6 + Math.random();
+        confetti.push({
+          x,
+          y,
+          vx: Math.cos(a) * s,
+          vy: Math.sin(a) * s - 120,
+          w: 4 + Math.random() * 3,
+          h: 8 + Math.random() * 4,
+          spin: Math.random() * Math.PI * 2,
+          spinRate: (Math.random() - 0.5) * 10,
+          tone: Math.floor(Math.random() * 3),
+          life: maxLife,
+          maxLife,
+        });
+      }
+    }
+
     /**
-     * The tier-hued space base: `paintSpace`'s structure from
-     * `sky-palette.ts`, with every stop and nebula sourced from the theme,
-     * plus a vignette that multiplies the corners toward tier-black — never
-     * neutral black, so even the darkest pixel carries the hue.
+     * The lit field, baked once per resize. Deliberately at DPR 1: these are
+     * pure smooth gradients, so upscaling is invisible, and two DPR-2 bakes on
+     * a 4K window would cost well over 100MB.
      */
-    function paintTierSpace(bg: CanvasRenderingContext2D, w: number, h: number) {
-      const g = bg.createRadialGradient(
-        w * 0.5,
-        h * 0.42,
+    function paintField(g: CanvasRenderingContext2D, w: number, h: number) {
+      const f = theme.field;
+      g.fillStyle = f.mid;
+      g.fillRect(0, 0, w, h);
+
+      // Centred on the EMBLEM, not on the screen — the light source and the
+      // object have to agree or the whole thing reads as a mistake.
+      const hot = g.createRadialGradient(
+        layout.cx,
+        layout.cy,
         0,
-        w * 0.5,
-        h * 0.5,
-        Math.max(w, h) * 0.9,
+        layout.cx,
+        layout.cy,
+        Math.hypot(w, h) * 0.72,
       );
-      for (const s of theme.space) g.addColorStop(s.at, s.color);
-      bg.fillStyle = g;
-      bg.fillRect(0, 0, w, h);
+      hot.addColorStop(0, f.hot);
+      hot.addColorStop(0.42, f.mid);
+      hot.addColorStop(1, f.edge);
+      g.fillStyle = hot;
+      g.fillRect(0, 0, w, h);
 
-      for (const neb of theme.nebulae) {
-        const rx = w * neb.rx;
-        const ry = w * neb.ry;
-        bg.save();
-        bg.globalCompositeOperation = "screen";
-        bg.translate(w * neb.x, h * neb.y);
-        bg.rotate(neb.rot);
-        bg.scale(1, ry / rx);
-        const cloud = bg.createRadialGradient(0, 0, 0, 0, 0, rx);
-        cloud.addColorStop(0, `rgba(${neb.rgb}, ${neb.a})`);
-        cloud.addColorStop(0.4, `rgba(${neb.rgb}, ${neb.a * 0.42})`);
-        cloud.addColorStop(0.72, `rgba(${neb.rgb}, ${neb.a * 0.12})`);
-        cloud.addColorStop(1, `rgba(${neb.rgb}, 0)`);
-        bg.fillStyle = cloud;
-        bg.beginPath();
-        bg.arc(0, 0, rx, 0, Math.PI * 2);
-        bg.fill();
-        bg.restore();
-      }
-
-      bg.save();
-      bg.globalCompositeOperation = "multiply";
-      for (const [px, py] of [
-        [0, 0],
-        [w, 0],
-        [0, h],
-        [w, h],
-      ] as const) {
-        const corner = bg.createRadialGradient(px, py, 0, px, py, Math.max(w, h) * 0.7);
-        corner.addColorStop(0, `rgba(${theme.deepRgb}, 0.55)`);
-        corner.addColorStop(1, "rgba(255, 255, 255, 0)");
-        bg.fillStyle = corner;
-        bg.fillRect(0, 0, w, h);
-      }
-      bg.restore();
+      // One centred inverse radial, not four corner gradients: on a flat
+      // field the corner approach shows up as a lumpy X.
+      const vig = g.createRadialGradient(
+        layout.cx,
+        layout.cy,
+        0,
+        layout.cx,
+        layout.cy,
+        Math.hypot(w, h) * 0.62,
+      );
+      vig.addColorStop(0, "rgba(255, 255, 255, 0)");
+      vig.addColorStop(0.55, "rgba(255, 255, 255, 0)");
+      vig.addColorStop(1, `rgba(${f.vignetteRgb}, 0.55)`);
+      g.save();
+      g.globalCompositeOperation = "multiply";
+      g.fillStyle = vig;
+      g.fillRect(0, 0, w, h);
+      g.restore();
     }
 
     function resize() {
       if (!canvas || !ctx) return;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       layout = stageLayout(window.innerWidth, window.innerHeight);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       canvas.width = Math.round(layout.width * dpr);
       canvas.height = Math.round(layout.height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      background = document.createElement("canvas");
-      background.width = canvas.width;
-      background.height = canvas.height;
-      const bg = background.getContext("2d");
-      if (bg) {
-        bg.setTransform(dpr, 0, 0, dpr, 0, 0);
-        paintTierSpace(bg, layout.width, layout.height);
+      // Never bake a zero-sized canvas: a container can report 0 for a frame
+      // during mount, and `drawImage` from a 0x0 source throws
+      // InvalidStateError rather than no-opping. `frame` re-runs resize once
+      // the viewport reports a real size.
+      const w = Math.max(1, Math.round(layout.width));
+      const h = Math.max(1, Math.round(layout.height));
+
+      bgLit = document.createElement("canvas");
+      bgLit.width = w;
+      bgLit.height = h;
+      const lit = bgLit.getContext("2d");
+      if (lit) paintField(lit, w, h);
+
+      // The dim bake IS the lit one darkened, so the cross-fade between them
+      // is monotone and cannot shift hue.
+      bgDim = document.createElement("canvas");
+      bgDim.width = w;
+      bgDim.height = h;
+      const dim = bgDim.getContext("2d");
+      if (dim && bgLit) {
+        dim.drawImage(bgLit, 0, 0);
+        dim.globalCompositeOperation = "multiply";
+        dim.fillStyle = `rgba(${theme.field.vignetteRgb}, 0.62)`;
+        dim.fillRect(0, 0, w, h);
+        const deepen = dim.createRadialGradient(
+          layout.cx,
+          layout.cy,
+          0,
+          layout.cx,
+          layout.cy,
+          Math.hypot(w, h) * 0.62,
+        );
+        deepen.addColorStop(0, "rgba(255, 255, 255, 0)");
+        deepen.addColorStop(1, `rgba(${theme.field.vignetteRgb}, 0.28)`);
+        dim.fillStyle = deepen;
+        dim.fillRect(0, 0, w, h);
       }
 
-      const area = layout.width * layout.height;
-      ambient = Array.from(
-        { length: Math.min(AMBIENT_CAP, Math.round(area / AMBIENT_AREA)) },
-        spawnAmbient,
-      );
       if (!ignited) {
-        disc = Array.from(
-          { length: Math.min(DISC_CAP, Math.round(area / DISC_AREA)) },
-          spawnDisc,
+        const count = Math.min(
+          SHARD_CAP,
+          Math.round((layout.width * layout.height) / SHARD_AREA),
         );
+        shards = Array.from({ length: count }, spawnShard);
       }
     }
 
-    /** Screen-wide tier-colour surge, the arc's emotional meter. */
+    /**
+     * The dark-to-bright knob: how much of the lit bake shows through. Not an
+     * additive surge — there is no dark sky left to surge against.
+     */
     function energyAt(t: number, now: number) {
-      if (t < COLLAPSE[0]) return 0.2 + 0.45 * easeIn(Math.min(1, t / ACCRETE[1]));
-      if (t < IGNITE) return 0.65 - 0.3 * ((t - COLLAPSE[0]) / (COLLAPSE[1] - COLLAPSE[0]));
-      if (t < FINALE) return 0.5 + 0.5 * Math.max(0, 1 - (t - IGNITE) / 900);
-      if (t < REST) return 0.5 - 0.15 * ((t - FINALE) / (REST - FINALE));
-      return 0.35 + 0.05 * Math.sin(now / 1200);
+      const HOLD_LOW = 0.1;
+      if (t < COLLAPSE[0]) {
+        return 0.28 + 0.36 * easeIn(Math.min(1, t / ACCRETE[1]));
+      }
+      if (t < IGNITE) {
+        // The held breath. Crushes toward the field's own deep tone, never
+        // toward black — black over a flat colour plane reads as a bug.
+        const c = (t - COLLAPSE[0]) / (COLLAPSE[1] - COLLAPSE[0]);
+        return 0.64 - (0.64 - HOLD_LOW) * easeHouse(c);
+      }
+      if (t < IGNITE + 150) {
+        return HOLD_LOW + (1 - HOLD_LOW) * easeHouse((t - IGNITE) / 150);
+      }
+      if (t < FINALE) {
+        return 0.62 + 0.38 * Math.max(0, 1 - (t - IGNITE - 150) / 900);
+      }
+      if (t < REST) {
+        return 0.62 + 0.18 * Math.max(0, 1 - (t - FINALE) / RING_SWEEP_MS);
+      }
+      return 0.58 + 0.05 * Math.sin(now / 1400);
     }
 
     function frame(now: number) {
-      if (!ctx || !background) {
+      if (!ctx || !bgLit || !bgDim) {
         raf = requestAnimationFrame(frame);
         return;
+      }
+      if (bgLit.width !== Math.max(1, Math.round(window.innerWidth))) {
+        // Baked before the viewport had a real size (or a resize event was
+        // missed). Re-bake rather than blitting a stretched 1px field.
+        resize();
+        if (!bgLit || !bgDim) {
+          raf = requestAnimationFrame(frame);
+          return;
+        }
       }
       const dt = Math.min(0.05, (now - lastFrame) / 1000);
       lastFrame = now;
 
       const raw = now - (t0Ref.current ?? now);
       const t = phaseRef.current === "rest" ? Math.max(raw, REST) : raw;
-      const { cx, cy, coreR, width, height } = layout;
+      const { cx, cy, width, height, emblemR } = layout;
+      const markR = emblemR * MARK_RATIO;
+      const collapsing = t >= COLLAPSE[0] && t < IGNITE;
 
-      // One-shot latches, keyed to `t` so a skip fires them consistently.
       if (!ignited && t >= IGNITE) {
         ignited = true;
-        // The disc is flung into the ambient field; fresh ignitions also get
-        // the ejecta burst, late ones (skip, long frame gap) skip transients.
-        for (const p of disc) {
-          if (ambient.length >= AMBIENT_CAP * 1.4) break;
-          ambient.push({
-            angle: p.angle,
-            radius: Math.max(p.radius, coreR * 1.2),
-            size: p.size,
-            twinkle: Math.random() * Math.PI * 2,
-          });
+        shards = [];
+        if (t - IGNITE < LATCH_FRESH_MS) {
+          spawnSparks(EJECTA_COUNT, cx, cy, 1000);
+          spawnConfetti(cx, cy);
         }
-        disc = [];
-        if (t - IGNITE < LATCH_FRESH_MS) spawnSparks(EJECTA_COUNT, cx, cy, 1000);
       }
       if (!glinted && t >= SWEEP_DONE) {
         glinted = true;
         if (t - SWEEP_DONE < LATCH_FRESH_MS) {
-          spawnSparks(GLINT_COUNT, cx, cy - layout.ringRadius, 320);
+          spawnSparks(GLINT_COUNT, cx, cy - emblemR, 320);
         }
       }
 
-      if (background.width > 0 && background.height > 0) {
-        ctx.drawImage(background, 0, 0, width, height);
-      }
-
-      ctx.save();
-      ctx.globalCompositeOperation = "screen";
       const energy = energyAt(t, now);
-      const surge = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(width, height) * 0.7);
-      surge.addColorStop(0, `rgba(${glow}, ${0.05 + 0.1 * energy})`);
-      surge.addColorStop(1, `rgba(${glow}, 0)`);
-      ctx.fillStyle = surge;
-      ctx.fillRect(0, 0, width, height);
-      ctx.restore();
 
-      // Ambient stars — tier-tinted, twinkling, drifting once the star burns.
-      ctx.save();
-      ctx.globalCompositeOperation = "screen";
-      const drift = ignited ? 4 * dt : 0;
-      for (const s of ambient) {
-        s.radius += drift;
-        if (s.radius > maxR() * 1.25) s.radius = maxR() * (0.1 + Math.random() * 0.4);
-        const a = 0.2 + 0.16 * Math.sin(now / 900 + s.twinkle);
+      // The field: two blits, no gradients in the hot path.
+      ctx.globalAlpha = 1;
+      ctx.drawImage(bgDim, 0, 0, width, height);
+      ctx.globalAlpha = energy;
+      ctx.drawImage(bgLit, 0, 0, width, height);
+      ctx.globalAlpha = 1;
+
+      // Sunburst rays. White at very low alpha over a saturated field
+      // lightens toward that field's own hotspot hue, so it never greys.
+      rayAngle += (ignited ? 0.035 : 0.11) * dt;
+      const rayA = 0.02 + 0.045 * energy;
+      ctx.fillStyle = `rgba(255, 255, 255, ${rayA})`;
+      for (let i = 0; i < RAY_COUNT; i += 2) {
+        const a0 = rayAngle + (i * Math.PI * 2) / RAY_COUNT;
+        const a1 = a0 + Math.PI / RAY_COUNT;
         ctx.beginPath();
-        ctx.fillStyle = `rgba(${glow}, ${a})`;
-        ctx.arc(
-          cx + Math.cos(s.angle) * s.radius,
-          cy + Math.sin(s.angle) * s.radius,
-          s.size,
-          0,
-          Math.PI * 2,
-        );
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, maxR() * 1.5, a0, a1);
+        ctx.closePath();
         ctx.fill();
       }
-      ctx.restore();
-
-      ctx.save();
-      ctx.globalCompositeOperation = "lighter";
 
       if (!ignited) {
-        // ACCRETE / COLLAPSE — matter spiralling in on the tilted disc.
+        // Shards fall straight in with a tangential curl. No tilted ellipse:
+        // that is a 3D cue, and this is a flat poster.
         const p = Math.min(1, t / ACCRETE[1]);
         const attract = easeIn(p);
-        const collapsing = t >= COLLAPSE[0];
-        const pull = (0.35 + attract * 1.2) * (collapsing ? 6 : 1);
-        for (const d of disc) {
-          d.radius -= (d.radius - coreR * 0.6) * pull * dt;
-          d.angle +=
-            0.9 * Math.pow(coreR / Math.max(d.radius, 1), 1.2) * (0.8 + attract) * dt * 4;
-          if (!collapsing && d.radius < coreR * 0.75) {
-            const fresh = spawnDisc();
-            d.angle = fresh.angle;
-            d.radius = fresh.radius;
-            d.seeded = false;
-          }
-          const { x, y } = discXY(d);
-          if (d.seeded) {
-            // The tail stretches the per-frame delta so in-falling matter
-            // reads as streaks, not dust — one frame of motion is invisible.
-            const inner = d.radius < coreR * 1.5;
+        const pull = (0.35 + attract * 1.2) * (collapsing ? 8 : 1);
+        for (const s of shards) {
+          s.radius -= (s.radius - markR) * pull * dt;
+          s.angle +=
+            1.4 * Math.pow(markR / Math.max(s.radius, 1), 0.8) * (0.6 + attract) * dt;
+          s.spin += s.spinRate * dt;
+          if (collapsing && s.radius < markR * 0.9) continue;
+          const x = cx + Math.cos(s.angle) * s.radius;
+          const y = cy + Math.sin(s.angle) * s.radius;
+          const tone =
+            s.tone === 0
+              ? theme.emblem.highlight
+              : s.tone === 1
+                ? theme.emblem.light
+                : "#FFFFFF";
+          ctx.save();
+          ctx.translate(x, y);
+          ctx.rotate(s.angle + Math.PI / 2 + s.spin);
+          // A solid chevron with a hard ink shadow — the flat-graphic mote.
+          const drawChevron = (fill: string, ox: number, oy: number) => {
+            ctx.fillStyle = fill;
             ctx.beginPath();
-            ctx.strokeStyle = inner
-              ? `rgba(${core}, ${0.4 + attract * 0.35})`
-              : `rgba(${glow}, ${0.22 + attract * 0.3})`;
-            ctx.lineWidth = d.size;
-            ctx.moveTo(x - (x - d.px) * 4, y - (y - d.py) * 4);
-            ctx.lineTo(x, y);
-            ctx.stroke();
-          }
-          d.px = x;
-          d.py = y;
-          d.seeded = true;
+            ctx.moveTo(ox, oy - s.len / 2);
+            ctx.lineTo(ox + s.len * 0.28, oy + s.len / 2);
+            ctx.lineTo(ox, oy + s.len * 0.22);
+            ctx.lineTo(ox - s.len * 0.28, oy + s.len / 2);
+            ctx.closePath();
+            ctx.fill();
+          };
+          drawChevron(`rgba(${theme.inkRgb}, 0.35)`, 1.5, 1.5);
+          drawChevron(tone, 0, 0);
+          ctx.restore();
         }
 
-        // The proto-star: growing, flickering, dimming a fraction as the
-        // disc collapses — the intake of breath.
-        const flicker = 1 + 0.06 * Math.sin(now / 47);
-        const dim = collapsing ? 0.8 : 1;
-        const growR = coreR * (0.25 + 0.75 * p) * flicker;
-        const star = ctx.createRadialGradient(cx, cy, 0, cx, cy, growR);
-        star.addColorStop(0, `rgba(${core}, ${0.9 * dim})`);
-        star.addColorStop(0.45, `rgba(${glow}, ${0.4 * dim})`);
-        star.addColorStop(1, `rgba(${glow}, 0)`);
-        ctx.fillStyle = star;
-        ctx.beginPath();
-        ctx.arc(cx, cy, growR, 0, Math.PI * 2);
-        ctx.fill();
+        // The constellation strikes in, node by node, at exactly the centre
+        // and size the emblem's mark will occupy.
+        const nodeStrikeAt = (i: number) => 300 + i * 300;
+        const NODE_SETTLE = 220;
+        const EDGE_DRAW = 190;
+        drawMarkSkeleton(ctx, cx, cy, markR, theme, {
+          squeeze: collapsing
+            ? 1 - 0.06 * easeHouse((t - COLLAPSE[0]) / (COLLAPSE[1] - COLLAPSE[0]))
+            : 1,
+          nodeAt: (i) =>
+            Math.max(0, Math.min(1, (t - nodeStrikeAt(i)) / NODE_SETTLE)),
+          edgeAt: (i) => {
+            const after = Math.max(...[i, i + 1]);
+            return Math.max(
+              0,
+              Math.min(1, (t - nodeStrikeAt(after) - 40) / EDGE_DRAW),
+            );
+          },
+        });
+
+        // The press: an oversized dark silhouette hanging over a crushed
+        // field, motionless. The coiled spring before the strike.
+        if (collapsing) {
+          const c = (t - COLLAPSE[0]) / (COLLAPSE[1] - COLLAPSE[0]);
+          ctx.save();
+          ctx.globalAlpha = 0.55 * easeHouse(c);
+          ctx.fillStyle = theme.emblem.contour;
+          ctx.beginPath();
+          ctx.arc(cx, cy, emblemR * 1.55, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
       } else {
-        // Shockwaves from the ignition.
+        // Two hard white rings. Source-over, not additive — an additive halo
+        // is a light effect, and this is a graphic one.
         for (const delay of [0, 130]) {
           const wt = (t - IGNITE - delay) / 700;
           if (wt <= 0 || wt >= 1) continue;
           const eased = easeHouse(wt);
+          ctx.save();
+          ctx.globalAlpha = 0.75 * (1 - eased);
+          ctx.strokeStyle = "#FFFFFF";
+          ctx.lineWidth = 10 * (1 - eased) + 1;
           ctx.beginPath();
-          ctx.strokeStyle = `rgba(${glow}, ${0.5 * (1 - eased)})`;
-          ctx.lineWidth = 2.5 * (1 - eased) + 0.5;
           ctx.arc(cx, cy, eased * maxR() * 1.1, 0, Math.PI * 2);
           ctx.stroke();
+          ctx.restore();
         }
+      }
 
-        // Cascade pulses: the star answers each perk as it is written in —
-        // one short ring per beat, so the list reads as something the star is
-        // emitting rather than as UI arriving on its own schedule.
-        for (let i = 0; i < n; i++) {
-          const pt = (t - perkAt(i)) / 520;
-          if (pt <= 0 || pt >= 1) continue;
-          const eased = easeHouse(pt);
-          ctx.beginPath();
-          ctx.strokeStyle = `rgba(${glow}, ${0.28 * (1 - eased)})`;
-          ctx.lineWidth = 1.6 * (1 - eased) + 0.4;
-          ctx.arc(cx, cy, coreR * (1 + eased * 1.6), 0, Math.PI * 2);
-          ctx.stroke();
+      // One hard ring per perk — the emblem answers each line as it is
+      // written in, so the list reads as something the emblem is emitting.
+      for (let i = 0; i < n; i++) {
+        const pt = (t - perkAt(i)) / 520;
+        if (pt <= 0 || pt >= 1) continue;
+        const eased = easeHouse(pt);
+        ctx.save();
+        ctx.globalAlpha = 0.3 * (1 - eased);
+        ctx.strokeStyle = "#FFFFFF";
+        ctx.lineWidth = 5 * (1 - eased) + 1;
+        ctx.beginPath();
+        ctx.arc(cx, cy, emblemR * (1 + eased * 1.2), 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+        if (kickedThrough < i) {
+          kickedThrough = i;
+          tiltKick += 0.1;
         }
+      }
+      tiltKick *= Math.pow(0.04, dt);
 
-        // The burning star — contracting into a point through the finale so
-        // the DOM logo can take its place under the falling brightness.
-        const contractStart = FINALE - 250;
-        let starScale = 1;
-        let starAlpha = 1;
-        if (t >= contractStart) {
-          const ct = Math.min(1, (t - contractStart) / 450);
-          const eased = easeHouse(ct);
-          starScale = 1 - eased * (1 - 30 / (coreR * 1.6));
-          starAlpha = 1 - eased;
-        }
-        if (starAlpha > 0.01) {
-          const burn = 0.85 + 0.15 * Math.max(0, 1 - (t - IGNITE) / 900);
-          const flicker = 1 + 0.04 * Math.sin(now / 41);
-          const bodyR = coreR * 1.6 * starScale * flicker;
-          const star = ctx.createRadialGradient(cx, cy, 0, cx, cy, bodyR);
-          star.addColorStop(0, `rgba(${core}, ${0.95 * burn * starAlpha})`);
-          star.addColorStop(0.35, `rgba(${glow}, ${0.5 * burn * starAlpha})`);
-          star.addColorStop(1, `rgba(${glow}, 0)`);
-          ctx.fillStyle = star;
-          ctx.beginPath();
-          ctx.arc(cx, cy, bodyR, 0, Math.PI * 2);
-          ctx.fill();
+      // The emblem.
+      const st = t - IGNITE;
+      let scale = 1;
+      let flash = 0;
+      if (t < IGNITE) {
+        scale = 0;
+      } else {
+        const snap = easeHouse(Math.min(1, st / 150));
+        const wobble =
+          st > 150
+            ? Math.sin((st - 150) / 78) * 0.055 * Math.exp(-(st - 150) / 190)
+            : 0;
+        scale = 1.55 - 0.55 * snap + wobble;
+        flash = Math.max(0, 1 - st / 180);
+      }
+      if (scale > 0) {
+        drawEmblem(ctx, cx, cy, emblemR, theme, {
+          forged: 1,
+          scale,
+          flash,
+          alpha: 1,
+          tilt: 0.22 * Math.sin(now / 2600) + tiltKick,
+          ringLit:
+            t >= FINALE ? easeHouse(Math.min(1, (t - FINALE) / RING_SWEEP_MS)) : 0,
+        });
+      }
 
-          // Four diffraction spikes, rotating slowly.
-          const spikeLen = coreR * 4 * starScale;
-          const rot = now / 20000;
-          for (const base of [0, Math.PI / 2]) {
-            const a = base + rot;
-            const x1 = cx + Math.cos(a) * spikeLen;
-            const y1 = cy + Math.sin(a) * spikeLen;
-            const x2 = cx - Math.cos(a) * spikeLen;
-            const y2 = cy - Math.sin(a) * spikeLen;
-            const spike = ctx.createLinearGradient(x1, y1, x2, y2);
-            spike.addColorStop(0, `rgba(${core}, 0)`);
-            spike.addColorStop(0.5, `rgba(${core}, ${0.35 * burn * starAlpha})`);
-            spike.addColorStop(1, `rgba(${core}, 0)`);
-            ctx.beginPath();
-            ctx.strokeStyle = spike;
-            ctx.lineWidth = 1.5;
-            ctx.moveTo(x1, y1);
-            ctx.lineTo(x2, y2);
-            ctx.stroke();
-          }
-        }
-
-        // Ring ignition: a white-hot head dragging a tier-coloured tail
-        // around the logo's ring radius, then a breathing halo forever.
-        if (t >= FINALE) {
-          const rr = layout.ringRadius;
-          const sweep = Math.min(1, (t - FINALE) / RING_SWEEP_MS);
-          const eased = easeHouse(sweep);
+      // The finale sweep: a white head running the emblem's own rim, leaving
+      // the plan ring lit behind it.
+      if (t >= FINALE && t < SWEEP_DONE + 400) {
+        const sweep = Math.min(1, (t - FINALE) / RING_SWEEP_MS);
+        const eased = easeHouse(sweep);
+        const rr = emblemR * 0.978;
+        if (sweep < 1) {
           const head = -Math.PI / 2 + eased * Math.PI * 2;
-          if (sweep < 1) {
-            const tail = Math.min(Math.PI * 0.66, eased * Math.PI * 2);
-            const segments = 40;
-            for (let k = 0; k < segments; k++) {
-              const a0 = head - (tail * k) / segments;
-              const a1 = head - (tail * (k + 1)) / segments;
-              const fade = 1 - k / segments;
-              ctx.beginPath();
-              ctx.strokeStyle = `rgba(${glow}, ${0.75 * fade})`;
-              ctx.lineWidth = 3.5 * fade + 0.8;
-              ctx.arc(cx, cy, rr, a1, a0);
-              ctx.stroke();
-            }
-            const hx = cx + Math.cos(head) * rr;
-            const hy = cy + Math.sin(head) * rr;
-            const headGlow = ctx.createRadialGradient(hx, hy, 0, hx, hy, 12);
-            headGlow.addColorStop(0, `rgba(${core}, 0.9)`);
-            headGlow.addColorStop(1, `rgba(${glow}, 0)`);
-            ctx.fillStyle = headGlow;
+          const tail = Math.min(Math.PI * 0.66, eased * Math.PI * 2);
+          const SEGMENTS = 40;
+          for (let i = 0; i < SEGMENTS; i++) {
+            const f = i / SEGMENTS;
+            const a0 = head - tail * f;
+            const a1 = head - tail * ((i + 1) / SEGMENTS);
+            ctx.save();
+            ctx.globalAlpha = 0.85 * (1 - f);
+            ctx.strokeStyle = "#FFFFFF";
+            ctx.lineWidth = emblemR * 0.1 * (1 - f) + 1;
             ctx.beginPath();
-            ctx.arc(hx, hy, 12, 0, Math.PI * 2);
-            ctx.fill();
-          } else {
-            const breathe = 0.22 + 0.05 * Math.sin(now / 900);
-            ctx.beginPath();
-            ctx.strokeStyle = `rgba(${glow}, ${breathe})`;
-            ctx.lineWidth = 3;
-            ctx.arc(cx, cy, rr, 0, Math.PI * 2);
+            ctx.arc(cx, cy, rr, a1, a0);
             ctx.stroke();
-            ctx.beginPath();
-            ctx.strokeStyle = `rgba(${glow}, 0.08)`;
-            ctx.lineWidth = 10;
-            ctx.arc(cx, cy, rr, 0, Math.PI * 2);
-            ctx.stroke();
+            ctx.restore();
           }
-        }
-      }
-
-      // Sparks — ignition ejecta and the ring glint share one pool.
-      if (sparks.length > 0) {
-        const alive: Spark[] = [];
-        for (const s of sparks) {
-          s.life -= dt;
-          if (s.life <= 0) continue;
-          s.vy += 60 * dt;
-          const drag = Math.pow(0.25, dt);
-          s.vx *= drag;
-          s.vy *= drag;
-          s.x += s.vx * dt;
-          s.y += s.vy * dt;
-          const a = Math.max(0, s.life / s.maxLife);
+          const hx = cx + Math.cos(head) * rr;
+          const hy = cy + Math.sin(head) * rr;
+          ctx.fillStyle = "#FFFFFF";
           ctx.beginPath();
-          ctx.strokeStyle = s.hot ? `rgba(${core}, ${0.8 * a})` : `rgba(${glow}, ${0.6 * a})`;
-          ctx.lineWidth = 1.2;
-          ctx.moveTo(s.x - s.vx * 0.03, s.y - s.vy * 0.03);
-          ctx.lineTo(s.x, s.y);
-          ctx.stroke();
-          alive.push(s);
+          ctx.arc(hx, hy, emblemR * 0.055, 0, Math.PI * 2);
+          ctx.fill();
+          sparkPath(ctx, hx, hy, emblemR * 0.14);
+          ctx.save();
+          ctx.globalAlpha = 0.7;
+          ctx.fill();
+          ctx.restore();
         }
-        sparks = alive;
       }
 
-      ctx.restore();
+      // Sparks: bright chips with hard graphic shadows.
+      sparks = sparks.filter((s) => s.life > 0);
+      for (const s of sparks) {
+        s.life -= dt;
+        if (s.life <= 0) continue;
+        s.vy += 60 * dt;
+        const drag = Math.pow(0.25, dt);
+        s.vx *= drag;
+        s.vy *= drag;
+        const px = s.x;
+        const py = s.y;
+        s.x += s.vx * dt;
+        s.y += s.vy * dt;
+        const a = Math.max(0, s.life / s.maxLife);
+        ctx.save();
+        ctx.globalAlpha = a * 0.4;
+        ctx.strokeStyle = `rgb(${theme.inkRgb})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(px + 1.5, py + 1.5);
+        ctx.lineTo(s.x + 1.5, s.y + 1.5);
+        ctx.stroke();
+        ctx.globalAlpha = a;
+        ctx.strokeStyle = s.hot ? `rgb(${theme.coreRgb})` : "#FFFFFF";
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(s.x, s.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Confetti: the biggest Battle-Pass read after the field itself. A 2D
+      // tumble is a width scale, which is why these stay flat rects.
+      confetti = confetti.filter((c) => c.life > 0);
+      for (const c of confetti) {
+        c.life -= dt;
+        if (c.life <= 0) continue;
+        c.vy += 420 * dt;
+        const drag = Math.pow(0.55, dt);
+        c.vx *= drag;
+        c.vy *= drag;
+        c.x += c.vx * dt;
+        c.y += c.vy * dt;
+        c.spin += c.spinRate * dt;
+        const a = Math.min(1, c.life / (c.maxLife * 0.4));
+        const tone =
+          c.tone === 0
+            ? "#FFFFFF"
+            : c.tone === 1
+              ? theme.emblem.highlight
+              : theme.ink;
+        ctx.save();
+        ctx.globalAlpha = a;
+        ctx.translate(c.x, c.y);
+        ctx.scale(Math.abs(Math.cos(c.spin)), 1);
+        ctx.fillStyle = `rgba(${theme.inkRgb}, 0.3)`;
+        ctx.fillRect(-c.w / 2 + 1.5, -c.h / 2 + 1.5, c.w, c.h);
+        ctx.fillStyle = tone;
+        ctx.fillRect(-c.w / 2, -c.h / 2, c.w, c.h);
+        ctx.restore();
+      }
+
       raf = requestAnimationFrame(frame);
     }
 

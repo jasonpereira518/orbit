@@ -72,6 +72,9 @@ export function CelebrationStage({
   const [handoff, setHandoff] = useState<{
     dx: number;
     dy: number;
+    /** The emblem's scale in logo-units, so the flight starts where the
+     * canvas emblem ended rather than popping to 96px. */
+    from: number;
     scale: number;
   } | null>(null);
   // First paint is transparent so the veil fades up from the app beneath it.
@@ -124,6 +127,7 @@ export function CelebrationStage({
       setHandoff({
         dx: target.cx - l.cx,
         dy: target.cy - l.cy,
+        from: (2 * l.emblemR) / HERO_LOGO_PX,
         scale: target.size / HERO_LOGO_PX,
       });
       // The app's own logo steps aside for the whole flight — otherwise it
@@ -286,11 +290,11 @@ export function CelebrationStage({
 
   const style = useMemo(
     () => ({
-      backgroundColor: theme.deep,
+      backgroundColor: theme.field.edge,
       opacity: exiting || !entered ? 0 : 1,
       transition: `opacity ${exiting ? EXIT_MS : reduced ? REDUCED_MS : ENTER_FADE_MS}ms ease-out`,
     }),
-    [entered, exiting, reduced, theme.deep],
+    [entered, exiting, reduced, theme.field.edge],
   );
 
   const shaken = phase !== "accrete" && !skipped;
@@ -331,7 +335,6 @@ export function CelebrationStage({
                 phase={phase}
                 collapsed={collapsed}
                 skipped={skipped}
-                handoff={handoff !== null}
                 layout={layout}
                 onDismiss={dismiss}
               />
@@ -344,7 +347,7 @@ export function CelebrationStage({
                   aria-hidden
                   className="pointer-events-none absolute inset-0"
                   style={{
-                    background: `radial-gradient(circle at ${layout.cx}px ${layout.cy}px, rgba(255,255,255,0.98), rgba(${theme.glowRgb}, 0.55) 42%, transparent 72%)`,
+                    background: `radial-gradient(circle at ${layout.cx}px ${layout.cy}px, rgba(255,255,255,0.98) 0%, rgba(${theme.coreRgb}, 0.6) 42%, ${theme.field.hot} 78%)`,
                   }}
                   initial={{ opacity: 0.95 }}
                   animate={{ opacity: 0 }}
@@ -368,8 +371,15 @@ export function CelebrationStage({
             left: layout.cx - HERO_LOGO_PX / 2,
             top: layout.cy - HERO_LOGO_PX / 2,
           }}
-          initial={{ x: 0, y: 0, scale: 1 }}
-          animate={{ x: handoff.dx, y: handoff.dy, scale: [1, 1.1, handoff.scale] }}
+          // Starts at the emblem's own size and shrinks all the way to the
+          // sidebar mark. Without this the 96px logo would pop out of a
+          // ~300px emblem at the instant the flight begins.
+          initial={{ x: 0, y: 0, scale: handoff.from }}
+          animate={{
+            x: handoff.dx,
+            y: handoff.dy,
+            scale: [handoff.from, handoff.from * 1.06, handoff.scale],
+          }}
           transition={{
             duration: HANDOFF_MS / 1000,
             ease: EASE_HOUSE,
@@ -383,7 +393,7 @@ export function CelebrationStage({
           }}
         >
           <motion.div
-            style={{ filter: `drop-shadow(0 0 26px rgba(${theme.glowRgb}, 0.75))` }}
+            style={{ filter: `drop-shadow(0 6px 10px rgba(${theme.inkRgb}, 0.35))` }}
             initial={{ opacity: 1 }}
             animate={{ opacity: 0 }}
             // Fades only at the very end, on top of the app's own logo, so
