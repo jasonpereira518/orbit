@@ -4,6 +4,7 @@ import {
   timestamp,
   integer,
   real,
+  boolean,
   jsonb,
   uuid,
   index,
@@ -84,6 +85,13 @@ export const userSettings = pgTable("user_settings", {
   wizardStep: text("wizard_step"),
   wizardCompletedAt: timestamp("wizard_completed_at", { withTimezone: true }),
   theme: text("theme").$type<"light" | "dark" | "system">(),
+  ycModeEnabled: boolean("yc_mode_enabled").default(false),
+  /**
+   * Manual estimate feeding the Unit Economics LTV calculation. Orbit's subscriber count
+   * is too small to derive a reliable churn rate from cancellation history, so this is
+   * entered by hand like the expense/spend figures elsewhere in YC mode.
+   */
+  estimatedMonthlyChurnPct: real("estimated_monthly_churn_pct"),
   apolloApiKeyEncrypted: text("apollo_api_key_encrypted"),
   resendApiKeyEncrypted: text("resend_api_key_encrypted"),
   twilioAccountSidEncrypted: text("twilio_account_sid_encrypted"),
@@ -1602,6 +1610,56 @@ export const appSurfaceFlags = pgTable("app_surface_flags", {
   hiddenAt: timestamp("hidden_at", { withTimezone: true }).defaultNow().notNull(),
   /** The admin who hid it. Kept for the audit trail's benefit, not read by the app. */
   hiddenBy: text("hidden_by").notNull(),
+});
+
+/**
+ * Manually-entered spend, for the YC-mode Runway page's burn calculation. No integration
+ * exists to pull this automatically — Orbit has no bank/accounting connection.
+ */
+export const startupExpenses = pgTable("startup_expenses", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  category: text("category").notNull(),
+  amountUsd: real("amount_usd").notNull(),
+  incurredAt: timestamp("incurred_at", { withTimezone: true }).notNull(),
+  note: text("note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/** Point-in-time cash-on-hand entries. The latest row is "current" cash for Runway. */
+export const cashSnapshots = pgTable("cash_snapshots", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  asOf: timestamp("as_of", { withTimezone: true }).notNull(),
+  balanceUsd: real("balance_usd").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/** Manually-logged acquisition spend by channel, for the Unit Economics CAC calculation. */
+export const acquisitionSpend = pgTable("acquisition_spend", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  channel: text("channel").notNull(),
+  amountUsd: real("amount_usd").notNull(),
+  periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+  periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const fundraisingRounds = pgTable("fundraising_rounds", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull(),
+  targetUsd: real("target_usd").notNull(),
+  status: text("status").$type<"open" | "closed">().notNull().default("open"),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/** No FK-cascade delete: closing/deleting a round should not silently erase commitments. */
+export const fundraisingInvestors = pgTable("fundraising_investors", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  roundId: uuid("round_id").notNull().references(() => fundraisingRounds.id),
+  name: text("name").notNull(),
+  amountUsd: real("amount_usd").notNull(),
+  committedAt: timestamp("committed_at", { withTimezone: true }).notNull(),
+  note: text("note"),
 });
 
 export const contactsRelations = relations(contacts, ({ many }) => ({
