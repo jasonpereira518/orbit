@@ -2,6 +2,9 @@ import { AdminShell } from "@/components/admin/admin-shell";
 import { requireAdminPage } from "@/lib/admin";
 import { getCurrentUserProfile } from "@/lib/auth";
 import { getHiddenSurfaceKeys } from "@/lib/surface-visibility";
+import { getDb } from "@/db";
+import { userSettings } from "@/db/schema";
+import { eq } from "drizzle-orm";
 
 /**
  * Its own route group, outside `(app)` — so it inherits neither the product shell nor the
@@ -20,14 +23,20 @@ export default async function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  await requireAdminPage();
-  const [profile, hidden] = await Promise.all([
+  const adminUserId = await requireAdminPage();
+  const db = await getDb();
+  const [profile, hidden, settings] = await Promise.all([
     getCurrentUserProfile(),
     getHiddenSurfaceKeys(),
+    db.query.userSettings.findFirst({ where: eq(userSettings.userId, adminUserId) }),
   ]);
 
   return (
-    <AdminShell adminEmail={profile?.email} hiddenSurfaceCount={hidden.size}>
+    <AdminShell
+      adminEmail={profile?.email}
+      hiddenSurfaceCount={hidden.size}
+      ycMode={settings?.ycModeEnabled ?? false}
+    >
       {children}
     </AdminShell>
   );

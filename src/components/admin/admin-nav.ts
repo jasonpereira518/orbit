@@ -1,8 +1,11 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  Flame,
   Gauge,
+  HandCoins,
   LayoutTemplate,
+  Scale,
   ScrollText,
   TrendingUp,
   Users,
@@ -37,6 +40,17 @@ export const ADMIN_NAV: AdminNavItem[] = [
   // alone reads as revenue-only.
   { href: "/admin/billing", label: "Money", icon: Wallet },
   { href: "/admin/audit", label: "Audit", icon: ScrollText },
+];
+
+/**
+ * The YC-mode nav — a full replacement for `ADMIN_NAV`, not an addition to it. Toggling
+ * modes changes which of these two arrays `AdminShell` renders.
+ */
+export const ADMIN_YC_NAV: AdminNavItem[] = [
+  { href: "/admin/yc/runway", label: "Runway", icon: Flame },
+  { href: "/admin/yc/revenue", label: "Revenue", icon: TrendingUp },
+  { href: "/admin/yc/economics", label: "Unit Economics", icon: Scale },
+  { href: "/admin/yc/fundraising", label: "Fundraising", icon: HandCoins },
 ];
 
 export function isAdminNavActive(pathname: string, href: string) {
