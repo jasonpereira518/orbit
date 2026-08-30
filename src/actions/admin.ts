@@ -273,3 +273,26 @@ export async function setViewAsUserAction(input: {
   revalidatePath("/", "layout");
   return { ok: true };
 }
+
+/**
+ * Toggle YC Startup console mode for the calling admin.
+ *
+ * Purely a personal preference on the operator's own `userSettings` row — it never touches
+ * another user's data or visibility, so unlike `setSurfaceHiddenAction` / `setViewAsUserAction`
+ * it does not go through `recordAdminAction`. Same shape as `saveThemePreference`.
+ */
+export async function setYcModeAction(input: { on: boolean }): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  const db = await getDb();
+
+  await db
+    .insert(userSettings)
+    .values({ userId: adminUserId, ycModeEnabled: input.on })
+    .onConflictDoUpdate({
+      target: userSettings.userId,
+      set: { ycModeEnabled: input.on, updatedAt: new Date() },
+    });
+
+  revalidatePath("/", "layout");
+  return { ok: true };
+}

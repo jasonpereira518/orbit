@@ -4,7 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "motion/react";
 import { ArrowUpRight } from "lucide-react";
-import { ADMIN_NAV, isAdminNavActive } from "@/components/admin/admin-nav";
+import { ADMIN_NAV, ADMIN_YC_NAV, isAdminNavActive } from "@/components/admin/admin-nav";
+import { YCModeToggle } from "@/components/admin/yc-mode-toggle";
 import { cn } from "@/lib/utils";
 
 /**
@@ -25,6 +26,7 @@ export function AdminShell({
   children,
   adminEmail,
   hiddenSurfaceCount = 0,
+  ycMode = false,
 }: {
   children: React.ReactNode;
   adminEmail?: string | null;
@@ -35,8 +37,10 @@ export function AdminShell({
    * already have to be looking at.
    */
   hiddenSurfaceCount?: number;
+  ycMode?: boolean;
 }) {
   const pathname = usePathname();
+  const navItems = ycMode ? ADMIN_YC_NAV : ADMIN_NAV;
 
   return (
     <div className="min-h-dvh bg-background text-sm">
@@ -56,7 +60,7 @@ export function AdminShell({
           </Link>
 
           <nav className="flex items-center gap-1">
-            {ADMIN_NAV.map((item) => {
+            {navItems.map((item) => {
               const active = isAdminNavActive(pathname, item.href);
               return (
                 <Link
@@ -95,6 +99,7 @@ export function AdminShell({
           </nav>
 
           <div className="ml-auto flex items-center gap-4 text-xs text-muted-foreground">
+            <YCModeToggle active={ycMode} />
             {adminEmail && (
               <span className="hidden sm:inline truncate max-w-[16rem]">
                 {adminEmail}

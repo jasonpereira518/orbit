@@ -590,6 +590,44 @@ CREATE TABLE IF NOT EXISTS app_surface_flags (
   hidden_at timestamptz NOT NULL DEFAULT now(),
   hidden_by text NOT NULL
 );
+CREATE TABLE IF NOT EXISTS startup_expenses (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  category text NOT NULL,
+  amount_usd real NOT NULL,
+  incurred_at timestamptz NOT NULL,
+  note text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS cash_snapshots (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  as_of timestamptz NOT NULL,
+  balance_usd real NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS acquisition_spend (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  channel text NOT NULL,
+  amount_usd real NOT NULL,
+  period_start timestamptz NOT NULL,
+  period_end timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS fundraising_rounds (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  target_usd real NOT NULL,
+  status text NOT NULL DEFAULT 'open',
+  closed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS fundraising_investors (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  round_id uuid NOT NULL REFERENCES fundraising_rounds(id),
+  name text NOT NULL,
+  amount_usd real NOT NULL,
+  committed_at timestamptz NOT NULL,
+  note text
+);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -612,7 +650,7 @@ CREATE TABLE IF NOT EXISTS app_surface_flags (
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -947,6 +985,8 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "twilio_auth_token_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_from_number", "text");
   await ensureColumn(client, "user_settings", "theme", "text");
+  await ensureColumn(client, "user_settings", "yc_mode_enabled", "boolean DEFAULT false");
+  await ensureColumn(client, "user_settings", "estimated_monthly_churn_pct", "real");
   await ensureColumn(
     client,
     "user_settings",
@@ -1357,6 +1397,8 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS social_links jsonb DEFAULT '{}'`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_plan text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lifetime_purchased_at timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS yc_mode_enabled boolean DEFAULT false`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS estimated_monthly_churn_pct real`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS stripe_customer_id text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_plan text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_status text`,
