@@ -72,7 +72,7 @@ runs on already-migrated databases.
 export const startupExpenses = pgTable("startup_expenses", {
   id: uuid("id").defaultRandom().primaryKey(),
   category: text("category").notNull(),
-  amountCents: integer("amount_cents").notNull(),
+  amountUsd: real("amount_usd").notNull(),
   incurredAt: timestamp("incurred_at", { withTimezone: true }).notNull(),
   note: text("note"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -81,14 +81,14 @@ export const startupExpenses = pgTable("startup_expenses", {
 export const cashSnapshots = pgTable("cash_snapshots", {
   id: uuid("id").defaultRandom().primaryKey(),
   asOf: timestamp("as_of", { withTimezone: true }).notNull(),
-  balanceCents: integer("balance_cents").notNull(),
+  balanceUsd: real("balance_usd").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 export const acquisitionSpend = pgTable("acquisition_spend", {
   id: uuid("id").defaultRandom().primaryKey(),
   channel: text("channel").notNull(),
-  amountCents: integer("amount_cents").notNull(),
+  amountUsd: real("amount_usd").notNull(),
   periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
   periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -97,7 +97,7 @@ export const acquisitionSpend = pgTable("acquisition_spend", {
 export const fundraisingRounds = pgTable("fundraising_rounds", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(), // "Pre-seed", "Seed", etc.
-  targetCents: integer("target_cents").notNull(),
+  targetUsd: real("target_usd").notNull(),
   status: text("status").$type<"open" | "closed">().notNull().default("open"),
   closedAt: timestamp("closed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -107,20 +107,26 @@ export const fundraisingInvestors = pgTable("fundraising_investors", {
   id: uuid("id").defaultRandom().primaryKey(),
   roundId: uuid("round_id").notNull().references(() => fundraisingRounds.id),
   name: text("name").notNull(),
-  amountCents: integer("amount_cents").notNull(),
+  amountUsd: real("amount_usd").notNull(),
   committedAt: timestamp("committed_at", { withTimezone: true }).notNull(),
   note: text("note"),
 });
 ```
 
-Money is stored as integer cents to avoid float rounding. The implementation plan should
-confirm this matches whatever convention `admin-metrics.ts` / `ai-pricing.ts` already use
-for billing amounts, so Revenue's numbers are computed consistently with the rest.
+Money is stored as plain-dollar `real` columns (`amountUsd`, `balanceUsd`, `targetUsd`), not
+integer cents — confirmed against the codebase's actual convention (`MONTHLY_AMOUNT = 5` in
+`plan-copy.ts`, `priceUsd` in `lifetime-offer.ts`; nothing in Orbit scales money by 100).
+Matching that convention keeps Revenue's numbers consistent with the rest of the console
+instead of introducing a second, incompatible money representation.
 
-One column addition, alongside `theme` on `userSettings`:
+Two column additions, alongside `theme` on `userSettings`:
 
 ```ts
 ycModeEnabled: boolean("yc_mode_enabled").default(false),
+// Orbit has no real churn data at this scale (a handful of subscribers) to derive this
+// reliably, so it's a manual estimate feeding the LTV calculation on Unit Economics —
+// same "manual input, real math" posture as the expense/spend forms.
+estimatedMonthlyChurnPct: real("estimated_monthly_churn_pct"),
 ```
 
 ## Section content
@@ -128,32 +134,43 @@ ycModeEnabled: boolean("yc_mode_enabled").default(false),
 - **Runway** (`/admin/yc/runway`) — latest `cashSnapshots` balance, trailing-30-day sum
   from `startupExpenses` as monthly burn, `runway = balance / burn`. A form to log a new
   expense or record a cash snapshot. Burn trend as a sparkline over recent months.
-- **Revenue** (`/admin/yc/revenue`) — MRR/ARR and MoM growth %, computed from existing
-  billing/subscription data. No new table — this is the one section built on data Orbit
-  already tracks, per the decision to lean new tracking elsewhere.
-- **Unit Economics** (`/admin/yc/economics`) — CAC = sum(`acquisitionSpend` for a period)
-  ÷ new users in that period (existing user-creation data); LTV = ARPU ÷ churn rate
-  (existing revenue + retention data); LTV:CAC ratio as the headline number. A form to
-  log acquisition spend by channel.
+- **Revenue** (`/admin/yc/revenue`) — MRR (subscribed count × `MONTHLY_AMOUNT`, the same
+  calculation `/admin/billing` already shows) as the headline. Growth is a new-subscriber
+  count comparison (trailing 30 days vs. the 30 before, via the existing `windowCount`
+  helper) rather than a claimed dollar MRR delta — Orbit has one flat price and no historical
+  MRR series stored anywhere, so subscriber growth is the honest proxy for revenue growth at
+  this stage. No new table — built entirely on data Orbit already tracks.
+- **Unit Economics** (`/admin/yc/economics`) — CAC = sum(`acquisitionSpend` for the trailing
+  30 days) ÷ new active subscribers signed up in that window (existing user rows). LTV =
+  ARPU (`MONTHLY_AMOUNT`, Orbit's flat $5/mo price) ÷ `userSettings.estimatedMonthlyChurnPct`
+  — a manual estimate, since Orbit's subscriber count is too small to derive a reliable
+  churn rate from cancellation history. LTV:CAC ratio as the headline number. A form to log
+  acquisition spend by channel, and a small input to update the churn estimate.
 - **Fundraising** (`/admin/yc/fundraising`) — round list with target vs. raised (sum of
   `fundraisingInvestors.amountCents` per round), forms to open a round and add an
   investor commitment.
 
 ## Styling
 
-Deck-style presentation (large hero numbers, trend sparklines, YC vocabulary) scoped
-entirely to `/admin/yc/*` components. No changes to shared admin chrome beyond the nav
-swap and the toggle itself — Users, Health, Product, and Audit are untouched and remain
-reachable by toggling back off.
+Reuses the existing admin visual primitives (`AdminPageHeader`, `AdminPanel`, `MetricTile`,
+`TrendBars` in `src/components/admin/primitives.tsx`) with YC vocabulary in the copy —
+consistent with the codebase's own stated posture of not adding new UI abstractions for a
+single call site. No changes to shared admin chrome beyond the nav swap and the toggle
+itself — Users, Health, Product, and Audit are untouched and remain reachable by toggling
+back off.
 
 ## Testing
 
-- A DDL smoke test (matching the project's existing schema-DDL smoke-test pattern) to
-  verify the four new tables and the `userSettings` column create cleanly against a
-  fresh PGlite instance.
-- Manual verification: toggle on/off persists across reload, nav swaps correctly, and
-  each page's calculation is checked against manually-entered fixture data (e.g. a
-  $10,000 cash snapshot plus a $2,000 expense should show a 5-month runway).
+- The project's existing `scripts/smoke-schema-ddl.ts` guard (already run via `npm run
+  db:check`) verifies DDL/schema/version consistency generically — it needs no new code,
+  only a lock-file regenerate (`--update`) once the new DDL lands.
+- Each pure calculation (runway, subscriber-growth, unit economics, fundraising progress)
+  gets a `scripts/smoke-*.ts` script in the project's existing no-framework convention
+  (plain `check(label, condition)` assertions, `main(); process.exit(0);` — see
+  `scripts/smoke-lifetime-pricing.ts`), run against fixed inputs, no database required.
+- Manual verification: toggle on/off persists across reload, nav swaps correctly, and each
+  page renders real numbers after using its form to enter fixture data (e.g. a $10,000 cash
+  snapshot plus a $2,000 expense should show a 5-month runway).
 
 ## Out of scope
 
