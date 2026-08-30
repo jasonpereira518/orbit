@@ -293,5 +293,6 @@ export async function setYcModeAction(input: { on: boolean }): Promise<{ ok: tru
       set: { ycModeEnabled: input.on, updatedAt: new Date() },
     });
 
+  revalidatePath("/", "layout");
   return { ok: true };
 }

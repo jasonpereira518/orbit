@@ -1,4 +1,4 @@
-import { AdminPageHeader, AdminPanel, MetricTile } from "@/components/admin/primitives";
+import { AdminPageHeader, MetricTile } from "@/components/admin/primitives";
 import { loadRevenueGrowth } from "@/lib/admin-yc-metrics";
 
 export const metadata = { title: "Admin · Revenue" };

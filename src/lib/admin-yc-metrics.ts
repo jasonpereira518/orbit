@@ -1,4 +1,4 @@
-import { desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   acquisitionSpend,
@@ -79,7 +79,13 @@ export async function loadUnitEconomics(now = new Date()) {
 
   const [spendRows, rows, settings] = await Promise.all([
     db.query.acquisitionSpend.findMany({
-      where: gte(acquisitionSpend.periodStart, since),
+      // Overlap-based, not start-based: `LogAcquisitionSpendForm` always writes
+      // `periodEnd = now` at write time, so a start-based filter (`periodStart >= since`
+      // computed at *read* time) fails on essentially every later read — the row's period
+      // always starts before the read's `since`, and the spend silently drops out of every
+      // CAC calculation. Counting a row whose period *overlaps* the trailing-30-day window
+      // fixes that: it ends on/after the window start and starts on/before now.
+      where: and(gte(acquisitionSpend.periodEnd, since), lte(acquisitionSpend.periodStart, now)),
     }),
     loadAdminUserRows(),
     (async () => {
