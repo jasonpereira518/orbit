@@ -211,6 +211,42 @@ async function seed() {
     body: "prose the user wrote about a real person",
   });
 
+  // Everything the Gmail recruiter scan derives from a mailbox. Same class of row as the
+  // message above and then some: a stage history quotes the mail it was read from, and a
+  // queued finding holds the whole classifier payload verbatim.
+  const [opportunity] = await db
+    .insert(schema.recruiterOpportunities)
+    .values({
+      userId: USER,
+      companyName: "Hiring Co",
+      companyNormalized: "hiring",
+      stage: "screening",
+      stageEvidence: "quoted from the user's inbox",
+      summary: "where this stands, distilled from their mail",
+    })
+    .returning();
+  await db.insert(schema.recruiterThreads).values({
+    userId: USER,
+    gmailThreadId: "gmail-thread-id",
+    opportunityId: opportunity.id,
+    recruiterId: recruiter.id,
+    subject: "Next steps",
+  });
+  await db.insert(schema.recruiterScanVerdicts).values({
+    userId: USER,
+    emailNormalized: "someone@example.test",
+    verdict: "not_recruiter",
+  });
+  await db.insert(schema.recruiterScanFindings).values({
+    userId: USER,
+    gmailThreadId: "queued-thread-id",
+    payload: { summary: "unreviewed classifier output about a named person" },
+  });
+  await db.insert(schema.recruiterScanState).values({
+    userId: USER,
+    lastScanAt: new Date(),
+  });
+
   for (const table of [schema.gmailConnections, schema.outlookConnections]) {
     await db.insert(table).values({
       userId: USER,

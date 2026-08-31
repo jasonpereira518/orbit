@@ -651,6 +651,33 @@ export type ImportStats = {
    */
   scanStartedAt?: string;
 
+  /**
+   * Which discovery arm the cursor belongs to. The inbound and sent sweeps are separate Gmail
+   * queries with separate pagination, so resuming needs to know which one `gmailPageToken`
+   * came from — a token from one arm is meaningless to the other.
+   */
+  scanArm?: "inbound" | "sent";
+  /** Distinct threads discovery found, after collapsing message hits. */
+  threadsDiscovered?: number;
+  /** Threads triage sent on to the expensive phase. */
+  triageAccepted?: number;
+  /**
+   * Threads that scored in the band between the reject and accept thresholds and were
+   * dropped. Counted rather than silently discarded: with a precision-biased filter this is
+   * the only honest way to tell an over-aggressive threshold from a quiet mailbox.
+   */
+  triageDeferred?: number;
+  /** Threads rejected outright — bulk mail, or a sender already judged. */
+  triageRejected?: number;
+  /** Threads whose stage came from the ATS rules, costing no tokens at all. */
+  atsRuleHits?: number;
+  /** LLM calls actually issued. The number every other figure here exists to hold down. */
+  llmCalls?: number;
+  /** Threads answered from the verdict cache instead of the model. */
+  cacheHits?: number;
+  opportunitiesFound?: number;
+  findingsPending?: number;
+
   /** Wall-clock milliseconds across every invocation of this job. */
   durationMs?: number;
   /** SQL statements issued across every invocation. The cost this work exists to bound. */
@@ -700,6 +727,42 @@ export type GmailSenderRowPayload = {
   firm: string | null;
   /** Capped at scan time; the classifier only reads the most recent few. */
   messageIds: string[];
+};
+
+/**
+ * One Gmail thread that survived triage, staged for classification.
+ *
+ * Threads rather than senders: a hiring process routinely spans a recruiter, a coordinator,
+ * and a hiring manager, which the sender-keyed row this replaces split into three unrelated
+ * pieces. The triage verdict travels with the row so the expensive phase never re-derives it,
+ * and so a row explains itself when something goes wrong.
+ */
+export type GmailThreadRowPayload = {
+  kind: "gmail_thread";
+  threadId: string;
+  subject: string;
+  /** `human` rows go to the classifier; `ats` rows are read by rule and cost no tokens. */
+  senderKind: "human" | "ats";
+  direction: "inbound" | "outbound";
+  /** The correspondent — for outbound-only threads this is the recipient, not the sender. */
+  email: string;
+  name: string;
+  firm: string | null;
+  messageIds: string[];
+  messageCount: number;
+  userReplied: boolean;
+  /**
+   * Subjects and snippets already returned by the metadata fetch, concatenated.
+   *
+   * Carried on the row so the ATS rules can read a stage with no further network call and no
+   * tokens at all — which is what makes keeping automated hiring mail affordable.
+   */
+  snippetText: string;
+  firstMessageAt: number | null;
+  lastMessageAt: number | null;
+  /** Why triage let this through. Surfaced in review and when retuning thresholds. */
+  triageReasons: string[];
+  triageScore: number;
 };
 
 /** One row of a Google People API contacts fetch, snapshotted for the engine to process. */
@@ -794,6 +857,7 @@ export type CalendarEventRowPayload = {
 export type ImportJobRowPayload =
   | LinkedInImportRowPayload
   | GmailSenderRowPayload
+  | GmailThreadRowPayload
   | GoogleContactRowPayload
   | OutlookContactRowPayload
   | LinkedInMessageThreadRowPayload
@@ -803,6 +867,12 @@ export function isGmailSenderRow(
   payload: ImportJobRowPayload
 ): payload is GmailSenderRowPayload {
   return payload.kind === "gmail_sender";
+}
+
+export function isGmailThreadRow(
+  payload: ImportJobRowPayload
+): payload is GmailThreadRowPayload {
+  return payload.kind === "gmail_thread";
 }
 
 export const importJobRows = pgTable(
@@ -1149,6 +1219,176 @@ export const recruiterMessages = pgTable(
     index("recruiter_messages_recruiter_idx").on(t.recruiterId),
     // Backs the daily send cap, which counts this user's sends since midnight.
     index("recruiter_messages_sent_idx").on(t.userId, t.sentAt),
+  ]
+);
+
+export type RecruiterOpportunitySource = "gmail_scan" | "manual";
+
+/**
+ * One hiring process, keyed by company.
+ *
+ * Company rather than role, by decision: a real job search feels like "where am I with
+ * Stripe", and role names in email are noisy enough that splitting on them fragments a
+ * single process into three. Roles are kept on the row so the detail is not lost.
+ *
+ * User-scoped and never shared. A stage history distilled from someone's inbox carries
+ * rejections and compensation talk, which is the same reason `user_recruiter_links.ai_summary`
+ * lives on the link and not on the pooled `recruiters` row.
+ */
+export const recruiterOpportunities = pgTable(
+  "recruiter_opportunities",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    companyId: uuid("company_id").references(() => companies.id, {
+      onDelete: "set null",
+    }),
+    companyName: text("company_name").notNull(),
+    /** Merge key. Shares `normalizeCompanyName` with `companies` so the two agree. */
+    companyNormalized: text("company_normalized").notNull(),
+    /** See `mergeStage` in lib/recruiter-stages.ts — the one rule every writer goes through. */
+    stage: text("stage").notNull().default("outreach_received"),
+    stageUpdatedAt: timestamp("stage_updated_at", { withTimezone: true }),
+    /** Quoted phrase the stage was read from. Makes a queued finding reviewable at a glance. */
+    stageEvidence: text("stage_evidence"),
+    roles: jsonb("roles").$type<string[]>().default([]),
+    summary: text("summary"),
+    nextStep: text("next_step"),
+    firstActivityAt: timestamp("first_activity_at", { withTimezone: true }),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }),
+    threadCount: integer("thread_count").default(0).notNull(),
+    confidence: integer("confidence").default(0).notNull(),
+    source: text("source")
+      .$type<RecruiterOpportunitySource>()
+      .default("gmail_scan")
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("recruiter_opportunities_user_idx").on(t.userId, t.stage),
+    index("recruiter_opportunities_activity_idx").on(t.userId, t.lastActivityAt),
+    uniqueIndex("recruiter_opportunities_user_company_uidx").on(
+      t.userId,
+      t.companyNormalized
+    ),
+  ]
+);
+
+export type RecruiterThreadDirection = "inbound" | "outbound";
+
+/** A Gmail thread bound to a process. The unique index is what makes re-scanning idempotent. */
+export const recruiterThreads = pgTable(
+  "recruiter_threads",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    gmailThreadId: text("gmail_thread_id").notNull(),
+    opportunityId: uuid("opportunity_id").references(
+      () => recruiterOpportunities.id,
+      { onDelete: "cascade" }
+    ),
+    /** Null for automated mail — an ATS robot is not a contact worth keeping. */
+    recruiterId: uuid("recruiter_id").references(() => recruiters.id, {
+      onDelete: "set null",
+    }),
+    direction: text("direction")
+      .$type<RecruiterThreadDirection>()
+      .default("inbound")
+      .notNull(),
+    /** How the correspondent was classified — see `SenderKind` in lib/recruiter-triage.ts. */
+    senderKind: text("sender_kind").default("human").notNull(),
+    subject: text("subject"),
+    messageCount: integer("message_count").default(0).notNull(),
+    /** True when the user wrote in this thread. Distinguishes a conversation from a blast. */
+    userReplied: integer("user_replied").default(0).notNull(),
+    stageAtThread: text("stage_at_thread"),
+    firstMessageAt: timestamp("first_message_at", { withTimezone: true }),
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("recruiter_threads_user_idx").on(t.userId),
+    index("recruiter_threads_opportunity_idx").on(t.opportunityId),
+    uniqueIndex("recruiter_threads_user_thread_uidx").on(t.userId, t.gmailThreadId),
+  ]
+);
+
+export type RecruiterVerdict = "recruiter" | "not_recruiter";
+
+/**
+ * Remembered classifier verdicts, keyed by sender.
+ *
+ * This is what makes a repeat scan nearly free: a sender already judged is never sent to the
+ * model again. It also gives the review queue teeth — rejecting a finding writes
+ * `not_recruiter` here, so a sender dismissed once stays dismissed.
+ *
+ * `prompt_version` scopes every entry to the classifier generation that produced it, so
+ * improving the prompt re-opens senders the old one got wrong instead of trusting stale
+ * answers forever.
+ */
+export const recruiterScanVerdicts = pgTable(
+  "recruiter_scan_verdicts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    emailNormalized: text("email_normalized").notNull(),
+    verdict: text("verdict").$type<RecruiterVerdict>().notNull(),
+    confidence: integer("confidence").default(0).notNull(),
+    promptVersion: integer("prompt_version").default(1).notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("recruiter_scan_verdicts_user_idx").on(t.userId),
+    uniqueIndex("recruiter_scan_verdicts_user_email_uidx").on(
+      t.userId,
+      t.emailNormalized
+    ),
+  ]
+);
+
+export type RecruiterFindingStatus =
+  | "auto_applied"
+  | "pending"
+  | "approved"
+  | "rejected";
+
+/**
+ * The hybrid review queue.
+ *
+ * High-confidence findings are applied immediately and recorded here as `auto_applied` — so
+ * an automatic write is still auditable and reversible rather than invisible. Everything else
+ * waits as `pending` and touches nothing until a person says so.
+ */
+export const recruiterScanFindings = pgTable(
+  "recruiter_scan_findings",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    importId: uuid("import_id").references(() => imports.id, {
+      onDelete: "cascade",
+    }),
+    gmailThreadId: text("gmail_thread_id").notNull(),
+    /** The classifier's (or ATS rule's) raw output, kept whole so review shows real evidence. */
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    confidence: integer("confidence").default(0).notNull(),
+    status: text("status")
+      .$type<RecruiterFindingStatus>()
+      .default("pending")
+      .notNull(),
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("recruiter_scan_findings_user_idx").on(t.userId, t.status),
+    uniqueIndex("recruiter_scan_findings_user_thread_uidx").on(
+      t.userId,
+      t.gmailThreadId
+    ),
   ]
 );
 
@@ -1874,6 +2114,10 @@ export type Recruiter = typeof recruiters.$inferSelect;
 export type UserRecruiterLink = typeof userRecruiterLinks.$inferSelect;
 export type RecruiterMessage = typeof recruiterMessages.$inferSelect;
 export type RecruiterScanState = typeof recruiterScanState.$inferSelect;
+export type RecruiterOpportunity = typeof recruiterOpportunities.$inferSelect;
+export type RecruiterThread = typeof recruiterThreads.$inferSelect;
+export type RecruiterScanVerdict = typeof recruiterScanVerdicts.$inferSelect;
+export type RecruiterScanFinding = typeof recruiterScanFindings.$inferSelect;
 export type GmailConnection = typeof gmailConnections.$inferSelect;
 export type UsageEvent = typeof usageEvents.$inferSelect;
 export type NewUsageEvent = typeof usageEvents.$inferInsert;

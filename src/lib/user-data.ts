@@ -25,6 +25,11 @@ import {
   usageEvents,
   userGoals,
   recruiterMessages,
+  recruiterOpportunities,
+  recruiterScanFindings,
+  recruiterScanState,
+  recruiterScanVerdicts,
+  recruiterThreads,
   userRecruiterLinks,
   userSettings,
 } from "@/db/schema";
@@ -131,6 +136,22 @@ export async function purgeUserData(
   // list from `schema.ts` precisely so a new one fails the suite — it did, and the failure
   // was sitting red on main.
   await db.delete(recruiterMessages).where(eq(recruiterMessages.userId, userId));
+
+  // Everything the Gmail scan derived from the mailbox. All five are user-scoped and carry
+  // inbox-derived detail — stage histories, quoted evidence, queued findings holding whole
+  // classifier payloads, and the per-sender verdict cache. Findings are cascaded by the
+  // `imports` delete below, but are removed explicitly so the purge does not depend on the
+  // order of two unrelated statements.
+  //
+  // Threads are deleted before opportunities: the FK cascades that way anyway, and doing it
+  // in the same direction keeps the intent readable.
+  await db.delete(recruiterScanFindings).where(eq(recruiterScanFindings.userId, userId));
+  await db.delete(recruiterThreads).where(eq(recruiterThreads.userId, userId));
+  await db
+    .delete(recruiterOpportunities)
+    .where(eq(recruiterOpportunities.userId, userId));
+  await db.delete(recruiterScanVerdicts).where(eq(recruiterScanVerdicts.userId, userId));
+  await db.delete(recruiterScanState).where(eq(recruiterScanState.userId, userId));
 
   await db.delete(userRecruiterLinks).where(eq(userRecruiterLinks.userId, userId));
 

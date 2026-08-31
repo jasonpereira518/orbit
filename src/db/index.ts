@@ -432,6 +432,76 @@ CREATE TABLE IF NOT EXISTS recruiter_messages (
 CREATE INDEX IF NOT EXISTS recruiter_messages_user_idx ON recruiter_messages(user_id, status);
 CREATE INDEX IF NOT EXISTS recruiter_messages_recruiter_idx ON recruiter_messages(recruiter_id);
 CREATE INDEX IF NOT EXISTS recruiter_messages_sent_idx ON recruiter_messages(user_id, sent_at);
+CREATE TABLE IF NOT EXISTS recruiter_opportunities (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  company_id uuid REFERENCES companies(id) ON DELETE SET NULL,
+  company_name text NOT NULL,
+  company_normalized text NOT NULL,
+  stage text NOT NULL DEFAULT 'outreach_received',
+  stage_updated_at timestamptz,
+  stage_evidence text,
+  roles jsonb DEFAULT '[]',
+  summary text,
+  next_step text,
+  first_activity_at timestamptz,
+  last_activity_at timestamptz,
+  thread_count integer NOT NULL DEFAULT 0,
+  confidence integer NOT NULL DEFAULT 0,
+  source text NOT NULL DEFAULT 'gmail_scan',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS recruiter_opportunities_user_idx ON recruiter_opportunities(user_id, stage);
+CREATE INDEX IF NOT EXISTS recruiter_opportunities_activity_idx ON recruiter_opportunities(user_id, last_activity_at);
+CREATE UNIQUE INDEX IF NOT EXISTS recruiter_opportunities_user_company_uidx ON recruiter_opportunities(user_id, company_normalized);
+CREATE TABLE IF NOT EXISTS recruiter_threads (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  gmail_thread_id text NOT NULL,
+  opportunity_id uuid REFERENCES recruiter_opportunities(id) ON DELETE CASCADE,
+  recruiter_id uuid REFERENCES recruiters(id) ON DELETE SET NULL,
+  direction text NOT NULL DEFAULT 'inbound',
+  sender_kind text NOT NULL DEFAULT 'human',
+  subject text,
+  message_count integer NOT NULL DEFAULT 0,
+  user_replied integer NOT NULL DEFAULT 0,
+  stage_at_thread text,
+  first_message_at timestamptz,
+  last_message_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS recruiter_threads_user_idx ON recruiter_threads(user_id);
+CREATE INDEX IF NOT EXISTS recruiter_threads_opportunity_idx ON recruiter_threads(opportunity_id);
+CREATE UNIQUE INDEX IF NOT EXISTS recruiter_threads_user_thread_uidx ON recruiter_threads(user_id, gmail_thread_id);
+CREATE TABLE IF NOT EXISTS recruiter_scan_verdicts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  email_normalized text NOT NULL,
+  verdict text NOT NULL,
+  confidence integer NOT NULL DEFAULT 0,
+  prompt_version integer NOT NULL DEFAULT 1,
+  last_seen_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS recruiter_scan_verdicts_user_idx ON recruiter_scan_verdicts(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS recruiter_scan_verdicts_user_email_uidx ON recruiter_scan_verdicts(user_id, email_normalized);
+CREATE TABLE IF NOT EXISTS recruiter_scan_findings (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  import_id uuid REFERENCES imports(id) ON DELETE CASCADE,
+  gmail_thread_id text NOT NULL,
+  payload jsonb NOT NULL,
+  confidence integer NOT NULL DEFAULT 0,
+  status text NOT NULL DEFAULT 'pending',
+  applied_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS recruiter_scan_findings_user_idx ON recruiter_scan_findings(user_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS recruiter_scan_findings_user_thread_uidx ON recruiter_scan_findings(user_id, gmail_thread_id);
 CREATE TABLE IF NOT EXISTS recruiter_scan_state (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL UNIQUE,
@@ -661,7 +731,7 @@ CREATE TABLE IF NOT EXISTS fundraising_investors (
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
