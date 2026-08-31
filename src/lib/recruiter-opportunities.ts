@@ -1,6 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
+  interactions,
   recruiterOpportunities,
   recruiterScanFindings,
   recruiterScanVerdicts,
@@ -224,6 +225,59 @@ async function refreshThreadCount(opportunityId: string): Promise<void> {
 }
 
 /**
+ * Mirrors a recruiter thread into the main contact timeline — but only when the user has
+ * already linked that recruiter to a contact.
+ *
+ * The spec called for every thread to become an `interactions` row. It cannot:
+ * `interactions.contact_id` is NOT NULL and references `contacts`, while recruiters live in
+ * their own tables by decision. Manufacturing a contact for every recruiter would quietly
+ * undo that decision and put agency sourcers into the user's network graph.
+ *
+ * So this is opportunistic. `recruiter_threads` is the recruiter-side timeline in its own
+ * right — direction, subject, dates and stage per thread — and this adds the event to the
+ * contact's history in the one case where a contact genuinely exists.
+ */
+async function writeTimelineEvent(
+  userId: string,
+  recruiterId: string,
+  finding: ThreadFinding
+): Promise<void> {
+  const db = await getDb();
+  const link = await db.query.userRecruiterLinks.findFirst({
+    where: and(
+      eq(userRecruiterLinks.userId, userId),
+      eq(userRecruiterLinks.recruiterId, recruiterId)
+    ),
+    columns: { contactId: true },
+  });
+  if (!link?.contactId) return;
+
+  await db
+    .insert(interactions)
+    .values({
+      userId,
+      contactId: link.contactId,
+      interactionType: "email",
+      interactionDate: finding.lastMessageAt ?? new Date(),
+      source: "gmail_recruiter_scan",
+      // Keyed by thread so a re-scan updates the event rather than adding another. The
+      // partial unique index on (user_id, external_id) is what makes that work.
+      externalId: `gmail:${finding.gmailThreadId}`,
+      rawNotes: finding.subject || null,
+      aiSummary: finding.summary,
+      topics: finding.roles,
+    })
+    .onConflictDoUpdate({
+      target: [interactions.userId, interactions.externalId],
+      set: {
+        interactionDate: finding.lastMessageAt ?? new Date(),
+        aiSummary: finding.summary,
+        topics: finding.roles,
+      },
+    });
+}
+
+/**
  * Writes one classified thread through to the recruiter tables.
  *
  * Idempotent by construction: opportunities are keyed on (user, company) and threads on
@@ -274,6 +328,7 @@ export async function applyThreadFinding(
       );
 
     await recordVerdict(userId, finding.correspondentEmail, "recruiter", finding.confidence);
+    await writeTimelineEvent(userId, recruiterId, finding);
   }
 
   await db

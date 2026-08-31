@@ -34,11 +34,39 @@ function isTerminal(status: string) {
 function phaseLabel(scan: GmailScanStatus) {
   if (isTerminal(scan.status)) return null;
   if (!scan.discoveryComplete) {
-    return scan.messagesScanned > 0
-      ? `Searching your mailbox — ${scan.messagesScanned.toLocaleString()} messages so far`
-      : "Searching your mailbox…";
+    // Threads, not messages: several hits in one conversation are one unit of work, and
+    // reporting the raw message count would overstate what is left to do.
+    return scan.threadsDiscovered > 0
+      ? `Searching your mail — ${scan.threadsDiscovered.toLocaleString()} conversations so far`
+      : "Searching your mail…";
   }
   return `Reading ${scan.processed}/${scan.totalSenders ?? 0} conversations`;
+}
+
+/**
+ * What the finished scan actually did.
+ *
+ * Deliberately includes what was skipped and how many model calls it took. The whole design
+ * trades completeness for cost in specific places, and a summary that reported only finds
+ * would hide both halves of that trade.
+ */
+function scanSummary(scan: GmailScanStatus): string | null {
+  if (scan.status !== "completed") return null;
+  const parts: string[] = [];
+  parts.push(
+    `${scan.opportunitiesFound} ${scan.opportunitiesFound === 1 ? "process" : "processes"}`
+  );
+  if (scan.threadsDiscovered > 0) {
+    parts.push(`${scan.threadsDiscovered.toLocaleString()} conversations read`);
+  }
+  if (scan.atsRuleHits > 0) {
+    parts.push(`${scan.atsRuleHits} matched by rule (no AI)`);
+  }
+  parts.push(`${scan.llmCalls} AI ${scan.llmCalls === 1 ? "call" : "calls"}`);
+  if (scan.triageDeferred > 0) {
+    parts.push(`${scan.triageDeferred} borderline skipped`);
+  }
+  return parts.join(" · ");
 }
 
 export function GmailImportPanel({
@@ -175,8 +203,8 @@ export function GmailImportPanel({
           </h2>
           <p className="mt-0.5 max-w-prose text-sm text-muted-foreground">
             {connection.connected
-              ? `Connected as ${connection.emailAddress}. Orbit searches your whole mailbox for recruiter threads and writes a private summary of each one.`
-              : "Search your whole mailbox for recruiters, the companies they hired for, and a summary of every conversation."}
+              ? `Connected as ${connection.emailAddress}. Orbit reads the last two years of recruiter mail and groups it into one process per company. Scanning again only reads what has arrived since.`
+              : "Find the recruiters who contacted you, the ones you contacted, and where every hiring process stands."}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -220,8 +248,40 @@ export function GmailImportPanel({
                   })
                 }
               >
-                {running ? "Scanning…" : scan ? "Scan again" : "Scan mailbox"}
+                {running ? "Scanning…" : scan ? "Scan new mail" : "Scan mailbox"}
               </Button>
+              {/* Distinct from the default incremental scan: this ignores the watermark and
+                  re-reads the whole window, which is what you want after the classifier
+                  itself has changed. It costs a full scan, so it is not the primary. */}
+              {scan && (
+                <Button
+                  variant="outline"
+                  disabled={pending || running}
+                  onClick={() =>
+                    start(async () => {
+                      try {
+                        const { importId } = await startGmailRecruiterScan({
+                          full: true,
+                        });
+                        const next = await getGmailScanStatus(importId);
+                        if (next) {
+                          setScan(next);
+                          mirror(next);
+                        }
+                        toast.success(
+                          "Re-scanning everything — this can take a few minutes"
+                        );
+                      } catch (err) {
+                        toast.error(
+                          err instanceof Error ? err.message : "Could not start scan"
+                        );
+                      }
+                    })
+                  }
+                >
+                  Re-scan everything
+                </Button>
+              )}
               <Button
                 variant="outline"
                 disabled={pending || running}
@@ -286,15 +346,28 @@ export function GmailImportPanel({
       )}
 
       {!running && scan?.status === "completed" && (
-        <p className="rounded-xl bg-muted/40 p-4 text-sm text-muted-foreground">
-          Last scan read {scan.messagesScanned.toLocaleString()} messages and
-          found{" "}
-          <span className="font-medium text-foreground">
-            {scan.recruitersFound} recruiter
-            {scan.recruitersFound === 1 ? "" : "s"}
-          </span>
-          . Summaries are private to you.
-        </p>
+        <div className="space-y-1 rounded-xl bg-muted/40 p-4 text-sm text-muted-foreground">
+          <p>
+            Last {scan.isFullScan ? "full scan" : "scan"} found{" "}
+            <span className="font-medium text-foreground">
+              {scan.opportunitiesFound}{" "}
+              {scan.opportunitiesFound === 1 ? "hiring process" : "hiring processes"}
+            </span>
+            {scan.findingsPending > 0 && (
+              <>
+                {" "}
+                and left{" "}
+                <span className="font-medium text-foreground">
+                  {scan.findingsPending} to review
+                </span>
+              </>
+            )}
+            . Summaries are private to you.
+          </p>
+          {/* The cost line. Shown rather than hidden: this design skips things on purpose,
+              and the counts are how that stays visible instead of feeling like a bug. */}
+          <p className="text-xs">{scanSummary(scan)}</p>
+        </div>
       )}
 
       {!running && scan?.status === "failed" && (

@@ -15,6 +15,12 @@ import {
   RecruiterSearch,
 } from "@/components/recruiters/recruiter-list";
 import { GmailImportPanel } from "@/components/recruiters/gmail-import-panel";
+import { PipelineBoard } from "@/components/recruiters/pipeline-board";
+import { FindingReviewList } from "@/components/recruiters/finding-review-list";
+import {
+  listOpportunities,
+  listPendingFindings,
+} from "@/actions/recruiter-pipeline";
 import { RecruiterSharingToggle } from "@/components/recruiters/sharing-toggle";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -45,17 +51,28 @@ export default async function RecruitersPage({
   // "Discover" replaced the old "Directory" tab. Directory used to mean "every recruiter
   // anyone had ever logged"; under the sharing model a private user's directory is
   // identical to their own list, so the tab was showing the same rows twice.
-  const tab = params.tab === "discover" ? "discover" : "mine";
+  const tab =
+    params.tab === "discover"
+      ? "discover"
+      : params.tab === "pipeline"
+        ? "pipeline"
+        : params.tab === "review"
+          ? "review"
+          : "mine";
   const q = params.q || "";
 
-  const [{ enabled: sharing }, mine, gmail, scan] = await Promise.all([
-    getRecruiterSharing(),
-    listMyRecruiters(),
-    getGmailConnectionStatus(),
-    // Seeds the panel so a scan already running on the server shows progress on load,
-    // rather than looking idle until the first poll returns.
-    getGmailScanStatus(),
-  ]);
+  const [{ enabled: sharing }, mine, gmail, scan, opportunities, findings] =
+    await Promise.all([
+      getRecruiterSharing(),
+      listMyRecruiters(),
+      getGmailConnectionStatus(),
+      // Seeds the panel so a scan already running on the server shows progress on load,
+      // rather than looking idle until the first poll returns.
+      getGmailScanStatus(),
+      // Both are needed on every tab, not just their own: the counts sit in the tab strip.
+      listOpportunities(),
+      listPendingFindings(),
+    ]);
 
   // Returns [] for a private viewer, so this is safe to call unconditionally.
   const discover =
@@ -117,6 +134,32 @@ export default async function RecruitersPage({
               My recruiters ({mine.length})
             </Link>
             <Link
+              href={`/recruiters?tab=pipeline${q ? `&q=${encodeURIComponent(q)}` : ""}`}
+              className={cn(
+                "rounded-md px-3 py-1.5",
+                tab === "pipeline"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              Pipeline ({opportunities.length})
+            </Link>
+            {/* Only shown when there is something waiting — an always-present tab reading
+                "Review (0)" is a permanent chore that never goes away. */}
+            {findings.length > 0 && (
+              <Link
+                href={`/recruiters?tab=review${q ? `&q=${encodeURIComponent(q)}` : ""}`}
+                className={cn(
+                  "rounded-md px-3 py-1.5",
+                  tab === "review"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                Review ({findings.length})
+              </Link>
+            )}
+            <Link
               href={`/recruiters?tab=discover${q ? `&q=${encodeURIComponent(q)}` : ""}`}
               className={cn(
                 "rounded-md px-3 py-1.5",
@@ -128,10 +171,18 @@ export default async function RecruitersPage({
               Discover
             </Link>
           </div>
-          <RecruiterSearch initialQ={q} className="min-w-[16rem] flex-1" />
+          {/* Search filters recruiter lists only; it has no meaning on pipeline or review,
+              and a live-looking box that does nothing is worse than no box. */}
+          {(tab === "mine" || tab === "discover") && (
+            <RecruiterSearch initialQ={q} className="min-w-[16rem] flex-1" />
+          )}
         </div>
 
-        {tab === "discover" && !sharing ? (
+        {tab === "pipeline" ? (
+          <PipelineBoard opportunities={opportunities} />
+        ) : tab === "review" ? (
+          <FindingReviewList findings={findings} />
+        ) : tab === "discover" && !sharing ? (
           // The empty Discover tab is the incentive made visible. Hiding it entirely
           // would also hide the offer, so it renders the reason instead of a list.
           <div className="rounded-2xl border border-dashed border-border/70 bg-card px-5 py-12 text-center">

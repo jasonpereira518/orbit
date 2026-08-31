@@ -134,6 +134,25 @@ export type GmailScanStatus = {
   discoveryComplete: boolean;
   errorMessage: string | null;
   updatedAt: string;
+
+  // What the scan cost and what it skipped. Surfaced rather than kept internal: the whole
+  // design trades completeness for cost in specific places, and these are how a user (and a
+  // future maintainer retuning the thresholds) can see where.
+  /** Distinct conversations found, after collapsing multiple hits in one thread. */
+  threadsDiscovered: number;
+  /** Threads that scored between the reject and accept thresholds and were dropped. */
+  triageDeferred: number;
+  /** Stages read straight off ATS templates — no model call, no tokens. */
+  atsRuleHits: number;
+  /** Model calls actually issued. */
+  llmCalls: number;
+  /** Findings waiting for review, having written nothing yet. */
+  findingsPending: number;
+  opportunitiesFound: number;
+  /** True when this run ignored the watermark and re-read the whole window. */
+  isFullScan: boolean;
+  /** Start of the window this run read, ISO. Null on jobs from before the window existed. */
+  scanAfter: string | null;
 };
 
 function toScanStatus(row: typeof imports.$inferSelect): GmailScanStatus {
@@ -148,17 +167,32 @@ function toScanStatus(row: typeof imports.$inferSelect): GmailScanStatus {
     discoveryComplete: Boolean(stats.discoveryComplete),
     errorMessage: row.errorMessage,
     updatedAt: row.updatedAt.toISOString(),
+    threadsDiscovered: stats.threadsDiscovered ?? 0,
+    triageDeferred: stats.triageDeferred ?? 0,
+    atsRuleHits: stats.atsRuleHits ?? 0,
+    llmCalls: stats.llmCalls ?? 0,
+    findingsPending: stats.findingsPending ?? 0,
+    opportunitiesFound: stats.opportunitiesFound ?? 0,
+    isFullScan: stats.scanIsFull === true,
+    scanAfter: stats.scanAfter ?? null,
   };
 }
 
 /**
- * Queue a whole-mailbox recruiter scan and return immediately.
+ * Queue a recruiter scan and return immediately.
+ *
+ * Incremental by default: the job resolves its own window from the user's watermark, so a
+ * routine re-scan reads only what has arrived since the last completed run. `full` ignores
+ * the watermark and re-reads the whole configured window — the escape hatch for when the
+ * classifier itself has improved and old verdicts deserve another look.
  *
  * The work is owned by the server (rows in `import_job_rows`, self-continuation, cron
  * backstop), so it survives navigation, a closed tab, and a dead invocation. The client
  * only polls.
  */
-export async function startGmailRecruiterScan(): Promise<{ importId: string }> {
+export async function startGmailRecruiterScan(
+  opts: { full?: boolean } = {}
+): Promise<{ importId: string }> {
   const userId = await requireSyncUser();
   const db = await getDb();
 
@@ -197,7 +231,13 @@ export async function startGmailRecruiterScan(): Promise<{ importId: string }> {
       status: "processing",
       totalRows: null,
       rowsProcessed: 0,
-      stats: { discoveryComplete: false, messagesScanned: 0 },
+      // `scanIsFull` is read back by the runner when it resolves the window on its first
+      // invocation; everything else about the window is decided there, not here.
+      stats: {
+        discoveryComplete: false,
+        messagesScanned: 0,
+        scanIsFull: opts.full === true,
+      },
     })
     .returning();
 
