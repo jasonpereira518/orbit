@@ -824,3 +824,203 @@ export async function fetchGmailMessages(
   });
   return results.filter((r): r is GmailMessageContent => r !== null);
 }
+
+// --- Thread-first retrieval -------------------------------------------------------------
+
+/**
+ * A whole conversation. `threads.get` returns every message in one call, which is both
+ * cheaper than fetching each message and strictly more informative: it carries the user's own
+ * replies, so the outbound half of a conversation needs no separate sweep.
+ */
+export type GmailThreadSummary = {
+  id: string;
+  /** Oldest first, matching Gmail's own ordering. */
+  messages: GmailHeaderSummary[];
+};
+
+/**
+ * Google's guidance is a hard cap of 100 sub-requests with 50 recommended, because a batch
+ * counts toward the quota as n requests rather than one. Batching buys round trips, not
+ * quota — so the conservative number is the right one.
+ */
+const GMAIL_BATCH_SIZE = 50;
+
+const THREAD_METADATA_QS =
+  "format=metadata" +
+  "&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date" +
+  "&metadataHeaders=List-Unsubscribe&metadataHeaders=List-Id&metadataHeaders=Precedence";
+
+type RawGmailThread = { id?: string; messages?: RawGmailMessage[] };
+
+function toHeaderSummary(msg: RawGmailMessage, threadId: string): GmailHeaderSummary {
+  const internal = Number(msg.internalDate);
+  return {
+    id: msg.id || "",
+    threadId: msg.threadId || threadId,
+    from: headerValue(msg, "From"),
+    to: headerValue(msg, "To"),
+    subject: headerValue(msg, "Subject"),
+    snippet: msg.snippet || "",
+    internalDate: Number.isFinite(internal) ? internal : null,
+    listUnsubscribe: headerValue(msg, "List-Unsubscribe"),
+    listId: headerValue(msg, "List-Id"),
+    precedence: headerValue(msg, "Precedence"),
+  };
+}
+
+function parseThread(raw: RawGmailThread, fallbackId: string): GmailThreadSummary | null {
+  const id = raw.id || fallbackId;
+  if (!id || !Array.isArray(raw.messages)) return null;
+  const messages = raw.messages.map((m) => toHeaderSummary(m, id));
+  messages.sort((a, b) => (a.internalDate ?? 0) - (b.internalDate ?? 0));
+  return { id, messages };
+}
+
+/**
+ * Splits a `multipart/mixed` batch response into its parts' JSON bodies, keyed by the
+ * `Content-ID` we asked for.
+ *
+ * Order is deliberately not trusted — the batch documentation makes no ordering guarantee, so
+ * pairing responses to requests positionally would silently attach one thread's messages to
+ * another thread's id. The `Content-ID` echo is the only safe join key.
+ */
+function parseBatchParts(body: string, boundary: string): Map<string, unknown> {
+  const out = new Map<string, unknown>();
+  const parts = body.split(`--${boundary}`);
+
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed || trimmed === "--") continue;
+
+    // part headers \r\n\r\n inner HTTP status+headers \r\n\r\n body
+    const sections = trimmed.split(/\r?\n\r?\n/);
+    if (sections.length < 3) continue;
+
+    const idMatch = sections[0].match(/Content-ID:\s*<?response-([^>\s]+)>?/i);
+    if (!idMatch) continue;
+
+    const statusMatch = sections[1].match(/HTTP\/\d(?:\.\d)?\s+(\d{3})/);
+    if (!statusMatch || !statusMatch[1].startsWith("2")) continue;
+
+    // Rejoin: a JSON body containing a blank line would otherwise be truncated.
+    const raw = sections.slice(2).join("\n\n");
+    try {
+      out.set(idMatch[1], JSON.parse(raw));
+    } catch {
+      // A malformed part must not take the other 49 down with it.
+    }
+  }
+  return out;
+}
+
+async function fetchThreadBatch(
+  accessToken: string,
+  threadIds: string[]
+): Promise<GmailThreadSummary[]> {
+  const boundary = `orbit_batch_${threadIds.length}_${threadIds[0]}`;
+  const body =
+    threadIds
+      .map((id) =>
+        [
+          `--${boundary}`,
+          "Content-Type: application/http",
+          `Content-ID: <${id}>`,
+          "",
+          `GET /gmail/v1/users/me/threads/${id}?${THREAD_METADATA_QS}`,
+          "",
+        ].join("\r\n")
+      )
+      .join("\r\n") + `\r\n--${boundary}--`;
+
+  const res = await fetch("https://gmail.googleapis.com/batch/gmail/v1", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": `multipart/mixed; boundary=${boundary}`,
+    },
+    body,
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) {
+    throw new Error(`Gmail batch failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
+  }
+
+  const responseBoundary = res.headers
+    .get("content-type")
+    ?.match(/boundary=(?:"([^"]+)"|([^;\s]+))/i);
+  const mark = responseBoundary?.[1] || responseBoundary?.[2];
+  if (!mark) throw new Error("Gmail batch response had no boundary");
+
+  const parsed = parseBatchParts(await res.text(), mark);
+  const threads: GmailThreadSummary[] = [];
+  for (const id of threadIds) {
+    const raw = parsed.get(id);
+    if (!raw) continue;
+    const thread = parseThread(raw as RawGmailThread, id);
+    if (thread) threads.push(thread);
+  }
+  return threads;
+}
+
+/** Single-thread fetch. The fallback when a batch is refused, and the retry for a lost part. */
+export async function fetchGmailThread(
+  accessToken: string,
+  threadId: string
+): Promise<GmailThreadSummary | null> {
+  try {
+    const res = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}?${THREAD_METADATA_QS}`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(15_000),
+      }
+    );
+    if (!res.ok) return null;
+    return parseThread((await res.json()) as RawGmailThread, threadId);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetches whole threads, batched.
+ *
+ * Falls back to bounded-concurrency individual GETs if the batch endpoint refuses — the
+ * result is identical either way, only slower, so a batch outage degrades the scan's speed
+ * rather than breaking it. Threads missing from an otherwise-successful batch are retried
+ * individually for the same reason.
+ */
+export async function fetchGmailThreadsBatched(
+  accessToken: string,
+  threadIds: string[],
+  opts: { concurrency?: number } = {}
+): Promise<GmailThreadSummary[]> {
+  if (threadIds.length === 0) return [];
+
+  const chunks: string[][] = [];
+  for (let i = 0; i < threadIds.length; i += GMAIL_BATCH_SIZE) {
+    chunks.push(threadIds.slice(i, i + GMAIL_BATCH_SIZE));
+  }
+
+  const results: GmailThreadSummary[] = [];
+  for (const chunk of chunks) {
+    let batched: GmailThreadSummary[] = [];
+    try {
+      batched = await fetchThreadBatch(accessToken, chunk);
+    } catch {
+      batched = [];
+    }
+
+    const seen = new Set(batched.map((t) => t.id));
+    results.push(...batched);
+
+    const missing = chunk.filter((id) => !seen.has(id));
+    if (missing.length > 0) {
+      const singles = await mapWithConcurrency(missing, opts.concurrency ?? 8, (id) =>
+        fetchGmailThread(accessToken, id)
+      );
+      results.push(...singles.filter((t): t is GmailThreadSummary => t !== null));
+    }
+  }
+  return results;
+}
