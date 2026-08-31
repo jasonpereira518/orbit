@@ -538,6 +538,17 @@ CREATE TABLE IF NOT EXISTS recruiter_messages (
 CREATE INDEX IF NOT EXISTS recruiter_messages_user_idx ON recruiter_messages(user_id, status);
 CREATE INDEX IF NOT EXISTS recruiter_messages_recruiter_idx ON recruiter_messages(recruiter_id);
 CREATE INDEX IF NOT EXISTS recruiter_messages_sent_idx ON recruiter_messages(user_id, sent_at);
+CREATE TABLE IF NOT EXISTS recruiter_scan_state (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL UNIQUE,
+  last_scan_at timestamptz,
+  last_full_scan_at timestamptz,
+  prompt_version integer NOT NULL DEFAULT 1,
+  window_months integer NOT NULL DEFAULT 24,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS recruiter_scan_state_user_idx ON recruiter_scan_state(user_id);
 CREATE TABLE IF NOT EXISTS gmail_connections (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL UNIQUE,
@@ -1070,12 +1081,15 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * duplicates being created), contact_merges (a merged contact archived whole, so the
  * loser's row can be deleted rather than flagged), duplicate_suggestions (name-tier
  * matches, which no longer auto-merge).
+ * v34 = recruiter scan v2: recruiter_scan_state (per-user watermark so a bounded,
+ * incremental Gmail query replaces the full-mailbox walk that was blowing the Gmail
+ * "Total Query Cost" quota).
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
- * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
+ * too, renumber and regenerate scripts/schema-ddl.lock.json rather than reusing 34.)
  */
-export const SCHEMA_VERSION = 33;
+export const SCHEMA_VERSION = 34;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a

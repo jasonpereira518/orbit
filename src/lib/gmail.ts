@@ -433,7 +433,7 @@ export async function fetchGooglePeopleContacts(
 const RECRUITER_TITLE_RE =
   /\b(recruiter|talent\s*acquisition|sourcer|staffing|headhunter|talent\s*partner|technical\s*recruiter)\b/i;
 
-const AGENCY_DOMAIN_HINTS = [
+export const AGENCY_DOMAIN_HINTS = [
   "robertwalters",
   "michaelpage",
   "hays",
@@ -504,6 +504,132 @@ export function looksLikeRecruiter(opts: {
 export const RECRUITER_QUERY_TERMS =
   '(recruiter OR "talent acquisition" OR sourcer OR staffing OR "job opportunity" OR "open role" OR "reaching out" OR headhunter OR "your background" OR "role at")';
 
+/**
+ * Positive terms for the sent-mail arm. A thread the user started that got a reply is
+ * already reachable from the inbound sweep (a Gmail thread carries both sides), so this
+ * exists only to catch cold emails that were never answered. Narrower than the inbound
+ * terms on purpose — an unanswered outbound thread has no recruiter language in it except
+ * the user's own.
+ */
+export const RECRUITER_SENT_QUERY_TERMS =
+  '(recruiter OR "talent acquisition" OR sourcer OR recruiting OR "open role" OR "your team" OR "reaching out about" OR "reaching out regarding")';
+
+/**
+ * Server-side subtraction. Gmail applies these for free, before a single byte reaches us —
+ * every hit removed here is a metadata fetch we never make and, downstream, an LLM call we
+ * never bill to the user's own key. Automated job-board and ATS mail is the bulk of what
+ * the classifier's negative list currently spends tokens rejecting one message at a time.
+ *
+ * Kept apart from the positive terms so the two can be tuned independently: widening recall
+ * and tightening precision are different decisions made at different times.
+ */
+/**
+ * Applicant-tracking systems and the automated career-site senders that behave like them.
+ *
+ * Deliberately NOT subtracted from the inbound query. Verified against a real mailbox: for
+ * anyone applying rather than being headhunted, this is where the pipeline actually lives —
+ * "we've decided not to proceed", "invitation to complete the assessment", "we have received
+ * your application" all arrive from these domains, and excluding them empties the stage
+ * history the scan exists to build.
+ *
+ * They carry no human to save, so triage routes them to opportunity stages only and never to
+ * recruiter contacts. Their templates are rigid enough that the stage is read by rule rather
+ * than by the classifier, which is why keeping them costs volume but almost no tokens.
+ */
+export const ATS_SENDER_DOMAINS = [
+  "greenhouse.io",
+  "lever.co",
+  "myworkday.com",
+  "icims.com",
+  "ashbyhq.com",
+  "jobvite.com",
+  "smartrecruiters.com",
+  "workable.com",
+  "bamboohr.com",
+  "taleo.net",
+  "pymetrics.com",
+  "hackerrankforwork.com",
+  "hirevue.com",
+  "codesignal.com",
+];
+
+/** Job boards and social networks. Never a hiring process — safe to subtract server-side. */
+export const EXCLUDED_JOB_BOARD_DOMAINS = [
+  "linkedin.com",
+  "indeed.com",
+  "ziprecruiter.com",
+  "glassdoor.com",
+  "monster.com",
+  "dice.com",
+  "hired.com",
+  "otta.com",
+  "wellfound.com",
+  "angel.co",
+];
+
+function orGroup(values: string[]): string {
+  return `(${values.join(" OR ")})`;
+}
+
+/**
+ * What Gmail can subtract for free.
+ *
+ * Note what is absent: automated senders and ATS domains. An earlier revision excluded both
+ * and was checked against a real mailbox, where it turned out to be discarding most of the
+ * user's actual stage history — see `ATS_SENDER_DOMAINS`. Newsletters are the other obvious
+ * candidate and are also absent, because Gmail cannot query arbitrary headers; they are cut
+ * at triage by `List-Unsubscribe`, which generalizes to senders no denylist anticipated.
+ */
+export const RECRUITER_QUERY_EXCLUSIONS = [
+  "-in:spam",
+  "-in:trash",
+  "-category:promotions",
+  "-category:social",
+  `-from:${orGroup(EXCLUDED_JOB_BOARD_DOMAINS)}`,
+];
+
+/**
+ * Outbound counterpart. In `in:sent` the sender is always the user, so a `-from:` domain
+ * clause matches nothing — the equivalent subtraction is `-to:`. Here ATS domains *are*
+ * excluded: a message to an applicant-tracking robot is not outreach to a recruiter.
+ *
+ * `-category:` is inbox-only and omitted rather than carried along as dead weight.
+ */
+export const RECRUITER_SENT_QUERY_EXCLUSIONS = [
+  "-in:spam",
+  "-in:trash",
+  `-to:${orGroup([...ATS_SENDER_DOMAINS, ...EXCLUDED_JOB_BOARD_DOMAINS])}`,
+  "-to:(noreply OR no-reply OR donotreply OR do-not-reply)",
+];
+
+/** Gmail wants `after:` as YYYY/MM/DD in the account's local sense; UTC date parts are close enough. */
+function gmailDate(d: Date): string {
+  return `${d.getUTCFullYear()}/${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+}
+
+export type RecruiterQueryOptions = {
+  /** Lower bound on message date. The single largest cost lever in the whole scan. */
+  after?: Date | null;
+  /** Sent-mail arm — unanswered cold outreach. Defaults to the inbound arm. */
+  direction?: "inbound" | "sent";
+};
+
+/**
+ * Builds the discovery query. Callers should never concatenate query fragments themselves:
+ * the exclusions are what keep a whole-mailbox scan affordable, and they are easy to drop
+ * by accident when the string is assembled at the call site.
+ */
+export function buildRecruiterQuery(opts: RecruiterQueryOptions = {}): string {
+  const sent = opts.direction === "sent";
+  const parts = [sent ? RECRUITER_SENT_QUERY_TERMS : RECRUITER_QUERY_TERMS];
+  if (sent) parts.push("in:sent");
+  if (opts.after) parts.push(`after:${gmailDate(opts.after)}`);
+  parts.push(
+    ...(sent ? RECRUITER_SENT_QUERY_EXCLUSIONS : RECRUITER_QUERY_EXCLUSIONS)
+  );
+  return parts.join(" ");
+}
+
 export type GmailMessageRef = { id: string; threadId: string };
 
 /**
@@ -540,9 +666,18 @@ export type GmailHeaderSummary = {
   id: string;
   threadId: string;
   from: string;
+  to: string;
   subject: string;
   snippet: string;
   internalDate: number | null;
+  /**
+   * Bulk-mail markers. Gmail's query language cannot filter on arbitrary headers, so this is
+   * the earliest point a newsletter can be told from a person — and it generalizes to senders
+   * no domain denylist anticipated, which is why triage cuts on this rather than on a list.
+   */
+  listUnsubscribe: string;
+  listId: string;
+  precedence: string;
 };
 
 type RawGmailMessage = {
@@ -567,7 +702,7 @@ function headerValue(msg: RawGmailMessage, name: string) {
 }
 
 /** Bounded-concurrency fetch, matching the pool the original scan used. */
-async function mapWithConcurrency<T, R>(
+export async function mapWithConcurrency<T, R>(
   items: T[],
   limit: number,
   fn: (item: T) => Promise<R>
@@ -594,7 +729,7 @@ export async function fetchGmailHeaders(
   const results = await mapWithConcurrency(refs, concurrency, async (ref) => {
     try {
       const res = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${ref.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`,
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${ref.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date&metadataHeaders=List-Unsubscribe&metadataHeaders=List-Id&metadataHeaders=Precedence`,
         {
           headers: { Authorization: `Bearer ${accessToken}` },
           signal: AbortSignal.timeout(10_000),
@@ -607,9 +742,13 @@ export async function fetchGmailHeaders(
         id: ref.id,
         threadId: msg.threadId || ref.threadId,
         from: headerValue(msg, "From"),
+        to: headerValue(msg, "To"),
         subject: headerValue(msg, "Subject"),
         snippet: msg.snippet || "",
         internalDate: Number.isFinite(internal) ? internal : null,
+        listUnsubscribe: headerValue(msg, "List-Unsubscribe"),
+        listId: headerValue(msg, "List-Id"),
+        precedence: headerValue(msg, "Precedence"),
       } satisfies GmailHeaderSummary;
     } catch {
       return null;
@@ -668,9 +807,13 @@ export async function fetchGmailMessages(
         id,
         threadId: msg.threadId || "",
         from: headerValue(msg, "From"),
+        to: headerValue(msg, "To"),
         subject: headerValue(msg, "Subject"),
         snippet: msg.snippet || "",
         internalDate: Number.isFinite(internal) ? internal : null,
+        listUnsubscribe: headerValue(msg, "List-Unsubscribe"),
+        listId: headerValue(msg, "List-Id"),
+        precedence: headerValue(msg, "Precedence"),
         // Trimmed hard: quoted reply chains routinely run to tens of thousands of
         // characters and add nothing the classifier needs.
         body: extractBody(msg.payload).slice(0, 4000),
