@@ -432,6 +432,17 @@ CREATE TABLE IF NOT EXISTS recruiter_messages (
 CREATE INDEX IF NOT EXISTS recruiter_messages_user_idx ON recruiter_messages(user_id, status);
 CREATE INDEX IF NOT EXISTS recruiter_messages_recruiter_idx ON recruiter_messages(recruiter_id);
 CREATE INDEX IF NOT EXISTS recruiter_messages_sent_idx ON recruiter_messages(user_id, sent_at);
+CREATE TABLE IF NOT EXISTS recruiter_scan_state (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL UNIQUE,
+  last_scan_at timestamptz,
+  last_full_scan_at timestamptz,
+  prompt_version integer NOT NULL DEFAULT 1,
+  window_months integer NOT NULL DEFAULT 24,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS recruiter_scan_state_user_idx ON recruiter_scan_state(user_id);
 CREATE TABLE IF NOT EXISTS gmail_connections (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL UNIQUE,
@@ -650,7 +661,7 @@ CREATE TABLE IF NOT EXISTS fundraising_investors (
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
