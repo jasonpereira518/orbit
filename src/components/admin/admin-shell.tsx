@@ -43,7 +43,7 @@ export function AdminShell({
   const navItems = ycMode ? ADMIN_YC_NAV : ADMIN_NAV;
 
   return (
-    <div className="min-h-dvh bg-background text-sm">
+    <div className={cn("min-h-dvh bg-background text-sm", ycMode && "yc-theme")}>
       {/* Mode signal. Gold is an existing Orbit token that is essentially unused in app
           chrome, so peripheral vision catches it before a word has been read. */}
       <div aria-hidden className="h-0.5 w-full bg-accent" />
