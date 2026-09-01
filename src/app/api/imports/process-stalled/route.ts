@@ -12,6 +12,7 @@ import {
   type CronRunStatus,
 } from "@/lib/cron-runs";
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
+import { sweepInterestListFollowUps } from "@/lib/interest-list-follow-up";
 import { findStaleCohorts } from "@/lib/closeness-materialize";
 import { kickEmbeddingBackfill, runEmbeddingBackfill } from "@/lib/embedding-backfill";
 import {
@@ -130,6 +131,10 @@ export async function GET(request: Request) {
     embeddingBackfillsKicked: 0,
     /** Users handed to the self-continuing LinkedIn timeline-event backfill route. */
     timelineBackfillsKicked: 0,
+    /** Day-3 interest-list follow-ups delivered on this run. */
+    followUpsSent: 0,
+    /** Claimed but refused by Resend; released, so tomorrow retries them. */
+    followUpsFailed: 0,
   };
 
   try {
@@ -170,6 +175,21 @@ export async function GET(request: Request) {
       // Housekeeping must never fail the job-resumption backstop this route exists for,
       // but a silent failure here is how a table grows unbounded — so it downgrades the
       // run instead of vanishing.
+      status = "partial";
+    }
+
+    try {
+      // Day-3 interest-list follow-ups. Rides on this route rather than taking a cron slot
+      // of its own: this is already the product's only scheduled job, and the Hobby plan's
+      // minimum interval is daily either way. The sweep bounds its own batch.
+      const followUps = await sweepInterestListFollowUps();
+      stats.followUpsSent = followUps.sent;
+      stats.followUpsFailed = followUps.failed;
+      // A send that Resend refused released its claim and will retry tomorrow, but a run
+      // that could not deliver anything it tried is worth surfacing rather than burying
+      // in a count nobody reads.
+      if (followUps.failed > 0 && followUps.sent === 0) status = "partial";
+    } catch {
       status = "partial";
     }
 

@@ -98,22 +98,6 @@ export async function POST(req: NextRequest) {
       } else {
         result = { outcome: "ignored", reason: WEBHOOK_REASONS.missingUserId };
       }
-    } else if (evt.type.startsWith("waitlistEntry.")) {
-      // Not mirrored into a table — the ledger IS the record. The landing page's waitlist
-      // form posts straight to Clerk, so without this there is no local trace of it at all.
-      const data = evt.data as {
-        id?: string;
-        status?: string;
-        email_address?: string;
-      };
-      result = {
-        outcome: "handled",
-        resourceId: data.id ?? null,
-        detail: {
-          waitlistStatus: data.status ?? null,
-          email: data.email_address?.toLowerCase() ?? null,
-        },
-      };
     } else if (evt.type.startsWith("paymentAttempt.")) {
       // A failed payment is otherwise invisible until the subscription eventually flips to
       // past_due, which can be days later — and by then the user has already been surprised.

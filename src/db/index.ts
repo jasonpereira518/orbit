@@ -547,6 +547,23 @@ CREATE TABLE IF NOT EXISTS feedback (
 );
 CREATE INDEX IF NOT EXISTS feedback_kind_created_idx ON feedback(kind, created_at);
 CREATE INDEX IF NOT EXISTS feedback_user_created_idx ON feedback(user_id, created_at);
+CREATE TABLE IF NOT EXISTS interest_list_signups (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  email text NOT NULL,
+  referrer text,
+  utm_source text,
+  utm_medium text,
+  utm_campaign text,
+  landing_path text,
+  unsubscribe_token text NOT NULL,
+  unsubscribed_at timestamptz,
+  welcome_planet text,
+  follow_up_sent_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
+CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_token_uidx ON interest_list_signups(unsubscribe_token);
+CREATE INDEX IF NOT EXISTS interest_list_signups_created_idx ON interest_list_signups(created_at);
 CREATE TABLE IF NOT EXISTS billing_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source text NOT NULL,
@@ -650,7 +667,7 @@ CREATE TABLE IF NOT EXISTS fundraising_investors (
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 16;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1238,6 +1255,11 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "suspended_reason", "text");
   await ensureColumn(client, "user_settings", "suspended_by", "text");
 
+  // Same reasoning: a local database built by the version that first added
+  // `interest_list_signups` has the table but neither of these columns.
+  await ensureColumn(client, "interest_list_signups", "welcome_planet", "text");
+  await ensureColumn(client, "interest_list_signups", "follow_up_sent_at", "timestamptz");
+
   for (const statement of ADMIN_V2_STATEMENTS) {
     try {
       await client.exec(statement);
@@ -1473,6 +1495,11 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token_created_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_last_fetched_at timestamptz`,
+    // Added a version after the table itself. A preview deployment of the branch that
+    // introduced `interest_list_signups` already created it without these, and
+    // CREATE TABLE IF NOT EXISTS will never go back and add a column to it.
+    `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS welcome_planet text`,
+    `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS follow_up_sent_at timestamptz`,
     `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
