@@ -47,10 +47,19 @@ function escapeHtml(value: string) {
  * `<style>` blocks or run them through their own reset, so anything that matters is written
  * on the element itself. Kept to a single column and web-safe fonts for the same reason —
  * the display face the landing page uses is not reliably available in mail clients.
+ *
+ * GRAPHICS ARE BUILT TO SURVIVE BLOCKED IMAGES, which Outlook and many Gmail configurations
+ * do by default until the reader clicks "show images". So nothing load-bearing is carried by
+ * an `<img>`: the logo sits beside a real text wordmark, the product card below is drawn with
+ * table cells and background colours rather than a screenshot, and the planet is decorative
+ * with empty alt text. Inline SVG and `data:` URIs are both unusable here — Gmail strips the
+ * former and blocks the latter — so every real image is a hosted PNG at an absolute URL.
  */
 export function buildInterestListWelcomeEmail(input: { unsubscribeUrl: string }) {
   const appUrl = getAppBaseUrl();
   const signUpUrl = `${appUrl}/sign-up`;
+  const logoUrl = `${appUrl}/orbit-logo.png`;
+  const saturnUrl = `${appUrl}/landing/planets/saturn.png`;
   const subject = "You're on the Orbit list";
 
   const text = [
@@ -62,11 +71,16 @@ export function buildInterestListWelcomeEmail(input: { unsubscribeUrl: string })
     "",
     "If you're interviewing at the moment, that's when it earns its keep — it's built so the person who could refer you doesn't go cold while you're busy with everything else.",
     "",
+    "    Priya Raman",
+    "    Referral call · 3 weeks ago · no follow-up sent",
+    "    → Follow up today",
+    "",
     `Try it now: ${signUpUrl}`,
     "",
     "— Jason",
     "",
     "—",
+    "You're getting this because you joined Orbit's interest list.",
     `Unsubscribe any time: ${input.unsubscribeUrl}`,
   ].join("\n");
 
@@ -83,9 +97,24 @@ export function buildInterestListWelcomeEmail(input: { unsubscribeUrl: string })
       <tr>
         <td align="center" style="padding:40px 20px;">
           <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;width:100%;">
+            <!-- Logo lockup. The wordmark is real text beside the mark, so a client with
+                 images off still shows "Orbit" rather than an empty box. -->
             <tr>
               <td style="padding-bottom:30px;">
-                <span style="font-size:19px;font-weight:600;color:${TEXT};letter-spacing:-0.01em;">Orbit</span>
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <!-- alt="" on purpose: the wordmark beside it is real text, so the mark
+                         is redundant. Giving it alt="Orbit" renders "Orbit Orbit" (plus a
+                         broken-image glyph) in every client that blocks images. -->
+                    <td style="padding-right:11px;" valign="middle">
+                      <img src="${logoUrl}" alt="" width="40" height="40"
+                           style="display:block;border:0;outline:none;text-decoration:none;width:40px;height:40px;border-radius:50%;" />
+                    </td>
+                    <td valign="middle">
+                      <span style="font-size:20px;font-weight:600;color:${TEXT};letter-spacing:-0.01em;">Orbit</span>
+                    </td>
+                  </tr>
+                </table>
               </td>
             </tr>
             <tr>
@@ -100,21 +129,70 @@ export function buildInterestListWelcomeEmail(input: { unsubscribeUrl: string })
             ${paragraph(
               "If you're interviewing at the moment, that's when it earns its keep — it's built so the person who could refer you doesn't go cold while you're busy with everything else."
             )}
+            <!-- The product moment, drawn rather than screenshotted: table cells and
+                 background colours render with images blocked, and stay crisp on any DPI.
+                 Mirrors the card on the landing page's "Before it goes cold" scene. -->
             <tr>
-              <td style="padding-top:10px;padding-bottom:30px;">
+              <td style="padding-top:6px;padding-bottom:28px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+                       style="background-color:#0a0f1c;border:1px solid rgba(232,243,241,0.12);border-radius:14px;">
+                  <tr>
+                    <td style="padding:16px 18px;">
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                        <tr>
+                          <td width="40" valign="middle" style="padding-right:12px;">
+                            <table role="presentation" width="40" height="40" cellpadding="0" cellspacing="0" border="0"
+                                   style="background-color:#0f3d3e;border-radius:50%;">
+                              <tr>
+                                <td align="center" valign="middle"
+                                    style="font-size:13px;font-weight:600;color:${TEXT};height:40px;">PR</td>
+                              </tr>
+                            </table>
+                          </td>
+                          <td valign="middle">
+                            <div style="font-size:14px;font-weight:600;color:${TEXT};">Priya Raman</div>
+                            <div style="font-size:12px;color:${MUTED};padding-top:3px;">Referral call · 3 weeks ago · no follow-up sent</div>
+                          </td>
+                        </tr>
+                      </table>
+                      <div style="font-size:12px;font-weight:600;color:${ACCENT};background-color:rgba(242,193,78,0.13);border-radius:999px;padding:6px 12px;margin-top:14px;display:inline-block;">
+                        Follow up today
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding-bottom:30px;">
                 <a href="${signUpUrl}"
                    style="display:inline-block;background-color:${ACCENT};color:${BG};font-weight:600;font-size:15px;text-decoration:none;padding:13px 26px;border-radius:10px;">
                   Try it now
                 </a>
               </td>
             </tr>
+            <!-- Signature, with the planet as a right-aligned flourish. Sharing the row is
+                 deliberate: on its own line a blocked image leaves a conspicuous empty
+                 placeholder box, whereas here it degrades to whitespace beside the sign-off.
+                 Decorative, so alt="". -->
             <tr>
-              <td style="font-size:15px;line-height:1.65;color:${MUTED};padding-bottom:32px;">
-                — Jason
+              <td style="padding-bottom:26px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td valign="middle" style="font-size:15px;line-height:1.65;color:${MUTED};">
+                      — Jason
+                    </td>
+                    <td align="right" valign="middle">
+                      <img src="${saturnUrl}" alt="" width="38" height="38"
+                           style="display:block;border:0;outline:none;width:38px;height:38px;opacity:0.8;" />
+                    </td>
+                  </tr>
+                </table>
               </td>
             </tr>
             <tr>
               <td style="font-size:12px;line-height:1.6;color:${FAINT};border-top:1px solid rgba(232,243,241,0.14);padding-top:22px;">
+                You're getting this because you joined Orbit's interest list.
                 <a href="${escapeHtml(input.unsubscribeUrl)}" style="color:${FAINT};text-decoration:underline;">Unsubscribe any time</a>.
               </td>
             </tr>
