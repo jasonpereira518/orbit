@@ -11,6 +11,7 @@ import {
   Th,
 } from "@/components/admin/primitives";
 import { Pager } from "@/components/admin/pager";
+import { InterestListRowActions } from "@/components/admin/interest-list-actions";
 import { cn } from "@/lib/utils";
 import {
   getInterestListSummary,
@@ -167,6 +168,7 @@ export default async function AdminInterestListPage({
                   <Th>Status</Th>
                   <Th>Follow-up</Th>
                   <Th>Planet</Th>
+                  <Th className="text-right">Actions</Th>
                 </>
               }
             >
@@ -203,6 +205,13 @@ export default async function AdminInterestListPage({
                   </Td>
                   <Td className="capitalize text-muted-foreground">
                     {row.welcomePlanet ?? "—"}
+                  </Td>
+                  <Td>
+                    <InterestListRowActions
+                      id={row.id}
+                      email={row.email}
+                      unsubscribed={row.unsubscribedAt !== null}
+                    />
                   </Td>
                 </tr>
               ))}

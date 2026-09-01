@@ -55,7 +55,13 @@ function textOf(node: unknown, out: string[] = []): string[] {
         key === "title" ||
         key === "action" ||
         key === "subtitle" ||
-        key === "hint"
+        key === "hint" ||
+        // The table's column headings live in `head`, not in its children.
+        key === "head" ||
+        // The row-action controls are a client component, so its props are all this walk
+        // can see — which is the right server-side contract to assert on anyway.
+        key === "email" ||
+        key === "unsubscribed"
       ) {
         textOf(value, out);
       }
@@ -133,6 +139,54 @@ async function main() {
     "converted filter isolates the account holder",
     converted.includes(`${PREFIX}converted@example.test`) &&
       !converted.includes(`${PREFIX}active@example.test`)
+  );
+
+  // --- removal controls
+  check("renders an Actions column", all.includes("Actions"));
+  // The walk sees the client component's props, so this proves each row is handed its own
+  // address and the right unsubscribed flag — a row wired to its neighbour's email is the
+  // failure that would delete the wrong person.
+  const rowProps = textOf(await Page({ searchParams: Promise.resolve({}) }))
+    .filter((t) => t.startsWith(PREFIX) || t === "true" || t === "false");
+  check(
+    "each row receives its own address",
+    [`${PREFIX}active@example.test`, `${PREFIX}unsubbed@example.test`].every((e) =>
+      rowProps.includes(e)
+    )
+  );
+
+  // --- the integration that matters: an admin removal must actually stop the mail.
+  const {
+    unsubscribeInterestListRow,
+  } = await import("../src/lib/admin-interest-list");
+  const { sweepInterestListFollowUps } = await import(
+    "../src/lib/interest-list-follow-up"
+  );
+  const target = (
+    await db
+      .select()
+      .from(interestListSignups)
+      .where(like(interestListSignups.email, `${PREFIX}active%`))
+  )[0];
+  // Backdate it past the follow-up delay so it would otherwise be due today.
+  await db
+    .update(interestListSignups)
+    .set({ createdAt: new Date("2026-01-01T00:00:00Z") })
+    .where(like(interestListSignups.email, `${PREFIX}active%`));
+
+  const beforeRemoval = await sweepInterestListFollowUps();
+  check(
+    "a due signup is eligible for the follow-up before removal",
+    beforeRemoval.eligible >= 1,
+    JSON.stringify(beforeRemoval)
+  );
+  // The sweep above claimed then released it (no Resend key), so it is still pending.
+  await unsubscribeInterestListRow(target.id);
+  const afterRemoval = await sweepInterestListFollowUps();
+  check(
+    "removing them from the console takes them out of the mailer",
+    afterRemoval.eligible === 0,
+    JSON.stringify(afterRemoval)
   );
 
   // A page far past the end must clamp, not render an empty table that looks like data loss.

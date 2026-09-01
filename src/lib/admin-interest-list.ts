@@ -1,4 +1,4 @@
-import { and, desc, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { interestListSignups, userSettings } from "@/db/schema";
 import { countInt } from "@/lib/admin-metrics";
@@ -157,6 +157,82 @@ export async function loadInterestListAll(
     .where(whereFor(filter))
     .orderBy(desc(interestListSignups.createdAt));
   return rows as InterestListRow[];
+}
+
+/** One row by id, for an action that needs to check what it is about to change. */
+export async function loadInterestListRow(
+  id: string
+): Promise<{ id: string; email: string } | null> {
+  const db = await getDb();
+  const rows = await db
+    .select({ id: interestListSignups.id, email: interestListSignups.email })
+    .from(interestListSignups)
+    .where(eq(interestListSignups.id, id))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * Take someone off the list without losing the record of them.
+ *
+ * Sets the same `unsubscribed_at` the recipient's own one-click link writes, so there is
+ * exactly one "is this person mailable" condition in the system rather than an operator
+ * flag that the sweep would also have to learn about. Idempotent via COALESCE: re-running
+ * it must not move a timestamp the subscriber themselves set earlier.
+ *
+ * Returns null when no row matched, so the caller can report that rather than logging an
+ * audit entry for something that did not happen.
+ */
+export async function unsubscribeInterestListRow(
+  id: string
+): Promise<{ email: string } | null> {
+  const db = await getDb();
+  const rows = await db
+    .update(interestListSignups)
+    .set({
+      unsubscribedAt: sql`coalesce(${interestListSignups.unsubscribedAt}, now())`,
+    })
+    .where(eq(interestListSignups.id, id))
+    .returning();
+  return rows[0] ? { email: rows[0].email } : null;
+}
+
+/**
+ * Put someone back on the list.
+ *
+ * The counterpart to the above, for the ordinary mistake of removing the wrong row. It
+ * clears `follow_up_sent_at` alongside, matching what a rejoin through the form does —
+ * otherwise a restored row would be permanently ineligible for the day-3 note.
+ */
+export async function resubscribeInterestListRow(
+  id: string
+): Promise<{ email: string } | null> {
+  const db = await getDb();
+  const rows = await db
+    .update(interestListSignups)
+    .set({ unsubscribedAt: null, followUpSentAt: null })
+    .where(eq(interestListSignups.id, id))
+    .returning();
+  return rows[0] ? { email: rows[0].email } : null;
+}
+
+/**
+ * Erase the row entirely.
+ *
+ * For a bot signup, a typo, or a genuine deletion request — not for "stop mailing them",
+ * which `unsubscribeInterestListRow` does while keeping the acquisition record. Deleting
+ * loses the signup date and source permanently, and lets that address rejoin later as a
+ * brand-new signup with a fresh planet.
+ */
+export async function deleteInterestListRow(
+  id: string
+): Promise<{ email: string } | null> {
+  const db = await getDb();
+  const rows = await db
+    .delete(interestListSignups)
+    .where(eq(interestListSignups.id, id))
+    .returning();
+  return rows[0] ? { email: rows[0].email } : null;
 }
 
 /**
