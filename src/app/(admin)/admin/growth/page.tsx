@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   AdminPageHeader,
   AdminPanel,
@@ -346,7 +347,17 @@ export default async function AdminGrowthPage({
             </p>
           </AdminPanel>
 
-          <AdminPanel title="Waitlist">
+          <AdminPanel
+            title="Interest list"
+            action={
+              <Link
+                href="/admin/growth/interest-list"
+                className="text-xs text-muted-foreground underline underline-offset-2 transition-colors duration-fast hover:text-primary"
+              >
+                View all
+              </Link>
+            }
+          >
             {!waitlist ? (
               <EmptyState>Not instrumented yet.</EmptyState>
             ) : waitlist.total === 0 ? (
