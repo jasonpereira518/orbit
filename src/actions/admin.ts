@@ -8,6 +8,7 @@ import { getDb } from "@/db";
 import { adminAuditLog, userSettings } from "@/db/schema";
 import { requireAdminUserId } from "@/lib/admin";
 import * as ops from "@/lib/admin-operations";
+import * as interestList from "@/lib/admin-interest-list";
 import { recordAdminAction } from "@/lib/admin-operations";
 import { resolvePlan } from "@/lib/entitlements";
 import { setCompedPlan } from "@/lib/user-settings";
@@ -104,6 +105,11 @@ export async function getAuditTrail(targetUserId: string) {
  * ================================================================================== */
 
 /** Paths that show account state. Any operator write invalidates all of them. */
+function revalidateInterestList() {
+  revalidatePath("/admin/growth");
+  revalidatePath("/admin/growth/interest-list");
+}
+
 function revalidateAdmin(targetUserId?: string) {
   revalidatePath("/admin");
   revalidatePath("/admin/users");
@@ -295,4 +301,99 @@ export async function setYcModeAction(input: { on: boolean }): Promise<{ ok: tru
 
   revalidatePath("/", "layout");
   return { ok: true };
+}
+
+/**
+ * Interest-list removals.
+ *
+ * Two operations rather than one because "remove them" means two different things. The
+ * unsubscribe writes the same `unsubscribed_at` the recipient's own one-click link sets,
+ * so there stays exactly one condition deciding whether someone is mailable; the delete
+ * erases the row, losing the signup date and source, which is only right for a bot
+ * signup, a typo, or a real deletion request.
+ *
+ * Both take a reason and both await their audit write. These reach a person's inbox
+ * rather than the operator's screen, and a delete has no other record that it happened —
+ * `interest_list_signups` is the only place that address ever existed.
+ */
+export async function unsubscribeInterestListAction(input: {
+  id: string;
+  reason: string;
+}): Promise<{ ok: true; email: string }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  const removed = await interestList.unsubscribeInterestListRow(input.id);
+  // Throws rather than returning a failure shape: ConfirmActionDialog reports success for
+  // any resolved promise and only surfaces a rejection, so a returned {ok:false} would
+  // toast "done" over an operation that did nothing.
+  if (!removed) throw new Error("That signup no longer exists.");
+
+  await recordAdminAction({
+    adminUserId,
+    action: "interest_list.unsubscribe",
+    resourceType: "interest_list_signup",
+    resourceId: input.id,
+    detail: { email: removed.email },
+    reason,
+  });
+
+  revalidateInterestList();
+  return { ok: true, email: removed.email };
+}
+
+export async function resubscribeInterestListAction(input: {
+  id: string;
+  reason: string;
+}): Promise<{ ok: true; email: string }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  const restored = await interestList.resubscribeInterestListRow(input.id);
+  if (!restored) throw new Error("That signup no longer exists.");
+
+  await recordAdminAction({
+    adminUserId,
+    action: "interest_list.resubscribe",
+    resourceType: "interest_list_signup",
+    resourceId: input.id,
+    detail: { email: restored.email },
+    reason,
+  });
+
+  revalidateInterestList();
+  return { ok: true, email: restored.email };
+}
+
+export async function deleteInterestListAction(input: {
+  id: string;
+  /** Must match the row's address. Guards against deleting whatever was scrolled to. */
+  confirmEmail: string;
+  reason: string;
+}): Promise<{ ok: true; email: string }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  // The audit entry records the address, so it is captured before the row is gone — and
+  // checked against what the operator typed, so a stale page cannot delete the wrong row.
+  const existing = await interestList.loadInterestListRow(input.id);
+  if (!existing) throw new Error("That signup no longer exists.");
+  if (existing.email.trim().toLowerCase() !== input.confirmEmail.trim().toLowerCase()) {
+    throw new Error("That address does not match this signup.");
+  }
+
+  const deleted = await interestList.deleteInterestListRow(input.id);
+  if (!deleted) throw new Error("That signup no longer exists.");
+
+  await recordAdminAction({
+    adminUserId,
+    action: "interest_list.delete",
+    resourceType: "interest_list_signup",
+    resourceId: input.id,
+    detail: { email: deleted.email },
+    reason,
+  });
+
+  revalidateInterestList();
+  return { ok: true, email: deleted.email };
 }
