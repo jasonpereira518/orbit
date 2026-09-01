@@ -1501,6 +1501,17 @@ export const interestListSignups = pgTable(
      * unsubscribe link without exposing the row's uuid or requiring a session. */
     unsubscribeToken: text("unsubscribe_token").notNull(),
     unsubscribedAt: timestamp("unsubscribed_at", { withTimezone: true }),
+    /**
+     * Which planet the welcome email showed. Stored rather than recomputed so the note's
+     * "you got Mercury" postscript stays true forever, and so the day-3 follow-up can show
+     * the same one. See `WELCOME_PLANETS`.
+     */
+    welcomePlanet: text("welcome_planet"),
+    /**
+     * When the day-3 follow-up went out. Null means "still owed one"; the sweep claims a
+     * row by stamping this before it sends, so a crash mid-batch cannot double-send.
+     */
+    followUpSentAt: timestamp("follow_up_sent_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [

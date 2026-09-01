@@ -6,6 +6,7 @@ import { getDb } from "@/db";
 import { interestListSignups } from "@/db/schema";
 import { ATTRIBUTION_COOKIE, parseAttribution } from "@/lib/attribution-parse";
 import {
+  asWelcomePlanet,
   buildUnsubscribeUrl,
   generateUnsubscribeToken,
   planetForSignupNumber,
@@ -80,6 +81,16 @@ export async function joinInterestList(
   const attribution = parseAttribution(cookieStore.get(ATTRIBUTION_COOKIE)?.value ?? null);
 
   const db = await getDb();
+
+  // The planet this signup would get if it turns out to be new: one step further from the
+  // sun than the last. Counted before the insert so the number is this row's own ordinal.
+  // An existing row keeps whatever planet it was given, so a resubscribe's second welcome
+  // still matches the postscript the first one printed.
+  const [before] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(interestListSignups);
+  const nextPlanet = planetForSignupNumber((before?.n ?? 0) + 1);
+
   // Single atomic upsert rather than a read-then-write: a brand-new email inserts; an
   // email that previously unsubscribed re-activates; an email that is already an active
   // subscriber matches neither branch (`setWhere` fails), so `ON CONFLICT` applies no
@@ -96,10 +107,14 @@ export async function joinInterestList(
       utmCampaign: attribution?.utmCampaign ?? null,
       landingPath: attribution?.landingPath ?? null,
       unsubscribeToken: generateUnsubscribeToken(),
+      welcomePlanet: nextPlanet,
     })
     .onConflictDoUpdate({
       target: interestListSignups.email,
-      set: { unsubscribedAt: null },
+      // Rejoining restarts the sequence: clearing `followUpSentAt` re-arms the day-3 note.
+      // `welcomePlanet` is deliberately absent — their planet is theirs, and rewriting it
+      // would contradict the postscript in the mail they already have.
+      set: { unsubscribedAt: null, followUpSentAt: null },
       setWhere: isNotNull(interestListSignups.unsubscribedAt),
     })
     // Bare, not `.returning({ email, unsubscribeToken })` — an explicit field selector
@@ -109,20 +124,12 @@ export async function joinInterestList(
 
   const row = rows[0];
   if (row) {
-    // Which planet this send gets: the list walks outward from Mercury, one planet per
-    // signup, wrapping after Neptune. Derived from the row count rather than stored,
-    // because the sequence is a flourish — two signups landing in the same instant can
-    // read the same count and share a planet, which costs nothing worth a column for.
-    const [counted] = await db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(interestListSignups);
-
     // Best-effort — see `sendInterestListWelcomeEmail`. The signup above already
     // succeeded, so a Resend hiccup must not turn this into a failed submission.
     await sendInterestListWelcomeEmail(
       row.email,
       buildUnsubscribeUrl(row.unsubscribeToken),
-      planetForSignupNumber(counted?.n ?? 1)
+      asWelcomePlanet(row.welcomePlanet)
     );
   }
 
