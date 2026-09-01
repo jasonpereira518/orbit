@@ -1,6 +1,6 @@
 "use server";
 
-import { isNotNull } from "drizzle-orm";
+import { isNotNull, sql } from "drizzle-orm";
 import { cookies, headers } from "next/headers";
 import { getDb } from "@/db";
 import { interestListSignups } from "@/db/schema";
@@ -8,6 +8,7 @@ import { ATTRIBUTION_COOKIE, parseAttribution } from "@/lib/attribution-parse";
 import {
   buildUnsubscribeUrl,
   generateUnsubscribeToken,
+  planetForSignupNumber,
   sendInterestListWelcomeEmail,
 } from "@/lib/interest-list-email";
 import {
@@ -108,9 +109,21 @@ export async function joinInterestList(
 
   const row = rows[0];
   if (row) {
+    // Which planet this send gets: the list walks outward from Mercury, one planet per
+    // signup, wrapping after Neptune. Derived from the row count rather than stored,
+    // because the sequence is a flourish — two signups landing in the same instant can
+    // read the same count and share a planet, which costs nothing worth a column for.
+    const [counted] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(interestListSignups);
+
     // Best-effort — see `sendInterestListWelcomeEmail`. The signup above already
     // succeeded, so a Resend hiccup must not turn this into a failed submission.
-    await sendInterestListWelcomeEmail(row.email, buildUnsubscribeUrl(row.unsubscribeToken));
+    await sendInterestListWelcomeEmail(
+      row.email,
+      buildUnsubscribeUrl(row.unsubscribeToken),
+      planetForSignupNumber(counted?.n ?? 1)
+    );
   }
 
   return { ok: true };

@@ -12,11 +12,46 @@ export function buildUnsubscribeUrl(token: string) {
   return `${getAppBaseUrl()}/api/interest-list/unsubscribe?token=${token}`;
 }
 
+/**
+ * The eight planets in `public/landing/planets/`, ordered by distance from the sun.
+ * Successive signups get successive planets, so the list walks outward from Mercury and
+ * wraps back round after Neptune.
+ *
+ * `sun.png` sits in that folder too and is deliberately absent: it is not a planet.
+ */
+export const WELCOME_PLANETS = [
+  "mercury",
+  "venus",
+  "earth",
+  "mars",
+  "jupiter",
+  "saturn",
+  "uranus",
+  "neptune",
+] as const;
+
+export type WelcomePlanet = (typeof WELCOME_PLANETS)[number];
+
+/**
+ * Maps a 1-based signup number onto the planet that signup receives: the 1st gets Mercury,
+ * the 8th Neptune, the 9th Mercury again.
+ *
+ * Defensive about its input because the caller derives it from a COUNT that could in
+ * principle come back 0 or non-finite — a negative index would otherwise read off the end
+ * of the array and hand `undefined` to the template.
+ */
+export function planetForSignupNumber(signupNumber: number): WelcomePlanet {
+  const n = Number.isFinite(signupNumber) ? Math.floor(signupNumber) : 1;
+  return WELCOME_PLANETS[Math.max(0, n - 1) % WELCOME_PLANETS.length];
+}
+
 const BG = "#05070f";
 const TEXT = "#e8f3f1";
 const MUTED = "#9aada8";
 const FAINT = "#6d807c";
 const ACCENT = "#f2c14e";
+/** The drift/warning tone the landing page and forms already use for at-risk states. */
+const WARN = "#e8a84e";
 const FONT_STACK =
   "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
@@ -55,11 +90,15 @@ function escapeHtml(value: string) {
  * with empty alt text. Inline SVG and `data:` URIs are both unusable here — Gmail strips the
  * former and blocks the latter — so every real image is a hosted PNG at an absolute URL.
  */
-export function buildInterestListWelcomeEmail(input: { unsubscribeUrl: string }) {
+export function buildInterestListWelcomeEmail(input: {
+  unsubscribeUrl: string;
+  /** Which planet this send gets. See `planetForSignupNumber`. */
+  planet: WelcomePlanet;
+}) {
   const appUrl = getAppBaseUrl();
   const signUpUrl = `${appUrl}/sign-up`;
   const logoUrl = `${appUrl}/orbit-logo.png`;
-  const saturnUrl = `${appUrl}/landing/planets/saturn.png`;
+  const planetUrl = `${appUrl}/landing/planets/${input.planet}.png`;
   const subject = "You're on the Orbit list";
 
   const text = [
@@ -71,9 +110,10 @@ export function buildInterestListWelcomeEmail(input: { unsubscribeUrl: string })
     "",
     "If you're interviewing at the moment, that's when it earns its keep — it's built so the person who could refer you doesn't go cold while you're busy with everything else.",
     "",
-    "    Priya Raman",
-    "    Referral call · 3 weeks ago · no follow-up sent",
-    "    → Follow up today",
+    "    This week in your network",
+    "     3  warm intros available",
+    "    12  people drifting",
+    "     2  follow-ups due",
     "",
     `Try it now: ${signUpUrl}`,
     "",
@@ -129,35 +169,35 @@ export function buildInterestListWelcomeEmail(input: { unsubscribeUrl: string })
             ${paragraph(
               "If you're interviewing at the moment, that's when it earns its keep — it's built so the person who could refer you doesn't go cold while you're busy with everything else."
             )}
-            <!-- The product moment, drawn rather than screenshotted: table cells and
+            <!-- The product at a glance, drawn rather than screenshotted: table cells and
                  background colours render with images blocked, and stay crisp on any DPI.
-                 Mirrors the card on the landing page's "Before it goes cold" scene. -->
+                 Deliberately carries no invented person — the numbers alone say what Orbit
+                 watches, and a fabricated name in a real inbox invites the reader to work
+                 out whether it is someone they know. -->
             <tr>
               <td style="padding-top:6px;padding-bottom:28px;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
                        style="background-color:#0a0f1c;border:1px solid rgba(232,243,241,0.12);border-radius:14px;">
                   <tr>
-                    <td style="padding:16px 18px;">
-                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                        <tr>
-                          <td width="40" valign="middle" style="padding-right:12px;">
-                            <table role="presentation" width="40" height="40" cellpadding="0" cellspacing="0" border="0"
-                                   style="background-color:#0f3d3e;border-radius:50%;">
-                              <tr>
-                                <td align="center" valign="middle"
-                                    style="font-size:13px;font-weight:600;color:${TEXT};height:40px;">PR</td>
-                              </tr>
-                            </table>
-                          </td>
-                          <td valign="middle">
-                            <div style="font-size:14px;font-weight:600;color:${TEXT};">Priya Raman</div>
-                            <div style="font-size:12px;color:${MUTED};padding-top:3px;">Referral call · 3 weeks ago · no follow-up sent</div>
-                          </td>
-                        </tr>
-                      </table>
-                      <div style="font-size:12px;font-weight:600;color:${ACCENT};background-color:rgba(242,193,78,0.13);border-radius:999px;padding:6px 12px;margin-top:14px;display:inline-block;">
-                        Follow up today
+                    <td style="padding:18px 20px;">
+                      <div style="font-size:11px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:${ACCENT};padding-bottom:14px;">
+                        This week in your network
                       </div>
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                        ${[
+                          { n: "3", label: "warm intros available", color: ACCENT },
+                          { n: "12", label: "people drifting", color: WARN },
+                          { n: "2", label: "follow-ups due", color: TEXT },
+                        ]
+                          .map(
+                            (row) => `<tr>
+                          <td width="38" align="right" valign="middle"
+                              style="font-size:19px;font-weight:600;color:${row.color};padding:5px 12px 5px 0;">${row.n}</td>
+                          <td valign="middle" style="font-size:14px;color:${MUTED};padding:5px 0;">${row.label}</td>
+                        </tr>`
+                          )
+                          .join("\n                        ")}
+                      </table>
                     </td>
                   </tr>
                 </table>
@@ -183,7 +223,7 @@ export function buildInterestListWelcomeEmail(input: { unsubscribeUrl: string })
                       — Jason
                     </td>
                     <td align="right" valign="middle">
-                      <img src="${saturnUrl}" alt="" width="38" height="38"
+                      <img src="${planetUrl}" alt="" width="38" height="38"
                            style="display:block;border:0;outline:none;width:38px;height:38px;opacity:0.8;" />
                     </td>
                   </tr>
@@ -222,7 +262,11 @@ function fromAddress() {
  * this runs, so a Resend outage or a missing API key should never turn a successful signup
  * into a failed one — this only ever logs.
  */
-export async function sendInterestListWelcomeEmail(email: string, unsubscribeUrl: string) {
+export async function sendInterestListWelcomeEmail(
+  email: string,
+  unsubscribeUrl: string,
+  planet: WelcomePlanet
+) {
   const apiKey = process.env.RESEND_API_KEY?.trim();
   const from = fromAddress();
   if (!apiKey || !from) {
@@ -231,7 +275,7 @@ export async function sendInterestListWelcomeEmail(email: string, unsubscribeUrl
   }
 
   try {
-    const { subject, html, text } = buildInterestListWelcomeEmail({ unsubscribeUrl });
+    const { subject, html, text } = buildInterestListWelcomeEmail({ unsubscribeUrl, planet });
     const resend = new Resend(apiKey);
     const { error } = await resend.emails.send({
       from,
