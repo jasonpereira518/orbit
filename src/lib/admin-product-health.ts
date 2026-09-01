@@ -4,6 +4,7 @@ import {
   chatThreads,
   contacts,
   interactions,
+  interestListSignups,
   outreachCampaigns,
   recruiters,
   reminders,
@@ -11,7 +12,6 @@ import {
   usageEvents,
   userGoals,
   userSettings,
-  webhookDeliveries,
 } from "@/db/schema";
 import { countInt, num } from "@/lib/admin-metrics";
 
@@ -222,33 +222,26 @@ export async function getFunnelParking() {
 }
 
 /**
- * Waitlist signups, read from the webhook ledger.
+ * Interest list ("Waitlist" on this page) signups, read from Orbit's own table.
  *
- * The landing page posts straight to Clerk, so before `waitlistEntry.*` was handled there
- * was no local trace of this at all — and answering it otherwise needs a Clerk Backend API
- * call, which this codebase has never made.
+ * The landing page's form calls `joinInterestList` directly (`src/actions/interest-list.ts`)
+ * rather than Clerk's `joinWaitlist()` — that call needs the whole instance's sign-up mode
+ * set to "Waitlist", which would block this app's normal, already-live sign-up flow.
  */
 export async function getWaitlist(limit = 10): Promise<WaitlistSummary> {
   const db = await getDb();
   const [total, recent] = await Promise.all([
+    db.select({ n: countInt }).from(interestListSignups),
     db
-      .select({ n: sql<string>`count(distinct ${webhookDeliveries.resourceId})` })
-      .from(webhookDeliveries)
-      .where(eq(webhookDeliveries.eventType, "waitlistEntry.created")),
-    db
-      .select({ detail: webhookDeliveries.detail, at: webhookDeliveries.createdAt })
-      .from(webhookDeliveries)
-      .where(eq(webhookDeliveries.eventType, "waitlistEntry.created"))
-      .orderBy(desc(webhookDeliveries.createdAt))
+      .select({ email: interestListSignups.email, at: interestListSignups.createdAt })
+      .from(interestListSignups)
+      .orderBy(desc(interestListSignups.createdAt))
       .limit(limit),
   ]);
 
   return {
-    total: num(total[0]?.n),
-    recent: recent.map((r) => ({
-      email: (r.detail as { email?: string })?.email ?? null,
-      at: r.at,
-    })),
+    total: total[0]?.n ?? 0,
+    recent: recent.map((r) => ({ email: r.email, at: r.at })),
   };
 }
 

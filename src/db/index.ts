@@ -547,6 +547,21 @@ CREATE TABLE IF NOT EXISTS feedback (
 );
 CREATE INDEX IF NOT EXISTS feedback_kind_created_idx ON feedback(kind, created_at);
 CREATE INDEX IF NOT EXISTS feedback_user_created_idx ON feedback(user_id, created_at);
+CREATE TABLE IF NOT EXISTS interest_list_signups (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  email text NOT NULL,
+  referrer text,
+  utm_source text,
+  utm_medium text,
+  utm_campaign text,
+  landing_path text,
+  unsubscribe_token text NOT NULL,
+  unsubscribed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
+CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_token_uidx ON interest_list_signups(unsubscribe_token);
+CREATE INDEX IF NOT EXISTS interest_list_signups_created_idx ON interest_list_signups(created_at);
 CREATE TABLE IF NOT EXISTS billing_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source text NOT NULL,
@@ -650,7 +665,7 @@ CREATE TABLE IF NOT EXISTS fundraising_investors (
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 15;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a

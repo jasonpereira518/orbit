@@ -1476,6 +1476,41 @@ export const feedback = pgTable(
 );
 
 /**
+ * The landing page's "Interest list" — a mailing-list opt-in, not a signup gate. Anonymous,
+ * so there's no `userId`: the only identity is the email itself.
+ *
+ * Deliberately not Clerk's `joinWaitlist()`. That call requires the whole instance's sign-up
+ * mode to be "Waitlist", which would block this app's normal, already-live sign-up flow —
+ * so this owns its own table instead, the same way `feedback` and `webhookDeliveries` do.
+ */
+export const interestListSignups = pgTable(
+  "interest_list_signups",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    /** Normalized (trimmed + lowercased) by the server action before insert — the unique
+     * index is a plain column, not a `lower()` expression, to stay covered by
+     * `smoke-schema-ddl.ts`'s index-parity check the way `companies.nameNormalized` does. */
+    email: text("email").notNull(),
+    /** First-touch acquisition signal, same shape as `user_settings.signup_*`. */
+    referrer: text("referrer"),
+    utmSource: text("utm_source"),
+    utmMedium: text("utm_medium"),
+    utmCampaign: text("utm_campaign"),
+    landingPath: text("landing_path"),
+    /** Opaque, same convention as `user_settings.calendar_feed_token` — mints the one-click
+     * unsubscribe link without exposing the row's uuid or requiring a session. */
+    unsubscribeToken: text("unsubscribe_token").notNull(),
+    unsubscribedAt: timestamp("unsubscribed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("interest_list_signups_email_uidx").on(t.email),
+    uniqueIndex("interest_list_signups_token_uidx").on(t.unsubscribeToken),
+    index("interest_list_signups_created_idx").on(t.createdAt),
+  ]
+);
+
+/**
  * Money, as events rather than as a headcount.
  *
  * The console previously derived MRR as `subscribers × $5`, which cannot see a mid-month
@@ -1835,6 +1870,7 @@ export type CronRun = typeof cronRuns.$inferSelect;
 export type WebhookDelivery = typeof webhookDeliveries.$inferSelect;
 export type ErrorEvent = typeof errorEvents.$inferSelect;
 export type FeedbackEntry = typeof feedback.$inferSelect;
+export type InterestListSignup = typeof interestListSignups.$inferSelect;
 export type BillingEvent = typeof billingEvents.$inferSelect;
 export type NewBillingEvent = typeof billingEvents.$inferInsert;
 export type InfraCost = typeof infraCosts.$inferSelect;

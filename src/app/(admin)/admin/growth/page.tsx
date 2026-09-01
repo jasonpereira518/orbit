@@ -72,7 +72,7 @@ export default async function AdminGrowthPage({
     getAiOperationAdoption(),
     getArtifacts(),
     getFunnelParking(),
-    // Waitlist rides on the webhook ledger, so it degrades on its own if that is absent.
+    // Degrades on its own if the table is unreachable, rather than failing the whole page.
     getWaitlist().catch(() => null),
     getDataQuality(),
   ]);
@@ -350,10 +350,7 @@ export default async function AdminGrowthPage({
             {!waitlist ? (
               <EmptyState>Not instrumented yet.</EmptyState>
             ) : waitlist.total === 0 ? (
-              <EmptyState>
-                No signups recorded. These arrive on the Clerk waitlistEntry.created
-                webhook, which must also be enabled on the endpoint in the Clerk Dashboard.
-              </EmptyState>
+              <EmptyState>No signups yet.</EmptyState>
             ) : (
               <>
                 <MetricTile label="Signups" value={waitlist.total} />

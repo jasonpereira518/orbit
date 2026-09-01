@@ -41,6 +41,7 @@ import { sql } from "drizzle-orm";
   "webhook_deliveries",
   "error_events",
   "app_surface_flags",
+  "interest_list_signups",
 ] as const;
 
 async function main() {
