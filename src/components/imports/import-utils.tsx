@@ -5,6 +5,7 @@ import { AlertTriangle, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useEtaCountdown } from "@/lib/use-eta-countdown";
+import { MESSAGES_ENTRY, readCsvFromArchive } from "@/lib/csv-archive";
 
 export type ImportProgressState = {
   done: number;
@@ -27,24 +28,11 @@ export async function readCsvOrZipMessages(file: File): Promise<{
   text: string;
   fileName: string;
 }> {
-  const lower = file.name.toLowerCase();
-  if (lower.endsWith(".zip")) {
-    const { default: JSZip } = await import("jszip");
-    const zip = await JSZip.loadAsync(await file.arrayBuffer());
-    const entry =
-      zip.file(/messages\.csv$/i)[0] ||
-      Object.values(zip.files).find(
-        (f) => !f.dir && /messages\.csv$/i.test(f.name)
-      );
-    if (!entry) {
-      throw new Error(
-        "No messages.csv found in ZIP. Export Messages from LinkedIn."
-      );
-    }
-    const text = await entry.async("string");
-    return { text, fileName: entry.name.split("/").pop() || "messages.csv" };
-  }
-  return { text: await file.text(), fileName: file.name };
+  return readCsvFromArchive(file, {
+    entryPattern: MESSAGES_ENTRY,
+    fallbackName: "messages.csv",
+    missingMessage: "No messages.csv found in ZIP. Export Messages from LinkedIn.",
+  });
 }
 
 /** Styled file picker that matches Orbit buttons (hides native Choose File UI). */
