@@ -31,4 +31,11 @@ const minimalPerson = { name: "Sarah Chen", source_excerpt: "Coffee with Sarah."
   const parsed = multiPersonNoteParseSchema.parse({ people: [{ ...minimalPerson, presence: "bogus" }] });
   check("unknown presence falls back to participant", parsed.people[0].presence === "participant");
 }
+{
+  const parsed = multiPersonNoteParseSchema.parse({
+    people: [minimalPerson],
+    mentions: [{ name: "" }, { name: "   " }, { name: null, context: "x" }, { name: "Raj" }],
+  });
+  check("blank or missing mention names are dropped, not thrown", parsed.mentions.length === 1 && parsed.mentions[0].name === "Raj");
+}
 console.log("\nsmoke-note-parse-schema: all checks passed");

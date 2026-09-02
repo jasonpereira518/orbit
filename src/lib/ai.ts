@@ -62,7 +62,7 @@ const personPresence = z
   .nullish()
   .transform((v): "participant" | "mentioned" => (v === "mentioned" ? "mentioned" : "participant"));
 export const noteMentionSchema = z.object({
-  name: z.string().min(1),
+  name: z.string().nullish().transform((v) => (v ?? "").trim()),
   context: nullStr.optional().transform((v) => v ?? null),
   near_person: nullStr.optional().transform((v) => v ?? null),
 });
@@ -70,7 +70,7 @@ export type NoteMention = z.infer<typeof noteMentionSchema>;
 const mentionList = z
   .array(noteMentionSchema)
   .nullish()
-  .transform((v) => (v ?? []).filter((m) => m.name.trim()));
+  .transform((v) => (v ?? []).filter((m) => m.name.length > 0));
 
 export const noteParseSchema = z.object({
   name: nullStr,
