@@ -296,8 +296,9 @@ export async function parseBulkCaptureNotes(
     ];
 
     // A note can legitimately carry dates but no people ("Board review 15th of October"),
-    // or only a mention of someone the user wasn't with, so only fail when everything is empty.
-    if (!participants.length && !commitmentResult.commitments.length && !mentions.length) {
+    // so only fail when both extractions came back empty.
+    // Mentions alone are not saveable: they hang on a participant's interaction.
+    if (!participants.length && !commitmentResult.commitments.length) {
       return {
         ok: false as const,
         error: "No people or dates found in those notes",
