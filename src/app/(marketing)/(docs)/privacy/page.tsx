@@ -277,8 +277,13 @@ export default function PrivacyPage() {
 
         <DocSection id="cookies" index={7} title="Cookies and local storage">
           <p>
-            Orbit uses Clerk session cookies to keep you signed in. The app also
-            stores preferences on your device in <code>localStorage</code> —
+            Orbit uses Clerk session cookies to keep you signed in. On your very
+            first visit it also sets one first-party cookie,{" "}
+            <code>orbit_attr</code>, recording where you arrived from — the
+            referring site and any campaign tags in the link — so we can tell
+            which channels bring people here. It holds no personal information,
+            is never shared, and expires after 90 days. The app also stores
+            preferences on your device in <code>localStorage</code> —
             theme flash helpers, saved graph layout positions, and per-device
             notification opt-in. Delivered notification history and account
             preferences live with your account instead.

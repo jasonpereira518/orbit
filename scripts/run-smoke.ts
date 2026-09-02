@@ -57,6 +57,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-relative-date": "pure",
   "smoke-scale-schema": "pure", // own in-memory PGlite
   "smoke-schema-ddl": "pure",
+  "smoke-security-headers": "pure",
   "smoke-warp-chrono": "pure",
   "smoke-warp-journeys": "pure",
   // pglite ----------------------------------------------------------------------------
@@ -75,6 +76,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-context": "pglite",
   "smoke-contact-brief": "pglite",
   "smoke-contacts-page": "pglite", // own in-memory PGlite, but imports the DDL from ../src/db
+  "smoke-csp-report": "pglite",
   "smoke-embedding-backfill": "pglite",
   "smoke-embedding-writes": "pglite",
   "smoke-entitlements": "pglite",
@@ -94,6 +96,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-pgvector-local": "pglite",
   "smoke-presence": "pglite",
   "smoke-purge": "pglite",
+  "smoke-rate-limit": "pglite",
   "smoke-recruiter-sharing": "pglite",
   "smoke-schema-upgrade": "pglite",
   "smoke-stripe-webhook": "pglite",

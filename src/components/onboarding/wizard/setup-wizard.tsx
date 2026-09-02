@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronLeft, Sparkles, Upload, UserPlus } from "lucide-react";
 import { completeWizard, saveWizardStep } from "@/actions/onboarding-wizard";
+import { WizardAiKey } from "@/components/onboarding/wizard/wizard-ai-key";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { WizardAddManual } from "@/components/onboarding/wizard/wizard-add-manual";
@@ -16,6 +17,7 @@ import { WizardTriage } from "@/components/onboarding/wizard/wizard-triage";
 export type WizardStep =
   | "intro"
   | "add-people"
+  | "ai-key"
   | "manual"
   | "capture"
   | "import"
@@ -46,6 +48,7 @@ const PATHS = [
 const STEP_TITLES: Record<WizardStep, string> = {
   intro: "Let's set up your orbit",
   "add-people": "How do you want to add your first people?",
+  "ai-key": "Connect your AI key",
   manual: "Add someone manually",
   capture: "Capture from notes",
   import: "Import LinkedIn connections",
@@ -57,6 +60,7 @@ function isValidStep(step: string | null | undefined): step is WizardStep {
   return (
     step === "intro" ||
     step === "add-people" ||
+    step === "ai-key" ||
     step === "manual" ||
     step === "capture" ||
     step === "import" ||
@@ -77,6 +81,8 @@ export function SetupWizard({
   const [step, setStep] = useState<WizardStep>(
     isValidStep(initialStepId) ? initialStepId : "intro"
   );
+  // Server-known at mount; flips when the key step saves one.
+  const [apiKey, setApiKey] = useState(hasApiKey);
   const [results, setResults] = useState<WizardResult[]>([]);
 
   const goTo = useCallback((next: WizardStep) => {
@@ -147,7 +153,22 @@ export function SetupWizard({
               )}
 
               {step === "add-people" && (
-                <PathStep onChoose={(id) => goTo(id)} />
+                // Capture needs a provider key; without one the step used to open on a
+                // hard error with a link back to Settings. Detour through the key step.
+                <PathStep onChoose={(id) => goTo(id === "capture" && !apiKey ? "ai-key" : id)} />
+              )}
+
+              {step === "ai-key" && (
+                <div className="space-y-4">
+                  <BackRow onBack={() => goTo("add-people")} />
+                  <WizardAiKey
+                    onSaved={() => {
+                      setApiKey(true);
+                      goTo("capture");
+                    }}
+                    onSkip={() => goTo("capture")}
+                  />
+                </div>
               )}
 
               {step === "manual" && (
@@ -166,7 +187,7 @@ export function SetupWizard({
                 <div className="space-y-4">
                   <BackRow onBack={() => goTo("add-people")} />
                   <WizardCapture
-                    hasApiKey={hasApiKey}
+                    hasApiKey={apiKey}
                     onSaved={(count) => {
                       addResult({ kind: "capture", count });
                       goTo("triage");

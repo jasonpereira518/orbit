@@ -1,5 +1,6 @@
 "use server";
 
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
@@ -140,6 +141,7 @@ export async function ingestCaptureMedia(input: {
 }) {
   try {
     const userId = await requireUserId();
+    await consumeBucket("capture", userId, RATE_LIMITS.capture);
     const hasText = Boolean(input.text?.trim());
     const hasFiles = Boolean(input.files?.length);
     if (!hasText && !hasFiles) {
@@ -171,6 +173,7 @@ export async function parseBulkCaptureNotes(
 ) {
   try {
     const userId = await requireUserId();
+    await consumeBucket("capture", userId, RATE_LIMITS.capture);
     if (!notes.trim()) {
       return { ok: false as const, error: "Notes are required" };
     }
@@ -375,6 +378,7 @@ export async function confirmBulkCapture(
   }
 ) {
   const userId = await requireUserId();
+  await consumeBucket("capture", userId, RATE_LIMITS.capture);
   // The hash is recomputed server-side: the client echoes sourceText, and a forged hash
   // could collide with (or evade) another note's dedupe keys.
   const sourceHash = hashSourceNote(batch.sourceText);

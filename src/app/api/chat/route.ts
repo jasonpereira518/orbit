@@ -9,6 +9,7 @@ import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
 import { isPaywallError } from "@/lib/entitlements";
 import { requireUserForSurface } from "@/lib/plan-guards";
+import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -29,6 +30,18 @@ export async function POST(request: Request) {
   } catch (err) {
     const status = isPaywallError(err) ? 403 : 401;
     return NextResponse.json({ error: toUserFacingError(err, "Sign in to chat").message }, { status });
+  }
+
+  try {
+    await consumeBucket("chat", userId, RATE_LIMITS.chat);
+  } catch (err) {
+    if (isRateLimitedError(err)) {
+      return NextResponse.json(
+        { error: err.message },
+        { status: 429, headers: { "Retry-After": String(err.retryAfterSec) } }
+      );
+    }
+    throw err;
   }
 
   const body = (await request.json().catch(() => null)) as
