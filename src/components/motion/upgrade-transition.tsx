@@ -52,7 +52,10 @@ import { arrivedBy, useWarp } from "@/components/warp/warp-provider";
  * click handler here, because `BackControl` owns Back. Instead the panels watch
  * `useWarp().run.phase` and, once it enters the inbound leg (`inbound` or `landing`),
  * lift and then fly out of the frame in reverse order — each to whichever side of the
- * viewport centre it is already nearer, so the two plan cards part like curtains.
+ * viewport centre it is already nearer, so the two plan cards part like curtains. A panel
+ * can opt out of the flight with `exit="fade"` and dissolve where it stands instead; the
+ * heading does, because a line of type carried off sideways reads as an object being
+ * removed rather than as words giving way to the sky.
  *
  * Scoped to /upgrade: BackControl's `onBeforeNavigate` hook this relies on is opt-in, so
  * /pricing and the marketing docs keep their instant back navigation untouched.
@@ -174,6 +177,21 @@ const PART_RISE = -18;
  * rather than as a departure.
  */
 const PART_FADE_DURATION = 0.12;
+
+/**
+ * How one panel leaves on the way home.
+ *
+ * "fly" is the default and the shot: lift, then cross the frame. "fade" is for
+ * the rare section where an object leaving the frame is the wrong reading —
+ * the heading, which is a line of type rather than a card, and which reads
+ * better dissolving into the starlight than being carried off sideways. It
+ * moves nothing at all: no rise, no flight, no blur, just opacity to zero.
+ *
+ * A fading panel still takes its slot's place in the reverse stagger — see the
+ * `exit === "fade"` branch in `usePanelMotionProps` — so it leaves with its
+ * neighbours instead of on a clock of its own.
+ */
+type PanelExit = "fly" | "fade";
 
 type TransitionState = {
   exiting: boolean;
@@ -338,6 +356,8 @@ function usePanelMotionProps(
   order: number,
   /** Which way this panel flies on the way home; see `usePartDirection`. */
   partDir: RefObject<-1 | 1>,
+  /** How this panel leaves on the way home; see `Panel`'s `exit` prop. */
+  exit: PanelExit = "fly",
 ) {
   const { exiting, reduced, maxOrder, mode, rewinding, holding, resolveLead } =
     usePanelTransition();
@@ -353,6 +373,31 @@ function usePanelMotionProps(
     };
 
     if (rewinding) {
+      // A panel that dissolves rather than departs. Checked before the flight
+      // below because the two are alternatives, not layers: this one sets no
+      // x, no y, no filter and no scale, so the section simply thins out where
+      // it stands and the starlight comes through it.
+      //
+      // `partScheduleForSlot` purely for its delay and duration, never its
+      // distance — nothing moves here. Borrowing the flight's clock is what
+      // keeps this panel inside the same reverse-stagger cohort as its
+      // neighbours: it starts when its slot's turn comes and is gone by the
+      // time `part` closes, so the cover still comes up over an empty page.
+      // (`usePartDirection` has already run for this panel, as the rules of
+      // hooks require; this branch simply never reads the direction it found.)
+      if (exit === "fade") {
+        const flight = partScheduleForSlot(order, maxOrder);
+        return {
+          initial: false,
+          animate: { opacity: 0 },
+          transition: {
+            duration: flight.durationMs / 1000,
+            ease: "easeOut",
+            delay: flight.startMs / 1000,
+          },
+        } as const;
+      }
+
       // Reverse stagger, as the assembly's exit already does: the last thing
       // to resolve is the first to go — but NOT the assembly's EXIT_STAGGER.
       // That constant belongs to a move whose end nothing waits on; this
@@ -505,14 +550,19 @@ function usePartDirection<T extends HTMLElement>(order: number) {
 export function Panel({
   order,
   className,
+  exit = "fly",
   children,
 }: {
   order: number;
   className?: string;
+  /** How this section leaves on a chrono rewind: "fly" (the default) lifts and
+   *  crosses the frame, "fade" dissolves in place. Ignored on every other
+   *  path — the assembly's own exit is unaffected. See `PanelExit`. */
+  exit?: PanelExit;
   children: ReactNode;
 }) {
   const { ref, direction } = usePartDirection<HTMLDivElement>(order);
-  const motionProps = usePanelMotionProps(order, direction);
+  const motionProps = usePanelMotionProps(order, direction, exit);
   return (
     <motion.div ref={ref} className={className} {...motionProps}>
       {children}

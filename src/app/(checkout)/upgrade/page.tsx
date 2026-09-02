@@ -112,7 +112,11 @@ export default async function UpgradePage({
             content whatever the DOM order. /pricing's <main> carries the same
             pair for the same reason. */}
         <main className="relative z-10 mx-auto w-full max-w-4xl px-6 pb-24 md:px-8">
-          <Panel order={1}>
+          {/* Fades rather than flies on the way home: everything else on this
+              page is a card or a band, but this is a line of type, and type
+              carried off sideways reads as an object being removed. Dissolving
+              into the star trails reads as the words giving way to the sky. */}
+          <Panel order={1} exit="fade">
             <h1 className={`${HEADING} text-[clamp(28px,4vw,42px)]`}>
               {hasPro || hasLifetime
                 ? "You're already on a paid plan."
