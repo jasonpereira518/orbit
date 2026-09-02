@@ -92,6 +92,16 @@ async function main() {
   check("interactions carry the batch id", rows.every((r) => r.noteBatchId === first.batchId));
   check("externalId is notes:<hash>:<contactId>", rows.every((r) => r.externalId?.startsWith(`notes:${hashSourceNote(NOTE)}:`)));
 
+  // Spec §3: a capture that asked for a reminder also moves the contact's own follow-up
+  // stamp. This is the column the profile and the follow-up queue read, and nothing else
+  // in the note path writes it.
+  const savedPeople = await db.query.contacts.findMany({ where: and(eq(contacts.userId, USER), inArray(contacts.id, first.contactIds)) });
+  check("both participants got a nextFollowUpAt", savedPeople.length === 2 && savedPeople.every((c) => c.nextFollowUpAt !== null), JSON.stringify(savedPeople.map((c) => [c.fullName, c.nextFollowUpAt])));
+  const devContact = savedPeople.find((c) => c.fullName === "Dev Patel")!;
+  check("  Dev's is anchor + 7d (his follow_up_days)", isoDayOf(devContact.nextFollowUpAt!) === "2026-09-08", isoDayOf(devContact.nextFollowUpAt!));
+  const sarahContact = savedPeople.find((c) => c.fullName === "Sarah Chen")!;
+  check("  Sarah's is anchor + 14d", isoDayOf(sarahContact.nextFollowUpAt!) === "2026-09-15", isoDayOf(sarahContact.nextFollowUpAt!));
+
   const rems = await db.query.reminders.findMany({ where: and(eq(reminders.userId, USER), eq(reminders.status, "pending")) });
   const titles = rems.map((r) => r.title).sort();
   // Sarah: Kickoff (absolute) + Intro to Raj (relative) + "Send Sarah the deck" (her action
@@ -146,6 +156,10 @@ async function main() {
   const again = input(miraId);
   again.participants[0].mergeContactId = first.contactIds[0];
   again.participants[1].mergeContactId = first.contactIds[1];
+  // A mention that resolved to somebody already IN this batch: dropped silently, never
+  // offered as "unresolved" (the results page would invite you to create a duplicate of a
+  // participant standing right above it).
+  again.mentions = [...(again.mentions ?? []), { text: "Sarah", context: "we spoke", nearPerson: "Dev Patel", contactId: first.contactIds[0], confidence: 0.7, matchedBy: "first_name_unique" }];
   const second = await saveNoteBatch(USER, again);
   const rows2 = await db.query.interactions.findMany({ where: eq(interactions.userId, USER) });
   const rems2 = await db.query.reminders.findMany({ where: eq(reminders.userId, USER) });
@@ -155,11 +169,20 @@ async function main() {
   check("re-paste: updated, not created", second.updated === 2 && second.created === 0);
   check("merge path re-stamps embeddingStaleAt", (await db.query.contacts.findMany({ where: and(eq(contacts.userId, USER), inArray(contacts.id, second.contactIds)) })).every((c) => c.embeddingStaleAt !== null));
   check("re-paste: mention count still 1 (unique index)", (await db.query.interactionMentions.findMany({ where: eq(interactionMentions.userId, USER) })).length === 1);
+  check("re-paste: a participant-targeted mention is dropped, not unresolved", second.result.unresolvedMentions.length === 1 && second.result.unresolvedMentions[0].text === "Raj", JSON.stringify(second.result.unresolvedMentions));
+  check("  and never becomes a mention link", !second.result.mentions.some((m) => m.contactId === first.contactIds[0]));
 
   // 3. Undo the first batch: reminders dismissed (not deleted), interactions untouched.
+  //    A mention link that this batch did NOT write — seeded by hand on the same
+  //    interaction — must survive: undo owns its own rows and nothing else.
+  const sarahInteractionId = rows.find((r) => r.contactId === sarahId)!.id;
+  const [zed] = await db.insert(contacts).values({ userId: USER, fullName: "Zed Quin" }).returning();
+  await db.insert(interactionMentions).values({ userId: USER, interactionId: sarahInteractionId, contactId: zed.id, mentionText: "Zed", confidence: 0.7, matchedBy: "first_name_unique" });
   const undo = await undoNoteBatchForUser(USER, first.batchId);
   check("undo dismissed four reminders", undo.remindersDismissed === 4, String(undo.remindersDismissed));
   check("undo removed mention links", undo.mentionsRemoved === 1);
+  const survivors = await db.query.interactionMentions.findMany({ where: eq(interactionMentions.userId, USER) });
+  check("  a foreign mention on the same interaction survives undo", survivors.length === 1 && survivors[0].contactId === zed.id, JSON.stringify(survivors.map((m) => m.mentionText)));
   const afterUndo = await db.query.reminders.findMany({ where: eq(reminders.userId, USER) });
   check("  rows still exist", afterUndo.length === 4);
   check("  all dismissed", afterUndo.every((r) => r.status === "dismissed"));

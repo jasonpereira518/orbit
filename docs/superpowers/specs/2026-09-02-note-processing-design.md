@@ -102,12 +102,20 @@ test hashes a fixture both ways and asserts equality.
 
 ```
 note_batch_id uuid, source_interaction_id uuid → interactions SET NULL,
-action_item_id uuid → action_items SET NULL,
+action_item_id uuid,          -- bare uuid, no FK (see below)
 source_excerpt text, raw_date_phrase text,
 date_basis text,              -- absolute | relative | vague | window
 item_hash text
-UNIQUE INDEX reminders_user_item_hash_uidx ON reminders(user_id, item_hash) WHERE item_hash IS NOT NULL
+UNIQUE INDEX reminders_user_item_hash_uidx ON reminders(user_id, item_hash)
 ```
+
+No predicate on that index and none needed: Postgres treats NULLs as distinct, so every
+reminder without an `item_hash` (anything not created from notes) sits outside it.
+
+`reminders.action_item_id` carries **no** foreign key. `action_items` is created *after*
+`reminders` in the bootstrap DDL template — it references `reminders.id` — so a reverse FK
+here would be a forward reference to a table that does not exist yet. The one real FK
+between the two runs the other way, `action_items.reminder_id → reminders.id`.
 
 `item_hash` reuses `buildSuggestionItemHash(sourceHash, dueDateIso, title)` from
 `src/lib/suggested-reminder-utils.ts`. "From notes" means `note_batch_id IS NOT NULL`.
@@ -157,10 +165,12 @@ query over `action_items`.
 The shape stays: two concurrent passes, fail only if both come back empty.
 
 **People pass** (`src/lib/ai.ts`). `noteParseSchema` gains
-`role: 'participant' | 'mentioned'` (default participant). `multiPersonNoteParseSchema`
-gains top-level `mentions: { name, context, near_person }[]` for names the model judges
-were not present. Both the single-pass prompt and the identify pass of the two-pass path
-carry `role`; otherwise long notes lose it. `PERSON_FIELD_SHAPE` documents it.
+`presence: 'participant' | 'mentioned'` (default participant) — named `presence`, not
+`role`, because `role` is already the person's job title on the same object.
+`multiPersonNoteParseSchema` gains top-level
+`mentions: { name, context, near_person }[]` for names the model judges were not present.
+Both the single-pass prompt and the identify pass of the two-pass path carry `presence`;
+otherwise long notes lose it. `PERSON_FIELD_SHAPE` documents it.
 
 **Dates pass** (`src/lib/date-commitment-extract.ts`). The prompt drops "ABSOLUTE DATES
 ONLY" and asks for every dated or relatively-dated commitment, copying `raw_date_phrase`

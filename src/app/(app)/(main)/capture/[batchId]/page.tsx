@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { getNoteBatch } from "@/actions/note-batches";
 import { NoteBatchResultView } from "@/components/capture/note-batch-result";
+import { isoDay } from "@/lib/suggested-reminder-utils";
 
 export default async function NoteBatchPage({
   params,
@@ -24,10 +25,11 @@ export default async function NoteBatchPage({
       <NoteBatchResultView
         batchId={batch.id}
         status={batch.status}
-        anchorIso={batch.anchorDate.toISOString().slice(0, 10)}
+        anchorIso={isoDay(new Date(batch.anchorDate))}
         anchorBasis={batch.anchorBasis}
         result={batch.result}
         reminderStatus={batch.reminderStatus}
+        reminderDetails={batch.reminderDetails}
         contactNames={batch.contactNames}
       />
     </div>

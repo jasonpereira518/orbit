@@ -7,9 +7,17 @@ import { toast } from "@/lib/toast";
 import { deleteContact } from "@/actions/contacts";
 import { dismissNoteReminder, undoNoteBatch } from "@/actions/note-batches";
 import type { NoteBatchResult } from "@/lib/note-batches";
+import type { ReminderActionKind } from "@/db/schema";
+import { ReminderFormDialog } from "@/components/reminders/reminder-form-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+export type NoteBatchReminderDetail = {
+  description: string | null;
+  actionKind: ReminderActionKind | null;
+  listId: string | null;
+};
 
 const BASIS_LABEL: Record<string, string> = {
   absolute: "date in your notes",
@@ -30,6 +38,7 @@ export function NoteBatchResultView({
   anchorBasis,
   result,
   reminderStatus,
+  reminderDetails,
   contactNames,
 }: {
   batchId: string;
@@ -38,11 +47,13 @@ export function NoteBatchResultView({
   anchorBasis: "note" | "hint" | "upload";
   result: NoteBatchResult;
   reminderStatus: Record<string, string>;
+  reminderDetails: Record<string, NoteBatchReminderDetail>;
   contactNames: Record<string, string>;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [local, setLocal] = useState(reminderStatus);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const undone = status === "undone";
 
   function dismiss(id: string) {
@@ -90,6 +101,7 @@ export function NoteBatchResultView({
   }
 
   const name = (id: string | null) => (id ? contactNames[id] ?? "Unknown" : "No one");
+  const editing = editingId ? result.reminders.find((r) => r.id === editingId) ?? null : null;
 
   return (
     <div className="space-y-4">
@@ -144,6 +156,27 @@ export function NoteBatchResultView({
         </Card>
       )}
 
+      {result.actionItems.length > 0 && (
+        <Card className="border-border/70 shadow-none">
+          <CardHeader><CardTitle>Action items</CardTitle></CardHeader>
+          <CardContent>
+            <ul className="space-y-2">
+              {result.actionItems.map((a) => (
+                <li key={a.id} className="flex items-start justify-between gap-2 rounded-xl border border-border/60 px-3 py-2 text-sm">
+                  <div>
+                    <p>{a.text}</p>
+                    <p className="text-xs text-muted-foreground">{name(a.contactId)}</p>
+                  </div>
+                  <Badge variant="secondary" className="shrink-0 text-[10px]">
+                    {a.reminderId ? "Reminder set" : "No reminder"}
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
       <Card className="border-border/70 shadow-none">
         <CardHeader><CardTitle>Reminders created</CardTitle></CardHeader>
         <CardContent>
@@ -163,11 +196,16 @@ export function NoteBatchResultView({
                         {r.rawDatePhrase && <> · &ldquo;{r.rawDatePhrase}&rdquo;</>}
                       </p>
                     </div>
-                    {st === "pending" ? (
-                      <Button variant="ghost" size="sm" disabled={pending} onClick={() => dismiss(r.id)}>Dismiss</Button>
-                    ) : (
-                      <Badge variant="secondary" className="text-[10px] capitalize">{st}</Badge>
-                    )}
+                    <div className="flex shrink-0 items-center gap-1">
+                      {st === "pending" ? (
+                        <>
+                          <Button variant="ghost" size="sm" disabled={pending} onClick={() => setEditingId(r.id)}>Edit</Button>
+                          <Button variant="ghost" size="sm" disabled={pending} onClick={() => dismiss(r.id)}>Dismiss</Button>
+                        </>
+                      ) : (
+                        <Badge variant="secondary" className="text-[10px] capitalize">{st}</Badge>
+                      )}
+                    </div>
                   </li>
                 );
               })}
@@ -180,6 +218,30 @@ export function NoteBatchResultView({
           )}
         </CardContent>
       </Card>
+
+      {/* One dialog for the whole list, keyed by the row being edited — the form seeds
+          itself from `initial` on open, and calls router.refresh() after saving. */}
+      {editing && (
+        <ReminderFormDialog
+          key={editing.id}
+          open
+          onOpenChange={(next) => { if (!next) setEditingId(null); }}
+          mode="edit"
+          lists={[]}
+          defaultListId={reminderDetails[editing.id]?.listId ?? null}
+          initial={{
+            id: editing.id,
+            title: editing.title,
+            description: reminderDetails[editing.id]?.description ?? null,
+            // Local noon, like every other date in this app: a bare `YYYY-MM-DD` parses
+            // as UTC midnight and reads back a day early west of Greenwich.
+            dueDate: `${editing.dueIso}T12:00:00`,
+            listId: reminderDetails[editing.id]?.listId ?? null,
+            contactId: editing.contactId,
+            actionKind: reminderDetails[editing.id]?.actionKind ?? "auto",
+          }}
+        />
+      )}
 
       <div className="flex gap-2">
         <Link href="/capture"><Button variant="outline" size="sm">Paste more notes</Button></Link>

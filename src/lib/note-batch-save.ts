@@ -8,7 +8,7 @@
  *   reminders     — `itemHash = sha256(sourceHash|dueIso|title)` (unique per user, NULLs allowed)
  *   undo          — marks reminders `dismissed`, never deletes, so the hash keeps blocking
  */
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { getDb } from "@/db";
 import { actionItems, contacts, interactionMentions, noteBatches, reminders, type NoteBatchResult, type ReminderActionKind } from "@/db/schema";
 import type { ParsedNote } from "@/lib/ai";
@@ -133,6 +133,12 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
       const { parsed } = p;
       let contactId = p.mergeContactId || null;
       let wasCreated = false;
+      // Spec §3: a capture that asks for a reminder also moves the contact's own
+      // follow-up stamp, on create AND on merge — the profile's "next follow-up" and
+      // the follow-up queue read this column, not the reminder rows.
+      const followUpDate = p.createReminder
+        ? windowDueDate(anchor, p.followUpDays || p.parsed.follow_up_days || DEFAULT_FOLLOW_UP_WINDOW_DAYS)
+        : null;
       const fields = {
         company: parsed.company || undefined,
         title: parsed.role || undefined,
@@ -147,6 +153,7 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         relationshipScore: p.relationshipScore,
         statedCloseness: p.relationshipScore,
         tagNames: p.tagNames,
+        ...(followUpDate ? { nextFollowUpAt: followUpDate.toISOString() } : {}),
       };
       if (contactId) {
         // Merge: never overwrite contacts.notes — the new material lives on the timeline.
@@ -213,7 +220,11 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
     const firstInteraction = result.participants[0]?.interactionId ?? null;
     const mentionRows: (typeof interactionMentions.$inferInsert)[] = [];
     for (const m of input.mentions ?? []) {
-      if (!m.contactId || participantIds.has(m.contactId)) {
+      // A mention that resolved to somebody already IN this batch is not unresolved — the
+      // person is right there on the results page as a participant. Drop it silently
+      // rather than offering "add as a contact" for someone just created.
+      if (m.contactId && participantIds.has(m.contactId)) continue;
+      if (!m.contactId) {
         result.unresolvedMentions.push({ text: m.text, context: m.context });
         continue;
       }
@@ -357,12 +368,17 @@ export async function undoNoteBatchForUser(userId: string, batchId: string) {
     .where(and(eq(reminders.userId, userId), eq(reminders.noteBatchId, batchId), eq(reminders.status, "pending")))
     .returning();
 
-  const interactionIds = batch.result.participants.map((p) => p.interactionId).filter((id): id is string => Boolean(id));
+  // Only the exact (interaction, contact) links THIS batch wrote. Deleting every mention
+  // on the batch's interactions would also wipe links written by an earlier paste, a
+  // later paste, or by hand — undo owns its own rows and nothing else.
+  const pairs = batch.result.mentions
+    .filter((m) => m.interactionId && m.contactId)
+    .map((m) => and(eq(interactionMentions.interactionId, m.interactionId), eq(interactionMentions.contactId, m.contactId)));
   let mentionsRemoved = 0;
-  if (interactionIds.length) {
+  if (pairs.length) {
     const removed = await db
       .delete(interactionMentions)
-      .where(and(eq(interactionMentions.userId, userId), inArray(interactionMentions.interactionId, interactionIds)))
+      .where(and(eq(interactionMentions.userId, userId), or(...pairs)))
       .returning();
     mentionsRemoved = removed.length;
   }

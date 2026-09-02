@@ -283,7 +283,11 @@ export async function parseBulkCaptureNotes(
 
     const candidates: MentionCandidate[] = [
       ...personParse.mentions.map((m) => ({ name: m.name, context: m.context, nearPerson: m.near_person })),
-      ...demoted.map((p) => ({ name: p.name!, context: p.summary, company: p.company, nearPerson: null })),
+      // A demoted mention with no usable name has nothing to resolve against — the
+      // non-null assertion below would otherwise hand `resolveMentions` a null name.
+      ...demoted
+        .filter((p) => p.name?.trim())
+        .map((p) => ({ name: p.name!.trim(), context: p.summary, company: p.company, nearPerson: null })),
     ];
     const { resolved, unresolved } = resolveMentions(
       existing.map((c) => ({ id: c.id, fullName: c.fullName, email: c.email, linkedinUrl: c.linkedinUrl, xHandle: c.xHandle, company: c.company, title: c.title })),

@@ -589,7 +589,12 @@ export async function getContact(id: string) {
           asc(interactions.sameDayOrder),
         ],
       },
-      reminders: { orderBy: [desc(reminders.createdAt)] },
+      // `dismissed` is the undo tombstone: the row survives so the batch item_hash keeps
+      // blocking a re-paste, but it must never show up as a live reminder on the profile.
+      reminders: {
+        where: (r, { ne }) => ne(r.status, "dismissed"),
+        orderBy: [desc(reminders.createdAt)],
+      },
     },
   });
 

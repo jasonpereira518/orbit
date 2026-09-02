@@ -80,4 +80,22 @@ const contacts = [
   check("tied name+company candidates unresolved", resolved.length === 0 && unresolved.length === 1);
 }
 
+// 11. A nameless candidate is dropped, not thrown on. The people pass can emit a
+//     `presence: "mentioned"` entry with a blank or null name; one bad row must not take
+//     the whole parse down.
+{
+  let threw = false;
+  let out: ReturnType<typeof resolveMentions> | null = null;
+  try {
+    out = resolveMentions(contacts, [
+      { name: "", context: null },
+      { name: null as unknown as string, context: "no name at all" },
+    ]);
+  } catch {
+    threw = true;
+  }
+  check("nameless candidates do not throw", !threw);
+  check("  and produce no output", out !== null && out.resolved.length === 0 && out.unresolved.length === 0, JSON.stringify(out));
+}
+
 console.log("\nsmoke-mention-resolution: all checks passed");

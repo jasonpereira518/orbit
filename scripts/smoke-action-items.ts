@@ -43,6 +43,16 @@ function check(label: string, condition: boolean, detail?: string) {
   const capped = diffActionItems([], Array.from({ length: 15 }, (_, i) => `item ${i}`), hash);
   check("capped at 10", capped.insert.length === 10);
   check("positions are 0..n-1", capped.insert.every((x, i) => x.position === i));
+
+  // Hash parity on non-space whitespace. The diff used to store `raw.trim()` (all
+  // Unicode whitespace) while actionItemHash/the SQL backfill btrim only ASCII spaces, so
+  // a tab-prefixed item was stored trimmed but hashed untrimmed — the backfill and the
+  // sync would then each insert their own copy of the same item.
+  const tabbed = diffActionItems([], ["\tTabbed item"], hash);
+  check("tab-prefixed item keeps its tab", tabbed.insert.length === 1 && tabbed.insert[0].text === "\tTabbed item", JSON.stringify(tabbed.insert[0]?.text));
+  check("  and hashes as the stored text", tabbed.insert[0].itemHash === actionItemHash(iid, "\tTabbed item"));
+  const spaced = diffActionItems([], ["   Spaced item   "], hash);
+  check("leading/trailing spaces are still trimmed", spaced.insert[0]?.text === "Spaced item");
 }
 
 // --- DB ---

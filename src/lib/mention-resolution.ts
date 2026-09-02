@@ -53,7 +53,11 @@ export function resolveMentions(
   const seen = new Set<string>();
 
   for (const m of mentions) {
-    const text = m.name.trim();
+    // A nameless candidate is dropped, not thrown on: the people pass can emit a
+    // `presence: "mentioned"` entry with a null/blank name, and one bad row must not
+    // take the whole parse down.
+    const text = (m.name ?? "").trim();
+    if (!text) continue;
     const norm = normalizeName(text);
     if (!norm || seen.has(norm)) continue;
     seen.add(norm);

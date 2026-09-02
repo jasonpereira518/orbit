@@ -27,7 +27,10 @@ export function diffActionItems(
   const insert: { text: string; position: number; itemHash: string }[] = [];
   let position = 0;
   for (const raw of incoming) {
-    const text = raw.trim();
+    // Space-only trim, matching actionItemHash() and the SQL `btrim` it mirrors. JS
+    // `.trim()` also strips tabs and newlines, so a "\tTabbed item" would be stored
+    // trimmed here but hashed untrimmed by the SQL backfill — the same item twice.
+    const text = raw.replace(/^ +| +$/g, "");
     if (!text) continue;
     const itemHash = hash(text);
     if (seen.has(itemHash)) continue;

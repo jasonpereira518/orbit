@@ -4,6 +4,7 @@
  */
 
 import {
+  datedCommitmentsSchema,
   validateCommitments,
   type RawCommitmentItem,
 } from "../src/lib/date-commitment-extract";
@@ -288,6 +289,35 @@ We met on Aug 3 originally.`;
   const today = new Date(2026, 8, 1, 12);
   const r = validateCommitments([item({ title: "Ping", raw_date_phrase: "tomorrow", date: "" })], "Ping tomorrow.", { today });
   check("no anchor → today", isoDay(r.commitments[0]?.dueDate) === "2026-09-02", isoDay(r.commitments[0]?.dueDate));
+}
+
+// 19. The model omits `date` entirely for a relative phrase — which the prompt tells it to
+//     do. A required `z.string()` there threw inside the schema and lost EVERY commitment
+//     in the response, not just this one. Parse the RAW payload, not a fixture, so this
+//     exercises the zod layer.
+{
+  const anchor = new Date(2026, 8, 1, 12);
+  const raw = {
+    commitments: [
+      {
+        title: "Intro to Raj",
+        detail: null,
+        raw_date_phrase: "in two weeks",
+        // no `date` key at all
+        date_kind: "relative",
+        person_name: "Sarah Chen",
+        confidence: 0.8,
+      },
+    ],
+  };
+  const parsed = datedCommitmentsSchema.parse(raw);
+  check("missing `date` key parses", parsed.commitments.length === 1);
+  check("  and defaults to empty string", parsed.commitments[0].date === "");
+  const notes = "She'll intro me to Raj in two weeks.";
+  const r = validateCommitments(parsed.commitments, notes, { today: anchor, anchor });
+  check("  the relative phrase still resolves", r.commitments.length === 1, JSON.stringify(r.rejected));
+  check("  anchor + 14d", isoDay(r.commitments[0]?.dueDate) === "2026-09-15", isoDay(r.commitments[0]?.dueDate));
+  check("  basis relative", r.commitments[0]?.dateBasis === "relative");
 }
 
 console.log("\nAll date-commitment smoke checks passed.");

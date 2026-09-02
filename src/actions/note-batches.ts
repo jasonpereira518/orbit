@@ -24,9 +24,15 @@ export async function getNoteBatch(batchId: string) {
       ...batch.result.reminders.map((r) => r.contactId).filter((id): id is string => Boolean(id)),
     ]),
   ];
+  // `description`, `actionKind` and `listId` are not in the result snapshot but the inline
+  // edit dialog needs them: seeding it from the snapshot alone would blank the reminder's
+  // notes and reset its action kind the moment the user hit Save.
   const [reminderRows, contactRows] = await Promise.all([
     reminderIds.length
-      ? db.select({ id: reminders.id, status: reminders.status }).from(reminders).where(and(eq(reminders.userId, userId), inArray(reminders.id, reminderIds)))
+      ? db
+          .select({ id: reminders.id, status: reminders.status, description: reminders.description, actionKind: reminders.actionKind, listId: reminders.listId })
+          .from(reminders)
+          .where(and(eq(reminders.userId, userId), inArray(reminders.id, reminderIds)))
       : Promise.resolve([]),
     contactIds.length
       ? db.select({ id: contacts.id, fullName: contacts.fullName }).from(contacts).where(and(eq(contacts.userId, userId), inArray(contacts.id, contactIds)))
@@ -35,6 +41,9 @@ export async function getNoteBatch(batchId: string) {
   return {
     ...batch,
     reminderStatus: Object.fromEntries(reminderRows.map((r) => [r.id, r.status])),
+    reminderDetails: Object.fromEntries(
+      reminderRows.map((r) => [r.id, { description: r.description, actionKind: r.actionKind, listId: r.listId }])
+    ),
     contactNames: Object.fromEntries(contactRows.map((c) => [c.id, c.fullName])),
   };
 }

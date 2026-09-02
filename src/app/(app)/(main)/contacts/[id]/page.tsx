@@ -44,7 +44,9 @@ export default async function ContactDetailPage({
   // (or racing notFound() into the error boundary on a bogus id); on
   // failure the section simply doesn't render.
   const sendOptionsPromise = getContactFollowUpSendOptions(id).catch(() => null);
-  const settingsPromise = getSettings();
+  // Guarded like the others: an unhandled getSettings() rejection would take the whole
+  // page down for a section that only decides whether the add-notes card is enabled.
+  const settingsPromise = getSettings().catch(() => ({ hasApiKey: false }));
   const relatedPromise = listRelatedContacts(id, 6).catch(() => []);
   // Started once and chained from below, rather than each `.then` re-calling
   // requireUserId(): the `after()` callback for brief regeneration needs the
@@ -265,13 +267,15 @@ export default async function ContactDetailPage({
         />
       </Suspense>
 
-      <Reveal>
-        <ContactAddNotesCard
+      {/* Streamed so the settings read never blocks the rest of the profile; no
+          fallback because the card's own place in the flow is what would flicker. */}
+      <Suspense fallback={null}>
+        <StreamedAddNotes
+          settings={settingsPromise}
           contactId={contact.id}
           contactName={displayName}
-          hasApiKey={(await settingsPromise).hasApiKey}
         />
-      </Reveal>
+      </Suspense>
 
       <Reveal>
         <ContactTimeline
@@ -324,6 +328,27 @@ async function StreamedFollowUp({
   return (
     <div className="reveal-mount">
       <ContactFollowUpSection {...rest} sendOptions={resolved} />
+    </div>
+  );
+}
+
+async function StreamedAddNotes({
+  settings,
+  contactId,
+  contactName,
+}: {
+  settings: Promise<{ hasApiKey: boolean }>;
+  contactId: string;
+  contactName: string;
+}) {
+  const { hasApiKey } = await settings;
+  return (
+    <div className="reveal-mount">
+      <ContactAddNotesCard
+        contactId={contactId}
+        contactName={contactName}
+        hasApiKey={hasApiKey}
+      />
     </div>
   );
 }

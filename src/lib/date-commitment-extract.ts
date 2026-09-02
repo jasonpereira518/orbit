@@ -63,7 +63,13 @@ const commitmentItemSchema = z.object({
   title: z.string().min(1),
   detail: nullTrimmed,
   raw_date_phrase: z.string().min(1),
-  date: z.string(),
+  // The prompt tells the model to leave this empty for relative/vague phrases, and models
+  // routinely omit the key entirely instead. A required string would throw here and lose
+  // EVERY commitment in the response, not just this one.
+  date: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? ""),
   // Parsed but not trusted: the validator classifies the phrase itself.
   date_kind: nullTrimmed,
   year_stated: z
@@ -128,8 +134,9 @@ function normalizeForMatch(text: string) {
 type MonthDay = { month: number; day: number; statedYear: number | null };
 
 /**
- * Recovers month/day from the phrase itself. Returning null means the phrase does not
- * name an absolute calendar date, which is the rejection signal.
+ * Recovers month/day from the phrase itself. Returning null means the phrase does not name
+ * an absolute calendar date — which routes it to the relative/vague grammar, not to
+ * rejection. Only a phrase that neither grammar can resolve is rejected.
  */
 export function deriveMonthDay(phrase: string): MonthDay | null {
   const iso = phrase.match(ISO_RE);
@@ -212,7 +219,7 @@ function toIsoDay(d: Date) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Validation — the layer that actually enforces "absolute dates only"  */
+/* Validation — verbatim containment, then absolute or relative resolution */
 /* ------------------------------------------------------------------ */
 
 export type ValidateOptions = { today: Date; anchor?: Date };

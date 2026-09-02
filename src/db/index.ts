@@ -729,8 +729,9 @@ CREATE TABLE IF NOT EXISTS fundraising_investors (
  *
  * v17 = note processing tables (note_batches, interaction_mentions, action_items,
  * contact_briefs) plus reminder/interaction provenance columns.
+ * v18 = legacy action-item backfill guards on jsonb_typeof(action_items) = 'array'.
  */
-export const SCHEMA_VERSION = 17;
+export const SCHEMA_VERSION = 18;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1370,7 +1371,7 @@ const ADMIN_V2_STATEMENTS = [
    SELECT i.user_id, i.contact_id, i.id, a.value, a.ordinality - 1,
           encode(sha256(convert_to(i.id::text || '|' || lower(btrim(a.value)), 'UTF8')), 'hex')
    FROM interactions i, jsonb_array_elements_text(COALESCE(i.action_items, '[]'::jsonb)) WITH ORDINALITY a
-   WHERE btrim(a.value) <> ''
+   WHERE jsonb_typeof(i.action_items) = 'array' AND btrim(a.value) <> ''
    ON CONFLICT (user_id, item_hash) DO NOTHING`,
 ];
 
