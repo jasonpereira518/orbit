@@ -36,7 +36,7 @@ import {
   type NoteBatchMentionInput,
   type NoteBatchParticipantInput,
 } from "@/lib/note-batch-save";
-import { generateAndStorePersonSummary } from "@/lib/person-summary";
+import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 
 export type BulkNoteDuplicate = {
   id: string;
@@ -387,7 +387,7 @@ export async function confirmBulkCapture(
   after(async () => {
     await kickEmbeddingBackfill(userId).catch(() => null);
     for (const id of out.contactIds) {
-      await generateAndStorePersonSummary(userId, id).catch(() => null);
+      await generateAndStoreContactBrief(userId, id).catch(() => null);
     }
   });
 

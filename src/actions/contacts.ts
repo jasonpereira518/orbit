@@ -25,7 +25,7 @@ import {
   type ContactWriteOptions,
   type LogInteractionInput,
 } from "@/lib/contact-writes";
-import { generateAndStorePersonSummary } from "@/lib/person-summary";
+import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { rebuildContactEmbedding } from "@/lib/search";
 import {
   selectTriageCandidates,
@@ -801,7 +801,7 @@ export async function updateInteraction(
   }
 
   await rebuildContactEmbedding(userId, existing.contactId);
-  void generateAndStorePersonSummary(userId, existing.contactId).catch(
+  void generateAndStoreContactBrief(userId, existing.contactId).catch(
     () => null
   );
 
@@ -860,13 +860,13 @@ export async function reorderSameDayInteractions(
 
 export async function regenerateContactSummary(contactId: string) {
   const userId = await requireUserId();
-  const summary = await generateAndStorePersonSummary(userId, contactId, {
+  const out = await generateAndStoreContactBrief(userId, contactId, {
     force: true,
   });
   revalidatePath(`/contacts/${contactId}`);
   revalidatePath("/graph");
   revalidatePath("/dashboard");
-  return { summary };
+  return { summary: out?.summary ?? null };
 }
 
 export type LinkedInRefreshTarget = {

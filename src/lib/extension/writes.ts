@@ -22,7 +22,7 @@ import {
 import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { PaywallError } from "@/lib/entitlements";
 import { rebuildContactEmbedding } from "@/lib/search";
-import { generateAndStorePersonSummary } from "@/lib/person-summary";
+import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import type {
   LogInteractionRequest,
@@ -223,7 +223,7 @@ export async function saveContactFromExtension(
   defer(async () => {
     await rebuildContactEmbedding(userId, contactId).catch(() => null);
     if (!summaryManuallySet) {
-      await generateAndStorePersonSummary(userId, contactId).catch(() => null);
+      await generateAndStoreContactBrief(userId, contactId).catch(() => null);
     }
     revalidateContactRoutes(contactId);
   });
@@ -272,7 +272,7 @@ export async function logExtensionInteraction(
 
   defer(async () => {
     await rebuildContactEmbedding(userId, input.contactId).catch(() => null);
-    await generateAndStorePersonSummary(userId, input.contactId).catch(() => null);
+    await generateAndStoreContactBrief(userId, input.contactId).catch(() => null);
     revalidateContactRoutes(input.contactId);
   });
 

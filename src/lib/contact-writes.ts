@@ -24,7 +24,7 @@ import {
   type CompanyResolver,
 } from "@/lib/companies";
 import { isMetContext } from "@/lib/met-context";
-import { generateAndStorePersonSummary } from "@/lib/person-summary";
+import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { markCohortDirty, rescoreContact } from "@/lib/closeness-materialize";
 import {
   rebuildContactEmbedding,
@@ -36,7 +36,7 @@ export type ContactWriteOptions = {
   skipRevalidate?: boolean;
   /** Skip the synchronous embedding API call; caller will rebuild embeddings in a batch. */
   skipEmbedding?: boolean;
-  /** Skip the fire-and-forget person-summary refresh; caller will defer it (e.g. via `after()`). */
+  /** Skip the fire-and-forget contact-brief refresh; caller will defer it (e.g. via `after()`). */
   skipSummary?: boolean;
   /**
    * Skip per-contact closeness scoring. For bulk paths only: they recalibrate the whole
@@ -702,7 +702,7 @@ export async function updateContactForUser(
     // `after()` rather than a bare floating promise: on Vercel the function can be
     // suspended the moment the response is sent, which would cut an unawaited summary
     // request off partway through.
-    after(() => generateAndStorePersonSummary(userId, id).catch(() => null));
+    after(() => generateAndStoreContactBrief(userId, id).catch(() => null));
   }
 
   await scoreAfterWrite(userId, id, options);
@@ -788,7 +788,7 @@ export async function logInteractionForUser(
   // Significant change: refresh stored person summary
   if (!options?.skipSummary) {
     after(() =>
-      generateAndStorePersonSummary(userId, input.contactId).catch(() => null)
+      generateAndStoreContactBrief(userId, input.contactId).catch(() => null)
     );
   }
 
