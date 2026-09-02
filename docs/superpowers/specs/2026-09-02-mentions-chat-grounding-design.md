@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS unresolved_mentions (
   near_contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
   mention_text text NOT NULL,
   context text,
+  source_hash text NOT NULL,
+  item_hash text NOT NULL,
   status text NOT NULL DEFAULT 'pending',
   resolved_contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
   resolved_at timestamptz,
@@ -53,14 +55,26 @@ CREATE TABLE IF NOT EXISTS unresolved_mentions (
 );
 CREATE INDEX IF NOT EXISTS unresolved_mentions_user_status_idx ON unresolved_mentions(user_id, status);
 CREATE INDEX IF NOT EXISTS unresolved_mentions_batch_idx ON unresolved_mentions(note_batch_id);
+CREATE UNIQUE INDEX IF NOT EXISTS unresolved_mentions_user_item_hash_uidx ON unresolved_mentions(user_id, item_hash);
 ```
 
 FK reasoning: `note_batch_id` cascades — the batch is the owning unit, matching how
 `undoNoteBatchForUser` already treats a batch's dependents. `interaction_id`,
 `near_contact_id`, and `resolved_contact_id` are `SET NULL` — losing an interaction or a
 contact must not destroy the review row's identity, mirroring the existing comment on
-`suggested_reminders.contact_id`. No unique index: a batch can legitimately produce two
-pending mentions with identical text.
+`suggested_reminders.contact_id`.
+
+**Correction found while writing the task plan** (the design above under-specified this):
+every sibling table in this pipeline — `action_items`, `reminders`, `interaction_mentions`
+— dedupes across a re-paste of the same note, either via a soft-unique `external_id`, an
+`item_hash`, or a real unique index. `unresolved_mentions` needs the same guard, or
+re-pasting a note that still contains an unresolved name (a very normal thing — the user
+hasn't acted on it yet) would insert a fresh duplicate "pending" row on every paste,
+flooding the review screen. `item_hash = buildSuggestionItemHash(sourceHash, "mention",
+mentionText)` — reusing the existing hash helper from `suggested-reminder-utils.ts` with a
+fixed second argument in place of a due date — backed by a unique `(user_id, item_hash)`
+index, `onConflictDoNothing` on insert. `source_hash` is stored denormalized (same pattern
+`suggested_reminders` already uses) so the hash can be recomputed/verified without a join.
 
 `NoteBatchResult.unresolvedMentions` (in `src/db/schema.ts`) gains an optional `id`:
 `{ text: string; context: string | null; id?: string }`. Optional so jsonb rows written
@@ -72,13 +86,17 @@ after, and confirm `npm run db:check`.
 
 ## 2. Write path
 
-In `src/lib/note-batch-save.ts`, at the point where a mention becomes a
-`result.unresolvedMentions.push({ text, context })` (there are two such sites — no
-resolvable contact, and a resolvable contact with no interaction to hang it on), also
-collect the row into a local array and, after the mention loop, insert all of them into
-`unresolved_mentions` in one statement, then stamp the returned ids back onto the matching
-`result.unresolvedMentions[]` entries by array position (both arrays are built in the same
-loop, so order is preserved).
+In `src/lib/note-batch-save.ts`'s mention loop (the `for (const m of input.mentions ?? [])`
+block, step "1b"), both `result.unresolvedMentions.push({ text: m.text, context: m.context
+})` sites (no resolvable contact; a resolvable contact with no interaction to hang it on)
+also push into a local `unresolvedCandidates` array carrying `{ userId, noteBatchId: batchId,
+interactionId: interactionId ?? null, nearContactId: nearId ?? null, mentionText: m.text,
+context: m.context, sourceHash: input.sourceHash, itemHash: buildSuggestionItemHash(input.sourceHash,
+"mention", m.text) }`, built in lockstep with `result.unresolvedMentions` so array
+position lines up. After the loop, one `insert(...).onConflictDoNothing({ target: [userId,
+itemHash] }).returning()`; for any candidate whose hash didn't come back (a real re-paste
+conflict), a follow-up `select` by the missing hashes resolves the existing row's id. Stamp
+every id back onto `result.unresolvedMentions[i].id` by matching `itemHash`.
 
 ## 3. Read path and actions
 
