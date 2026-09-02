@@ -1403,3 +1403,27 @@ html[data-warp] [data-warp-craft] {
     opacity: 1 !important;
   }
 }
+
+/* The plan-celebration handoff: the app's own logo mark (sidebar or mobile
+   header, whichever is laid out — see `[data-app-logo]`) steps aside while
+   the celebration's mark flies across the screen to take its place, then
+   fades back in synced with the flying mark's own fade-out. Without this the
+   destination already shows the new tier's ring (the shell refreshes the
+   instant the flight starts) for the whole flight, so the arriving mark
+   looks like a duplicate rather than a replacement. */
+html[data-celebration-handoff] [data-app-logo] {
+  opacity: 0;
+}
+
+[data-app-logo] {
+  transition: opacity 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Reduced motion never flies the mark (see `celebration-stage.tsx`), so
+     this attribute is never set in that path — but if it ever were, nothing
+     here should animate the app's own logo. */
+  [data-app-logo] {
+    transition: none;
+  }
+}

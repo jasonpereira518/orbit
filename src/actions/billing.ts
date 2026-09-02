@@ -17,6 +17,7 @@ import {
 import { getAppBaseUrl } from "@/lib/app-url";
 import { lifetimeOffer } from "@/lib/lifetime-offer";
 import type { BillingPeriod } from "@/lib/plan-copy";
+import type { Plan } from "@/lib/plan-limits";
 
 export type CheckoutResult = { url: string } | { error: string };
 
@@ -58,8 +59,9 @@ export async function startLifetimeCheckout(): Promise<CheckoutResult> {
       // Prefills the email without forcing it — the customer can still change it.
       customer_email: profile?.email || undefined,
       // The plan card here already reads "Orbit Lifetime" once the webhook lands, so this
-      // page confirms the purchase without needing a bespoke success screen.
-      success_url: `${baseUrl}/settings#settings-plan`,
+      // page confirms the purchase without needing a bespoke success screen. `upgraded`
+      // arms the celebration watcher's fast poll — the webhook may not have landed yet.
+      success_url: `${baseUrl}/settings?upgraded=lifetime#settings-plan`,
       cancel_url: `${baseUrl}/pricing`,
     });
 
@@ -119,7 +121,8 @@ export async function startProCheckout(
         },
       },
       customer_email: profile?.email || undefined,
-      success_url: `${baseUrl}/settings#settings-plan`,
+      // `upgraded` arms the celebration watcher's fast poll; see the Lifetime session.
+      success_url: `${baseUrl}/settings?upgraded=pro#settings-plan`,
       cancel_url: `${baseUrl}/pricing`,
     });
 
@@ -140,4 +143,16 @@ export async function startProCheckout(
  */
 export async function getLifetimeAvailability() {
   return { purchasable: isStripeConfigured() };
+}
+
+/**
+ * The resolved plan, for the celebration watcher's polls. `getEntitlements`
+ * memoizes per request only, so every poll is a fresh read — which is the
+ * point: this is how a webhook grant or an admin comp reaches a client that
+ * has no realtime channel.
+ */
+export async function getCurrentPlan(): Promise<Plan> {
+  const userId = await requireUserId();
+  const { plan } = await getEntitlements(userId);
+  return plan;
 }
