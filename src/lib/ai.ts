@@ -1334,6 +1334,8 @@ export async function chatWithNetwork(
     notes: string | null;
     keyFacts?: string[];
     recentMessages?: string[];
+    mentionedByLines?: string[];
+    mentionsOfLines?: string[];
     tags: string[];
     relevance: number;
   }>,
@@ -1399,7 +1401,13 @@ export async function chatWithNetwork(
               .map((m) => `- ${m}`)
               .join("\n")}`
           : "";
-      return `${i + 1}. [id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | score=${c.relationshipScore} | tags=${c.tags.join(", ")} | relevance=${c.relevance.toFixed(2)}\nSummary: ${c.aiSummary || "n/a"}\nNotes: ${(c.notes || "").slice(0, 400)}${facts ? `\n${facts}` : ""}${messages ? `\n${messages}` : ""}`;
+      const mentionedBy = c.mentionedByLines && c.mentionedByLines.length
+        ? `Mentioned by: ${c.mentionedByLines.join(", ")}`
+        : "";
+      const mentionsOf = c.mentionsOfLines && c.mentionsOfLines.length
+        ? `Has mentioned: ${c.mentionsOfLines.join(", ")}`
+        : "";
+      return `${i + 1}. [id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | score=${c.relationshipScore} | tags=${c.tags.join(", ")} | relevance=${c.relevance.toFixed(2)}\nSummary: ${c.aiSummary || "n/a"}\nNotes: ${(c.notes || "").slice(0, 400)}${facts ? `\n${facts}` : ""}${messages ? `\n${messages}` : ""}${mentionedBy ? `\n${mentionedBy}` : ""}${mentionsOf ? `\n${mentionsOf}` : ""}`;
     })
     .join("\n\n");
 

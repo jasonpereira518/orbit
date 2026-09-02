@@ -10,6 +10,7 @@ import {
 } from "@/db/schema";
 import { chatWithNetwork } from "@/lib/ai";
 import { getAttentionBrief, isAttentionQuestion } from "@/lib/chat-attention";
+import { listContactMentionsBatch } from "@/lib/contact-mentions";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { findOrgRosters } from "@/lib/chat-roster";
 import { semanticSearchContacts } from "@/lib/search";
@@ -218,6 +219,8 @@ export async function askNetwork(
       retrieved.map((c) => c.id)
     );
 
+    const mentionLines = await listContactMentionsBatch(userId, retrieved.map((c) => c.id));
+
     if (focusContactId) {
       const focusMsgs = await db.query.interactions.findMany({
         where: and(
@@ -277,6 +280,8 @@ export async function askNetwork(
         notes: c.notes,
         keyFacts: c.keyFacts || [],
         recentMessages: snippets.get(c.id)?.recentMessages || [],
+        mentionedByLines: mentionLines.get(c.id)?.mentionedByLines || [],
+        mentionsOfLines: mentionLines.get(c.id)?.mentionsOfLines || [],
         tags: c.tags,
         relevance: c.relevance,
       })),
