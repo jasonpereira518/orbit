@@ -155,6 +155,7 @@ CREATE TABLE IF NOT EXISTS interactions (
   same_day_order integer NOT NULL DEFAULT 0,
   source text,
   external_id text,
+  note_batch_id uuid,
   raw_notes text,
   ai_summary text,
   topics jsonb DEFAULT '[]',
@@ -185,6 +186,13 @@ CREATE TABLE IF NOT EXISTS reminders (
   reminder_type text NOT NULL DEFAULT 'manual',
   action_kind text NOT NULL DEFAULT 'task',
   created_by text NOT NULL DEFAULT 'user',
+  note_batch_id uuid,
+  source_interaction_id uuid REFERENCES interactions(id) ON DELETE SET NULL,
+  action_item_id uuid,
+  source_excerpt text,
+  raw_date_phrase text,
+  date_basis text,
+  item_hash text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS suggested_reminders (
@@ -210,6 +218,58 @@ CREATE TABLE IF NOT EXISTS suggested_reminders (
 CREATE INDEX IF NOT EXISTS suggested_reminders_user_status_idx ON suggested_reminders(user_id, status);
 CREATE INDEX IF NOT EXISTS suggested_reminders_batch_idx ON suggested_reminders(capture_batch_id);
 CREATE UNIQUE INDEX IF NOT EXISTS suggested_reminders_user_item_uidx ON suggested_reminders(user_id, item_hash);
+CREATE TABLE IF NOT EXISTS note_batches (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  source_hash text NOT NULL,
+  source_text text NOT NULL,
+  entry_point text NOT NULL DEFAULT 'capture',
+  seed_contact_id uuid,
+  anchor_date timestamptz NOT NULL,
+  anchor_basis text NOT NULL DEFAULT 'upload',
+  status text NOT NULL DEFAULT 'saved',
+  result jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  undone_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS note_batches_user_created_idx ON note_batches(user_id, created_at);
+CREATE INDEX IF NOT EXISTS note_batches_user_source_idx ON note_batches(user_id, source_hash);
+CREATE TABLE IF NOT EXISTS interaction_mentions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  interaction_id uuid NOT NULL REFERENCES interactions(id) ON DELETE CASCADE,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  mention_text text NOT NULL,
+  confidence real NOT NULL,
+  matched_by text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS interaction_mentions_interaction_contact_uidx ON interaction_mentions(interaction_id, contact_id);
+CREATE INDEX IF NOT EXISTS interaction_mentions_user_contact_idx ON interaction_mentions(user_id, contact_id);
+CREATE TABLE IF NOT EXISTS action_items (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  interaction_id uuid NOT NULL REFERENCES interactions(id) ON DELETE CASCADE,
+  text text NOT NULL,
+  position integer NOT NULL DEFAULT 0,
+  status text NOT NULL DEFAULT 'open',
+  completed_at timestamptz,
+  item_hash text NOT NULL,
+  reminder_id uuid REFERENCES reminders(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS action_items_user_item_hash_uidx ON action_items(user_id, item_hash);
+CREATE INDEX IF NOT EXISTS action_items_user_contact_status_idx ON action_items(user_id, contact_id, status);
+CREATE TABLE IF NOT EXISTS contact_briefs (
+  contact_id uuid PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  standing text NOT NULL,
+  recent_discussions jsonb NOT NULL DEFAULT '[]',
+  generated_at timestamptz NOT NULL DEFAULT now(),
+  basis_interaction_id uuid,
+  model text
+);
 CREATE TABLE IF NOT EXISTS imports (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -666,8 +726,11 @@ CREATE TABLE IF NOT EXISTS fundraising_investors (
  * of them no-ops after the first deploy, blocking the first request. One SELECT confirms a
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
+ *
+ * v17 = note processing tables (note_batches, interaction_mentions, action_items,
+ * contact_briefs) plus reminder/interaction provenance columns.
  */
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 17;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1260,6 +1323,16 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "interest_list_signups", "welcome_planet", "text");
   await ensureColumn(client, "interest_list_signups", "follow_up_sent_at", "timestamptz");
 
+  // Schema v17: note processing provenance columns.
+  await ensureColumn(client, "interactions", "note_batch_id", "uuid");
+  await ensureColumn(client, "reminders", "note_batch_id", "uuid");
+  await ensureColumn(client, "reminders", "source_interaction_id", "uuid REFERENCES interactions(id) ON DELETE SET NULL");
+  await ensureColumn(client, "reminders", "action_item_id", "uuid");
+  await ensureColumn(client, "reminders", "source_excerpt", "text");
+  await ensureColumn(client, "reminders", "raw_date_phrase", "text");
+  await ensureColumn(client, "reminders", "date_basis", "text");
+  await ensureColumn(client, "reminders", "item_hash", "text");
+
   for (const statement of ADMIN_V2_STATEMENTS) {
     try {
       await client.exec(statement);
@@ -1288,6 +1361,17 @@ const ADMIN_V2_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS user_settings_email_idx ON user_settings(email)`,
   `CREATE INDEX IF NOT EXISTS user_settings_last_active_idx ON user_settings(last_active_at)`,
   `CREATE INDEX IF NOT EXISTS usage_events_failures_idx ON usage_events(user_id, created_at) WHERE success = 0`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS reminders_user_item_hash_uidx ON reminders(user_id, item_hash)`,
+  `CREATE INDEX IF NOT EXISTS reminders_note_batch_idx ON reminders(note_batch_id)`,
+  `CREATE INDEX IF NOT EXISTS interactions_note_batch_idx ON interactions(note_batch_id)`,
+  // Legacy action items → rows. Idempotent through the unique (user_id, item_hash) index.
+  // The hash formula MUST equal actionItemHash() in src/lib/action-items.ts.
+  `INSERT INTO action_items (user_id, contact_id, interaction_id, text, position, item_hash)
+   SELECT i.user_id, i.contact_id, i.id, a.value, a.ordinality - 1,
+          encode(sha256(convert_to(i.id::text || '|' || lower(btrim(a.value)), 'UTF8')), 'hex')
+   FROM interactions i, jsonb_array_elements_text(COALESCE(i.action_items, '[]'::jsonb)) WITH ORDINALITY a
+   WHERE btrim(a.value) <> ''
+   ON CONFLICT (user_id, item_hash) DO NOTHING`,
 ];
 
 /**
@@ -1517,6 +1601,14 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_reason text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_by text`,
+    `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS note_batch_id uuid`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS note_batch_id uuid`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS source_interaction_id uuid REFERENCES interactions(id) ON DELETE SET NULL`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS action_item_id uuid`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS source_excerpt text`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS raw_date_phrase text`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS date_basis text`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS item_hash text`,
     ...ADMIN_V2_STATEMENTS,
     // Embedding staleness: imports flag contacts here instead of embedding inline, and a
     // separate backfill drains them. The dedupe is safe to re-run — it only ever deletes
