@@ -9,6 +9,8 @@ import { ContactsFilters } from "@/components/contacts/contacts-filters";
 import { ContactsList } from "@/components/contacts/contacts-list";
 import { PeopleListShell } from "@/components/contacts/people-list-shell";
 import { RefreshContactsButton } from "@/components/contacts/refresh-contacts-button";
+import { requireUserId } from "@/lib/auth";
+import { hasAnyContacts } from "@/lib/onboarding";
 import { cn } from "@/lib/utils";
 
 const SORTS: ContactSort[] = ["name", "closeness", "recent"];
@@ -39,12 +41,15 @@ export default async function ContactsPage({
     letter: params.letter,
   };
 
-  const [page, letters, planOverview] = await Promise.all([
+  const [page, letters, planOverview, hasContacts] = await Promise.all([
     // One page, not the whole network. Filtering, searching and ordering all happen in
     // Postgres now, so this costs the same whether the user knows 50 people or 50,000.
     listContactsPage({ ...filters, limit: CONTACTS_PAGE_SIZE }),
     listContactLetters(),
     getPlanOverview(),
+    // `total` above is a *filtered* count, so it can't tell "no contacts at all" from "no
+    // matches" — request-cached, so this doesn't cost a second query on top of the layout's.
+    requireUserId().then(hasAnyContacts),
   ]);
 
   return (
@@ -100,6 +105,7 @@ export default async function ContactsPage({
             initialItems={page.items}
             initialCursor={page.nextCursor}
             total={page.total}
+            hasContacts={hasContacts}
             filters={filters}
             availableLetters={letters}
             activeLetter={params.letter ?? null}

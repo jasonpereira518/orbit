@@ -34,6 +34,7 @@ import { createReminder } from "@/actions/reminders";
 import { AiKeyPanel } from "@/components/settings/ai-key-panel";
 import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
+import { EmptyOrbit } from "@/components/empty-orbit";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -97,7 +98,13 @@ function formatThreadLabel(thread: ThreadSummary) {
   return thread.title?.trim() || "New chat";
 }
 
-export function ChatPanel({ hasApiKey: hasApiKeyProp }: { hasApiKey: boolean }) {
+export function ChatPanel({
+  hasApiKey: hasApiKeyProp,
+  hasContacts,
+}: {
+  hasApiKey: boolean;
+  hasContacts: boolean;
+}) {
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [threadTitle, setThreadTitle] = useState<string | null>(null);
@@ -469,13 +476,22 @@ export function ChatPanel({ hasApiKey: hasApiKeyProp }: { hasApiKey: boolean }) 
                 <>
                   {messages.length === 0 && !pending && (
                     <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-                      <p className="font-[family-name:var(--font-display)] text-xl text-ink sm:text-2xl">
-                        Ask your network
-                      </p>
-                      <p className="max-w-md text-sm text-muted-foreground">
-                        Who can help, who to follow up with, or who knows what —
-                        try a suggestion below.
-                      </p>
+                      {!hasContacts ? (
+                        <EmptyOrbit
+                          compact
+                          hint="Chat answers from your own contacts — add a few people first."
+                        />
+                      ) : (
+                        <>
+                          <p className="font-[family-name:var(--font-display)] text-xl text-ink sm:text-2xl">
+                            Ask your network
+                          </p>
+                          <p className="max-w-md text-sm text-muted-foreground">
+                            Who can help, who to follow up with, or who knows
+                            what — try a suggestion below.
+                          </p>
+                        </>
+                      )}
                       {!hasApiKey && (
                         <AiKeyPanel
                           variant="inline"

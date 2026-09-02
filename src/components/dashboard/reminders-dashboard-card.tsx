@@ -50,7 +50,7 @@ export function RemindersDashboardCard({
       <CardContent className="flex flex-1 flex-col space-y-2">
         {items.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No pending reminders. Capture notes to create follow-ups.
+            Nothing due. Follow-ups Orbit suggests will land here.
           </p>
         ) : (
           <>

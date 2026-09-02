@@ -58,7 +58,7 @@ export function SuggestedOutreachCard({
                 and six overdue follow-ups, because anyone already listed as due is
                 filtered out of this queue. Say what is actually true instead. */}
             {networkIsEmpty
-              ? "No one to reach out to yet — add a contact or import your network."
+              ? "No one to reach out to yet — once you add people, Orbit watches for who's gone quiet."
               : dueFollowUpCount > 0
                 ? `Nothing extra to suggest — your ${dueFollowUpCount} due follow-up${
                     dueFollowUpCount === 1 ? "" : "s"

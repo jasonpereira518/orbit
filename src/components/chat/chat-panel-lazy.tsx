@@ -46,6 +46,12 @@ const ChatPanel = dynamic(
   }
 );
 
-export function ChatPanelLazy({ hasApiKey }: { hasApiKey: boolean }) {
-  return <ChatPanel hasApiKey={hasApiKey} />;
+export function ChatPanelLazy({
+  hasApiKey,
+  hasContacts,
+}: {
+  hasApiKey: boolean;
+  hasContacts: boolean;
+}) {
+  return <ChatPanel hasApiKey={hasApiKey} hasContacts={hasContacts} />;
 }

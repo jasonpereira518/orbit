@@ -24,6 +24,7 @@ import { CompanyRoleLine } from "@/components/contacts/company-role-line";
 import { ContactAvatarPreview } from "@/components/contacts/contact-preview-card";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { EmptyOrbit } from "@/components/empty-orbit";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
 import { FollowUpDraftSheet } from "@/components/follow-up/follow-up-draft-sheet";
 import {
@@ -157,6 +158,7 @@ export function ContactsList({
   initialItems,
   initialCursor,
   total,
+  hasContacts,
   filters,
   availableLetters: serverLetters,
   activeLetter: seekLetter,
@@ -164,6 +166,10 @@ export function ContactsList({
   initialItems: ContactListItem[];
   initialCursor: string | null;
   total: number | null;
+  // `total` is a *filtered* count, so it can't tell "no contacts at all" from "no matches
+  // for this filter" — the page passes this separately so the empty state can tell those
+  // apart.
+  hasContacts: boolean;
   filters: ContactsListFilters;
   availableLetters: string[];
   activeLetter: string | null;
@@ -363,6 +369,9 @@ export function ContactsList({
   }
 
   if (contacts.length === 0) {
+    if (!hasContacts) {
+      return <EmptyOrbit compact />;
+    }
     return (
       <div className="p-10 text-center text-muted-foreground">
         No contacts match these filters. Clear search to see everyone, or{" "}
@@ -371,7 +380,7 @@ export function ContactsList({
         </Link>{" "}
         /{" "}
         <Link href="/imports" className="text-primary underline">
-          import LinkedIn
+          import people
         </Link>
         .
       </div>

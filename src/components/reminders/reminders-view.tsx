@@ -108,7 +108,7 @@ export function RemindersView({
             <p className="text-sm text-muted-foreground">
               {status === "done"
                 ? "No completed reminders in this list."
-                : "Nothing here yet. Add a reminder to get started."}
+                : "Nothing here yet. Set a reminder, or let Orbit suggest follow-ups once you've logged a few conversations."}
             </p>
           </div>
         ) : (
