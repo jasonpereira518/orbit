@@ -3,9 +3,9 @@
  * the results page. No DB, no AI — everything here is unit-checkable.
  */
 import { atLocalNoon } from "@/lib/interaction-date";
-import type { NoteBatchResult } from "@/db/schema";
+import type { NoteBatchResult, ReminderDateBasis } from "@/db/schema";
 
-export type { NoteBatchResult, ReminderDateBasis } from "@/db/schema";
+export type { NoteBatchResult, ReminderDateBasis };
 
 export const DEFAULT_FOLLOW_UP_WINDOW_DAYS = 14;
 export const COLLISION_WINDOW_DAYS = 3;
@@ -40,7 +40,7 @@ export function normalizeTitle(s: string) {
 export function titlesCollide(a: string, b: string) {
   const na = normalizeTitle(a);
   const nb = normalizeTitle(b);
-  return Boolean(na) && (na === nb || na.includes(nb) || nb.includes(na));
+  return Boolean(na) && Boolean(nb) && (na === nb || na.includes(nb) || nb.includes(na));
 }
 
 export function withinCollisionWindow(a: Date, b: Date, days = COLLISION_WINDOW_DAYS) {
