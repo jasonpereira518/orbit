@@ -9,14 +9,18 @@
  * first-factor, a distinct path from password/email-code, so it works regardless of how
  * those are configured.
  *
- * The token is SINGLE-USE and expires quickly on purpose — this is meant to be run right
- * before you need it (e.g. backstage, two minutes before going on), not saved and reused.
- * Re-run it any time you need a fresh one.
+ * The token is SINGLE-USE — that's a Clerk server-side property, not something this
+ * script (or any expiry value) can turn off. `--expires-seconds` only controls how long
+ * an UNUSED token stays valid; it does not make a token reusable after it's clicked once.
+ * There is no "unlimited and reusable" option here — the closest thing to that is fixing
+ * the real password sign-in (see the comment on `clerk-prefer-password-signin.ts`), which
+ * is reusable forever because it isn't a token at all.
  *
  * Usage:
  *   CLERK_SECRET_KEY=sk_live_xxx npx tsx scripts/demo-signin-link.ts
  *   CLERK_SECRET_KEY=sk_live_xxx npx tsx scripts/demo-signin-link.ts --email you@x.com
  *   CLERK_SECRET_KEY=sk_live_xxx npx tsx scripts/demo-signin-link.ts --base-url https://orbit.jasonpereira.live
+ *   CLERK_SECRET_KEY=sk_live_xxx npx tsx scripts/demo-signin-link.ts --expires-seconds 2592000
  */
 import { config } from "dotenv";
 config({ path: ".env.local" });
@@ -32,8 +36,9 @@ function flagValue(name: string, fallback: string) {
 
 const EMAIL = flagValue("email", "demo@orbit.com");
 const BASE_URL = flagValue("base-url", "https://orbit.jasonpereira.live").replace(/\/$/, "");
-// Short-lived: this is a "run it right before you need it" tool, not a link to bookmark.
-const EXPIRES_IN_SECONDS = 15 * 60;
+// 30 days — the longest Clerk documents for this — so the link doesn't go stale before
+// you get to it. Does NOT make it reusable; see the header comment.
+const EXPIRES_IN_SECONDS = Number(flagValue("expires-seconds", String(30 * 24 * 60 * 60)));
 
 const secretKey = process.env.CLERK_SECRET_KEY?.trim();
 if (!secretKey) {
@@ -68,9 +73,15 @@ async function main() {
   // with no prompt at all.
   const link = `${BASE_URL}/sign-in?__clerk_ticket=${encodeURIComponent(signInToken.token)}`;
 
-  console.log(`One-click sign-in for ${EMAIL} (expires in 15 minutes, single-use):\n`);
+  const days = Math.round(EXPIRES_IN_SECONDS / 86400);
+  console.log(`One-click sign-in for ${EMAIL} — valid for ${days} day${days === 1 ? "" : "s"}, but SINGLE-USE:\n`);
   console.log(link);
-  console.log("\nOpen it in the browser you're presenting from. Signs straight in to /dashboard.");
+  console.log(
+    "\nOpen it in the browser you're presenting from. Signs straight in to /dashboard.\n" +
+      "It stops working the instant it's opened once — the long expiry just means it won't\n" +
+      "go stale sitting unused. Re-run this script for another one; there's no limit on how\n" +
+      "many you can mint."
+  );
 
   process.exit(0);
 }
