@@ -1,5 +1,4 @@
 import { after } from "next/server";
-import Link from "next/link";
 import { listImports } from "@/actions/imports";
 import {
   listCalendarSubscriptions,
@@ -10,6 +9,7 @@ import { ImportHub } from "@/components/imports/import-hub";
 import { LinkedInExportNudge } from "@/components/imports/linkedin-export-nudge";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { isResumableImportType } from "@/lib/import-job-dispatch";
 
 /** Large connections imports process in the background via after(); allow it room to run. */
 export const maxDuration = 300;
@@ -45,6 +45,14 @@ export default async function ImportsPage() {
 
   const showLinkedInNudge = shouldShowLinkedInNudge(linkedInExport);
 
+  // canRetry is computed here, server-side, rather than in the client `ImportHistory` row:
+  // that component must never import anything reaching `@/db`, and `isResumableImportType`
+  // lives in a module that does.
+  const historyWithRetry = history.map((h) => ({
+    ...h,
+    canRetry: h.status === "failed" && isResumableImportType(h.importType),
+  }));
+
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <div>
@@ -52,12 +60,8 @@ export default async function ImportsPage() {
           Imports
         </h1>
         <p className="mt-1 text-muted-foreground">
-          Upload LinkedIn data, sync calendars, and review past imports. After
-          import, browse everything in{" "}
-          <Link href="/knowledge" className="underline-offset-2 hover:underline">
-            Knowledge
-          </Link>
-          .
+          Bring in the people you already know — from Google, Outlook, or a
+          LinkedIn export.
         </p>
       </div>
 
@@ -66,7 +70,7 @@ export default async function ImportsPage() {
       )}
 
       <ImportHub
-        history={history}
+        history={historyWithRetry}
         calendarSubscriptions={calendarSubscriptions}
         canUseSync={entitlements.canUseSync}
       />

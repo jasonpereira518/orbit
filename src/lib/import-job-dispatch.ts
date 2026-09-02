@@ -50,6 +50,12 @@ export const RESUMABLE_IMPORT_TYPES = [
   GMAIL_SCAN_IMPORT_TYPE,
 ] as const;
 
+/** Whether `type` owns its own server-side processing and can therefore be re-armed and
+ *  resumed — see `RESUMABLE_IMPORT_TYPES` above. */
+export function isResumableImportType(type: string): boolean {
+  return (RESUMABLE_IMPORT_TYPES as readonly string[]).includes(type);
+}
+
 /**
  * Single entry point for resuming any server-owned import job.
  *
@@ -79,4 +85,21 @@ export async function runImportJobById(importId: string): Promise<void> {
       // Import types with no server-side runner land here — none remain today.
       return;
   }
+}
+
+/**
+ * Re-arm a failed or stuck import for another run: clears the error and flips the row back
+ * to `processing` so `runImportJobById` (via the engine's own resumable loop) picks up where
+ * it stopped rather than starting over.
+ *
+ * Deliberately does not run the job itself — same reasoning as the rest of this module's
+ * callers: a resumed job can run far longer than the caller's own request/action, so
+ * scheduling it is left to the caller via `after()`.
+ */
+export async function rearmImportJob(importId: string): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(imports)
+    .set({ status: "processing", errorMessage: null, updatedAt: new Date() })
+    .where(eq(imports.id, importId));
 }

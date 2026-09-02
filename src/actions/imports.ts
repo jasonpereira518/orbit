@@ -27,6 +27,8 @@ import {
   LINKEDIN_MESSAGES_IMPORT_TYPE,
   CALENDAR_ICS_IMPORT_TYPE,
   CALENDAR_CSV_IMPORT_TYPE,
+  isResumableImportType,
+  rearmImportJob,
   runImportJobById,
 } from "@/lib/import-job-dispatch";
 import { parseLinkedInConnectionsCsv } from "@/lib/linkedin-connections";
@@ -303,6 +305,43 @@ export async function cancelImportSession(importId: string) {
   revalidatePath("/graph");
   revalidatePath("/chat");
   return updated;
+}
+
+/**
+ * User-facing retry for a failed, server-owned import: re-arms the row and hands it back to
+ * the engine in the background via `after()`, same shape as `startLinkedInImport`. Returns a
+ * result object rather than throwing — "not yours", "not failed", and "not resumable" are
+ * expected outcomes a Retry button surfaces as a toast, not exceptional failures.
+ */
+export async function retryImport(
+  importId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const existing = await db.query.imports.findFirst({
+    where: eq(imports.id, importId),
+  });
+  // Ownership is checked explicitly, not folded into the query's `where` — a row that
+  // belongs to someone else must read as "not found", never leak via a different error.
+  if (!existing || existing.userId !== userId) {
+    return { ok: false, error: "Import not found" };
+  }
+  if (existing.status !== "failed") {
+    return { ok: false, error: "Only failed imports can be retried" };
+  }
+  if (!isResumableImportType(existing.importType)) {
+    return {
+      ok: false,
+      error: "This import can't be retried automatically — re-upload the file",
+    };
+  }
+
+  await rearmImportJob(importId);
+  after(() => runImportJobById(importId).catch(() => {}));
+  revalidatePath("/imports");
+
+  return { ok: true };
 }
 
 export async function previewLinkedInMessagesCsv(csvText: string) {

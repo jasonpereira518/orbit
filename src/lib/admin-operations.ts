@@ -11,7 +11,8 @@ import {
 } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
 import {
-  RESUMABLE_IMPORT_TYPES,
+  isResumableImportType,
+  rearmImportJob,
   runImportJobById,
 } from "@/lib/import-job-dispatch";
 import { purgeUserData } from "@/lib/user-data";
@@ -189,8 +190,7 @@ export async function retryImport(adminUserId: string, input: {
     ),
   });
   if (!job) throw new Error("No such import.");
-  const resumable: readonly string[] = RESUMABLE_IMPORT_TYPES;
-  if (!resumable.includes(job.importType)) {
+  if (!isResumableImportType(job.importType)) {
     throw new Error(
       "Only server-owned imports stage resumable progress; this type has to be re-uploaded by the user."
     );
@@ -207,10 +207,7 @@ export async function retryImport(adminUserId: string, input: {
     reason,
   });
 
-  await db
-    .update(imports)
-    .set({ status: "processing", errorMessage: null, updatedAt: new Date() })
-    .where(eq(imports.id, input.importId));
+  await rearmImportJob(input.importId);
 
   return { importId: input.importId };
 }
