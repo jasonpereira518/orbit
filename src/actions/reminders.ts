@@ -146,6 +146,10 @@ export async function listRemindersPage(options?: {
 
   const totals = { pending: 0, done: 0 };
   for (const r of allReminders) {
+    // Dismissed rows (killed by a note-batch undo) count toward neither bucket — they
+    // aren't open work and aren't a completed task, so folding them into "done" would
+    // inflate that badge with reminders the done filter itself doesn't return.
+    if (r.status === "dismissed") continue;
     const isPending = r.status === "pending";
     if (isPending) totals.pending += 1;
     else totals.done += 1;
@@ -168,7 +172,9 @@ export async function listRemindersPage(options?: {
     if (status === "done") {
       return r.status === "done" || r.status === "completed";
     }
-    return true;
+    // "all" still excludes dismissed rows: those are reminders an undone note batch
+    // killed, not a state the reminders page should ever surface as a list item.
+    return r.status !== "dismissed";
   });
 
   const startOfToday = new Date();
