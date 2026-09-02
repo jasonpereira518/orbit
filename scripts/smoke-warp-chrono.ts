@@ -229,6 +229,14 @@ function main() {
   // the window the beat table advertises: the top sections never finished
   // leaving, and the cover came up over them. Every slot must land inside
   // `part`, whatever the page's slot count, or the beat table is a lie.
+  //
+  // This also covers the `exit="fade"` path in upgrade-transition.tsx: the
+  // fade branch schedules itself with this exact same `partScheduleForSlot`
+  // call (for its delay/duration only, never its distance — see the comment
+  // there), so the `slots = SLOTS` pass below, at /upgrade's real maxOrder,
+  // is already the assertion that a fading panel's `startMs + durationMs`
+  // stays inside `CHRONO_IN.part`, same as a flying panel's does. There is no
+  // separate schedule for "fade" to pin.
   const SLOTS = 5; // /upgrade's maxOrder: header, heading, toggle, 2 cards, trust row.
   for (const slots of [SLOTS, 0, 1, 12]) {
     for (let order = 0; order <= slots; order += 1) {
@@ -428,10 +436,17 @@ function main() {
   check("the card right of centre leaves to the right", lifetimeCard === 1);
   check("...so the two cards part rather than convoy", proCard !== lifetimeCard);
 
-  // /upgrade's other four slots are full-width bands whose centre IS the frame
-  // centre. They have no nearer side, so they split by parity — and the thing
-  // that matters is that they do not all go the same way.
-  const bands = [0, 1, 2, 5].map((order) => partDirection(centre, centre, order));
+  // /upgrade's other full-width bands are slots 0 (header), 2 (billing
+  // toggle) and 5 (trust row) — the three that still use `exit="fly"` in
+  // page.tsx/upgrade-transition.tsx. Slot 1 (the heading) is deliberately
+  // left out: it uses `exit="fade"` and dissolves in place, so it never
+  // reaches `partDirection` in any way this assertion cares about. Their
+  // centre IS the frame centre, so they have no nearer side and split by the
+  // fallback formula instead — and the thing that matters is that they do
+  // not all go the same way. If a future change flips any of these three to
+  // "fade", or adds a new full-width "fly" slot, this list must be updated to
+  // match — otherwise the check below passes without testing what it claims.
+  const bands = [0, 2, 5].map((order) => partDirection(centre, centre, order));
   check(
     "a panel dead on the centre line still picks a side",
     bands.every((d) => d === -1 || d === 1)

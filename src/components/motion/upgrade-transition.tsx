@@ -392,7 +392,7 @@ function usePanelMotionProps(
           animate: { opacity: 0 },
           transition: {
             duration: flight.durationMs / 1000,
-            ease: "easeOut",
+            ease: "linear",
             delay: flight.startMs / 1000,
           },
         } as const;

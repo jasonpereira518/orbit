@@ -320,12 +320,27 @@ export const PART_CENTRED_EPSILON = 2;
  * curtains — Pro to the left, Lifetime to the right — because that is where
  * they already are.
  *
- * A panel whose centre IS the frame's centre has no nearer side, and /upgrade
- * has four of them: the header, the heading, the billing toggle and the trust
- * row are all full width. Those fall back to a split by slot parity, which is
- * arbitrary but deterministic and, crucially, not all the same way — four
- * full-width bands sliding off in convoy would read as one sheet being pulled,
- * which is the opposite of parting.
+ * A panel whose centre IS the frame's centre has no nearer side. /upgrade
+ * currently has three such panels that actually fly: the header (order 0),
+ * the billing toggle (order 2) and the trust row (order 5) — the heading
+ * (order 1) used to be a fourth, but it now exits with `exit="fade"` and
+ * dissolves in place instead of reaching this fallback at all. Those three
+ * fall back to a split derived from the slot, which is arbitrary but
+ * deterministic and, crucially, not all the same way — full-width bands
+ * sliding off in convoy would read as one sheet being pulled, which is the
+ * opposite of parting.
+ *
+ * The formula itself is not a principled derivation — it is one arbitrary
+ * assignment that happens to alternate for the flying set as it stands today,
+ * `{0, 2, 5}`: `floor(0/2)=0` (even) -> -1, `floor(2/2)=1` (odd) -> +1,
+ * `floor(5/2)=2` (even) -> -1, giving -1, +1, -1. A plain `order % 2` would
+ * not: it gives -1, -1, +1 for that same set, sending the header and the
+ * toggle off the same side back to back — exactly the convoy this fallback
+ * exists to avoid. Nobody chose `floor(order / 2) % 2` for any reason beyond
+ * that it alternates against the current set; if the set of full-width flying
+ * slots ever changes — a panel's `exit` prop changes, or a new full-width
+ * slot is added — re-verify alternation by hand rather than assuming this
+ * formula still works. It is not a general solution.
  */
 export function partDirection(
   panelCentreX: number,
@@ -333,7 +348,8 @@ export function partDirection(
   order: number,
 ): -1 | 1 {
   const offset = panelCentreX - viewportCentreX;
-  if (Math.abs(offset) <= PART_CENTRED_EPSILON) return order % 2 === 0 ? -1 : 1;
+  if (Math.abs(offset) <= PART_CENTRED_EPSILON)
+    return Math.floor(order / 2) % 2 === 0 ? -1 : 1;
   return offset < 0 ? -1 : 1;
 }
 

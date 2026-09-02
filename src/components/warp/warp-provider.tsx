@@ -34,9 +34,9 @@ import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
  * Enough on its own only where the stage is already opaque when skip lands.
  * On liftoff's return that holds: the canvas sits at full cover until the
  * judder begins, so this window just keeps it there. On chrono's way home it
- * does not — the cover there is at 0 until CHRONO_IN_COVER opens at 480ms,
- * and holding a TRANSPARENT canvas up for 120ms hides nothing. That leg needs
- * the pin; see `WarpRun.covered`.
+ * does not — the cover there is at 0 until `CHRONO_IN_COVER` opens (see
+ * chrono.ts), and holding a TRANSPARENT canvas up for 120ms hides nothing.
+ * That leg needs the pin; see `WarpRun.covered`.
  */
 const SKIP_COVER_MS = 120;
 
@@ -67,9 +67,10 @@ export type WarpRun = {
    * The stage must pin itself fully opaque for the rest of the run when this
    * is true. `SKIP_COVER_MS` was written when the inbound cover was opaque
    * from frame one, so bringing the navigation forward was safe on its own;
-   * it no longer is — the cover now stays at 0 until 480ms so the panels can
-   * be seen leaving, and a skip at t=150 would otherwise swap the route with
-   * no cover at all: panels frozen mid-flight, hard cut to the origin page.
+   * it no longer is — the cover now stays at 0 until `CHRONO_IN_COVER` opens
+   * so the panels can be seen leaving, and a skip at t=150 would otherwise
+   * swap the route with no cover at all: panels frozen mid-flight, hard cut
+   * to the origin page.
    * Forcing the cover rather than deferring the navigation on purpose —
    * "stop waiting" is the entire point of skip, and a delayed button reads as
    * a broken one.
