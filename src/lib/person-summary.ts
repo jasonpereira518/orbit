@@ -10,6 +10,24 @@ const personSummarySchema = z.object({
   summary: z.string().min(1),
 });
 
+/**
+ * Trim to a word boundary and mark the cut.
+ *
+ * A hard `slice` ended snippets mid-word: a real profile read "...to ping her after
+ * their pl; ... she thinks most teams over-pro." — which looks like corrupted data
+ * rather than an abridged note. This is the summary Orbit falls back to whenever the AI
+ * provider is missing or failing, so it is exactly what is on screen if a key runs out
+ * mid-demo. Falls back to a hard cut only when a single word is longer than the budget.
+ */
+function clip(text: string, max: number) {
+  const trimmed = text.trim();
+  if (trimmed.length <= max) return trimmed;
+  const cut = trimmed.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  const body = lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut;
+  return `${body.replace(/[\s,;:.\u2013\u2014-]+$/, "")}\u2026`;
+}
+
 function buildDeterministicSummary(input: {
   fullName: string;
   preferredName?: string | null;
@@ -36,21 +54,25 @@ function buildDeterministicSummary(input: {
       : `${name} is in your orbit.`
   );
   if (met) {
-    parts.push(`You met through ${met}.`);
+    // `formatHowMetSummary` joins context, date and details with "·" for the profile
+    // card's label. Dropping that into prose produced "You met through Jul 3, 2026 ·
+    // AWS Summit — hallway track…", so it is introduced as a label here too.
+    parts.push(`How you met: ${met}.`);
   } else if (metContextLabel(input.metContext)) {
     parts.push(`You connected via ${metContextLabel(input.metContext)}.`);
   }
   if (input.notes?.trim()) {
-    parts.push(input.notes.trim().slice(0, 280));
+    parts.push(clip(input.notes, 280));
   }
   if (input.interactionSnippets.length > 0) {
+    const covered = input.interactionSnippets.slice(0, 3).join("; ");
+    // No trailing period when the last snippet was clipped — "over-pro….' reads worse
+    // than either mark on its own.
     parts.push(
-      `Recent conversations covered: ${input.interactionSnippets
-        .slice(0, 3)
-        .join("; ")}.`
+      `Recent conversations covered: ${covered}${covered.endsWith("\u2026") ? "" : "."}`
     );
   }
-  return parts.join(" ").slice(0, 1200);
+  return clip(parts.join(" "), 1200);
 }
 
 /**
@@ -168,7 +190,7 @@ Rules:
       howMet: contact.howMet,
       notes: contact.notes,
       interactionSnippets: interactionSnippets.map((s) =>
-        s.replace(/^\[[^\]]+\]\s*/, "").slice(0, 120)
+        clip(s.replace(/^\[[^\]]+\]\s*/, ""), 120)
       ),
     });
   }

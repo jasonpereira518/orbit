@@ -54,7 +54,39 @@ function isDiscoveryEligible(c: { nextFollowUpAt: Date | string | null }) {
   return !c.nextFollowUpAt;
 }
 
-export async function refreshOutreachSuggestions(userId: string) {
+/**
+ * One rebuild per user at a time.
+ *
+ * `buildOutreachSuggestions` clears the pending auto suggestions and re-inserts them, so
+ * two overlapping runs interleave as delete/delete/insert/insert and every suggestion
+ * lands twice. That is not hypothetical: four concurrent cold dashboard loads produced
+ * exactly four copies of every row, and a cold load is easy to hit twice at once —
+ * Next prefetches the dashboard on link hover and then renders it on click.
+ *
+ * A second caller joins the first run's promise rather than starting its own, which is
+ * also the semantics callers want: they await "the queue is current", not "I rebuilt it".
+ * Per-process, so it does not cover two server instances racing; `filteredSuggestions`
+ * in `getDashboardData` de-duplicates on read for that case (and for rows already
+ * written by one).
+ */
+const suggestionRefreshInFlight = new Map<string, Promise<void>>();
+
+export function refreshOutreachSuggestions(userId: string): Promise<void> {
+  const existing = suggestionRefreshInFlight.get(userId);
+  if (existing) return existing;
+
+  // Result discarded on purpose: no caller reads the inserted rows, and a shared promise
+  // must not hand two callers the same mutable array.
+  const run = buildOutreachSuggestions(userId)
+    .then(() => undefined)
+    .finally(() => {
+      suggestionRefreshInFlight.delete(userId);
+    });
+  suggestionRefreshInFlight.set(userId, run);
+  return run;
+}
+
+async function buildOutreachSuggestions(userId: string) {
   const db = await getDb();
   const all = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
@@ -301,6 +333,33 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
 
 const SUGGESTION_REFRESH_TTL_MS = 30 * 60 * 1000;
 
+/**
+ * Cold-start build of the outreach queue.
+ *
+ * `maybeRefreshOutreachSuggestions` is stale-while-revalidate, which is right once a
+ * queue exists but wrong the very first time: there is nothing to be stale, so the
+ * dashboard renders "No outreach opportunities" to someone whose network is full of
+ * dormant contacts, and only the *second* visit shows the truth. Anyone demoing the
+ * product, or seeing it for the first time, is looking at exactly that first load.
+ *
+ * So the first build blocks; every later one is deferred as before. Status-agnostic on
+ * purpose — a user who dismissed every suggestion has a queue, just an empty one, and
+ * must not have it rebuilt under them on the next page view.
+ */
+export async function ensureOutreachSuggestions(userId: string) {
+  const db = await getDb();
+  const existing = await db.query.aiSuggestions.findFirst({
+    where: and(
+      eq(aiSuggestions.userId, userId),
+      inArray(aiSuggestions.suggestionType, [...AUTO_SUGGESTION_TYPES])
+    ),
+    columns: { id: true },
+  });
+  if (existing) return false;
+  await refreshOutreachSuggestions(userId);
+  return true;
+}
+
 export async function maybeRefreshOutreachSuggestions(userId: string) {
   const db = await getDb();
   const latest = await db.query.aiSuggestions.findFirst({
@@ -450,6 +509,7 @@ export async function getDashboardData(
       closenessTier: closeness?.tier ?? ("outer" as const),
       orbitScore: closeness?.orbitScore ?? 2,
       lastInteractionAt: lastAt,
+      hasLoggedInteraction: closenessCohort.interactedIds.has(c.id),
       nextFollowUpAt: c.nextFollowUpAt
         ? c.nextFollowUpAt instanceof Date
           ? c.nextFollowUpAt
@@ -558,9 +618,22 @@ export async function getDashboardData(
 
   const contactById = new Map(allContactRows.map((c) => [c.id, c]));
 
+  // Belt and braces against a cross-instance rebuild race writing the same suggestion
+  // twice (see refreshOutreachSuggestions): one row per contact and type, whatever the
+  // table holds. Also repairs rows a previous race already wrote, with no migration.
+  const seenSuggestionKeys = new Set<string>();
+
   const filteredSuggestions = suggestions.filter((s) => {
     const contactId = s.relatedContactIds?.[0];
+    const key = `${s.suggestionType}:${contactId ?? s.id}`;
+    if (seenSuggestionKeys.has(key)) return false;
+    seenSuggestionKeys.add(key);
     if (!contactId) return true;
+    // `related_contact_ids` is a jsonb array, so deleting a contact does not cascade to
+    // its suggestions. Left in, the card renders a row headed "Contact" with a real-looking
+    // "gone quiet 105 days ago" under it — a ghost of someone the user removed. The
+    // rebuild clears them on its own TTL; this stops them being shown in the meantime.
+    if (!contactById.has(contactId)) return false;
     return !dueFollowUpIds.has(contactId);
   });
 

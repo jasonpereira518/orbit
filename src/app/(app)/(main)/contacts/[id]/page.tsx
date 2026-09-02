@@ -109,6 +109,9 @@ export default async function ContactDetailPage({
   const latestInteraction = contact.interactions[0] ?? null;
   const lastTouchAt =
     latestInteraction?.interactionDate || contact.lastInteractionAt;
+  // Same distinction the closeness model already makes: `lastInteractionAt` is stamped on
+  // every create/import, so only an actual interactions row proves a touch happened.
+  const hasLoggedInteraction = contact.interactions.length > 0;
 
   const frequencyLabel = formatInteractionFrequency(
     contact.interactions.map((i) => i.interactionDate)
@@ -173,7 +176,11 @@ export default async function ContactDetailPage({
         className="reveal-mount"
         style={{ "--reveal-delay": "60ms" } as React.CSSProperties}
       >
-        <ContactStatPills closeness={closeness} lastTouchAt={lastTouchAt} />
+        <ContactStatPills
+          closeness={closeness}
+          lastTouchAt={lastTouchAt}
+          hasLoggedInteraction={hasLoggedInteraction}
+        />
       </div>
 
       <div
@@ -188,6 +195,7 @@ export default async function ContactDetailPage({
           industry={contact.industry}
           closeness={closeness}
           lastTouchAt={lastTouchAt}
+          hasLoggedInteraction={hasLoggedInteraction}
           frequencyLabel={frequencyLabel}
           howMetSummary={howMetSummary}
         />

@@ -60,3 +60,15 @@ export const needsOnboarding = cache(async (userId: string) => {
 });
 
 export { persistOnboardingComplete };
+
+/**
+ * Which `(app)` paths the first-run gate applies to.
+ *
+ * Everything in the group except `/onboarding` itself (it must not redirect to itself) and
+ * `/settings` (needed for API keys, and reachable from the tour). Kept as a pathname test
+ * rather than a route-group check because the gate now runs in `(app)/layout.tsx`, which
+ * wraps all three — see the comment there for why it cannot live in the nested layout.
+ */
+export function isOnboardingGatedPath(pathname: string) {
+  return !/^\/(onboarding|settings)(\/|$)/.test(pathname);
+}

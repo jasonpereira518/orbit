@@ -9,6 +9,9 @@ import {
   type ChatRecommendation,
 } from "@/db/schema";
 import { chatWithNetwork } from "@/lib/ai";
+import { getAttentionBrief, isAttentionQuestion } from "@/lib/chat-attention";
+import { getClosenessCohort } from "@/lib/closeness-cohort";
+import { findOrgRosters } from "@/lib/chat-roster";
 import { semanticSearchContacts } from "@/lib/search";
 import { isRecruiterIntent } from "@/lib/recruiters";
 import { loadRecruitersForChat } from "@/actions/recruiters";
@@ -237,6 +240,20 @@ export async function askNetwork(
       ? `[Focus: answer primarily about the pinned contact id=${focusContactId}. You may use other contacts only for intros/context.]\n\n${q}`
       : q;
 
+    // Exhaustive membership for any organisation the question names — the one thing a
+    // relevance-ranked top-K cannot supply. Never fatal: a failure here just means the
+    // answer falls back to the retrieved subset.
+    const orgRosters = await findOrgRosters(userId, q).catch(() => []);
+
+    // Who the dashboard would say needs attention. Only for questions that ask; see
+    // `isAttentionQuestion`. Failure is non-fatal — the answer just loses this grounding.
+    const attention = isAttentionQuestion(q)
+      ? await getAttentionBrief(
+          userId,
+          (await getClosenessCohort(userId).catch(() => null))?.interactedIds
+        ).catch(() => null)
+      : null;
+
     const recruiterIntent = isRecruiterIntent(q);
     const recruitersForChat = recruiterIntent
       ? await loadRecruitersForChat(q, 8)
@@ -264,6 +281,8 @@ export async function askNetwork(
         relevance: c.relevance,
       })),
       priorTurns,
+      orgRosters,
+      attention,
       recruitersForChat.map((r) => ({
         id: r.id,
         fullName: r.fullName,
@@ -279,7 +298,15 @@ export async function askNetwork(
       }))
     );
 
-    const allowedContacts = new Set(retrieved.map((c) => c.id));
+    // Roster people are as legitimate a recommendation as retrieved ones — they came from
+    // the same user's own rows — so they must not be filtered out for being outside the
+    // top-K that the semantic pass happened to return.
+    const allowedContacts = new Set([
+      ...retrieved.map((c) => c.id),
+      ...orgRosters.flatMap((r) => r.people.map((p) => p.id)),
+      ...(attention?.overdue.map((c) => c.id) ?? []),
+      ...(attention?.suggestions.map((c) => c.id) ?? []),
+    ]);
     const allowedRecruiters = new Set(recruitersForChat.map((r) => r.id));
     const recommendations = (result.recommendations || []).filter((r) => {
       if (r.recruiter_id) return allowedRecruiters.has(r.recruiter_id);

@@ -1910,7 +1910,7 @@ export function NetworkGraph({
           "flex items-center justify-center rounded-2xl border border-white/10 bg-[#05070c] text-white/50",
           compact
             ? "h-[300px]"
-            : "h-[calc(100dvh-15rem)] md:h-[calc(100dvh-10.5rem)]"
+            : "h-[calc(100dvh-19.5rem)] md:h-[calc(100dvh-10.5rem)]"
         )}
       >
         Loading constellation…
@@ -1931,7 +1931,10 @@ export function NetworkGraph({
           "relative overflow-hidden border border-white/10 bg-[#03050a] shadow-[inset_0_0_120px_rgba(0,0,0,0.65)]",
           compact
             ? "h-[300px] rounded-2xl"
-            : "h-[calc(100dvh-15rem)] max-h-[calc(100dvh-15rem)] rounded-2xl md:h-[calc(100dvh-10.5rem)] md:max-h-[calc(100dvh-10.5rem)]",
+            : // 19.5rem, not 15rem: below md the app's floating bottom nav is a fixed pill
+            // ~5rem tall, and the old height ran the canvas (and its Key / full-screen /
+            // home buttons) underneath it, where they could not be tapped at all.
+            "h-[calc(100dvh-19.5rem)] max-h-[calc(100dvh-19.5rem)] rounded-2xl md:h-[calc(100dvh-10.5rem)] md:max-h-[calc(100dvh-10.5rem)]",
           fullscreenActive &&
             "rounded-none border-0 !h-dvh !max-h-none",
           cssFullscreen && "!fixed inset-0 z-[100] w-screen"
@@ -2012,7 +2015,10 @@ export function NetworkGraph({
             </div>
 
             {/* Top center — search + filters */}
-            <div className="absolute left-1/2 top-3 z-20 flex w-[min(92vw,420px)] -translate-x-1/2 items-center gap-2">
+            {/* Second row below md: at 375px the 92vw search box ran straight through the
+                Clusters chip on the left and Re-engage / Refresh on the right, so all
+                three were unreadable and partly untappable. */}
+            <div className="absolute left-1/2 top-14 z-20 flex w-[min(92%,420px)] -translate-x-1/2 items-center gap-2 lg:top-3">
               <div className="relative flex-1">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/40" />
                 <Input
@@ -2259,11 +2265,13 @@ export function NetworkGraph({
                 className="rounded-full border border-white/15 bg-[#080b12]/80 text-white backdrop-blur-md hover:bg-[#0c1018]/90"
               >
                 {refreshing ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin sm:mr-1.5" />
                 ) : (
-                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                  <RefreshCw className="h-3.5 w-3.5 sm:mr-1.5" />
                 )}
-                Refresh
+                {/* Icon-only below sm: with the label, this row's three pills were
+                    14px wider than a 375px canvas and Re-engage sat on top of Clusters. */}
+                <span className="hidden lg:inline">Refresh</span>
               </Button>
             </div>
 

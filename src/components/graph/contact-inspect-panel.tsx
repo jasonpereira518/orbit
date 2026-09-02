@@ -474,7 +474,12 @@ function ContactPanelBody({
 
         <div className="grid gap-2 text-sm">
           <div className="flex justify-between gap-4 border-b border-border/50 py-2">
-            <span className="text-muted-foreground">Last interaction</span>
+            {/* "Last interaction" only when one was actually logged — otherwise this row
+                is reporting the import stamp, and would contradict the empty timeline
+                on the full profile. */}
+            <span className="text-muted-foreground">
+              {data.hasLoggedInteraction ? "Last interaction" : "In your network"}
+            </span>
             <span className="text-right text-ink">
               {formatMaybeRelative(data.lastInteractionAt) ||
                 formatMaybeDate(data.lastInteractionAt) ||
