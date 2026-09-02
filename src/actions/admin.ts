@@ -81,6 +81,18 @@ export async function setCompAction(input: {
   return { ok: true, plan: resolvePlan(row).plan };
 }
 
+/**
+ * A one-click sign-in URL for the named account. See `ops.mintSignInLink` for what this
+ * actually is (a single-use Clerk sign-in token) and why the expiry is generous but the
+ * link is not reusable regardless.
+ */
+export async function mintSignInLinkAction(input: {
+  targetUserId: string;
+}): Promise<{ url: string; expiresInSeconds: number }> {
+  const adminUserId = await requireAdminUserId();
+  return ops.mintSignInLink(adminUserId, input);
+}
+
 /** Audit history for one account, shown on their inspector page. */
 export async function getAuditTrail(targetUserId: string) {
   await requireAdminUserId();
