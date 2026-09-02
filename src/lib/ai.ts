@@ -226,7 +226,7 @@ export async function getAiConfig(userId: string) {
   if (!apiKey) {
     const meta = AI_PROVIDERS.find((p) => p.id === provider)!;
     throw new Error(
-      `No ${meta.label} API key configured. Add your own key in Settings.`,
+      `No ${meta.label} API key configured. Add a free Gemini API key under Settings → AI key.`,
     );
   }
 
@@ -277,7 +277,7 @@ export async function resolveEmbeddingBackend(userId: string): Promise<{
     const apiKey = getProviderApiKey("openai", settings);
     if (!apiKey) {
       throw new Error(
-        "No OpenAI API key configured for embeddings. Add your own key in Settings.",
+        "No OpenAI API key configured for embeddings. Add a free Gemini API key under Settings → AI key.",
       );
     }
     return { backend: "openai", apiKey, keyOwner: owner("openai") };
@@ -287,7 +287,7 @@ export async function resolveEmbeddingBackend(userId: string): Promise<{
     const apiKey = getProviderApiKey("gemini", settings);
     if (!apiKey) {
       throw new Error(
-        "No Gemini API key configured for embeddings. Add your own key in Settings.",
+        "No Gemini API key configured for embeddings. Add a free Gemini API key under Settings → AI key.",
       );
     }
     return { backend: "gemini", apiKey, keyOwner: owner("gemini") };
@@ -305,7 +305,7 @@ export async function resolveEmbeddingBackend(userId: string): Promise<{
   }
 
   throw new Error(
-    "Anthropic has no embeddings API. Add an OpenAI or Gemini key in Settings for search embeddings.",
+    "Anthropic has no embeddings API. Add a free Gemini API key for search embeddings under Settings → AI key.",
   );
 }
 
@@ -797,7 +797,7 @@ export async function transcribeAudioWithAI(
   }
 
   throw new Error(
-    "Voice capture needs an OpenAI or Gemini API key in Settings for transcription.",
+    "Voice capture needs an API key — add a free Gemini API key under Settings → AI key.",
   );
 }
 

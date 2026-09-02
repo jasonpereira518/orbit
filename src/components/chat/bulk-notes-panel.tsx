@@ -13,6 +13,7 @@ import {
   type SuggestedReminderPreview,
 } from "@/actions/capture";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
+import { AiKeyPanel } from "@/components/settings/ai-key-panel";
 import { getSettings } from "@/actions/settings";
 import type {
   CaptureParseHints,
@@ -320,21 +321,10 @@ export function BulkNotesPanel({
           )}
         >
           {!hasApiKey && (
-            <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-3 text-sm dark:border-amber-900/50 dark:bg-amber-950/30">
-              <p className="font-medium text-foreground">
-                Add an AI API key to extract people from notes
-              </p>
-              <p className="mt-1 text-muted-foreground">
-                Orbit needs your Gemini, OpenAI, or Anthropic key — add one in{" "}
-                <Link
-                  href="/settings"
-                  className="font-medium text-primary underline-offset-2 hover:underline"
-                >
-                  Settings
-                </Link>
-                , then come back here.
-              </p>
-            </div>
+            <AiKeyPanel
+              variant="inline"
+              onVerified={() => setHasApiKey(true)}
+            />
           )}
           {preferredContactId && preferredContactName && (
             <p className="rounded-xl bg-muted/50 px-3 py-2 text-sm text-muted-foreground">

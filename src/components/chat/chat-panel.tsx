@@ -18,7 +18,11 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
+import {
+  MISSING_AI_API_KEY_MESSAGE,
+  isMissingAiApiKeyError,
+  toUserFacingError,
+} from "@/lib/errors";
 import {
   askNetwork,
   createChatThread,
@@ -27,6 +31,7 @@ import {
   listChatThreads,
 } from "@/actions/chat";
 import { createReminder } from "@/actions/reminders";
+import { AiKeyPanel } from "@/components/settings/ai-key-panel";
 import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { Button } from "@/components/ui/button";
@@ -92,12 +97,13 @@ function formatThreadLabel(thread: ThreadSummary) {
   return thread.title?.trim() || "New chat";
 }
 
-export function ChatPanel() {
+export function ChatPanel({ hasApiKey: hasApiKeyProp }: { hasApiKey: boolean }) {
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [threadTitle, setThreadTitle] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
+  const [hasApiKey, setHasApiKey] = useState(hasApiKeyProp);
   const [notesOpen, setNotesOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
@@ -120,6 +126,13 @@ export function ChatPanel() {
   useEffect(() => {
     void refreshThreads();
   }, [refreshThreads]);
+
+  useEffect(() => {
+    // Re-syncs the optimistic local override from the server-provided prop after
+    // router.refresh() — same pattern as bulk-notes-panel.tsx's hasApiKey effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHasApiKey(hasApiKeyProp);
+  }, [hasApiKeyProp]);
 
   const isNearBottom = useCallback(() => {
     const el = listRef.current;
@@ -264,6 +277,7 @@ export function ChatPanel() {
           const activeId = await ensureThread();
           const res = await askNetwork(q, { threadId: activeId });
           if (!res.ok) {
+            if (isMissingAiApiKeyError(res.error)) setHasApiKey(false);
             toast.error(res.error);
             setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
             setQuestion(q);
@@ -290,9 +304,12 @@ export function ChatPanel() {
             ];
           });
         } catch (err) {
-          toast.error(
-            toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message
-          );
+          const message = toUserFacingError(
+            err,
+            MISSING_AI_API_KEY_MESSAGE
+          ).message;
+          if (isMissingAiApiKeyError(message)) setHasApiKey(false);
+          toast.error(message);
           setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
           setQuestion(q);
         }
@@ -459,6 +476,13 @@ export function ChatPanel() {
                         Who can help, who to follow up with, or who knows what —
                         try a suggestion below.
                       </p>
+                      {!hasApiKey && (
+                        <AiKeyPanel
+                          variant="inline"
+                          className="mt-2 w-full max-w-md text-left"
+                          onVerified={() => setHasApiKey(true)}
+                        />
+                      )}
                     </div>
                   )}
 
