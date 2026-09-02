@@ -2376,8 +2376,8 @@ Import `interactionMentions` (already imported for undo) and `type MentionMatche
 After computing `items`, split roles and resolve:
 
 ```ts
-    const participants = people.filter((p) => p.role !== "mentioned");
-    const demoted = people.filter((p) => p.role === "mentioned");
+    const participants = people.filter((p) => p.presence !== "mentioned");
+    const demoted = people.filter((p) => p.presence === "mentioned");
     const candidates: MentionCandidate[] = [
       ...personParse.mentions.map((m) => ({ name: m.name, context: m.context, nearPerson: m.near_person })),
       ...demoted.map((p) => ({ name: p.name!, context: p.summary, company: p.company, nearPerson: null })),
