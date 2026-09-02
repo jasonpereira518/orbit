@@ -564,6 +564,30 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_token_uidx ON interest_list_signups(unsubscribe_token);
 CREATE INDEX IF NOT EXISTS interest_list_signups_created_idx ON interest_list_signups(created_at);
+CREATE TABLE IF NOT EXISTS broadcasts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  subject text NOT NULL,
+  body text NOT NULL,
+  status text NOT NULL DEFAULT 'draft',
+  created_by text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  sent_at timestamptz,
+  recipient_count integer NOT NULL DEFAULT 0,
+  sent_count integer NOT NULL DEFAULT 0,
+  failed_count integer NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS broadcasts_created_idx ON broadcasts(created_at);
+CREATE TABLE IF NOT EXISTS broadcast_recipients (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  broadcast_id uuid NOT NULL,
+  signup_id uuid NOT NULL,
+  email text NOT NULL,
+  sent_at timestamptz,
+  error text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS broadcast_recipients_pair_uidx ON broadcast_recipients(broadcast_id, signup_id);
+CREATE INDEX IF NOT EXISTS broadcast_recipients_broadcast_idx ON broadcast_recipients(broadcast_id);
 CREATE TABLE IF NOT EXISTS billing_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source text NOT NULL,
@@ -667,7 +691,7 @@ CREATE TABLE IF NOT EXISTS fundraising_investors (
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 17;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
