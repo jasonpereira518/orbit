@@ -146,12 +146,17 @@ export function NoteBatchResultView({
                 <span className="text-muted-foreground"> · {Math.round(m.confidence * 100)}%</span>
               </p>
             ))}
-            {result.unresolvedMentions.map((m, index) => (
-              <p key={`${index}-${m.text}`} className="flex items-center justify-between gap-2">
-                <span>&ldquo;{m.text}&rdquo;{m.context ? <span className="text-muted-foreground"> — {m.context}</span> : null}</span>
-                <Link href={`/capture?mode=structured`} className="text-xs text-primary underline">Add as contact</Link>
-              </p>
-            ))}
+            {result.unresolvedMentions.map((m, index) => {
+              const params = new URLSearchParams({ name: m.text });
+              if (m.context) params.set("context", m.context);
+              if (m.id) params.set("mentionId", m.id);
+              return (
+                <p key={m.id ?? `${index}-${m.text}`} className="flex items-center justify-between gap-2">
+                  <span>&ldquo;{m.text}&rdquo;{m.context ? <span className="text-muted-foreground"> — {m.context}</span> : null}</span>
+                  <Link href={`/contacts/new?${params.toString()}`} className="text-xs text-primary underline">Add as contact</Link>
+                </p>
+              );
+            })}
           </CardContent>
         </Card>
       )}
