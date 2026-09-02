@@ -70,6 +70,7 @@ export function AppShell({
   // from every screen, which is the whole thing hiding is supposed to prevent.
   const showAskBar =
     !isOnboarding &&
+    !pathname.startsWith("/onboarding") &&
     !isChat &&
     !isSettings &&
     !isConstellation &&

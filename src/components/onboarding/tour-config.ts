@@ -120,9 +120,9 @@ export const TOUR_STEPS: TourStep[] = [
     id: "imports",
     navKey: "imports",
     title: "Import your world",
-    body: "Bring in LinkedIn connections, messages, or calendar meetings — it all feeds your searchable Knowledge base too.",
+    body: "Bring in Google Contacts, LinkedIn connections, messages, or calendar meetings — it all feeds your searchable Knowledge base too.",
     hotspots: [
-      { id: "linkedin", label: "Import LinkedIn connections." },
+      { id: "linkedin", label: "Import Google Contacts or LinkedIn connections." },
       { id: "messages", label: "Enrich from message threads." },
       { id: "calendar", label: "Sync meetings from your calendar." },
     ],

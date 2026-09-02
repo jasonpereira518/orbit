@@ -17,9 +17,20 @@ const SetupWizard = dynamic(
 export function SetupWizardLazy({
   initialStepId = null,
   hasApiKey = true,
+  googleConfigured,
+  contactLimit,
 }: {
   initialStepId?: string | null;
   hasApiKey?: boolean;
+  googleConfigured: boolean;
+  contactLimit: number | null;
 }) {
-  return <SetupWizard initialStepId={initialStepId} hasApiKey={hasApiKey} />;
+  return (
+    <SetupWizard
+      initialStepId={initialStepId}
+      hasApiKey={hasApiKey}
+      googleConfigured={googleConfigured}
+      contactLimit={contactLimit}
+    />
+  );
 }

@@ -3,12 +3,13 @@
 import { useCallback, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
-import { ChevronLeft, Sparkles, Upload, UserPlus } from "lucide-react";
+import { ChevronLeft, Contact, Sparkles, Upload, UserPlus } from "lucide-react";
 import { completeWizard, saveWizardStep } from "@/actions/onboarding-wizard";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { WizardAddManual } from "@/components/onboarding/wizard/wizard-add-manual";
 import { WizardCapture } from "@/components/onboarding/wizard/wizard-capture";
+import { WizardConnectGoogle } from "@/components/onboarding/wizard/wizard-connect-google";
 import { WizardImport } from "@/components/onboarding/wizard/wizard-import";
 import { WizardReview, type WizardResult } from "@/components/onboarding/wizard/wizard-review";
 import { WizardTriage } from "@/components/onboarding/wizard/wizard-triage";
@@ -16,6 +17,7 @@ import { WizardTriage } from "@/components/onboarding/wizard/wizard-triage";
 export type WizardStep =
   | "intro"
   | "add-people"
+  | "connect-google"
   | "manual"
   | "capture"
   | "import"
@@ -24,10 +26,17 @@ export type WizardStep =
 
 const PATHS = [
   {
-    id: "import" as const,
-    icon: Upload,
-    title: "Import LinkedIn",
-    description: "Bring in connections from a Connections.csv export.",
+    id: "connect-google" as const,
+    icon: Contact,
+    title: "Import Google Contacts",
+    description: "Two clicks. Orbit only reads your contacts, never your email.",
+  },
+  {
+    id: "capture" as const,
+    icon: Sparkles,
+    title: "Capture from notes",
+    description:
+      "Paste meeting notes — Orbit pulls out the people. Needs a free AI key; we'll walk you through it.",
   },
   {
     id: "manual" as const,
@@ -36,16 +45,17 @@ const PATHS = [
     description: "Enter a name, company, and how you know them.",
   },
   {
-    id: "capture" as const,
-    icon: Sparkles,
-    title: "Capture from notes",
-    description: "Paste meeting notes — AI extracts people and context.",
+    id: "import" as const,
+    icon: Upload,
+    title: "Upload a LinkedIn export",
+    description: "Takes about a day to arrive. Have the file already? Upload it here.",
   },
 ];
 
 const STEP_TITLES: Record<WizardStep, string> = {
   intro: "Let's set up your orbit",
   "add-people": "How do you want to add your first people?",
+  "connect-google": "Import your Google contacts",
   manual: "Add someone manually",
   capture: "Capture from notes",
   import: "Import LinkedIn connections",
@@ -54,23 +64,19 @@ const STEP_TITLES: Record<WizardStep, string> = {
 };
 
 function isValidStep(step: string | null | undefined): step is WizardStep {
-  return (
-    step === "intro" ||
-    step === "add-people" ||
-    step === "manual" ||
-    step === "capture" ||
-    step === "import" ||
-    step === "triage" ||
-    step === "review"
-  );
+  return step != null && step in STEP_TITLES;
 }
 
 export function SetupWizard({
   initialStepId = null,
   hasApiKey = true,
+  googleConfigured,
+  contactLimit,
 }: {
   initialStepId?: string | null;
   hasApiKey?: boolean;
+  googleConfigured: boolean;
+  contactLimit: number | null;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -78,6 +84,9 @@ export function SetupWizard({
     isValidStep(initialStepId) ? initialStepId : "intro"
   );
   const [results, setResults] = useState<WizardResult[]>([]);
+  const paths = googleConfigured
+    ? PATHS
+    : PATHS.filter((path) => path.id !== "connect-google");
 
   const goTo = useCallback((next: WizardStep) => {
     setStep(next);
@@ -147,7 +156,18 @@ export function SetupWizard({
               )}
 
               {step === "add-people" && (
-                <PathStep onChoose={(id) => goTo(id)} />
+                <PathStep paths={paths} onChoose={(id) => goTo(id)} />
+              )}
+
+              {step === "connect-google" && (
+                <WizardConnectGoogle
+                  contactLimit={contactLimit}
+                  onImported={(count) => {
+                    addResult({ kind: "google", count });
+                    goTo("triage");
+                  }}
+                  onSkip={() => goTo("add-people")}
+                />
               )}
 
               {step === "manual" && (
@@ -209,9 +229,9 @@ function IntroStep({ onNext }: { onNext: () => void }) {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        Two minutes, three ways to start — pick whichever fits what you
-        already have on hand: a LinkedIn export, some raw notes, or just a
-        name you want to remember.
+        Two minutes. Start with the people already in your Google Contacts,
+        paste notes from a coffee chat, or add one name. LinkedIn takes a
+        day — kick it off now and Orbit will nudge you.
       </p>
       <Button
         type="button"
@@ -225,13 +245,15 @@ function IntroStep({ onNext }: { onNext: () => void }) {
 }
 
 function PathStep({
+  paths,
   onChoose,
 }: {
-  onChoose: (id: "manual" | "capture" | "import") => void;
+  paths: typeof PATHS;
+  onChoose: (id: "connect-google" | "manual" | "capture" | "import") => void;
 }) {
   return (
     <ul className="space-y-3">
-      {PATHS.map((path) => {
+      {paths.map((path) => {
         const Icon = path.icon;
         return (
           <li key={path.id}>

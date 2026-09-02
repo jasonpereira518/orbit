@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 export type WizardResult =
   | { kind: "manual" }
   | { kind: "capture"; count: number }
-  | { kind: "import" };
+  | { kind: "import" }
+  | { kind: "google"; count: number };
 
 function describe(result: WizardResult) {
   switch (result.kind) {
@@ -18,6 +19,10 @@ function describe(result: WizardResult) {
         : `Added ${result.count} people from your notes.`;
     case "import":
       return "Imported your LinkedIn connections.";
+    case "google":
+      return result.count === 1
+        ? "Started importing 1 Google contact."
+        : `Started importing ${result.count} Google contacts.`;
   }
 }
 

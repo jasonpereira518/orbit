@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import {
   getTriageCandidates,
   rateContacts,
@@ -9,6 +9,7 @@ import {
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useImportJob } from "@/lib/import-job-runner";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +20,7 @@ const SCREEN_SIZE = 8;
 const RATING_VALUES = [1, 2, 3, 4, 5] as const;
 
 export function WizardTriage({ onDone }: { onDone: () => void }) {
+  const job = useImportJob();
   const [pending, start] = useTransition();
   const [loading, setLoading] = useState(true);
   // Distinct from "candidates is empty": a failed fetch must never render as
@@ -68,6 +70,24 @@ export function WizardTriage({ onDone }: { onDone: () => void }) {
     setLoadError(false);
     fetchCandidates(() => false);
   }, [fetchCandidates]);
+
+  // Re-fetches candidates the moment the running import job (e.g. the Google contacts
+  // import just kicked off from the wizard's connect step) lands, so the person we were
+  // about to ask about isn't stuck behind a stale "nothing to rate yet" read. The ref
+  // remembers the last-seen status so this fires exactly once per running->completed
+  // transition rather than on every render while the job stays completed; `retry` is
+  // called from a callback reacting to the external job-runner singleton, not
+  // synchronously in the effect body, matching the pattern in google-contacts-import.tsx.
+  const lastJobStatusRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const prevStatus = lastJobStatusRef.current;
+    lastJobStatusRef.current = job?.status;
+    if (job?.status === "completed" && prevStatus === "running") {
+      queueMicrotask(() => {
+        retry();
+      });
+    }
+  }, [job, retry]);
 
   const screens = Math.max(1, Math.ceil(candidates.length / SCREEN_SIZE));
   const pageItems = candidates.slice(
@@ -173,6 +193,16 @@ export function WizardTriage({ onDone }: { onDone: () => void }) {
   }
 
   if (candidates.length === 0) {
+    if (job?.status === "running") {
+      return (
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Importing {job.progress?.done ?? 0}/{job.progress?.total ?? 0}{" "}
+            people — Orbit will ask about a few once they land.
+          </p>
+        </div>
+      );
+    }
     return (
       <div className="space-y-4">
         <p className="text-sm text-muted-foreground">
