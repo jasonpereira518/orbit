@@ -18,14 +18,7 @@
  *
  * Runs against the local PGlite database. Run: npx tsx scripts/smoke-page-budgets.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
-
-// Local PGlite only: this script inserts and deletes thousands of rows for its fixture
-// user, and .env.local points DATABASE_URL at the shared remote database. dotenv fills in
-// only unset vars, so the delete must come after it.
-delete process.env.DATABASE_URL;
+import "./smoke/_env";
 
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";

@@ -1841,7 +1841,10 @@ async function ensureReady(): Promise<void> {
   }
 
   if (!globalForDb.orbitPglite) {
-    const dataDir = path.join(process.cwd(), ".data", "pglite");
+    // `ORBIT_PGLITE_DIR` lets the smoke harness point every script at a throwaway
+    // directory: PGlite is single-writer, and a dev server on `.data/pglite` must never
+    // share it with a test. Unset in normal development.
+    const dataDir = process.env.ORBIT_PGLITE_DIR || path.join(process.cwd(), ".data", "pglite");
     fs.mkdirSync(dataDir, { recursive: true });
     // Absolute string path — requires serverExternalPackages for @electric-sql/pglite.
     // `pg_trgm` has to be supplied at construction: PGlite loads extension bundles when the

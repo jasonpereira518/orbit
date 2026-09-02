@@ -11,14 +11,7 @@
  *
  * Run: npx tsx scripts/smoke-internal-auth.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
-
-// Force local PGlite: the routes below import `@/db` at module load, and this repo's
-// .env.local points DATABASE_URL at the shared remote database. dotenv only fills in unset
-// vars, so this delete has to come after it.
-delete process.env.DATABASE_URL;
+import "./smoke/_env";
 
 import { internalAuthHeaders, internalFetch, isInternalRequest } from "../src/lib/internal-auth";
 import { GET as processStalled } from "../src/app/api/imports/process-stalled/route";

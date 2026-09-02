@@ -2,14 +2,14 @@ import { eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   aiSuggestions,
+  billingEvents,
   calendarSubscriptions,
-  closenessCohorts,
   chatThreads,
+  closenessCohorts,
   companies,
   contactEmbeddings,
-  contactTags,
   contacts,
-  billingEvents,
+  contactTags,
   errorEvents,
   extensionUsage,
   feedback,
@@ -20,13 +20,13 @@ import {
   noteBatches,
   outlookConnections,
   outreachCampaigns,
+  recruiterMessages,
   reminderLists,
   reminders,
   suggestedReminders,
   tags,
   usageEvents,
   userGoals,
-  recruiterMessages,
   userRecruiterLinks,
   userSettings,
 } from "@/db/schema";
@@ -158,6 +158,12 @@ export async function purgeUserData(
   // exceptions that are not written down.
   await db.delete(extensionUsage).where(eq(extensionUsage.userId, userId));
   await db.delete(errorEvents).where(eq(errorEvents.userId, userId));
+  // The extension's per-user rate-limit window. A counter, not prose — but it is keyed on
+  // the person, and the FOURTH user-scoped table found unpurged (after `outlook_connections`,
+  // `suggested_reminders` and `recruiter_messages`). Caught the first time
+  // `scripts/smoke-purge.ts` ran against a fresh database rather than one that happened to
+  // carry a leftover row for its fixture user.
+  await db.delete(extensionUsage).where(eq(extensionUsage.userId, userId));
 
   // What they told us, and which walls they hit. Both are personal — one is literally
   // their own words — so erasure means erasure, even though the churn reasons are the

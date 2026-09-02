@@ -7,9 +7,7 @@
  *
  * Run: npx tsx scripts/smoke-stripe-webhook.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import "./smoke/_env";
 
 /**
  * FORCE LOCAL PGLITE.

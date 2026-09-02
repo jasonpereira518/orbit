@@ -8,9 +8,7 @@
  *
  * Run: npx tsx scripts/smoke-broadcasts.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import "./smoke/_env";
 
 import { eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";

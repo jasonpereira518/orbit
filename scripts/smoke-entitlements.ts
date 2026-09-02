@@ -5,9 +5,7 @@
  *
  * Run: npx tsx scripts/smoke-entitlements.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import "./smoke/_env";
 
 import { and, count, eq } from "drizzle-orm";
 import { getDb } from "../src/db";

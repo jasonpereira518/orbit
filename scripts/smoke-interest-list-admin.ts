@@ -13,9 +13,7 @@
  *
  * Run: npx tsx scripts/smoke-interest-list-admin.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import "./smoke/_env";
 
 import { like } from "drizzle-orm";
 import { getDb } from "../src/db";

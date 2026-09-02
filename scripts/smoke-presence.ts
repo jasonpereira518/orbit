@@ -9,9 +9,7 @@
  *
  * Run: npx tsx scripts/smoke-presence.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import "./smoke/_env";
 
 import { eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";

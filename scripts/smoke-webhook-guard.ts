@@ -12,13 +12,7 @@
  *
  * Run: npx tsx scripts/smoke-webhook-guard.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
-
-// Force local PGlite — this repo's .env.local points DATABASE_URL at the shared remote DB,
-// and dotenv only fills in unset vars, so the delete has to come after it.
-delete process.env.DATABASE_URL;
+import "./smoke/_env";
 
 // Real-looking secrets so each verifier reaches its "signature does not match" branch
 // rather than its "not configured" branch. None talk to a network.

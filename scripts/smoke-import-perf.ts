@@ -20,18 +20,12 @@
  *
  * Run: npx tsx scripts/smoke-import-perf.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import "./smoke/_env";
 
 // Env reads in auth.ts and db/index.ts are lazy (inside functions), so setting these
 // after dotenv but before the src/ imports below still lands before anything reads them.
 process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke-import";
 process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-import";
-// This suite must run against the local per-worktree PGlite file, never a remote
-// database: this script hard-deletes a user's contacts, and .env.local gaining a
-// DATABASE_URL (one `vercel env pull` away) would point that at shared data.
-delete process.env.DATABASE_URL;
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";

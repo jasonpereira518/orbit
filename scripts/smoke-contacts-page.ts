@@ -8,6 +8,7 @@
  *
  * Runs against a throwaway PGlite database. Run: npx tsx scripts/smoke-contacts-page.ts
  */
+import "./smoke/_env";
 import { PGlite } from "@electric-sql/pglite";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import { drizzle } from "drizzle-orm/pglite";
