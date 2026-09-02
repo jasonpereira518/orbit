@@ -14,6 +14,7 @@ import { requireUserId } from "@/lib/auth";
 import { requireRecruitersUser, requireSyncUser } from "@/lib/plan-guards";
 import { getCurrentUserProfile } from "@/lib/auth";
 import { sendGmailMessage } from "@/lib/gmail-send";
+import { hasSendScope } from "@/lib/gmail";
 import { gmailConnections } from "@/db/schema";
 import {
   generateRecruiterDraftsBatch,
@@ -255,6 +256,11 @@ export async function sendRecruiterDrafts(
   });
   if (!conn || conn.status !== "active") {
     throw new Error("Connect Gmail before sending.");
+  }
+  if (!hasSendScope(conn.scopes)) {
+    throw new Error(
+      "Grant Orbit permission to send from Gmail — reconnect Gmail from the compose page."
+    );
   }
   const profile = await getCurrentUserProfile().catch(() => null);
   const from = { name: profile?.name?.trim() || null, email: conn.emailAddress };

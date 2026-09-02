@@ -21,7 +21,9 @@ export function GoogleContactsImport() {
   const job = useImportJob();
   const [pending, start] = useTransition();
   const [status, setStatus] = useState<GmailConnectionStatus | null>(null);
-  const [contactsScopeGranted, setContactsScopeGranted] = useState(true);
+  // Seeded from the server-reported connection status; `previewGoogleContacts` can later
+  // override it (e.g. Google silently dropped the scope since the last status fetch).
+  const [contactsScopeOverride, setContactsScopeOverride] = useState<boolean | null>(null);
   const [people, setPeople] = useState<GoogleContactPerson[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
@@ -67,7 +69,14 @@ export function GoogleContactsImport() {
       const next = params.toString();
       window.history.replaceState(null, "", `/imports${next ? `?${next}` : ""}`);
       router.refresh();
-      getGmailConnectionStatus().then(setStatus).catch(() => {});
+      getGmailConnectionStatus()
+        .then((s) => {
+          // Let the fresh status (not a stale preview-derived override) decide the
+          // scope UI.
+          setContactsScopeOverride(null);
+          setStatus(s);
+        })
+        .catch(() => {});
     } else if (google === "error") {
       toast.error(params.get("reason") || "Google connection failed");
       params.delete("google");
@@ -96,6 +105,8 @@ export function GoogleContactsImport() {
     );
   }
 
+  const contactsScopeGranted = contactsScopeOverride ?? status.canImportContacts;
+
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -114,7 +125,10 @@ export function GoogleContactsImport() {
               onClick={() =>
                 start(async () => {
                   try {
-                    const { url } = await startGmailOAuth("/imports");
+                    const { url } = await startGmailOAuth({
+                      returnTo: "/imports",
+                      scopes: "contacts",
+                    });
                     window.location.href = url;
                   } catch (err) {
                     toast.error(err instanceof Error ? err.message : "OAuth failed");
@@ -132,7 +146,7 @@ export function GoogleContactsImport() {
                   start(async () => {
                     try {
                       const res = await previewGoogleContacts();
-                      setContactsScopeGranted(res.contactsScopeGranted);
+                      setContactsScopeOverride(res.contactsScopeGranted);
                       if (!res.contactsScopeGranted) {
                         toast.error("Reconnect Google to grant contacts access");
                         return;
@@ -162,6 +176,7 @@ export function GoogleContactsImport() {
                     setPeople([]);
                     setLoaded(false);
                     setStatus(null);
+                    setContactsScopeOverride(null);
                     toast.success("Google disconnected");
                     router.refresh();
                     getGmailConnectionStatus().then(setStatus).catch(() => {});

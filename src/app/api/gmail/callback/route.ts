@@ -4,6 +4,7 @@ import { consumeGmailOAuthState } from "@/actions/gmail";
 import {
   exchangeCodeForTokens,
   fetchGoogleProfileEmail,
+  googleScopesFor,
   upsertGmailConnection,
 } from "@/lib/gmail";
 import { isDemoMode } from "@/lib/auth";
@@ -47,7 +48,7 @@ export async function GET(request: Request) {
   try {
     if (!code) throw new Error("Missing authorization code");
 
-    const { userId: stateUserId, returnTo } = await consumeGmailOAuthState(state);
+    const { userId: stateUserId, returnTo, scopes } = await consumeGmailOAuthState(state);
     if (returnTo) redirectBase = new URL(returnTo, url.origin);
 
     let sessionUserId: string | null = null;
@@ -64,7 +65,9 @@ export async function GET(request: Request) {
 
     const tokens = await exchangeCodeForTokens(code);
     const email = await fetchGoogleProfileEmail(tokens.access_token);
-    await upsertGmailConnection(sessionUserId, tokens, email);
+    await upsertGmailConnection(sessionUserId, tokens, email, {
+      requestedScopes: googleScopesFor(scopes),
+    });
 
     redirectBase.searchParams.set("gmail", "connected");
     redirectBase.searchParams.set("google", "connected");
