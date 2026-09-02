@@ -5,6 +5,7 @@ import {
   getContactFollowUpSendOptions,
   listRelatedContacts,
 } from "@/actions/contacts";
+import { ContactAddNotesCard } from "@/components/contacts/contact-add-notes-card";
 import { ContactBriefCard } from "@/components/contacts/contact-brief-card";
 import { ContactFollowUpSection } from "@/components/contacts/contact-follow-up-section";
 import { ContactMentionsSection } from "@/components/contacts/contact-mentions-section";
@@ -27,6 +28,7 @@ import {
 } from "@/lib/contact-brief";
 import { listContactMentions } from "@/lib/contact-mentions";
 import { formatHowMetSummary } from "@/lib/met-context";
+import { getSettings } from "@/actions/settings";
 import { notFound } from "next/navigation";
 
 export default async function ContactDetailPage({
@@ -42,6 +44,7 @@ export default async function ContactDetailPage({
   // (or racing notFound() into the error boundary on a bogus id); on
   // failure the section simply doesn't render.
   const sendOptionsPromise = getContactFollowUpSendOptions(id).catch(() => null);
+  const settingsPromise = getSettings();
   const relatedPromise = listRelatedContacts(id, 6).catch(() => []);
   // Started once and chained from below, rather than each `.then` re-calling
   // requireUserId(): the `after()` callback for brief regeneration needs the
@@ -261,6 +264,14 @@ export default async function ContactDetailPage({
           phone={contact.phone}
         />
       </Suspense>
+
+      <Reveal>
+        <ContactAddNotesCard
+          contactId={contact.id}
+          contactName={displayName}
+          hasApiKey={(await settingsPromise).hasApiKey}
+        />
+      </Reveal>
 
       <Reveal>
         <ContactTimeline

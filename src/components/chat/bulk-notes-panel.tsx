@@ -16,7 +16,7 @@ import {
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
 import { getSettings } from "@/actions/settings";
 import type { SaveNoteBatchOutput } from "@/lib/note-batch-save";
-import type { PreviewMention } from "@/lib/note-batches";
+import { pickLockedParticipant, type PreviewMention } from "@/lib/note-batches";
 import type {
   CaptureParseHints,
   ParsedNote,
@@ -55,6 +55,8 @@ type ReviewItem = BulkNotePersonPreview & {
   relationshipScore: number;
   tagNames: string;
   followUpDays: number;
+  /** Locked to `lockedParticipantId` — the panel was opened from that contact's profile. */
+  locked?: boolean;
 };
 
 const CAPTURE_FILE_ACCEPT = [
@@ -91,12 +93,24 @@ export function BulkNotesPanel({
   compact = false,
   preferredContactId = null,
   preferredContactName = null,
+  lockedParticipantId = null,
+  lockedParticipantName = null,
+  entryPoint,
   hasApiKey: hasApiKeyProp,
   onSaved,
 }: {
   compact?: boolean;
   preferredContactId?: string | null;
   preferredContactName?: string | null;
+  /**
+   * When set, the parse is seeded with this person and whichever parsed item matches
+   * them is force-merged into this contact and can't be redirected to "Create new" or
+   * another merge target — used when the panel is opened from that contact's profile.
+   */
+  lockedParticipantId?: string | null;
+  lockedParticipantName?: string | null;
+  /** Where the panel was opened from. Affects the default `onSaved` behavior. */
+  entryPoint?: "capture" | "profile";
   /** When known from the server, skips a settings round-trip. */
   hasApiKey?: boolean;
   /** Called after a successful save. Defaults to staying on the paste step. */
@@ -244,7 +258,8 @@ export function BulkNotesPanel({
           sourceText: sourceText!,
           anchorIso: anchorIso!,
           anchorBasis: anchorBasis ?? "upload",
-          entryPoint: "capture",
+          entryPoint: entryPoint ?? "capture",
+          seedContactId: lockedParticipantId ?? null,
           commitments: checkedSuggestions.map((s) => ({
             title: s.title,
             description: s.description,
@@ -261,12 +276,27 @@ export function BulkNotesPanel({
           mentions,
           skipped: skipped ?? { relative: 0, unverifiable: 0, past: 0 },
         });
-        toast.success(
-          `Saved: ${res.created} created, ${res.updated} updated, ${res.remindersCreated} reminders`
-        );
         if (onSaved) {
+          toast.success(
+            `Saved: ${res.created} created, ${res.updated} updated, ${res.remindersCreated} reminders`
+          );
           onSaved(res);
+        } else if (entryPoint === "profile") {
+          // Stay on the profile — nothing to navigate to here — and offer a link to
+          // the fuller capture results (mentions, reminders, dedupe) instead of
+          // dragging the user off the page they were already looking at.
+          resetToPaste();
+          router.refresh();
+          toast.success("Saved — view what was created", {
+            action: {
+              label: "Open",
+              onClick: () => router.push(`/capture/${res.batchId}`),
+            },
+          });
         } else {
+          toast.success(
+            `Saved: ${res.created} created, ${res.updated} updated, ${res.remindersCreated} reminders`
+          );
           resetToPaste();
           router.push(`/capture/${res.batchId}`);
         }
@@ -420,7 +450,11 @@ export function BulkNotesPanel({
             onClick={() =>
               start(async () => {
                 try {
-                  const res = await parseBulkCaptureNotes(notes, captureHints);
+                  const hints: CaptureParseHints | null =
+                    lockedParticipantId && lockedParticipantName
+                      ? { ...captureHints, seedPeople: [{ name: lockedParticipantName }] }
+                      : captureHints;
+                  const res = await parseBulkCaptureNotes(notes, hints);
                   if (!res.ok) {
                     const missingKey = isMissingAiApiKeyError(res.error);
                     if (missingKey) setHasApiKey(false);
@@ -430,8 +464,20 @@ export function BulkNotesPanel({
                     return;
                   }
                   setSharedNotes(res.sharedNotes || []);
+                  const lockedKey =
+                    lockedParticipantId && lockedParticipantName
+                      ? pickLockedParticipant(
+                          res.items.map((item) => ({
+                            key: item.key,
+                            name: item.parsed.name,
+                            duplicateIds: item.duplicates.map((d) => d.id),
+                          })),
+                          { id: lockedParticipantId, name: lockedParticipantName }
+                        )
+                      : null;
                   setItems(
                     res.items.map((item) => {
+                      const isLocked = lockedKey !== null && item.key === lockedKey;
                       const preferredMatch =
                         preferredContactId &&
                         item.duplicates.some((d) => d.id === preferredContactId)
@@ -440,8 +486,10 @@ export function BulkNotesPanel({
                       return {
                         ...item,
                         decision: "pending" as const,
-                        mergeContactId:
-                          preferredMatch || item.suggestedMergeId,
+                        mergeContactId: isLocked
+                          ? lockedParticipantId
+                          : preferredMatch || item.suggestedMergeId,
+                        locked: isLocked,
                         createReminder: Boolean(
                           item.parsed.follow_up_recommendation
                         ),
@@ -576,6 +624,7 @@ export function BulkNotesPanel({
                   compact={compact}
                   preferredContactId={preferredContactId}
                   preferredContactName={preferredContactName}
+                  lockedParticipantName={lockedParticipantName}
                   onChange={(next) =>
                     setItems((prev) =>
                       prev.map((p, i) => (i === reviewIndex ? next : p))
@@ -756,12 +805,14 @@ function PersonReviewCard({
   compact,
   preferredContactId,
   preferredContactName,
+  lockedParticipantName,
 }: {
   item: ReviewItem;
   onChange: (next: ReviewItem) => void;
   compact?: boolean;
   preferredContactId?: string | null;
   preferredContactName?: string | null;
+  lockedParticipantName?: string | null;
 }) {
   const updateParsed = (patch: Partial<ParsedNote>) =>
     onChange({ ...item, parsed: { ...item.parsed, ...patch } });
@@ -891,51 +942,63 @@ function PersonReviewCard({
       )}
 
       <div className="space-y-1.5 rounded-xl border border-border/60 bg-muted/30 p-2.5">
-        <p className="text-xs font-medium">Save as</p>
-        <label className="flex items-center gap-2 text-xs">
-          <input
-            type="radio"
-            name={`merge-${item.key}`}
-            checked={!item.mergeContactId}
-            onChange={() => onChange({ ...item, mergeContactId: null })}
-          />
-          Create new contact
-        </label>
-        {showPreferred && (
-          <label className="flex items-center gap-2 text-xs">
-            <input
-              type="radio"
-              name={`merge-${item.key}`}
-              checked={item.mergeContactId === preferredContactId}
-              onChange={() =>
-                onChange({ ...item, mergeContactId: preferredContactId })
-              }
-            />
-            Merge into {preferredContactName}
-          </label>
-        )}
-        {item.duplicates.map((d) => (
-          <label key={d.id} className="flex items-start gap-2 text-xs">
-            <input
-              type="radio"
-              className="mt-0.5"
-              name={`merge-${item.key}`}
-              checked={item.mergeContactId === d.id}
-              onChange={() => onChange({ ...item, mergeContactId: d.id })}
-            />
-            <span>
-              Update{" "}
-              <Link
-                href={`/contacts/${d.id}`}
-                className="text-primary underline"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {d.fullName}
-              </Link>
-              {d.company ? ` (${d.company})` : ""}
+        {item.locked ? (
+          <p className="text-xs text-muted-foreground">
+            Logging on{" "}
+            <span className="font-medium text-foreground">
+              {lockedParticipantName}
             </span>
-          </label>
-        ))}
+            &apos;s timeline
+          </p>
+        ) : (
+          <>
+            <p className="text-xs font-medium">Save as</p>
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="radio"
+                name={`merge-${item.key}`}
+                checked={!item.mergeContactId}
+                onChange={() => onChange({ ...item, mergeContactId: null })}
+              />
+              Create new contact
+            </label>
+            {showPreferred && (
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="radio"
+                  name={`merge-${item.key}`}
+                  checked={item.mergeContactId === preferredContactId}
+                  onChange={() =>
+                    onChange({ ...item, mergeContactId: preferredContactId })
+                  }
+                />
+                Merge into {preferredContactName}
+              </label>
+            )}
+            {item.duplicates.map((d) => (
+              <label key={d.id} className="flex items-start gap-2 text-xs">
+                <input
+                  type="radio"
+                  className="mt-0.5"
+                  name={`merge-${item.key}`}
+                  checked={item.mergeContactId === d.id}
+                  onChange={() => onChange({ ...item, mergeContactId: d.id })}
+                />
+                <span>
+                  Update{" "}
+                  <Link
+                    href={`/contacts/${d.id}`}
+                    className="text-primary underline"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {d.fullName}
+                  </Link>
+                  {d.company ? ` (${d.company})` : ""}
+                </span>
+              </label>
+            ))}
+          </>
+        )}
       </div>
 
       <div

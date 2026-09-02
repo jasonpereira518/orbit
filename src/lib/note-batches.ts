@@ -50,3 +50,27 @@ export function titlesCollide(a: string, b: string) {
 export function withinCollisionWindow(a: Date, b: Date, days = COLLISION_WINDOW_DAYS) {
   return Math.abs(a.getTime() - b.getTime()) <= days * 86_400_000;
 }
+
+/**
+ * Picks which parsed item (if any) should be locked to a known contact when the bulk
+ * notes panel is opened from that contact's profile (`lockedParticipantId`). Pure so it
+ * can be unit-smoked without a model: duplicate-id match wins, then a case-insensitive
+ * name match, then — only when nothing else can be reasonably confident, exactly one
+ * parsed participant — that lone item. Returns the item's `key`, or null when no item
+ * should be locked.
+ */
+export function pickLockedParticipant(
+  items: { key: string; name: string | null; duplicateIds: string[] }[],
+  locked: { id: string; name: string }
+): string | null {
+  const byDuplicate = items.find((item) => item.duplicateIds.includes(locked.id));
+  if (byDuplicate) return byDuplicate.key;
+
+  const lockedName = locked.name.trim().toLowerCase();
+  const byName = items.find((item) => (item.name || "").trim().toLowerCase() === lockedName);
+  if (byName) return byName.key;
+
+  if (items.length === 1) return items[0]!.key;
+
+  return null;
+}
