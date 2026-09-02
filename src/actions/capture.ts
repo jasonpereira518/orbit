@@ -33,7 +33,10 @@ import {
   normalizePastedCaptureText,
   type CaptureMediaFile,
 } from "@/lib/capture-ingest";
-import { findDuplicateCandidates } from "@/lib/duplicates";
+import {
+  buildDuplicateIndex,
+  findDuplicateCandidatesIndexed,
+} from "@/lib/duplicates";
 import { createContact, logInteraction, updateContact } from "@/actions/contacts";
 import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
 
@@ -221,6 +224,10 @@ export async function parseBulkCaptureNotes(
     const defaultDate = interaction_date || mergedHints.eventDate || null;
     const interactionType = mergedHints.interactionType || "meeting_note";
 
+    // One index for every person in the note, rather than a fresh scan of the whole
+    // contact list per person.
+    const duplicateIndex = buildDuplicateIndex(existing);
+
     const items: BulkNotePersonPreview[] = people.map((person, index) => {
       const { source_excerpt, ...parsedBase } = person;
       const sharedForPerson = sharedNotesForPerson(
@@ -238,7 +245,7 @@ export async function parseBulkCaptureNotes(
         interaction_date: parsedBase.interaction_date || defaultDate,
       };
 
-      const duplicates = findDuplicateCandidates(existing, {
+      const duplicates = findDuplicateCandidatesIndexed(duplicateIndex, {
         fullName: parsed.name,
         email: parsed.email,
         linkedinUrl: parsed.linkedin_url,

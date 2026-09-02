@@ -14,7 +14,11 @@ import {
   type CalendarEventRowPayload,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { DUPLICATE_MERGE_CONFIDENCE, findDuplicateCandidates } from "@/lib/duplicates";
+import {
+  DUPLICATE_MERGE_CONFIDENCE,
+  buildDuplicateIndex,
+  findDuplicateCandidatesIndexed,
+} from "@/lib/duplicates";
 import { runLinkedInImportJob } from "@/lib/import-job-processor";
 import {
   GOOGLE_CONTACTS_IMPORT_TYPE,
@@ -113,9 +117,14 @@ export async function previewLinkedInCsv(csvText: string) {
     },
   });
 
+  // One index for the whole preview. Scanning `existing` per row made this an all-pairs
+  // comparison with a Levenshtein in the inner loop — ~8s for a 3,000-row export against
+  // 3,000 contacts, which is the everyday case once you have imported once already.
+  const duplicateIndex = buildDuplicateIndex(existing);
+
   const people = rows.map((row, index) => {
     const fullName = `${row.firstName} ${row.lastName}`.trim();
-    const dups = findDuplicateCandidates(existing, {
+    const dups = findDuplicateCandidatesIndexed(duplicateIndex, {
       fullName,
       email: row.email,
       linkedinUrl: row.url,
@@ -502,11 +511,13 @@ export async function previewCalendarImport(payload: {
   // One-time calendar upload: reach back CALENDAR_BACKFILL_DAYS.
   const windowed = windowCalendarEvents(events);
 
+  const duplicateIndex = buildDuplicateIndex(existing);
+
   const preview = windowed.slice(0, 40).map((event) => {
     const people = peopleFromEvent(event);
     const matches = people
       .map((person) => {
-        const dups = findDuplicateCandidates(existing, {
+        const dups = findDuplicateCandidatesIndexed(duplicateIndex, {
           fullName: person.name || undefined,
           email: person.email || undefined,
         });
@@ -701,8 +712,10 @@ export async function previewGoogleContacts(): Promise<{
     },
   });
 
+  const duplicateIndex = buildDuplicateIndex(existing);
+
   const people = googleContacts.map((p) => {
-    const dups = findDuplicateCandidates(existing, {
+    const dups = findDuplicateCandidatesIndexed(duplicateIndex, {
       fullName: p.fullName,
       email: p.email,
       company: p.company,
@@ -838,8 +851,10 @@ export async function previewOutlookContacts(): Promise<{
     },
   });
 
+  const duplicateIndex = buildDuplicateIndex(existing);
+
   const people = outlookContacts.map((p) => {
-    const dups = findDuplicateCandidates(existing, {
+    const dups = findDuplicateCandidatesIndexed(duplicateIndex, {
       fullName: p.fullName,
       email: p.email,
       company: p.company,

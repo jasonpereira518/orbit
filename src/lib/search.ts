@@ -215,6 +215,9 @@ export async function semanticSearchContacts(
   }
 
   const q = query.toLowerCase();
+  // Loop-invariant: both scoring passes below run per row, and this was being re-split
+  // and re-filtered on every one of them.
+  const qTokens = q.split(/\s+/).filter((t) => t.length > 2);
   const scoreByContact = new Map<string, number>();
 
   if (queryEmbedding) {
@@ -292,7 +295,7 @@ export async function semanticSearchContacts(
       let bump = 0;
       if (hay.includes(q)) bump = 0.35;
       else {
-        for (const token of q.split(/\s+/).filter((t) => t.length > 2)) {
+        for (const token of qTokens) {
           if (hay.includes(token)) bump += 0.08;
         }
       }
@@ -331,7 +334,7 @@ export async function semanticSearchContacts(
         .toLowerCase();
 
       if (haystack.includes(q)) score = Math.max(score, 0.55);
-      for (const token of q.split(/\s+/).filter((t) => t.length > 2)) {
+      for (const token of qTokens) {
         if (haystack.includes(token)) score += 0.08;
       }
 
