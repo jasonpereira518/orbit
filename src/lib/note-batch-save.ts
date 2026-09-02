@@ -219,13 +219,15 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
     const participantIds = new Set(contactIds);
     const firstInteraction = result.participants[0]?.interactionId ?? null;
     const mentionRows: (typeof interactionMentions.$inferInsert)[] = [];
-    type UnresolvedCandidate = { itemHash: string; row: typeof unresolvedMentions.$inferInsert };
+    type UnresolvedCandidate = { itemHash: string; entry: NoteBatchResult["unresolvedMentions"][number]; row: typeof unresolvedMentions.$inferInsert };
     const unresolvedCandidates: UnresolvedCandidate[] = [];
     const pushUnresolved = (m: { text: string; context: string | null }, interactionId: string | null, nearContactId: string | null) => {
       const itemHash = buildSuggestionItemHash(input.sourceHash, "mention", m.text);
-      result.unresolvedMentions.push({ text: m.text, context: m.context });
+      const entry: NoteBatchResult["unresolvedMentions"][number] = { text: m.text, context: m.context };
+      result.unresolvedMentions.push(entry);
       unresolvedCandidates.push({
         itemHash,
+        entry,
         row: { userId, noteBatchId: batchId, interactionId, nearContactId, mentionText: m.text, context: m.context, sourceHash: input.sourceHash, itemHash },
       });
     };
@@ -262,8 +264,8 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
           .where(and(eq(unresolvedMentions.userId, userId), inArray(unresolvedMentions.itemHash, missing)));
         for (const e of existing) idByHash.set(e.itemHash, e.id);
       }
-      unresolvedCandidates.forEach((c, i) => {
-        result.unresolvedMentions[result.unresolvedMentions.length - unresolvedCandidates.length + i].id = idByHash.get(c.itemHash);
+      unresolvedCandidates.forEach((c) => {
+        c.entry.id = idByHash.get(c.itemHash);
       });
     }
 
