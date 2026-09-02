@@ -11,6 +11,7 @@ import { WizardAddManual } from "@/components/onboarding/wizard/wizard-add-manua
 import { WizardCapture } from "@/components/onboarding/wizard/wizard-capture";
 import { WizardConnectGoogle } from "@/components/onboarding/wizard/wizard-connect-google";
 import { WizardImport } from "@/components/onboarding/wizard/wizard-import";
+import { WizardLinkedInLater } from "@/components/onboarding/wizard/wizard-linkedin-later";
 import { WizardReview, type WizardResult } from "@/components/onboarding/wizard/wizard-review";
 import { WizardTriage } from "@/components/onboarding/wizard/wizard-triage";
 import { WizardAiKey } from "@/components/onboarding/wizard/wizard-ai-key";
@@ -22,6 +23,7 @@ export type WizardStep =
   | "manual"
   | "capture"
   | "import"
+  | "linkedin-later"
   | "triage"
   | "ai-key"
   | "review";
@@ -47,10 +49,10 @@ const PATHS = [
     description: "Enter a name, company, and how you know them.",
   },
   {
-    id: "import" as const,
+    id: "linkedin-later" as const,
     icon: Upload,
-    title: "Upload a LinkedIn export",
-    description: "Takes about a day to arrive. Have the file already? Upload it here.",
+    title: "LinkedIn (takes a day)",
+    description: "Request your export now; Orbit reminds you to upload it tomorrow.",
   },
 ];
 
@@ -61,6 +63,7 @@ const STEP_TITLES: Record<WizardStep, string> = {
   manual: "Add someone manually",
   capture: "Capture from notes",
   import: "Import LinkedIn connections",
+  "linkedin-later": "LinkedIn (takes a day)",
   triage: "Rate a few people",
   "ai-key": "Turn on AI (optional)",
   review: "You're set up",
@@ -215,6 +218,22 @@ export function SetupWizard({
                 </div>
               )}
 
+              {step === "linkedin-later" && (
+                <div className="space-y-4">
+                  <BackRow onBack={() => goTo("add-people")} />
+                  <WizardLinkedInLater
+                    onContinue={(result) => {
+                      if (result) addResult(result);
+                      goTo("triage");
+                    }}
+                    onImportNow={(result) => {
+                      if (result) addResult(result);
+                      goTo("import");
+                    }}
+                  />
+                </div>
+              )}
+
               {step === "triage" && (
                 <WizardTriage
                   onDone={() => goTo(aiOn ? "review" : "ai-key")}
@@ -272,7 +291,9 @@ function PathStep({
   onChoose,
 }: {
   paths: typeof PATHS;
-  onChoose: (id: "connect-google" | "manual" | "capture" | "import") => void;
+  onChoose: (
+    id: "connect-google" | "manual" | "capture" | "linkedin-later"
+  ) => void;
 }) {
   return (
     <ul className="space-y-3">

@@ -3,12 +3,14 @@ import { formatDistanceToNow } from "date-fns";
 import { Bell, Sparkles, Users } from "lucide-react";
 import type { getOutreachPerformanceSummary } from "@/actions/outreach";
 import type { fetchDashboard } from "@/actions/reminders";
+import { getLinkedInExportStatus } from "@/actions/linkedin-export";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { DashboardGraphPreview } from "@/components/dashboard/dashboard-graph-preview";
 import { DueFollowUpRow } from "@/components/dashboard/due-follow-up-row";
 import { GenerateFollowUpsButton } from "@/components/dashboard/generate-follow-ups-button";
 import { GoalsSummary } from "@/components/dashboard/goals-summary";
+import { LinkedInExportNudge } from "@/components/imports/linkedin-export-nudge";
 import { NetworkDepthChart } from "@/components/dashboard/network-depth-chart";
 import { NetworkStatsCard } from "@/components/dashboard/network-stats-card";
 import { PlanLaunchCard } from "@/components/dashboard/plan-launch-card";
@@ -19,6 +21,9 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+
+/** Beyond this the export almost certainly isn't coming; the nudge stops offering it. */
+const LINKEDIN_NUDGE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * Async server sections for the streamed dashboard. Every bundle section
@@ -56,9 +61,28 @@ function contactMeta(data: BundleData, contactId: string | null | undefined) {
 const revealDelay = (ms: number) =>
   ({ "--reveal-delay": `${ms}ms` }) as React.CSSProperties;
 
+/**
+ * Plain module-level function, not inlined in the component: `Date.now()` in the render
+ * body itself trips `react-hooks/purity` (impure call during render).
+ */
+function shouldShowLinkedInNudge(status: {
+  requestedAt: string | null;
+  hasLinkedInImport: boolean;
+}): boolean {
+  if (!status.requestedAt || status.hasLinkedInImport) return false;
+  return (
+    Date.now() - new Date(status.requestedAt).getTime() <
+    LINKEDIN_NUDGE_MAX_AGE_MS
+  );
+}
+
 export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
-  const { data } = await bundle;
+  const [{ data }, linkedInExport] = await Promise.all([
+    bundle,
+    getLinkedInExportStatus(),
+  ]);
   const isEmptyNetwork = data.stats.totalContacts === 0;
+  const showLinkedInNudge = shouldShowLinkedInNudge(linkedInExport);
 
   return (
     <>
@@ -94,6 +118,14 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
               Add a contact
             </Link>
           </div>
+        </div>
+      )}
+
+      {showLinkedInNudge && (
+        <div className="reveal-mount" style={revealDelay(70)}>
+          <LinkedInExportNudge
+            requestedAt={linkedInExport.requestedAt as string}
+          />
         </div>
       )}
 

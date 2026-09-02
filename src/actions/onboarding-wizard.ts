@@ -27,6 +27,7 @@ const WIZARD_STEP_IDS: Record<WizardStep, true> = {
   manual: true,
   capture: true,
   import: true,
+  "linkedin-later": true,
   triage: true,
   "ai-key": true,
   review: true,

@@ -18,6 +18,7 @@ import {
   isReminderActionKind,
 } from "@/lib/reminder-action-kind";
 import { revalidateReminderPaths } from "@/lib/reminder-paths";
+import { reminderHref } from "@/lib/reminder-links";
 import {
   displayListName,
   ensureReminderLists,
@@ -763,7 +764,7 @@ export async function listNotificationPanel() {
       kind: "reminder",
       title: r.title,
       body: r.description,
-      url: r.contactId ? `/contacts/${r.contactId}` : "/reminders",
+      url: reminderHref(r),
       dueAt: dueAt?.toISOString() ?? null,
       urgency: isDue ? "due" : "upcoming",
       reminderId: r.id,

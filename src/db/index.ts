@@ -691,7 +691,7 @@ CREATE TABLE IF NOT EXISTS fundraising_investors (
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 19;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1087,6 +1087,12 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "outreach_messages", "outcome_notes", "text");
   await ensureColumn(client, "outreach_messages", "replied_at", "timestamptz");
   await ensureColumn(client, "user_settings", "wizard_offered_at", "timestamptz");
+  await ensureColumn(
+    client,
+    "user_settings",
+    "linkedin_export_requested_at",
+    "timestamptz"
+  );
   await ensureColumn(client, "user_settings", "wizard_step", "text");
   await ensureColumn(client, "user_settings", "wizard_completed_at", "timestamptz");
   await ensureColumn(client, "user_settings", "email", "text");
@@ -1526,6 +1532,7 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `CREATE INDEX IF NOT EXISTS embeddings_user_idx ON contact_embeddings(user_id)`,
     `CREATE INDEX IF NOT EXISTS embeddings_contact_idx ON contact_embeddings(contact_id)`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_offered_at timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_export_requested_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_step text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_completed_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email text`,

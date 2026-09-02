@@ -13,6 +13,7 @@ import {
   UserRound,
   NotebookPen,
   Coffee,
+  Upload,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
@@ -21,6 +22,7 @@ import {
 } from "@/actions/reminders";
 import type { ReminderActionKind } from "@/db/schema";
 import { ACTION_KIND_LABELS } from "@/lib/reminder-action-kind";
+import { reminderHref } from "@/lib/reminder-links";
 import { ReminderDoneSnooze } from "@/components/reminders/reminder-done-snooze";
 import { ReminderFormDialog } from "@/components/reminders/reminder-form-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -34,6 +36,7 @@ const TYPE_LABELS: Record<string, string> = {
   generated: "Auto-generated",
   ai_suggested: "AI suggested",
   extracted_date: "From notes",
+  linkedin_export: "LinkedIn",
 };
 
 const TYPE_STYLES: Record<string, string> = {
@@ -43,6 +46,7 @@ const TYPE_STYLES: Record<string, string> = {
   generated: "bg-muted text-muted-foreground",
   ai_suggested: "bg-violet-500/15 text-violet-800 dark:text-violet-200",
   extracted_date: "bg-amber-500/15 text-amber-800 dark:text-amber-200",
+  linkedin_export: "bg-sky-500/15 text-sky-800 dark:text-sky-200",
 };
 
 function dueLabel(dueDate: Date | string | null | undefined) {
@@ -213,6 +217,15 @@ export function ReminderCard({
               >
                 <Coffee className="mr-1.5 h-3.5 w-3.5" />
                 Log meeting
+              </Link>
+            )}
+            {reminderType === "linkedin_export" && (
+              <Link
+                href={reminderHref({ reminderType, contactId })}
+                className={actionClass}
+              >
+                <Upload className="mr-1.5 h-3.5 w-3.5" />
+                Open Imports
               </Link>
             )}
             {showDraft && contactId && (

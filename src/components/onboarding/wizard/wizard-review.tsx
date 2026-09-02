@@ -8,7 +8,9 @@ export type WizardResult =
   | { kind: "capture"; count: number }
   | { kind: "import" }
   | { kind: "google"; count: number }
-  | { kind: "ai-key" };
+  | { kind: "ai-key" }
+  | { kind: "linkedin-requested" }
+  | { kind: "linkedin-requested-no-reminder" };
 
 function describe(result: WizardResult) {
   switch (result.kind) {
@@ -26,6 +28,10 @@ function describe(result: WizardResult) {
         : `Started importing ${result.count} Google contacts.`;
     case "ai-key":
       return "AI is on.";
+    case "linkedin-requested":
+      return "LinkedIn export requested — reminder set for tomorrow.";
+    case "linkedin-requested-no-reminder":
+      return "LinkedIn export requested.";
   }
 }
 
