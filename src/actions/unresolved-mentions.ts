@@ -53,6 +53,11 @@ export async function resolveUnresolvedMentionToContact(mentionId: string, conta
   const row = await loadPendingMention(userId, mentionId);
   if (!row) return;
   const db = await getDb();
+  const contact = await db.query.contacts.findFirst({
+    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+    columns: { id: true },
+  });
+  if (!contact) throw new Error("Contact not found");
   await db
     .update(unresolvedMentions)
     .set({ status: "resolved", resolvedContactId: contactId, resolvedAt: new Date() })
