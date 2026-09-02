@@ -60,6 +60,14 @@ export function NoteBatchResultView({
     start(async () => {
       try {
         const out = await undoNoteBatch(batchId);
+        setLocal((s) =>
+          Object.fromEntries(
+            Object.entries(s).map(([id, st]) => [
+              id,
+              st === "pending" ? "dismissed" : st,
+            ])
+          )
+        );
         toast.success(`Undone: ${out.remindersDismissed} reminders dismissed`);
         router.refresh();
       } catch (err) {
@@ -126,8 +134,8 @@ export function NoteBatchResultView({
                 <span className="text-muted-foreground"> · {Math.round(m.confidence * 100)}%</span>
               </p>
             ))}
-            {result.unresolvedMentions.map((m) => (
-              <p key={m.text} className="flex items-center justify-between gap-2">
+            {result.unresolvedMentions.map((m, index) => (
+              <p key={`${index}-${m.text}`} className="flex items-center justify-between gap-2">
                 <span>&ldquo;{m.text}&rdquo;{m.context ? <span className="text-muted-foreground"> — {m.context}</span> : null}</span>
                 <Link href={`/capture?mode=structured`} className="text-xs text-primary underline">Add as contact</Link>
               </p>
