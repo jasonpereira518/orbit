@@ -3,9 +3,12 @@
  * into a known contact when opened from that contact's profile (`lockedParticipantId`). Pure,
  * no DB, no AI — exercises the four branches: duplicate-id match, case-insensitive name match,
  * the lone-item fallback, and the no-match case.
+ *
+ * `withLockedSeedPerson` folds that same locked contact into `captureHints.seedPeople`
+ * without dropping attendees `.ics`/`.eml` ingestion already put there.
  * Run: npx tsx scripts/smoke-locked-participant.ts
  */
-import { pickLockedParticipant } from "../src/lib/note-batches";
+import { pickLockedParticipant, withLockedSeedPerson } from "../src/lib/note-batches";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -75,5 +78,39 @@ const LOCKED = { id: "contact-1", name: "Sarah Chen" };
 
 // Empty item list -> null, not a lone-item false positive.
 check("empty items -> null", pickLockedParticipant([], LOCKED) === null);
+
+// withLockedSeedPerson: appends to whatever seedPeople ingestion already produced,
+// rather than replacing it (a naive overwrite would drop real .ics/.eml attendees).
+{
+  const hints = { seedPeople: [{ name: "Dev Patel" }] };
+  const result = withLockedSeedPerson(hints, "Sarah Chen");
+  check(
+    "withLockedSeedPerson appends to existing seed people",
+    result.seedPeople?.length === 2 &&
+      result.seedPeople.some((p) => p.name === "Dev Patel") &&
+      result.seedPeople.some((p) => p.name === "Sarah Chen")
+  );
+}
+
+// Re-locking the same person (e.g. hints recomputed on a second extract) must not pile
+// up a duplicate entry — case and surrounding whitespace shouldn't matter either.
+{
+  const hints = { seedPeople: [{ name: "  sarah CHEN  " }] };
+  const result = withLockedSeedPerson(hints, "Sarah Chen");
+  check(
+    "withLockedSeedPerson does not duplicate a same-name entry",
+    result.seedPeople?.length === 1
+  );
+}
+
+// No prior hints at all (first extract, nothing ingested) still produces a valid
+// CaptureParseHints seeded with just the locked contact.
+{
+  const result = withLockedSeedPerson(null, "Sarah Chen");
+  check(
+    "withLockedSeedPerson works when hints are null",
+    result.seedPeople?.length === 1 && result.seedPeople[0]?.name === "Sarah Chen"
+  );
+}
 
 console.log("\nsmoke-locked-participant: all checks passed");

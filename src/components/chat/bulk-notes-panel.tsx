@@ -16,7 +16,11 @@ import {
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
 import { getSettings } from "@/actions/settings";
 import type { SaveNoteBatchOutput } from "@/lib/note-batch-save";
-import { pickLockedParticipant, type PreviewMention } from "@/lib/note-batches";
+import {
+  pickLockedParticipant,
+  withLockedSeedPerson,
+  type PreviewMention,
+} from "@/lib/note-batches";
 import type {
   CaptureParseHints,
   ParsedNote,
@@ -276,10 +280,15 @@ export function BulkNotesPanel({
           mentions,
           skipped: skipped ?? { relative: 0, unverifiable: 0, past: 0 },
         });
-        if (onSaved) {
+        // The profile entry point's default path gets its own toast below (a link to
+        // the fuller capture results, not a raw count) — every other path shares this
+        // one summary toast, so it's hoisted here instead of repeated per branch.
+        if (onSaved || entryPoint !== "profile") {
           toast.success(
             `Saved: ${res.created} created, ${res.updated} updated, ${res.remindersCreated} reminders`
           );
+        }
+        if (onSaved) {
           onSaved(res);
         } else if (entryPoint === "profile") {
           // Stay on the profile — nothing to navigate to here — and offer a link to
@@ -294,9 +303,6 @@ export function BulkNotesPanel({
             },
           });
         } else {
-          toast.success(
-            `Saved: ${res.created} created, ${res.updated} updated, ${res.remindersCreated} reminders`
-          );
           resetToPaste();
           router.push(`/capture/${res.batchId}`);
         }
@@ -452,7 +458,7 @@ export function BulkNotesPanel({
                 try {
                   const hints: CaptureParseHints | null =
                     lockedParticipantId && lockedParticipantName
-                      ? { ...captureHints, seedPeople: [{ name: lockedParticipantName }] }
+                      ? withLockedSeedPerson(captureHints, lockedParticipantName)
                       : captureHints;
                   const res = await parseBulkCaptureNotes(notes, hints);
                   if (!res.ok) {

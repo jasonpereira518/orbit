@@ -14,7 +14,14 @@ export function ContactAddNotesCard({ contactId, contactName, hasApiKey }: { con
       <CardHeader className="cursor-pointer" onClick={() => setOpen((o) => !o)}>
         <CardTitle className="flex items-center gap-2 text-base">
           <NotebookPen className="size-4" /> Add notes
-          <Button type="button" variant="ghost" size="sm" className="ml-auto h-7 px-2" aria-expanded={open}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="ml-auto h-7 px-2"
+            aria-expanded={open}
+            aria-label={open ? "Collapse add notes" : "Expand add notes"}
+          >
             <ChevronDown className={cn("size-4 transition-transform", open && "rotate-180")} />
           </Button>
         </CardTitle>
