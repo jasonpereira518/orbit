@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
@@ -699,7 +699,7 @@ export async function snoozeReminderAction(id: string, days = 7) {
 export async function listNotificationPanel() {
   const userId = await requireUserId();
   const db = await getDb();
-  const { aiSuggestions, suggestedReminders } = await import("@/db/schema");
+  const { aiSuggestions, suggestedReminders, unresolvedMentions } = await import("@/db/schema");
   const { getEntitlements } = await import("@/lib/entitlements");
   const now = new Date();
 
@@ -708,6 +708,7 @@ export async function listNotificationPanel() {
     contactRows,
     suggestions,
     datedSuggestions,
+    pendingMentionCount,
     entitlements,
   ] = await Promise.all([
     db.query.reminders.findMany({
@@ -743,12 +744,17 @@ export async function listNotificationPanel() {
       orderBy: (s, { asc: ascOrder }) => [ascOrder(s.dueDate)],
       limit: 25,
     }),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(unresolvedMentions)
+      .where(and(eq(unresolvedMentions.userId, userId), eq(unresolvedMentions.status, "pending")))
+      .then((rows) => rows[0]?.count ?? 0),
     getEntitlements(userId),
   ]);
 
   type PanelItem = {
     id: string;
-    kind: "reminder" | "follow_up" | "suggestion" | "suggested_reminder";
+    kind: "reminder" | "follow_up" | "suggestion" | "suggested_reminder" | "unresolved_mentions";
     title: string;
     body: string | null;
     url: string;
@@ -836,6 +842,18 @@ export async function listNotificationPanel() {
       urgency: "info",
       suggestedReminderId: s.id,
       contactId: s.contactId,
+    });
+  }
+
+  if (pendingMentionCount > 0) {
+    items.push({
+      id: "unresolved_mentions",
+      kind: "unresolved_mentions",
+      title: `${pendingMentionCount} ${pendingMentionCount === 1 ? "person" : "people"} mentioned need review`,
+      body: null,
+      url: "/mentions/review",
+      dueAt: null,
+      urgency: "info",
     });
   }
 
