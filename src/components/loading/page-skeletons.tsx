@@ -1,3 +1,4 @@
+import { ConstellationLoading } from "@/components/graph/constellation-loading";
 import { Skeleton } from "@/components/ui/skeleton";
 
 function PageHeaderSkeleton({
@@ -189,19 +190,17 @@ export function ChatPageSkeleton() {
 }
 
 export function GraphPageSkeleton() {
+  // Mirrors the real /graph layout: a three-line header and then the canvas. The old
+  // version drew a 4-column stat grid the page has never had, so the skeleton visibly
+  // rearranged itself into something else the moment the data arrived.
   return (
-    <div className="space-y-4">
+    <div className="-mx-1 space-y-3 md:-mx-2">
       <div className="space-y-2 px-1">
         <Skeleton className="h-3 w-24" />
-        <Skeleton className="h-9 w-44" />
+        <Skeleton className="h-8 w-48" />
         <Skeleton className="h-4 w-80 max-w-full" />
       </div>
-      <div className="grid gap-3 rounded-2xl border border-border/70 p-4 sm:grid-cols-2 lg:grid-cols-4">
-        {Array.from({ length: 8 }).map((_, i) => (
-          <Skeleton key={i} className="h-10 rounded-lg" />
-        ))}
-      </div>
-      <Skeleton className="h-[min(78vh,720px)] w-full rounded-2xl" />
+      <ConstellationLoading className="h-[calc(100dvh-15rem)] md:h-[calc(100dvh-10.5rem)]" />
     </div>
   );
 }

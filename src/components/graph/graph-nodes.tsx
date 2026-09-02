@@ -159,6 +159,30 @@ function starSize(score: number) {
 }
 
 /**
+ * Diameter of the invisible disc that actually catches the click.
+ *
+ * A star is 7–16px in *node* space, which at the default fit view (zoom ≈ 0.11 for a
+ * 114-person network) is under two screen pixels — the person is visible and, in
+ * practice, unclickable. The pad extends 8px past the star's edge in every direction,
+ * which is exactly half of the 18px minimum star separation that
+ * `scripts/smoke-graph-layout.ts` guarantees, so no two pads can ever overlap and a
+ * click still resolves to the nearest star. It is absolutely positioned, so it does not
+ * change the node's measured box or the layout React Flow derives from it.
+ */
+const STAR_HIT_PAD = 16;
+
+function StarHitTarget({ disc }: { disc: number }) {
+  const hit = disc + STAR_HIT_PAD;
+  return (
+    <span
+      aria-hidden
+      className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full"
+      style={{ width: hit, height: hit }}
+    />
+  );
+}
+
+/**
  * The line under a person's name: their role, or their company when we don't
  * know what they do. Never both — one quiet line keeps the sky readable.
  */
@@ -170,6 +194,9 @@ function ContactNodeComponent({
   data,
   selected,
 }: NodeProps & { data: GraphNodeData }) {
+  // Rounded so a pan/zoom gesture does not re-render every star on every frame — the
+  // same trick ClusterLabelNodeComponent uses.
+  const zoom = useStore((s) => Math.round(s.transform[2] * 20) / 20);
   const score = data.score || 2;
   const size = starSize(score);
   const glow = Math.max(3, score * 2.2);
@@ -186,12 +213,13 @@ function ContactNodeComponent({
     return (
       <div
         className={cn(
-          "constellation-planet-enter group relative",
+          "constellation-planet-enter group relative cursor-pointer",
           data.motionPaused && "z-20"
         )}
         style={{ width: disc, height: disc }}
       >
         <StarHandles />
+        <StarHitTarget disc={disc} />
         <div
           className={cn(
             "constellation-comet relative",
@@ -243,23 +271,46 @@ function ContactNodeComponent({
   const alphaScale = dimmedScatter ? 0.55 : 1;
   const baseDisc = dimmedScatter ? Math.max(4, size * 0.6) : size;
   const disc = baseDisc * (data.spotlight ? 1.3 : 1);
+  /**
+   * Counteract the camera a little as it pulls back.
+   *
+   * A star is 7–16 layout px. At the default framing of a 24-person network that is
+   * 1–3 screen px, so the map opens on what looks like an empty sky — the one view a
+   * first-time visitor is guaranteed to see. Growing the disc as zoom falls keeps the
+   * sky legible, and the cap (+STAR_HIT_PAD, half the 18px minimum star separation the
+   * layout guarantees) means two stars can never grow into each other.
+   *
+   * Applied as a transform on the disc only, so the node's measured box, the label
+   * positions and the non-overlap proof in `scripts/smoke-graph-layout.ts` are all
+   * untouched.
+   */
+  const zoomRelief = Math.max(
+    1,
+    Math.min((disc + STAR_HIT_PAD) / disc, 1 / Math.max(zoom, 0.08))
+  );
 
   return (
     <div
       className={cn(
-        "constellation-planet-enter group relative",
+        "constellation-planet-enter group relative cursor-pointer",
         data.motionPaused && "z-20",
         data.spotlight && "z-30"
       )}
       style={{ width: disc, height: disc }}
     >
       <StarHandles />
+      <StarHitTarget disc={disc} />
       {/* Bob wrapper: the sole search hit hovers gently up and down. */}
       <div
         className={cn(
           "relative h-full w-full",
           data.spotlightSolo && "constellation-bob"
         )}
+        style={
+          zoomRelief > 1
+            ? { transform: `scale(${zoomRelief.toFixed(3)})` }
+            : undefined
+        }
       >
         <div
           className={cn(

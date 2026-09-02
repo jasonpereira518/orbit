@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import type { getGraphData } from "@/actions/graph";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ConstellationLoading } from "@/components/graph/constellation-loading";
 
 type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
 
@@ -14,7 +14,7 @@ const NetworkGraphFull = dynamic(
   {
     ssr: false,
     loading: () => (
-      <Skeleton className="h-[calc(100dvh-15rem)] w-full rounded-2xl bg-[#05070c] md:h-[calc(100dvh-10.5rem)]" />
+      <ConstellationLoading className="h-[calc(100dvh-15rem)] md:h-[calc(100dvh-10.5rem)]" />
     ),
   }
 );
@@ -26,9 +26,7 @@ const NetworkGraphCompact = dynamic(
     })),
   {
     ssr: false,
-    loading: () => (
-      <Skeleton className="h-[300px] w-full rounded-2xl bg-[#05070c]" />
-    ),
+    loading: () => <ConstellationLoading className="h-[300px]" />,
   }
 );
 

@@ -23,8 +23,14 @@ export type SuggestedOutreachItem = {
 
 export function SuggestedOutreachCard({
   items,
+  networkIsEmpty,
+  dueFollowUpCount,
 }: {
   items: SuggestedOutreachItem[];
+  /** No contacts at all — the only case where "add contacts" is the right advice. */
+  networkIsEmpty: boolean;
+  /** Suggestions for people already listed as due are filtered out; say where they went. */
+  dueFollowUpCount: number;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasMore = items.length > PREVIEW_COUNT;
@@ -48,7 +54,16 @@ export function SuggestedOutreachCard({
       >
         {items.length === 0 ? (
           <p className="rounded-xl border border-dashed border-border/70 px-4 py-8 text-center text-sm text-muted-foreground">
-            No outreach opportunities — add contacts or log interactions.
+            {/* "Add contacts or log interactions" was shown to accounts with 24 contacts
+                and six overdue follow-ups, because anyone already listed as due is
+                filtered out of this queue. Say what is actually true instead. */}
+            {networkIsEmpty
+              ? "No one to reach out to yet — add a contact or import your network."
+              : dueFollowUpCount > 0
+                ? `Nothing extra to suggest — your ${dueFollowUpCount} due follow-up${
+                    dueFollowUpCount === 1 ? "" : "s"
+                  } are the priority right now.`
+                : "Nobody has gone quiet. Log an interaction and Orbit will keep watching."}
           </p>
         ) : (
           <>

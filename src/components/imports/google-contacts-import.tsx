@@ -14,6 +14,7 @@ import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { toast } from "@/lib/toast";
+import { IntegrationUnavailable } from "@/components/imports/integration-unavailable";
 
 export function GoogleContactsImport() {
   const router = useRouter();
@@ -83,14 +84,15 @@ export function GoogleContactsImport() {
 
   if (!status.configured) {
     return (
-      <section className="space-y-2 rounded-2xl border border-dashed border-border/70 bg-card/50 p-6">
-        <h2 className="text-lg font-medium text-ink">Google Contacts</h2>
-        <p className="text-sm text-muted-foreground">
-          Set <code className="text-xs">GOOGLE_CLIENT_ID</code>,{" "}
-          <code className="text-xs">GOOGLE_CLIENT_SECRET</code>, and{" "}
-          <code className="text-xs">GOOGLE_REDIRECT_URI</code> to enable this.
-        </p>
-      </section>
+      <IntegrationUnavailable
+        title="Google Contacts"
+        blurb="Not connected yet. Import from LinkedIn above, or paste your notes into Capture and Orbit will pull the people out."
+        envVars={[
+          "GOOGLE_CLIENT_ID",
+          "GOOGLE_CLIENT_SECRET",
+          "GOOGLE_REDIRECT_URI",
+        ]}
+      />
     );
   }
 

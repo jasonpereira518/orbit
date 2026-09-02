@@ -1307,6 +1307,40 @@ export async function chatWithNetwork(
     relevance: number;
   }>,
   priorTurns: Array<{ role: "user" | "assistant"; content: string }> = [],
+  /**
+   * Exhaustive membership for any organisation the question named. Unlike `contactsContext`
+   * — a relevance-ranked top-K — this is a complete group-by, so the model can state a
+   * count instead of guessing one from a truncated list. See `@/lib/chat-roster`.
+   */
+  orgRosters: Array<{
+    kind: "company" | "school";
+    name: string;
+    total: number;
+    people: Array<{ id: string; name: string; title: string | null }>;
+    truncated: boolean;
+  }> = [],
+  /**
+   * Who the product itself says needs attention — overdue follow-ups and the standing
+   * outreach queue. Present only for questions about reconnecting. See `@/lib/chat-attention`.
+   */
+  attention: {
+    overdue: Array<{
+      id: string;
+      name: string;
+      title: string | null;
+      company: string | null;
+      daysOverdue: number;
+      daysSinceTouch: number | null;
+      hasLoggedInteraction: boolean;
+    }>;
+    suggestions: Array<{
+      id: string;
+      name: string;
+      title: string | null;
+      company: string | null;
+      reason: string;
+    }>;
+  } | null = null,
   recruitersContext: Array<{
     id: string;
     fullName: string;
@@ -1363,13 +1397,60 @@ export async function chatWithNetwork(
 
   const hasRecruiters = recruitersContext.length > 0;
 
+  const attentionBlock = (() => {
+    if (!attention) return "";
+    const lines: string[] = [];
+    for (const c of attention.overdue) {
+      const where = [c.title, c.company].filter(Boolean).join(" @ ");
+      // "last touch" is only stated when a touch was actually logged; otherwise
+      // `lastInteractionAt` is the day they were added and saying otherwise invents history.
+      const touch =
+        c.hasLoggedInteraction && c.daysSinceTouch != null
+          ? `, last spoke ${c.daysSinceTouch}d ago`
+          : ", no conversation logged yet";
+      lines.push(
+        `- [id=${c.id}] ${c.name}${where ? ` (${where})` : ""} — follow-up ${c.daysOverdue}d overdue${touch}`
+      );
+    }
+    const overdueBlock = lines.length
+      ? `Overdue follow-ups (${attention.overdue.length}):\n${lines.join("\n")}`
+      : "Overdue follow-ups: none";
+    const queue = attention.suggestions
+      .map(
+        (s) =>
+          `- [id=${s.id}] ${s.name}${
+            [s.title, s.company].filter(Boolean).length
+              ? ` (${[s.title, s.company].filter(Boolean).join(" @ ")})`
+              : ""
+          }${s.reason ? ` — ${s.reason}` : ""}`
+      )
+      .join("\n");
+    return `${overdueBlock}${queue ? `\n\nOutreach queue:\n${queue}` : ""}`;
+  })();
+
+  const rosterBlock = orgRosters
+    .map((r) => {
+      const shown = r.people
+        .map((p) => `- [id=${p.id}] ${p.name}${p.title ? ` — ${p.title}` : ""}`)
+        .join("\n");
+      const note = r.truncated
+        ? `(closest ${r.people.length} of ${r.total} listed)`
+        : "(complete)";
+      return `${r.name} — ${r.total} ${r.total === 1 ? "person" : "people"} ${note}\n${shown}`;
+    })
+    .join("\n\n");
+
   const content = await completeJson(userId, {
     operation: "chat.answer",
     temperature: 0.3,
-    user: `${historyBlock ? `Prior conversation:\n${historyBlock}\n\n` : ""}Question: ${question}\n\nContacts:\n${contextBlock || "(no contacts found)"}${hasRecruiters ? `\n\nRecruiters:\n${recruitersBlock}` : ""}`,
+    user: `${historyBlock ? `Prior conversation:\n${historyBlock}\n\n` : ""}Question: ${question}\n\nContacts (relevance-ranked, not exhaustive):\n${contextBlock || "(no contacts found)"}${rosterBlock ? `\n\nComplete roster:\n${rosterBlock}` : ""}${attentionBlock ? `\n\nNeeds attention (computed from this user's own follow-up dates and outreach queue):\n${attentionBlock}` : ""}${hasRecruiters ? `\n\nRecruiters:\n${recruitersBlock}` : ""}`,
     system: `You are Orbit, a personal networking assistant.
-Answer using the provided contacts${hasRecruiters ? " and recruiters" : ""} (including summaries, notes, key facts, and LinkedIn messages). Never invent people or message content.
+Answer using the provided contacts${hasRecruiters ? " and recruiters" : ""} (including summaries, notes, key facts, and LinkedIn messages). Never invent people, companies, dates, or message content — if the lists do not say it, you do not know it.
 Use prior conversation for context when present, but ground every recommendation in the provided lists.
+The Contacts list is a relevance-ranked subset, so never present it as everyone the user knows and never count from it.
+${attentionBlock ? "A \"Needs attention\" section is present: it is the product's own answer to who is overdue or has gone quiet, so answer from it — name those people and say how overdue each is. Do not reply that you lack information while it is present.\n" : ""}${rosterBlock ? "A \"Complete roster\" section is present: its totals are authoritative and exhaustive for those organisations. Use that number when the question asks who or how many the user knows somewhere, and name people from it rather than from the Contacts list. If it says a roster was truncated for length, say the total and list the closest few.\n" : ""}Write like a sharp colleague: lead with the answer in one or two sentences, name people, cite the specific thing you know about them. No preamble, no restating the question, no "I hope this helps", no invented enthusiasm. If nothing in the lists answers the question, say so plainly and suggest what the user could add.
+Titles and companies say where someone works today and nothing more — never turn "Founder @ Acme" into "founded Acme", or a seniority into a history you were not given.
+Each recommendation's reason must point at a concrete detail from that person's summary, notes, key facts, or messages — not a generic statement that they work in the field. Any draft_message must sound like the user wrote it: short, specific to what they actually discussed, no flattery and no filler openers.
 ${hasRecruiters ? "When the question is about recruiters, prefer recruiters the user already logged (personal_rating / status present), then highly rated community recruiters. Do not invent email/phone — contact details may be locked." : ""}
 Return JSON:
 {

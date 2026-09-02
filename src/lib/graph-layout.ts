@@ -59,6 +59,8 @@ export type GraphContactInput = {
   notes?: string | null;
   sharedInterests?: string[] | null;
   dormant?: boolean;
+  /** True only when an `interactions` row exists. See ClosenessCohortResult.interactedIds. */
+  hasLoggedInteraction?: boolean;
 };
 
 export type GraphNodeData = {
@@ -80,6 +82,11 @@ export type GraphNodeData = {
   aiSummary?: string | null;
   keyFacts?: string[];
   lastInteractionAt?: string | null;
+  /**
+   * Whether `lastInteractionAt` describes a real touch. It is stamped on every create
+   * and import, so on its own it cannot be labelled "last interaction" honestly.
+   */
+  hasLoggedInteraction?: boolean;
   nextFollowUpAt?: string | null;
   metContext?: string | null;
   dateMet?: string | null;
@@ -662,6 +669,7 @@ export function buildHybridGraphLayout(
           aiSummary: c.aiSummary,
           keyFacts: c.keyFacts || [],
           lastInteractionAt: toIso(c.lastInteractionAt),
+          hasLoggedInteraction: c.hasLoggedInteraction === true,
           nextFollowUpAt: toIso(c.nextFollowUpAt),
           metContext: c.metContext ?? null,
           dateMet: toIso(c.dateMet ?? null),

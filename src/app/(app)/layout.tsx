@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { AppShell } from "@/components/layout/app-shell";
@@ -10,6 +11,7 @@ import {
   isDemoMode,
 } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { isOnboardingGatedPath, needsOnboarding } from "@/lib/onboarding";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { resolveThemePreference } from "@/lib/theme";
 
@@ -60,6 +62,20 @@ export default async function AppLayout({
   // Server Action POSTs that never re-run this layout. This is only the friendly surface:
   // without it a suspended user would hit an error boundary instead of an explanation.
   if (settings.suspendedAt) redirect("/suspended");
+
+  // First-run gate. This HAS to happen here, above <AppShell>, not in the (main) layout
+  // below it: by the time a nested layout redirects, this layout has already rendered and
+  // Next has flushed the shell, so the redirect degrades from a 307 into a client-side one
+  // that re-renders the router mid-hydration — which throws "Rendered more hooks than
+  // during the previous render" inside Next's own Router and blanks the page. Redirecting
+  // before anything renders keeps it a clean server redirect.
+  //
+  // `x-pathname` is set by `src/proxy.ts`; `needsOnboarding` is request-cached, so the
+  // (main) layout's own read of it costs nothing.
+  const pathname = (await headers()).get("x-pathname") ?? "";
+  if (isOnboardingGatedPath(pathname) && (await needsOnboarding(userId))) {
+    redirect("/onboarding");
+  }
 
   const theme = resolveThemePreference(settings.theme);
 

@@ -9,14 +9,27 @@ import { cn } from "@/lib/utils";
 export function ContactStatPills({
   closeness,
   lastTouchAt,
+  hasLoggedInteraction,
 }: {
   closeness: ClosenessBreakdown;
   lastTouchAt: Date | string | null;
+  /**
+   * Whether an `interactions` row exists. `lastTouchAt` falls back to
+   * `contacts.lastInteractionAt`, which is stamped on every create/import — so
+   * without this, an untouched LinkedIn import claims a "last touch" that never
+   * happened, right next to a timeline that says "no interactions yet".
+   */
+  hasLoggedInteraction: boolean;
 }) {
   const pct = Math.round(closeness.closeness * 100);
-  const lastLabel = lastTouchAt
-    ? `Last touch ${formatDistanceToNow(new Date(lastTouchAt), { addSuffix: true })}`
-    : "No interactions yet";
+  const since = lastTouchAt
+    ? formatDistanceToNow(new Date(lastTouchAt), { addSuffix: true })
+    : null;
+  const lastLabel = !since
+    ? "No interactions yet"
+    : hasLoggedInteraction
+      ? `Last touch ${since}`
+      : `Connected ${since}`;
 
   return (
     <div className="flex flex-wrap gap-2">

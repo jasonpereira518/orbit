@@ -618,6 +618,33 @@
   }
 }
 
+/* Star-chart loading placeholder (see constellation-loading.tsx). Reuses the
+   canvas's own vocabulary — a breathing core glow — rather than a shimmer bar,
+   which is invisible against #05070c. */
+@keyframes constellation-loading-breathe {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.constellation-loading-glow {
+  background: radial-gradient(
+    circle at 50% 50%,
+    color-mix(in oklab, #7aa7ff 42%, transparent) 0%,
+    color-mix(in oklab, #2b3f78 18%, transparent) 26%,
+    transparent 55%
+  );
+  animation: constellation-loading-breathe 2.4s ease-in-out infinite;
+}
+
+.constellation-loading-star {
+  animation: constellation-twinkle 1.4s ease-in-out infinite;
+}
+
 .constellation-corona {
   animation: constellation-corona 3.2s ease-in-out infinite;
 }
@@ -1456,5 +1483,58 @@ html[data-warp-journey="chrono"][data-warp="inbound"] [data-warp-craft] {
     animation: none !important;
     transform: none !important;
     opacity: 1 !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Toasts must never swallow a click on the page underneath.
+ *
+ * Sonner anchors bottom-right with `pointer-events: auto`, and Orbit puts primary
+ * actions there too: the Accept / Accept & next buttons on the Capture review card sit
+ * at x 780-1160, y 692-724 on a 1280x820 viewport, and the "Found N people" toast that
+ * fires the moment the card appears covers x 900-1256, y 675-729. For the four seconds
+ * the toast is up (ten for an error), `document.elementFromPoint` on the middle of that
+ * button returns the toast — so the click does nothing, twice in a row, on the exact
+ * step of the demo where you have just pasted your notes. The constellation's
+ * full-screen and Home buttons sit in the same corner.
+ *
+ * The toast layer becomes transparent to hit-testing; anything genuinely interactive
+ * inside a toast (the "See more" expander in `lib/toast.tsx`, a close or action button)
+ * opts back in. The cost is swipe-to-dismiss on a four-second notification, which is
+ * a better trade than a dead primary button.
+ * --------------------------------------------------------------------------- */
+[data-sonner-toaster],
+[data-sonner-toaster] [data-sonner-toast] {
+  pointer-events: none;
+}
+
+[data-sonner-toaster] [data-sonner-toast] button,
+[data-sonner-toaster] [data-sonner-toast] a,
+[data-sonner-toaster] [data-sonner-toast] [data-close-button],
+[data-sonner-toaster] [data-sonner-toast] [data-button] {
+  pointer-events: auto;
+}
+
+/* The plan-celebration handoff: the app's own logo mark (sidebar or mobile
+   header, whichever is laid out — see `[data-app-logo]`) steps aside while
+   the celebration's mark flies across the screen to take its place, then
+   fades back in synced with the flying mark's own fade-out. Without this the
+   destination already shows the new tier's ring (the shell refreshes the
+   instant the flight starts) for the whole flight, so the arriving mark
+   looks like a duplicate rather than a replacement. */
+html[data-celebration-handoff] [data-app-logo] {
+  opacity: 0;
+}
+
+[data-app-logo] {
+  transition: opacity 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Reduced motion never flies the mark (see `celebration-stage.tsx`), so
+     this attribute is never set in that path — but if it ever were, nothing
+     here should animate the app's own logo. */
+  [data-app-logo] {
+    transition: none;
   }
 }
