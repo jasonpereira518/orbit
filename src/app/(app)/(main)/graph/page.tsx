@@ -1,9 +1,14 @@
+import { Suspense } from "react";
 import { getGraphData } from "@/actions/graph";
 import { NetworkGraphLazy } from "@/components/graph/network-graph-lazy";
+import { GraphPageSkeleton } from "@/components/loading/page-skeletons";
 
-export default async function GraphPage() {
-  const initialData = await getGraphData();
-
+/**
+ * The heading paints from the layout immediately; the full-network scan streams in behind
+ * a Suspense boundary. Before, the page awaited the scan at the top, so the first byte
+ * waited for the whole payload — on a large network, seconds of blank.
+ */
+export default function GraphPage() {
   return (
     <div className="-mx-1 space-y-3 overflow-hidden md:-mx-2">
       <div className="shrink-0 px-1">
@@ -18,7 +23,14 @@ export default async function GraphPage() {
           you — each figure traced by its own people.
         </p>
       </div>
-      <NetworkGraphLazy initialData={initialData} />
+      <Suspense fallback={<GraphPageSkeleton />}>
+        <GraphIsland />
+      </Suspense>
     </div>
   );
+}
+
+async function GraphIsland() {
+  const initialData = await getGraphData();
+  return <NetworkGraphLazy initialData={initialData} />;
 }

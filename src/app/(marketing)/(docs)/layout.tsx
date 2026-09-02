@@ -1,4 +1,3 @@
-import { auth } from "@clerk/nextjs/server";
 import { MarketingDocShell } from "@/components/marketing/marketing-doc";
 import { isClerkConfigured, isDemoMode } from "@/lib/auth";
 
@@ -10,21 +9,15 @@ import { isClerkConfigured, isDemoMode } from "@/lib/auth";
  * never remount, which is what lets the switcher's bubble animate between
  * pills instead of jumping.
  */
-export default async function DocsLayout({
+export default function DocsLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const clerkOn = isClerkConfigured();
-  // Public pages: resolve auth optionally so signed-out visitors never hit a throw.
-  const { userId } = clerkOn ? await auth() : { userId: null };
-
+  // Static: the signed-in variant of the header resolves in the browser (see
+  // `LandingAuthControls`), so these pages need no server work at all.
   return (
-    <MarketingDocShell
-      clerkOn={clerkOn}
-      demoMode={isDemoMode()}
-      signedIn={Boolean(userId)}
-    >
+    <MarketingDocShell clerkOn={isClerkConfigured()} demoMode={isDemoMode()}>
       {children}
     </MarketingDocShell>
   );

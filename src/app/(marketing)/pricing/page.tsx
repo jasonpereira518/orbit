@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { auth } from "@clerk/nextjs/server";
 import { Eye, KeyRound, RotateCcw } from "lucide-react";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { Reveal } from "@/components/motion/reveal";
@@ -11,13 +10,11 @@ import { WarpArrivalBeacon } from "@/components/warp/warp-arrival-beacon";
 import { PlanComparison } from "@/components/pricing/plan-comparison";
 import { PricingFaq } from "@/components/pricing/pricing-faq";
 import { PricingTiers } from "@/components/pricing/pricing-tiers";
-import { getEntitlements } from "@/lib/entitlements";
 import {
   FREE_CONTACT_LIMIT,
   LIFETIME_INTRO_PRICE,
   LIFETIME_INTRO_SEATS,
   LIFETIME_STANDARD_PRICE,
-  type Plan,
 } from "@/lib/plan-limits";
 import { MONTHLY_AMOUNT } from "@/lib/plan-copy";
 import { isStripeConfigured } from "@/lib/stripe";
@@ -53,36 +50,26 @@ const TRUST = [
   },
 ];
 
+/**
+ * Revalidated every five minutes rather than rendered per request: the only server read
+ * is the Lifetime sale count, and the struck-through price can lag a few minutes without
+ * anyone being misled. Who is signed in, and on what plan, resolves in the browser
+ * (`LandingAuthControls`, `PricingTiers`) so the page itself is shared by everyone.
+ */
+export const revalidate = 300;
+
 export default async function PricingPage() {
   const clerkOn = isClerkConfigured();
   const demoMode = isDemoMode();
-
-  // Public page: resolve auth optionally and never call requireUserId, which throws for
-  // signed-out visitors. Entitlements are only read when there is somebody to read them for.
-  //
-  // Plan awareness keys off a real Clerk user, never the demo user: without Clerk keys
-  // `LandingAuthControls` always renders the signed-out header, so crediting demo-user
-  // with a plan would put "Your current plan" under a "Get Started" button.
-  const { userId } = clerkOn ? await auth() : { userId: null };
-  const signedIn = Boolean(userId);
 
   // What Lifetime costs today. Read from the sale count rather than hardcoded, so the
   // struck-through comparison stops being shown the moment it stops being true — a
   // permanent "was $75" beside a price that is simply $25 is a fake discount.
   const offer = await lifetimeOffer();
 
-  const currentPlan = await (async (): Promise<Plan | null> => {
-    if (!userId) return null;
-    try {
-      return (await getEntitlements(userId)).plan;
-    } catch {
-      return null;
-    }
-  })();
-
   // Only offer checkout when Stripe can actually take the payment.
   const lifetimePurchasable = isStripeConfigured();
-  const authProps = { clerkOn, demoMode, signedIn };
+  const authProps = { clerkOn, demoMode };
 
   return (
     // `landing-root` is load-bearing: globals.css paints the body deep-space while it is
@@ -133,8 +120,7 @@ export default async function PricingPage() {
 
         <Reveal className="reveal-celestial mt-14 block md:mt-20" delay={140}>
           <PricingTiers
-            currentPlan={currentPlan}
-            signedIn={signedIn}
+            clerkOn={clerkOn}
             lifetimePurchasable={lifetimePurchasable}
             lifetimeOffer={{
               priceUsd: offer.priceUsd,

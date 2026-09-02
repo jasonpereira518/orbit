@@ -1,11 +1,12 @@
 "use client";
 
+import { refreshPulse, useAppPulse } from "@/lib/app-pulse-store";
+import type { AppPulse } from "@/lib/app-pulse";
 import Link from "next/link";
 import {
   useEffect,
   useRef,
   useState,
-  useSyncExternalStore,
   useTransition,
 } from "react";
 import { formatDistanceToNow } from "date-fns";
@@ -26,7 +27,6 @@ import { toast } from "@/lib/toast";
 import {
   clearContactFollowUp,
   dismissSuggestion,
-  listNotificationPanel,
   markReminderDone,
   snoozeReminderAction,
 } from "@/actions/reminders";
@@ -53,7 +53,7 @@ import {
   type BackgroundJob,
 } from "@/lib/background-jobs";
 
-type PanelData = Awaited<ReturnType<typeof listNotificationPanel>>;
+type PanelData = AppPulse["panel"];
 type PanelItem = PanelData["items"][number];
 
 /**
@@ -87,100 +87,11 @@ function originFromButton(button: HTMLElement | null): string {
 /* Shared panel state                                                         */
 /* -------------------------------------------------------------------------- */
 
-/**
- * One poll for the whole app, not one per mounted button.
- *
- * `AppShell` renders this button twice — once in the mobile header, once in the fixed
- * desktop slot — and CSS hides whichever breakpoint does not apply. CSS does not stop
- * React from mounting both, so a per-component effect meant two `listNotificationPanel()`
- * round trips on every page load and two more every two minutes, in every open tab,
- * forever. Hoisting the state above the component means both mounts read one cache, share
- * one timer, and collapse simultaneous refreshes into a single request.
- *
- * The same shape as `src/lib/background-jobs.ts`, which this component already consumes.
- */
-const REFRESH_MS = 120_000;
-
-type PanelSnapshot = { data: PanelData | null; loading: boolean };
-
-const EMPTY_SNAPSHOT: PanelSnapshot = { data: null, loading: false };
-
-let snapshot: PanelSnapshot = EMPTY_SNAPSHOT;
-let inFlight: Promise<void> | null = null;
-let latestRequest = 0;
-let timerId: number | null = null;
-const listeners = new Set<() => void>();
-
-function setSnapshot(next: Partial<PanelSnapshot>) {
-  snapshot = { ...snapshot, ...next };
-  for (const listener of listeners) listener();
-}
-
-/**
- * Refreshes the panel.
- *
- * Ambient callers (mount, the interval, opening the sheet) share whatever request is
- * already running — that is what collapses the two mounts' first fetch into one.
- * `force` is for refreshing *after* a mutation, which must not be served by a request
- * that was issued before the mutation landed, or the panel silently reverts what the
- * user just did. `requestId` keeps the newest response the winner regardless of the
- * order the two come back in.
- */
-function refreshPanel(force = false): Promise<void> {
-  if (inFlight && !force) return inFlight;
-
-  const requestId = ++latestRequest;
-  setSnapshot({ loading: true });
-
-  const run = listNotificationPanel()
-    .then((next) => {
-      if (requestId === latestRequest) setSnapshot({ data: next });
-    })
-    .catch(() => {
-      if (requestId === latestRequest) toast.error("Could not load notifications");
-    })
-    .finally(() => {
-      if (requestId !== latestRequest) return;
-      inFlight = null;
-      setSnapshot({ loading: false });
-    });
-
-  inFlight = run;
-  return run;
-}
-
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  // First mount starts the shared timer; the last unmount stops it.
-  if (listeners.size === 1 && timerId === null) {
-    timerId = window.setInterval(() => {
-      // A hidden tab has no badge to update, and the old per-component interval kept
-      // every backgrounded tab polling regardless.
-      if (document.visibilityState === "visible") void refreshPanel();
-    }, REFRESH_MS);
-  }
-  return () => {
-    listeners.delete(listener);
-    if (listeners.size === 0) {
-      if (timerId !== null) {
-        window.clearInterval(timerId);
-        timerId = null;
-      }
-      // Dropped when the shell unmounts (signing out, or navigating to marketing) so a
-      // subsequent session cannot paint the previous account's counts before its own
-      // first fetch lands. Costs nothing: remounting refetches regardless.
-      snapshot = EMPTY_SNAPSHOT;
-    }
-  };
-}
-
-function getSnapshot() {
-  return snapshot;
-}
-
-function getServerSnapshot(): PanelSnapshot {
-  return EMPTY_SNAPSHOT;
-}
+// The panel is one slice of the app pulse (`src/lib/app-pulse-store.ts`): one poll per
+// tab shared with the desktop-notification and plan-celebration watchers, rather than the
+// three separate timers that used to run. `refreshPanel` keeps its old name and contract
+// (`force` after a mutation) so the action handlers below read the same.
+const refreshPanel = (force = false) => refreshPulse(force);
 
 export function NotificationsPanelButton() {
   const [open, setOpen] = useState(false);
@@ -189,11 +100,8 @@ export function NotificationsPanelButton() {
   // header and desktop fixed, hidden from each other by CSS), and this resolves to
   // whichever one the user actually pressed.
   const [origin, setOrigin] = useState("top right");
-  const { data, loading } = useSyncExternalStore(
-    subscribe,
-    getSnapshot,
-    getServerSnapshot
-  );
+  const { pulse, loading } = useAppPulse();
+  const data = pulse?.panel ?? null;
   const [pending, start] = useTransition();
 
   useEffect(() => {

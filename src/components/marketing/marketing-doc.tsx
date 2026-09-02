@@ -25,7 +25,8 @@ export function MarketingDocShell({
 }: {
   clerkOn: boolean;
   demoMode: boolean;
-  signedIn: boolean;
+  /** Server-known hint only; the header resolves the live state in the browser. */
+  signedIn?: boolean;
   children: ReactNode;
 }): JSX.Element {
   const authProps = { clerkOn, demoMode, signedIn };

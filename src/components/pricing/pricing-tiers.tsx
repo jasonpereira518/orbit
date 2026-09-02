@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
+import { getCurrentPlan } from "@/actions/billing";
 import Link from "next/link";
 import { Check } from "lucide-react";
 import { BillingToggle } from "@/components/pricing/billing-toggle";
@@ -168,14 +170,8 @@ const TIER_ACCENT: Record<
   },
 };
 
-export function PricingTiers({
-  currentPlan,
-  signedIn,
-  lifetimePurchasable,
-  lifetimeOffer,
-}: {
-  currentPlan: Plan | null;
-  signedIn: boolean;
+type TiersProps = {
+  clerkOn: boolean;
   lifetimePurchasable: boolean;
   /**
    * Resolved on the server from the live sale count, because Lifetime's price rises after
@@ -183,7 +179,47 @@ export function PricingTiers({
    * component; the shape is deliberately minimal for the same reason.
    */
   lifetimeOffer: { priceUsd: number; compareAtUsd: number | null };
-}) {
+};
+
+/**
+ * The page is static and shared, so "who is this" and "what plan are they on" resolve in
+ * the browser after Clerk loads. `useAuth()` throws outside a <ClerkProvider>, which is
+ * mounted only when Clerk is configured (also at build time, where this page is now
+ * prerendered), so the hook lives in a child that only exists when Clerk does. Plan
+ * awareness keys off a real Clerk user, never the demo user: without Clerk keys the header
+ * renders signed-out, and crediting demo-user with a plan would put "Your current plan"
+ * under a "Get Started" button.
+ */
+export function PricingTiers(props: TiersProps) {
+  if (!props.clerkOn) return <PricingTiersView {...props} signedIn={false} currentPlan={null} />;
+  return <ClerkAwareTiers {...props} />;
+}
+
+function ClerkAwareTiers(props: TiersProps) {
+  const auth = useAuth();
+  const signedIn = auth.isSignedIn === true;
+  const [currentPlan, setCurrentPlan] = useState<Plan | null>(null);
+  useEffect(() => {
+    if (!signedIn) return;
+    let cancelled = false;
+    getCurrentPlan()
+      .then((plan) => {
+        if (!cancelled) setCurrentPlan(plan);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [signedIn]);
+  return <PricingTiersView {...props} signedIn={signedIn} currentPlan={currentPlan} />;
+}
+
+function PricingTiersView({
+  lifetimePurchasable,
+  lifetimeOffer,
+  signedIn,
+  currentPlan,
+}: TiersProps & { signedIn: boolean; currentPlan: Plan | null }) {
   const [period, setPeriod] = useState<BillingPeriod>("monthly");
   const plans = planCopyWithOffer(lifetimeOffer);
 

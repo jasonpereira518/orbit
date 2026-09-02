@@ -11,7 +11,7 @@
  * `src/lib/search.ts`, which already take `userId` as their first argument.
  */
 
-import { and, count, eq, inArray, sql } from "drizzle-orm";
+import { and, count, eq, inArray, sql, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getDb } from "@/db";
@@ -353,12 +353,16 @@ export async function createContactForUser(
 
   const [contact] = await db
     .insert(contacts)
-    .values(contactInsertValues(userId, input, companyFields, now))
+    .values({
+      ...contactInsertValues(userId, input, companyFields, now),
+      // Stale from birth: the embedding is built after the response (see deferEmbeddingRebuild).
+      embeddingStaleAt: now,
+    })
     .returning();
 
   await syncTags(userId, contact.id, input.tagNames);
   if (!options?.skipEmbedding) {
-    await rebuildContactEmbedding(userId, contact.id);
+    deferEmbeddingRebuild(userId, contact.id, now);
   }
 
   await scoreAfterWrite(userId, contact.id, options);
@@ -383,6 +387,53 @@ export async function createContactForUser(
  * Failure here is not worth failing a write over. An unscored contact is picked up by the
  * next recalibration either way, which is exactly what the dirty flag is asking for.
  */
+/**
+ * Rebuild a contact's semantic embedding AFTER the response, not before it.
+ *
+ * The rebuild is an external embedding-API round trip (300–800 ms, unbounded on a slow
+ * provider), and it used to sit inside every create, update and logged note — the most-felt
+ * latency in the product. The row is marked `embedding_stale_at` in the write itself, so
+ * the hourly backfill is the backstop if this deferred task never runs (a killed function,
+ * a script with no request scope). Keyword search reads the row, not the embedding, so a
+ * just-saved contact is findable by name immediately and semantically within seconds.
+ *
+ * `after()` needs a request scope; outside one (tsx scripts) the task simply runs in the
+ * background of the current process.
+ */
+function deferEmbeddingRebuild(userId: string, contactId: string, staleAt: Date) {
+  const task = async () => {
+    try {
+      // A swallowed provider failure (no key, an outage) reports false and leaves the
+      // marker for the backfill.
+      if (!(await rebuildContactEmbedding(userId, contactId))) return;
+      const db = await getDb();
+      // Clear the marker only if nothing newer re-marked it (same guard as the backfill).
+      await db
+        .update(contacts)
+        .set({ embeddingStaleAt: null })
+        .where(and(eq(contacts.id, contactId), lte(contacts.embeddingStaleAt, staleAt)));
+    } catch {
+      // Left stale on purpose; the backfill picks it up.
+    }
+  };
+  try {
+    after(task);
+  } catch {
+    void task();
+  }
+}
+
+/** Mark a contact stale and rebuild its embedding after the response. For callers outside this file. */
+export async function scheduleEmbeddingRebuild(userId: string, contactId: string) {
+  const staleAt = new Date();
+  const db = await getDb();
+  await db
+    .update(contacts)
+    .set({ embeddingStaleAt: staleAt })
+    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+  deferEmbeddingRebuild(userId, contactId, staleAt);
+}
+
 async function scoreAfterWrite(
   userId: string,
   contactId: string,
@@ -604,6 +655,7 @@ export async function updateContactForUser(
   options?: ContactWriteOptions
 ) {
   const db = await getDb();
+  const staleAt = new Date();
 
   const companyPatch =
     input.company !== undefined
@@ -613,6 +665,8 @@ export async function updateContactForUser(
   const [contact] = await db
     .update(contacts)
     .set({
+      // The embedding is rebuilt after the response; see deferEmbeddingRebuild.
+      embeddingStaleAt: staleAt,
       ...(input.fullName !== undefined ? { fullName: input.fullName } : {}),
       ...(input.firstName !== undefined ? { firstName: input.firstName } : {}),
       ...(input.lastName !== undefined ? { lastName: input.lastName } : {}),
@@ -683,7 +737,7 @@ export async function updateContactForUser(
   }
 
   if (!options?.skipEmbedding) {
-    await rebuildContactEmbedding(userId, id);
+    deferEmbeddingRebuild(userId, id, staleAt);
   }
 
   const significant =
@@ -782,7 +836,7 @@ export async function logInteractionForUser(
   }
 
   if ((input.rawNotes || input.aiSummary) && !options?.skipEmbedding) {
-    await rebuildContactEmbedding(userId, input.contactId);
+    await scheduleEmbeddingRebuild(userId, input.contactId);
   }
 
   // Significant change: refresh stored person summary
