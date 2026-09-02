@@ -31,21 +31,34 @@ async function main() {
   const [sarah] = await db.insert(contacts).values({ userId: USER, fullName: "Sarah Chen" }).returning();
   const [raj] = await db.insert(contacts).values({ userId: USER, fullName: "Raj Patel" }).returning();
   const [dev] = await db.insert(contacts).values({ userId: USER, fullName: "Dev Patel" }).returning();
+  const [amy] = await db.insert(contacts).values({ userId: USER, fullName: "Amy Liu" }).returning();
+  const [ben] = await db.insert(contacts).values({ userId: USER, fullName: "Ben Wu" }).returning();
+  const [zed] = await db.insert(contacts).values({ userId: USER, fullName: "Zed Quin" }).returning();
 
   const [sarahInteraction] = await db.insert(interactions).values({ userId: USER, contactId: sarah.id, rawNotes: "x", interactionDate: new Date(2026, 7, 1, 12) }).returning();
   const [devInteraction] = await db.insert(interactions).values({ userId: USER, contactId: dev.id, rawNotes: "y", interactionDate: new Date(2026, 7, 2, 12) }).returning();
+  const [amyInteraction] = await db.insert(interactions).values({ userId: USER, contactId: amy.id, rawNotes: "z", interactionDate: new Date(2026, 7, 3, 12) }).returning();
+  const [benInteraction] = await db.insert(interactions).values({ userId: USER, contactId: ben.id, rawNotes: "w", interactionDate: new Date(2026, 7, 4, 12) }).returning();
 
   // Sarah's own note mentions Raj (mentionsOf, from Sarah's perspective).
   await db.insert(interactionMentions).values({ userId: USER, interactionId: sarahInteraction.id, contactId: raj.id, mentionText: "Raj", confidence: 0.7, matchedBy: "first_name_unique" });
-  // Dev's note also mentions Raj (mentionedBy, from Raj's perspective).
+  // Dev's, Amy's, and Ben's notes also mention Raj (mentionedBy, from Raj's perspective) —
+  // four sources total, oldest (Sarah) to newest (Ben), to exercise the 3-per-direction cap.
   await db.insert(interactionMentions).values({ userId: USER, interactionId: devInteraction.id, contactId: raj.id, mentionText: "Raj Patel", confidence: 0.9, matchedBy: "exact_name" });
+  await db.insert(interactionMentions).values({ userId: USER, interactionId: amyInteraction.id, contactId: raj.id, mentionText: "Raj Patel", confidence: 0.9, matchedBy: "exact_name" });
+  await db.insert(interactionMentions).values({ userId: USER, interactionId: benInteraction.id, contactId: raj.id, mentionText: "Raj Patel", confidence: 0.9, matchedBy: "exact_name" });
 
-  const result = await listContactMentionsBatch(USER, [sarah.id, raj.id, dev.id]);
+  // Zed has zero interactionMentions rows in either direction, and is passed in contactIds.
+  const result = await listContactMentionsBatch(USER, [sarah.id, raj.id, dev.id, zed.id]);
 
   check("Sarah has a mentionsOf line naming Raj", (result.get(sarah.id)?.mentionsOfLines.length ?? 0) === 1);
-  check("Raj has two mentionedBy lines (Sarah's and Dev's notes)", (result.get(raj.id)?.mentionedByLines.length ?? 0) === 2, JSON.stringify(result.get(raj.id)));
+  check(
+    "Raj's mentionedByLines truncates to 3, newest first (Ben, Amy, Dev — Sarah dropped as oldest)",
+    JSON.stringify(result.get(raj.id)?.mentionedByLines) === JSON.stringify(["Ben Wu", "Amy Liu", "Dev Patel"]),
+    JSON.stringify(result.get(raj.id))
+  );
   check("Dev has neither (his note mentions Raj, not himself)", (result.get(dev.id)?.mentionedByLines ?? []).length === 0 && (result.get(dev.id)?.mentionsOfLines.length ?? 0) === 1);
-  check("a contact with no mentions at all is absent or empty, never throws", true);
+  check("a contact with no mentions at all is absent from the Map, never throws", result.get(zed.id) === undefined);
 
   await db.delete(contacts).where(eq(contacts.userId, USER));
   console.log("\nsmoke-contact-mentions-batch: all checks passed");
