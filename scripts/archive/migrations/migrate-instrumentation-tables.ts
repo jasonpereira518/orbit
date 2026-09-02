@@ -20,7 +20,7 @@ config({ path: ".env.local" });
 config();
 
 import { sql } from "drizzle-orm";
-import { getDb, rowsOf } from "../src/db";
+import { getDb, rowsOf } from "../../../src/db";
 
 const TABLES: Array<[name: string, ddl: string]> = [
   [

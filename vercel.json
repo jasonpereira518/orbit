@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm run check:env && next build",
+  "buildCommand": "npm run check:env && npm run db:migrate && next build",
   "crons": [
     {
       "path": "/api/imports/process-stalled",

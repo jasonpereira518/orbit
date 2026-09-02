@@ -285,6 +285,7 @@ CREATE TABLE IF NOT EXISTS imports (
   duplicates_found integer DEFAULT 0,
   error_message text,
   stats jsonb DEFAULT '{}',
+  stall_resumes integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -790,8 +791,9 @@ CREATE TABLE IF NOT EXISTS non_dilutive_funding (
  * v22 = non_dilutive_funding, plus fundraising_investors.received_at.
  * v23 = contact_embeddings.content_hash (hybrid contact search).
  * v24 = ops_alert_state (the production-readiness ops sweep's alert ledger).
+ * v25 = imports.stall_resumes (the process-stalled cron's give-up counter).
  */
-export const SCHEMA_VERSION = 24;
+export const SCHEMA_VERSION = 25;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -941,6 +943,20 @@ export const SCALE_DDL: string[] = [
   // throttle check) had no supporting index — its three existing indexes lead with
   // created_at, target_user_id, and action respectively.
   `CREATE INDEX IF NOT EXISTS admin_audit_log_admin_target_idx ON admin_audit_log(admin_user_id, target_user_id, created_at)`,
+
+  // Legacy action items → rows. Idempotent through the unique (user_id, item_hash) index —
+  // which is why this lives here rather than in `ADMIN_V2_STATEMENTS`: this runs via
+  // `applyScaleSchema`, AFTER `applySchema` has created every index, so the ON CONFLICT
+  // target the INSERT depends on is guaranteed to exist. `ADMIN_V2_STATEMENTS` is spread
+  // into the `alters` pass, which runs BEFORE indexes — an insert placed there would fail
+  // on any database (fresh or upgrading) that does not already have this index.
+  // The hash formula MUST equal actionItemHash() in src/lib/action-items.ts.
+  `INSERT INTO action_items (user_id, contact_id, interaction_id, text, position, item_hash)
+   SELECT i.user_id, i.contact_id, i.id, a.value, a.ordinality - 1,
+          encode(sha256(convert_to(i.id::text || '|' || lower(btrim(a.value)), 'UTF8')), 'hex')
+   FROM interactions i, jsonb_array_elements_text(COALESCE(i.action_items, '[]'::jsonb)) WITH ORDINALITY a
+   WHERE jsonb_typeof(i.action_items) = 'array' AND btrim(a.value) <> ''
+   ON CONFLICT (user_id, item_hash) DO NOTHING`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
@@ -951,21 +967,31 @@ export type StatementRunner = (statement: string) => Promise<unknown>;
  * that `IF NOT EXISTS` cannot express (adding a constraint, mostly) while still surfacing
  * anything genuinely wrong instead of swallowing it.
  */
+/** "It was already there" — the only failures an idempotent sweep may ignore. */
+const BENIGN_DDL_FAILURE = /already exists|duplicate key|duplicate object/i;
+
+export type SchemaFailure = { statement: string; message: string };
+
+/**
+ * Runs a list of idempotent DDL statements. With a `failed` collector every real failure
+ * is recorded for the caller to act on (the build-time migration refuses to deploy on any);
+ * without one it is logged, which is all a runtime cold start can do.
+ */
 async function runStatements(
   run: StatementRunner,
   statements: string[],
-  label: string
+  label: string,
+  failed?: SchemaFailure[]
 ) {
   for (const statement of statements) {
     try {
       await run(statement);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (/already exists|duplicate key|duplicate object/i.test(message)) continue;
-      console.error(
-        `[db] ${label} failed: ${statement.trim().split("\n")[0]}\n`,
-        message
-      );
+      if (BENIGN_DDL_FAILURE.test(message)) continue;
+      const head = statement.trim().split("\n")[0].slice(0, 140);
+      if (failed) failed.push({ statement: head, message });
+      else console.error(`[db] ${label} failed: ${head}\n`, message);
     }
   }
 }
@@ -977,8 +1003,8 @@ async function runStatements(
  * before an index can use `gin_trgm_ops`, and the `contact_tags` uniqueness can only be
  * added once the duplicate pairs already in the table are gone.
  */
-export async function applyScaleSchema(run: StatementRunner) {
-  await runStatements(run, SCALE_DDL, "scale DDL");
+export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFailure[]) {
+  await runStatements(run, SCALE_DDL, "scale DDL", failed);
 
   // Fuzzy name matching. Available on Neon as an extension and bundled with PGlite (see
   // `ensureReady`), so local search finally behaves like production — unlike pgvector,
@@ -1112,8 +1138,9 @@ async function ensureColumn(
   await client.exec(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${definition}`);
 }
 
-async function migratePglite(client: PGlite) {
-  await client.exec(DDL);
+async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
+  const failed: SchemaFailure[] = [];
+  await applySchema((statement) => client.query(statement), failed);
 
   // Older local DBs used an OpenAI key column name
   if (await columnExists(client, "user_settings", "openai_api_key_encrypted")) {
@@ -1416,7 +1443,7 @@ async function migratePglite(client: PGlite) {
   // `query` rather than `exec`: it returns `{ rows }`, which `rowsOf` understands, so the
   // schema-version SELECT reads the same on both drivers. Every statement here is a single
   // command, which is what `query` requires.
-  await applyScaleSchema((statement) => client.query(statement));
+  await applyScaleSchema((statement) => client.query(statement), failed);
 
   // Admin console v2: operator suspension, plus the indexes the cross-user roster/trend
   // queries need. Same reasoning as the block above — the DDL template only helps a
@@ -1430,23 +1457,11 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "interest_list_signups", "welcome_planet", "text");
   await ensureColumn(client, "interest_list_signups", "follow_up_sent_at", "timestamptz");
 
-  // Schema v17: note processing provenance columns.
-  await ensureColumn(client, "interactions", "note_batch_id", "uuid");
-  await ensureColumn(client, "reminders", "note_batch_id", "uuid");
-  await ensureColumn(client, "reminders", "source_interaction_id", "uuid REFERENCES interactions(id) ON DELETE SET NULL");
-  await ensureColumn(client, "reminders", "action_item_id", "uuid");
-  await ensureColumn(client, "reminders", "source_excerpt", "text");
-  await ensureColumn(client, "reminders", "raw_date_phrase", "text");
-  await ensureColumn(client, "reminders", "date_basis", "text");
-  await ensureColumn(client, "reminders", "item_hash", "text");
-
-  for (const statement of ADMIN_V2_STATEMENTS) {
-    try {
-      await client.exec(statement);
-    } catch {
-      // Already exists.
-    }
-  }
+  // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
+  // and friends), and admin console v2's own indexes, are covered by the shared `alters`
+  // list above via `applySchema` — not here. `ADMIN_V2_STATEMENTS` is spread into that
+  // list, so running it again here would just repeat it.
+  return failed;
 }
 
 /**
@@ -1471,14 +1486,6 @@ const ADMIN_V2_STATEMENTS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS reminders_user_item_hash_uidx ON reminders(user_id, item_hash)`,
   `CREATE INDEX IF NOT EXISTS reminders_note_batch_idx ON reminders(note_batch_id)`,
   `CREATE INDEX IF NOT EXISTS interactions_note_batch_idx ON interactions(note_batch_id)`,
-  // Legacy action items → rows. Idempotent through the unique (user_id, item_hash) index.
-  // The hash formula MUST equal actionItemHash() in src/lib/action-items.ts.
-  `INSERT INTO action_items (user_id, contact_id, interaction_id, text, position, item_hash)
-   SELECT i.user_id, i.contact_id, i.id, a.value, a.ordinality - 1,
-          encode(sha256(convert_to(i.id::text || '|' || lower(btrim(a.value)), 'UTF8')), 'hex')
-   FROM interactions i, jsonb_array_elements_text(COALESCE(i.action_items, '[]'::jsonb)) WITH ORDINALITY a
-   WHERE jsonb_typeof(i.action_items) = 'array' AND btrim(a.value) <> ''
-   ON CONFLICT (user_id, item_hash) DO NOTHING`,
 ];
 
 /**
@@ -1610,208 +1617,212 @@ async function migratePgvector(run: StatementRunner) {
   }
 }
 
-async function migrateNeon(sql: ReturnType<typeof neon>) {
-  // Full bootstrap for empty Neon DBs (CREATE IF NOT EXISTS is idempotent).
+/**
+ * Incremental columns and indexes for databases created before they existed. Applied by
+ * BOTH drivers (PGlite is Postgres), in list order, AFTER the template's CREATE TABLEs and
+ * BEFORE its indexes — see `applySchema`.
+ */
+const alters = [
+  // Deliberately not backfilled from `committed_at` — see the column's comment in schema.ts.
+  `ALTER TABLE fundraising_investors ADD COLUMN IF NOT EXISTS received_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_step text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS openai_api_key_encrypted text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS anthropic_api_key_encrypted text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS preferred_name text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS website text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS met_context text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS date_met timestamptz`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS company_id uuid`,
+  `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS external_id text`,
+  `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS same_day_order integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS error_message text`,
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS stats jsonb DEFAULT '{}'`,
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS total_rows integer`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS apollo_api_key_encrypted text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS resend_api_key_encrypted text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_account_sid_encrypted text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_auth_token_encrypted text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_from_number text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS theme text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS desktop_notified_ids jsonb DEFAULT '[]'`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS social_links jsonb DEFAULT '{}'`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_plan text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lifetime_purchased_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS yc_mode_enabled boolean DEFAULT false`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS estimated_monthly_churn_pct real`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS stripe_customer_id text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_plan text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_status text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_period_end timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_monthly_cents integer`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_interval text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_note text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_by text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_active_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS first_name text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_name text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS profile_image_url text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_referrer text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_utm_source text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_utm_medium text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_utm_campaign text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_landing_path text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_attributed_at timestamptz`,
+  `CREATE INDEX IF NOT EXISTS usage_events_user_created_idx ON usage_events(user_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS usage_events_created_idx ON usage_events(created_at)`,
+  `CREATE INDEX IF NOT EXISTS usage_events_model_idx ON usage_events(provider, model)`,
+  `CREATE INDEX IF NOT EXISTS admin_audit_log_created_idx ON admin_audit_log(created_at)`,
+  `CREATE INDEX IF NOT EXISTS admin_audit_log_target_idx ON admin_audit_log(target_user_id)`,
+  // Instrumentation tables. The CREATE TABLEs in DDL above land on a fresh database;
+  // these repair an existing one, which is why the indexes appear in both places.
+  `CREATE INDEX IF NOT EXISTS cron_runs_job_started_idx ON cron_runs(job, started_at)`,
+  `CREATE INDEX IF NOT EXISTS cron_runs_started_idx ON cron_runs(started_at)`,
+  `CREATE INDEX IF NOT EXISTS webhook_deliveries_created_idx ON webhook_deliveries(created_at)`,
+  `CREATE INDEX IF NOT EXISTS webhook_deliveries_event_idx ON webhook_deliveries(event_id)`,
+  `CREATE INDEX IF NOT EXISTS webhook_deliveries_target_idx ON webhook_deliveries(target_user_id)`,
+  `CREATE INDEX IF NOT EXISTS webhook_deliveries_type_created_idx ON webhook_deliveries(event_type, created_at)`,
+  `CREATE INDEX IF NOT EXISTS error_events_created_idx ON error_events(created_at)`,
+  `CREATE INDEX IF NOT EXISTS error_events_source_created_idx ON error_events(source, created_at)`,
+  `CREATE INDEX IF NOT EXISTS error_events_user_created_idx ON error_events(user_id, created_at)`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS x_handle text`,
+  `CREATE INDEX IF NOT EXISTS contacts_user_linkedin_idx ON contacts(user_id, linkedin_url)`,
+  `CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle)`,
+  `CREATE INDEX IF NOT EXISTS companies_user_idx ON companies(user_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS companies_user_name_uidx ON companies(user_id, name_normalized)`,
+  `CREATE INDEX IF NOT EXISTS user_goals_user_idx ON user_goals(user_id)`,
+  `CREATE INDEX IF NOT EXISTS contacts_company_idx ON contacts(user_id, company)`,
+  `CREATE INDEX IF NOT EXISTS contacts_follow_up_idx ON contacts(user_id, next_follow_up_at)`,
+  `CREATE INDEX IF NOT EXISTS tags_user_id_idx ON tags(user_id)`,
+  `CREATE INDEX IF NOT EXISTS contact_tags_contact_idx ON contact_tags(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS interactions_contact_idx ON interactions(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS interactions_user_idx ON interactions(user_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS interactions_user_external_uidx ON interactions(user_id, external_id) WHERE external_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS reminders_user_status_idx ON reminders(user_id, status)`,
+  `CREATE INDEX IF NOT EXISTS reminders_due_idx ON reminders(user_id, due_date)`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS list_id uuid REFERENCES reminder_lists(id) ON DELETE SET NULL`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS action_kind text NOT NULL DEFAULT 'task'`,
+  `CREATE INDEX IF NOT EXISTS reminders_list_idx ON reminders(user_id, list_id)`,
+  `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS reply_cta text`,
+  `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS sequence_steps jsonb DEFAULT '[]'`,
+  `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS last_search_source text`,
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS step_index integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS parent_message_id uuid`,
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS scheduled_for timestamptz`,
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS outcome text`,
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS outcome_notes text`,
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS replied_at timestamptz`,
+  `CREATE INDEX IF NOT EXISTS outreach_messages_outcome_idx ON outreach_messages(outcome)`,
+  `CREATE INDEX IF NOT EXISTS outreach_messages_scheduled_idx ON outreach_messages(scheduled_for)`,
+  `CREATE INDEX IF NOT EXISTS ai_suggestions_user_idx ON ai_suggestions(user_id, status)`,
+  `CREATE INDEX IF NOT EXISTS embeddings_user_idx ON contact_embeddings(user_id)`,
+  `CREATE INDEX IF NOT EXISTS embeddings_contact_idx ON contact_embeddings(contact_id)`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_offered_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_step text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_completed_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token_created_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_last_fetched_at timestamptz`,
+  // Added a version after the table itself. A preview deployment of the branch that
+  // introduced `interest_list_signups` already created it without these, and
+  // CREATE TABLE IF NOT EXISTS will never go back and add a column to it.
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS welcome_planet text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS follow_up_sent_at timestamptz`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS shared_to_pool integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS ai_summary text`,
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS companies_mentioned jsonb DEFAULT '[]'`,
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS roles_discussed jsonb DEFAULT '[]'`,
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS first_email_at timestamptz`,
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS last_email_at timestamptz`,
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email_count integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS gmail_thread_id text`,
+  `CREATE INDEX IF NOT EXISTS recruiter_messages_user_idx ON recruiter_messages(user_id, status)`,
+  `CREATE INDEX IF NOT EXISTS recruiter_messages_recruiter_idx ON recruiter_messages(recruiter_id)`,
+  `CREATE INDEX IF NOT EXISTS recruiter_messages_sent_idx ON recruiter_messages(user_id, sent_at)`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_reason text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_by text`,
+  // Schema v17: note processing provenance columns.
+  `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS note_batch_id uuid`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS note_batch_id uuid`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS source_interaction_id uuid REFERENCES interactions(id) ON DELETE SET NULL`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS action_item_id uuid`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS source_excerpt text`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS raw_date_phrase text`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS date_basis text`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS item_hash text`,
+  ...ADMIN_V2_STATEMENTS,
+  // Embedding staleness: imports flag contacts here instead of embedding inline, and a
+  // separate backfill drains them. The dedupe is safe to re-run — it only ever deletes
+  // rows that lose the (user_id, contact_id, source_type, source_id) tiebreak, and once
+  // the unique index exists no more duplicates can be created for it to find.
+  //
+  // `source_id` is part of the key because that is the real uniqueness contract:
+  // `upsertContactEmbedding` keys its existence check on all four columns, and
+  // calendar-sync writes one `"meeting"` row per meeting with a distinct `source_id`.
+  // The DROP is load-bearing: an earlier revision created this same-named index on only
+  // three columns, which would delete every meeting embedding but the newest and then
+  // make each subsequent meeting write raise a swallowed unique violation. NULL
+  // `source_id`s index as distinct (Postgres default), so unkeyed rows stay
+  // unconstrained — matching the writer, which skips its existence check without one.
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS embedding_stale_at timestamptz`,
+  `CREATE INDEX IF NOT EXISTS contacts_embedding_stale_idx
+   ON contacts(user_id) WHERE embedding_stale_at IS NOT NULL`,
+  `DELETE FROM contact_embeddings a
+   USING contact_embeddings b
+   WHERE a.user_id = b.user_id
+     AND a.contact_id = b.contact_id
+     AND a.source_type = b.source_type
+     AND a.source_id = b.source_id
+     AND (a.created_at < b.created_at OR (a.created_at = b.created_at AND a.id < b.id))`,
+  `DROP INDEX IF EXISTS embeddings_user_contact_source_uidx`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS embeddings_user_contact_source_id_uidx
+   ON contact_embeddings(user_id, contact_id, source_type, source_id)`,
+];
+
+/**
+ * Applies the bootstrap DDL in an order that cannot fail on an older database:
+ *
+ *   1. the template's CREATE TABLEs        (new tables, all columns, fresh databases)
+ *   2. the template's ALTER TABLEs         (rare; columns the template itself adds)
+ *   3. `alters`, in list order             (columns and indexes for older databases)
+ *   4. everything else in the template     (indexes, which may name altered columns)
+ *
+ * The template used to run top to bottom, so `CREATE INDEX contacts_user_x_idx ON
+ * contacts(x_handle)` ran before `alters` added `x_handle` to a pre-existing table. The
+ * statement failed, the sweep carried on, the version was recorded anyway, and the index
+ * has been silently missing from production since August 2026. Now: columns first, and
+ * every real failure is returned rather than only logged.
+ */
+async function applySchema(run: StatementRunner, failed: SchemaFailure[]): Promise<void> {
   const statements = DDL.split(";")
     .map((s) => s.trim())
     .filter(Boolean);
+  const tables = statements.filter((s) => /^CREATE TABLE/i.test(s));
+  const columns = statements.filter((s) => /^ALTER TABLE/i.test(s));
+  const rest = statements.filter((s) => !/^(CREATE TABLE|ALTER TABLE)/i.test(s));
+  await runStatements(run, tables, "DDL", failed);
+  await runStatements(run, columns, "DDL", failed);
+  await runStatements(run, alters, "alters", failed);
+  await runStatements(run, rest, "DDL", failed);
+}
 
-  for (const statement of statements) {
-    try {
-      await sql.query(statement);
-    } catch (err) {
-      // Older Postgres variants / race — continue so later alters can recover,
-      // but surface anything unexpected instead of swallowing it silently.
-      const message = err instanceof Error ? err.message : String(err);
-      if (!/already exists/i.test(message)) {
-        console.error(`[db] DDL statement failed: ${statement}\n`, message);
-      }
-    }
-  }
-
-  // Incremental columns for older Neon DBs created before these existed.
-  const alters = [
-    // Deliberately not backfilled from `committed_at` — see the column's comment in schema.ts.
-    `ALTER TABLE fundraising_investors ADD COLUMN IF NOT EXISTS received_at timestamptz`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed_at timestamptz`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_step text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS openai_api_key_encrypted text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS anthropic_api_key_encrypted text`,
-    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS preferred_name text`,
-    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS website text`,
-    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS met_context text`,
-    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS date_met timestamptz`,
-    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS company_id uuid`,
-    `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS external_id text`,
-    `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS same_day_order integer NOT NULL DEFAULT 0`,
-    `ALTER TABLE imports ADD COLUMN IF NOT EXISTS error_message text`,
-    `ALTER TABLE imports ADD COLUMN IF NOT EXISTS stats jsonb DEFAULT '{}'`,
-    `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,
-    `ALTER TABLE imports ADD COLUMN IF NOT EXISTS total_rows integer`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS apollo_api_key_encrypted text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS resend_api_key_encrypted text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_account_sid_encrypted text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_auth_token_encrypted text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_from_number text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS theme text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS desktop_notified_ids jsonb DEFAULT '[]'`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS social_links jsonb DEFAULT '{}'`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_plan text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lifetime_purchased_at timestamptz`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS yc_mode_enabled boolean DEFAULT false`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS estimated_monthly_churn_pct real`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS stripe_customer_id text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_plan text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_status text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_period_end timestamptz`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_monthly_cents integer`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_interval text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_note text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_at timestamptz`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_by text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_active_at timestamptz`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS first_name text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_name text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS profile_image_url text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_referrer text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_utm_source text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_utm_medium text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_utm_campaign text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_landing_path text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS signup_attributed_at timestamptz`,
-    `CREATE INDEX IF NOT EXISTS usage_events_user_created_idx ON usage_events(user_id, created_at)`,
-    `CREATE INDEX IF NOT EXISTS usage_events_created_idx ON usage_events(created_at)`,
-    `CREATE INDEX IF NOT EXISTS usage_events_model_idx ON usage_events(provider, model)`,
-    `CREATE INDEX IF NOT EXISTS admin_audit_log_created_idx ON admin_audit_log(created_at)`,
-    `CREATE INDEX IF NOT EXISTS admin_audit_log_target_idx ON admin_audit_log(target_user_id)`,
-    // Instrumentation tables. The CREATE TABLEs in DDL above land on a fresh database;
-    // these repair an existing one, which is why the indexes appear in both places.
-    `CREATE INDEX IF NOT EXISTS cron_runs_job_started_idx ON cron_runs(job, started_at)`,
-    `CREATE INDEX IF NOT EXISTS cron_runs_started_idx ON cron_runs(started_at)`,
-    `CREATE INDEX IF NOT EXISTS webhook_deliveries_created_idx ON webhook_deliveries(created_at)`,
-    `CREATE INDEX IF NOT EXISTS webhook_deliveries_event_idx ON webhook_deliveries(event_id)`,
-    `CREATE INDEX IF NOT EXISTS webhook_deliveries_target_idx ON webhook_deliveries(target_user_id)`,
-    `CREATE INDEX IF NOT EXISTS webhook_deliveries_type_created_idx ON webhook_deliveries(event_type, created_at)`,
-    `CREATE INDEX IF NOT EXISTS error_events_created_idx ON error_events(created_at)`,
-    `CREATE INDEX IF NOT EXISTS error_events_source_created_idx ON error_events(source, created_at)`,
-    `CREATE INDEX IF NOT EXISTS error_events_user_created_idx ON error_events(user_id, created_at)`,
-    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
-    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
-    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS x_handle text`,
-    `CREATE INDEX IF NOT EXISTS contacts_user_linkedin_idx ON contacts(user_id, linkedin_url)`,
-    `CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle)`,
-    `CREATE INDEX IF NOT EXISTS companies_user_idx ON companies(user_id)`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS companies_user_name_uidx ON companies(user_id, name_normalized)`,
-    `CREATE INDEX IF NOT EXISTS user_goals_user_idx ON user_goals(user_id)`,
-    `CREATE INDEX IF NOT EXISTS contacts_company_idx ON contacts(user_id, company)`,
-    `CREATE INDEX IF NOT EXISTS contacts_follow_up_idx ON contacts(user_id, next_follow_up_at)`,
-    `CREATE INDEX IF NOT EXISTS tags_user_id_idx ON tags(user_id)`,
-    `CREATE INDEX IF NOT EXISTS contact_tags_contact_idx ON contact_tags(contact_id)`,
-    `CREATE INDEX IF NOT EXISTS interactions_contact_idx ON interactions(contact_id)`,
-    `CREATE INDEX IF NOT EXISTS interactions_user_idx ON interactions(user_id)`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS interactions_user_external_uidx ON interactions(user_id, external_id) WHERE external_id IS NOT NULL`,
-    `CREATE INDEX IF NOT EXISTS reminders_user_status_idx ON reminders(user_id, status)`,
-    `CREATE INDEX IF NOT EXISTS reminders_due_idx ON reminders(user_id, due_date)`,
-    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS list_id uuid REFERENCES reminder_lists(id) ON DELETE SET NULL`,
-    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS action_kind text NOT NULL DEFAULT 'task'`,
-    `CREATE INDEX IF NOT EXISTS reminders_list_idx ON reminders(user_id, list_id)`,
-    `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS reply_cta text`,
-    `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS sequence_steps jsonb DEFAULT '[]'`,
-    `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS last_search_source text`,
-    `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS step_index integer NOT NULL DEFAULT 0`,
-    `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS parent_message_id uuid`,
-    `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS scheduled_for timestamptz`,
-    `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS outcome text`,
-    `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS outcome_notes text`,
-    `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS replied_at timestamptz`,
-    `CREATE INDEX IF NOT EXISTS outreach_messages_outcome_idx ON outreach_messages(outcome)`,
-    `CREATE INDEX IF NOT EXISTS outreach_messages_scheduled_idx ON outreach_messages(scheduled_for)`,
-    `CREATE INDEX IF NOT EXISTS ai_suggestions_user_idx ON ai_suggestions(user_id, status)`,
-    `CREATE INDEX IF NOT EXISTS embeddings_user_idx ON contact_embeddings(user_id)`,
-    `CREATE INDEX IF NOT EXISTS embeddings_contact_idx ON contact_embeddings(contact_id)`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_offered_at timestamptz`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_step text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_completed_at timestamptz`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token_created_at timestamptz`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_last_fetched_at timestamptz`,
-    // Added a version after the table itself. A preview deployment of the branch that
-    // introduced `interest_list_signups` already created it without these, and
-    // CREATE TABLE IF NOT EXISTS will never go back and add a column to it.
-    `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS welcome_planet text`,
-    `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS follow_up_sent_at timestamptz`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
-    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
-    `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS shared_to_pool integer NOT NULL DEFAULT 1`,
-    `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS ai_summary text`,
-    `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS companies_mentioned jsonb DEFAULT '[]'`,
-    `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS roles_discussed jsonb DEFAULT '[]'`,
-    `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS first_email_at timestamptz`,
-    `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS last_email_at timestamptz`,
-    `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email_count integer NOT NULL DEFAULT 0`,
-    `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS gmail_thread_id text`,
-    `CREATE INDEX IF NOT EXISTS recruiter_messages_user_idx ON recruiter_messages(user_id, status)`,
-    `CREATE INDEX IF NOT EXISTS recruiter_messages_recruiter_idx ON recruiter_messages(recruiter_id)`,
-    `CREATE INDEX IF NOT EXISTS recruiter_messages_sent_idx ON recruiter_messages(user_id, sent_at)`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_at timestamptz`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_reason text`,
-    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_by text`,
-    `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS note_batch_id uuid`,
-    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS note_batch_id uuid`,
-    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS source_interaction_id uuid REFERENCES interactions(id) ON DELETE SET NULL`,
-    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS action_item_id uuid`,
-    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS source_excerpt text`,
-    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS raw_date_phrase text`,
-    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS date_basis text`,
-    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS item_hash text`,
-    ...ADMIN_V2_STATEMENTS,
-    // Embedding staleness: imports flag contacts here instead of embedding inline, and a
-    // separate backfill drains them. The dedupe is safe to re-run — it only ever deletes
-    // rows that lose the (user_id, contact_id, source_type, source_id) tiebreak, and once
-    // the unique index exists no more duplicates can be created for it to find.
-    //
-    // `source_id` is part of the key because that is the real uniqueness contract:
-    // `upsertContactEmbedding` keys its existence check on all four columns, and
-    // calendar-sync writes one `"meeting"` row per meeting with a distinct `source_id`.
-    // The DROP is load-bearing: an earlier revision created this same-named index on only
-    // three columns, which would delete every meeting embedding but the newest and then
-    // make each subsequent meeting write raise a swallowed unique violation. NULL
-    // `source_id`s index as distinct (Postgres default), so unkeyed rows stay
-    // unconstrained — matching the writer, which skips its existence check without one.
-    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS embedding_stale_at timestamptz`,
-    `CREATE INDEX IF NOT EXISTS contacts_embedding_stale_idx
-     ON contacts(user_id) WHERE embedding_stale_at IS NOT NULL`,
-    `DELETE FROM contact_embeddings a
-     USING contact_embeddings b
-     WHERE a.user_id = b.user_id
-       AND a.contact_id = b.contact_id
-       AND a.source_type = b.source_type
-       AND a.source_id = b.source_id
-       AND (a.created_at < b.created_at OR (a.created_at = b.created_at AND a.id < b.id))`,
-    `DROP INDEX IF EXISTS embeddings_user_contact_source_uidx`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS embeddings_user_contact_source_id_uidx
-     ON contact_embeddings(user_id, contact_id, source_type, source_id)`,
-  ];
-
-  for (const statement of alters) {
-    try {
-      await sql.query(statement);
-    } catch (err) {
-      // Older Postgres variants / race — ignore "already exists"-style failures,
-      // but surface anything else so real DDL drift doesn't fail silently.
-      const message = err instanceof Error ? err.message : String(err);
-      if (!/already exists/i.test(message)) {
-        console.error(`[db] DDL statement failed: ${statement}\n`, message);
-      }
-    }
-  }
-
-  await migratePgvector((statement) => sql.query(statement));
-
-  await applyScaleSchema((statement) => sql.query(statement));
+async function migrateNeon(sql: ReturnType<typeof neon>): Promise<SchemaFailure[]> {
+  const failed: SchemaFailure[] = [];
+  const run: StatementRunner = (statement) => sql.query(statement);
+  await applySchema(run, failed);
+  await migratePgvector(run);
+  await applyScaleSchema(run, failed);
+  return failed;
 }
 
 /**
@@ -1919,7 +1930,7 @@ export async function closeDb(): Promise<void> {
   globalForDb.orbitReady = undefined;
 }
 
-export async function getDb(): Promise<Db> {
+async function ready(): Promise<void> {
   if (!globalForDb.orbitReady) {
     globalForDb.orbitReady = ensureReady().catch((err) => {
       globalForDb.orbitReady = undefined;
@@ -1927,36 +1938,64 @@ export async function getDb(): Promise<Db> {
     });
   }
   await globalForDb.orbitReady;
+}
+
+export type SchemaReconcileResult = {
+  version: number;
+  /** False when the recorded version already matched and nothing ran. */
+  applied: boolean;
+  failed: SchemaFailure[];
+};
+
+/**
+ * Brings the connected database up to `SCHEMA_VERSION`, or confirms it already is.
+ *
+ * The whole sweep is idempotent, but "idempotent" is not "free": on `neon-http` every
+ * statement is a separate HTTPS request, so replaying ~165 of them is the single largest
+ * cost in a cold start. Confirm the recorded version first and skip the lot when it
+ * already matches. A version mismatch — or any error reading it — takes the full pass.
+ *
+ * The version is recorded ONLY when nothing failed. A sweep that logged a failure and
+ * recorded the version anyway is how an index went missing from production for a month
+ * unnoticed; leaving the version behind instead keeps `/api/health` reporting
+ * `schema_mismatch` until someone looks. The build-time migration (`scripts/migrate.ts`)
+ * runs this ahead of `next build` and refuses to deploy on any failure, so in practice a
+ * runtime boot only ever sees the no-op path.
+ */
+export async function reconcileSchema(): Promise<SchemaReconcileResult> {
+  await ready();
+  const neonSql = globalForDb.orbitNeonSql;
+  const run: StatementRunner = neonSql
+    ? (statement) => neonSql.query(statement)
+    : (statement) => globalForDb.orbitPglite!.query(statement);
+
+  if (await schemaIsCurrent(run)) {
+    // pgvector/pg_trgm availability lives in module state, not in the database, so it
+    // still has to be established on a boot that skips the DDL.
+    await detectExtensions(run);
+    return { version: SCHEMA_VERSION, applied: false, failed: [] };
+  }
+
+  const failed = neonSql
+    ? await migrateNeon(neonSql)
+    : await migratePglite(globalForDb.orbitPglite!);
+  for (const f of failed) {
+    console.error(`[db] DDL statement failed: ${f.statement}\n`, f.message);
+  }
+  if (failed.length === 0) await recordSchemaVersion(run);
+  return { version: SCHEMA_VERSION, applied: true, failed };
+}
+
+export async function getDb(): Promise<Db> {
+  await ready();
 
   if (!schemaReconciled) {
-    schemaReconciled = (async () => {
-      const neonSql = globalForDb.orbitNeonSql;
-      const run: StatementRunner = neonSql
-        ? (statement) => neonSql.query(statement)
-        : (statement) => globalForDb.orbitPglite!.query(statement);
-
-      // The whole sweep is idempotent, but "idempotent" is not "free": on `neon-http`
-      // every statement is a separate HTTPS request, so replaying ~165 of them is the
-      // single largest cost in a cold start. Confirm the recorded version first and skip
-      // the lot when it already matches. A version mismatch — or any error reading it —
-      // falls through to the full pass, so the worst case is the old behaviour.
-      if (await schemaIsCurrent(run)) {
-        // pgvector/pg_trgm availability lives in module state, not in the database, so it
-        // still has to be established on a boot that skips the DDL.
-        await detectExtensions(run);
-        return;
-      }
-
-      if (neonSql) {
-        await migrateNeon(neonSql);
-      } else {
-        await migratePglite(globalForDb.orbitPglite!);
-      }
-      await recordSchemaVersion(run);
-    })().catch((err) => {
-      schemaReconciled = undefined;
-      throw err;
-    });
+    schemaReconciled = reconcileSchema()
+      .then(() => undefined)
+      .catch((err) => {
+        schemaReconciled = undefined;
+        throw err;
+      });
   }
   await schemaReconciled;
 

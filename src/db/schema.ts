@@ -554,6 +554,8 @@ export const reminders = pgTable(
     index("reminders_due_idx").on(t.userId, t.dueDate),
     index("reminders_list_idx").on(t.userId, t.listId),
     uniqueIndex("reminders_user_item_hash_uidx").on(t.userId, t.itemHash),
+    // Created by SCALE_DDL; declared here so the two never disagree again.
+    index("reminders_user_contact_idx").on(t.userId, t.contactId),
   ]
 );
 
@@ -784,6 +786,12 @@ export const imports = pgTable("imports", {
   contactsUpdated: integer("contacts_updated").default(0),
   duplicatesFound: integer("duplicates_found").default(0),
   errorMessage: text("error_message"),
+  /**
+   * How many times the stalled-import backstop has resumed this job. Self-continuations
+   * do not count — only the cron picking up a job that went quiet. Past 3 the job is
+   * marked failed with a message rather than retried forever (see src/lib/import-stall.ts).
+   */
+  stallResumes: integer("stall_resumes").default(0).notNull(),
   stats: jsonb("stats").$type<ImportStats>().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

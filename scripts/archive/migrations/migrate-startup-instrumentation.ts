@@ -23,7 +23,7 @@ config({ path: ".env.local" });
 config();
 
 import { sql } from "drizzle-orm";
-import { getDb } from "../src/db";
+import { getDb } from "../../../src/db";
 
 const COLUMNS: Array<[column: string, definition: string]> = [
   ["signup_referrer", "text"],
