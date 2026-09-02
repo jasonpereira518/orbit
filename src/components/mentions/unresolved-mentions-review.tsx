@@ -70,7 +70,7 @@ export function UnresolvedMentionsReview({ mentions: initial }: { mentions: Unre
   }
 
   return (
-    <ul className="space-y-3">
+    <div className="space-y-3">
       {mentions.map((m) => (
         <Card key={m.id} className="border-border/70 shadow-none">
           <CardContent className="space-y-3 pt-4">
@@ -92,6 +92,7 @@ export function UnresolvedMentionsReview({ mentions: initial }: { mentions: Unre
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <select
+                aria-label="Link to existing contact"
                 className="h-9 rounded-md border border-input bg-background px-2 text-sm"
                 value={linking[m.id] ?? ""}
                 onChange={(e) => setLinking((prev) => ({ ...prev, [m.id]: e.target.value }))}
@@ -118,6 +119,6 @@ export function UnresolvedMentionsReview({ mentions: initial }: { mentions: Unre
           </CardContent>
         </Card>
       ))}
-    </ul>
+    </div>
   );
 }
