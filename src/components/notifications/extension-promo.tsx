@@ -8,17 +8,14 @@ import { WarpLink } from "@/components/warp/warp-link";
 import { cn } from "@/lib/utils";
 
 /**
- * Where "Add to Chrome" goes. There is no published listing yet, so this falls
- * back to a Chrome Web Store search rather than hiding the button — the store
- * is the destination either way, and a search still lands somewhere real.
+ * Where "Add to Chrome" goes. Unset until the listing is published — the
+ * banner renders nothing rather than sending people to a search result.
  *
  * Set `NEXT_PUBLIC_EXTENSION_URL` to the listing URL
  * (https://chromewebstore.google.com/detail/<slug>/<id>) once it is published;
  * that is the only change needed here.
  */
-const STORE_URL =
-  process.env.NEXT_PUBLIC_EXTENSION_URL ??
-  "https://chromewebstore.google.com/search/orbit";
+const STORE_URL = process.env.NEXT_PUBLIC_EXTENSION_URL;
 
 /**
  * In dark mode this banner keeps its light-mode face: a white card in a dark
@@ -97,7 +94,7 @@ export function ExtensionPromo({
   // fetch resolves, so it has no server-rendered output to mismatch.
   const [dismissed, setDismissed] = useState(wasDismissed);
 
-  if (dismissed) return null;
+  if (dismissed || !STORE_URL) return null;
 
   return (
     <div

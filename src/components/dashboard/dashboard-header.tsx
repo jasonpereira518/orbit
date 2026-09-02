@@ -11,11 +11,14 @@ export function DashboardHeader() {
       </h1>
       <p className="max-w-xl text-muted-foreground">
         Follow-ups, dormant connections, and people worth reaching out to — in one place.
-        Press{" "}
-        <kbd className="rounded-md border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[11px]">
-          ⌘K
-        </kbd>{" "}
-        to ask your network.
+        <span className="hidden md:inline">
+          {" "}
+          Press{" "}
+          <kbd className="rounded-md border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[11px]">
+            ⌘K
+          </kbd>{" "}
+          to ask your network.
+        </span>
       </p>
     </header>
   );

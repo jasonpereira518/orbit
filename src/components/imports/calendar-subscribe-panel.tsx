@@ -53,15 +53,10 @@ export function CalendarSubscribePanel({
             Calendar subscription
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Paste a private ICS URL. For Google Calendar: Settings → Integrate
-            calendar →{" "}
-            <span className="text-foreground">
-              Secret address in iCal format
-            </span>{" "}
-            (it includes <code className="text-xs">/private-…/</code>, not{" "}
-            <code className="text-xs">/public/</code>). Orbit polls it, keeps
-            1:1 / networking events in sync, and can create contacts for people
-            it recognizes — team standups and focus blocks are ignored.
+            Paste your calendar&apos;s secret iCal link. In Google Calendar:
+            Settings → your calendar → Integrate calendar → Secret address in
+            iCal format. Orbit checks it for 1:1 and networking meetings and
+            skips standups.
           </p>
         </div>
       </div>

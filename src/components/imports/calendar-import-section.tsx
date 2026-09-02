@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { Calendar as CalendarIcon } from "lucide-react";
+import { Calendar as CalendarIcon, ChevronDown } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { previewCalendarImport } from "@/actions/imports";
 import { CALENDAR_BACKFILL_DAYS } from "@/lib/calendar-import";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CalendarSubscribePanel } from "@/components/imports/calendar-subscribe-panel";
+import { cn } from "@/lib/utils";
 import {
   BusyHint,
   ImportFilePicker,
@@ -43,6 +44,10 @@ export function CalendarImportSection({
   const job = useImportJob();
   const [pending, start] = useTransition();
 
+  // Collapsed by default — this is the secret-URL sync path, and most people just
+  // want the one-time upload below.
+  const [subscribeOpen, setSubscribeOpen] = useState(false);
+
   const [calendarText, setCalendarText] = useState("");
   const [calendarKind, setCalendarKind] = useState<"ics" | "csv">("ics");
   const [calendarFileName, setCalendarFileName] = useState<string | null>(null);
@@ -74,7 +79,31 @@ export function CalendarImportSection({
 
   return (
     <div className="space-y-6">
-      <CalendarSubscribePanel initialSubscriptions={calendarSubscriptions} />
+      <div className="space-y-3">
+        <button
+          type="button"
+          aria-expanded={subscribeOpen}
+          aria-controls="calendar-subscribe-disclosure"
+          onClick={() => setSubscribeOpen((prev) => !prev)}
+          className="flex w-full items-start justify-between gap-3 rounded-xl border border-border/60 bg-muted/30 px-4 py-3 text-left transition-colors hover:border-border"
+        >
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-foreground">
+              Advanced: keep a calendar in sync
+            </span>
+          </span>
+          <ChevronDown
+            aria-hidden="true"
+            className={cn(
+              "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+              subscribeOpen && "rotate-180"
+            )}
+          />
+        </button>
+        <div id="calendar-subscribe-disclosure" hidden={!subscribeOpen}>
+          <CalendarSubscribePanel initialSubscriptions={calendarSubscriptions} />
+        </div>
+      </div>
 
       <section className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-calendar/70 bg-card p-6">
         <div className="flex items-start gap-3">

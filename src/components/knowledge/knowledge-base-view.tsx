@@ -105,7 +105,7 @@ export function KnowledgeBaseView({
         />
         <Stat
           icon={<BookOpen className="h-4 w-4" />}
-          label="Searchable chunks"
+          label="Search index"
           value={stats.embeddings}
         />
       </div>
