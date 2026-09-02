@@ -74,8 +74,30 @@ export function offerForCount(
   };
 }
 
+/**
+ * True while a LOCAL production build is prerendering.
+ *
+ * `/pricing` is static, so `next build` renders it — and this function is the only reason
+ * that build opens a database at all. Against Neon that is harmless. Against the local
+ * PGlite directory it makes every `npm run build` a second writer alongside `next dev`,
+ * which is the single most common way that directory gets corrupted.
+ *
+ * Deliberately narrow: it checks for the build phase AND the absence of `DATABASE_URL`, so
+ * a real deployment build still reads the true count and the page still ships accurate
+ * pricing. Skipping only costs a local build the sale count on a page whose count is baked
+ * in at build time and goes stale immediately regardless.
+ */
+function isLocalPrerender() {
+  return (
+    process.env.NEXT_PHASE === "phase-production-build" &&
+    !process.env.DATABASE_URL?.trim()
+  );
+}
+
 /** The live offer. Falls back to the intro price if the count cannot be read. */
 export async function lifetimeOffer(): Promise<LifetimeOffer> {
+  if (isLocalPrerender()) return offerForCount(0);
+
   let sold = 0;
   try {
     sold = await countLifetimePurchases();

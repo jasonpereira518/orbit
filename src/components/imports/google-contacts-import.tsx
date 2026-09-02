@@ -83,7 +83,7 @@ export function GoogleContactsImport() {
 
   if (!status.configured) {
     return (
-      <section className="space-y-2 rounded-2xl border border-dashed border-border/70 bg-card/50 p-6">
+      <section id="import-google-contacts" className="space-y-2 rounded-2xl border border-dashed border-border/70 bg-card/50 p-6">
         <h2 className="text-lg font-medium text-ink">Google Contacts</h2>
         <p className="text-sm text-muted-foreground">
           Set <code className="text-xs">GOOGLE_CLIENT_ID</code>,{" "}
@@ -95,7 +95,7 @@ export function GoogleContactsImport() {
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
+    <section id="import-google-contacts" className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-medium text-ink">Google Contacts</h2>
