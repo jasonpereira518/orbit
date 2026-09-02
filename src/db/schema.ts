@@ -602,7 +602,7 @@ export type ReminderDateBasis = "absolute" | "relative" | "vague" | "window";
 export type NoteBatchResult = {
   participants: { contactId: string; interactionId: string | null; name: string; created: boolean; duplicate: boolean }[];
   mentions: { interactionId: string; contactId: string; text: string; confidence: number; matchedBy: string }[];
-  unresolvedMentions: { text: string; context: string | null }[];
+  unresolvedMentions: { text: string; context: string | null; id?: string }[];
   actionItems: { id: string; contactId: string; text: string; reminderId: string | null }[];
   reminders: { id: string; contactId: string | null; title: string; dueIso: string; dateBasis: ReminderDateBasis; rawDatePhrase: string | null; sourceExcerpt: string | null }[];
   skipped: { relative: number; unverifiable: number; past: number; duplicate: number };
@@ -650,6 +650,42 @@ export const interactionMentions = pgTable(
     index("interaction_mentions_user_contact_idx").on(t.userId, t.contactId),
   ]
 );
+
+/**
+ * A mention that resolved to no contact when a note was saved. Staged like
+ * `suggestedReminders`: reviewed on `/mentions/review` or from the batch results page,
+ * then either linked to an existing contact (writing a real `interactionMentions` row) or
+ * used to create a new one. `itemHash` dedupes across a re-paste of the same note, exactly
+ * like every other write this pipeline makes.
+ */
+export const unresolvedMentions = pgTable(
+  "unresolved_mentions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    noteBatchId: uuid("note_batch_id").notNull().references(() => noteBatches.id, { onDelete: "cascade" }),
+    /** The interaction the mention was found near, when one exists (null for a dates-only batch). */
+    interactionId: uuid("interaction_id").references(() => interactions.id, { onDelete: "set null" }),
+    /** The participant contact this mention was found near — for "found in your note about X". */
+    nearContactId: uuid("near_contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    mentionText: text("mention_text").notNull(),
+    context: text("context"),
+    sourceHash: text("source_hash").notNull(),
+    /** buildSuggestionItemHash(sourceHash, "mention", mentionText) — dedupes a re-paste. */
+    itemHash: text("item_hash").notNull(),
+    status: text("status").$type<"pending" | "resolved" | "dismissed">().default("pending").notNull(),
+    resolvedContactId: uuid("resolved_contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("unresolved_mentions_user_status_idx").on(t.userId, t.status),
+    index("unresolved_mentions_batch_idx").on(t.noteBatchId),
+    uniqueIndex("unresolved_mentions_user_item_hash_uidx").on(t.userId, t.itemHash),
+  ]
+);
+
+export type UnresolvedMention = typeof unresolvedMentions.$inferSelect;
 
 /**
  * One row per action item extracted from (or typed into) an interaction, with completion
@@ -1906,6 +1942,12 @@ export const noteBatchesRelations = relations(noteBatches, ({ many }) => ({
 export const interactionMentionsRelations = relations(interactionMentions, ({ one }) => ({
   interaction: one(interactions, { fields: [interactionMentions.interactionId], references: [interactions.id] }),
   contact: one(contacts, { fields: [interactionMentions.contactId], references: [contacts.id] }),
+}));
+export const unresolvedMentionsRelations = relations(unresolvedMentions, ({ one }) => ({
+  noteBatch: one(noteBatches, { fields: [unresolvedMentions.noteBatchId], references: [noteBatches.id] }),
+  interaction: one(interactions, { fields: [unresolvedMentions.interactionId], references: [interactions.id] }),
+  nearContact: one(contacts, { fields: [unresolvedMentions.nearContactId], references: [contacts.id] }),
+  resolvedContact: one(contacts, { fields: [unresolvedMentions.resolvedContactId], references: [contacts.id] }),
 }));
 export const actionItemsRelations = relations(actionItems, ({ one }) => ({
   interaction: one(interactions, { fields: [actionItems.interactionId], references: [interactions.id] }),

@@ -261,6 +261,24 @@ CREATE TABLE IF NOT EXISTS action_items (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS action_items_user_item_hash_uidx ON action_items(user_id, item_hash);
 CREATE INDEX IF NOT EXISTS action_items_user_contact_status_idx ON action_items(user_id, contact_id, status);
+CREATE TABLE IF NOT EXISTS unresolved_mentions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  note_batch_id uuid NOT NULL REFERENCES note_batches(id) ON DELETE CASCADE,
+  interaction_id uuid REFERENCES interactions(id) ON DELETE SET NULL,
+  near_contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  mention_text text NOT NULL,
+  context text,
+  source_hash text NOT NULL,
+  item_hash text NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  resolved_contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  resolved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS unresolved_mentions_user_status_idx ON unresolved_mentions(user_id, status);
+CREATE INDEX IF NOT EXISTS unresolved_mentions_batch_idx ON unresolved_mentions(note_batch_id);
+CREATE UNIQUE INDEX IF NOT EXISTS unresolved_mentions_user_item_hash_uidx ON unresolved_mentions(user_id, item_hash);
 CREATE TABLE IF NOT EXISTS contact_briefs (
   contact_id uuid PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
   user_id text NOT NULL,
@@ -754,8 +772,10 @@ CREATE TABLE IF NOT EXISTS fundraising_investors (
  * v17 = note processing tables (note_batches, interaction_mentions, action_items,
  * contact_briefs) plus reminder/interaction provenance columns.
  * v18 = legacy action-item backfill guards on jsonb_typeof(action_items) = 'array'.
+ * v20 = unresolved_mentions table (mention review,
+ *   dedupe hash, notification-panel entry).
  */
-export const SCHEMA_VERSION = 19;
+export const SCHEMA_VERSION = 20;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
