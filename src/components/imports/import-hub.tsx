@@ -278,11 +278,9 @@ export function ImportHub({
                 )}
               />
             </button>
-            {linkedInOpen ? (
-              <div id="linkedin-connections-disclosure">
-                <LinkedInConnectionsImport />
-              </div>
-            ) : null}
+            <div id="linkedin-connections-disclosure" hidden={!linkedInOpen}>
+              <LinkedInConnectionsImport />
+            </div>
           </div>
         </div>
       )}

@@ -92,7 +92,13 @@ export function ImportFilePicker({
         e.preventDefault();
         setDragging(true);
       }}
-      onDragLeave={() => setDragging(false)}
+      onDragLeave={(e) => {
+        // Fires whenever the cursor moves onto a child (the Button, filename span, caption)
+        // too, not just when it truly exits the wrapper — only clear the highlight once the
+        // pointer's next target is outside this element, or every child boundary flickers it.
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        setDragging(false);
+      }}
       onDrop={(e) => {
         e.preventDefault();
         setDragging(false);

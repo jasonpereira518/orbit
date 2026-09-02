@@ -158,6 +158,15 @@ export async function recordAccountView(
 /* ------------------------------------------------------------------------------ imports */
 
 /**
+ * Every status `retryImport` (below) allows re-arming from — anything but `completed`,
+ * which is refused by its own explicit check before either the audit row or the re-arm
+ * runs. Passed straight to `rearmImportJob`'s `fromStatuses` so its guard and its write
+ * happen in one atomic `UPDATE ... WHERE`, matching what `retryImport` already checked,
+ * rather than that check and the write racing against a second retry of the same row.
+ */
+const ADMIN_RETRYABLE_STATUSES = ["pending", "processing", "failed", "cancelled"] as const;
+
+/**
  * Re-arm a failed or stuck import, and return the id of the job to run.
  *
  * Only the types in `RESUMABLE_IMPORT_TYPES` can be re-armed: they are the ones that own
@@ -207,7 +216,12 @@ export async function retryImport(adminUserId: string, input: {
     reason,
   });
 
-  await rearmImportJob(input.importId);
+  const rearmed = await rearmImportJob(input.importId, ADMIN_RETRYABLE_STATUSES);
+  if (!rearmed) {
+    throw new Error(
+      "This import's status changed before the retry could be applied. Refresh and try again."
+    );
+  }
 
   return { importId: input.importId };
 }

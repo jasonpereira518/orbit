@@ -337,7 +337,15 @@ export async function retryImport(
     };
   }
 
-  await rearmImportJob(importId);
+  // The status check above is a fast, user-friendly read; `rearmImportJob`'s own
+  // UPDATE ... WHERE status = 'failed' is the real guard, atomically — it is what makes two
+  // concurrent retries of the same row safe: one wins the write, the other gets `false` back
+  // and must not also schedule a run.
+  const rearmed = await rearmImportJob(importId);
+  if (!rearmed) {
+    return { ok: false, error: "That import is already running." };
+  }
+
   after(() => runImportJobById(importId).catch(() => {}));
   revalidatePath("/imports");
 
