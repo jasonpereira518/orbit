@@ -1,20 +1,16 @@
 import { NextResponse } from "next/server";
 import { after } from "next/server";
+import { isInternalRequest } from "@/lib/internal-auth";
 import { runImportJobById } from "@/lib/import-job-dispatch";
 
 export const maxDuration = 300;
 
 type Params = { params: Promise<{ id: string }> };
 
-/** Internal self-continuation target — not user-facing. Authorized via a shared secret. */
-function isAuthorized(request: Request) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return true;
-  return request.headers.get("authorization") === `Bearer ${secret}`;
-}
-
 export async function POST(request: Request, { params }: Params) {
-  if (!isAuthorized(request)) {
+  // Internal self-continuation target — not user-facing. Fail-closed shared secret; see
+  // internal-auth.ts.
+  if (!isInternalRequest(request)) {
     return new NextResponse(null, { status: 401 });
   }
 

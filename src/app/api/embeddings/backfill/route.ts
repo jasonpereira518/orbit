@@ -1,18 +1,13 @@
 import { NextResponse } from "next/server";
 import { after } from "next/server";
+import { isInternalRequest } from "@/lib/internal-auth";
 import { kickEmbeddingBackfill, runEmbeddingBackfill } from "@/lib/embedding-backfill";
 
 export const maxDuration = 300;
 
-/** Internal kick target — not user-facing. Authorized via the shared cron secret. */
-function isAuthorized(request: Request) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return true;
-  return request.headers.get("authorization") === `Bearer ${secret}`;
-}
-
 export async function POST(request: Request) {
-  if (!isAuthorized(request)) {
+  // Internal kick target — not user-facing. Fail-closed shared secret; see internal-auth.ts.
+  if (!isInternalRequest(request)) {
     return new NextResponse(null, { status: 401 });
   }
 

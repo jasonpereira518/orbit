@@ -27,4 +27,13 @@ export const PUBLIC_ROUTES = [
   // an unauthenticated call gets a JSON 401 the extension can act on, rather than a 302
   // to an HTML sign-in page.
   "/api/extension(.*)",
+  // Not actually public either: Orbit's internal job routes. Vercel Cron, the ops scheduler
+  // and the app's own self-continuation `fetch` carry no Clerk session, so `auth.protect()`
+  // would bounce every one of them before the handler ran — which is exactly what happened,
+  // silently, until Sept 2026. They authenticate with CRON_SECRET via `isInternalRequest()`
+  // (`src/lib/internal-auth.ts`), which is fail-closed in production.
+  "/api/imports/process-stalled",
+  "/api/imports/(.*)/continue",
+  "/api/embeddings/backfill",
+  "/api/linkedin/timeline-events/backfill",
 ] as const;

@@ -21,7 +21,7 @@ import { and, asc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { contacts } from "@/db/schema";
 import { createEmbeddingsBatch } from "@/lib/ai";
-import { getAppBaseUrl } from "@/lib/app-url";
+import { internalFetch } from "@/lib/internal-auth";
 import { buildContactEmbeddingContent, persistEmbeddingVectors } from "@/lib/search";
 
 /** Contacts claimed per pass. */
@@ -44,14 +44,10 @@ export const TIME_BUDGET_MS = 4.5 * 60 * 1000;
  * its invocation. Best-effort by design — the daily cron re-kicks anything still pending.
  */
 export async function kickEmbeddingBackfill(userId: string) {
-  const secret = process.env.CRON_SECRET;
   try {
-    await fetch(`${getAppBaseUrl()}/api/embeddings/backfill`, {
+    await internalFetch("/api/embeddings/backfill", {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
-      },
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ userId }),
     });
   } catch {

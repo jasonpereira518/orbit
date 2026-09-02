@@ -7,6 +7,7 @@ import {
   setUserIdentity,
 } from "@/lib/user-settings";
 import { recordBillingEvent } from "@/lib/billing-events";
+import { shouldRecordThrottled } from "@/lib/error-events";
 import {
   WEBHOOK_REASONS,
   recordWebhookDelivery,
@@ -48,14 +49,19 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error("Clerk webhook verification failed:", err);
     // Deliberately stores nothing from the body: an unverified payload is untrusted input.
-    await recordWebhookDelivery({
-      eventId,
-      eventType: null,
-      outcome: "invalid",
-      reason: WEBHOOK_REASONS.signatureInvalid,
-      error: err,
-      durationMs: Date.now() - started,
-    });
+    // Once per hour, not once per request: this write happens BEFORE any authentication, so
+    // without the latch anyone can grow the ledger a row per POST. One row still says
+    // "signatures are failing", which is all the ops sweep needs.
+    if (shouldRecordThrottled("webhook.clerk.invalid")) {
+      await recordWebhookDelivery({
+        eventId,
+        eventType: null,
+        outcome: "invalid",
+        reason: WEBHOOK_REASONS.signatureInvalid,
+        error: err,
+        durationMs: Date.now() - started,
+      });
+    }
     return new Response("Verification failed", { status: 400 });
   }
 

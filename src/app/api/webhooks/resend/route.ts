@@ -14,6 +14,7 @@ import {
   recordWebhookDelivery,
   type WebhookOutcome,
 } from "@/lib/webhook-deliveries";
+import { shouldRecordThrottled } from "@/lib/error-events";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -68,15 +69,19 @@ export async function POST(req: NextRequest) {
   });
 
   if (!verified.ok) {
-    // Stores nothing from the body: an unverified payload is untrusted input.
-    await recordWebhookDelivery({
-      source: "resend",
-      eventId,
-      outcome: "invalid",
-      reason: WEBHOOK_REASONS.signatureInvalid,
-      detail: { failure: verified.reason },
-      durationMs: Date.now() - started,
-    });
+    // Stores nothing from the body: an unverified payload is untrusted input. Latched to
+    // once per hour — this write precedes authentication, so it must not scale with the
+    // number of garbage POSTs. Same reasoning as the Clerk route.
+    if (shouldRecordThrottled("webhook.resend.invalid")) {
+      await recordWebhookDelivery({
+        source: "resend",
+        eventId,
+        outcome: "invalid",
+        reason: WEBHOOK_REASONS.signatureInvalid,
+        detail: { failure: verified.reason },
+        durationMs: Date.now() - started,
+      });
+    }
     return new NextResponse("Verification failed", { status: 400 });
   }
 
