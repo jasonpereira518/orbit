@@ -56,21 +56,21 @@ export function asWelcomePlanet(value: string | null | undefined): WelcomePlanet
     : WELCOME_PLANETS[0];
 }
 
-const BG = "#05070f";
-const TEXT = "#e8f3f1";
-const MUTED = "#9aada8";
-const FAINT = "#6d807c";
-const ACCENT = "#f2c14e";
+export const BG = "#05070f";
+export const TEXT = "#e8f3f1";
+export const MUTED = "#9aada8";
+export const FAINT = "#6d807c";
+export const ACCENT = "#f2c14e";
 /** The drift/warning tone the landing page and forms already use for at-risk states. */
 const WARN = "#e8a84e";
-const FONT_STACK =
+export const FONT_STACK =
   "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
 function titleCase(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function escapeHtml(value: string) {
+export function escapeHtml(value: string) {
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

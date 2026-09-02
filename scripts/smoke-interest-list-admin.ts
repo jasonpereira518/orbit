@@ -40,7 +40,20 @@ function textOf(node: unknown, out: string[] = []): string[] {
     for (const child of node) textOf(child, out);
     return out;
   }
+  // Plain data handed to a client component (the roster's `rows`) is not a React element
+  // and has no `props` — walk its own values instead, or the table's contents are invisible
+  // to this check even though they render.
   const el = node as { props?: Record<string, unknown> };
+  if (!el.props) {
+    if (node instanceof Date) {
+      out.push(node.toISOString());
+      return out;
+    }
+    for (const value of Object.values(node as Record<string, unknown>)) {
+      textOf(value, out);
+    }
+    return out;
+  }
   if (el.props) {
     for (const [key, value] of Object.entries(el.props)) {
       // Client components render in the browser, so their props are all this walk sees —
@@ -58,6 +71,13 @@ function textOf(node: unknown, out: string[] = []): string[] {
         key === "hint" ||
         // The table's column headings live in `head`, not in its children.
         key === "head" ||
+        // The roster table is now a client component handed a `rows` array, so the walk
+        // has to descend into it to see any row at all.
+        key === "rows" ||
+        key === "createdAtLabel" ||
+        key === "source" ||
+        key === "status" ||
+        key === "planet" ||
         // The row-action controls are a client component, so its props are all this walk
         // can see — which is the right server-side contract to assert on anyway.
         key === "email" ||
@@ -68,6 +88,26 @@ function textOf(node: unknown, out: string[] = []): string[] {
     }
   }
   return out;
+}
+
+type RowProp = { id: string; email: string; status: string };
+
+/** Finds the `rows` array handed to the client table, wherever it sits in the tree. */
+function findRows(node: unknown): RowProp[] {
+  if (node == null || typeof node !== "object") return [];
+  if (Array.isArray(node)) return node.flatMap(findRows);
+  const el = node as { props?: Record<string, unknown> };
+  if (el.props) {
+    const candidate = el.props.rows;
+    if (
+      Array.isArray(candidate) &&
+      candidate.every((r) => r && typeof r === "object" && "email" in r && "status" in r)
+    ) {
+      return candidate as RowProp[];
+    }
+    return Object.values(el.props).flatMap(findRows);
+  }
+  return [];
 }
 
 async function cleanup() {
@@ -118,6 +158,11 @@ async function main() {
   check("labels the converted row", all.includes("Converted"));
   check("labels the unsubscribed row", all.includes("Unsubscribed"));
   check("surfaces the source from utm", all.includes("reddit · social"));
+  check("renders the signup trend panel", all.includes("Signups by week"));
+  check("renders the source rollup panel", all.includes("Where they come from"));
+  check("offers a search box", all.includes("Search"));
+  check("links to the broadcast composer", all.includes("Broadcasts"));
+  check("links to the email preview", all.includes("Preview emails"));
   check("shows the stored planet", all.toLowerCase().includes("jupiter"));
   check("offers the filter tabs", ["All", "Active", "Converted", "Unsubscribed"].every((f) => all.includes(f)));
 
@@ -141,18 +186,49 @@ async function main() {
       !converted.includes(`${PREFIX}active@example.test`)
   );
 
-  // --- removal controls
-  check("renders an Actions column", all.includes("Actions"));
-  // The walk sees the client component's props, so this proves each row is handed its own
-  // address and the right unsubscribed flag — a row wired to its neighbour's email is the
-  // failure that would delete the wrong person.
-  const rowProps = textOf(await Page({ searchParams: Promise.resolve({}) }))
-    .filter((t) => t.startsWith(PREFIX) || t === "true" || t === "false");
+  // --- the row contract the removal controls depend on
+  //
+  // The table and its buttons are a client component now, so the column header and the
+  // dialogs render in the browser and are deliberately NOT asserted here — this walk can
+  // only see the props crossing the boundary. Those props ARE the thing worth checking:
+  // every row must carry its own id, its own address and the right status, because a row
+  // wired to its neighbour's values is what deletes the wrong person.
+  const tree = await Page({ searchParams: Promise.resolve({}) });
+  const rows = findRows(tree);
+  check("the table is handed one row per signup", rows.length === 3, `got ${rows.length}`);
   check(
-    "each row receives its own address",
-    [`${PREFIX}active@example.test`, `${PREFIX}unsubbed@example.test`].every((e) =>
-      rowProps.includes(e)
-    )
+    "every row carries a distinct id and its own address",
+    new Set(rows.map((r) => r.id)).size === 3 &&
+      new Set(rows.map((r) => r.email)).size === 3
+  );
+  const statusByEmail = Object.fromEntries(rows.map((r) => [r.email, r.status]));
+  check(
+    "each row's status matches its data",
+    statusByEmail[`${PREFIX}unsubbed@example.test`] === "unsubscribed" &&
+      statusByEmail[`${PREFIX}converted@example.test`] === "converted" &&
+      statusByEmail[`${PREFIX}active@example.test`] === "active",
+    JSON.stringify(statusByEmail)
+  );
+
+  // --- correlated-subquery regression
+  //
+  // With one account among several signups, a broken correlation in the `converted` EXISTS
+  // marks EVERY row converted (it collapses to `lower(u.email) = u.email`). That empties the
+  // broadcast audience and makes the console lie about the whole list, while still passing
+  // any check that only looks at the one genuinely-converted row — so it is asserted by
+  // counting, not by spot-checking.
+  const summary = await (await import("../src/lib/admin-interest-list")).getInterestListSummary();
+  check(
+    "exactly one seeded row is converted, not all of them",
+    summary.converted === 1,
+    `converted=${summary.converted}`
+  );
+  const audience = await (await import("../src/lib/broadcasts")).audienceFor();
+  const audienceEmails = audience.filter((a) => a.email.startsWith(PREFIX)).map((a) => a.email);
+  check(
+    "the broadcast audience is the mailable subscribers, not zero and not everyone",
+    audienceEmails.length === 1 && audienceEmails[0] === `${PREFIX}active@example.test`,
+    JSON.stringify(audienceEmails)
   );
 
   // --- the integration that matters: an admin removal must actually stop the mail.
@@ -188,6 +264,19 @@ async function main() {
     afterRemoval.eligible === 0,
     JSON.stringify(afterRemoval)
   );
+
+  const searched = textOf(
+    await Page({ searchParams: Promise.resolve({ q: "unsubbed" }) })
+  ).join(" ");
+  check(
+    "search narrows the table to the match",
+    searched.includes(`${PREFIX}unsubbed@example.test`) &&
+      !searched.includes(`${PREFIX}active@example.test`)
+  );
+  const noMatch = textOf(
+    await Page({ searchParams: Promise.resolve({ q: "zzz-no-such-address" }) })
+  ).join(" ");
+  check("a search with no matches says so", noMatch.includes("No signups match"));
 
   // A page far past the end must clamp, not render an empty table that looks like data loss.
   const far = textOf(
