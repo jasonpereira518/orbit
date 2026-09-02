@@ -72,6 +72,7 @@ export function ContactFollowUpSection({
   sendOptions,
   phone,
   initialIntent,
+  bare = false,
 }: {
   contactId: string;
   contactName: string;
@@ -80,6 +81,9 @@ export function ContactFollowUpSection({
   phone?: string | null;
   /** Prefill intent for intro/reach-out drafts (e.g. related person). */
   initialIntent?: string | null;
+  /** Skip the outer Card chrome and "Follow up" header — for use inside a
+   * container (e.g. a Sheet) that already provides its own framing/title. */
+  bare?: boolean;
 }) {
   const router = useRouter();
   const [platform, setPlatform] = useState<Platform | null>(null);
@@ -247,16 +251,7 @@ export function ContactFollowUpSection({
     },
   ];
 
-  return (
-    <Card id="follow-up" className="scroll-mt-24 border-border/70 shadow-none">
-      <CardHeader>
-        <CardTitle>Follow up</CardTitle>
-        <p className="text-sm text-muted-foreground">
-          Schedule a reminder, or pick a channel to draft a message from your
-          history.
-        </p>
-      </CardHeader>
-      <CardContent>
+  const content = (
       <div className="space-y-4">
         <div>
           <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -406,7 +401,20 @@ export function ContactFollowUpSection({
           </div>
         ) : null}
       </div>
-      </CardContent>
+  );
+
+  if (bare) return content;
+
+  return (
+    <Card id="follow-up" className="scroll-mt-24 border-border/70 shadow-none">
+      <CardHeader>
+        <CardTitle>Follow up</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Schedule a reminder, or pick a channel to draft a message from your
+          history.
+        </p>
+      </CardHeader>
+      <CardContent>{content}</CardContent>
     </Card>
   );
 }

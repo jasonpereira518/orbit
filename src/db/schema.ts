@@ -4,6 +4,7 @@ import {
   timestamp,
   integer,
   real,
+  boolean,
   jsonb,
   uuid,
   index,
@@ -84,6 +85,13 @@ export const userSettings = pgTable("user_settings", {
   wizardStep: text("wizard_step"),
   wizardCompletedAt: timestamp("wizard_completed_at", { withTimezone: true }),
   theme: text("theme").$type<"light" | "dark" | "system">(),
+  ycModeEnabled: boolean("yc_mode_enabled").default(false),
+  /**
+   * Manual estimate feeding the Unit Economics LTV calculation. Orbit's subscriber count
+   * is too small to derive a reliable churn rate from cancellation history, so this is
+   * entered by hand like the expense/spend figures elsewhere in YC mode.
+   */
+  estimatedMonthlyChurnPct: real("estimated_monthly_churn_pct"),
   apolloApiKeyEncrypted: text("apollo_api_key_encrypted"),
   resendApiKeyEncrypted: text("resend_api_key_encrypted"),
   twilioAccountSidEncrypted: text("twilio_account_sid_encrypted"),
@@ -267,6 +275,8 @@ export const contacts = pgTable(
     email: text("email"),
     phone: text("phone"),
     linkedinUrl: text("linkedin_url"),
+    /** Bare X/Twitter handle, no leading "@" — see normalizeXHandle in lib/duplicates. */
+    xHandle: text("x_handle"),
     website: text("website"),
     profileImageUrl: text("profile_image_url"),
     relationshipScore: integer("relationship_score").default(2).notNull(),
@@ -345,6 +355,16 @@ export const contacts = pgTable(
 
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+
+    /**
+     * Set when a write changed text the contact's embedding is built from.
+     *
+     * Imports no longer embed inline — they flag rows here and a backfill claims them. NULL
+     * means "the stored embedding matches the current content", which is also true of a
+     * contact that was never embedded and has no embedding row at all; the backfill treats
+     * both the same way.
+     */
+    embeddingStaleAt: timestamp("embedding_stale_at", { withTimezone: true }),
   },
   (t) => [
     index("contacts_user_id_idx").on(t.userId),
@@ -355,6 +375,10 @@ export const contacts = pgTable(
     index("contacts_user_closeness_idx").on(t.userId, t.closeness.desc(), t.id.desc()),
     index("contacts_user_recent_idx").on(t.userId, t.updatedAt.desc(), t.id.desc()),
     index("contacts_company_id_idx").on(t.companyId),
+    // The browser extension resolves a profile to a contact on every panel open;
+    // without these, each lookup is a full per-user scan.
+    index("contacts_user_linkedin_idx").on(t.userId, t.linkedinUrl),
+    index("contacts_user_x_idx").on(t.userId, t.xHandle),
   ]
 );
 
@@ -568,6 +592,30 @@ export type ImportStats = {
   messagesImported?: number;
   meetingsLogged?: number;
   remindersCreated?: number;
+  /**
+   * Interactions the engine's bulk insert actually wrote this run (see
+   * `ImportAdapter.interactions` in `import-engine.ts`) — every adapter that produces
+   * interaction rows shares this one counter rather than each getting its own per-type field
+   * the way `messagesImported`/`meetingsLogged` used to (and, once an import type moved onto
+   * the engine, silently stopped being written — see those two fields' history). Counts rows
+   * the insert's `ON CONFLICT DO UPDATE ... RETURNING` touched, which includes both brand-new
+   * interactions and existing ones refreshed by a re-upload — see that insert's own comment
+   * for why "touched this run," not "brand-new only," is the honest thing to count once the
+   * insert stopped being a plain `DO NOTHING`.
+   */
+  interactionsLogged?: number;
+  /**
+   * Rows the engine isolated as unwritable and marked `import_job_rows.status = 'failed'`
+   * (see `writeWithNarrowing`/`onBadRow` in `import-engine.ts`). Distinct from both
+   * `skipped` (rows that parsed but had nothing to attach to) and `blockedByPlan` (rows
+   * refused by the contact cap): these are rows the database itself rejected, and
+   * isolating them is the whole point of chunk narrowing.
+   *
+   * Without this counter the isolation is invisible — a job that dropped 20 poison rows
+   * reports "completed, 480 created" and never mentions the 20, which is worse than the
+   * pre-narrowing behavior of failing loudly.
+   */
+  failedRows?: number;
   contactsEnriched?: number;
   eventsProcessed?: number;
   /** Contact ids touched during a multi-chunk messages import. */
@@ -589,6 +637,11 @@ export type ImportStats = {
   recruitersFound?: number;
   /** Senders the classifier rejected or scored below the confidence floor. */
   sendersRejected?: number;
+
+  /** Wall-clock milliseconds across every invocation of this job. */
+  durationMs?: number;
+  /** SQL statements issued across every invocation. The cost this work exists to bound. */
+  statements?: number;
 };
 
 export const imports = pgTable("imports", {
@@ -636,9 +689,102 @@ export type GmailSenderRowPayload = {
   messageIds: string[];
 };
 
+/** One row of a Google People API contacts fetch, snapshotted for the engine to process. */
+export type GoogleContactRowPayload = {
+  kind: "google_contact";
+  resourceName: string;
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  company: string;
+  title: string;
+  email: string;
+  phone: string;
+  photoUrl: string;
+};
+
+/** One row of an Outlook/Microsoft Graph contacts fetch, snapshotted for the engine to
+ *  process. No `photoUrl` — unlike Google People, the Graph contacts endpoint this import
+ *  reads from doesn't carry a photo URL alongside the contact fields. */
+export type OutlookContactRowPayload = {
+  kind: "outlook_contact";
+  id: string;
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  company: string;
+  title: string;
+  email: string;
+  phone: string;
+};
+
+/**
+ * One resolved conversation from a LinkedIn Messages export, snapshotted once at parse
+ * time so the engine never re-parses the CSV or re-fetches contacts per conversation.
+ * `messages[].id` is a hash of (conversationId, date, content) computed at parse time —
+ * see `linkedInMessageExternalId` in `src/actions/imports.ts` — and is carried straight
+ * through to `interactions.externalId`, which is the entire dedupe mechanism for a
+ * re-imported CSV: `linkedinUrl: ""` marks a conversation with no resolvable LinkedIn
+ * profile, which the adapter's `identity()` turns into a skipped row.
+ */
+export type LinkedInMessageThreadRowPayload = {
+  kind: "linkedin_message_thread";
+  conversationId: string;
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  linkedinUrl: string;
+  /**
+   * `sentAt` is `null` — never a sentinel date — when the CSV's timestamp column could not
+   * be parsed. It used to be written as `new Date(0).toISOString()`, which reads downstream
+   * as a perfectly valid 1970-01-01: `messageDateRange` accepted it, so one unparseable
+   * message pinned the contact's `first_interaction_at` to the epoch, and because
+   * `bulkMergeContactsForUser` widens that column with `LEAST`, no later import could ever
+   * pull it back. `null` is excluded from the range instead, which is what "we don't know
+   * when this was sent" actually means.
+   */
+  messages: { id: string; body: string; sentAt: string | null }[];
+};
+
+/**
+ * One (calendar event, attendee) pair — the unit of work for a calendar import.
+ *
+ * Calendar ingest never creates contacts (`createsContacts: false` on the adapter): it only
+ * annotates people already in the network, matching each attendee against the duplicate
+ * index and logging a meeting where one matches. The adapter seam takes one identity per row
+ * (`identity(payload): DuplicateProbe | null`), and a calendar event has N attendees — rather
+ * than widen the seam to `identities(): DuplicateProbe[]` for this one consumer,
+ * `confirmCalendarImport` explodes each windowed event into one job row per (event, attendee)
+ * pair, organizer included. Progress therefore counts pairs, not events: a 100-event file
+ * with 3 attendees each is 300 rows.
+ *
+ * `eventUid` plus the contact id the engine resolves is what keys `interactions.externalId`
+ * (see `calendarMeetingExternalId` in `src/lib/import-adapters/calendar.ts`) — that pair, not
+ * `eventUid` alone, is what keeps N attendees of the same event from colliding on the
+ * `(user_id, external_id)` unique index.
+ */
+export type CalendarEventRowPayload = {
+  kind: "calendar_event";
+  eventUid: string;
+  summary: string;
+  description: string;
+  location: string;
+  start: string | null;
+  end: string | null;
+  attendeeName: string;
+  attendeeEmail: string;
+  /** Snapshotted once at ingest (from the confirm call's own option) so the per-row adapter
+   *  functions don't need any job-level state beyond the payload. */
+  createFollowUps: boolean;
+};
+
 export type ImportJobRowPayload =
   | LinkedInImportRowPayload
-  | GmailSenderRowPayload;
+  | GmailSenderRowPayload
+  | GoogleContactRowPayload
+  | OutlookContactRowPayload
+  | LinkedInMessageThreadRowPayload
+  | CalendarEventRowPayload;
 
 export function isGmailSenderRow(
   payload: ImportJobRowPayload
@@ -828,6 +974,34 @@ export const contactEmbeddings = pgTable(
   (t) => [
     index("embeddings_user_idx").on(t.userId),
     index("embeddings_contact_idx").on(t.contactId),
+    /**
+     * Mirrors the hand-written `CREATE UNIQUE INDEX` in `src/db/index.ts` (both the PGlite
+     * migration body and the Neon `alters` list) and in
+     * `scripts/migrate-embedding-stale.ts`. All four must agree on name AND column list.
+     *
+     * Nothing at runtime reads this declaration — Orbit's migrations are hand-written SQL,
+     * deliberately, because `drizzle-kit push` drops the runtime-managed
+     * `embedding_vector` column. But `drizzle.config.ts` points `schema` at this file and
+     * `package.json` still ships `db:push`/`db:generate`, so a stale declaration here is a
+     * loaded gun: running either would recreate whatever this says against whatever
+     * `DATABASE_URL` resolves to.
+     *
+     * `source_id` is in the key because that is the real uniqueness contract.
+     * `upsertContactEmbedding` (`src/lib/search.ts`) keys its existence check on all four
+     * columns, and `calendar-sync.ts` writes one `"meeting"` row per meeting with a
+     * distinct `source_id`. Dropping it makes the migration's dedupe delete every meeting
+     * embedding but the newest per contact, and makes each later meeting write raise a
+     * unique violation that `upsertContactEmbedding`'s blanket `catch {}` swallows.
+     * `source_id` is nullable and Postgres indexes NULLs as distinct, so rows written
+     * without one stay unconstrained — matching the writer, which skips its existence
+     * check when no `source_id` is supplied.
+     */
+    uniqueIndex("embeddings_user_contact_source_id_uidx").on(
+      t.userId,
+      t.contactId,
+      t.sourceType,
+      t.sourceId
+    ),
   ]
 );
 
@@ -1302,6 +1476,104 @@ export const feedback = pgTable(
 );
 
 /**
+ * The landing page's "Interest list" — a mailing-list opt-in, not a signup gate. Anonymous,
+ * so there's no `userId`: the only identity is the email itself.
+ *
+ * Deliberately not Clerk's `joinWaitlist()`. That call requires the whole instance's sign-up
+ * mode to be "Waitlist", which would block this app's normal, already-live sign-up flow —
+ * so this owns its own table instead, the same way `feedback` and `webhookDeliveries` do.
+ */
+export const interestListSignups = pgTable(
+  "interest_list_signups",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    /** Normalized (trimmed + lowercased) by the server action before insert — the unique
+     * index is a plain column, not a `lower()` expression, to stay covered by
+     * `smoke-schema-ddl.ts`'s index-parity check the way `companies.nameNormalized` does. */
+    email: text("email").notNull(),
+    /** First-touch acquisition signal, same shape as `user_settings.signup_*`. */
+    referrer: text("referrer"),
+    utmSource: text("utm_source"),
+    utmMedium: text("utm_medium"),
+    utmCampaign: text("utm_campaign"),
+    landingPath: text("landing_path"),
+    /** Opaque, same convention as `user_settings.calendar_feed_token` — mints the one-click
+     * unsubscribe link without exposing the row's uuid or requiring a session. */
+    unsubscribeToken: text("unsubscribe_token").notNull(),
+    unsubscribedAt: timestamp("unsubscribed_at", { withTimezone: true }),
+    /**
+     * Which planet the welcome email showed. Stored rather than recomputed so the note's
+     * "you got Mercury" postscript stays true forever, and so the day-3 follow-up can show
+     * the same one. See `WELCOME_PLANETS`.
+     */
+    welcomePlanet: text("welcome_planet"),
+    /**
+     * When the day-3 follow-up went out. Null means "still owed one"; the sweep claims a
+     * row by stamping this before it sends, so a crash mid-batch cannot double-send.
+     */
+    followUpSentAt: timestamp("follow_up_sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("interest_list_signups_email_uidx").on(t.email),
+    uniqueIndex("interest_list_signups_token_uidx").on(t.unsubscribeToken),
+    index("interest_list_signups_created_idx").on(t.createdAt),
+  ]
+);
+
+/**
+ * An operator-composed note to the interest list — the "occasional note on what's new" the
+ * landing page promises, which the two automated emails do not cover.
+ *
+ * The body is stored as plain text, not HTML: the operator writes prose and the send wraps
+ * it in the same shell the welcome note uses, so a broadcast cannot drift from the product's
+ * look or ship broken markup to a whole list.
+ */
+export const broadcasts = pgTable(
+  "broadcasts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    subject: text("subject").notNull(),
+    body: text("body").notNull(),
+    /** `draft` until a send starts, `sending` while it runs, then `sent`. */
+    status: text("status").$type<"draft" | "sending" | "sent">().default("draft").notNull(),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    recipientCount: integer("recipient_count").default(0).notNull(),
+    sentCount: integer("sent_count").default(0).notNull(),
+    failedCount: integer("failed_count").default(0).notNull(),
+  },
+  (t) => [index("broadcasts_created_idx").on(t.createdAt)]
+);
+
+/**
+ * One row per (broadcast, recipient), which is what makes a send resumable and at-most-once.
+ *
+ * Without it, a send that dies halfway can only be retried by mailing everyone again —
+ * double-sending a broadcast to the whole list being about the worst failure this feature
+ * has. The unique index is the guarantee: a second attempt cannot re-insert a recipient it
+ * already has.
+ */
+export const broadcastRecipients = pgTable(
+  "broadcast_recipients",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    broadcastId: uuid("broadcast_id").notNull(),
+    signupId: uuid("signup_id").notNull(),
+    /** Denormalised so the record survives the signup row being deleted. */
+    email: text("email").notNull(),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("broadcast_recipients_pair_uidx").on(t.broadcastId, t.signupId),
+    index("broadcast_recipients_broadcast_idx").on(t.broadcastId),
+  ]
+);
+
+/**
  * Money, as events rather than as a headcount.
  *
  * The console previously derived MRR as `subscribers × $5`, which cannot see a mid-month
@@ -1417,6 +1689,76 @@ export const gateEvents = pgTable(
     index("gate_events_user_created_idx").on(t.userId, t.createdAt),
   ]
 );
+
+/**
+ * Surfaces an operator has hidden from every user. The one genuinely global table in the
+ * schema — no `user_id`, because the whole point is that it applies to everybody.
+ *
+ * PRESENCE IS THE FLAG: a row exists only for a hidden surface, and unhiding deletes it.
+ * Storing a boolean per surface instead would mean seeding a row for every entry in
+ * `SURFACES`, so adding a surface to that registry would need a migration before it could
+ * be toggled. This way the registry is free to grow in a single commit.
+ *
+ * `surface_key` is a key from `@/lib/surfaces` and deliberately has no foreign key to
+ * anything — a key retired from the registry leaves a harmless orphan row rather than
+ * blocking the deploy that retired it.
+ */
+export const appSurfaceFlags = pgTable("app_surface_flags", {
+  surfaceKey: text("surface_key").primaryKey(),
+  hiddenAt: timestamp("hidden_at", { withTimezone: true }).defaultNow().notNull(),
+  /** The admin who hid it. Kept for the audit trail's benefit, not read by the app. */
+  hiddenBy: text("hidden_by").notNull(),
+});
+
+/**
+ * Manually-entered spend, for the YC-mode Runway page's burn calculation. No integration
+ * exists to pull this automatically — Orbit has no bank/accounting connection.
+ */
+export const startupExpenses = pgTable("startup_expenses", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  category: text("category").notNull(),
+  amountUsd: real("amount_usd").notNull(),
+  incurredAt: timestamp("incurred_at", { withTimezone: true }).notNull(),
+  note: text("note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/** Point-in-time cash-on-hand entries. The latest row is "current" cash for Runway. */
+export const cashSnapshots = pgTable("cash_snapshots", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  asOf: timestamp("as_of", { withTimezone: true }).notNull(),
+  balanceUsd: real("balance_usd").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/** Manually-logged acquisition spend by channel, for the Unit Economics CAC calculation. */
+export const acquisitionSpend = pgTable("acquisition_spend", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  channel: text("channel").notNull(),
+  amountUsd: real("amount_usd").notNull(),
+  periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+  periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const fundraisingRounds = pgTable("fundraising_rounds", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull(),
+  targetUsd: real("target_usd").notNull(),
+  status: text("status").$type<"open" | "closed">().notNull().default("open"),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/** No FK-cascade delete: closing/deleting a round should not silently erase commitments. */
+export const fundraisingInvestors = pgTable("fundraising_investors", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  roundId: uuid("round_id").notNull().references(() => fundraisingRounds.id),
+  name: text("name").notNull(),
+  amountUsd: real("amount_usd").notNull(),
+  committedAt: timestamp("committed_at", { withTimezone: true }).notNull(),
+  note: text("note"),
+});
 
 export const contactsRelations = relations(contacts, ({ many }) => ({
   interactions: many(interactions),
@@ -1543,8 +1885,28 @@ export const userRecruiterLinksRelations = relations(
   })
 );
 
+/**
+ * Rolling-window request counters for the browser extension API.
+ *
+ * One row per user. The AI window is tracked separately and kept much tighter
+ * because those calls spend the user's own provider credits.
+ */
+export const extensionUsage = pgTable("extension_usage", {
+  userId: text("user_id").primaryKey(),
+  windowStartedAt: timestamp("window_started_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  requestCount: integer("request_count").default(0).notNull(),
+  aiWindowStartedAt: timestamp("ai_window_started_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  aiCount: integer("ai_count").default(0).notNull(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+});
+
 export type Contact = typeof contacts.$inferSelect;
 export type NewContact = typeof contacts.$inferInsert;
+export type ExtensionUsage = typeof extensionUsage.$inferSelect;
 export type Interaction = typeof interactions.$inferSelect;
 export type Reminder = typeof reminders.$inferSelect;
 export type ReminderList = typeof reminderLists.$inferSelect;
@@ -1571,6 +1933,7 @@ export type CronRun = typeof cronRuns.$inferSelect;
 export type WebhookDelivery = typeof webhookDeliveries.$inferSelect;
 export type ErrorEvent = typeof errorEvents.$inferSelect;
 export type FeedbackEntry = typeof feedback.$inferSelect;
+export type InterestListSignup = typeof interestListSignups.$inferSelect;
 export type BillingEvent = typeof billingEvents.$inferSelect;
 export type NewBillingEvent = typeof billingEvents.$inferInsert;
 export type InfraCost = typeof infraCosts.$inferSelect;

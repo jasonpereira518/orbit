@@ -1,0 +1,219 @@
+/*
+ * GENERATED — do not edit by hand.
+ * Copied from src/app/globals.css by scripts/tokens.mjs.
+ * Run `npm run tokens:sync` after changing the app's tokens;
+ * `npm run check:tokens` fails the build if these drift.
+ */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans), "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-display), "Fraunces", ui-serif, Georgia, serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-import-connections: var(--import-connections);
+  --color-import-messages: var(--import-messages);
+  --color-import-calendar: var(--import-calendar);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-landing-accent: #f2c14e;
+  /* Orbit Pro's blue, mirroring how gold is handled: `--color-tier-pro` follows
+     the theme (for app surfaces that must stay legible in light mode) while
+     `--color-brand-pro` is a fixed value for the always-dark canvases — pricing
+     cards and the logo ring — that never see the light palette. */
+  --color-brand-pro: #599de7;
+  --color-landing-button-surface: #eef7f4;
+  --color-landing-button-label: #0f2e28;
+  --color-tier-lifetime: var(--tier-lifetime);
+  --color-tier-pro: var(--tier-pro);
+  --color-ink: var(--ink);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+}
+@theme {
+  --transition-duration-fast: 120ms; /* hover, press, tooltips, exits */
+  --transition-duration-base: 180ms; /* overlays, toggles, small enters */
+  --transition-duration-slow: 320ms; /* page/section reveals */
+  --transition-duration-celestial: 700ms; /* landing + constellation set-pieces */
+
+  --ease-house: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Retime every bare `transition-*` utility (~100 call sites) onto the
+   * interaction tier in one place. */
+  --default-transition-duration: 120ms;
+  --default-transition-timing-function: cubic-bezier(0, 0, 0.2, 1);
+}
+:root {
+  --background: #fbfbf9;
+  --foreground: #1a1c1a;
+  --card: #ffffff;
+  --card-foreground: #1a1c1a;
+  --popover: #ffffff;
+  --popover-foreground: #1a1c1a;
+  --primary: #0f3d3e;
+  --primary-foreground: #e8f3f1;
+  --secondary: #eef1ec;
+  --secondary-foreground: #1a1c1a;
+  --muted: #f0f2ee;
+  --muted-foreground: #5f6760;
+  --accent: #e7f0ee;
+  --accent-foreground: #0f3d3e;
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: #e4e7e1;
+  --input: #e4e7e1;
+  --ring: #0f3d3e;
+  --chart-1: #0f3d3e;
+  --chart-2: #3d7a6c;
+  --chart-3: #7aa896;
+  --chart-4: #c4a35a;
+  --chart-5: #8b5e3c;
+  --import-connections: #5b5fc7;
+  --import-messages: #c2694a;
+  --import-calendar: #b8873a;
+  /* Orbit Pro reads as `--primary` (the product's own color, per the pricing
+     tiers). Orbit Lifetime gets this dedicated gold so paywalled surfaces can
+     name which tier(s) unlock a feature without borrowing a hue that already
+     means something else (chart series, calendar import, etc). Dark enough
+     for 4.5:1 text contrast on a light card, not just icon-level contrast. */
+  --tier-lifetime: #8a6423;
+  --tier-pro: #2f68b0;
+  /* Emphasised content — names, titles, section headings. This is the value
+     `--primary` has always had in light mode, which is why ~90 call sites reach
+     for `text-primary` to mean "strong text". It only worked by coincidence:
+     light `--primary` is near-black teal, so the tint read as emphasis. In dark,
+     `--primary` is a bright accent, so the same class turned every heading and
+     every contact name into saturated blue. Splitting the two meanings apart
+     lets `--primary` be an accent in both themes without dragging body content
+     with it. Light is unchanged from before the split. */
+  --ink: #0f3d3e;
+  --radius: 0.625rem;
+  --sidebar: #f7f8f6;
+  --sidebar-foreground: #1a1c1a;
+  --sidebar-primary: #0f3d3e;
+  --sidebar-primary-foreground: #e8f3f1;
+  --sidebar-accent: #ffffff;
+  --sidebar-accent-foreground: #0f3d3e;
+  --sidebar-border: #e4e7e1;
+  --sidebar-ring: #0f3d3e;
+  /* Percentage-sized radial gradients scale off the *whole page's*
+     height (this wrapper spans every section), so a single one
+     collapses to flat background almost immediately once content
+     grows past one screen. Using fixed/vh-based sizes and stacking a
+     few glows at different scroll depths keeps the ambient light
+     visible the whole way down instead of fading out after the hero. */
+  --landing-page-gradient: radial-gradient(
+      1100px 900px at 64% 220px,
+      #111c33 0%,
+      transparent 72%
+    ),
+    radial-gradient(1000px 850px at 30% 110vh, #101a30 0%, transparent 72%),
+    radial-gradient(1000px 850px at 70% 190vh, #0d1626 0%, transparent 72%);
+  color-scheme: light;
+}
+.dark {
+  /* ── Night sky ──
+   * The app chrome paints the same space the Constellation canvas and the
+   * landing page already live in (see lib/sky-palette.ts), rather than the
+   * neutral gray it used to be. Every neutral carries hue 220-222°, close
+   * enough to the sky's 227° to read as one continuous product.
+   *
+   * The surface ladder below is spaced by PERCEPTUAL lightness (L*), not by
+   * WCAG contrast ratio: the ratio formula's +0.05 flare term compresses hard
+   * near black, so it reports two clearly-distinct dark surfaces as ~1.1:1 and
+   * is the wrong tool down here. Every adjacent rung is >= 3.2 L* apart and the
+   * ladder is monotonic — `--muted` used to sit ABOVE `--card`, which is why
+   * recessed wells read as raised.
+   *
+   *   sidebar     #080d18   L*  3.7
+   *   background  #0e1524   L*  6.8
+   *   muted       #151d2f   L* 10.9
+   *   card        #1a2438   L* 14.2
+   *   popover     #212c42   L* 18.0
+   *   border      #333f5a   L* 26.7
+   */
+  --background: #0e1524;
+  --foreground: #e4ebf6;
+  --card: #1a2438;
+  --card-foreground: #e4ebf6;
+  --popover: #212c42;
+  --popover-foreground: #e4ebf6;
+  --primary: #7cc3e2;
+  --primary-foreground: #04121b;
+  --secondary: #212c42;
+  --secondary-foreground: #e4ebf6;
+  --muted: #151d2f;
+  --muted-foreground: #96a8c4;
+  --accent: #20374f;
+  --accent-foreground: #aeddf0;
+  --destructive: #ff6b6b;
+  --border: #333f5a;
+  /* Light enough to clear 3:1 against `--card` — this is a control boundary
+     (WCAG 1.4.11), not decoration. The old #3d3d3d managed 1.22:1, so text
+     fields had effectively no edge. */
+  --input: #626f90;
+  --ring: #7cc3e2;
+  /* Five distinct HUES with staggered lightness, so series stay separable in
+     grayscale and under red-green colour blindness. The old dark ramp was five
+     lightnesses of one hue (211-212°) — a categorical scale that silently
+     rendered as a sequential one. Hue order tracks light mode's
+     (cool -> green -> blue -> gold -> rust) so a series keeps its identity
+     when the theme flips. */
+  --chart-1: #3aa8c4;
+  --chart-2: #63d69b;
+  --chart-3: #7d8ee8;
+  --chart-4: #f7d071;
+  --chart-5: #f08a63;
+  --import-connections: #9b9ff5;
+  --import-messages: #f0956f;
+  --import-calendar: #e2b45f;
+  /* Brighter on a dark card so it keeps 4.5:1 text contrast (#8a6423 would
+     read as near-black here). */
+  --tier-lifetime: #f2c14e;
+  --tier-pro: #599de7;
+  --ink: #e4ebf6;
+  /* Shadows on a dark ground want to be deeper than the surface, not neutral
+     black — a pure-black shadow over navy reads as a dead hole. */
+  --shadow-color: 218deg 60% 3%;
+  --sidebar: #080d18;
+  --sidebar-foreground: #e4ebf6;
+  --sidebar-primary: #7cc3e2;
+  --sidebar-primary-foreground: #04121b;
+  --sidebar-accent: #1a2438;
+  --sidebar-accent-foreground: #aeddf0;
+  --sidebar-border: #333f5a;
+  --sidebar-ring: #7cc3e2;
+  color-scheme: dark;
+}
+.reveal-mount {
+  animation: reveal-rise var(--transition-duration-slow) var(--ease-house)
+    var(--reveal-delay, 0ms) both;
+}

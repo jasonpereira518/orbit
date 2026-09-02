@@ -14,7 +14,7 @@ export function DataSettings() {
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div>
-        <h2 className="text-lg font-medium text-primary">Data and privacy</h2>
+        <h2 className="text-lg font-medium text-ink">Data and privacy</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Export everything as JSON, or permanently delete your Orbit data. Read
           our{" "}

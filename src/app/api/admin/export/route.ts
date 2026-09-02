@@ -9,6 +9,11 @@ import {
   type RosterStateFilter,
 } from "@/lib/admin-roster";
 import { getAdminHealth } from "@/lib/admin-health";
+import {
+  isInterestListFilter,
+  loadInterestListAll,
+  sourceLabel,
+} from "@/lib/admin-interest-list";
 import { loadAuditLog } from "@/lib/admin-operations";
 import { formatCostMicros } from "@/lib/ai-pricing";
 
@@ -33,7 +38,7 @@ export const runtime = "nodejs";
  * extract a spreadsheet of other people's phone numbers that outlives it.
  */
 
-const DATASETS = ["roster", "health", "audit"] as const;
+const DATASETS = ["roster", "health", "audit", "interest-list"] as const;
 type Dataset = (typeof DATASETS)[number];
 
 function isDataset(value: string | null): value is Dataset {
@@ -62,6 +67,8 @@ export async function GET(request: NextRequest) {
   const dataset: Dataset = isDataset(datasetParam) ? datasetParam : "roster";
   const format = url.searchParams.get("format") === "json" ? "json" : "csv";
 
+  const interestFilter = url.searchParams.get("filter") ?? undefined;
+
   const filters = {
     q: url.searchParams.get("q") ?? undefined,
     plan: (url.searchParams.get("plan") ?? "all") as RosterPlanFilter,
@@ -69,7 +76,7 @@ export async function GET(request: NextRequest) {
     sort: (url.searchParams.get("sort") ?? "signup") as RosterSort,
   };
 
-  const { rows, count } = await buildDataset(dataset, filters);
+  const { rows, count } = await buildDataset(dataset, filters, interestFilter);
 
   await recordAdminAction({
     adminUserId,
@@ -103,8 +110,33 @@ async function buildDataset(
     plan: RosterPlanFilter;
     state: RosterStateFilter;
     sort: RosterSort;
-  }
+  },
+  interestFilter?: string
 ): Promise<{ rows: Array<Record<string, unknown>>; count: number }> {
+  if (dataset === "interest-list") {
+    // First-party only: these addresses were typed into Orbit's own form by their owners,
+    // which is what separates this from the contact data this route refuses to emit.
+    const signups = await loadInterestListAll(
+      isInterestListFilter(interestFilter) ? interestFilter : "all"
+    );
+    const rows = signups.map((r) => ({
+      email: r.email,
+      signed_up_at: iso(r.createdAt),
+      status: r.unsubscribedAt ? "unsubscribed" : r.converted ? "converted" : "active",
+      unsubscribed_at: iso(r.unsubscribedAt),
+      converted: r.converted,
+      follow_up_sent_at: iso(r.followUpSentAt),
+      source: sourceLabel(r),
+      referrer: r.referrer ?? "",
+      utm_source: r.utmSource ?? "",
+      utm_medium: r.utmMedium ?? "",
+      utm_campaign: r.utmCampaign ?? "",
+      landing_path: r.landingPath ?? "",
+      welcome_planet: r.welcomePlanet ?? "",
+    }));
+    return { rows, count: rows.length };
+  }
+
   if (dataset === "roster") {
     const roster = await loadAdminRosterAll(filters);
     // Account-level columns only. Nothing here comes from `contacts`.

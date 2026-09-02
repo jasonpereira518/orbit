@@ -1,7 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState, useTransition } from "react";
+import {
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  useTransition,
+} from "react";
 import { formatDistanceToNow } from "date-fns";
 import {
   Bell,
@@ -37,6 +42,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { ExtensionPromo } from "@/components/notifications/extension-promo";
 import {
   dismissBackgroundJob,
   useActiveBackgroundJobCount,
@@ -47,35 +53,121 @@ import {
 type PanelData = Awaited<ReturnType<typeof listNotificationPanel>>;
 type PanelItem = PanelData["items"][number];
 
+/* -------------------------------------------------------------------------- */
+/* Shared panel state                                                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One poll for the whole app, not one per mounted button.
+ *
+ * `AppShell` renders this button twice — once in the mobile header, once in the fixed
+ * desktop slot — and CSS hides whichever breakpoint does not apply. CSS does not stop
+ * React from mounting both, so a per-component effect meant two `listNotificationPanel()`
+ * round trips on every page load and two more every two minutes, in every open tab,
+ * forever. Hoisting the state above the component means both mounts read one cache, share
+ * one timer, and collapse simultaneous refreshes into a single request.
+ *
+ * The same shape as `src/lib/background-jobs.ts`, which this component already consumes.
+ */
+const REFRESH_MS = 120_000;
+
+type PanelSnapshot = { data: PanelData | null; loading: boolean };
+
+const EMPTY_SNAPSHOT: PanelSnapshot = { data: null, loading: false };
+
+let snapshot: PanelSnapshot = EMPTY_SNAPSHOT;
+let inFlight: Promise<void> | null = null;
+let latestRequest = 0;
+let timerId: number | null = null;
+const listeners = new Set<() => void>();
+
+function setSnapshot(next: Partial<PanelSnapshot>) {
+  snapshot = { ...snapshot, ...next };
+  for (const listener of listeners) listener();
+}
+
+/**
+ * Refreshes the panel.
+ *
+ * Ambient callers (mount, the interval, opening the sheet) share whatever request is
+ * already running — that is what collapses the two mounts' first fetch into one.
+ * `force` is for refreshing *after* a mutation, which must not be served by a request
+ * that was issued before the mutation landed, or the panel silently reverts what the
+ * user just did. `requestId` keeps the newest response the winner regardless of the
+ * order the two come back in.
+ */
+function refreshPanel(force = false): Promise<void> {
+  if (inFlight && !force) return inFlight;
+
+  const requestId = ++latestRequest;
+  setSnapshot({ loading: true });
+
+  const run = listNotificationPanel()
+    .then((next) => {
+      if (requestId === latestRequest) setSnapshot({ data: next });
+    })
+    .catch(() => {
+      if (requestId === latestRequest) toast.error("Could not load notifications");
+    })
+    .finally(() => {
+      if (requestId !== latestRequest) return;
+      inFlight = null;
+      setSnapshot({ loading: false });
+    });
+
+  inFlight = run;
+  return run;
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  // First mount starts the shared timer; the last unmount stops it.
+  if (listeners.size === 1 && timerId === null) {
+    timerId = window.setInterval(() => {
+      // A hidden tab has no badge to update, and the old per-component interval kept
+      // every backgrounded tab polling regardless.
+      if (document.visibilityState === "visible") void refreshPanel();
+    }, REFRESH_MS);
+  }
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) {
+      if (timerId !== null) {
+        window.clearInterval(timerId);
+        timerId = null;
+      }
+      // Dropped when the shell unmounts (signing out, or navigating to marketing) so a
+      // subsequent session cannot paint the previous account's counts before its own
+      // first fetch lands. Costs nothing: remounting refetches regardless.
+      snapshot = EMPTY_SNAPSHOT;
+    }
+  };
+}
+
+function getSnapshot() {
+  return snapshot;
+}
+
+function getServerSnapshot(): PanelSnapshot {
+  return EMPTY_SNAPSHOT;
+}
+
 export function NotificationsPanelButton() {
   const [open, setOpen] = useState(false);
-  const [data, setData] = useState<PanelData | null>(null);
-  const [loading, setLoading] = useState(false);
+  const { data, loading } = useSyncExternalStore(
+    subscribe,
+    getSnapshot,
+    getServerSnapshot
+  );
   const [pending, start] = useTransition();
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      const next = await listNotificationPanel();
-      setData(next);
-    } catch {
-      toast.error("Could not load notifications");
-    } finally {
-      setLoading(false);
-    }
+  useEffect(() => {
+    void refreshPanel();
   }, []);
 
   useEffect(() => {
-    void refresh();
-    const id = window.setInterval(() => {
-      void refresh();
-    }, 120_000);
-    return () => window.clearInterval(id);
-  }, [refresh]);
-
-  useEffect(() => {
-    if (open) void refresh();
-  }, [open, refresh]);
+    if (open) void refreshPanel();
+  }, [open]);
 
   const jobs = useBackgroundJobs();
   const activeJobCount = useActiveBackgroundJobCount();
@@ -92,7 +184,7 @@ export function NotificationsPanelButton() {
       try {
         await action();
         toast.success(label);
-        await refresh();
+        await refreshPanel(true);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Action failed");
       }
@@ -128,7 +220,7 @@ export function NotificationsPanelButton() {
           showCloseButton
         >
           <SheetHeader className="border-b border-border/60 pr-12">
-            <SheetTitle className="font-[family-name:var(--font-display)] text-lg text-primary">
+            <SheetTitle className="font-[family-name:var(--font-display)] text-lg text-ink">
               Notifications
             </SheetTitle>
             <SheetDescription>
@@ -136,13 +228,15 @@ export function NotificationsPanelButton() {
             </SheetDescription>
           </SheetHeader>
 
-          <div className="flex-1 overflow-y-auto px-4 py-4">
+          <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+            {data && <ExtensionPromo canUseExtension={data.canUseExtension} />}
+
             {loading && !data ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
             ) : (!data || data.totalCount === 0) && jobs.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border/70 px-4 py-10 text-center">
                 <Bell className="mx-auto h-5 w-5 text-muted-foreground" />
-                <p className="mt-3 text-sm font-medium text-primary">
+                <p className="mt-3 text-sm font-medium text-ink">
                   You&apos;re all caught up
                 </p>
                 <p className="mt-1 text-sm text-muted-foreground">
@@ -319,7 +413,7 @@ function JobRow({ job }: { job: BackgroundJob }) {
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="font-medium text-primary">
+          <p className="font-medium text-ink">
             {job.status === "running"
               ? job.cancelling
                 ? "Stopping…"

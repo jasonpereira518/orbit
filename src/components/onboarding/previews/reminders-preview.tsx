@@ -38,7 +38,7 @@ export function RemindersPreview({ reducedMotion }: PreviewProps) {
   return (
     <div className="space-y-3 p-1">
       <div className="flex items-center justify-between gap-3">
-        <p className="font-[family-name:var(--font-display)] text-lg text-primary">
+        <p className="font-[family-name:var(--font-display)] text-lg text-ink">
           Reminders
         </p>
         <div
@@ -72,7 +72,7 @@ export function RemindersPreview({ reducedMotion }: PreviewProps) {
             className="rounded-xl border border-border/60 bg-background/60 px-3 py-2.5"
           >
             <div className="flex flex-wrap items-center gap-1.5">
-              <p className="text-sm font-medium text-primary">{r.title}</p>
+              <p className="text-sm font-medium text-ink">{r.title}</p>
               <span
                 className={cn(
                   "rounded-full px-2 py-0.5 text-[9px] font-medium uppercase tracking-wide",

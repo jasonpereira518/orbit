@@ -49,7 +49,7 @@ export function CalendarSubscribePanel({
           <CalendarIcon className="h-4 w-4" />
         </span>
         <div className="min-w-0">
-          <h2 className="text-lg font-medium text-primary">
+          <h2 className="text-lg font-medium text-ink">
             Calendar subscription
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">

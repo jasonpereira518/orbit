@@ -151,12 +151,12 @@ const TIER_ACCENT: Record<
     raised: false,
   },
   orbit: {
-    // #599de7 is `--primary` in the app's dark theme, so the plan that unlocks the
-    // product is outlined in the colour the product itself runs on.
-    surface: "border-[#599de7]/40 bg-[#070b18]/80 hover:border-[#599de7]/75",
-    tick: "text-[#599de7]",
+    // `--brand-pro` is the Orbit Pro tier's own blue (see plan-badge.tsx), fixed
+    // rather than theme-aware because this card only ever sits on the starfield.
+    surface: "border-brand-pro/40 bg-[#070b18]/80 hover:border-brand-pro/75",
+    tick: "text-brand-pro",
     glow: "radial-gradient(circle, rgba(89,157,231,0.20), transparent 68%)",
-    badge: { label: "Most popular", className: "bg-[#599de7] text-[#081326]" },
+    badge: { label: "Most popular", className: "bg-brand-pro text-[#081326]" },
     raised: true,
   },
   lifetime: {

@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example
+# Committed on purpose: production build inputs for the extension are all
+# public values (publishable key, site URL, the ID-pinning PUBLIC key).
+!extension/.env.production
 
 # local PGlite database
 .data/
@@ -46,3 +49,12 @@ next-env.d.ts
 
 # Subagent-driven-development scratch workspace (ledger, briefs, review packages)
 .superpowers/
+
+# browser extension (separate project — own lockfile, not deployed)
+extension/node_modules/
+extension/dist/
+extension/release/
+extension/*.zip
+# Intermediate build output: the injected IIFE is emitted into public/ so the
+# main build copies it into dist as a static asset.
+extension/public/inject/

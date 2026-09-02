@@ -3,13 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   SECTION_SCROLL_OFFSET,
-  SETTINGS_SECTIONS,
   type SettingsSectionId,
 } from "@/components/settings/sections";
 import { cn } from "@/lib/utils";
 
-const FIRST_ID = SETTINGS_SECTIONS[0].id;
-const LAST_ID = SETTINGS_SECTIONS[SETTINGS_SECTIONS.length - 1].id;
+export type RailSection = { id: SettingsSectionId; label: string };
 
 /**
  * Everything an open row spends beside the label — `px-3`, `gap-3`, tick slot —
@@ -121,8 +119,18 @@ function scrollToSection(id: SettingsSectionId, animate: boolean) {
   scrollAnimation.frame = requestAnimationFrame(step);
 }
 
-export function SettingsSectionNav() {
-  const [activeId, setActiveId] = useState<SettingsSectionId>(FIRST_ID);
+/**
+ * `sections` is passed in rather than read from `SETTINGS_SECTIONS` directly because an
+ * operator can hide individual settings cards. The rail is derived entirely from the
+ * sections the page actually rendered — a row for a hidden card would scroll to an anchor
+ * that does not exist, and `getElementById` returning null makes that a silent dead click.
+ */
+export function SettingsSectionNav({ sections }: { sections: RailSection[] }) {
+  const firstId = sections[0]?.id;
+  const lastId = sections[sections.length - 1]?.id;
+  const [activeId, setActiveId] = useState<SettingsSectionId | undefined>(
+    firstId
+  );
   const [dragId, setDragId] = useState<SettingsSectionId | null>(null);
 
   const navRef = useRef<HTMLElement>(null);
@@ -173,10 +181,10 @@ export function SettingsSectionNav() {
     const compute = () => {
       frame = 0;
       const line = anchorLine();
-      let next: SettingsSectionId = FIRST_ID;
+      let next: SettingsSectionId | undefined = firstId;
       let lastEl: Element | null = null;
 
-      for (const section of SETTINGS_SECTIONS) {
+      for (const section of sections) {
         const el = document.getElementById(section.id);
         if (!el) continue;
         lastEl = el;
@@ -190,7 +198,7 @@ export function SettingsSectionNav() {
       const scroller = scrollerFor(lastEl);
       const scrollable = scroller.scrollHeight - scroller.clientHeight;
       if (scrollable > 4 && scroller.scrollTop >= scrollable - 2) {
-        next = railIntent.id ?? LAST_ID;
+        next = railIntent.id ?? lastId;
       } else if (railIntent.settled) {
         railIntent.id = null;
       }
@@ -210,7 +218,7 @@ export function SettingsSectionNav() {
       document.removeEventListener("scroll", schedule, true);
       window.removeEventListener("resize", schedule);
     };
-  }, []);
+  }, [sections, firstId, lastId]);
 
   const nearestId = useCallback((clientY: number) => {
     let best: SettingsSectionId | null = null;
@@ -231,7 +239,7 @@ export function SettingsSectionNav() {
     if (event.pointerType === "mouse" && event.button !== 0) return;
     endDragRef.current?.();
 
-    centersRef.current = SETTINGS_SECTIONS.flatMap((section) => {
+    centersRef.current = sections.flatMap((section) => {
       const el = itemsRef.current.get(section.id);
       if (!el) return [];
       const rect = el.getBoundingClientRect();
@@ -306,18 +314,16 @@ export function SettingsSectionNav() {
     // Step from whatever is focused, not from the scroll-derived current
     // section: two quick presses must advance twice even though the second
     // lands before the first scroll has resolved.
-    const focused = SETTINGS_SECTIONS.findIndex(
+    const focused = sections.findIndex(
       (s) => itemsRef.current.get(s.id) === document.activeElement,
     );
     const index =
-      focused >= 0
-        ? focused
-        : SETTINGS_SECTIONS.findIndex((s) => s.id === activeId);
+      focused >= 0 ? focused : sections.findIndex((s) => s.id === activeId);
     let nextIndex: number;
     switch (event.key) {
       case "ArrowDown":
       case "ArrowRight":
-        nextIndex = Math.min(index + 1, SETTINGS_SECTIONS.length - 1);
+        nextIndex = Math.min(index + 1, sections.length - 1);
         break;
       case "ArrowUp":
       case "ArrowLeft":
@@ -327,13 +333,13 @@ export function SettingsSectionNav() {
         nextIndex = 0;
         break;
       case "End":
-        nextIndex = SETTINGS_SECTIONS.length - 1;
+        nextIndex = sections.length - 1;
         break;
       default:
         return;
     }
     event.preventDefault();
-    const { id } = SETTINGS_SECTIONS[nextIndex];
+    const { id } = sections[nextIndex];
     itemsRef.current.get(id)?.focus();
     scrollToSection(id, true);
   };
@@ -365,7 +371,7 @@ export function SettingsSectionNav() {
       />
 
       <ul className="relative flex flex-col gap-px px-3 py-2.5">
-        {SETTINGS_SECTIONS.map((section) => {
+        {sections.map((section) => {
           const isCurrent = section.id === shownId;
           return (
             <li key={section.id}>

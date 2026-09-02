@@ -34,7 +34,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div>
-        <h2 className="text-lg font-medium text-primary">AI provider</h2>
+        <h2 className="text-lg font-medium text-ink">AI provider</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Choose Gemini, OpenAI, or Anthropic and paste your own API key. Keys
           are encrypted at rest and only used for your account.
@@ -190,7 +190,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
       </div>
 
       <div className="border-t border-border/60 pt-4">
-        <p className="mb-2 text-sm font-medium text-primary">Saved keys</p>
+        <p className="mb-2 text-sm font-medium text-ink">Saved keys</p>
         <ul className="space-y-1 text-sm text-muted-foreground">
           {settings.providers.map((p) => (
             <li key={p.id}>

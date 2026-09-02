@@ -5,8 +5,16 @@ import { PGlite } from "@electric-sql/pglite";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import * as schema from "./schema";
 import { formatVectorLiteral } from "@/lib/pgvector";
+import { noteQuery } from "@/lib/query-counter";
 import path from "node:path";
 import fs from "node:fs";
+
+/**
+ * Drizzle's logger hook is the only place every statement funnels through regardless of
+ * driver, which is why the statement counter hangs off it rather than off `db.execute`.
+ * It logs nothing — `logQuery` is used purely as a per-statement callback.
+ */
+const countingLogger = { logQuery: () => noteQuery() };
 
 type Db =
   | ReturnType<typeof drizzleNeon<typeof schema>>
@@ -85,6 +93,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   email text,
   phone text,
   linkedin_url text,
+  x_handle text,
   website text,
   profile_image_url text,
   relationship_score integer NOT NULL DEFAULT 2,
@@ -103,10 +112,21 @@ CREATE TABLE IF NOT EXISTS contacts (
   follow_up_status text DEFAULT 'none',
   ai_summary text,
   notes text,
+  embedding_stale_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS contacts_user_id_idx ON contacts(user_id);
+CREATE INDEX IF NOT EXISTS contacts_user_linkedin_idx ON contacts(user_id, linkedin_url);
+CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle);
+CREATE TABLE IF NOT EXISTS extension_usage (
+  user_id text PRIMARY KEY,
+  window_started_at timestamptz NOT NULL DEFAULT now(),
+  request_count integer NOT NULL DEFAULT 0,
+  ai_window_started_at timestamptz NOT NULL DEFAULT now(),
+  ai_count integer NOT NULL DEFAULT 0,
+  last_seen_at timestamptz
+);
 CREATE TABLE IF NOT EXISTS user_goals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -527,6 +547,47 @@ CREATE TABLE IF NOT EXISTS feedback (
 );
 CREATE INDEX IF NOT EXISTS feedback_kind_created_idx ON feedback(kind, created_at);
 CREATE INDEX IF NOT EXISTS feedback_user_created_idx ON feedback(user_id, created_at);
+CREATE TABLE IF NOT EXISTS interest_list_signups (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  email text NOT NULL,
+  referrer text,
+  utm_source text,
+  utm_medium text,
+  utm_campaign text,
+  landing_path text,
+  unsubscribe_token text NOT NULL,
+  unsubscribed_at timestamptz,
+  welcome_planet text,
+  follow_up_sent_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
+CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_token_uidx ON interest_list_signups(unsubscribe_token);
+CREATE INDEX IF NOT EXISTS interest_list_signups_created_idx ON interest_list_signups(created_at);
+CREATE TABLE IF NOT EXISTS broadcasts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  subject text NOT NULL,
+  body text NOT NULL,
+  status text NOT NULL DEFAULT 'draft',
+  created_by text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  sent_at timestamptz,
+  recipient_count integer NOT NULL DEFAULT 0,
+  sent_count integer NOT NULL DEFAULT 0,
+  failed_count integer NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS broadcasts_created_idx ON broadcasts(created_at);
+CREATE TABLE IF NOT EXISTS broadcast_recipients (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  broadcast_id uuid NOT NULL,
+  signup_id uuid NOT NULL,
+  email text NOT NULL,
+  sent_at timestamptz,
+  error text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS broadcast_recipients_pair_uidx ON broadcast_recipients(broadcast_id, signup_id);
+CREATE INDEX IF NOT EXISTS broadcast_recipients_broadcast_idx ON broadcast_recipients(broadcast_id);
 CREATE TABLE IF NOT EXISTS billing_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source text NOT NULL,
@@ -565,6 +626,49 @@ CREATE TABLE IF NOT EXISTS gate_events (
 CREATE INDEX IF NOT EXISTS gate_events_feature_created_idx ON gate_events(feature, created_at);
 CREATE INDEX IF NOT EXISTS gate_events_user_created_idx ON gate_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action, created_at);
+CREATE TABLE IF NOT EXISTS app_surface_flags (
+  surface_key text PRIMARY KEY,
+  hidden_at timestamptz NOT NULL DEFAULT now(),
+  hidden_by text NOT NULL
+);
+CREATE TABLE IF NOT EXISTS startup_expenses (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  category text NOT NULL,
+  amount_usd real NOT NULL,
+  incurred_at timestamptz NOT NULL,
+  note text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS cash_snapshots (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  as_of timestamptz NOT NULL,
+  balance_usd real NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS acquisition_spend (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  channel text NOT NULL,
+  amount_usd real NOT NULL,
+  period_start timestamptz NOT NULL,
+  period_end timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS fundraising_rounds (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  target_usd real NOT NULL,
+  status text NOT NULL DEFAULT 'open',
+  closed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS fundraising_investors (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  round_id uuid NOT NULL REFERENCES fundraising_rounds(id),
+  name text NOT NULL,
+  amount_usd real NOT NULL,
+  committed_at timestamptz NOT NULL,
+  note text
+);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -587,7 +691,7 @@ CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action,
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 18;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -701,6 +805,19 @@ export const SCALE_DDL: string[] = [
   // base and outreach refresh had no usable index for their scans.
   `CREATE INDEX IF NOT EXISTS interactions_user_date_idx ON interactions(user_id, interaction_date DESC)`,
   `CREATE INDEX IF NOT EXISTS embeddings_user_src_idx ON contact_embeddings(user_id, source_type, contact_id)`,
+  // Reminders had `(user_id, status)`, `(user_id, due_date)` and `(user_id, list_id)` but
+  // nothing on contact_id, while eight hot paths filter by it — the contact detail page,
+  // every reminder write, calendar sync, and the import engine's per-chunk `inArray` dedupe.
+  // Each of those was a per-user index scan plus a filter instead of a point lookup.
+  `CREATE INDEX IF NOT EXISTS reminders_user_contact_idx ON reminders(user_id, contact_id)`,
+  // Company/school concentration in `src/lib/closeness-materialize.ts` counts with
+  // `lower(trim(company)) = $1`. A b-tree on the bare column cannot serve that — Postgres
+  // could only use the user_id prefix and then filter every one of that user's entries —
+  // so these are expression indexes matching the predicate exactly. `lower` and `btrim`
+  // are both immutable, which is what makes them indexable. This runs on every contact
+  // create, update and logInteraction, so it is not a cold path.
+  `CREATE INDEX IF NOT EXISTS contacts_user_company_norm_idx ON contacts(user_id, lower(trim(company)))`,
+  `CREATE INDEX IF NOT EXISTS contacts_user_school_norm_idx ON contacts(user_id, lower(trim(school)))`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
@@ -922,6 +1039,8 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "twilio_auth_token_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_from_number", "text");
   await ensureColumn(client, "user_settings", "theme", "text");
+  await ensureColumn(client, "user_settings", "yc_mode_enabled", "boolean DEFAULT false");
+  await ensureColumn(client, "user_settings", "estimated_monthly_churn_pct", "real");
   await ensureColumn(
     client,
     "user_settings",
@@ -1103,13 +1222,68 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "signup_landing_path", "text");
   await ensureColumn(client, "user_settings", "signup_attributed_at", "timestamptz");
 
+  // Embedding staleness: imports flag contacts here instead of embedding inline, and a
+  // separate backfill drains them. The dedupe is safe to re-run — it only ever deletes rows
+  // that lose the (user_id, contact_id, source_type, source_id) tiebreak, and once the
+  // unique index exists no more duplicates can be created for it to find.
+  //
+  // The key includes `source_id` because that is the real uniqueness contract:
+  // `upsertContactEmbedding` (src/lib/search.ts) keys its existence check on all four
+  // columns, and calendar-sync writes one `"meeting"` row per meeting with a distinct
+  // `source_id`. A three-column key would both delete every meeting embedding but the
+  // newest and make every subsequent meeting write raise a unique violation that
+  // `upsertContactEmbedding`'s catch swallows. `source_id` is nullable and Postgres
+  // indexes NULLs as distinct by default, so rows with a null `source_id` are simply
+  // unconstrained — which matches the writer, since `upsertContactEmbedding` skips its
+  // existence check entirely when no `source_id` is supplied.
+  await ensureColumn(client, "contacts", "embedding_stale_at", "timestamptz");
+
+  try {
+    await client.exec(
+      `CREATE INDEX IF NOT EXISTS contacts_embedding_stale_idx
+       ON contacts(user_id) WHERE embedding_stale_at IS NOT NULL`
+    );
+  } catch {
+    // Index may already exist
+  }
+
+  try {
+    await client.exec(`
+      DELETE FROM contact_embeddings a
+      USING contact_embeddings b
+      WHERE a.user_id = b.user_id
+        AND a.contact_id = b.contact_id
+        AND a.source_type = b.source_type
+        AND a.source_id = b.source_id
+        AND (a.created_at < b.created_at OR (a.created_at = b.created_at AND a.id < b.id))
+    `);
+  } catch {
+    // Nothing to dedupe
+  }
+
+  // An earlier revision of this migration created the same-named index on only three
+  // columns. Drop it by name before creating the correct one, or a database that already
+  // migrated keeps the over-strict key forever. Both statements are no-ops once the
+  // four-column index is in place.
+  try {
+    await client.exec(`DROP INDEX IF EXISTS embeddings_user_contact_source_uidx`);
+  } catch {
+    // Index may not exist
+  }
+
+  try {
+    await client.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS embeddings_user_contact_source_id_uidx
+       ON contact_embeddings(user_id, contact_id, source_type, source_id)`
+    );
+  } catch {
+    // Index may already exist
+  }
+
   // `query` rather than `exec`: it returns `{ rows }`, which `rowsOf` understands, so the
   // schema-version SELECT reads the same on both drivers. Every statement here is a single
   // command, which is what `query` requires.
   await applyScaleSchema((statement) => client.query(statement));
-}
-
-/**
 
   // Admin console v2: operator suspension, plus the indexes the cross-user roster/trend
   // queries need. Same reasoning as the block above — the DDL template only helps a
@@ -1117,6 +1291,11 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "suspended_at", "timestamptz");
   await ensureColumn(client, "user_settings", "suspended_reason", "text");
   await ensureColumn(client, "user_settings", "suspended_by", "text");
+
+  // Same reasoning: a local database built by the version that first added
+  // `interest_list_signups` has the table but neither of these columns.
+  await ensureColumn(client, "interest_list_signups", "welcome_planet", "text");
+  await ensureColumn(client, "interest_list_signups", "follow_up_sent_at", "timestamptz");
 
   for (const statement of ADMIN_V2_STATEMENTS) {
     try {
@@ -1277,6 +1456,8 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS social_links jsonb DEFAULT '{}'`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_plan text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lifetime_purchased_at timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS yc_mode_enabled boolean DEFAULT false`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS estimated_monthly_churn_pct real`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS stripe_customer_id text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_plan text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_status text`,
@@ -1312,6 +1493,9 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `CREATE INDEX IF NOT EXISTS error_events_user_created_idx ON error_events(user_id, created_at)`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
+    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS x_handle text`,
+    `CREATE INDEX IF NOT EXISTS contacts_user_linkedin_idx ON contacts(user_id, linkedin_url)`,
+    `CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle)`,
     `CREATE INDEX IF NOT EXISTS companies_user_idx ON companies(user_id)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS companies_user_name_uidx ON companies(user_id, name_normalized)`,
     `CREATE INDEX IF NOT EXISTS user_goals_user_idx ON user_goals(user_id)`,
@@ -1348,6 +1532,11 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token_created_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_last_fetched_at timestamptz`,
+    // Added a version after the table itself. A preview deployment of the branch that
+    // introduced `interest_list_signups` already created it without these, and
+    // CREATE TABLE IF NOT EXISTS will never go back and add a column to it.
+    `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS welcome_planet text`,
+    `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS follow_up_sent_at timestamptz`,
     `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
@@ -1366,6 +1555,32 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_reason text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_by text`,
     ...ADMIN_V2_STATEMENTS,
+    // Embedding staleness: imports flag contacts here instead of embedding inline, and a
+    // separate backfill drains them. The dedupe is safe to re-run — it only ever deletes
+    // rows that lose the (user_id, contact_id, source_type, source_id) tiebreak, and once
+    // the unique index exists no more duplicates can be created for it to find.
+    //
+    // `source_id` is part of the key because that is the real uniqueness contract:
+    // `upsertContactEmbedding` keys its existence check on all four columns, and
+    // calendar-sync writes one `"meeting"` row per meeting with a distinct `source_id`.
+    // The DROP is load-bearing: an earlier revision created this same-named index on only
+    // three columns, which would delete every meeting embedding but the newest and then
+    // make each subsequent meeting write raise a swallowed unique violation. NULL
+    // `source_id`s index as distinct (Postgres default), so unkeyed rows stay
+    // unconstrained — matching the writer, which skips its existence check without one.
+    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS embedding_stale_at timestamptz`,
+    `CREATE INDEX IF NOT EXISTS contacts_embedding_stale_idx
+     ON contacts(user_id) WHERE embedding_stale_at IS NOT NULL`,
+    `DELETE FROM contact_embeddings a
+     USING contact_embeddings b
+     WHERE a.user_id = b.user_id
+       AND a.contact_id = b.contact_id
+       AND a.source_type = b.source_type
+       AND a.source_id = b.source_id
+       AND (a.created_at < b.created_at OR (a.created_at = b.created_at AND a.id < b.id))`,
+    `DROP INDEX IF EXISTS embeddings_user_contact_source_uidx`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS embeddings_user_contact_source_id_uidx
+     ON contact_embeddings(user_id, contact_id, source_type, source_id)`,
   ];
 
   for (const statement of alters) {
@@ -1459,15 +1674,15 @@ export async function getDb(): Promise<Db> {
   // per request — each rebuild reconstructs the relational query metadata from `schema`.
   if (process.env.NODE_ENV !== "production") {
     if (globalForDb.orbitNeonSql) {
-      return drizzleNeon(globalForDb.orbitNeonSql, { schema }) as Db;
+      return drizzleNeon(globalForDb.orbitNeonSql, { schema, logger: countingLogger }) as Db;
     }
-    return drizzlePglite(globalForDb.orbitPglite!, { schema });
+    return drizzlePglite(globalForDb.orbitPglite!, { schema, logger: countingLogger });
   }
 
   if (!globalForDb.orbitDrizzle) {
     globalForDb.orbitDrizzle = globalForDb.orbitNeonSql
-      ? (drizzleNeon(globalForDb.orbitNeonSql, { schema }) as Db)
-      : drizzlePglite(globalForDb.orbitPglite!, { schema });
+      ? (drizzleNeon(globalForDb.orbitNeonSql, { schema, logger: countingLogger }) as Db)
+      : drizzlePglite(globalForDb.orbitPglite!, { schema, logger: countingLogger });
   }
   return globalForDb.orbitDrizzle;
 }

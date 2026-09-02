@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { userGoals } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 
 export async function listGoals() {
   const userId = await requireUserId();
@@ -16,13 +17,7 @@ export async function listGoals() {
 }
 
 export async function listActiveGoalTexts() {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const rows = await db.query.userGoals.findMany({
-    where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
-    columns: { text: true },
-  });
-  return rows.map((r) => r.text);
+  return listActiveGoalTextsForUser(await requireUserId());
 }
 
 export async function addGoal(text: string) {

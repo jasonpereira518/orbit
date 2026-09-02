@@ -4,7 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "motion/react";
 import { ArrowUpRight } from "lucide-react";
-import { ADMIN_NAV, isAdminNavActive } from "@/components/admin/admin-nav";
+import { ADMIN_NAV, ADMIN_YC_NAV, isAdminNavActive } from "@/components/admin/admin-nav";
+import { YCModeToggle } from "@/components/admin/yc-mode-toggle";
 import { cn } from "@/lib/utils";
 
 /**
@@ -24,14 +25,25 @@ import { cn } from "@/lib/utils";
 export function AdminShell({
   children,
   adminEmail,
+  hiddenSurfaceCount = 0,
+  ycMode = false,
 }: {
   children: React.ReactNode;
   adminEmail?: string | null;
+  /**
+   * How many surfaces are currently hidden from users. Rides in the nav on EVERY admin
+   * screen, not just /admin/product, because operators are exempt from their own toggles —
+   * so without this the only visible trace of a forgotten one is on the page you would
+   * already have to be looking at.
+   */
+  hiddenSurfaceCount?: number;
+  ycMode?: boolean;
 }) {
   const pathname = usePathname();
+  const navItems = ycMode ? ADMIN_YC_NAV : ADMIN_NAV;
 
   return (
-    <div className="min-h-dvh bg-background text-sm">
+    <div className={cn("min-h-dvh bg-background text-sm", ycMode && "yc-theme")}>
       {/* Mode signal. Gold is an existing Orbit token that is essentially unused in app
           chrome, so peripheral vision catches it before a word has been read. */}
       <div aria-hidden className="h-0.5 w-full bg-accent" />
@@ -39,7 +51,7 @@ export function AdminShell({
       <header className="sticky top-0 z-30 border-b border-border/70 bg-card/90 backdrop-blur">
         <div className="mx-auto flex w-full max-w-[1400px] items-center gap-6 px-6 py-3">
           <Link href="/admin" className="flex items-center gap-2">
-            <span className="font-[family-name:var(--font-display)] text-base text-primary">
+            <span className="font-[family-name:var(--font-display)] text-base text-ink">
               Orbit
             </span>
             <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[0.625rem] font-medium uppercase tracking-widest text-accent-foreground">
@@ -48,7 +60,7 @@ export function AdminShell({
           </Link>
 
           <nav className="flex items-center gap-1">
-            {ADMIN_NAV.map((item) => {
+            {navItems.map((item) => {
               const active = isAdminNavActive(pathname, item.href);
               return (
                 <Link
@@ -72,6 +84,14 @@ export function AdminShell({
                   <span className="relative flex items-center gap-1.5">
                     <item.icon className="size-3.5" aria-hidden />
                     {item.label}
+                    {item.href === "/admin/product" && hiddenSurfaceCount > 0 && (
+                      <span
+                        title={`${hiddenSurfaceCount} surface${hiddenSurfaceCount === 1 ? "" : "s"} hidden from users`}
+                        className="rounded-full bg-accent/25 px-1.5 text-[0.625rem] font-medium tabular-nums text-accent-foreground"
+                      >
+                        {hiddenSurfaceCount}
+                      </span>
+                    )}
                   </span>
                 </Link>
               );
@@ -79,6 +99,7 @@ export function AdminShell({
           </nav>
 
           <div className="ml-auto flex items-center gap-4 text-xs text-muted-foreground">
+            <YCModeToggle active={ycMode} />
             {adminEmail && (
               <span className="hidden sm:inline truncate max-w-[16rem]">
                 {adminEmail}

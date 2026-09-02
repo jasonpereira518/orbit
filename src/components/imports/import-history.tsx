@@ -40,9 +40,19 @@ export type ImportHistoryItem = {
   errorMessage?: string | null;
   stats?: {
     skipped?: number;
+    // Legacy per-type breakdown: written by import types before they moved onto the
+    // resumable engine, and no longer written by anything — kept here purely so historical
+    // rows from before that move still render their real counts instead of going blank.
     messagesImported?: number;
     meetingsLogged?: number;
+    // Current, adapter-agnostic counters every server-owned import job's engine run writes
+    // (see `ImportStats` in `src/db/schema.ts`) — what `messagesImported`/`meetingsLogged`
+    // were replaced by once LinkedIn messages (Task 14) and calendar (Task 15) moved onto
+    // the engine, which counts interactions/reminders once generically instead of per type.
+    interactionsLogged?: number;
     remindersCreated?: number;
+    /** Rows the engine isolated as unwritable — see `ImportStats.failedRows`. */
+    failedRows?: number;
     contactsEnriched?: number;
     eventsProcessed?: number;
   } | null;
@@ -53,7 +63,7 @@ export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div>
-        <h2 className="text-lg font-medium text-primary">Import history</h2>
+        <h2 className="text-lg font-medium text-ink">Import history</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Recent LinkedIn and calendar imports for this account.
         </p>
@@ -83,7 +93,7 @@ export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
                     </span>
                   ) : null}
                   <div className="min-w-0">
-                    <p className="font-medium text-primary">
+                    <p className="font-medium text-ink">
                       {h.fileName || "Import"}
                     </p>
                     <p className="text-xs text-muted-foreground">
@@ -96,10 +106,17 @@ export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
                       {h.stats?.meetingsLogged
                         ? ` · ${h.stats.meetingsLogged} meetings`
                         : ""}
+                      {h.stats?.interactionsLogged
+                        ? ` · ${h.stats.interactionsLogged} interactions logged`
+                        : ""}
+                      {h.stats?.remindersCreated
+                        ? ` · ${h.stats.remindersCreated} reminders`
+                        : ""}
                       {h.duplicatesFound
                         ? ` · ${h.duplicatesFound} duplicates`
                         : ""}
                       {h.stats?.skipped ? ` · ${h.stats.skipped} skipped` : ""}
+                      {h.stats?.failedRows ? ` · ${h.stats.failedRows} failed` : ""}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {formatDistanceToNow(new Date(h.createdAt), {

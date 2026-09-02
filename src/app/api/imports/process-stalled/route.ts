@@ -1,7 +1,7 @@
-import { and, count, inArray, lt, eq } from "drizzle-orm";
+import { and, count, inArray, isNotNull, lt, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
-import { errorEvents, imports, usageEvents } from "@/db/schema";
+import { contacts, errorEvents, imports, usageEvents } from "@/db/schema";
 import {
   RESUMABLE_IMPORT_TYPES,
   runImportJobById,
@@ -12,7 +12,13 @@ import {
   type CronRunStatus,
 } from "@/lib/cron-runs";
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
+import { sweepInterestListFollowUps } from "@/lib/interest-list-follow-up";
 import { findStaleCohorts } from "@/lib/closeness-materialize";
+import { kickEmbeddingBackfill, runEmbeddingBackfill } from "@/lib/embedding-backfill";
+import {
+  kickLinkedInTimelineBackfill,
+  usersWithPendingTimelineEvents,
+} from "@/lib/linkedin-timeline-backfill";
 import { backfillEmbeddingVectors, neonClient } from "@/db";
 
 export const maxDuration = 300;
@@ -35,6 +41,37 @@ const USAGE_EVENT_RETENTION_DAYS = 180;
 
 /** Networks recalibrated per run. Bounded so one huge orbit cannot eat the invocation. */
 const RECALIBRATE_BATCH = 25;
+
+/** Users listed per run for the embedding backstop — see the try block below. */
+const EMBED_BACKFILL_USERS = 25;
+
+/**
+ * Users handed to the LinkedIn timeline backfill per run.
+ *
+ * Kicked, never run inline — unlike the embedding sweep below, which does drain work here
+ * under a wall-clock budget. Timeline derivation costs one AI completion per contact, so
+ * even a single user's backlog can exceed this route's whole 300s, and this route has a
+ * job-resumption backstop to get to. The route it kicks is self-continuing and has its own
+ * 300s per invocation, which is where that work belongs.
+ */
+const TIMELINE_BACKFILL_USERS = 25;
+
+/**
+ * Wall-clock ceiling on the whole embedding sweep, and on any single user inside it.
+ *
+ * This used to be bounded by *user count* alone (10 users, each free to take
+ * `runEmbeddingBackfill`'s own 4.5-minute internal budget) inside a route whose
+ * `maxDuration` is 300s. One user with a large backlog therefore consumed the entire
+ * invocation and two exceeded the ceiling outright — at which point the function is killed,
+ * the `finally` never runs, `finishCronRun` never records anything, and the `cron_run` row
+ * is stuck `running` forever while the other users are never reached at all. A 5,000-contact
+ * import, the stated target scale, is exactly that case.
+ *
+ * A count cannot bound unbounded per-item work, so the budget is time. Users still pending
+ * when it runs out are not dropped: they get a kick to the backfill route, which is
+ * self-continuing and has its own 300s to work in (see `kickEmbeddingBackfill`).
+ */
+const EMBED_SWEEP_BUDGET_MS = 90 * 1000;
 
 /**
  * Shorter than usage events, because the two answer different questions: usage feeds cost
@@ -88,6 +125,16 @@ export async function GET(request: Request) {
     errorEventsPruned: 0,
     cohortsRecalibrated: 0,
     embeddingsBackfilled: 0,
+    embeddingsGenerated: 0,
+    /** Users handed to the self-continuing backfill route because this run could not
+     *  finish them inside `EMBED_SWEEP_BUDGET_MS`. */
+    embeddingBackfillsKicked: 0,
+    /** Users handed to the self-continuing LinkedIn timeline-event backfill route. */
+    timelineBackfillsKicked: 0,
+    /** Day-3 interest-list follow-ups delivered on this run. */
+    followUpsSent: 0,
+    /** Claimed but refused by Resend; released, so tomorrow retries them. */
+    followUpsFailed: 0,
   };
 
   try {
@@ -132,6 +179,21 @@ export async function GET(request: Request) {
     }
 
     try {
+      // Day-3 interest-list follow-ups. Rides on this route rather than taking a cron slot
+      // of its own: this is already the product's only scheduled job, and the Hobby plan's
+      // minimum interval is daily either way. The sweep bounds its own batch.
+      const followUps = await sweepInterestListFollowUps();
+      stats.followUpsSent = followUps.sent;
+      stats.followUpsFailed = followUps.failed;
+      // A send that Resend refused released its claim and will retry tomorrow, but a run
+      // that could not deliver anything it tried is worth surfacing rather than burying
+      // in a count nobody reads.
+      if (followUps.failed > 0 && followUps.sent === 0) status = "partial";
+    } catch {
+      status = "partial";
+    }
+
+    try {
       // Redraw closeness for users whose ranking has been drifting.
       //
       // Ordinary edits score their own contact immediately and flag the distribution
@@ -154,6 +216,53 @@ export async function GET(request: Request) {
       // vector search until it is picked up here.
       const neonSql = neonClient();
       if (neonSql) stats.embeddingsBackfilled = await backfillEmbeddingVectors(neonSql);
+    } catch {
+      status = "partial";
+    }
+
+    try {
+      // Backstop only — imports kick the backfill directly on completion. This catches
+      // users whose kick was lost along with the invocation that sent it.
+      const staleUsers = await db
+        .selectDistinct({ userId: contacts.userId })
+        .from(contacts)
+        .where(isNotNull(contacts.embeddingStaleAt))
+        .limit(EMBED_BACKFILL_USERS);
+
+      const sweepDeadline = Date.now() + EMBED_SWEEP_BUDGET_MS;
+      for (const { userId: staleUser } of staleUsers) {
+        const left = sweepDeadline - Date.now();
+        if (left <= 0) {
+          // Out of sweep budget. Hand this user to the self-continuing route rather than
+          // dropping them until tomorrow's run — the point of the wall-clock bound is that
+          // one backlog cannot starve the others, not that the others go unserved.
+          stats.embeddingBackfillsKicked += 1;
+          await kickEmbeddingBackfill(staleUser);
+          continue;
+        }
+        // The per-user slice is whatever is left of the sweep, so the sum across users
+        // cannot exceed the budget no matter how the backlog is distributed.
+        const res = await runEmbeddingBackfill(staleUser, undefined, left).catch(() => null);
+        stats.embeddingsGenerated += res?.embedded ?? 0;
+        if ((res?.remaining ?? 0) > 0) {
+          stats.embeddingBackfillsKicked += 1;
+          await kickEmbeddingBackfill(staleUser);
+        }
+      }
+    } catch {
+      status = "partial";
+    }
+
+    try {
+      // Backstop only — the LinkedIn messages adapter's `finalize` kicks this directly when
+      // an import completes. This catches users whose kick was lost along with the
+      // invocation that sent it, and users whose backlog outlived the kick chain.
+      for (const pendingUser of await usersWithPendingTimelineEvents(
+        TIMELINE_BACKFILL_USERS
+      )) {
+        await kickLinkedInTimelineBackfill(pendingUser);
+        stats.timelineBackfillsKicked += 1;
+      }
     } catch {
       status = "partial";
     }

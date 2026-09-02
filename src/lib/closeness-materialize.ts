@@ -344,8 +344,10 @@ export async function rescoreContact(
           eq(interactions.contactId, contactId)
         )
       ),
-    // Concentration for this contact's employer only — an indexed count on
-    // `contacts_company_idx`, not a scan of the network to rebuild every bucket.
+    // Concentration for this contact's employer only — not a scan of the network to
+    // rebuild every bucket. Served by `contacts_user_company_norm_idx`, which is an
+    // expression index on `lower(trim(company))`: it has to match this predicate exactly,
+    // because a plain b-tree on `company` cannot answer a normalized comparison.
     contact.company
       ? db
           .select({ n: sql<number>`count(*)::int` })

@@ -19,4 +19,12 @@ export const PUBLIC_ROUTES = [
   // Calendar clients (Google, Apple, Outlook) cannot complete a Clerk session. The feed
   // is authenticated by the opaque token in its path instead.
   "/api/calendar/(.*)",
+  // Clicked from an email, by someone who has never signed in. Authenticated by the
+  // opaque token in the query string instead, same pattern as the calendar feed above.
+  "/api/interest-list/unsubscribe",
+  // Not actually public: these authenticate via requireExtensionUserId, which reads the
+  // Clerk state clerkMiddleware populates. They are exempted from auth.protect() only so
+  // an unauthenticated call gets a JSON 401 the extension can act on, rather than a 302
+  // to an HTML sign-in page.
+  "/api/extension(.*)",
 ] as const;

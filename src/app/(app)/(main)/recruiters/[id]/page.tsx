@@ -40,7 +40,7 @@ export default async function RecruiterDetailPage({
           >
             ← Recruiters
           </Link>
-          <h1 className="mt-2 font-[family-name:var(--font-display)] text-3xl text-primary">
+          <h1 className="mt-2 font-[family-name:var(--font-display)] text-3xl text-ink">
             {recruiter.fullName}
           </h1>
           <p className="mt-1 text-muted-foreground">
@@ -57,7 +57,7 @@ export default async function RecruiterDetailPage({
         <div className="rounded-xl border border-border/70 bg-card px-4 py-3 text-center text-sm">
           {recruiter.ratingCount > 0 ? (
             <>
-              <p className="text-2xl font-medium text-primary">
+              <p className="text-2xl font-medium text-ink">
                 ★ {formatAvg(recruiter.avgRating)}
               </p>
               <p className="text-xs text-muted-foreground">
@@ -82,7 +82,7 @@ export default async function RecruiterDetailPage({
       </div>
 
       <div className="rounded-2xl border border-border/70 bg-card p-5">
-        <h2 className="font-[family-name:var(--font-display)] text-lg text-primary">
+        <h2 className="font-[family-name:var(--font-display)] text-lg text-ink">
           Contact
         </h2>
         {recruiter.piiUnlocked ? (
@@ -142,7 +142,7 @@ export default async function RecruiterDetailPage({
       {(summary || companies.length > 0 || roles.length > 0) && (
         <div className="rounded-2xl border border-border/70 bg-card p-5">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-[family-name:var(--font-display)] text-lg text-primary">
+            <h2 className="font-[family-name:var(--font-display)] text-lg text-ink">
               Your history
             </h2>
             {/* Stated plainly because this text is distilled from the user's inbox.
@@ -206,7 +206,7 @@ export default async function RecruiterDetailPage({
         />
       ) : (
         <div className="rounded-2xl border border-border/70 bg-card p-5">
-          <h2 className="font-[family-name:var(--font-display)] text-lg text-primary">
+          <h2 className="font-[family-name:var(--font-display)] text-lg text-ink">
             Log your interaction
           </h2>
           <p className="mt-1 mb-4 text-sm text-muted-foreground">

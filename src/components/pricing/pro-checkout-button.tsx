@@ -54,7 +54,7 @@ export function ProCheckoutButton({
         {pending ? "Opening checkout…" : label}
       </button>
       {error && (
-        <p role="alert" className="text-center text-xs text-[#599de7]">
+        <p role="alert" className="text-center text-xs text-brand-pro">
           {error}
         </p>
       )}

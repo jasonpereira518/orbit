@@ -40,6 +40,10 @@ import { sql } from "drizzle-orm";
   "cron_runs",
   "webhook_deliveries",
   "error_events",
+  "app_surface_flags",
+  "interest_list_signups",
+  "broadcasts",
+  "broadcast_recipients",
 ] as const;
 
 async function main() {
