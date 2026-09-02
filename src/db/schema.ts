@@ -1591,6 +1591,33 @@ export const broadcastRecipients = pgTable(
  * every future reader remembering to deduplicate. The retry information is not lost; it
  * still lives one table over.
  */
+/**
+ * What a billing event meant financially.
+ *
+ * Declared here rather than in `billing-events.ts` because the column's `$type` and the
+ * module's union were previously spelled out separately, in two files, with nothing
+ * keeping them in step — a kind added to one and forgotten in the other type-checks
+ * cleanly and mis-sorts money at runtime.
+ *
+ * `kind` is a plain `text` column with no CHECK and no `pgEnum`, so adding a member here
+ * needs no DDL and no `SCHEMA_VERSION` bump.
+ *
+ * `payment` is recurring cash actually received (an invoice paid). It is deliberately
+ * distinct from `lifetime`, which is one-time cash: folding the two together is the
+ * easiest way to produce a "one-time revenue" figure that quietly includes subscription
+ * renewals.
+ */
+export type BillingEventKind =
+  | "new"
+  | "expansion"
+  | "contraction"
+  | "churn"
+  | "reactivation"
+  | "lifetime"
+  | "payment"
+  | "refund"
+  | "payment_failed";
+
 export const billingEvents = pgTable(
   "billing_events",
   {
@@ -1598,18 +1625,7 @@ export const billingEvents = pgTable(
     source: text("source").$type<"clerk" | "stripe">().notNull(),
     /** The provider's delivery id — `svix-id` for Clerk, the event id for Stripe. */
     eventId: text("event_id").notNull(),
-    kind: text("kind")
-      .$type<
-        | "new"
-        | "expansion"
-        | "contraction"
-        | "churn"
-        | "reactivation"
-        | "lifetime"
-        | "refund"
-        | "payment_failed"
-      >()
-      .notNull(),
+    kind: text("kind").$type<BillingEventKind>().notNull(),
     userId: text("user_id"),
     /** Cash moved, always positive. Zero for a pure status change. */
     amountCents: integer("amount_cents").default(0).notNull(),
