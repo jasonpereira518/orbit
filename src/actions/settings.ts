@@ -110,6 +110,7 @@ export async function getSettings() {
       canUseRecruiters: entitlements.canUseRecruiters,
       canUseSync: entitlements.canUseSync,
       canUseExtension: entitlements.canUseExtension,
+      canUseContactsImport: entitlements.canUseContactsImport,
     },
     socialLinks: {
       linkedin: settings?.socialLinks?.linkedin || "",

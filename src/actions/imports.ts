@@ -14,6 +14,7 @@ import {
   type CalendarEventRowPayload,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { requireContactsImportUser } from "@/lib/plan-guards";
 import {
   DUPLICATE_MERGE_CONFIDENCE,
   buildDuplicateIndex,
@@ -684,7 +685,7 @@ export async function previewGoogleContacts(): Promise<{
   contactsScopeGranted: boolean;
   people: GoogleContactPerson[];
 }> {
-  const userId = await requireUserId();
+  const userId = await requireContactsImportUser();
   const db = await getDb();
   const conn = await db.query.gmailConnections.findFirst({
     where: and(eq(gmailConnections.userId, userId), eq(gmailConnections.status, "active")),
@@ -759,7 +760,7 @@ export async function previewGoogleContacts(): Promise<{
 export async function confirmGoogleContactsImport(
   selectedIds: string[]
 ): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
+  const userId = await requireContactsImportUser();
   const db = await getDb();
 
   const accessToken = await getValidAccessToken(userId);
@@ -826,7 +827,7 @@ export async function previewOutlookContacts(): Promise<{
   connected: boolean;
   people: OutlookContactPerson[];
 }> {
-  const userId = await requireUserId();
+  const userId = await requireContactsImportUser();
   const db = await getDb();
   const conn = await db.query.outlookConnections.findFirst({
     where: and(eq(outlookConnections.userId, userId), eq(outlookConnections.status, "active")),
@@ -892,7 +893,7 @@ export async function previewOutlookContacts(): Promise<{
 export async function confirmOutlookContactsImport(
   selectedIds: string[]
 ): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
+  const userId = await requireContactsImportUser();
   const db = await getDb();
 
   const accessToken = await getValidOutlookAccessToken(userId);

@@ -146,7 +146,7 @@ export function ImportHub({
 }: {
   history: ImportHistoryItem[];
   calendarSubscriptions?: CalendarSub[];
-  /** Calendar sync is a paid feature; LinkedIn import stays free on every plan. */
+  /** Calendar sync is a paid feature; LinkedIn, Google, and Outlook contacts imports are free on every plan. */
   canUseSync?: boolean;
 }) {
   const job = useImportJob();
@@ -280,7 +280,7 @@ export function ImportHub({
                 "New people from invites land in your contacts",
                 "Follow-up reminders created automatically",
               ]}
-              note="LinkedIn imports stay free on every plan."
+              note="LinkedIn, Google, and Outlook contacts imports are free on every plan."
             />
           )}
         </div>

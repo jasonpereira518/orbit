@@ -107,6 +107,7 @@ export default async function AdminUserDetailPage({
     ["hosted sending", ent.canUseHostedSending],
     ["hosted enrichment", ent.canUseHostedEnrichment],
     ["recruiters", ent.canUseRecruiters],
+    ["contacts import", ent.canUseContactsImport],
     ["sync", ent.canUseSync],
     ["extension", ent.canUseExtension],
   ];

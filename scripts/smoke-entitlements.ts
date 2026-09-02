@@ -8,14 +8,19 @@
 import { config } from "dotenv";
 config({ path: ".env.local" });
 config();
+// This suite must run against the local per-worktree PGlite file, never a remote
+// database: reset() hard-deletes a user's contacts and gate events, and .env.local
+// gaining a DATABASE_URL would point that at shared data.
+delete process.env.DATABASE_URL;
 
 import { and, count, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, userSettings } from "../src/db/schema";
+import { contacts, gateEvents, userSettings } from "../src/db/schema";
 import {
   FREE_CONTACT_LIMIT,
   getEntitlements,
   isPaywallError,
+  requireEntitlement,
   resolvePlan,
 } from "../src/lib/entitlements";
 import {
@@ -49,10 +54,20 @@ async function setBilling(patch: Partial<typeof userSettings.$inferInsert>) {
   await db.update(userSettings).set(patch).where(eq(userSettings.userId, USER));
 }
 
+async function gateEventCount(feature: string) {
+  const db = await getDb();
+  const [row] = await db
+    .select({ value: count() })
+    .from(gateEvents)
+    .where(and(eq(gateEvents.userId, USER), eq(gateEvents.feature, feature)));
+  return row?.value ?? 0;
+}
+
 async function reset() {
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
+  await db.delete(gateEvents).where(eq(gateEvents.userId, USER));
   await ensureUserSettings(USER);
 }
 
@@ -96,6 +111,27 @@ async function main() {
   check("sync gated", ent.canUseSync === false);
   check("hosted sending gated", ent.canUseHostedSending === false);
   check("hosted enrichment gated", ent.canUseHostedEnrichment === false);
+  check("contacts import free on free plan", ent.canUseContactsImport === true);
+
+  // --- contactsImport is free everywhere; sync stays gated and records a gate hit ---
+  console.log("\ncontacts import gate (free plan)");
+  const syncHitsBefore = await gateEventCount("sync");
+  await requireEntitlement(USER, "contactsImport");
+  check("contactsImport resolves on free plan", true);
+
+  let syncThrew: unknown = null;
+  try {
+    await requireEntitlement(USER, "sync");
+  } catch (err) {
+    syncThrew = err;
+  }
+  check("sync still throws PaywallError on free plan", isPaywallError(syncThrew), String(syncThrew));
+  const syncHitsAfter = await gateEventCount("sync");
+  check(
+    "exactly one gate_events row recorded for sync",
+    syncHitsAfter - syncHitsBefore === 1,
+    `before=${syncHitsBefore} after=${syncHitsAfter}`
+  );
 
   const resolver = await createCompanyResolver(USER);
   const bulk = Array.from({ length: FREE_CONTACT_LIMIT - 1 }, (_, i) => ({
@@ -165,6 +201,7 @@ async function main() {
   check("outreach unlocked", ent.canUseOutreach === true);
   check("sync unlocked", ent.canUseSync === true);
   check("extension unlocked", ent.canUseExtension === true);
+  check("contacts import free on lifetime", ent.canUseContactsImport === true);
   // The whole point of the split: Lifetime sends on Orbit's credits (bounded by
   // DAILY_SEND_LIMIT) but enriches on its own Apollo key (which has no ceiling).
   check("hosted sending unlocked on lifetime", ent.canUseHostedSending === true);
@@ -190,6 +227,7 @@ async function main() {
   check("plan is orbit", ent.plan === "orbit", ent.plan);
   check("hosted sending unlocked", ent.canUseHostedSending === true);
   check("hosted enrichment unlocked", ent.canUseHostedEnrichment === true);
+  check("contacts import free on orbit", ent.canUseContactsImport === true);
 
   // --- lifetime + live subscription are additive ---
   // `resolvePlan` ranks lifetime above subscription, so this user resolves to `lifetime`,
