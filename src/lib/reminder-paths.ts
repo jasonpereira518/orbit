@@ -16,3 +16,8 @@ export function revalidateReminderPaths(contactId?: string | null) {
     revalidatePath("/graph");
   }
 }
+
+export function revalidateMentionPaths(contactId?: string | null) {
+  revalidatePath("/mentions/review");
+  if (contactId) revalidatePath(`/contacts/${contactId}`);
+}
