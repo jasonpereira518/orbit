@@ -33,6 +33,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-avatar-storage": "pure",
   "smoke-chat-pipeline": "pure",
   "smoke-chat-retrieval": "pure",
+  "smoke-chat-stream": "pure",
   "smoke-closeness": "pure",
   "smoke-closeness-materialized": "pure",
   "smoke-dashboard-search": "pure",
@@ -71,6 +72,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-admin-unmasked": "pglite",
   "smoke-avatar-migration": "pglite",
   "smoke-broadcasts": "pglite",
+  "smoke-chat-context": "pglite",
   "smoke-contact-brief": "pglite",
   "smoke-contacts-page": "pglite", // own in-memory PGlite, but imports the DDL from ../src/db
   "smoke-embedding-backfill": "pglite",

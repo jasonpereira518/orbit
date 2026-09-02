@@ -50,6 +50,7 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import type { ChatRecommendation } from "@/db/schema";
+import { streamChat } from "@/lib/chat-stream-client";
 
 type ChatResult = Extract<
   Awaited<ReturnType<typeof askNetwork>>,
@@ -74,6 +75,8 @@ type AssistantMessage = {
   role: "assistant";
   answer: string;
   recommendations: ChatRecommendation[];
+  /** True while the answer is still arriving from `/api/chat`. */
+  streaming?: boolean;
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
@@ -105,6 +108,14 @@ export function ChatPanel() {
   const [loadingThread, setLoadingThread] = useState(false);
   const [lastUserQuery, setLastUserQuery] = useState("");
   const [pending, start] = useTransition();
+  // Streaming is deliberately NOT a transition: updates inside `startTransition` are
+  // deferred, which would hold every streamed token back until the whole answer landed.
+  const [streaming, setStreaming] = useState(false);
+  const busy = pending || streaming;
+  // The "searching" bubble makes sense until the first token; after that the answer
+  // itself is the progress indicator.
+  const awaitingFirstToken =
+    busy && !messages.some((m) => m.role === "assistant" && m.streaming);
   const listRef = useRef<HTMLDivElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -142,7 +153,7 @@ export function ChatPanel() {
     if (!stickToBottomRef.current && !isNearBottom()) return;
     // Defer so DOM has laid out new messages
     requestAnimationFrame(() => scrollToBottom(true));
-  }, [messages, pending, isNearBottom, scrollToBottom]);
+  }, [messages, busy, isNearBottom, scrollToBottom]);
 
   function onListScroll() {
     stickToBottomRef.current = isNearBottom();
@@ -248,7 +259,7 @@ export function ChatPanel() {
   const sendQuestion = useCallback(
     (raw: string) => {
       const q = raw.trim();
-      if (!q || pending || loadingThread) return;
+      if (!q || busy || loadingThread) return;
 
       setLastUserQuery(q);
       const userMsg: UserMessage = {
@@ -261,46 +272,73 @@ export function ChatPanel() {
       setQuestion("");
       requestAnimationFrame(() => scrollToBottom(true));
 
-      start(async () => {
+      const assistantId = newId();
+      setStreaming(true);
+      void (async () => {
+        let activeId: string;
         try {
-          const activeId = await ensureThread();
-          const res = await askNetwork(q, { threadId: activeId });
-          if (!res.ok) {
-            toast.error(res.error);
-            setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
-            setQuestion(q);
-            return;
-          }
-          const assistantMsg: AssistantMessage = {
-            id: res.messageId || newId(),
-            role: "assistant",
-            answer: res.answer,
-            recommendations: res.recommendations,
-          };
-          setMessages((prev) => [...prev, assistantMsg]);
-          if (res.title) setThreadTitle(res.title);
-          setThreads((prev) => {
-            const next = prev.filter((t) => t.id !== activeId);
-            return [
-              {
-                id: activeId,
-                title: res.title ?? null,
-                createdAt: new Date(),
-                updatedAt: new Date(),
-              },
-              ...next,
-            ];
-          });
+          activeId = await ensureThread();
         } catch (err) {
-          toast.error(
-            toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message
-          );
+          toast.error(toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message);
           setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
           setQuestion(q);
+          setStreaming(false);
+          return;
         }
-      });
+
+        let placed = false;
+        const patch = (fn: (m: AssistantMessage) => AssistantMessage) =>
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId && m.role === "assistant" ? fn(m) : m))
+          );
+        const ensurePlaceholder = () => {
+          if (placed) return;
+          placed = true;
+          setMessages((prev) => [
+            ...prev,
+            { id: assistantId, role: "assistant", answer: "", recommendations: [], streaming: true },
+          ]);
+        };
+
+        await streamChat(
+          { question: q, threadId: activeId },
+          {
+            onAnswer: (delta) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, answer: m.answer + delta }));
+            },
+            onRecommendations: (items) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, recommendations: items }));
+            },
+            onDone: (info) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, id: info.messageId || assistantId, streaming: false }));
+              if (info.title) setThreadTitle(info.title);
+              setThreads((prev) => {
+                const next = prev.filter((t) => t.id !== activeId);
+                return [
+                  {
+                    id: activeId,
+                    title: info.title ?? null,
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                  },
+                  ...next,
+                ];
+              });
+            },
+            onError: (message) => {
+              toast.error(message);
+              setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
+              setQuestion(q);
+            },
+          }
+        );
+        setStreaming(false);
+      })();
     },
-    [pending, loadingThread, ensureThread, scrollToBottom]
+    [busy, loadingThread, ensureThread, scrollToBottom]
   );
 
   function fillMostRecentUserMessage() {
@@ -420,7 +458,7 @@ export function ChatPanel() {
             size="sm"
             className="shrink-0 text-muted-foreground"
             onClick={startNewChat}
-            disabled={pending}
+            disabled={busy}
           >
             <Plus className="size-4" />
             <span className="hidden sm:inline">New chat</span>
@@ -452,7 +490,7 @@ export function ChatPanel() {
                 </div>
               ) : (
                 <>
-                  {messages.length === 0 && !pending && (
+                  {messages.length === 0 && !busy && (
                     <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
                       <p className="font-[family-name:var(--font-display)] text-xl text-ink sm:text-2xl">
                         Ask your network
@@ -492,7 +530,7 @@ export function ChatPanel() {
                     )
                   )}
 
-                  {pending && (
+                  {awaitingFirstToken && (
                     <div className="flex justify-start">
                       <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
                         <Loader2 className="size-3.5 animate-spin" />
@@ -517,13 +555,13 @@ export function ChatPanel() {
                   onChange={(e) => setQuestion(e.target.value)}
                   onKeyDown={onComposerKeyDown}
                   className="min-h-[44px] flex-1 resize-none"
-                  disabled={pending || loadingThread}
+                  disabled={busy || loadingThread}
                 />
                 <Button
                   type="button"
                   size="icon"
                   disabled={
-                    pending ||
+                    busy ||
                     loadingThread ||
                     (!question.trim() && !lastUserQuery)
                   }
@@ -537,7 +575,7 @@ export function ChatPanel() {
                   }}
                   aria-label={question.trim() ? "Send" : "Recall last message"}
                 >
-                  {pending ? (
+                  {busy ? (
                     <Loader2 className="size-4 animate-spin" />
                   ) : (
                     <ArrowUp className="size-4" />
@@ -549,7 +587,7 @@ export function ChatPanel() {
                   <button
                     key={chip}
                     type="button"
-                    disabled={pending || loadingThread}
+                    disabled={busy || loadingThread}
                     className="rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
                     onClick={() => sendQuestion(chip)}
                   >

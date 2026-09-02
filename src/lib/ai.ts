@@ -15,6 +15,11 @@ import {
 } from "@/lib/usage-events";
 import { aiProviderErrorMessage } from "@/lib/errors";
 import {
+  RECOMMENDATIONS_MARKER,
+  createAnswerSplitter,
+  type SplitResult,
+} from "@/lib/chat-stream-protocol";
+import {
   AI_PROVIDERS,
   resolveAiModel,
   resolveAiProvider,
@@ -32,6 +37,19 @@ export {
 } from "@/lib/ai-providers";
 
 /** AI often omits unknown fields; accept missing/null. */
+/**
+ * Every provider call carries a deadline. A hung completion used to hold the function until
+ * Vercel killed it at `maxDuration` — invisible to every error tracker, and the request
+ * simply never answered. 45 s is well past any healthy completion and well inside the
+ * 60 s pages that host these calls.
+ */
+export const AI_CALL_TIMEOUT_MS = 45_000;
+
+/** A fresh signal per call; a shared one would abort every later call once it fired. */
+export function aiSignal(ms = AI_CALL_TIMEOUT_MS): AbortSignal {
+  return AbortSignal.timeout(ms);
+}
+
 const nullStr = z
   .string()
   .nullish()
@@ -525,7 +543,7 @@ export async function completeJson(
           const response = await client.models.generateContent({
             model,
             contents: input.user,
-            config: {
+            config: { abortSignal: aiSignal(),
               temperature,
               maxOutputTokens,
               responseMimeType: "application/json",
@@ -549,7 +567,7 @@ export async function completeJson(
               { role: "system", content: system },
               { role: "user", content: input.user },
             ],
-          });
+          }, { signal: aiSignal() });
           report(tokensFromOpenAi(response));
           const content = response.choices[0]?.message?.content;
           if (!content) throw new Error("Empty AI response");
@@ -563,7 +581,7 @@ export async function completeJson(
           temperature,
           system,
           messages: [{ role: "user", content: input.user }],
-        });
+        }, { signal: aiSignal() });
         report(tokensFromAnthropic(response));
         const block = response.content.find((b) => b.type === "text");
         if (!block || block.type !== "text" || !block.text) {
@@ -650,7 +668,7 @@ async function completeMultimodalJsonInner(
       const response = await client.models.generateContent({
         model,
         contents: [{ role: "user", parts: contents }],
-        config: {
+        config: { abortSignal: aiSignal(),
           temperature,
           maxOutputTokens,
           responseMimeType: "application/json",
@@ -696,7 +714,7 @@ async function completeMultimodalJsonInner(
           { role: "system", content: system },
           { role: "user", content },
         ],
-      });
+      }, { signal: aiSignal() });
       report(tokensFromOpenAi(response));
       const out = response.choices[0]?.message?.content;
       if (!out) throw new Error("Empty AI response");
@@ -742,7 +760,7 @@ async function completeMultimodalJsonInner(
       temperature,
       system,
       messages: [{ role: "user", content }],
-    });
+    }, { signal: aiSignal() });
     report(tokensFromAnthropic(response));
     const block = response.content.find((b) => b.type === "text");
     if (!block || block.type !== "text" || !block.text) {
@@ -838,7 +856,7 @@ export async function transcribeAudioWithAI(
               ],
             },
           ],
-          config: {
+          config: { abortSignal: aiSignal(),
             temperature: 0.1,
             maxOutputTokens: 4096,
             responseMimeType: "application/json",
@@ -1272,7 +1290,7 @@ export async function createEmbedding(userId: string, text: string) {
         const res = await client.embeddings.create({
           model: OPENAI_EMBEDDING_MODEL,
           input,
-        });
+        }, { signal: aiSignal() });
         report(tokensFromOpenAi(res));
         const values = res.data[0]?.embedding;
         if (!values?.length) throw new Error("Empty embedding response");
@@ -1283,6 +1301,7 @@ export async function createEmbedding(userId: string, text: string) {
       const res = await client.models.embedContent({
         model: GEMINI_EMBEDDING_MODEL,
         contents: input,
+        config: { abortSignal: aiSignal() },
       });
       // Gemini's embed endpoint reports no usage metadata — the row stores null tokens
       // rather than a fabricated zero, and counts as volume.
@@ -1319,7 +1338,7 @@ export async function createEmbeddingsBatch(
         const res = await client.embeddings.create({
           model: OPENAI_EMBEDDING_MODEL,
           input: inputs,
-        });
+        }, { signal: aiSignal() });
         report(tokensFromOpenAi(res));
         const values = res.data
           .slice()
@@ -1335,6 +1354,7 @@ export async function createEmbeddingsBatch(
       const res = await client.models.embedContent({
         model: GEMINI_EMBEDDING_MODEL,
         contents: inputs,
+        config: { abortSignal: aiSignal() },
       });
       // No usage metadata from Gemini embeddings; see createEmbedding.
       const values = res.embeddings?.map((e) => e.values ?? []) ?? [];
@@ -1360,71 +1380,27 @@ export function cosineSimilarity(a: number[], b: number[]) {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
-export async function chatWithNetwork(
-  userId: string,
-  question: string,
-  contactsContext: Array<{
-    id: string;
-    fullName: string;
-    company: string | null;
-    title: string | null;
-    relationshipScore: number;
-    aiSummary: string | null;
-    notes: string | null;
-    keyFacts?: string[];
-    recentMessages?: string[];
-    tags: string[];
-    relevance: number;
-  }>,
-  priorTurns: Array<{ role: "user" | "assistant"; content: string }> = [],
-  /**
-   * Exhaustive membership for any organisation the question named. Unlike `contactsContext`
-   * — a relevance-ranked top-K — this is a complete group-by, so the model can state a
-   * count instead of guessing one from a truncated list. See `@/lib/chat-roster`.
-   */
-  orgRosters: Array<{
-    kind: "company" | "school";
-    name: string;
-    total: number;
-    people: Array<{ id: string; name: string; title: string | null }>;
-    truncated: boolean;
-  }> = [],
-  /**
-   * Who the product itself says needs attention — overdue follow-ups and the standing
-   * outreach queue. Present only for questions about reconnecting. See `@/lib/chat-attention`.
-   */
-  attention: {
-    overdue: Array<{
-      id: string;
-      name: string;
-      title: string | null;
-      company: string | null;
-      daysOverdue: number;
-      daysSinceTouch: number | null;
-      hasLoggedInteraction: boolean;
-    }>;
-    suggestions: Array<{
-      id: string;
-      name: string;
-      title: string | null;
-      company: string | null;
-      reason: string;
-    }>;
-  } | null = null,
-  recruitersContext: Array<{
-    id: string;
-    fullName: string;
-    firm: string | null;
-    specialty: string[];
-    avgRating: number;
-    logCount: number;
-    personalRating: number | null;
-    status: string | null;
-    notes: string | null;
-    piiUnlocked: boolean;
-    relevance: number;
-  }> = [],
-) {
+type ChatPromptArgs = {
+  question: Parameters<typeof chatWithNetwork>[1];
+  contactsContext: Parameters<typeof chatWithNetwork>[2];
+  priorTurns: NonNullable<Parameters<typeof chatWithNetwork>[3]>;
+  orgRosters: NonNullable<Parameters<typeof chatWithNetwork>[4]>;
+  attention: Parameters<typeof chatWithNetwork>[5];
+  recruitersContext: NonNullable<Parameters<typeof chatWithNetwork>[6]>;
+};
+
+/**
+ * The prompt both chat paths share. `chatWithNetwork` asks for a JSON object;
+ * `chatWithNetworkStream` asks for prose, a marker, then JSON — same facts, same rules.
+ */
+function buildChatPrompt({
+  question,
+  contactsContext,
+  priorTurns,
+  orgRosters,
+  attention,
+  recruitersContext,
+}: ChatPromptArgs): { user: string; systemCore: string; hasRecruiters: boolean } {
   const contextBlock = contactsContext
     .map((c, i) => {
       const facts =
@@ -1510,18 +1486,163 @@ export async function chatWithNetwork(
     })
     .join("\n\n");
 
-  const content = await completeJson(userId, {
-    operation: "chat.answer",
-    temperature: 0.3,
-    user: `${historyBlock ? `Prior conversation:\n${historyBlock}\n\n` : ""}Question: ${question}\n\nContacts (relevance-ranked, not exhaustive):\n${contextBlock || "(no contacts found)"}${rosterBlock ? `\n\nComplete roster:\n${rosterBlock}` : ""}${attentionBlock ? `\n\nNeeds attention (computed from this user's own follow-up dates and outreach queue):\n${attentionBlock}` : ""}${hasRecruiters ? `\n\nRecruiters:\n${recruitersBlock}` : ""}`,
-    system: `You are Orbit, a personal networking assistant.
+  const user = `${historyBlock ? `Prior conversation:\n${historyBlock}\n\n` : ""}Question: ${question}\n\nContacts (relevance-ranked, not exhaustive):\n${contextBlock || "(no contacts found)"}${rosterBlock ? `\n\nComplete roster:\n${rosterBlock}` : ""}${attentionBlock ? `\n\nNeeds attention (computed from this user's own follow-up dates and outreach queue):\n${attentionBlock}` : ""}${hasRecruiters ? `\n\nRecruiters:\n${recruitersBlock}` : ""}`;
+  const systemCore = `You are Orbit, a personal networking assistant.
 Answer using the provided contacts${hasRecruiters ? " and recruiters" : ""} (including summaries, notes, key facts, and LinkedIn messages). Never invent people, companies, dates, or message content — if the lists do not say it, you do not know it.
 Use prior conversation for context when present, but ground every recommendation in the provided lists.
 The Contacts list is a relevance-ranked subset, so never present it as everyone the user knows and never count from it.
 ${attentionBlock ? "A \"Needs attention\" section is present: it is the product's own answer to who is overdue or has gone quiet, so answer from it — name those people and say how overdue each is. Do not reply that you lack information while it is present.\n" : ""}${rosterBlock ? "A \"Complete roster\" section is present: its totals are authoritative and exhaustive for those organisations. Use that number when the question asks who or how many the user knows somewhere, and name people from it rather than from the Contacts list. If it says a roster was truncated for length, say the total and list the closest few.\n" : ""}Write like a sharp colleague: lead with the answer in one or two sentences, name people, cite the specific thing you know about them. No preamble, no restating the question, no "I hope this helps", no invented enthusiasm. If nothing in the lists answers the question, say so plainly and suggest what the user could add.
 Titles and companies say where someone works today and nothing more — never turn "Founder @ Acme" into "founded Acme", or a seniority into a history you were not given.
 Each recommendation's reason must point at a concrete detail from that person's summary, notes, key facts, or messages — not a generic statement that they work in the field. Any draft_message must sound like the user wrote it: short, specific to what they actually discussed, no flattery and no filler openers.
-${hasRecruiters ? "When the question is about recruiters, prefer recruiters the user already logged (personal_rating / status present), then highly rated community recruiters. Do not invent email/phone — contact details may be locked." : ""}
+${hasRecruiters ? "When the question is about recruiters, prefer recruiters the user already logged (personal_rating / status present), then highly rated community recruiters. Do not invent email/phone — contact details may be locked." : ""}`;
+  return { user, systemCore, hasRecruiters };
+}
+
+/**
+ * A streamed completion: the model's text is handed to `onDelta` as it arrives, and the
+ * full text is returned at the end. Same three providers, same usage accounting as
+ * `completeJson`; token counts come from the final chunk where the provider reports them.
+ */
+async function streamText(
+  userId: string,
+  input: {
+    system: string;
+    user: string;
+    temperature?: number;
+    maxOutputTokens?: number;
+    operation: string;
+  },
+  onDelta: (delta: string) => void
+): Promise<string> {
+  const { provider, model, apiKey, keyOwner } = await getAiConfig(userId);
+  const temperature = input.temperature ?? 0.3;
+  const maxOutputTokens = input.maxOutputTokens ?? 4096;
+
+  return withUsage(
+    { userId, operation: input.operation, provider, model, kind: "completion", keyOwner },
+    async (report) => {
+      let full = "";
+      const emit = (t: string | undefined | null) => {
+        if (!t) return;
+        full += t;
+        onDelta(t);
+      };
+
+      if (provider === "gemini") {
+        const client = new GoogleGenAI({ apiKey });
+        const stream = await client.models.generateContentStream({
+          model,
+          contents: input.user,
+          config: {
+            abortSignal: aiSignal(),
+            temperature,
+            maxOutputTokens,
+            systemInstruction: input.system,
+          },
+        });
+        let last: unknown = null;
+        for await (const chunk of stream) {
+          emit(chunk.text);
+          last = chunk;
+        }
+        if (last) report(tokensFromGemini(last));
+      } else if (provider === "openai") {
+        const client = new OpenAI({ apiKey });
+        const stream = await client.chat.completions.create(
+          {
+            model,
+            temperature,
+            max_tokens: maxOutputTokens,
+            stream: true,
+            stream_options: { include_usage: true },
+            messages: [
+              { role: "system", content: input.system },
+              { role: "user", content: input.user },
+            ],
+          },
+          { signal: aiSignal() }
+        );
+        let usage: unknown = null;
+        for await (const chunk of stream) {
+          emit(chunk.choices[0]?.delta?.content);
+          if (chunk.usage) usage = chunk.usage;
+        }
+        if (usage) report(tokensFromOpenAi({ usage }));
+      } else {
+        const client = new Anthropic({ apiKey });
+        const stream = client.messages.stream(
+          {
+            model,
+            max_tokens: maxOutputTokens,
+            temperature,
+            system: input.system,
+            messages: [{ role: "user", content: input.user }],
+          },
+          { signal: aiSignal() }
+        );
+        for await (const event of stream) {
+          if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+            emit(event.delta.text);
+          }
+        }
+        report(tokensFromAnthropic(await stream.finalMessage()));
+      }
+
+      if (!full.trim()) throw new Error("Empty AI response");
+      return full;
+    }
+  );
+}
+
+const CHAT_STREAM_TAIL = `
+Write the answer as plain prose (markdown is fine), then on its own line write exactly
+${RECOMMENDATIONS_MARKER}
+followed by a JSON array of recommendations, each an object with the fields
+"contact_id" (string|null), "recruiter_id" (string|null), "name", "reason",
+"suggested_action" and "draft_message" (string|null). Nothing after the JSON.
+Only use contact_ids and recruiter_ids from the provided lists. For recruiter recommendations set recruiter_id and leave contact_id null (unless recommending a contact who is also a recruiter).`;
+
+/**
+ * The streaming twin of `chatWithNetwork`: same prompt, same grounding rules, but the model
+ * writes the answer as prose first (streamed to `onDelta` as it arrives) and the
+ * recommendations as JSON after a marker line, parsed once the stream ends.
+ */
+export async function chatWithNetworkStream(
+  userId: string,
+  question: Parameters<typeof chatWithNetwork>[1],
+  contactsContext: Parameters<typeof chatWithNetwork>[2],
+  priorTurns: NonNullable<Parameters<typeof chatWithNetwork>[3]>,
+  orgRosters: NonNullable<Parameters<typeof chatWithNetwork>[4]>,
+  attention: Parameters<typeof chatWithNetwork>[5],
+  recruitersContext: NonNullable<Parameters<typeof chatWithNetwork>[6]>,
+  onDelta: (delta: string) => void
+): Promise<SplitResult> {
+  const prompt = buildChatPrompt({
+    question,
+    contactsContext,
+    priorTurns,
+    orgRosters,
+    attention,
+    recruitersContext,
+  });
+  const splitter = createAnswerSplitter();
+  await streamText(
+    userId,
+    {
+      operation: "chat.answer",
+      temperature: 0.3,
+      user: prompt.user,
+      system: `${prompt.systemCore}${CHAT_STREAM_TAIL}`,
+    },
+    (delta) => {
+      const out = splitter.push(delta);
+      if (out) onDelta(out);
+    }
+  );
+  return splitter.finish();
+}
+
+const CHAT_JSON_TAIL = `
 Return JSON:
 {
   "answer": string,
@@ -1536,7 +1657,86 @@ Return JSON:
     }
   ]
 }
-Only use contact_ids and recruiter_ids from the provided lists. For recruiter recommendations set recruiter_id and leave contact_id null (unless recommending a contact who is also a recruiter).`,
+Only use contact_ids and recruiter_ids from the provided lists. For recruiter recommendations set recruiter_id and leave contact_id null (unless recommending a contact who is also a recruiter).`;
+
+export async function chatWithNetwork(
+  userId: string,
+  question: string,
+  contactsContext: Array<{
+    id: string;
+    fullName: string;
+    company: string | null;
+    title: string | null;
+    relationshipScore: number;
+    aiSummary: string | null;
+    notes: string | null;
+    keyFacts?: string[];
+    recentMessages?: string[];
+    tags: string[];
+    relevance: number;
+  }>,
+  priorTurns: Array<{ role: "user" | "assistant"; content: string }> = [],
+  /**
+   * Exhaustive membership for any organisation the question named. Unlike `contactsContext`
+   * — a relevance-ranked top-K — this is a complete group-by, so the model can state a
+   * count instead of guessing one from a truncated list. See `@/lib/chat-roster`.
+   */
+  orgRosters: Array<{
+    kind: "company" | "school";
+    name: string;
+    total: number;
+    people: Array<{ id: string; name: string; title: string | null }>;
+    truncated: boolean;
+  }> = [],
+  /**
+   * Who the product itself says needs attention — overdue follow-ups and the standing
+   * outreach queue. Present only for questions about reconnecting. See `@/lib/chat-attention`.
+   */
+  attention: {
+    overdue: Array<{
+      id: string;
+      name: string;
+      title: string | null;
+      company: string | null;
+      daysOverdue: number;
+      daysSinceTouch: number | null;
+      hasLoggedInteraction: boolean;
+    }>;
+    suggestions: Array<{
+      id: string;
+      name: string;
+      title: string | null;
+      company: string | null;
+      reason: string;
+    }>;
+  } | null = null,
+  recruitersContext: Array<{
+    id: string;
+    fullName: string;
+    firm: string | null;
+    specialty: string[];
+    avgRating: number;
+    logCount: number;
+    personalRating: number | null;
+    status: string | null;
+    notes: string | null;
+    piiUnlocked: boolean;
+    relevance: number;
+  }> = [],
+) {
+  const prompt = buildChatPrompt({
+    question,
+    contactsContext,
+    priorTurns,
+    orgRosters,
+    attention,
+    recruitersContext,
+  });
+  const content = await completeJson(userId, {
+    operation: "chat.answer",
+    temperature: 0.3,
+    user: prompt.user,
+    system: `${prompt.systemCore}${CHAT_JSON_TAIL}`,
   });
 
   return parseAiJson<{
