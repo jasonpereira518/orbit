@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 import {
   useCallback,
@@ -21,7 +22,6 @@ import { getAskBarContact } from "@/actions/contacts";
 import { searchDashboardContacts } from "@/actions/search";
 import { createReminder } from "@/actions/reminders";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
-import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,6 +29,25 @@ import {
   type KeywordSearchHit,
 } from "@/lib/keyword-search";
 import { cn } from "@/lib/utils";
+
+/**
+ * Split out of the shell's chunk.
+ *
+ * `ChatMarkdown` pulls react-markdown — micromark plus the mdast/hast pipeline, ~30-40KB
+ * gzipped — and only ever renders an answer that exists *after* the user has asked
+ * something. `AppShell` mounts this bar on nearly every route, so importing it statically
+ * put that parser in the first load of /dashboard, /contacts, /graph and /reminders to
+ * render nothing. `preloadChatMarkdown` runs when the bar opens, so the chunk is already
+ * in flight long before an answer comes back and there is no gap to paint around.
+ */
+const ChatMarkdown = dynamic(
+  () => import("@/components/chat/chat-markdown").then((m) => m.ChatMarkdown),
+  { loading: () => null }
+);
+
+function preloadChatMarkdown() {
+  void import("@/components/chat/chat-markdown");
+}
 
 type ChatResult = Extract<
   Awaited<ReturnType<typeof askNetwork>>,
@@ -103,6 +122,12 @@ export function FloatingAskBar() {
     null
   );
   const [chipDismissed, setChipDismissed] = useState(false);
+
+  // Warm the markdown chunk as soon as the bar opens, so it is resolved well before the
+  // first answer returns from the model.
+  useEffect(() => {
+    if (open) preloadChatMarkdown();
+  }, [open]);
 
   const personContextActive =
     Boolean(pathContactId) && Boolean(profileContact) && !chipDismissed;

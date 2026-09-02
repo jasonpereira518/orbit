@@ -27,6 +27,7 @@ import {
 } from "@/lib/reminder-lists";
 import {
   completeReminder,
+  ensureOutreachSuggestions,
   generateDueFollowUps,
   getDashboardData,
   maybeRefreshOutreachSuggestions,
@@ -35,6 +36,10 @@ import {
 
 export async function fetchDashboard() {
   const userId = await requireUserId();
+  // One exception to the deferred rebuild below: an account that has never had a queue
+  // built has nothing to render, so deferring would show an empty card on the first
+  // visit and the real one only on the second. Builds once, then never again.
+  await ensureOutreachSuggestions(userId).catch(() => {});
   // Calendar sync and the suggestion rebuild are slow; run both after the
   // response instead of on the dashboard's critical path. Suggestions are
   // stale-while-revalidate: this load renders whatever exists, the next

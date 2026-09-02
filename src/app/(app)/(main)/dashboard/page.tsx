@@ -52,13 +52,16 @@ export default async function DashboardPage() {
         </Suspense>
       )}
 
+      {/* Flex for the same reason as the row below: the Network depth card removes itself
+          on an empty network (it can only draw zeros), and the constellation preview
+          should then fill the row rather than sit beside an empty grid column. */}
       {show("dashboard.charts") && (
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="flex flex-col gap-6 lg:flex-row">
           <Suspense
             fallback={
               <>
-                <DashboardCardSkeleton className="h-80" />
-                <DashboardCardSkeleton className="h-80" />
+                <DashboardCardSkeleton className="h-80 min-w-0 lg:flex-1" />
+                <DashboardCardSkeleton className="h-80 min-w-0 lg:flex-1" />
               </>
             }
           >
@@ -67,15 +70,23 @@ export default async function DashboardPage() {
         </div>
       )}
 
+      {/* Flex, not a 2-column grid: the outreach card removes itself when the account has
+          never sent anything (see OutreachPerformanceSection), and a grid would leave its
+          empty column behind, stranding Suggested outreach at half width next to a hole.
+          A Suspense boundary renders no DOM node, so with flex the survivor just fills. */}
       {showSuggestedRow && (
-        <div className="grid items-stretch gap-6 lg:grid-cols-2">
+        <div className="flex flex-col items-stretch gap-6 lg:flex-row">
           {show("dashboard.suggested-outreach") && (
-            <Suspense fallback={<DashboardCardSkeleton className="h-64" />}>
+            <Suspense
+              fallback={<DashboardCardSkeleton className="h-64 min-w-0 lg:flex-1" />}
+            >
               <SuggestedOutreachSection bundle={bundle} />
             </Suspense>
           )}
           {outreachSummary && (
-            <Suspense fallback={<DashboardCardSkeleton className="h-64" />}>
+            <Suspense
+              fallback={<DashboardCardSkeleton className="h-64 min-w-0 lg:flex-1" />}
+            >
               <OutreachPerformanceSection summary={outreachSummary} />
             </Suspense>
           )}

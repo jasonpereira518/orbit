@@ -624,6 +624,30 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_token_uidx ON interest_list_signups(unsubscribe_token);
 CREATE INDEX IF NOT EXISTS interest_list_signups_created_idx ON interest_list_signups(created_at);
+CREATE TABLE IF NOT EXISTS broadcasts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  subject text NOT NULL,
+  body text NOT NULL,
+  status text NOT NULL DEFAULT 'draft',
+  created_by text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  sent_at timestamptz,
+  recipient_count integer NOT NULL DEFAULT 0,
+  sent_count integer NOT NULL DEFAULT 0,
+  failed_count integer NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS broadcasts_created_idx ON broadcasts(created_at);
+CREATE TABLE IF NOT EXISTS broadcast_recipients (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  broadcast_id uuid NOT NULL,
+  signup_id uuid NOT NULL,
+  email text NOT NULL,
+  sent_at timestamptz,
+  error text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS broadcast_recipients_pair_uidx ON broadcast_recipients(broadcast_id, signup_id);
+CREATE INDEX IF NOT EXISTS broadcast_recipients_broadcast_idx ON broadcast_recipients(broadcast_id);
 CREATE TABLE IF NOT EXISTS billing_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source text NOT NULL,
@@ -731,7 +755,7 @@ CREATE TABLE IF NOT EXISTS fundraising_investors (
  * contact_briefs) plus reminder/interaction provenance columns.
  * v18 = legacy action-item backfill guards on jsonb_typeof(action_items) = 'array'.
  */
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 19;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -845,6 +869,19 @@ export const SCALE_DDL: string[] = [
   // base and outreach refresh had no usable index for their scans.
   `CREATE INDEX IF NOT EXISTS interactions_user_date_idx ON interactions(user_id, interaction_date DESC)`,
   `CREATE INDEX IF NOT EXISTS embeddings_user_src_idx ON contact_embeddings(user_id, source_type, contact_id)`,
+  // Reminders had `(user_id, status)`, `(user_id, due_date)` and `(user_id, list_id)` but
+  // nothing on contact_id, while eight hot paths filter by it — the contact detail page,
+  // every reminder write, calendar sync, and the import engine's per-chunk `inArray` dedupe.
+  // Each of those was a per-user index scan plus a filter instead of a point lookup.
+  `CREATE INDEX IF NOT EXISTS reminders_user_contact_idx ON reminders(user_id, contact_id)`,
+  // Company/school concentration in `src/lib/closeness-materialize.ts` counts with
+  // `lower(trim(company)) = $1`. A b-tree on the bare column cannot serve that — Postgres
+  // could only use the user_id prefix and then filter every one of that user's entries —
+  // so these are expression indexes matching the predicate exactly. `lower` and `btrim`
+  // are both immutable, which is what makes them indexable. This runs on every contact
+  // create, update and logInteraction, so it is not a cold path.
+  `CREATE INDEX IF NOT EXISTS contacts_user_company_norm_idx ON contacts(user_id, lower(trim(company)))`,
+  `CREATE INDEX IF NOT EXISTS contacts_user_school_norm_idx ON contacts(user_id, lower(trim(school)))`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */

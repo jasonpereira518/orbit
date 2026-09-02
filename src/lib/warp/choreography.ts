@@ -82,3 +82,18 @@ export function easeIn(t: number) {
 export function judder(t: number) {
   return Math.sin(t * Math.PI * 6) * Math.pow(1 - t, 2.2);
 }
+
+/** Linear blend. `t` is expected pre-clamped by `span`. */
+export function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t;
+}
+
+/**
+ * Smoothstep: zero slope at both ends. The house curve for CROSS-FADES, where
+ * `easeHouse` is for motion — a fade that starts and stops abruptly reads as a
+ * cut even when its duration is generous, because the eye tracks the rate of
+ * change, not the value.
+ */
+export function easeFade(t: number) {
+  return t * t * (3 - 2 * t);
+}

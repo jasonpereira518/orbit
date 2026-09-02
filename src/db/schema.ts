@@ -1630,6 +1630,58 @@ export const interestListSignups = pgTable(
 );
 
 /**
+ * An operator-composed note to the interest list — the "occasional note on what's new" the
+ * landing page promises, which the two automated emails do not cover.
+ *
+ * The body is stored as plain text, not HTML: the operator writes prose and the send wraps
+ * it in the same shell the welcome note uses, so a broadcast cannot drift from the product's
+ * look or ship broken markup to a whole list.
+ */
+export const broadcasts = pgTable(
+  "broadcasts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    subject: text("subject").notNull(),
+    body: text("body").notNull(),
+    /** `draft` until a send starts, `sending` while it runs, then `sent`. */
+    status: text("status").$type<"draft" | "sending" | "sent">().default("draft").notNull(),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    recipientCount: integer("recipient_count").default(0).notNull(),
+    sentCount: integer("sent_count").default(0).notNull(),
+    failedCount: integer("failed_count").default(0).notNull(),
+  },
+  (t) => [index("broadcasts_created_idx").on(t.createdAt)]
+);
+
+/**
+ * One row per (broadcast, recipient), which is what makes a send resumable and at-most-once.
+ *
+ * Without it, a send that dies halfway can only be retried by mailing everyone again —
+ * double-sending a broadcast to the whole list being about the worst failure this feature
+ * has. The unique index is the guarantee: a second attempt cannot re-insert a recipient it
+ * already has.
+ */
+export const broadcastRecipients = pgTable(
+  "broadcast_recipients",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    broadcastId: uuid("broadcast_id").notNull(),
+    signupId: uuid("signup_id").notNull(),
+    /** Denormalised so the record survives the signup row being deleted. */
+    email: text("email").notNull(),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("broadcast_recipients_pair_uidx").on(t.broadcastId, t.signupId),
+    index("broadcast_recipients_broadcast_idx").on(t.broadcastId),
+  ]
+);
+
+/**
  * Money, as events rather than as a headcount.
  *
  * The console previously derived MRR as `subscribers × $5`, which cannot see a mid-month

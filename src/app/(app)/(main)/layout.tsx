@@ -1,15 +1,13 @@
 import { headers } from "next/headers";
-import { redirect } from "next/navigation";
 import { SurfaceUnavailable } from "@/components/surface-unavailable";
 import { requireUserId } from "@/lib/auth";
-import { needsOnboarding } from "@/lib/onboarding";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { surfaceForPathname } from "@/lib/surfaces";
 
 /**
- * First-run gate for core product routes.
- * /onboarding and /settings live outside this group so they stay reachable
- * (settings is needed for API keys; onboarding must not redirect to itself).
+ * The first-run gate for these routes lives one level up, in `(app)/layout.tsx` — it has to
+ * run before `<AppShell>` renders or the redirect turns into a client-side one that crashes
+ * Next's router during hydration. See the comment there.
  *
  * AvatarBackfill lives in AppShell (above the remounting template) so nav
  * does not abort/restart background photo fills.
@@ -24,10 +22,6 @@ export default async function MainAppLayout({
 }) {
   // Reuses the parent layout's cached requireUserId / settings bootstrap.
   const userId = await requireUserId();
-
-  if (await needsOnboarding(userId)) {
-    redirect("/onboarding");
-  }
 
   // Route-level half of surface visibility. One check here covers every page in the group
   // AND its dynamic children — hiding Contacts closes `/contacts/[id]` and `/contacts/new`
