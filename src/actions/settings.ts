@@ -2,6 +2,7 @@
 
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { getDb } from "@/db";
 import {
   aiSuggestions,
@@ -18,6 +19,8 @@ import { encrypt } from "@/lib/crypto";
 import { purgeUserData } from "@/lib/user-data";
 import { getEntitlements } from "@/lib/entitlements";
 import { contactUsageForUser } from "@/lib/contact-writes";
+import { probeAiKey, type ProbeReason } from "@/lib/ai-key-probe";
+import { takeToken } from "@/lib/rate-limit";
 import {
   resolveThemePreference,
   type ThemePreference,
@@ -163,12 +166,15 @@ async function embeddingBackendFor(
   return null;
 }
 
-export async function saveAiSettings(input: {
-  provider: AiProvider;
-  model?: string;
-  apiKey?: string;
-}) {
-  const userId = await requireUserId();
+/**
+ * Body of `saveAiSettings`, lifted out so `verifyAndSaveAiKey` can persist a
+ * provider-verified key through the exact same path — encryption, embedding-backend
+ * reset, revalidation — without re-checking auth (the caller already has `userId`).
+ */
+async function persistAiSettings(
+  userId: string,
+  input: { provider: AiProvider; model?: string; apiKey?: string },
+) {
   const db = await getDb();
   const existing = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
@@ -232,7 +238,73 @@ export async function saveAiSettings(input: {
 
   revalidatePath("/settings");
   revalidatePath("/chat");
+  revalidatePath("/capture");
+  revalidatePath("/onboarding/wizard");
   return { ok: true, embeddingReset: Boolean(previousBackend && nextBackend && previousBackend !== nextBackend) };
+}
+
+export async function saveAiSettings(input: {
+  provider: AiProvider;
+  model?: string;
+  apiKey?: string;
+}) {
+  const userId = await requireUserId();
+  return persistAiSettings(userId, input);
+}
+
+const verifyAiKeyInputSchema = z.object({
+  provider: z.string().transform((value) => resolveAiProvider(value)),
+  model: z.string().optional(),
+  apiKey: z.string().trim().min(8).max(512),
+});
+
+/**
+ * Verifies a pasted API key against its provider before saving it, so the settings UI
+ * can surface a specific, human-readable rejection reason instead of silently persisting
+ * a key that doesn't work. Never persists on failure.
+ */
+export async function verifyAndSaveAiKey(input: {
+  provider: AiProvider;
+  apiKey: string;
+  model?: string;
+}): Promise<
+  | { ok: true; provider: AiProvider; model: string; embeddingReset: boolean }
+  | { ok: false; reason: ProbeReason; message: string }
+> {
+  const userId = await requireUserId();
+
+  const parsed = verifyAiKeyInputSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      reason: "invalid",
+      message: "That doesn't look like an API key.",
+    };
+  }
+
+  if (!takeToken(`verify:${userId}`, { max: 6, windowMs: 60_000 })) {
+    return {
+      ok: false,
+      reason: "throttled",
+      message: "Too many attempts — wait a minute and try again.",
+    };
+  }
+
+  const { provider, apiKey } = parsed.data;
+  const model = resolveAiModel(provider, parsed.data.model);
+
+  const probe = await probeAiKey(provider, apiKey, model);
+  if (!probe.ok) {
+    return probe;
+  }
+
+  const persisted = await persistAiSettings(userId, { provider, model, apiKey });
+  return {
+    ok: true,
+    provider,
+    model,
+    embeddingReset: persisted.embeddingReset,
+  };
 }
 
 export async function clearApiKey(provider?: AiProvider) {
