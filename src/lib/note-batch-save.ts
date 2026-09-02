@@ -10,7 +10,7 @@
  */
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts, interactionMentions, noteBatches, reminders, type NoteBatchResult, type ReminderActionKind } from "@/db/schema";
+import { actionItems, contacts, interactionMentions, noteBatches, reminders, type NoteBatchResult, type ReminderActionKind } from "@/db/schema";
 import type { ParsedNote } from "@/lib/ai";
 import type { DatedCommitment } from "@/lib/date-commitment-extract";
 import type { MentionMatchedBy } from "@/lib/mention-resolution";
@@ -91,6 +91,7 @@ type ReminderDraft = {
   dateBasis: NoteBatchResult["reminders"][number]["dateBasis"];
   rawDatePhrase: string | null;
   sourceExcerpt: string | null;
+  actionItemId: string | null;
 };
 
 export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): Promise<SaveNoteBatchOutput> {
@@ -123,6 +124,8 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
   const contactIds: string[] = [];
   const interactionIdByContact = new Map<string, string>();
   const contactIdByName = new Map<string, string>();
+
+  const drafts: ReminderDraft[] = [];
 
   try {
     // 1. Participants → contacts + interactions.
@@ -183,6 +186,25 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
       interactionIdByContact.set(contactId, row.id);
       if (!interactionCreated) result.skipped.duplicate += 1;
       result.participants.push({ contactId, interactionId: row.id, name: parsed.name || "Unnamed", created: wasCreated, duplicate: !interactionCreated });
+
+      // 1a. Each new open action item gets its own window reminder draft (skip items that
+      // already carry a reminderId — e.g. a re-sync that didn't touch this item).
+      if (interactionCreated && parsed.action_items.length) {
+        const openItems = await db
+          .select({ id: actionItems.id, text: actionItems.text, reminderId: actionItems.reminderId })
+          .from(actionItems)
+          .where(and(eq(actionItems.userId, userId), eq(actionItems.interactionId, row.id)));
+        for (const item of openItems) {
+          if (item.reminderId) continue;
+          drafts.push({
+            contactId, sourceInteractionId: row.id, title: item.text, description: null,
+            dueDate: windowDueDate(anchor), reminderType: "ai_suggested",
+            actionKind: inferReminderActionKind({ title: item.text, description: null, reminderType: "ai_suggested", contactId }),
+            dateBasis: "window", rawDatePhrase: null, sourceExcerpt: null, actionItemId: item.id,
+          });
+          result.actionItems.push({ id: item.id, contactId, text: item.text, reminderId: null });
+        }
+      }
     }
 
     // 1b. Mentions → links on the nearest participant's interaction. A dates-only batch has
@@ -206,7 +228,6 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
     }
 
     // 2. Dated commitments → reminder drafts.
-    const drafts: ReminderDraft[] = [];
     for (const c of input.commitments) {
       const contactId = c.contactId ?? (c.personName ? contactIdByName.get(c.personName.trim().toLowerCase()) ?? null : null);
       drafts.push({
@@ -220,6 +241,7 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         dateBasis: c.dateBasis,
         rawDatePhrase: c.rawDatePhrase,
         sourceExcerpt: c.sourceExcerpt,
+        actionItemId: null,
       });
     }
 
@@ -242,12 +264,13 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         dateBasis: "window",
         rawDatePhrase: null,
         sourceExcerpt: null,
+        actionItemId: null,
       });
     }
 
-    // 4. Collision rule. Dormant until action items push their own `window` drafts here
-    //    (Task 12): the fallback follow-up above is never created alongside another draft,
-    //    so today the only `window` drafts that can collide are the action-item ones.
+    // 4. Collision rule. Action-item drafts push their own `window` reminders (step 1a
+    //    above); this drops one when it collides with a dated commitment for the same
+    //    contact so the two don't produce duplicate-looking reminders.
     const kept = drafts.filter((d) => {
       if (d.dateBasis !== "window") return true;
       return !drafts.some(
@@ -259,6 +282,12 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
     // 5. Insert reminders, idempotent through itemHash.
     if (kept.length) {
       const listId = await getInboxListId(userId);
+      // itemHash is unique per (userId, itemHash) and deterministic from
+      // sourceHash+dueIso+title, so it doubles as the key back to each draft's
+      // actionItemId once `.onConflictDoNothing()` tells us which rows actually landed.
+      const actionItemIdByHash = new Map(
+        kept.filter((d) => d.actionItemId).map((d) => [buildSuggestionItemHash(input.sourceHash, isoDay(d.dueDate), d.title), d.actionItemId!])
+      );
       const inserted = await db
         .insert(reminders)
         .values(
@@ -290,6 +319,12 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
           dateBasis: (r.dateBasis ?? "window") as NoteBatchResult["reminders"][number]["dateBasis"],
           rawDatePhrase: r.rawDatePhrase, sourceExcerpt: r.sourceExcerpt,
         });
+        const actionItemId = r.itemHash ? actionItemIdByHash.get(r.itemHash) : undefined;
+        if (actionItemId) {
+          await db.update(actionItems).set({ reminderId: r.id }).where(eq(actionItems.id, actionItemId));
+          const entry = result.actionItems.find((a) => a.id === actionItemId);
+          if (entry) entry.reminderId = r.id;
+        }
       }
     }
   } catch (err) {

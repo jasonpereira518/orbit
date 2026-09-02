@@ -1,6 +1,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
+  actionItems,
   aiSuggestions,
   contacts,
   interactions,
@@ -665,4 +666,8 @@ export async function completeReminder(userId: string, reminderId: string) {
     .update(reminders)
     .set({ status: "done" })
     .where(and(eq(reminders.id, reminderId), eq(reminders.userId, userId)));
+  await db
+    .update(actionItems)
+    .set({ status: "done", completedAt: new Date() })
+    .where(and(eq(actionItems.userId, userId), eq(actionItems.reminderId, reminderId)));
 }

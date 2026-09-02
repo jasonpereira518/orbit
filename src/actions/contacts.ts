@@ -795,6 +795,11 @@ export async function updateInteraction(
     .where(eq(interactions.id, interactionId))
     .returning();
 
+  if (input.actionItems !== undefined) {
+    const { syncActionItems } = await import("@/lib/action-items");
+    await syncActionItems(userId, interactionId, existing.contactId, input.actionItems);
+  }
+
   await rebuildContactEmbedding(userId, existing.contactId);
   void generateAndStorePersonSummary(userId, existing.contactId).catch(
     () => null

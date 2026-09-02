@@ -776,6 +776,11 @@ export async function logInteractionForUser(
     })
     .returning();
 
+  if (input.actionItems?.length) {
+    const { syncActionItems } = await import("@/lib/action-items");
+    await syncActionItems(userId, row.id, input.contactId, input.actionItems);
+  }
+
   if ((input.rawNotes || input.aiSummary) && !options?.skipEmbedding) {
     await rebuildContactEmbedding(userId, input.contactId);
   }

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
+import { addDays, format } from "date-fns";
 import { toast } from "@/lib/toast";
 import {
   confirmBulkCapture,
@@ -687,6 +688,19 @@ export function BulkNotesPanel({
               You discarded everyone. Go back to review again, or start over.
             </p>
           )}
+
+          {(() => {
+            const itemCount = accepted.reduce((n, i) => n + i.parsed.action_items.length, 0);
+            if (itemCount === 0) return null;
+            const dueLabel = anchorIso
+              ? format(addDays(new Date(`${anchorIso}T12:00:00`), 14), "MMM d")
+              : "in 2 weeks";
+            return (
+              <p className="text-xs text-muted-foreground">
+                {itemCount} action item{itemCount === 1 ? "" : "s"} will also become reminders due {dueLabel}
+              </p>
+            );
+          })()}
 
           {mentions.length > 0 && (
             <div className="rounded-xl border border-border/60 bg-muted/30 p-3 text-xs">

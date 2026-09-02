@@ -15,10 +15,12 @@ delete process.env.DATABASE_URL;
 
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, interactionMentions, interactions, noteBatches, reminders, userSettings } from "../src/db/schema";
+import { actionItems, contacts, interactionMentions, interactions, noteBatches, reminders, userSettings } from "../src/db/schema";
 import { dismissNoteReminderForUser, saveNoteBatch, undoNoteBatchForUser, type SaveNoteBatchInput } from "../src/lib/note-batch-save";
-import { hashSourceNote } from "../src/lib/suggested-reminder-utils";
+import { hashSourceNote, isoDay } from "../src/lib/suggested-reminder-utils";
 import { ensureUserSettings } from "../src/lib/user-settings";
+
+const isoDayOf = (d: Date | string) => isoDay(new Date(d));
 
 const USER = "smoke-note-batch-user";
 
@@ -92,9 +94,10 @@ async function main() {
 
   const rems = await db.query.reminders.findMany({ where: and(eq(reminders.userId, USER), eq(reminders.status, "pending")) });
   const titles = rems.map((r) => r.title).sort();
-  // Sarah: Kickoff (absolute) + Intro to Raj (relative). Dev: no commitments → fallback "Follow up with Dev Patel".
+  // Sarah: Kickoff (absolute) + Intro to Raj (relative) + "Send Sarah the deck" (her action
+  // item, window). Dev: no commitments → fallback "Follow up with Dev Patel".
   // Sarah's fallback follow-up is suppressed because she already has reminders from the note.
-  check("three pending reminders", rems.length === 3, titles.join(" | "));
+  check("four pending reminders", rems.length === 4, titles.join(" | "));
   check("  Sarah has no generic follow-up", !titles.includes("Follow up with Sarah Chen"), titles.join(" | "));
   check("  Dev got the fallback follow-up", titles.includes("Follow up with Dev Patel"));
   const kickoff = rems.find((r) => r.title === "Kickoff")!;
@@ -103,7 +106,14 @@ async function main() {
   const sarahId = first.contactIds[0];
   check("  linked to Sarah", kickoff.contactId === sarahId);
   check("  due at local noon", new Date(kickoff.dueDate!).getHours() === 12);
-  check("result snapshot lists reminders", first.result.reminders.length === 3 && first.result.participants.length === 2);
+  check("result snapshot lists reminders", first.result.reminders.length === 4 && first.result.participants.length === 2);
+
+  const deck = rems.find((r) => r.title === "Send Sarah the deck")!;
+  check("action item became a window reminder", Boolean(deck) && deck.dateBasis === "window" && deck.reminderType === "ai_suggested");
+  check("  due anchor + 14d", isoDayOf(deck.dueDate!) === "2026-09-15");
+  const items = await db.query.actionItems.findMany({ where: eq(actionItems.userId, USER) });
+  check("action item row linked to its reminder", items.length === 1 && items[0].reminderId === deck.id);
+  check("result lists the action item", first.result.actionItems.length === 1 && first.result.actionItems[0].reminderId === deck.id);
 
   const mentionRows = await db.query.interactionMentions.findMany({ where: eq(interactionMentions.userId, USER) });
   check("one mention link written", mentionRows.length === 1 && mentionRows[0].contactId === miraId && mentionRows[0].matchedBy === "first_name_unique");
@@ -140,7 +150,7 @@ async function main() {
   const rows2 = await db.query.interactions.findMany({ where: eq(interactions.userId, USER) });
   const rems2 = await db.query.reminders.findMany({ where: eq(reminders.userId, USER) });
   check("re-paste: still two interactions", rows2.length === 2, String(rows2.length));
-  check("re-paste: still three reminders", rems2.length === 3, String(rems2.length));
+  check("re-paste: still four reminders", rems2.length === 4, String(rems2.length));
   check("re-paste: reported as duplicates", second.result.skipped.duplicate === 2 && second.result.participants.every((p) => p.duplicate), JSON.stringify(second.result.skipped));
   check("re-paste: updated, not created", second.updated === 2 && second.created === 0);
   check("merge path re-stamps embeddingStaleAt", (await db.query.contacts.findMany({ where: and(eq(contacts.userId, USER), inArray(contacts.id, second.contactIds)) })).every((c) => c.embeddingStaleAt !== null));
@@ -148,10 +158,10 @@ async function main() {
 
   // 3. Undo the first batch: reminders dismissed (not deleted), interactions untouched.
   const undo = await undoNoteBatchForUser(USER, first.batchId);
-  check("undo dismissed three reminders", undo.remindersDismissed === 3, String(undo.remindersDismissed));
+  check("undo dismissed four reminders", undo.remindersDismissed === 4, String(undo.remindersDismissed));
   check("undo removed mention links", undo.mentionsRemoved === 1);
   const afterUndo = await db.query.reminders.findMany({ where: eq(reminders.userId, USER) });
-  check("  rows still exist", afterUndo.length === 3);
+  check("  rows still exist", afterUndo.length === 4);
   check("  all dismissed", afterUndo.every((r) => r.status === "dismissed"));
   check("  interactions survive", (await db.query.interactions.findMany({ where: eq(interactions.userId, USER) })).length === 2);
   const undone = await db.query.noteBatches.findFirst({ where: eq(noteBatches.id, first.batchId) });
@@ -160,7 +170,7 @@ async function main() {
   // 4. Paste a third time after undo: the dismissed rows block re-creation.
   const third = await saveNoteBatch(USER, again);
   const rems3 = await db.query.reminders.findMany({ where: eq(reminders.userId, USER) });
-  check("post-undo re-paste creates no reminders", rems3.length === 3 && third.remindersCreated === 0, String(rems3.length));
+  check("post-undo re-paste creates no reminders", rems3.length === 4 && third.remindersCreated === 0, String(rems3.length));
 
   // 5. Undo of another user's batch is refused.
   let refused = false;
@@ -187,6 +197,34 @@ async function main() {
     partialBatch !== undefined && partialBatch.result.participants.length === 1,
     JSON.stringify(partialBatch?.result.participants)
   );
+
+  // 7. Collision: an action item whose title collides with a dated commitment for the same
+  //    contact (due dates within the collision window) must not also get its own window
+  //    reminder — the item row stays with no reminder link, and since the commitment draft
+  //    already covers this contact, the fallback follow-up is suppressed too.
+  const devId = first.contactIds[1];
+  const collisionNote = "Dev Patel — let's get the kickoff going.";
+  const collisionInput: SaveNoteBatchInput = {
+    sourceText: collisionNote,
+    sourceHash: hashSourceNote(collisionNote),
+    anchorIso: "2026-09-01",
+    anchorBasis: "note",
+    entryPoint: "capture",
+    participants: [
+      { notes: collisionNote, parsed: parsed("Dev Patel", null, ["Book kickoff"], null), mergeContactId: devId, createReminder: true, relationshipScore: 2, tagNames: [] },
+    ],
+    commitments: [
+      { title: "Kickoff", description: null, rawDatePhrase: "Sept 16", dueDateIso: "2026-09-16", yearInferred: true, personName: "Dev Patel", actionKind: "meet", confidenceScore: 90, sourceExcerpt: "Sept 16 kickoff.", dateBasis: "absolute", anchorIso: "2026-09-01" },
+    ],
+    skipped: { relative: 0, unverifiable: 0, past: 0 },
+  };
+  const collision = await saveNoteBatch(USER, collisionInput);
+  const devReminders = await db.query.reminders.findMany({ where: and(eq(reminders.userId, USER), eq(reminders.contactId, devId), eq(reminders.noteBatchId, collision.batchId)) });
+  check("collision: no window reminder titled Book kickoff", !devReminders.some((r) => r.title === "Book kickoff"), devReminders.map((r) => r.title).join(" | "));
+  check("collision: Dev's Kickoff commitment reminder created", devReminders.some((r) => r.title === "Kickoff" && r.dateBasis === "absolute"));
+  check("collision: Dev has no fallback follow-up from this batch", !devReminders.some((r) => r.title === "Follow up with Dev Patel"));
+  const devActionItem = await db.query.actionItems.findFirst({ where: and(eq(actionItems.userId, USER), eq(actionItems.contactId, devId), eq(actionItems.text, "Book kickoff")) });
+  check("collision: action item row still exists with no reminder link", devActionItem !== undefined && devActionItem.reminderId === null);
 
   await reset();
   console.log("\nsmoke-note-batch: all checks passed");

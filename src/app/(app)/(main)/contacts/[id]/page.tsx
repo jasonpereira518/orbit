@@ -6,6 +6,7 @@ import {
 } from "@/actions/contacts";
 import { ContactFollowUpSection } from "@/components/contacts/contact-follow-up-section";
 import { ContactMentionsSection } from "@/components/contacts/contact-mentions-section";
+import { ContactNextSteps } from "@/components/contacts/contact-next-steps";
 import { ContactProfileHero } from "@/components/contacts/contact-profile-hero";
 import { ContactProfileOverview } from "@/components/contacts/contact-profile-overview";
 import { ContactRelatedPeople } from "@/components/contacts/contact-related-people";
@@ -17,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { computeCloseness, formatInteractionFrequency } from "@/lib/closeness";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { requireUserId } from "@/lib/auth";
+import { listOpenActionItems } from "@/lib/action-items";
 import { listContactMentions } from "@/lib/contact-mentions";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { notFound } from "next/navigation";
@@ -44,6 +46,9 @@ export default async function ContactDetailPage({
   const mentionsPromise = requireUserId()
     .then((u) => listContactMentions(u, id))
     .catch(() => ({ mentionedIn: [], mentions: [] }));
+  const nextStepsPromise = requireUserId()
+    .then((u) => listOpenActionItems(u, id))
+    .catch(() => []);
 
   // notFound() must fire BEFORE any Suspense boundary renders so the route
   // still returns a real 404 status.
@@ -198,6 +203,12 @@ export default async function ContactDetailPage({
         />
       </div>
 
+      {/* Task 14 moves this into the brief card; for now it lives in the overview
+          area, right after the "Who they are" summary. */}
+      <Suspense fallback={null}>
+        <StreamedNextSteps data={nextStepsPromise} />
+      </Suspense>
+
       <Suspense fallback={<Skeleton className="h-40 w-full rounded-2xl" />}>
         <StreamedFollowUp
           sendOptions={sendOptionsPromise}
@@ -259,6 +270,24 @@ async function StreamedFollowUp({
   return (
     <div className="reveal-mount">
       <ContactFollowUpSection {...rest} sendOptions={resolved} />
+    </div>
+  );
+}
+
+async function StreamedNextSteps({
+  data,
+}: {
+  data: ReturnType<typeof listOpenActionItems> | Promise<never[]>;
+}) {
+  const items = await data;
+  return (
+    <div className="reveal-mount">
+      <ContactNextSteps
+        items={items.map((item) => ({
+          ...item,
+          interactionDate: new Date(item.interactionDate).toISOString(),
+        }))}
+      />
     </div>
   );
 }
