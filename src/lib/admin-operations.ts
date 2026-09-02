@@ -10,6 +10,7 @@ import {
   userSettings,
 } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
+import { getAppBaseUrl } from "@/lib/app-url";
 import {
   RESUMABLE_IMPORT_TYPES,
   runImportJobById,
@@ -152,6 +153,48 @@ export async function recordAccountView(
   } catch {
     // See above: never fail a render over the audit trail.
   }
+}
+
+/* ---------------------------------------------------------------------- sign-in link */
+
+/** How long a minted link stays valid before its first (only) use. */
+const SIGN_IN_LINK_EXPIRES_SECONDS = 30 * 24 * 60 * 60;
+
+/**
+ * Mint a one-click sign-in URL for any account, for the operator to hand to whoever needs
+ * to be signed in as that user without knowing (or resetting) their password — the
+ * showcase demo account being the motivating case, but nothing here is specific to it.
+ *
+ * This is Clerk's own "sign-in token" ticket strategy: a distinct first factor from
+ * password or an emailed code, single-use, consumed the instant the link is opened once.
+ * No expiry value changes that — `SIGN_IN_LINK_EXPIRES_SECONDS` only bounds how long an
+ * UNUSED link stays valid, which is why it is generous; it is not a session length.
+ *
+ * The token itself is never written to the audit log — only that one was minted, and
+ * when. Anyone who could read the token from an audit row could sign in as the account it
+ * names, which would make the log itself a credential.
+ */
+export async function mintSignInLink(
+  adminUserId: string,
+  input: { targetUserId: string }
+): Promise<{ url: string; expiresInSeconds: number }> {
+  await requireAccount(input.targetUserId);
+
+  const clerk = await clerkClient();
+  const token = await clerk.signInTokens.createSignInToken({
+    userId: input.targetUserId,
+    expiresInSeconds: SIGN_IN_LINK_EXPIRES_SECONDS,
+  });
+
+  await recordAdminAction({
+    adminUserId,
+    action: "auth.sign_in_link",
+    targetUserId: input.targetUserId,
+    detail: { expiresInSeconds: SIGN_IN_LINK_EXPIRES_SECONDS },
+  });
+
+  const url = `${getAppBaseUrl()}/sign-in?__clerk_ticket=${encodeURIComponent(token.token)}`;
+  return { url, expiresInSeconds: SIGN_IN_LINK_EXPIRES_SECONDS };
 }
 
 /* ------------------------------------------------------------------------------ imports */

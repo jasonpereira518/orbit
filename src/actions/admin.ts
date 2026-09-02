@@ -8,6 +8,8 @@ import { getDb } from "@/db";
 import { adminAuditLog, userSettings } from "@/db/schema";
 import { requireAdminUserId } from "@/lib/admin";
 import * as ops from "@/lib/admin-operations";
+import * as interestList from "@/lib/admin-interest-list";
+import * as broadcast from "@/lib/broadcasts";
 import { recordAdminAction } from "@/lib/admin-operations";
 import { resolvePlan } from "@/lib/entitlements";
 import { setCompedPlan } from "@/lib/user-settings";
@@ -79,6 +81,18 @@ export async function setCompAction(input: {
   return { ok: true, plan: resolvePlan(row).plan };
 }
 
+/**
+ * A one-click sign-in URL for the named account. See `ops.mintSignInLink` for what this
+ * actually is (a single-use Clerk sign-in token) and why the expiry is generous but the
+ * link is not reusable regardless.
+ */
+export async function mintSignInLinkAction(input: {
+  targetUserId: string;
+}): Promise<{ url: string; expiresInSeconds: number }> {
+  const adminUserId = await requireAdminUserId();
+  return ops.mintSignInLink(adminUserId, input);
+}
+
 /** Audit history for one account, shown on their inspector page. */
 export async function getAuditTrail(targetUserId: string) {
   await requireAdminUserId();
@@ -104,6 +118,15 @@ export async function getAuditTrail(targetUserId: string) {
  * ================================================================================== */
 
 /** Paths that show account state. Any operator write invalidates all of them. */
+function revalidateInterestList() {
+  revalidatePath("/admin/growth");
+  revalidatePath("/admin/growth/interest-list");
+}
+
+function revalidateBroadcasts() {
+  revalidatePath("/admin/growth/broadcasts");
+}
+
 function revalidateAdmin(targetUserId?: string) {
   revalidatePath("/admin");
   revalidatePath("/admin/users");
@@ -294,5 +317,250 @@ export async function setYcModeAction(input: { on: boolean }): Promise<{ ok: tru
     });
 
   revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/**
+ * Interest-list removals.
+ *
+ * Two operations rather than one because "remove them" means two different things. The
+ * unsubscribe writes the same `unsubscribed_at` the recipient's own one-click link sets,
+ * so there stays exactly one condition deciding whether someone is mailable; the delete
+ * erases the row, losing the signup date and source, which is only right for a bot
+ * signup, a typo, or a real deletion request.
+ *
+ * Both take a reason and both await their audit write. These reach a person's inbox
+ * rather than the operator's screen, and a delete has no other record that it happened —
+ * `interest_list_signups` is the only place that address ever existed.
+ */
+export async function unsubscribeInterestListAction(input: {
+  id: string;
+  reason: string;
+}): Promise<{ ok: true; email: string }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  const removed = await interestList.unsubscribeInterestListRow(input.id);
+  // Throws rather than returning a failure shape: ConfirmActionDialog reports success for
+  // any resolved promise and only surfaces a rejection, so a returned {ok:false} would
+  // toast "done" over an operation that did nothing.
+  if (!removed) throw new Error("That signup no longer exists.");
+
+  await recordAdminAction({
+    adminUserId,
+    action: "interest_list.unsubscribe",
+    resourceType: "interest_list_signup",
+    resourceId: input.id,
+    detail: { email: removed.email },
+    reason,
+  });
+
+  revalidateInterestList();
+  return { ok: true, email: removed.email };
+}
+
+export async function resubscribeInterestListAction(input: {
+  id: string;
+  reason: string;
+}): Promise<{ ok: true; email: string }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  const restored = await interestList.resubscribeInterestListRow(input.id);
+  if (!restored) throw new Error("That signup no longer exists.");
+
+  await recordAdminAction({
+    adminUserId,
+    action: "interest_list.resubscribe",
+    resourceType: "interest_list_signup",
+    resourceId: input.id,
+    detail: { email: restored.email },
+    reason,
+  });
+
+  revalidateInterestList();
+  return { ok: true, email: restored.email };
+}
+
+export async function deleteInterestListAction(input: {
+  id: string;
+  /** Must match the row's address. Guards against deleting whatever was scrolled to. */
+  confirmEmail: string;
+  reason: string;
+}): Promise<{ ok: true; email: string }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  // The audit entry records the address, so it is captured before the row is gone — and
+  // checked against what the operator typed, so a stale page cannot delete the wrong row.
+  const existing = await interestList.loadInterestListRow(input.id);
+  if (!existing) throw new Error("That signup no longer exists.");
+  if (existing.email.trim().toLowerCase() !== input.confirmEmail.trim().toLowerCase()) {
+    throw new Error("That address does not match this signup.");
+  }
+
+  const deleted = await interestList.deleteInterestListRow(input.id);
+  if (!deleted) throw new Error("That signup no longer exists.");
+
+  await recordAdminAction({
+    adminUserId,
+    action: "interest_list.delete",
+    resourceType: "interest_list_signup",
+    resourceId: input.id,
+    detail: { email: deleted.email },
+    reason,
+  });
+
+  revalidateInterestList();
+  return { ok: true, email: deleted.email };
+}
+
+/**
+ * Bulk removals.
+ *
+ * Capped in the data layer rather than trusted from the client, and the audit entry records
+ * every address rather than a count — after a bulk delete that entry is the only thing that
+ * can answer "who did that take out".
+ */
+export async function bulkUnsubscribeInterestListAction(input: {
+  ids: string[];
+  reason: string;
+}): Promise<{ ok: true; count: number }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+  if (input.ids.length === 0) throw new Error("Nothing selected.");
+
+  const emails = await interestList.bulkUnsubscribeInterestListRows(input.ids);
+  if (emails.length === 0) throw new Error("None of those signups still exist.");
+
+  await recordAdminAction({
+    adminUserId,
+    action: "interest_list.bulk_unsubscribe",
+    resourceType: "interest_list_signup",
+    detail: { emails, count: emails.length },
+    reason,
+  });
+
+  revalidateInterestList();
+  return { ok: true, count: emails.length };
+}
+
+export async function bulkDeleteInterestListAction(input: {
+  ids: string[];
+  reason: string;
+}): Promise<{ ok: true; count: number }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+  if (input.ids.length === 0) throw new Error("Nothing selected.");
+
+  const emails = await interestList.bulkDeleteInterestListRows(input.ids);
+  if (emails.length === 0) throw new Error("None of those signups still exist.");
+
+  await recordAdminAction({
+    adminUserId,
+    action: "interest_list.bulk_delete",
+    resourceType: "interest_list_signup",
+    detail: { emails, count: emails.length },
+    reason,
+  });
+
+  revalidateInterestList();
+  return { ok: true, count: emails.length };
+}
+
+/**
+ * Broadcasts — the operator-composed note to the interest list.
+ *
+ * Sending is the one action here that reaches many people at once and cannot be recalled,
+ * so it is deliberately a two-step: compose saves a draft, and a separate send with its own
+ * confirmation is what actually mails it. There is no compose-and-send-in-one-click path.
+ */
+export async function createBroadcastAction(input: {
+  subject: string;
+  body: string;
+}): Promise<{ ok: true; id: string }> {
+  const adminUserId = await requireAdminUserId();
+  const invalid = broadcast.validateBroadcast(input);
+  if (invalid) throw new Error(invalid);
+
+  const created = await broadcast.createBroadcast({ ...input, createdBy: adminUserId });
+  await recordAdminAction({
+    adminUserId,
+    action: "broadcast.create",
+    resourceType: "broadcast",
+    resourceId: created.id,
+    detail: { subject: created.subject },
+  });
+
+  revalidateBroadcasts();
+  return { ok: true, id: created.id };
+}
+
+export async function sendBroadcastTestAction(input: {
+  subject: string;
+  body: string;
+  to: string;
+}): Promise<{ ok: true }> {
+  await requireAdminUserId();
+  const invalid = broadcast.validateBroadcast(input);
+  if (invalid) throw new Error(invalid);
+  if (!input.to.includes("@")) throw new Error("That doesn't look like an address.");
+
+  const result = await broadcast.sendBroadcastTest(input);
+  if (!result.ok) throw new Error(result.error ?? "The test send failed.");
+  return { ok: true };
+}
+
+export async function sendBroadcastAction(input: {
+  id: string;
+  /** Must match the subject. The guard against sending the wrong draft to everyone. */
+  confirmSubject: string;
+  reason: string;
+}): Promise<{ ok: true; sent: number; failed: number; remaining: number }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  const draft = await broadcast.loadBroadcast(input.id);
+  if (!draft) throw new Error("That broadcast no longer exists.");
+  if (draft.subject.trim() !== input.confirmSubject.trim()) {
+    throw new Error("That subject does not match this broadcast.");
+  }
+
+  // Logged BEFORE the send, unlike every other action here: this one mails real people, and
+  // if the invocation dies partway the audit must still show that a send was started.
+  await recordAdminAction({
+    adminUserId,
+    action: "broadcast.send",
+    resourceType: "broadcast",
+    resourceId: draft.id,
+    detail: { subject: draft.subject },
+    reason,
+  });
+
+  const stats = await broadcast.sendBroadcast(input.id);
+  revalidateBroadcasts();
+  return { ok: true, sent: stats.sent, failed: stats.failed, remaining: stats.remaining };
+}
+
+export async function deleteBroadcastAction(input: {
+  id: string;
+  reason: string;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  const removed = await broadcast.deleteDraftBroadcast(input.id);
+  if (!removed) throw new Error("Only an unsent draft can be deleted.");
+
+  await recordAdminAction({
+    adminUserId,
+    action: "broadcast.delete",
+    resourceType: "broadcast",
+    resourceId: input.id,
+    detail: { subject: removed.subject },
+    reason,
+  });
+
+  revalidateBroadcasts();
   return { ok: true };
 }

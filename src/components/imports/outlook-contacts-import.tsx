@@ -14,6 +14,7 @@ import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { toast } from "@/lib/toast";
+import { IntegrationUnavailable } from "@/components/imports/integration-unavailable";
 
 export function OutlookContactsImport() {
   const router = useRouter();
@@ -80,14 +81,16 @@ export function OutlookContactsImport() {
 
   if (!status.configured) {
     return (
-      <section id="import-outlook-contacts" className="space-y-2 rounded-2xl border border-dashed border-border/70 bg-card/50 p-6">
-        <h2 className="text-lg font-medium text-ink">Outlook Contacts</h2>
-        <p className="text-sm text-muted-foreground">
-          Set <code className="text-xs">MICROSOFT_CLIENT_ID</code>,{" "}
-          <code className="text-xs">MICROSOFT_CLIENT_SECRET</code>, and{" "}
-          <code className="text-xs">MICROSOFT_REDIRECT_URI</code> to enable this.
-        </p>
-      </section>
+      <IntegrationUnavailable
+        id="import-outlook-contacts"
+        title="Outlook Contacts"
+        blurb="Not connected yet. Import from LinkedIn above, or paste your notes into Capture and Orbit will pull the people out."
+        envVars={[
+          "MICROSOFT_CLIENT_ID",
+          "MICROSOFT_CLIENT_SECRET",
+          "MICROSOFT_REDIRECT_URI",
+        ]}
+      />
     );
   }
 

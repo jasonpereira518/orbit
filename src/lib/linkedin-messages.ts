@@ -1,6 +1,10 @@
 import Papa from "papaparse";
 import type { Contact } from "@/db/schema";
-import { findDuplicateCandidates, linkedinSlug } from "@/lib/duplicates";
+import {
+  buildDuplicateIndex,
+  findDuplicateCandidatesIndexed,
+  linkedinSlug,
+} from "@/lib/duplicates";
 import { csvGet } from "@/lib/linkedin-connections";
 
 export type LinkedInMessageRow = {
@@ -301,6 +305,11 @@ export function resolveConversations(
 
   const resolutions: ConversationResolution[] = [];
 
+  // Built once for the whole export, not once per conversation: the two probes below run
+  // inside the loop, so a linear scan here made this O(conversations x contacts) with a
+  // Levenshtein in the inner loop — ~9s for 2,000 conversations against 3,000 contacts.
+  const duplicateIndex = buildDuplicateIndex(existing);
+
   for (const [conversationId, msgs] of byConv) {
     const urlSet = new Set<string>();
     for (const m of msgs) {
@@ -374,7 +383,7 @@ export function resolveConversations(
     );
 
     let match: ConversationResolution["match"] = null;
-    const urlDup = findDuplicateCandidates(existing, {
+    const urlDup = findDuplicateCandidatesIndexed(duplicateIndex, {
       linkedinUrl: primaryUrl,
     });
     if (urlDup[0] && urlDup[0].confidence >= 0.9) {
@@ -385,7 +394,7 @@ export function resolveConversations(
         confidence: urlDup[0].confidence,
       };
     } else if (isLikelyPersonName(primaryName)) {
-      const nameDup = findDuplicateCandidates(existing, {
+      const nameDup = findDuplicateCandidatesIndexed(duplicateIndex, {
         fullName: primaryName,
       });
       if (nameDup[0] && nameDup[0].confidence >= 0.85) {

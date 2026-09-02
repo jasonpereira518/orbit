@@ -2,22 +2,32 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { NetworkMetrics } from "@/lib/network-metrics";
 import { cn } from "@/lib/utils";
 
+/**
+ * Labels here are deliberately NOT "Inner / Mid / Outer".
+ *
+ * A contact's orbit badge is its rank inside your network — the top slice is Inner
+ * however warm or cold the whole network is. This chart counts by absolute score
+ * instead (see `network-metrics.ts`), which is the more useful measure: it actually
+ * moves when relationships warm up. But sharing the badge's words made the product
+ * contradict itself out loud — three people badged INNER ORBIT on /contacts while
+ * this card read "Inner 0 (0%)". Same colours, different nouns.
+ */
 const TIER_META = [
   {
     key: "inner" as const,
-    label: "Inner",
+    label: "Close",
     color: "bg-emerald-500",
     text: "text-emerald-700 dark:text-emerald-300",
   },
   {
     key: "mid" as const,
-    label: "Mid",
+    label: "Warm",
     color: "bg-sky-500",
     text: "text-sky-700 dark:text-sky-300",
   },
   {
     key: "outer" as const,
-    label: "Outer",
+    label: "Cool",
     color: "bg-amber-500",
     text: "text-amber-700 dark:text-amber-300",
   },
@@ -34,7 +44,7 @@ function pct(count: number, total: number) {
   return Math.round((count / total) * 100);
 }
 
-/** Honest bar widths from real Inner/Mid/Outer shares. */
+/** Honest bar widths from the real Close/Warm/Cool shares. */
 function tierBarWidths(tierCounts: NetworkMetrics["tierCounts"], total: number) {
   return {
     inner: pct(tierCounts.inner, total),
@@ -77,7 +87,7 @@ export function NetworkDepthChart({
       <CardContent className="space-y-5">
         <div className="space-y-2.5">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Closeness tiers
+            Relationship strength
           </p>
           <div className="flex h-3.5 overflow-hidden rounded-full bg-muted/40">
             {TIER_META.map((t) => {
@@ -114,7 +124,8 @@ export function NetworkDepthChart({
             })}
           </div>
           <p className="text-xs text-muted-foreground">
-            Strength, recency, cadence, and goal alignment combined
+            Strength, recency, cadence, and goal alignment combined — measured on
+            its own terms, not ranked against the rest of your network
           </p>
         </div>
 

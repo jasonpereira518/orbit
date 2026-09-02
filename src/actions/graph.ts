@@ -103,6 +103,7 @@ export async function getGraphData() {
       closenessTier: breakdown?.tier ?? ("outer" as const),
       orbitScore: breakdown?.orbitScore ?? 1,
       lastInteractionAt: c.lastInteractionAt,
+      hasLoggedInteraction: closenessCohort.interactedIds.has(c.id),
       nextFollowUpAt: c.nextFollowUpAt,
       tags,
       aiSummary: c.aiSummary,

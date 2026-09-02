@@ -828,6 +828,33 @@
   }
 }
 
+/* Star-chart loading placeholder (see constellation-loading.tsx). Reuses the
+   canvas's own vocabulary — a breathing core glow — rather than a shimmer bar,
+   which is invisible against #05070c. */
+@keyframes constellation-loading-breathe {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.constellation-loading-glow {
+  background: radial-gradient(
+    circle at 50% 50%,
+    color-mix(in oklab, #7aa7ff 42%, transparent) 0%,
+    color-mix(in oklab, #2b3f78 18%, transparent) 26%,
+    transparent 55%
+  );
+  animation: constellation-loading-breathe 2.4s ease-in-out infinite;
+}
+
+.constellation-loading-star {
+  animation: constellation-twinkle 1.4s ease-in-out infinite;
+}
+
 .constellation-corona {
   animation: constellation-corona 3.2s ease-in-out infinite;
 }
@@ -1503,14 +1530,17 @@ body:has(.landing-root) {
 
 /* ── Lift-off: app <-> /pricing ──
  *
- * The canvas stage (components/warp/warp-stage.tsx) paints the sky; this block
- * only moves the app itself. `WarpProvider` sets `data-warp` on <html>, so the
- * server-rendered layouts need no knowledge of the journey — they just carry
- * `data-warp-craft` on the element that flies.
+ * The canvas stage (components/warp/liftoff-stage.tsx) paints the sky; this
+ * block only moves the app itself. `WarpProvider` sets `data-warp` on <html>,
+ * so the server-rendered layouts need no knowledge of the journey — they just
+ * carry `data-warp-craft` on the element that flies.
  *
  * Percentages below mirror `lib/warp/choreography.ts`. Change one, change both:
  * ASCENT.ignition ends at 180/820 = 22%, and the whole ascend animation runs
- * for ASCENT.liftoff's 820ms. */
+ * for ASCENT.liftoff's 820ms.
+ *
+ * The selectors are journey-qualified because `/upgrade`'s time warp shares
+ * both the `data-warp` attribute and the `[data-warp-craft]` element. */
 
 @keyframes warp-craft-ascend {
   /* Engines light: a short judder before anything actually moves. */
@@ -1572,7 +1602,7 @@ body:has(.landing-root) {
   }
 }
 
-html[data-warp="ascending"] [data-warp-craft] {
+html[data-warp-journey="liftoff"][data-warp="outbound"] [data-warp-craft] {
   animation: warp-craft-ascend 820ms ease-out both;
   /* The stage portals to <body>, so it is never inside this transform — a
      transformed ancestor becomes the containing block for position:fixed and
@@ -1581,13 +1611,20 @@ html[data-warp="ascending"] [data-warp-craft] {
   will-change: transform, opacity;
 }
 
-html[data-warp="landing"] [data-warp-craft] {
+html[data-warp-journey="liftoff"][data-warp="landing"] [data-warp-craft] {
   animation: warp-craft-land 420ms cubic-bezier(0.3, 0.9, 0.4, 1) both;
   will-change: transform, opacity;
 }
 
-/* Nothing underneath the sky should react to a stray click or hover while the
-   journey is running; the canvas itself swallows pointer events. */
+/* Nothing on the ORIGIN page should react to a stray click or hover while the
+   journey is running. This rule reaches the origin only: the destination
+   mounts in a different layout and never carries [data-warp-craft].
+   Destinations are covered — or not — by their own stage:
+     liftoff — the canvas is pointer-events:none throughout, so /pricing stays
+       clickable underneath it. Cosmetic; there is nothing there to mis-click.
+     chrono  — the canvas takes pointer events while it is actually covering
+       (see COVER_BLOCKS_CLICKS in chrono-stage.tsx), because /upgrade's cover
+       hides live checkout buttons. */
 html[data-warp] [data-warp-craft] {
   pointer-events: none;
 }
@@ -1602,6 +1639,51 @@ html[data-warp] [data-warp-craft] {
   }
 }
 
+/* ── Time warp: Settings <-> /upgrade ──
+ *
+ * The chrono journey does not fly anywhere, so nothing translates. The room
+ * simply goes dark as the exposure opens: the shell loses contrast and
+ * recedes a fraction while the canvas stage fades up over it. Coming home it
+ * runs backwards, which is also how the dark-to-light theme boundary is
+ * crossed.
+ *
+ * Windows mirror CHRONO_OUT.shutter and CHRONO_IN.landing in
+ * `lib/warp/chrono.ts`. Change one, change both. */
+
+@keyframes chrono-craft-dim {
+  0% {
+    transform: scale(1);
+    filter: saturate(1) brightness(1);
+  }
+  100% {
+    transform: scale(0.985);
+    filter: saturate(0.35) brightness(0.42);
+  }
+}
+
+html[data-warp-journey="chrono"][data-warp="outbound"] [data-warp-craft],
+html[data-warp-journey="chrono"][data-warp="cruise"] [data-warp-craft],
+html[data-warp-journey="chrono"][data-warp="arriving"] [data-warp-craft] {
+  animation: chrono-craft-dim 560ms cubic-bezier(0.4, 0, 0.6, 1) both;
+  will-change: transform, filter;
+}
+
+/* Coming home: the last 220ms of the return arc, played forwards out of the
+   dimmed state — the width of CHRONO_IN.landing, which successive retunes of
+   the inbound arc have moved (350ms, then 150ms, then 185ms, now 220ms), so
+   check it against `chrono.ts` rather than against memory. `reverse` rather
+   than a second keyframe block so the two can never drift apart. */
+html[data-warp-journey="chrono"][data-warp="landing"] [data-warp-craft] {
+  animation: chrono-craft-dim 220ms cubic-bezier(0.4, 0, 0.6, 1) reverse both;
+  will-change: transform, filter;
+}
+
+/* Held dimmed for the whole rewind, so the room does not brighten early. */
+html[data-warp-journey="chrono"][data-warp="inbound"] [data-warp-craft] {
+  transform: scale(0.985);
+  filter: saturate(0.35) brightness(0.42);
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* `data-warp="reduced"` never matches the rules above, so the craft simply
      never animates. This is the belt-and-braces for a stale attribute: without
@@ -1611,5 +1693,58 @@ html[data-warp] [data-warp-craft] {
     animation: none !important;
     transform: none !important;
     opacity: 1 !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Toasts must never swallow a click on the page underneath.
+ *
+ * Sonner anchors bottom-right with `pointer-events: auto`, and Orbit puts primary
+ * actions there too: the Accept / Accept & next buttons on the Capture review card sit
+ * at x 780-1160, y 692-724 on a 1280x820 viewport, and the "Found N people" toast that
+ * fires the moment the card appears covers x 900-1256, y 675-729. For the four seconds
+ * the toast is up (ten for an error), `document.elementFromPoint` on the middle of that
+ * button returns the toast — so the click does nothing, twice in a row, on the exact
+ * step of the demo where you have just pasted your notes. The constellation's
+ * full-screen and Home buttons sit in the same corner.
+ *
+ * The toast layer becomes transparent to hit-testing; anything genuinely interactive
+ * inside a toast (the "See more" expander in `lib/toast.tsx`, a close or action button)
+ * opts back in. The cost is swipe-to-dismiss on a four-second notification, which is
+ * a better trade than a dead primary button.
+ * --------------------------------------------------------------------------- */
+[data-sonner-toaster],
+[data-sonner-toaster] [data-sonner-toast] {
+  pointer-events: none;
+}
+
+[data-sonner-toaster] [data-sonner-toast] button,
+[data-sonner-toaster] [data-sonner-toast] a,
+[data-sonner-toaster] [data-sonner-toast] [data-close-button],
+[data-sonner-toaster] [data-sonner-toast] [data-button] {
+  pointer-events: auto;
+}
+
+/* The plan-celebration handoff: the app's own logo mark (sidebar or mobile
+   header, whichever is laid out — see `[data-app-logo]`) steps aside while
+   the celebration's mark flies across the screen to take its place, then
+   fades back in synced with the flying mark's own fade-out. Without this the
+   destination already shows the new tier's ring (the shell refreshes the
+   instant the flight starts) for the whole flight, so the arriving mark
+   looks like a duplicate rather than a replacement. */
+html[data-celebration-handoff] [data-app-logo] {
+  opacity: 0;
+}
+
+[data-app-logo] {
+  transition: opacity 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Reduced motion never flies the mark (see `celebration-stage.tsx`), so
+     this attribute is never set in that path — but if it ever were, nothing
+     here should animate the app's own logo. */
+  [data-app-logo] {
+    transition: none;
   }
 }

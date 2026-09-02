@@ -101,7 +101,9 @@ export function AppSidebar({
           className="flex min-w-0 flex-1 items-center justify-center gap-2.5 lg:justify-start"
           title="Back to landing page"
         >
-          <OrbitLogo size="md" plan={plan} />
+          <span data-app-logo className="inline-flex shrink-0">
+            <OrbitLogo size="md" plan={plan} />
+          </span>
           <div className="hidden min-w-0 lg:block">
             <p className="font-[family-name:var(--font-display)] text-lg leading-none tracking-tight text-sidebar-primary">
               Orbit

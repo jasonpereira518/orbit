@@ -145,18 +145,21 @@ export function GmailImportPanel({
 
   if (!connection.configured) {
     return (
-      <div className="rounded-2xl border border-dashed border-border/70 bg-card/50 px-5 py-4 text-sm text-muted-foreground">
-        Connect Gmail to import recruiters from your inbox. Set{" "}
-        <code className="text-xs">GOOGLE_CLIENT_ID</code>,{" "}
-        <code className="text-xs">GOOGLE_CLIENT_SECRET</code>, and{" "}
-        <code className="text-xs">GOOGLE_REDIRECT_URI</code> in the environment
-        {connection.redirectUri ? (
-          <>
-            {" "}
-            (redirect: <code className="text-xs">{connection.redirectUri}</code>)
-          </>
+      <div className="space-y-2 rounded-2xl border border-dashed border-border/70 bg-card/50 px-5 py-4 text-sm text-muted-foreground">
+        {/* Setup instructions are for whoever runs the app, not the person reading the
+            page — the env-var line is compiled out of production bundles. */}
+        <p>
+          Gmail isn&apos;t connected yet, so recruiter threads can&apos;t be
+          imported from your inbox. You can still add recruiters by hand.
+        </p>
+        {process.env.NODE_ENV === "development" ? (
+          <p className="text-xs text-muted-foreground/70">
+            Dev only — set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and
+            GOOGLE_REDIRECT_URI
+            {connection.redirectUri ? ` (redirect: ${connection.redirectUri})` : ""}
+            .
+          </p>
         ) : null}
-        .
       </div>
     );
   }

@@ -24,6 +24,7 @@ export function ContactProfileOverview({
   industry,
   closeness,
   lastTouchAt,
+  hasLoggedInteraction,
   frequencyLabel,
   howMetSummary,
 }: {
@@ -34,6 +35,8 @@ export function ContactProfileOverview({
   industry: string | null;
   closeness: ClosenessBreakdown;
   lastTouchAt: Date | string | null;
+  /** See ContactStatPills — `lastTouchAt` alone cannot tell the two cases apart. */
+  hasLoggedInteraction: boolean;
   frequencyLabel: string;
   howMetSummary: string | null;
 }) {
@@ -156,12 +159,31 @@ export function ContactProfileOverview({
                   {/* Both lines feed the score: recency and cadence are
                       separate components of closeness. */}
                   <p className="text-xs text-muted-foreground">Activity</p>
-                  <p className="mt-0.5 text-sm text-ink">
-                    Last interaction {recencyLabel}
-                  </p>
-                  <p className="mt-0.5 text-sm text-muted-foreground">
-                    Frequency · {frequencyLabel}
-                  </p>
+                  {hasLoggedInteraction ? (
+                    <>
+                      <p className="mt-0.5 text-sm text-ink">
+                        Last interaction {recencyLabel}
+                      </p>
+                      <p className="mt-0.5 text-sm text-muted-foreground">
+                        Frequency · {frequencyLabel}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      {/* Nothing logged. Saying "last interaction 23 days ago" here —
+                          off an import stamp — next to a timeline reading "no
+                          interactions yet" is the kind of contradiction that costs
+                          trust in every other number on the page. */}
+                      <p className="mt-0.5 text-sm text-ink">
+                        No interactions logged
+                      </p>
+                      <p className="mt-0.5 text-sm text-muted-foreground">
+                        {lastTouchAt
+                          ? `In your network ${recencyLabel}`
+                          : "Add a note to start the history"}
+                      </p>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
