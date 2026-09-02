@@ -1349,12 +1349,13 @@ html[data-warp-journey="chrono"][data-warp="arriving"] [data-warp-craft] {
   will-change: transform, filter;
 }
 
-/* Coming home: the last 150ms of the return arc, played forwards out of the
-   dimmed state — the width of CHRONO_IN.landing, which the retuned inbound arc
-   shortened from 350ms. `reverse` rather than a second keyframe block so the
-   two can never drift apart. */
+/* Coming home: the last 185ms of the return arc, played forwards out of the
+   dimmed state — the width of CHRONO_IN.landing, which successive retunes of
+   the inbound arc have moved (350ms, then 150ms, now 185ms), so check it
+   against `chrono.ts` rather than against memory. `reverse` rather than a
+   second keyframe block so the two can never drift apart. */
 html[data-warp-journey="chrono"][data-warp="landing"] [data-warp-craft] {
-  animation: chrono-craft-dim 150ms cubic-bezier(0.4, 0, 0.6, 1) reverse both;
+  animation: chrono-craft-dim 185ms cubic-bezier(0.4, 0, 0.6, 1) reverse both;
   will-change: transform, filter;
 }
 

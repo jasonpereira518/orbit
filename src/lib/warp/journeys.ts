@@ -7,7 +7,7 @@
  *             star trails. You rewind home the way you came, but nowhere near
  *             as far: at least 2810ms out — 1950ms of deterministic run, any
  *             cruise hold on top of that, then 860ms of deceleration —
- *             against 1150ms back. Coming home is a departure someone has
+ *             against 1400ms back. Coming home is a departure someone has
  *             already decided on, and the beats below are not symmetric.
  *             `outboundMs` and `inboundMs` are not comparable on their own;
  *             see their doc comments.
