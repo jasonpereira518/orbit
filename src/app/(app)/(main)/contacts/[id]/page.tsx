@@ -43,19 +43,25 @@ export default async function ContactDetailPage({
   // failure the section simply doesn't render.
   const sendOptionsPromise = getContactFollowUpSendOptions(id).catch(() => null);
   const relatedPromise = listRelatedContacts(id, 6).catch(() => []);
+  // Started once and chained from below, rather than each `.then` re-calling
+  // requireUserId(): the `after()` callback for brief regeneration needs the
+  // resolved userId itself (a Server Component's `after` can't call
+  // requireUserId()/auth() there — see the note below), so there needs to be
+  // a single place upstream that resolves it during render.
+  const userIdPromise = requireUserId();
   // Closeness is relative, so even a single-contact page needs the whole
   // orbit's distribution. Cached per request, and shared with any other
   // surface on this page that scores contacts.
-  const cohortPromise = requireUserId().then((userId) =>
+  const cohortPromise = userIdPromise.then((userId) =>
     getClosenessCohort(userId)
   );
-  const mentionsPromise = requireUserId()
+  const mentionsPromise = userIdPromise
     .then((u) => listContactMentions(u, id))
     .catch(() => ({ mentionedIn: [], mentions: [] }));
-  const nextStepsPromise = requireUserId()
+  const nextStepsPromise = userIdPromise
     .then((u) => listOpenActionItems(u, id))
     .catch(() => []);
-  const briefPromise = requireUserId()
+  const briefPromise = userIdPromise
     .then((u) => getContactBrief(u, id))
     .catch(() => null);
 
@@ -73,11 +79,16 @@ export default async function ContactDetailPage({
     // Regenerate off the request path: the page renders the last-known brief
     // (or the empty state) immediately, and the next visit picks up the
     // refreshed one. Errors here must never surface to the response.
-    after(() =>
-      requireUserId()
-        .then((u) => generateAndStoreContactBrief(u, id))
-        .catch(() => null)
-    );
+    //
+    // The userId is resolved here, during render, and closed over below —
+    // NOT read inside the after() callback. Outside demo mode, requireUserId()
+    // calls Clerk's auth(), which awaits headers(); a Server Component's
+    // after() callback cannot call request-time APIs like headers()/cookies()
+    // (see node_modules/next/dist/docs/.../functions/after.md), so
+    // `after(() => requireUserId().then(...))` would throw there and never
+    // regenerate the brief in production.
+    const userId = await userIdPromise;
+    after(() => generateAndStoreContactBrief(userId, id).catch(() => null));
   }
 
   const closeness =

@@ -43,6 +43,7 @@ export function ContactBriefCard({ contactId, standing, recentDiscussions, nextS
                 {recentDiscussions.map((d) => (
                   <li key={d.interactionId} className="flex gap-2">
                     <Link href={`#interaction-${d.interactionId}`} className="shrink-0 tabular-nums text-muted-foreground hover:text-primary">
+                      {/* local noon: a date-time string without a zone parses as local time */}
                       {format(new Date(`${d.dateIso}T12:00:00`), "MMM d")}
                     </Link>
                     <span className="text-ink">{d.line}</span>
