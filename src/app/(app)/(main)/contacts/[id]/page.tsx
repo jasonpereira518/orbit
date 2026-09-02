@@ -1,12 +1,13 @@
 import { Suspense } from "react";
+import { after } from "next/server";
 import {
   getContact,
   getContactFollowUpSendOptions,
   listRelatedContacts,
 } from "@/actions/contacts";
+import { ContactBriefCard } from "@/components/contacts/contact-brief-card";
 import { ContactFollowUpSection } from "@/components/contacts/contact-follow-up-section";
 import { ContactMentionsSection } from "@/components/contacts/contact-mentions-section";
-import { ContactNextSteps } from "@/components/contacts/contact-next-steps";
 import { ContactProfileHero } from "@/components/contacts/contact-profile-hero";
 import { ContactProfileOverview } from "@/components/contacts/contact-profile-overview";
 import { ContactRelatedPeople } from "@/components/contacts/contact-related-people";
@@ -19,6 +20,11 @@ import { computeCloseness, formatInteractionFrequency } from "@/lib/closeness";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { requireUserId } from "@/lib/auth";
 import { listOpenActionItems } from "@/lib/action-items";
+import {
+  generateAndStoreContactBrief,
+  getContactBrief,
+  isBriefStale,
+} from "@/lib/contact-brief";
 import { listContactMentions } from "@/lib/contact-mentions";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { notFound } from "next/navigation";
@@ -49,6 +55,9 @@ export default async function ContactDetailPage({
   const nextStepsPromise = requireUserId()
     .then((u) => listOpenActionItems(u, id))
     .catch(() => []);
+  const briefPromise = requireUserId()
+    .then((u) => getContactBrief(u, id))
+    .catch(() => null);
 
   // notFound() must fire BEFORE any Suspense boundary renders so the route
   // still returns a real 404 status.
@@ -57,6 +66,19 @@ export default async function ContactDetailPage({
     cohortPromise,
   ]);
   if (!contact) notFound();
+
+  const brief = await briefPromise;
+  const briefStale = isBriefStale(brief, contact.lastInteractionAt);
+  if (briefStale) {
+    // Regenerate off the request path: the page renders the last-known brief
+    // (or the empty state) immediately, and the next visit picks up the
+    // refreshed one. Errors here must never surface to the response.
+    after(() =>
+      requireUserId()
+        .then((u) => generateAndStoreContactBrief(u, id))
+        .catch(() => null)
+    );
+  }
 
   const closeness =
     closenessCohort.byId.get(contact.id) ??
@@ -188,6 +210,22 @@ export default async function ContactDetailPage({
 
       <div
         className="reveal-mount"
+        style={{ "--reveal-delay": "90ms" } as React.CSSProperties}
+      >
+        <ContactBriefCard
+          contactId={contact.id}
+          standing={brief?.standing ?? null}
+          recentDiscussions={brief?.recentDiscussions ?? []}
+          nextSteps={(await nextStepsPromise).map((item) => ({
+            ...item,
+            interactionDate: new Date(item.interactionDate).toISOString(),
+          }))}
+          stale={briefStale}
+        />
+      </div>
+
+      <div
+        className="reveal-mount"
         style={{ "--reveal-delay": "120ms" } as React.CSSProperties}
       >
         <ContactProfileOverview
@@ -202,12 +240,6 @@ export default async function ContactDetailPage({
           howMetSummary={howMetSummary}
         />
       </div>
-
-      {/* Task 14 moves this into the brief card; for now it lives in the overview
-          area, right after the "Who they are" summary. */}
-      <Suspense fallback={null}>
-        <StreamedNextSteps data={nextStepsPromise} />
-      </Suspense>
 
       <Suspense fallback={<Skeleton className="h-40 w-full rounded-2xl" />}>
         <StreamedFollowUp
@@ -270,24 +302,6 @@ async function StreamedFollowUp({
   return (
     <div className="reveal-mount">
       <ContactFollowUpSection {...rest} sendOptions={resolved} />
-    </div>
-  );
-}
-
-async function StreamedNextSteps({
-  data,
-}: {
-  data: ReturnType<typeof listOpenActionItems> | Promise<never[]>;
-}) {
-  const items = await data;
-  return (
-    <div className="reveal-mount">
-      <ContactNextSteps
-        items={items.map((item) => ({
-          ...item,
-          interactionDate: new Date(item.interactionDate).toISOString(),
-        }))}
-      />
     </div>
   );
 }

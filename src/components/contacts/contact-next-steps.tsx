@@ -7,7 +7,6 @@ import { toast } from "@/lib/toast";
 import { setActionItemStatus } from "@/actions/action-items";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export type OpenActionItem = {
   id: string;
@@ -43,46 +42,43 @@ export function ContactNextSteps({ items }: { items: OpenActionItem[] }) {
     });
   }
 
+  if (visible.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Nothing open — everything from your notes is done.
+      </p>
+    );
+  }
+
   return (
-    <Card className="border-border/70 shadow-none">
-      <CardHeader>
-        <CardTitle>Next steps</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {visible.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Nothing open — everything from your notes is done.
-          </p>
-        ) : (
-          visible.map((item) => (
-            <label
-              key={item.id}
-              className="group flex items-start gap-3 rounded-xl border border-border/60 p-3"
-            >
-              <Checkbox
-                className="mt-0.5"
-                disabled={pending}
-                checked={false}
-                onCheckedChange={() => checkItem(item.id)}
-                aria-label={`Mark "${item.text}" done`}
-              />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm text-ink">{item.text}</p>
-                <div className="mt-1 flex items-center gap-2">
-                  <p className="text-xs text-muted-foreground">
-                    {format(new Date(item.interactionDate), "MMM d")}
-                  </p>
-                  {item.reminderId ? (
-                    <Badge variant="outline" className="text-[10px]">
-                      reminder set
-                    </Badge>
-                  ) : null}
-                </div>
-              </div>
-            </label>
-          ))
-        )}
-      </CardContent>
-    </Card>
+    <div className="space-y-2">
+      {visible.map((item) => (
+        <label
+          key={item.id}
+          className="group flex items-start gap-3 rounded-xl border border-border/60 p-3"
+        >
+          <Checkbox
+            className="mt-0.5"
+            disabled={pending}
+            checked={false}
+            onCheckedChange={() => checkItem(item.id)}
+            aria-label={`Mark "${item.text}" done`}
+          />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm text-ink">{item.text}</p>
+            <div className="mt-1 flex items-center gap-2">
+              <p className="text-xs text-muted-foreground">
+                {format(new Date(item.interactionDate), "MMM d")}
+              </p>
+              {item.reminderId ? (
+                <Badge variant="outline" className="text-[10px]">
+                  reminder set
+                </Badge>
+              ) : null}
+            </div>
+          </div>
+        </label>
+      ))}
+    </div>
   );
 }
