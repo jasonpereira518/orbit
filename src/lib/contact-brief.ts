@@ -7,9 +7,14 @@ import { formatHowMetSummary, metContextLabel } from "@/lib/met-context";
 import { rebuildContactEmbedding } from "@/lib/search";
 import { isoDay } from "@/lib/suggested-reminder-utils";
 
+/** Never reject a good summary over an overlong standing paragraph — truncate instead. */
+export function clampStanding(s: string) {
+  return s.trim().slice(0, 600);
+}
+
 const contactBriefSchema = z.object({
   summary: z.string().min(1),
-  standing: z.string().min(1).max(600),
+  standing: z.string().min(1).transform(clampStanding),
 });
 
 export type ContactBrief = typeof contactBriefs.$inferSelect;
@@ -237,7 +242,7 @@ Rules:
     });
     const parsed = contactBriefSchema.parse(JSON.parse(content));
     summary = parsed.summary.trim();
-    standing = parsed.standing.trim();
+    standing = parsed.standing;
     model = config.model;
   } catch {
     summary = buildDeterministicSummary({
@@ -274,24 +279,27 @@ Rules:
     aiSummary: i.aiSummary,
     rawNotes: i.rawNotes,
   }));
+  const recentDiscussions = buildRecentDiscussions(recentRows);
+  const generatedAt = new Date();
+  const basisInteractionId = recent[0]?.id ?? null;
   await db
     .insert(contactBriefs)
     .values({
       contactId,
       userId,
       standing,
-      recentDiscussions: buildRecentDiscussions(recentRows),
-      generatedAt: new Date(),
-      basisInteractionId: recent[0]?.id ?? null,
+      recentDiscussions,
+      generatedAt,
+      basisInteractionId,
       model,
     })
     .onConflictDoUpdate({
       target: contactBriefs.contactId,
       set: {
         standing,
-        recentDiscussions: buildRecentDiscussions(recentRows),
-        generatedAt: new Date(),
-        basisInteractionId: recent[0]?.id ?? null,
+        recentDiscussions,
+        generatedAt,
+        basisInteractionId,
         model,
       },
     });

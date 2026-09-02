@@ -18,7 +18,7 @@ delete process.env.ANTHROPIC_API_KEY;
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contactBriefs, contacts, interactions, userSettings } from "../src/db/schema";
-import { buildRecentDiscussions, generateAndStoreContactBrief, getContactBrief, isBriefStale } from "../src/lib/contact-brief";
+import { buildRecentDiscussions, clampStanding, generateAndStoreContactBrief, getContactBrief, isBriefStale } from "../src/lib/contact-brief";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const USER = "smoke-brief-user";
@@ -53,6 +53,9 @@ function check(label: string, condition: boolean, detail?: string) {
   check("brief older than last interaction → stale", isBriefStale({ generatedAt: t0 }, t1));
   check("brief newer → fresh", !isBriefStale({ generatedAt: t1 }, t0));
   check("no interactions → fresh", !isBriefStale({ generatedAt: t0 }, null));
+}
+{
+  check("overlong standing is truncated, not rejected", clampStanding("x".repeat(700)).length === 600);
 }
 
 // --- DB, no AI key ---
