@@ -124,9 +124,12 @@ export function GoogleContactsImport({
   // the initial (0, 0) on mount and the reset to (0, 0) whenever the review list clears.
   // No local state of our own here: `onSelectionChange` is a plain derived-value callback,
   // not a reaction to an external singleton, so it needs none of the microtask deferral the
-  // job-runner effects above use.
+  // job-runner effects above use. Reports 0 whenever the list is empty rather than trusting
+  // `selected.size` directly — a reset path that clears `people` but (by omission) not
+  // `selected` must not leak a stale selected count to the caller; Disconnect used to be
+  // exactly that gap.
   useEffect(() => {
-    onSelectionChange?.(selected.size, people.length);
+    onSelectionChange?.(people.length === 0 ? 0 : selected.size, people.length);
   }, [selected, people, onSelectionChange]);
 
   useEffect(() => {
@@ -254,6 +257,7 @@ export function GoogleContactsImport({
                   start(async () => {
                     await disconnectGmail();
                     setPeople([]);
+                    setSelected(new Set());
                     setLoaded(false);
                     setStatus(null);
                     setContactsScopeOverride(null);
