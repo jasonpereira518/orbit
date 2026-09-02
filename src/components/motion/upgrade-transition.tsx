@@ -138,18 +138,18 @@ const RESOLVE_EASE = [0.22, 0.61, 0.36, 1] as const;
  * `motion-utils/dist/es/easing/ease.mjs` for the JS path and
  * `motion-dom/.../waapi/easing/supported.mjs`, which maps the same name to
  * CSS `ease-in`, for the WAAPI one. Its initial velocity is exactly zero.
- * By the time the flight starts the rise is 76% of the way through an easeOut
- * — 16.5px of its 18px, with 1.5px left to travel — so it is visually done,
+ * By the time the flight starts the rise is 77% of the way through an easeOut
+ * — 16.6px of its 18px, with 1.4px left to travel — so it is visually done,
  * and the first frames of the flight are the only thing left on screen. easeIn
- * spends them barely moving: 0.19% of the
- * distance on frame one, 0.75% on frame two, or 3px then 11px on a 1440px
+ * spends them barely moving: 0.14% of the
+ * distance on frame one, 0.55% on frame two, or 2px then 8px on a 1440px
  * viewport. The beat has to read as "lift, THEN fly", and a beat that has to
  * be legible cannot begin with nothing happening.
  *
  * This curve starts at 0.32x the flight's average velocity rather than 0x and
  * finishes at 1.55x rather than easeIn's 1.71x, accelerating monotonically
  * throughout — so the panel commits on the first frame and is still plainly
- * speeding up when it leaves. Frame one goes from 0.19% to 1.12% of the
+ * speeding up when it leaves. Frame one goes from 0.14% to 0.94% of the
  * distance; one tenth of the way in, from 1.70% to 3.89%.
  *
  * At the HALFWAY point it is 34.2% against easeIn's 31.5% — barely moved, and
@@ -165,7 +165,7 @@ const RESOLVE_EASE = [0.22, 0.61, 0.36, 1] as const;
 const PART_EASE = [0.25, 0.08, 0.55, 0.3] as const;
 /** How far a panel rises before it goes. Larger than the assembly's brick lift:
  *  that one is a piece coming off its studs, this is a release, and it has to
- *  register inside one rise — `liftScheduleForSlot`, 190ms at the beats as
+ *  register inside one rise — `liftScheduleForSlot`, 220ms at the beats as
  *  they stand — against a flight that is about to cross the screen. */
 const PART_RISE = -18;
 /**
@@ -176,7 +176,7 @@ const PART_RISE = -18;
  * leaves a hard-edged panel meeting the frame boundary, which reads as a clip
  * rather than as a departure.
  */
-const PART_FADE_DURATION = 0.145;
+const PART_FADE_DURATION = 0.17;
 
 /**
  * How one panel leaves on the way home.

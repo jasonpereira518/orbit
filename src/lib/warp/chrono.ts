@@ -28,7 +28,7 @@ export const CHRONO_OUTBOUND_MS = 1950;
 /** Deceleration: arcs collapse back into stars. The payoff shot. */
 export const CHRONO_ARRIVING_MS = 860;
 /** The rewind home, start to settled. */
-export const CHRONO_INBOUND_MS = 1400;
+export const CHRONO_INBOUND_MS = 1650;
 
 import {
   CRUISE_CAP_MS,
@@ -58,31 +58,31 @@ export const CHRONO_IN = {
    *
    *  This is the window for the whole STAGGERED SET, not for one panel: every
    *  slot's rise is offset by the same amount its flight is, so the first slot
-   *  to leave rises 0-190ms and the last 100-290ms. One panel's rise is the
+   *  to leave rises 0-220ms and the last 120-340ms. One panel's rise is the
    *  window minus that spread — `liftScheduleForSlot` does the arithmetic. A
-   *  window declared as one panel's 190ms would close 100ms before the set has
+   *  window declared as one panel's 220ms would close 120ms before the set has
    *  actually finished rising: a beat table that stops short of the beat. */
-  lift: [0, 290],
+  lift: [0, 340],
   /** The panels fly horizontally clean out of the frame, each to whichever
    *  side of the centre line it is already nearer. Overlaps the lift on
    *  purpose — the rise is still finishing as the flight begins, so the two
    *  read as one gesture and not as two moves in sequence. */
-  part: [145, 755],
+  part: [170, 890],
   /** The canvas fades up behind them, once they are all but gone. Late by
    *  design: a stage that is opaque from frame one hides the exit entirely,
    *  and the exit is the shot. */
-  cover: [585, 850],
+  cover: [690, 1000],
   /** Late, unlike the rocket's frame-one push: the page leaving is the shot,
    *  so the swap waits until the cover above has finished. */
-  push: 850,
+  push: 1000,
   /** Time runs backwards. */
-  rewind: [365, 1035],
+  rewind: [430, 1220],
   /** Stars go out in bursts; the growth un-happens. */
-  extinguish: [425, 1095],
+  extinguish: [500, 1290],
   /** Arcs collapse back to points. */
-  collapse: [1035, 1240],
+  collapse: [1220, 1460],
   /** The room lights come back up. */
-  landing: [1215, 1400],
+  landing: [1430, 1650],
 } as const;
 
 /**
@@ -375,14 +375,14 @@ export function partDistance(viewportWidth: number) {
  * The first shape of this exit borrowed the assembly's 50ms exit stagger,
  * which was tuned for a different move entirely — pieces lifting a few pixels
  * in place, where the total run IS the beat and nothing downstream depends on
- * when it ends. This window has a hard end: the cover starts rising at 585ms
- * and is opaque at 850ms. At the beats as they stand a 50ms stagger would put
- * the last slot's flight at 395-905ms — still crossing the frame 55ms after
+ * when it ends. This window has a hard end: the cover starts rising at 690ms
+ * and is opaque at 1000ms. At the beats as they stand a 50ms stagger would put
+ * the last slot's flight at 420-1020ms — still crossing the frame 20ms after
  * the cover has sealed over it — so the top sections would never visually
  * complete and the beat table would claim a window the code did not honour. A
  * beat table that does not describe the motion is worse than no beat table.
  */
-export const PART_FLIGHT_MS = 510;
+export const PART_FLIGHT_MS = 600;
 
 /**
  * How much later the last panel leaves than the first, in ms.
@@ -409,7 +409,7 @@ function exitOffsetForSlot(order: number, maxOrder: number) {
  *
  * Reverse order, as the assembly's exit already does: the last panel to arrive
  * is the first to leave. The spread is whatever `part` has left after the
- * flight itself — 100ms across six slots on /upgrade, so 20ms apart. Near
+ * flight itself — 120ms across six slots on /upgrade, so 24ms apart. Near
  * simultaneous, and deliberately so: two plan cards parting like curtains part
  * together, and a cascade would turn a single gesture into a queue.
  */
