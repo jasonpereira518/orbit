@@ -73,5 +73,11 @@ const contacts = [
   const withCo = resolveMentions(dupes, [{ name: "Raj Patel", context: null, company: "Globex" }]);
   check("  company picks one", withCo.resolved[0]?.contactId === "raj2");
 }
+// 10. Two contacts with the same full name AND company → ambiguous even with company.
+{
+  const twins = [...contacts, subject("raj-twin", "Raj Patel", "Acme")];
+  const { resolved, unresolved } = resolveMentions(twins, [{ name: "Raj Patel", context: null, company: "Acme" }]);
+  check("tied name+company candidates unresolved", resolved.length === 0 && unresolved.length === 1);
+}
 
 console.log("\nsmoke-mention-resolution: all checks passed");

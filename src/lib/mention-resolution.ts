@@ -64,8 +64,14 @@ export function resolveMentions(
 
     // Tier 1: name + company through the duplicate matcher (≥ 0.85 = its own merge bar).
     if (company && norm.includes(" ")) {
-      const top = findDuplicateCandidatesIndexed(index, { fullName: text, company: m.company })[0];
+      const candidates = findDuplicateCandidatesIndexed(index, { fullName: text, company: m.company });
+      const top = candidates[0];
+      const runnerUp = candidates[1];
       if (top && top.confidence >= 0.85) {
+        if (runnerUp && runnerUp.confidence === top.confidence) {
+          unresolved.push(base);
+          continue;
+        }
         resolved.push({ ...base, contactId: top.contact.id, confidence: 0.9, matchedBy: "name_company" });
         continue;
       }
