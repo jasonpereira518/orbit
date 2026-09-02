@@ -56,11 +56,27 @@ const strList = z
   .array(z.string())
   .nullish()
   .transform((v) => v ?? []);
+/** "participant" (talked with/met/messaged) vs "mentioned" (only referred to). */
+const personPresence = z
+  .string()
+  .nullish()
+  .transform((v): "participant" | "mentioned" => (v === "mentioned" ? "mentioned" : "participant"));
+export const noteMentionSchema = z.object({
+  name: z.string().min(1),
+  context: nullStr.optional().transform((v) => v ?? null),
+  near_person: nullStr.optional().transform((v) => v ?? null),
+});
+export type NoteMention = z.infer<typeof noteMentionSchema>;
+const mentionList = z
+  .array(noteMentionSchema)
+  .nullish()
+  .transform((v) => (v ?? []).filter((m) => m.name.trim()));
 
 export const noteParseSchema = z.object({
   name: nullStr,
   company: nullStr,
   role: nullStr,
+  presence: personPresence,
   location: nullStr,
   email: nullStr,
   linkedin_url: nullStr,
@@ -112,6 +128,8 @@ export const multiPersonNoteParseSchema = z.object({
         .transform((v) => v?.trim() || ""),
     }),
   ),
+  /** People only referred to, never actually present (a cofounder, "she'll intro me to Raj"). */
+  mentions: mentionList,
 });
 
 export type ParsedMultiPersonNotes = z.infer<typeof multiPersonNoteParseSchema>;
@@ -123,6 +141,7 @@ const personIdentitySchema = z.object({
   email: nullStr.optional(),
   company: nullStr.optional(),
   role: nullStr.optional(),
+  presence: personPresence,
 });
 
 const multiPersonIdentitySchema = z.object({
@@ -134,6 +153,7 @@ const multiPersonIdentitySchema = z.object({
   interaction_date: nullStr.optional(),
   met_at: nullStr.optional(),
   people: z.array(personIdentitySchema),
+  mentions: mentionList,
 });
 
 const personDetailBatchSchema = z.object({
@@ -845,6 +865,7 @@ Rules:
 
 const PERSON_FIELD_SHAPE = `{
   "name": string|null,
+  "presence": "participant"|"mentioned",
   "company": string|null,
   "role": string|null,
   "location": string|null,
@@ -938,12 +959,15 @@ Return strict JSON matching this shape:
     }
   ],
   "interaction_date": string|null,
+  "mentions": [ { "name": string, "context": string|null, "near_person": string|null } ],
   "people": [
     ${PERSON_FIELD_SHAPE}
   ]
 }
 Rules:
 - Create one object per distinct person clearly mentioned in the notes.
+- people[] is for PARTICIPANTS: people the user actually talked with, met, or messaged in these notes. Set presence "participant".
+- Anyone only referred to — a cofounder, a boss, "she'll intro me to Raj", a speaker they watched — is a MENTION. Put them in mentions[] with the sentence fragment as context and near_person = the participant whose section mentioned them. Do NOT create a people[] entry for them unless the notes give real profile detail (role, company, contact info); if you do, set presence "mentioned".
 - Skip vague groups ("a few engineers") with no identifiable person.
 - Extract only information supported by the notes. Use null when unknown. Do not invent people or facts.
 - Include every key on every person object. Use null (or [] for arrays) when unknown — never omit keys.
@@ -977,6 +1001,7 @@ Rules:
       interaction_date: p.interaction_date || defaultDate,
       met_at: p.met_at || null,
     })),
+    mentions: parsed.mentions,
   };
 }
 
@@ -1004,8 +1029,9 @@ Return strict JSON:
   ],
   "interaction_date": string|null,
   "met_at": string|null,
+  "mentions": [ { "name": string, "context": string|null, "near_person": string|null } ],
   "people": [
-    { "name": string, "email": string|null, "company": string|null, "role": string|null }
+    { "name": string, "email": string|null, "company": string|null, "role": string|null, "presence": "participant"|"mentioned" }
   ]
 }
 Rules:
@@ -1013,7 +1039,9 @@ Rules:
 - Do not invent people. Prefer seed attendees when they clearly belong to this event.
 - shared_notes hold ONLY multi-person context (not person-only facts). person_names must match people[].name (or [] for everyone).
 - interaction_date: YYYY-MM-DD when known from notes/hints; else null.
-- Keep people list complete even for long dumps.`,
+- Keep people list complete even for long dumps.
+- people[] is for PARTICIPANTS: people the user actually talked with, met, or messaged in these notes. Set presence "participant".
+- Anyone only referred to — a cofounder, a boss, "she'll intro me to Raj", a speaker they watched — is a MENTION. Put them in mentions[] with the sentence fragment as context and near_person = the participant whose section mentioned them. Do NOT create a people[] entry for them unless the notes give real profile detail (role, company, contact info); if you do, set presence "mentioned".`,
   });
 
   const identity = multiPersonIdentitySchema.parse(JSON.parse(identityRaw));
@@ -1043,13 +1071,14 @@ Rules:
           email: seed.email ?? null,
           company: null,
           role: null,
+          presence: "participant",
         });
       }
     }
   }
 
   if (!peopleIds.length) {
-    return { shared_notes: [], interaction_date: null, people: [] };
+    return { shared_notes: [], interaction_date: null, people: [], mentions: identity.mentions };
   }
 
   const shared_notes = normalizeSharedNotes(
@@ -1105,6 +1134,7 @@ Rules:
 
       const merged: ParsedPersonNote = {
         name: requested.name,
+        presence: requested.presence,
         company: found?.company || requested.company || null,
         role: found?.role || requested.role || null,
         location: found?.location || null,
@@ -1157,6 +1187,7 @@ Rules:
     shared_notes,
     interaction_date: defaultDate,
     people: detailed,
+    mentions: identity.mentions,
   };
 }
 

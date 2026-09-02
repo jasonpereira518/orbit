@@ -41,7 +41,7 @@ Also met Dev Patel — wants the deck soon.`;
 
 function parsed(name: string, company: string | null, actionItems: string[], followUpDays: number | null) {
   return {
-    name, company, role: null, location: null, email: null, linkedin_url: null, met_at: null,
+    name, company, role: null, presence: "participant" as const, location: null, email: null, linkedin_url: null, met_at: null,
     topics: ["fundraising"], action_items: actionItems,
     follow_up_recommendation: followUpDays ? `Follow up with ${name}` : null, follow_up_days: followUpDays,
     relationship_score_suggestion: 3, tags: [], summary: `Chat with ${name}`, key_facts: [], opportunities: [],
