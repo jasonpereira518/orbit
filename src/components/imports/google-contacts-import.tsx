@@ -22,6 +22,7 @@ export function GoogleContactsImport({
   autoPreview = false,
   onImportStarted,
   onUnavailable,
+  onSelectionChange,
 }: {
   returnTo?: string;
   /** No outer card chrome / h2 — the caller supplies its own. */
@@ -32,6 +33,10 @@ export function GoogleContactsImport({
   onImportStarted?: (count: number) => void;
   /** Fired once when `!status.configured`. */
   onUnavailable?: () => void;
+  /** Fired whenever the selected set or the loaded people list changes — including the
+   *  reset to `(0, 0)` when the review list clears (import started, job finished,
+   *  disconnected). */
+  onSelectionChange?: (selected: number, total: number) => void;
 }) {
   const router = useRouter();
   const job = useImportJob();
@@ -114,6 +119,15 @@ export function GoogleContactsImport({
   useEffect(() => {
     getGmailConnectionStatus().then(setStatus).catch(() => {});
   }, []);
+
+  // Notifies the caller of the current selected/total counts on every change — including
+  // the initial (0, 0) on mount and the reset to (0, 0) whenever the review list clears.
+  // No local state of our own here: `onSelectionChange` is a plain derived-value callback,
+  // not a reaction to an external singleton, so it needs none of the microtask deferral the
+  // job-runner effects above use.
+  useEffect(() => {
+    onSelectionChange?.(selected.size, people.length);
+  }, [selected, people, onSelectionChange]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
