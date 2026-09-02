@@ -10,7 +10,7 @@
  */
 import { and, eq, inArray, or } from "drizzle-orm";
 import { getDb } from "@/db";
-import { actionItems, contacts, interactionMentions, noteBatches, reminders, type NoteBatchResult, type ReminderActionKind } from "@/db/schema";
+import { actionItems, contacts, interactionMentions, noteBatches, reminders, unresolvedMentions, type NoteBatchResult, type ReminderActionKind } from "@/db/schema";
 import type { ParsedNote } from "@/lib/ai";
 import type { DatedCommitment } from "@/lib/date-commitment-extract";
 import type { MentionMatchedBy } from "@/lib/mention-resolution";
@@ -219,23 +219,52 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
     const participantIds = new Set(contactIds);
     const firstInteraction = result.participants[0]?.interactionId ?? null;
     const mentionRows: (typeof interactionMentions.$inferInsert)[] = [];
+    type UnresolvedCandidate = { itemHash: string; row: typeof unresolvedMentions.$inferInsert };
+    const unresolvedCandidates: UnresolvedCandidate[] = [];
+    const pushUnresolved = (m: { text: string; context: string | null }, interactionId: string | null, nearContactId: string | null) => {
+      const itemHash = buildSuggestionItemHash(input.sourceHash, "mention", m.text);
+      result.unresolvedMentions.push({ text: m.text, context: m.context });
+      unresolvedCandidates.push({
+        itemHash,
+        row: { userId, noteBatchId: batchId, interactionId, nearContactId, mentionText: m.text, context: m.context, sourceHash: input.sourceHash, itemHash },
+      });
+    };
     for (const m of input.mentions ?? []) {
       // A mention that resolved to somebody already IN this batch is not unresolved — the
       // person is right there on the results page as a participant. Drop it silently
       // rather than offering "add as a contact" for someone just created.
       if (m.contactId && participantIds.has(m.contactId)) continue;
-      if (!m.contactId) {
-        result.unresolvedMentions.push({ text: m.text, context: m.context });
-        continue;
-      }
       const nearId = m.nearPerson ? contactIdByName.get(m.nearPerson.trim().toLowerCase()) : undefined;
       const interactionId = (nearId && interactionIdByContact.get(nearId)) || firstInteraction;
-      if (!interactionId) { result.unresolvedMentions.push({ text: m.text, context: m.context }); continue; }
+      if (!m.contactId) {
+        pushUnresolved(m, interactionId, nearId ?? null);
+        continue;
+      }
+      if (!interactionId) { pushUnresolved(m, null, nearId ?? null); continue; }
       mentionRows.push({ userId, interactionId, contactId: m.contactId, mentionText: m.text, confidence: m.confidence, matchedBy: m.matchedBy ?? "user_pick" });
       result.mentions.push({ interactionId, contactId: m.contactId, text: m.text, confidence: m.confidence, matchedBy: m.matchedBy ?? "user_pick" });
     }
     if (mentionRows.length) {
       await db.insert(interactionMentions).values(mentionRows).onConflictDoNothing({ target: [interactionMentions.interactionId, interactionMentions.contactId] });
+    }
+    if (unresolvedCandidates.length) {
+      const inserted = await db
+        .insert(unresolvedMentions)
+        .values(unresolvedCandidates.map((c) => c.row))
+        .onConflictDoNothing({ target: [unresolvedMentions.userId, unresolvedMentions.itemHash] })
+        .returning();
+      const idByHash = new Map(inserted.map((r) => [r.itemHash, r.id]));
+      const missing = unresolvedCandidates.map((c) => c.itemHash).filter((h) => !idByHash.has(h));
+      if (missing.length) {
+        const existing = await db
+          .select({ id: unresolvedMentions.id, itemHash: unresolvedMentions.itemHash })
+          .from(unresolvedMentions)
+          .where(and(eq(unresolvedMentions.userId, userId), inArray(unresolvedMentions.itemHash, missing)));
+        for (const e of existing) idByHash.set(e.itemHash, e.id);
+      }
+      unresolvedCandidates.forEach((c, i) => {
+        result.unresolvedMentions[result.unresolvedMentions.length - unresolvedCandidates.length + i].id = idByHash.get(c.itemHash);
+      });
     }
 
     // 2. Dated commitments → reminder drafts.

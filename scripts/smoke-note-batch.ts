@@ -15,7 +15,7 @@ delete process.env.DATABASE_URL;
 
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { actionItems, contacts, interactionMentions, interactions, noteBatches, reminders, userSettings } from "../src/db/schema";
+import { actionItems, contacts, interactionMentions, interactions, noteBatches, reminders, unresolvedMentions, userSettings } from "../src/db/schema";
 import { dismissNoteReminderForUser, saveNoteBatch, undoNoteBatchForUser, type SaveNoteBatchInput } from "../src/lib/note-batch-save";
 import { hashSourceNote, isoDay } from "../src/lib/suggested-reminder-utils";
 import { ensureUserSettings } from "../src/lib/user-settings";
@@ -129,6 +129,10 @@ async function main() {
   check("one mention link written", mentionRows.length === 1 && mentionRows[0].contactId === miraId && mentionRows[0].matchedBy === "first_name_unique");
   check("  hangs on Sarah's interaction", mentionRows[0].interactionId === rows.find((r) => r.contactId === sarahId)!.id);
   check("unresolved mention recorded in result", first.result.unresolvedMentions.length === 1 && first.result.unresolvedMentions[0].text === "Raj");
+  check("  and it carries a stable id", Boolean(first.result.unresolvedMentions[0].id));
+  const rajRow = await db.query.unresolvedMentions.findFirst({ where: eq(unresolvedMentions.id, first.result.unresolvedMentions[0].id!) });
+  check("  matching a real unresolved_mentions row", rajRow?.mentionText === "Raj" && rajRow.context === "she'll intro me to Raj" && rajRow.status === "pending", JSON.stringify(rajRow));
+  check("  hung on Sarah's interaction and near-contact", rajRow?.interactionId === rows.find((r) => r.contactId === sarahId)!.id && rajRow.nearContactId === sarahId);
 
   const touched = await db.query.contacts.findMany({ where: and(eq(contacts.userId, USER), inArray(contacts.id, first.contactIds)) });
   check("touched contacts stamped embeddingStaleAt (no inline embedding call)", touched.every((c) => c.embeddingStaleAt !== null));
@@ -170,6 +174,9 @@ async function main() {
   check("merge path re-stamps embeddingStaleAt", (await db.query.contacts.findMany({ where: and(eq(contacts.userId, USER), inArray(contacts.id, second.contactIds)) })).every((c) => c.embeddingStaleAt !== null));
   check("re-paste: mention count still 1 (unique index)", (await db.query.interactionMentions.findMany({ where: eq(interactionMentions.userId, USER) })).length === 1);
   check("re-paste: a participant-targeted mention is dropped, not unresolved", second.result.unresolvedMentions.length === 1 && second.result.unresolvedMentions[0].text === "Raj", JSON.stringify(second.result.unresolvedMentions));
+  check("  re-paste reuses the same unresolved_mentions row, no duplicate", second.result.unresolvedMentions[0].id === first.result.unresolvedMentions[0].id, JSON.stringify({ first: first.result.unresolvedMentions[0].id, second: second.result.unresolvedMentions[0].id }));
+  const allUnresolved = await db.query.unresolvedMentions.findMany({ where: eq(unresolvedMentions.userId, USER) });
+  check("  exactly one unresolved_mentions row total after two pastes", allUnresolved.length === 1, String(allUnresolved.length));
   check("  and never becomes a mention link", !second.result.mentions.some((m) => m.contactId === first.contactIds[0]));
 
   // 3. Undo the first batch: reminders dismissed (not deleted), interactions untouched.
