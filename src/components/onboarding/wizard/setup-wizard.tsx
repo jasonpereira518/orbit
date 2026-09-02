@@ -13,6 +13,7 @@ import { WizardConnectGoogle } from "@/components/onboarding/wizard/wizard-conne
 import { WizardImport } from "@/components/onboarding/wizard/wizard-import";
 import { WizardReview, type WizardResult } from "@/components/onboarding/wizard/wizard-review";
 import { WizardTriage } from "@/components/onboarding/wizard/wizard-triage";
+import { WizardAiKey } from "@/components/onboarding/wizard/wizard-ai-key";
 
 export type WizardStep =
   | "intro"
@@ -22,6 +23,7 @@ export type WizardStep =
   | "capture"
   | "import"
   | "triage"
+  | "ai-key"
   | "review";
 
 const PATHS = [
@@ -60,6 +62,7 @@ const STEP_TITLES: Record<WizardStep, string> = {
   capture: "Capture from notes",
   import: "Import LinkedIn connections",
   triage: "Rate a few people",
+  "ai-key": "Turn on AI (optional)",
   review: "You're set up",
 };
 
@@ -84,6 +87,10 @@ export function SetupWizard({
     isValidStep(initialStepId) ? initialStepId : "intro"
   );
   const [results, setResults] = useState<WizardResult[]>([]);
+  // Initialized once from the server-provided prop and never re-read during the
+  // session — set true the moment a key is verified, on either the Capture path
+  // (inline panel) or the dedicated ai-key step (wizard panel).
+  const [aiOn, setAiOn] = useState(hasApiKey);
   const paths = googleConfigured
     ? PATHS
     : PATHS.filter((path) => path.id !== "connect-google");
@@ -187,6 +194,7 @@ export function SetupWizard({
                   <BackRow onBack={() => goTo("add-people")} />
                   <WizardCapture
                     hasApiKey={hasApiKey}
+                    onKeyVerified={() => setAiOn(true)}
                     onSaved={(count) => {
                       addResult({ kind: "capture", count });
                       goTo("triage");
@@ -207,7 +215,22 @@ export function SetupWizard({
                 </div>
               )}
 
-              {step === "triage" && <WizardTriage onDone={() => goTo("review")} />}
+              {step === "triage" && (
+                <WizardTriage
+                  onDone={() => goTo(aiOn ? "review" : "ai-key")}
+                />
+              )}
+
+              {step === "ai-key" && (
+                <WizardAiKey
+                  onVerified={() => {
+                    setAiOn(true);
+                    addResult({ kind: "ai-key" });
+                    goTo("review");
+                  }}
+                  onSkip={() => goTo("review")}
+                />
+              )}
 
               {step === "review" && (
                 <WizardReview

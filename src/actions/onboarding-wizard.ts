@@ -28,6 +28,7 @@ const WIZARD_STEP_IDS: Record<WizardStep, true> = {
   capture: true,
   import: true,
   triage: true,
+  "ai-key": true,
   review: true,
 };
 const VALID_WIZARD_STEPS = new Set<string>(Object.keys(WIZARD_STEP_IDS));

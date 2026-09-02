@@ -90,6 +90,7 @@ export function BulkNotesPanel({
   preferredContactId = null,
   preferredContactName = null,
   hasApiKey: hasApiKeyProp,
+  onApiKeyVerified,
   onSaved,
 }: {
   compact?: boolean;
@@ -97,6 +98,8 @@ export function BulkNotesPanel({
   preferredContactName?: string | null;
   /** When known from the server, skips a settings round-trip. */
   hasApiKey?: boolean;
+  /** Called when the inline AiKeyPanel verifies a key, in addition to flipping the local state. */
+  onApiKeyVerified?: () => void;
   /** Called after a successful save. Defaults to staying on the paste step. */
   onSaved?: (result: {
     created: number;
@@ -323,7 +326,10 @@ export function BulkNotesPanel({
           {!hasApiKey && (
             <AiKeyPanel
               variant="inline"
-              onVerified={() => setHasApiKey(true)}
+              onVerified={() => {
+                setHasApiKey(true);
+                onApiKeyVerified?.();
+              }}
             />
           )}
           {preferredContactId && preferredContactName && (

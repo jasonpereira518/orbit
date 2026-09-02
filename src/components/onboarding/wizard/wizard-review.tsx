@@ -7,7 +7,8 @@ export type WizardResult =
   | { kind: "manual" }
   | { kind: "capture"; count: number }
   | { kind: "import" }
-  | { kind: "google"; count: number };
+  | { kind: "google"; count: number }
+  | { kind: "ai-key" };
 
 function describe(result: WizardResult) {
   switch (result.kind) {
@@ -23,6 +24,8 @@ function describe(result: WizardResult) {
       return result.count === 1
         ? "Started importing 1 Google contact."
         : `Started importing ${result.count} Google contacts.`;
+    case "ai-key":
+      return "AI is on.";
   }
 }
 
