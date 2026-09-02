@@ -9,9 +9,15 @@ import {
   suggestedReminders,
   usageEvents,
   webhookDeliveries,
+  opsAlertState,
 } from "@/db/schema";
 import { countInt, num, toDate } from "@/lib/admin-metrics";
-import { deriveCronRunState, hasMissedRun, type CronRunState } from "@/lib/cron-runs";
+import {
+  deriveCronRunState,
+  hasMissedRun,
+  type CronJobName,
+  type CronRunState,
+} from "@/lib/cron-runs";
 
 /**
  * System-level reads that `/admin/health` cannot answer from existing tables.
@@ -102,7 +108,7 @@ export type BugSignatures = {
 };
 
 /** `usage_events.error_kind` values that mean Orbit broke, not the user's key. */
-const OUR_ERROR_KINDS = new Set(["timeout", "empty_response", "model_unavailable", "other"]);
+export const OUR_ERROR_KINDS = new Set(["timeout", "empty_response", "model_unavailable", "other"]);
 
 export async function getOutreachQueueHealth(now = new Date()): Promise<OutreachQueueHealth> {
   const db = await getDb();
@@ -147,11 +153,20 @@ export async function getOutreachQueueHealth(now = new Date()): Promise<Outreach
   };
 }
 
-export async function getCronHealth(now = new Date()): Promise<CronHealth> {
+/**
+ * `job` scopes the read to one ledger entry. Without it the newest row of ANY job wins,
+ * which stopped meaning "the nightly job" the moment the ten-minute ops sweep started
+ * writing to the same table.
+ */
+export async function getCronHealth(
+  job: CronJobName | null = null,
+  now = new Date()
+): Promise<CronHealth> {
   const db = await getDb();
   const rows = await db
     .select()
     .from(cronRuns)
+    .where(job ? eq(cronRuns.job, job) : undefined)
     .orderBy(desc(cronRuns.startedAt))
     .limit(10);
 
@@ -382,9 +397,18 @@ export async function getBugSignatures(): Promise<BugSignatures> {
  * Several scalar subqueries in ONE round trip, because this runs on a page that already
  * does its own fan-out and must not pay for nine more queries.
  */
-export async function getSystemIssueCount(now = new Date()): Promise<number> {
+export type SystemIssues = {
+  wedged: number;
+  overdue: number;
+  calendarErrors: number;
+  needsReauth: number;
+};
+
+/** The four counts behind the Overview badge, individually — the ops sweep reads them. */
+export async function getSystemIssues(now = new Date()): Promise<SystemIssues> {
   const db = await getDb();
   const wedgedBefore = new Date(now.getTime() - WEDGED_IMPORT_MS).toISOString();
+  const empty = { wedged: 0, overdue: 0, calendarErrors: 0, needsReauth: 0 };
 
   try {
     const res = await db.execute(sql`
@@ -407,12 +431,100 @@ export async function getSystemIssueCount(now = new Date()): Promise<number> {
       calendar_errors: number;
       needs_reauth: number;
     }>(res)[0];
-    if (!row) return 0;
-    return (
-      num(row.wedged) + num(row.overdue) + num(row.calendar_errors) + num(row.needs_reauth)
-    );
+    if (!row) return empty;
+    return {
+      wedged: num(row.wedged),
+      overdue: num(row.overdue),
+      calendarErrors: num(row.calendar_errors),
+      needsReauth: num(row.needs_reauth),
+    };
   } catch {
     // The Overview must render even if this one extra query fails.
-    return 0;
+    return empty;
   }
+}
+
+export async function getSystemIssueCount(now = new Date()): Promise<number> {
+  const i = await getSystemIssues(now);
+  return i.wedged + i.overdue + i.calendarErrors + i.needsReauth;
+}
+
+export type WebhookSource = "clerk" | "stripe" | "resend";
+
+/**
+ * The last few delivery outcomes per source, newest first. Three rejections in a row is
+ * how a rolled signing secret looks from here; one is noise.
+ */
+export async function recentWebhookOutcomes(
+  perSource = 5,
+  now = new Date()
+): Promise<Record<WebhookSource, Array<"handled" | "ignored" | "invalid" | "error">>> {
+  const db = await getDb();
+  const since = new Date(now.getTime() - 7 * DAY_MS);
+  const rows = await db
+    .select({ source: webhookDeliveries.source, outcome: webhookDeliveries.outcome })
+    .from(webhookDeliveries)
+    .where(gt(webhookDeliveries.createdAt, since))
+    .orderBy(desc(webhookDeliveries.createdAt))
+    .limit(perSource * 20);
+  const out: Record<WebhookSource, Array<"handled" | "ignored" | "invalid" | "error">> = {
+    clerk: [],
+    stripe: [],
+    resend: [],
+  };
+  for (const r of rows) {
+    const bucket = out[r.source as WebhookSource];
+    if (bucket && bucket.length < perSource) bucket.push(r.outcome);
+  }
+  return out;
+}
+
+/** The sweep must have run this recently or its scheduler is presumed dead. */
+const SWEEP_QUIET_MS = 30 * 60 * 1000;
+
+export type OpsStatus = {
+  lastSweep: CronHealth["lastRun"];
+  sweepQuiet: boolean;
+  openAlerts: Array<{
+    id: string;
+    severity: "critical" | "warning" | "info";
+    openedAt: Date;
+    lastNotifiedAt: Date | null;
+    notifyCount: number;
+    title: string | null;
+    detail: string | null;
+    href: string | null;
+  }>;
+  deployedSha: string | null;
+  builtAt: string | null;
+  sentryUrl: string | null;
+  slackConfigured: boolean;
+};
+
+/** What the admin "System status" strip shows: is anyone watching, and what did they see. */
+export async function getOpsStatus(now = new Date()): Promise<OpsStatus> {
+  const db = await getDb();
+  const [sweep, rows] = await Promise.all([
+    getCronHealth("ops.sweep", now),
+    db.select().from(opsAlertState).where(eq(opsAlertState.active, true)).orderBy(desc(opsAlertState.openedAt)),
+  ]);
+  const str = (v: unknown) => (typeof v === "string" ? v : null);
+  return {
+    lastSweep: sweep.lastRun,
+    sweepQuiet: !sweep.lastRun || now.getTime() - sweep.lastRun.startedAt.getTime() > SWEEP_QUIET_MS,
+    openAlerts: rows.map((r) => ({
+      id: r.id,
+      severity: r.severity,
+      openedAt: r.openedAt,
+      lastNotifiedAt: r.lastNotifiedAt,
+      notifyCount: r.notifyCount,
+      title: str(r.detail?.title),
+      detail: str(r.detail?.detail),
+      href: str(r.detail?.href),
+    })),
+    deployedSha: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
+    builtAt: process.env.BUILD_TIME ?? null,
+    sentryUrl: process.env.SENTRY_PROJECT_URL ?? null,
+    slackConfigured: Boolean(process.env.SLACK_OPS_WEBHOOK_URL),
+  };
 }

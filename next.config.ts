@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
+import { withSentryConfig } from "@sentry/nextjs/config";
 
 const nextConfig: NextConfig = {
+  env: {
+    // Inlined at build time; /api/health reports it so "which build is this" has an answer
+    // even when the sha is unhelpful (a redeploy of the same commit).
+    BUILD_TIME: new Date().toISOString(),
+  },
   serverExternalPackages: [
     "@electric-sql/pglite",
     "@neondatabase/serverless",
@@ -38,4 +44,15 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// Sentry's build plugin: injects the instrumentation and, when SENTRY_AUTH_TOKEN is set,
+// uploads source maps. Without org/project/token it is a no-op wrapper, so local builds
+// and previews are unaffected. Only Turbopack-safe options are passed.
+export default withSentryConfig(nextConfig, {
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT,
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  silent: !process.env.CI,
+  telemetry: false,
+  widenClientFileUpload: true,
+  sourcemaps: { disable: !process.env.SENTRY_AUTH_TOKEN },
+});

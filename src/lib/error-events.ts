@@ -39,6 +39,11 @@ export const ERROR_SOURCES = {
   apolloSearch: "apollo.search",
   /** A call that outran `SLOW_CALL_THRESHOLD_MS` — see `src/lib/perf-trace.ts`. */
   perfSlow: "perf.slow",
+  /**
+   * A Stripe Checkout Session could not be created. Bounded by checkout attempts, recorded
+   * nowhere else, and the one failure that means nobody can pay — the ops sweep pages on it.
+   */
+  stripeCheckout: "stripe.checkout",
 } as const;
 
 export type ErrorEventInput = {
@@ -72,19 +77,6 @@ export async function recordErrorEvent(input: ErrorEventInput): Promise<void> {
   }
 }
 
-/**
- * A once-per-window latch for call sites that can fire on every request.
- *
- * Module-scope state, so it is per-lambda-instance — the same shape as
- * `microlinkCooldownUntil` in `contact-avatar.ts`. That is deliberately not a general
- * throttling framework; it exists so one broken subsystem cannot write a row per search.
- */
-const latches = new Map<string, number>();
-
-export function shouldRecordThrottled(key: string, windowMs = 60 * 60 * 1000): boolean {
-  const now = Date.now();
-  const last = latches.get(key);
-  if (last && now - last < windowMs) return false;
-  latches.set(key, now);
-  return true;
-}
+// The latch lives in its own import-free module (see there for why); re-exported so every
+// existing call site keeps importing it from here.
+export { shouldRecordThrottled } from "@/lib/throttle-latch";

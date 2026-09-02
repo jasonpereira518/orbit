@@ -69,6 +69,9 @@ function main() {
     "/api/imports/imp_abc123/continue",
     "/api/embeddings/backfill",
     "/api/linkedin/timeline-events/backfill",
+    "/api/ops/sweep",
+    // The uptime monitor has no session either.
+    "/api/health",
   ];
   const blocked: string[] = [];
   for (const route of internalRoutes) {

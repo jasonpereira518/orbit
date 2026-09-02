@@ -21,6 +21,7 @@ import {
   CancelImportButton,
   DisableCalendarFeedButton,
   DisconnectIntegrationButton,
+  OpsButtons,
   RetryImportButton,
 } from "@/components/admin/health-actions";
 import { getAdminHealth } from "@/lib/admin-health";
@@ -28,6 +29,7 @@ import {
   getBugSignatures,
   getCronHealth,
   getErrorEventSummary,
+  getOpsStatus,
   getOutreachQueueHealth,
   getWebhookHealth,
 } from "@/lib/admin-system";
@@ -51,14 +53,17 @@ export default async function AdminHealthPage() {
   // "what is broken about Orbit" — no person to name, no button to press, which is
   // precisely why none of it was visible before. Each degrades independently so this page
   // still renders if one instrumentation table is missing.
-  const [health, cron, webhooks, errors, outreach, bugs] = await Promise.all([
+  const [health, cron, webhooks, errors, outreach, bugs, ops] = await Promise.all([
     getAdminHealth(),
-    getCronHealth().catch(() => null),
+    getCronHealth("imports.process-stalled").catch(() => null),
     getWebhookHealth().catch(() => null),
     getErrorEventSummary().catch(() => null),
     getOutreachQueueHealth().catch(() => null),
     getBugSignatures().catch(() => null),
+    getOpsStatus().catch(() => null),
   ]);
+
+  const criticalOpen = ops?.openAlerts.filter((a) => a.severity === "critical").length ?? 0;
 
   const inspector = (userId: string) =>
     `/admin/users/${encodeURIComponent(userId)}`;
@@ -99,6 +104,46 @@ export default async function AdminHealthPage() {
           </a>
         }
       />
+
+      {/* Is anyone watching? The sweep is what turns the rest of this page into Slack
+          messages; if it has gone quiet, nothing below will reach a phone. */}
+      <SystemStrip
+        items={[
+          {
+            label: "Ops sweep",
+            value: !ops
+              ? "not instrumented"
+              : !ops.lastSweep
+                ? "never run"
+                : ops.sweepQuiet
+                  ? "quiet for over 30 min"
+                  : `${ops.lastSweep.state} · ${relativeMinutes(ops.lastSweep.startedAt)}`,
+            tone: !ops || !ops.lastSweep || ops.sweepQuiet ? "danger" : "ok",
+          },
+          {
+            label: "Open alerts",
+            value: ops ? `${ops.openAlerts.length}${criticalOpen ? ` (${criticalOpen} critical)` : ""}` : "—",
+            tone: criticalOpen > 0 ? "danger" : ops && ops.openAlerts.length > 0 ? "warn" : "ok",
+            href: "#open-alerts",
+          },
+          {
+            label: "Deployed",
+            value: ops?.deployedSha
+              ? `${ops.deployedSha.slice(0, 7)}${ops.builtAt ? ` · built ${relativeMinutes(new Date(ops.builtAt))}` : ""}`
+              : "local",
+            tone: "ok",
+          },
+          {
+            label: "Errors",
+            value: ops?.sentryUrl ? "Sentry" : "not connected",
+            tone: ops?.sentryUrl ? "ok" : "warn",
+            href: ops?.sentryUrl ?? undefined,
+          },
+        ]}
+      />
+      <div className="-mt-4 mb-6 flex justify-end">
+        <OpsButtons slackConfigured={Boolean(ops?.slackConfigured)} />
+      </div>
 
       <SystemStrip
         items={[
@@ -143,6 +188,39 @@ export default async function AdminHealthPage() {
       />
 
       <div className="space-y-6">
+        <AdminPanel title="Open alerts" className="scroll-mt-24">
+          <div id="open-alerts" />
+          {!ops || ops.openAlerts.length === 0 ? (
+            <EmptyState>No known condition is open. The sweep says so every ten minutes.</EmptyState>
+          ) : (
+            <ul className="divide-y divide-border/50">
+              {ops.openAlerts.map((a) => (
+                <li key={a.id} className="flex items-start gap-3 py-2 text-sm">
+                  <AlertTriangle
+                    className={
+                      a.severity === "critical"
+                        ? "mt-0.5 size-3.5 shrink-0 text-destructive"
+                        : "mt-0.5 size-3.5 shrink-0 text-accent-foreground"
+                    }
+                    aria-hidden
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-baseline gap-x-2">
+                      <span className="font-medium">{a.title ?? a.id}</span>
+                      <span className="text-xs uppercase tracking-wider text-muted-foreground">{a.severity}</span>
+                      <span className="text-xs text-muted-foreground">
+                        open <RelativeTime date={a.openedAt} /> · told {a.notifyCount}×
+                      </span>
+                    </div>
+                    {a.detail && <p className="text-muted-foreground">{a.detail}</p>}
+                    <CodeDetail>{a.id}</CodeDetail>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </AdminPanel>
+
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <MetricTile
             label="No AI key"
@@ -638,4 +716,14 @@ export default async function AdminHealthPage() {
       </div>
     </>
   );
+}
+
+/** "3 min ago" for the strip, which takes a string rather than a node. */
+function relativeMinutes(date: Date) {
+  const mins = Math.max(0, Math.round((Date.now() - date.getTime()) / 60_000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `${hours} h ago`;
+  return `${Math.round(hours / 24)} d ago`;
 }
