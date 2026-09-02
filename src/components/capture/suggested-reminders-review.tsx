@@ -37,7 +37,7 @@ export function SuggestedRemindersReview({
       <div className="flex items-center gap-2">
         <CalendarClock className="size-4 text-amber-600 dark:text-amber-300" />
         <h3 className="text-sm font-medium text-foreground">
-          Dates found in these notes
+          Reminders that will be created
         </h3>
         <span className="text-xs text-muted-foreground">
           {checkedCount} of {items.length} selected

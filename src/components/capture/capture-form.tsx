@@ -140,12 +140,7 @@ export function CaptureForm({
           preferredContactName={initialContactName}
           hasApiKey={hasApiKey}
           onSaved={(res) => {
-            if (res.contactIds.length === 1) {
-              router.push(`/contacts/${res.contactIds[0]}`);
-            } else {
-              router.push("/contacts");
-            }
-            router.refresh();
+            router.push(`/capture/${res.batchId}`);
           }}
         />
       )}

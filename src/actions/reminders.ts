@@ -234,6 +234,7 @@ export async function listRemindersPage(options?: {
         contactName: c ? c.preferredName?.trim() || c.fullName : null,
         contactEmail: c?.email ?? null,
         contactPhone: c?.phone ?? null,
+        noteBatchId: r.noteBatchId,
         createdAt: r.createdAt,
       };
     }),

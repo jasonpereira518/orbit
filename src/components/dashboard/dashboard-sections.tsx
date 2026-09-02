@@ -213,6 +213,7 @@ export async function RemindersAndFollowUpsSection({
             contactName: r.contactId
               ? data.contactNameById.get(r.contactId) ?? null
               : null,
+            noteBatchId: r.noteBatchId,
           }))}
         />
       </div>

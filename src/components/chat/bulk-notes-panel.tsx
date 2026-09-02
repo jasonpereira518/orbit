@@ -14,6 +14,7 @@ import {
 } from "@/actions/capture";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
 import { getSettings } from "@/actions/settings";
+import type { SaveNoteBatchOutput } from "@/lib/note-batch-save";
 import type {
   CaptureParseHints,
   ParsedNote,
@@ -97,11 +98,7 @@ export function BulkNotesPanel({
   /** When known from the server, skips a settings round-trip. */
   hasApiKey?: boolean;
   /** Called after a successful save. Defaults to staying on the paste step. */
-  onSaved?: (result: {
-    created: number;
-    updated: number;
-    contactIds: string[];
-  }) => void;
+  onSaved?: (result: SaveNoteBatchOutput) => void;
 }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -117,8 +114,12 @@ export function BulkNotesPanel({
   const [reviewIndex, setReviewIndex] = useState(0);
   const [slideDirection, setSlideDirection] = useState<1 | -1>(1);
   const [suggestions, setSuggestions] = useState<SuggestionReviewItem[]>([]);
-  const [captureBatchId, setCaptureBatchId] = useState<string | null>(null);
+  const [sourceText, setSourceText] = useState<string | null>(null);
   const [sourceHash, setSourceHash] = useState<string | null>(null);
+  const [anchorIso, setAnchorIso] = useState<string | null>(null);
+  const [anchorBasis, setAnchorBasis] = useState<
+    "note" | "hint" | "upload" | null
+  >(null);
   const [skipped, setSkipped] = useState<{
     relative: number;
     unverifiable: number;
@@ -158,7 +159,9 @@ export function BulkNotesPanel({
       );
     }
     if (checkedDates) {
-      parts.push(`${checkedDates} ${checkedDates === 1 ? "date" : "dates"}`);
+      parts.push(
+        `${checkedDates} ${checkedDates === 1 ? "reminder" : "reminders"}`
+      );
     }
     return parts.length ? `Save ${parts.join(" + ")}` : "Save";
   })();
@@ -173,8 +176,10 @@ export function BulkNotesPanel({
     setSharedNotes([]);
     setReviewIndex(0);
     setSuggestions([]);
-    setCaptureBatchId(null);
+    setSourceText(null);
     setSourceHash(null);
+    setAnchorIso(null);
+    setAnchorBasis(null);
     setSkipped(null);
   }
 
@@ -230,42 +235,35 @@ export function BulkNotesPanel({
           toast.error("Nothing to save — accept a person or a date");
           return;
         }
-        const res = await confirmBulkCapture(
-          payload,
-          captureBatchId && sourceHash && checkedSuggestions.length
-            ? {
-                captureBatchId,
-                sourceHash,
-                items: checkedSuggestions.map((s) => ({
-                  key: s.key,
-                  title: s.title,
-                  description: s.description,
-                  rawDatePhrase: s.rawDatePhrase,
-                  dueDateIso: s.dueDateIso,
-                  yearInferred: s.yearInferred,
-                  personName: s.personNameOverride ?? s.personName,
-                  actionKind: s.actionKind,
-                  confidenceScore: s.confidenceScore,
-                  sourceExcerpt: s.sourceExcerpt,
-                  dateBasis: s.dateBasis,
-                  anchorIso: s.anchorIso,
-                })),
-              }
-            : undefined
-        );
-        const datePart = res.suggestionsStaged
-          ? `, ${res.suggestionsStaged} ${
-              res.suggestionsStaged === 1 ? "date" : "dates"
-            } to review`
-          : "";
+        const res = await confirmBulkCapture(payload, {
+          sourceHash: sourceHash!,
+          sourceText: sourceText!,
+          anchorIso: anchorIso!,
+          anchorBasis: anchorBasis ?? "upload",
+          entryPoint: "capture",
+          commitments: checkedSuggestions.map((s) => ({
+            title: s.title,
+            description: s.description,
+            rawDatePhrase: s.rawDatePhrase,
+            dueDateIso: s.dueDateIso,
+            yearInferred: s.yearInferred,
+            personName: s.personNameOverride ?? s.personName,
+            actionKind: s.actionKind,
+            confidenceScore: s.confidenceScore,
+            sourceExcerpt: s.sourceExcerpt,
+            dateBasis: s.dateBasis,
+            anchorIso: s.anchorIso,
+          })),
+          skipped: skipped ?? { relative: 0, unverifiable: 0, past: 0 },
+        });
         toast.success(
-          `Saved: ${res.created} created, ${res.updated} updated${datePart}`
+          `Saved: ${res.created} created, ${res.updated} updated, ${res.remindersCreated} reminders`
         );
         if (onSaved) {
           onSaved(res);
         } else {
           resetToPaste();
-          router.refresh();
+          router.push(`/capture/${res.batchId}`);
         }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Save failed");
@@ -450,8 +448,10 @@ export function BulkNotesPanel({
                     })
                   );
                   const found = res.suggestedReminders || [];
-                  setCaptureBatchId(res.captureBatchId);
+                  setSourceText(res.sourceText);
                   setSourceHash(res.sourceHash);
+                  setAnchorIso(res.anchorIso);
+                  setAnchorBasis(res.anchorBasis);
                   setSkipped(res.suggestionsSkipped || null);
                   setSuggestions(
                     found.map((s) => ({
