@@ -667,7 +667,7 @@ export const actionItems = pgTable(
     position: integer("position").default(0).notNull(),
     status: text("status").$type<"open" | "done">().default("open").notNull(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
-    /** sha256(`${interactionId}|${text.trim().toLowerCase()}`) — see `actionItemHash` in src/lib/action-items.ts. */
+    /** sha256(interactionId + "|" + lower(btrim(text))) — btrim semantics (ASCII spaces only), mirrored by actionItemHash in src/lib/action-items.ts. */
     itemHash: text("item_hash").notNull(),
     reminderId: uuid("reminder_id").references(() => reminders.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -1876,6 +1876,7 @@ export const remindersRelations = relations(reminders, ({ one }) => ({
     fields: [reminders.listId],
     references: [reminderLists.id],
   }),
+  noteBatch: one(noteBatches, { fields: [reminders.noteBatchId], references: [noteBatches.id] }),
 }));
 
 export const suggestedRemindersRelations = relations(
