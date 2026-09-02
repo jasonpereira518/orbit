@@ -5,6 +5,7 @@ import {
   listRelatedContacts,
 } from "@/actions/contacts";
 import { ContactFollowUpSection } from "@/components/contacts/contact-follow-up-section";
+import { ContactMentionsSection } from "@/components/contacts/contact-mentions-section";
 import { ContactProfileHero } from "@/components/contacts/contact-profile-hero";
 import { ContactProfileOverview } from "@/components/contacts/contact-profile-overview";
 import { ContactRelatedPeople } from "@/components/contacts/contact-related-people";
@@ -16,6 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { computeCloseness, formatInteractionFrequency } from "@/lib/closeness";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { requireUserId } from "@/lib/auth";
+import { listContactMentions } from "@/lib/contact-mentions";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { notFound } from "next/navigation";
 
@@ -39,6 +41,9 @@ export default async function ContactDetailPage({
   const cohortPromise = requireUserId().then((userId) =>
     getClosenessCohort(userId)
   );
+  const mentionsPromise = requireUserId()
+    .then((u) => listContactMentions(u, id))
+    .catch(() => ({ mentionedIn: [], mentions: [] }));
 
   // notFound() must fire BEFORE any Suspense boundary renders so the route
   // still returns a real 404 status.
@@ -225,6 +230,12 @@ export default async function ContactDetailPage({
       {/* No fallback here: this section renders nothing when empty, and a
           skeleton that can collapse into nothing reads as a glitch. */}
       <Suspense fallback={null}>
+        <StreamedMentions data={mentionsPromise} />
+      </Suspense>
+
+      {/* No fallback here: this section renders nothing when empty, and a
+          skeleton that can collapse into nothing reads as a glitch. */}
+      <Suspense fallback={null}>
         <StreamedRelated people={relatedPromise} subjectName={displayName} />
       </Suspense>
     </div>
@@ -248,6 +259,20 @@ async function StreamedFollowUp({
   return (
     <div className="reveal-mount">
       <ContactFollowUpSection {...rest} sendOptions={resolved} />
+    </div>
+  );
+}
+
+async function StreamedMentions({
+  data,
+}: {
+  data: ReturnType<typeof listContactMentions>;
+}) {
+  const { mentionedIn, mentions } = await data;
+  if (mentionedIn.length === 0 && mentions.length === 0) return null;
+  return (
+    <div className="reveal-mount">
+      <ContactMentionsSection mentionedIn={mentionedIn} mentions={mentions} />
     </div>
   );
 }

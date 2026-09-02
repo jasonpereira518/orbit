@@ -13,9 +13,9 @@ process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke-note-batch";
 process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-note-batch";
 delete process.env.DATABASE_URL;
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, interactions, noteBatches, reminders, userSettings } from "../src/db/schema";
+import { contacts, interactionMentions, interactions, noteBatches, reminders, userSettings } from "../src/db/schema";
 import { dismissNoteReminderForUser, saveNoteBatch, undoNoteBatchForUser, type SaveNoteBatchInput } from "../src/lib/note-batch-save";
 import { hashSourceNote } from "../src/lib/suggested-reminder-utils";
 import { ensureUserSettings } from "../src/lib/user-settings";
@@ -50,7 +50,7 @@ function parsed(name: string, company: string | null, actionItems: string[], fol
   };
 }
 
-function input(): SaveNoteBatchInput {
+function input(miraId: string): SaveNoteBatchInput {
   return {
     sourceText: NOTE,
     sourceHash: hashSourceNote(NOTE),
@@ -65,6 +65,10 @@ function input(): SaveNoteBatchInput {
       { title: "Kickoff", description: null, rawDatePhrase: "Sept 20", dueDateIso: "2026-09-20", yearInferred: true, personName: "Sarah Chen", actionKind: "meet", confidenceScore: 90, sourceExcerpt: "Kickoff is Sept 20.", dateBasis: "absolute", anchorIso: "2026-09-01" },
       { title: "Intro to Raj", description: null, rawDatePhrase: "in two weeks", dueDateIso: "2026-09-15", yearInferred: false, personName: "Sarah Chen", actionKind: "follow_up", confidenceScore: 80, sourceExcerpt: "She'll intro me to Raj in two weeks.", dateBasis: "relative", anchorIso: "2026-09-01" },
     ],
+    mentions: [
+      { text: "Raj", context: "she'll intro me to Raj", nearPerson: "Sarah Chen", contactId: null, confidence: 0, matchedBy: null }, // unresolved
+      { text: "Mira", context: null, nearPerson: "Sarah Chen", contactId: miraId, confidence: 0.7, matchedBy: "first_name_unique" },
+    ],
     skipped: { relative: 0, unverifiable: 0, past: 0 },
   };
 }
@@ -73,8 +77,12 @@ async function main() {
   await reset();
   const db = await getDb();
 
+  // Seed a contact who will be resolved as a mention (not a participant of this note).
+  const [mira] = await db.insert(contacts).values({ userId: USER, fullName: "Mira Okafor" }).returning();
+  const miraId = mira.id;
+
   // 1. First save: two contacts, two interactions, reminders auto-created.
-  const first = await saveNoteBatch(USER, input());
+  const first = await saveNoteBatch(USER, input(miraId));
   check("two contacts created", first.created === 2 && first.updated === 0, JSON.stringify({ c: first.created, u: first.updated }));
   const rows = await db.query.interactions.findMany({ where: eq(interactions.userId, USER) });
   check("two interactions", rows.length === 2, String(rows.length));
@@ -96,7 +104,13 @@ async function main() {
   check("  linked to Sarah", kickoff.contactId === sarahId);
   check("  due at local noon", new Date(kickoff.dueDate!).getHours() === 12);
   check("result snapshot lists reminders", first.result.reminders.length === 3 && first.result.participants.length === 2);
-  const touched = await db.query.contacts.findMany({ where: eq(contacts.userId, USER) });
+
+  const mentionRows = await db.query.interactionMentions.findMany({ where: eq(interactionMentions.userId, USER) });
+  check("one mention link written", mentionRows.length === 1 && mentionRows[0].contactId === miraId && mentionRows[0].matchedBy === "first_name_unique");
+  check("  hangs on Sarah's interaction", mentionRows[0].interactionId === rows.find((r) => r.contactId === sarahId)!.id);
+  check("unresolved mention recorded in result", first.result.unresolvedMentions.length === 1 && first.result.unresolvedMentions[0].text === "Raj");
+
+  const touched = await db.query.contacts.findMany({ where: and(eq(contacts.userId, USER), inArray(contacts.id, first.contactIds)) });
   check("touched contacts stamped embeddingStaleAt (no inline embedding call)", touched.every((c) => c.embeddingStaleAt !== null));
 
   const batch = await db.query.noteBatches.findFirst({ where: eq(noteBatches.id, first.batchId) });
@@ -119,7 +133,7 @@ async function main() {
   await db.update(contacts).set({ embeddingStaleAt: null }).where(eq(contacts.userId, USER));
 
   // 2. Re-paste with merge into the existing contacts: nothing new is created.
-  const again = input();
+  const again = input(miraId);
   again.participants[0].mergeContactId = first.contactIds[0];
   again.participants[1].mergeContactId = first.contactIds[1];
   const second = await saveNoteBatch(USER, again);
@@ -129,11 +143,13 @@ async function main() {
   check("re-paste: still three reminders", rems2.length === 3, String(rems2.length));
   check("re-paste: reported as duplicates", second.result.skipped.duplicate === 2 && second.result.participants.every((p) => p.duplicate), JSON.stringify(second.result.skipped));
   check("re-paste: updated, not created", second.updated === 2 && second.created === 0);
-  check("merge path re-stamps embeddingStaleAt", (await db.query.contacts.findMany({ where: eq(contacts.userId, USER) })).every((c) => c.embeddingStaleAt !== null));
+  check("merge path re-stamps embeddingStaleAt", (await db.query.contacts.findMany({ where: and(eq(contacts.userId, USER), inArray(contacts.id, second.contactIds)) })).every((c) => c.embeddingStaleAt !== null));
+  check("re-paste: mention count still 1 (unique index)", (await db.query.interactionMentions.findMany({ where: eq(interactionMentions.userId, USER) })).length === 1);
 
   // 3. Undo the first batch: reminders dismissed (not deleted), interactions untouched.
   const undo = await undoNoteBatchForUser(USER, first.batchId);
   check("undo dismissed three reminders", undo.remindersDismissed === 3, String(undo.remindersDismissed));
+  check("undo removed mention links", undo.mentionsRemoved === 1);
   const afterUndo = await db.query.reminders.findMany({ where: eq(reminders.userId, USER) });
   check("  rows still exist", afterUndo.length === 3);
   check("  all dismissed", afterUndo.every((r) => r.status === "dismissed"));
@@ -155,7 +171,7 @@ async function main() {
   // landed with this batch's noteBatchId, so the partial result must be persisted for undo
   // and the results page to find, even though saveNoteBatch itself rejects.
   const priorBatchIds = new Set((await db.query.noteBatches.findMany({ where: eq(noteBatches.userId, USER) })).map((b) => b.id));
-  const partial = input();
+  const partial = input(miraId);
   partial.participants[1] = { ...partial.participants[1], parsed: { ...partial.participants[1].parsed, name: null }, mergeContactId: null };
   let threw = false;
   try {

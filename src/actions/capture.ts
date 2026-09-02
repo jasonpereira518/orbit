@@ -28,9 +28,12 @@ import {
 import { findDuplicateCandidates } from "@/lib/duplicates";
 import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
+import { resolveMentions, type MentionCandidate } from "@/lib/mention-resolution";
+import type { PreviewMention } from "@/lib/note-batches";
 import {
   saveNoteBatch,
   type NoteBatchCommitmentInput,
+  type NoteBatchMentionInput,
   type NoteBatchParticipantInput,
 } from "@/lib/note-batch-save";
 import { generateAndStorePersonSummary } from "@/lib/person-summary";
@@ -200,6 +203,11 @@ export async function parseBulkCaptureNotes(
     ]);
 
     const { people, shared_notes, interaction_date } = personParse;
+    // people[] mixes two roles: participants (actually talked to) and mentions demoted into
+    // people[] because the note gave them real profile detail. Only participants get a
+    // review card; demoted mentions fold into mention resolution below.
+    const participants = people.filter((p) => p.presence !== "mentioned");
+    const demoted = people.filter((p) => p.presence === "mentioned");
     // The anchor is the date the notes are ABOUT: what the people pass found, else the
     // calendar/email hint, else the upload moment. Relative phrases count from it.
     const anchorSource = interaction_date || mergedHints.eventDate || null;
@@ -216,14 +224,6 @@ export async function parseBulkCaptureNotes(
         return emptyCommitmentResult();
       }
     })();
-    // A note can legitimately carry dates but no people ("Board review 15th of October"),
-    // so only fail when both extractions came back empty.
-    if (!people.length && !commitmentResult.commitments.length) {
-      return {
-        ok: false as const,
-        error: "No people or dates found in those notes",
-      };
-    }
 
     const db = await getDb();
     const existing = await db.query.contacts.findMany({
@@ -233,7 +233,7 @@ export async function parseBulkCaptureNotes(
     const defaultDate = interaction_date || mergedHints.eventDate || null;
     const interactionType = mergedHints.interactionType || "meeting_note";
 
-    const items: BulkNotePersonPreview[] = people.map((person, index) => {
+    const items: BulkNotePersonPreview[] = participants.map((person, index) => {
       const { source_excerpt, ...parsedBase } = person;
       const sharedForPerson = sharedNotesForPerson(
         parsedBase.name,
@@ -281,6 +281,29 @@ export async function parseBulkCaptureNotes(
       };
     });
 
+    const candidates: MentionCandidate[] = [
+      ...personParse.mentions.map((m) => ({ name: m.name, context: m.context, nearPerson: m.near_person })),
+      ...demoted.map((p) => ({ name: p.name!, context: p.summary, company: p.company, nearPerson: null })),
+    ];
+    const { resolved, unresolved } = resolveMentions(
+      existing.map((c) => ({ id: c.id, fullName: c.fullName, email: c.email, linkedinUrl: c.linkedinUrl, xHandle: c.xHandle, company: c.company, title: c.title })),
+      candidates,
+      { excludeContactIds: items.map((i) => i.suggestedMergeId).filter((id): id is string => Boolean(id)) }
+    );
+    const mentions: PreviewMention[] = [
+      ...resolved.map((m) => ({ text: m.text, context: m.context, nearPerson: m.nearPerson, contactId: m.contactId, confidence: m.confidence, matchedBy: m.matchedBy })),
+      ...unresolved.map((m) => ({ text: m.text, context: m.context, nearPerson: m.nearPerson, contactId: null, confidence: 0, matchedBy: null })),
+    ];
+
+    // A note can legitimately carry dates but no people ("Board review 15th of October"),
+    // or only a mention of someone the user wasn't with, so only fail when everything is empty.
+    if (!participants.length && !commitmentResult.commitments.length && !mentions.length) {
+      return {
+        ok: false as const,
+        error: "No people or dates found in those notes",
+      };
+    }
+
     const sourceHash = hashSourceNote(corpus);
     const suggestedRemindersPreview: SuggestedReminderPreview[] =
       commitmentResult.commitments.map((c, index) => ({
@@ -314,6 +337,7 @@ export async function parseBulkCaptureNotes(
       sourceHash,
       suggestedReminders: suggestedRemindersPreview,
       suggestionsSkipped: commitmentResult.rejected as RejectedCounts,
+      mentions,
     };
   } catch (err) {
     const { toUserFacingError } = await import("@/lib/errors");
@@ -334,6 +358,7 @@ export async function confirmBulkCapture(
     entryPoint?: "capture" | "profile";
     seedContactId?: string | null;
     commitments: NoteBatchCommitmentInput[];
+    mentions?: NoteBatchMentionInput[];
     skipped: RejectedCounts;
   }
 ) {
@@ -352,6 +377,7 @@ export async function confirmBulkCapture(
     seedContactId: batch.seedContactId ?? null,
     participants: items,
     commitments: batch.commitments,
+    mentions: batch.mentions ?? [],
     skipped: batch.skipped,
   });
 

@@ -15,6 +15,7 @@ import {
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
 import { getSettings } from "@/actions/settings";
 import type { SaveNoteBatchOutput } from "@/lib/note-batch-save";
+import type { PreviewMention } from "@/lib/note-batches";
 import type {
   CaptureParseHints,
   ParsedNote,
@@ -125,6 +126,7 @@ export function BulkNotesPanel({
     unverifiable: number;
     past: number;
   } | null>(null);
+  const [mentions, setMentions] = useState<PreviewMention[]>([]);
   const [hasApiKey, setHasApiKey] = useState(hasApiKeyProp ?? true);
   const [pending, start] = useTransition();
 
@@ -181,6 +183,7 @@ export function BulkNotesPanel({
     setAnchorIso(null);
     setAnchorBasis(null);
     setSkipped(null);
+    setMentions([]);
   }
 
   function decide(decision: "accepted" | "discarded") {
@@ -254,6 +257,7 @@ export function BulkNotesPanel({
             dateBasis: s.dateBasis,
             anchorIso: s.anchorIso,
           })),
+          mentions,
           skipped: skipped ?? { relative: 0, unverifiable: 0, past: 0 },
         });
         toast.success(
@@ -453,6 +457,7 @@ export function BulkNotesPanel({
                   setAnchorIso(res.anchorIso);
                   setAnchorBasis(res.anchorBasis);
                   setSkipped(res.suggestionsSkipped || null);
+                  setMentions(res.mentions || []);
                   setSuggestions(
                     found.map((s) => ({
                       ...s,
@@ -681,6 +686,19 @@ export function BulkNotesPanel({
             <p className="text-sm text-muted-foreground">
               You discarded everyone. Go back to review again, or start over.
             </p>
+          )}
+
+          {mentions.length > 0 && (
+            <div className="rounded-xl border border-border/60 bg-muted/30 p-3 text-xs">
+              <p className="mb-1 font-medium">Mentioned, not met</p>
+              <ul className="space-y-0.5">
+                {mentions.map((m) => (
+                  <li key={m.text}>
+                    “{m.text}” {m.contactId ? <>→ linked to an existing contact ({Math.round(m.confidence * 100)}%)</> : <span className="text-muted-foreground">— no match; you can add them after saving</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
 
           <SuggestedRemindersReview

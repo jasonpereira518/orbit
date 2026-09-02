@@ -4,8 +4,12 @@
  */
 import { atLocalNoon } from "@/lib/interaction-date";
 import type { NoteBatchResult, ReminderDateBasis } from "@/db/schema";
+import type { MentionMatchedBy } from "@/lib/mention-resolution";
 
 export type { NoteBatchResult, ReminderDateBasis };
+
+/** One mention surfaced by `parseBulkCaptureNotes`, echoed through the panel's done step. */
+export type PreviewMention = { text: string; context: string | null; nearPerson: string | null; contactId: string | null; confidence: number; matchedBy: MentionMatchedBy | null };
 
 export const DEFAULT_FOLLOW_UP_WINDOW_DAYS = 14;
 export const COLLISION_WINDOW_DAYS = 3;

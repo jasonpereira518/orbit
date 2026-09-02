@@ -13,6 +13,7 @@ import { getDb } from "@/db";
 import { contacts, interactionMentions, noteBatches, reminders, type NoteBatchResult, type ReminderActionKind } from "@/db/schema";
 import type { ParsedNote } from "@/lib/ai";
 import type { DatedCommitment } from "@/lib/date-commitment-extract";
+import type { MentionMatchedBy } from "@/lib/mention-resolution";
 import {
   createContactForUser,
   logNoteInteractionForUser,
@@ -47,6 +48,8 @@ export type NoteBatchCommitmentInput = Pick<
   "title" | "description" | "rawDatePhrase" | "yearInferred" | "personName" | "actionKind" | "confidenceScore" | "sourceExcerpt" | "dateBasis" | "anchorIso"
 > & { dueDateIso: string; contactId?: string | null };
 
+export type NoteBatchMentionInput = { text: string; context: string | null; nearPerson: string | null; contactId: string | null; confidence: number; matchedBy: MentionMatchedBy | "user_pick" | null };
+
 export type SaveNoteBatchInput = {
   sourceText: string;
   sourceHash: string;
@@ -56,6 +59,7 @@ export type SaveNoteBatchInput = {
   seedContactId?: string | null;
   participants: NoteBatchParticipantInput[];
   commitments: NoteBatchCommitmentInput[];
+  mentions?: NoteBatchMentionInput[];
   skipped: { relative: number; unverifiable: number; past: number };
 };
 
@@ -179,6 +183,26 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
       interactionIdByContact.set(contactId, row.id);
       if (!interactionCreated) result.skipped.duplicate += 1;
       result.participants.push({ contactId, interactionId: row.id, name: parsed.name || "Unnamed", created: wasCreated, duplicate: !interactionCreated });
+    }
+
+    // 1b. Mentions → links on the nearest participant's interaction. A dates-only batch has
+    //     no interaction to hang them on, so they stay in the result as unresolved.
+    const participantIds = new Set(contactIds);
+    const firstInteraction = result.participants[0]?.interactionId ?? null;
+    const mentionRows: (typeof interactionMentions.$inferInsert)[] = [];
+    for (const m of input.mentions ?? []) {
+      if (!m.contactId || participantIds.has(m.contactId)) {
+        result.unresolvedMentions.push({ text: m.text, context: m.context });
+        continue;
+      }
+      const nearId = m.nearPerson ? contactIdByName.get(m.nearPerson.trim().toLowerCase()) : undefined;
+      const interactionId = (nearId && interactionIdByContact.get(nearId)) || firstInteraction;
+      if (!interactionId) { result.unresolvedMentions.push({ text: m.text, context: m.context }); continue; }
+      mentionRows.push({ userId, interactionId, contactId: m.contactId, mentionText: m.text, confidence: m.confidence, matchedBy: m.matchedBy ?? "user_pick" });
+      result.mentions.push({ interactionId, contactId: m.contactId, text: m.text, confidence: m.confidence, matchedBy: m.matchedBy ?? "user_pick" });
+    }
+    if (mentionRows.length) {
+      await db.insert(interactionMentions).values(mentionRows).onConflictDoNothing({ target: [interactionMentions.interactionId, interactionMentions.contactId] });
     }
 
     // 2. Dated commitments → reminder drafts.
