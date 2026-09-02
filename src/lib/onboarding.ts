@@ -24,6 +24,21 @@ async function persistOnboardingComplete(userId: string) {
 }
 
 /**
+ * Whether the account has at least one contact. Request-cached — `needsOnboarding` and the
+ * `(app)` layout's progressive-nav check both want this on the same request and should
+ * share one query rather than two.
+ */
+export const hasAnyContacts = cache(async (userId: string) => {
+  const db = await getDb();
+  return Boolean(
+    await db.query.contacts.findFirst({
+      where: eq(contacts.userId, userId),
+      columns: { id: true },
+    })
+  );
+});
+
+/**
  * Onboarding is first-run only: new accounts with no completion flag and no
  * existing network data. Returning users (or anyone who already added people /
  * imports) are treated as done and never forced through again.
@@ -38,10 +53,7 @@ export const needsOnboarding = cache(async (userId: string) => {
 
   const db = await getDb();
   const [existingContact, existingImport] = await Promise.all([
-    db.query.contacts.findFirst({
-      where: eq(contacts.userId, userId),
-      columns: { id: true },
-    }),
+    hasAnyContacts(userId),
     db.query.imports.findFirst({
       where: eq(imports.userId, userId),
       columns: { id: true },

@@ -38,6 +38,7 @@ export function AppShell({
   hidden,
   hiddenForUsers,
   viewingAsUser,
+  quiet,
 }: {
   children: React.ReactNode;
   clerkOn: boolean;
@@ -49,6 +50,13 @@ export function AppShell({
   /** Surface keys hidden from ordinary users, for the operator's "Hidden" tags. */
   hiddenForUsers: string[];
   viewingAsUser: boolean;
+  /**
+   * Surface keys quiet until the account has a contact (see `QUIET_UNTIL_FIRST_CONTACT`).
+   * Folded into `navHidden` below for the sidebar and mobile nav only — routes stay
+   * reachable by direct URL, and `hiddenSet` (admin-hidden surfaces) keeps serving
+   * `showAskBar` and everything else untouched.
+   */
+  quiet: string[];
 }) {
   const pathname = usePathname();
   // Arrays cross the server boundary; the nav does membership tests, so build the sets
@@ -57,6 +65,11 @@ export function AppShell({
   const hiddenForUsersSet = useMemo(
     () => new Set(hiddenForUsers),
     [hiddenForUsers]
+  );
+  // Sidebar + mobile nav only — see the `quiet` prop doc above.
+  const navHidden = useMemo(
+    () => new Set([...hidden, ...quiet]),
+    [hidden, quiet]
   );
   const isOnboarding = pathname === "/onboarding";
   const isChat = pathname === "/chat";
@@ -118,7 +131,7 @@ export function AppShell({
               clerkOn={clerkOn}
               demoMode={demoMode}
               plan={plan}
-              hidden={hiddenSet}
+              hidden={navHidden}
               hiddenForUsers={hiddenForUsersSet}
             />
           </div>
@@ -178,7 +191,7 @@ export function AppShell({
             <MobileNav
               clerkOn={clerkOn}
               demoMode={demoMode}
-              hidden={hiddenSet}
+              hidden={navHidden}
             />
           </main>
         </div>

@@ -23,6 +23,7 @@ import {
   setSurfaceHidden,
 } from "../src/lib/surface-visibility";
 import {
+  QUIET_UNTIL_FIRST_CONTACT,
   SURFACES,
   getSurface,
   surfaceForPathname,
@@ -31,6 +32,7 @@ import {
   surfacesOfKind,
 } from "../src/lib/surfaces";
 import { SETTINGS_SECTIONS } from "../src/components/settings/sections";
+import { MOBILE_BOTTOM_NAV } from "../src/components/layout/app-nav";
 
 const ADMIN = "smoke-surface-admin";
 const USER = "smoke-surface-user";
@@ -126,6 +128,21 @@ function registryChecks() {
     check(
       `${key} is always visible`,
       surface?.alwaysVisible === true && Boolean(surface.reason)
+    );
+  }
+
+  // Progressive nav until the first contact (Task 9). Every quieted key must be a real,
+  // hideable page surface, or `navHidden` in `app-shell.tsx` would silently no-op on a typo.
+  const bottomNavHrefs = new Set(
+    MOBILE_BOTTOM_NAV.flatMap((item) => ("href" in item ? [item.href] : []))
+  );
+  for (const key of QUIET_UNTIL_FIRST_CONTACT) {
+    const surface = getSurface(key);
+    check(`${key} resolves to a page surface`, surface?.kind === "page");
+    check(`${key} is not always visible`, surface?.alwaysVisible !== true);
+    check(
+      `${key} is not in the mobile bottom nav`,
+      !(surface?.href && bottomNavHrefs.has(surface.href))
     );
   }
 }
