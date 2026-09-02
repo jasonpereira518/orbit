@@ -47,6 +47,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# Subagent-driven-development scratch workspace (ledger, briefs, review packages)
+.superpowers/
+
 # browser extension (separate project — own lockfile, not deployed)
 extension/node_modules/
 extension/dist/
@@ -55,4 +58,3 @@ extension/*.zip
 # Intermediate build output: the injected IIFE is emitted into public/ so the
 # main build copies it into dist as a static asset.
 extension/public/inject/
-*.pem

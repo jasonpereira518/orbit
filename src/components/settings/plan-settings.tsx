@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { Check, Sparkles } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -221,11 +220,19 @@ export function PlanSettings({
 
         <div className="flex flex-wrap items-center gap-3 border-t border-border/60 pt-4">
           {isFree && (
-            /* Points at the transaction page, not back at /pricing — that round trip was a
-               loop with no way to actually pay at either end. */
-            <Link href="/upgrade" className={cn(buttonVariants({ size: "sm" }))}>
+            /* Points at the transaction page, not back at /pricing — that round
+               trip was a loop with no way to actually pay at either end.
+               Flies the chrono journey: a time warp forward to the orbit you
+               would have without the ceiling. Only rendered for free users, so
+               a paying customer is never shown a growth story they already
+               bought. */
+            <WarpLink
+              href="/upgrade"
+              journey="chrono"
+              className={cn(buttonVariants({ size: "sm" }))}
+            >
               Upgrade
-            </Link>
+            </WarpLink>
           )}
           <WarpLink
             href="/pricing"

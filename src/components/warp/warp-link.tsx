@@ -3,9 +3,10 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
 import { useWarp } from "@/components/warp/warp-provider";
+import type { JourneyId } from "@/lib/warp/journeys";
 
 /**
- * A link out of the app and into space.
+ * A link that flies one of the warp journeys.
  *
  * Renders a real anchor, so this degrades to an ordinary navigation whenever
  * the fancy path can't run: no JS, not yet hydrated, or a click the browser
@@ -18,11 +19,15 @@ import { useWarp } from "@/components/warp/warp-provider";
  */
 export function WarpLink({
   href = "/pricing",
+  journey = "liftoff",
   className,
   children,
   onClick,
   ...rest
-}: React.ComponentPropsWithoutRef<"a"> & { href?: string }) {
+}: React.ComponentPropsWithoutRef<"a"> & {
+  href?: string;
+  journey?: JourneyId;
+}) {
   const router = useRouter();
   const { launch } = useWarp();
   const ref = useRef<HTMLAnchorElement>(null);
@@ -42,9 +47,9 @@ export function WarpLink({
       // cmd/ctrl-click still opens a tab, middle-click still works.
       if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
       e.preventDefault();
-      launch(ref.current?.getBoundingClientRect() ?? null);
+      launch(journey, ref.current?.getBoundingClientRect() ?? null);
     },
-    [launch, onClick],
+    [journey, launch, onClick],
   );
 
   return (

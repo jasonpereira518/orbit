@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
-import { arrivedByWarp, useWarp } from "@/components/warp/warp-provider";
+import { useWarp } from "@/components/warp/warp-provider";
 
 /**
  * Returns the visitor wherever they came from.
@@ -29,7 +29,7 @@ export function BackControl({
   onBeforeNavigate?: (navigate: () => void) => void;
 }) {
   const router = useRouter();
-  const { reenter } = useWarp();
+  const { reenter, skip, run } = useWarp();
 
   function navigate() {
     // A direct load or a shared link has no entry to go back to.
@@ -41,15 +41,38 @@ export function BackControl({
     <button
       type="button"
       onClick={() => {
+        // A second press during a chrono rewind means "stop waiting", not
+        // "go back twice" — the arc is long enough that it would otherwise
+        // read as a dead button. An outbound run is left alone: the visitor
+        // cannot see the page they are clicking, and skip() would complete
+        // the journey forwards, which is the opposite of Back.
+        if (run.phase !== "idle") {
+          if (
+            run.journey === "chrono" &&
+            (run.phase === "inbound" || run.phase === "landing")
+          ) {
+            skip();
+          } else if (run.journey !== "chrono") {
+            router.back();
+          }
+          return;
+        }
         // A direct load or a shared link has no entry to go back to.
         if (window.history.length <= 1) {
           router.push("/");
           return;
         }
-        // reenter() owns the router.back() call so the fall and the navigation
-        // start on the same frame; it returns false only if a run is already in
-        // flight, in which case the plain navigation still has to happen.
-        if (arrivedByWarp() && reenter()) return;
+        // reenter() owns the router.back() call so the arc and the navigation
+        // start together; it returns false when no journey delivered this
+        // visitor, in which case the plain navigation still has to happen.
+        if (reenter()) return;
+        // Let a page play an exit transition first; it owns the timing and
+        // calls navigate() when it is ready. Pages that pass nothing keep the
+        // instant behaviour.
+        if (onBeforeNavigate) {
+          onBeforeNavigate(navigate);
+          return;
+        }
         router.back();
       }}
       className="group -ml-2 inline-flex items-center gap-2 rounded-lg border border-transparent px-2.5 py-1.5 text-sm text-[#9aada8] transition-colors duration-200 hover:border-[#e8f3f1]/25 hover:bg-[#e8f3f1]/10 hover:text-[#e8f3f1] hover:shadow-[0_0_0_1px_rgba(232,243,241,0.06)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#f2c14e]"
