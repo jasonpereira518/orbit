@@ -194,6 +194,31 @@ function hasPersonalProviderKey(
   return Boolean(settings?.anthropicApiKeyEncrypted);
 }
 
+/**
+ * Whether a key EXISTS for this provider, without decrypting it.
+ *
+ * The notifications panel asks this every 120 seconds to decide whether to show the
+ * "add your API key" alert. `getProviderApiKey` would answer the same question, but it
+ * runs `decryptOrNull` — pulling a live secret into memory on a polling path, purely to
+ * test presence. Presence is all the alert needs.
+ *
+ * The difference is one edge case: a key that is stored but no longer decryptable (a
+ * rotated `ENCRYPTION_KEY`) reads as present here and as absent to `getProviderApiKey`.
+ * `getAiCapability` deliberately keeps the stricter, decrypting check — the extension
+ * degrades to heuristics off it and must not be told a key works when it does not. The
+ * alert accepts the weaker check because that failure mode is an ops incident that breaks
+ * every account at once and is loud on its own, not something one user can act on.
+ */
+export function hasAiKeyFor(
+  provider: AiProvider,
+  settings?: ProviderKeySettings | null,
+): boolean {
+  return (
+    hasPersonalProviderKey(provider, settings) ||
+    Boolean(getEnvProviderKey(provider))
+  );
+}
+
 export function getProviderApiKey(
   provider: AiProvider,
   settings?: ProviderKeySettings | null,
