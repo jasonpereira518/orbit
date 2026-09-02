@@ -45,7 +45,11 @@ async function main() {
   await reset();
   const db = await getDb();
   const sent: OpsDelivery[] = [];
-  const deps = { deliver: async (d: OpsDelivery) => { sent.push(d); } };
+  let heartbeats = 0;
+  const deps = {
+    deliver: async (d: OpsDelivery) => { sent.push(d); },
+    heartbeat: async () => { heartbeats += 1; },
+  };
 
   console.log("First sweep on a fresh database...");
   const first = await runOpsSweep({ trigger: "manual", deps });
@@ -58,6 +62,7 @@ async function main() {
   check("state row persisted as active with one notification", row?.active === true && row?.notifyCount === 1, JSON.stringify(row));
   const sweepRuns = await db.query.cronRuns.findMany({ where: eq(cronRuns.job, "ops.sweep") });
   check("the sweep recorded itself in cron_runs as ok", sweepRuns.length === 1 && sweepRuns[0].status === "ok", JSON.stringify(sweepRuns));
+  check("a completed sweep pings the heartbeat once", heartbeats === 1, `heartbeats=${heartbeats}`);
 
   console.log("\nSecond sweep, nothing changed...");
   sent.length = 0;

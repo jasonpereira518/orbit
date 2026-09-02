@@ -110,7 +110,24 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
 export type OpsSweepDeps = {
   deliver: (d: OpsDelivery) => Promise<void>;
   now: () => Date;
+  /** Tells the uptime monitor the sweep is alive. Only ever called after a completed sweep. */
+  heartbeat: () => Promise<void>;
 };
+
+/**
+ * Better Stack heartbeat: a GET the monitor expects every ten minutes. When it stops
+ * arriving — a dead GitHub schedule, a broken deploy — the monitor pages. Best-effort;
+ * a slow heartbeat endpoint must not fail the sweep that just succeeded.
+ */
+async function pingHeartbeat(): Promise<void> {
+  const url = process.env.BETTERSTACK_HEARTBEAT_URL?.trim();
+  if (!url) return;
+  try {
+    await fetch(url, { method: "GET", signal: AbortSignal.timeout(5_000) });
+  } catch {
+    // The monitor will notice the gap if this keeps failing; nothing to do here.
+  }
+}
 
 export type OpsSweepResult = {
   status: CronRunStatus;
@@ -157,6 +174,7 @@ export async function runOpsSweep(options: {
   snapshotOverride?: (snapshot: OpsSnapshot) => OpsSnapshot;
 }): Promise<OpsSweepResult> {
   const deliver = options.deps?.deliver ?? deliverToSlack;
+  const heartbeat = options.deps?.heartbeat ?? pingHeartbeat;
   const now = (options.deps?.now ?? (() => new Date()))();
 
   // Fails loudly (throws) if the database is down — see the module note.
@@ -275,6 +293,7 @@ export async function runOpsSweep(options: {
         deliveryFailures: result.deliveryFailures,
       },
     });
+    await heartbeat();
     return result;
   } catch (err) {
     await finishCronRun(run, { status: "failed", error: err });
