@@ -486,6 +486,28 @@ export async function getAdminUserDetail(
     .from(userSettings)
     .where(eq(userSettings.userId, userId));
 
+  /**
+   * Operator-facing account health.
+   *
+   * The user-facing equivalent lives in `src/lib/account-alerts.ts` and drives the Alerts
+   * section of the notifications panel. The two were NOT unified, deliberately: this is a
+   * diagnostic that should over-report, and that one is a notification surface that must
+   * under-report, so four predicates differ on purpose.
+   *
+   *   1. Expired token. Here, any `tokenExpiresAt` in the past warns. There, only an
+   *      expired token with NO refresh token does — `getValidAccessToken` refreshes
+   *      transparently otherwise, so alerting users on plain expiry would flag every
+   *      healthy connected account within an hour.
+   *   2. Calendar sync. `error` here, `warn` there: `lastSyncStatus` is sticky until the
+   *      next success, so one transient ICS 503 must not pin a red dot on a user's bell.
+   *   3. Missing AI key. Ungated here; gated on completed onboarding there, so someone who
+   *      abandons the wizard is not met by an alert before doing anything.
+   *   4. Imports. Every recent row here; windowed to 7 days there, because user alerts are
+   *      not dismissible and an unwindowed historical failure would be permanent.
+   *
+   * Keep them in step where they SHOULD agree: a new condition worth an operator's
+   * attention is usually worth the account owner's too. Check both when changing either.
+   */
   const health: AdminHealthItem[] = [];
 
   for (const job of importRows) {

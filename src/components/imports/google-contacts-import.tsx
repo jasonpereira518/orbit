@@ -85,6 +85,7 @@ export function GoogleContactsImport() {
   if (!status.configured) {
     return (
       <IntegrationUnavailable
+        id="import-google-contacts"
         title="Google Contacts"
         blurb="Not connected yet. Import from LinkedIn above, or paste your notes into Capture and Orbit will pull the people out."
         envVars={[
@@ -97,7 +98,7 @@ export function GoogleContactsImport() {
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
+    <section id="import-google-contacts" className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-medium text-ink">Google Contacts</h2>

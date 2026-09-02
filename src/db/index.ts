@@ -1607,6 +1607,22 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
   await applyScaleSchema((statement) => sql.query(statement));
 }
 
+/**
+ * Move an unopenable local PGlite directory aside so a fresh one can be created.
+ * Returns the new path, or null if it could not be moved (in which case the caller should
+ * surface the original open error rather than pretend it recovered).
+ */
+function quarantineDataDir(dataDir: string): string | null {
+  try {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const quarantined = `${dataDir}-corrupt-${stamp}`;
+    fs.renameSync(dataDir, quarantined);
+    return quarantined;
+  } catch {
+    return null;
+  }
+}
+
 async function ensureReady(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
 
@@ -1625,13 +1641,70 @@ async function ensureReady(): Promise<void> {
     // instance is built, not on demand from `CREATE EXTENSION`. This is what gives local dev
     // the same fuzzy search as production — pgvector has no PGlite build, so vector search
     // still degrades locally, but keyword search no longer does.
-    globalForDb.orbitPglite = await PGlite.create({
-      dataDir,
-      extensions: { pg_trgm },
-    });
+    const open = () =>
+      PGlite.create({ dataDir, extensions: { pg_trgm } });
+
+    try {
+      globalForDb.orbitPglite = await open();
+    } catch (err) {
+      // A local PGlite directory that will not open is not recoverable: the failure is a
+      // bare WASM `Aborted()` with no diagnostics, and `pg_resetwal` is not available. It
+      // happens when two processes write the directory at once (`next dev` plus a build or
+      // a script) or when one exits without checkpointing, and until now it bricked local
+      // development until someone deleted the directory by hand — with the real cause
+      // buried under a stack trace that points at `PGlite.create`.
+      //
+      // So: quarantine it and start again. The directory is gitignored local fixture data,
+      // it is already unreadable, and the schema is reapplied below automatically. Moved
+      // rather than deleted, because it costs nothing to keep and the alternative is
+      // destroying something on the user's behalf without being asked.
+      const quarantined = quarantineDataDir(dataDir);
+      if (!quarantined) throw err;
+
+      console.error(
+        `[orbit] Local database at ${dataDir} could not be opened and has been reset.\n` +
+          `[orbit] The unreadable copy is at ${quarantined}.\n` +
+          `[orbit] This is almost always two processes writing it at once — a build or a ` +
+          `tsx script running while 'next dev' is up. Stop the dev server first.`
+      );
+
+      fs.mkdirSync(dataDir, { recursive: true });
+      // The replacement directory is empty, so the DDL sweep has to run against it even if
+      // an earlier open in this same process already marked the schema reconciled.
+      schemaReconciled = undefined;
+      globalForDb.orbitPglite = await open();
+    }
   }
 
   await globalForDb.orbitPglite.waitReady;
+}
+
+/**
+ * Flush and release the local PGlite instance.
+ *
+ * MUST be called before `process.exit()` by any script that writes to the local database.
+ *
+ * Scripts here exit with an explicit `process.exit(0)` (importing `next/server` anywhere
+ * in the graph keeps the event loop alive, so draining is not an option). That terminates
+ * the process without letting embedded Postgres checkpoint, which leaves `global/pg_control`
+ * pointing at an older redo position than the WAL actually contains. The next open then
+ * fails inside the WASM build with a bare `Aborted()` and no diagnostics, and there is no
+ * `pg_resetwal` to repair it — the data directory is simply gone. That has happened once
+ * already; it costs the whole local dev database.
+ *
+ * No-op against Neon: there is no local instance to close.
+ */
+export async function closeDb(): Promise<void> {
+  const pglite = globalForDb.orbitPglite;
+  if (!pglite) return;
+  try {
+    await pglite.close();
+  } catch {
+    // Already closed, or never finished opening. Nothing useful to do here.
+  }
+  globalForDb.orbitPglite = undefined;
+  globalForDb.orbitDrizzle = undefined;
+  globalForDb.orbitReady = undefined;
 }
 
 export async function getDb(): Promise<Db> {

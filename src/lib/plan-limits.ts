@@ -13,6 +13,16 @@
 
 export type Plan = "free" | "orbit" | "lifetime";
 
+/**
+ * Where a user's plan came from. Purely informational for UI ("Comped", "Orbit Lifetime"),
+ * but also the tiebreaker documented in `resolvePlan`.
+ *
+ * Lives here rather than in `entitlements.ts` for the same reason `Plan` does: pure
+ * modules that need it (`account-alerts.ts`) must not reach a server-only module to get a
+ * four-member union. `entitlements.ts` re-exports it, so server code is unaffected.
+ */
+export type PlanSource = "comp" | "lifetime" | "subscription" | "free";
+
 export const FREE_CONTACT_LIMIT = 500;
 
 /**
