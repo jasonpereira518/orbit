@@ -116,20 +116,38 @@ function nameAliases(c: GraphContactInput) {
   return [...names];
 }
 
-function mentionsOther(a: GraphContactInput, b: GraphContactInput) {
-  const text = contactCorpus(a);
-  if (!text) return false;
-  return nameAliases(b).some((alias) => {
-    if (alias.length < 3) return false;
-    return text.includes(alias);
-  });
+/**
+ * Everything the all-pairs loop below needs from a single contact, derived once.
+ *
+ * The loop is O(n^2) by nature — it is asking which pairs are connected — but it used to
+ * rebuild each contact's corpus string, alias list and lowercased tag sets *inside* the
+ * pair comparison, so every contact's multi-KB notes were re-joined and re-lowercased
+ * ~2n times instead of once. That made the constant factor scale with note length.
+ */
+type SoftKnowsFacts = {
+  corpus: string;
+  aliases: string[];
+  tagsLower: string[];
+  tagsSet: Set<string>;
+  interestsLower: string[];
+  interestsSet: Set<string>;
+  clusterId: string | undefined;
+};
+
+function mentionsAliasOf(textOwner: SoftKnowsFacts, named: SoftKnowsFacts) {
+  if (!textOwner.corpus) return false;
+  return named.aliases.some((alias) => textOwner.corpus.includes(alias));
 }
 
-function sharedCount(a: string[], b: string[]) {
-  const setB = new Set(b.map((t) => t.toLowerCase()));
+/**
+ * Counts entries of `aLower` present in `bSet`. Deliberately iterates the array rather
+ * than intersecting two sets: the original counted duplicates on the `a` side, and
+ * collapsing them would quietly change the >= 2 thresholds this feeds.
+ */
+function overlapCount(aLower: string[], bSet: Set<string>) {
   let n = 0;
-  for (const t of a) {
-    if (setB.has(t.toLowerCase())) n += 1;
+  for (const value of aLower) {
+    if (bSet.has(value)) n += 1;
   }
   return n;
 }
@@ -160,15 +178,34 @@ function addSoftKnowsEdges(
   contacts: GraphContactInput[],
   byContactId: Map<string, { id: string }>
 ) {
-  for (let i = 0; i < contacts.length; i++) {
-    for (let j = i + 1; j < contacts.length; j++) {
-      const a = contacts[i];
-      const b = contacts[j];
-      const ca = byContactId.get(a.id)?.id;
-      const cb = byContactId.get(b.id)?.id;
-      if (ca && cb && ca === cb) continue;
+  const facts: SoftKnowsFacts[] = contacts.map((c) => {
+    const tagsLower = (c.tags || []).map((t) => t.toLowerCase());
+    const interestsLower = (c.sharedInterests || []).map((t) =>
+      t.toLowerCase()
+    );
+    return {
+      corpus: contactCorpus(c),
+      // `nameAliases` already drops anything shorter than 3, which is the bar the pair
+      // comparison used to re-apply per alias per pair.
+      aliases: nameAliases(c).filter((alias) => alias.length >= 3),
+      tagsLower,
+      tagsSet: new Set(tagsLower),
+      interestsLower,
+      interestsSet: new Set(interestsLower),
+      clusterId: byContactId.get(c.id)?.id,
+    };
+  });
 
-      if (mentionsOther(a, b) || mentionsOther(b, a)) {
+  for (let i = 0; i < contacts.length; i++) {
+    const a = contacts[i];
+    const fa = facts[i];
+    for (let j = i + 1; j < contacts.length; j++) {
+      const b = contacts[j];
+      const fb = facts[j];
+      if (fa.clusterId && fb.clusterId && fa.clusterId === fb.clusterId)
+        continue;
+
+      if (mentionsAliasOf(fa, fb) || mentionsAliasOf(fb, fa)) {
         addPeerEdge(edges, seenPairs, a.id, b.id, {
           kind: "knows",
           reason: "mention",
@@ -176,8 +213,7 @@ function addSoftKnowsEdges(
         continue;
       }
 
-      const tagOverlap = sharedCount(a.tags || [], b.tags || []);
-      if (tagOverlap >= 2) {
+      if (overlapCount(fa.tagsLower, fb.tagsSet) >= 2) {
         addPeerEdge(edges, seenPairs, a.id, b.id, {
           kind: "knows",
           reason: "sharedTags",
@@ -185,11 +221,7 @@ function addSoftKnowsEdges(
         continue;
       }
 
-      const interestOverlap = sharedCount(
-        a.sharedInterests || [],
-        b.sharedInterests || []
-      );
-      if (interestOverlap >= 2) {
+      if (overlapCount(fa.interestsLower, fb.interestsSet) >= 2) {
         addPeerEdge(edges, seenPairs, a.id, b.id, {
           kind: "knows",
           reason: "sharedInterests",

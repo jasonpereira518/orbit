@@ -691,7 +691,7 @@ CREATE TABLE IF NOT EXISTS fundraising_investors (
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 17;
+export const SCHEMA_VERSION = 18;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -805,6 +805,19 @@ export const SCALE_DDL: string[] = [
   // base and outreach refresh had no usable index for their scans.
   `CREATE INDEX IF NOT EXISTS interactions_user_date_idx ON interactions(user_id, interaction_date DESC)`,
   `CREATE INDEX IF NOT EXISTS embeddings_user_src_idx ON contact_embeddings(user_id, source_type, contact_id)`,
+  // Reminders had `(user_id, status)`, `(user_id, due_date)` and `(user_id, list_id)` but
+  // nothing on contact_id, while eight hot paths filter by it — the contact detail page,
+  // every reminder write, calendar sync, and the import engine's per-chunk `inArray` dedupe.
+  // Each of those was a per-user index scan plus a filter instead of a point lookup.
+  `CREATE INDEX IF NOT EXISTS reminders_user_contact_idx ON reminders(user_id, contact_id)`,
+  // Company/school concentration in `src/lib/closeness-materialize.ts` counts with
+  // `lower(trim(company)) = $1`. A b-tree on the bare column cannot serve that — Postgres
+  // could only use the user_id prefix and then filter every one of that user's entries —
+  // so these are expression indexes matching the predicate exactly. `lower` and `btrim`
+  // are both immutable, which is what makes them indexable. This runs on every contact
+  // create, update and logInteraction, so it is not a cold path.
+  `CREATE INDEX IF NOT EXISTS contacts_user_company_norm_idx ON contacts(user_id, lower(trim(company)))`,
+  `CREATE INDEX IF NOT EXISTS contacts_user_school_norm_idx ON contacts(user_id, lower(trim(school)))`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
