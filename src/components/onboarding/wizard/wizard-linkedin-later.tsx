@@ -32,8 +32,18 @@ export function WizardLinkedInLater({
   const [pending, startTransition] = useTransition();
 
   function requestExport() {
-    setRequested(true);
-    void markLinkedInExportRequested().catch(() => {});
+    // The <a target="_blank"> handles the navigation itself (this handler never calls
+    // preventDefault), so LinkedIn opens instantly regardless of how the request below
+    // resolves. `requested` only flips once the server actually recorded it — otherwise a
+    // failed call would still produce a false "LinkedIn export requested." summary.
+    startTransition(async () => {
+      try {
+        await markLinkedInExportRequested();
+        setRequested(true);
+      } catch {
+        toast.error("Couldn't record the request — try again.");
+      }
+    });
   }
 
   function remindTomorrow() {
