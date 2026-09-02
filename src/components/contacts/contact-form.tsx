@@ -204,6 +204,7 @@ export function ContactForm({
           try {
             const payload: ContactInput = {
               fullName: form.fullName.trim(),
+              source: initial?.source,
               preferredName: form.preferredName.trim(),
               title: form.title.trim(),
               company: form.company.trim(),

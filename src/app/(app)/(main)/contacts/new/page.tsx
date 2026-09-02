@@ -1,9 +1,16 @@
 import { ContactForm } from "@/components/contacts/contact-form";
+import { ContactFormFromMention } from "@/components/contacts/contact-form-from-mention";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import { LockedFeature } from "@/components/locked-feature";
 import { getPlanOverview } from "@/actions/settings";
+import type { ContactInput } from "@/lib/contact-writes";
 
-export default async function NewContactPage() {
+export default async function NewContactPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ name?: string; context?: string; mentionId?: string }>;
+}) {
+  const { name, context, mentionId } = await searchParams;
   const { usage } = await getPlanOverview();
   const atLimit = usage.limit !== null && usage.remaining === 0;
 
@@ -27,6 +34,10 @@ export default async function NewContactPage() {
     );
   }
 
+  const initial: (Partial<ContactInput> & { tags?: string[] }) | undefined = name
+    ? { fullName: name, notes: context || undefined, source: "mention_capture" }
+    : undefined;
+
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
@@ -42,7 +53,11 @@ export default async function NewContactPage() {
         </p>
       </div>
       <ContactQuotaNotice used={usage.used} limit={usage.limit} />
-      <ContactForm />
+      {mentionId ? (
+        <ContactFormFromMention initial={initial} mentionId={mentionId} />
+      ) : (
+        <ContactForm initial={initial} />
+      )}
     </div>
   );
 }
