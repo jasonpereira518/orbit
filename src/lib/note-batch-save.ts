@@ -115,156 +115,163 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
 
   let created = 0;
   let updated = 0;
+  let remindersCreated = 0;
   const contactIds: string[] = [];
   const interactionIdByContact = new Map<string, string>();
   const contactIdByName = new Map<string, string>();
 
-  // 1. Participants → contacts + interactions.
-  for (const p of input.participants) {
-    const { parsed } = p;
-    let contactId = p.mergeContactId || null;
-    let wasCreated = false;
-    const fields = {
-      company: parsed.company || undefined,
-      title: parsed.role || undefined,
-      location: parsed.location || undefined,
-      email: parsed.email || undefined,
-      linkedinUrl: parsed.linkedin_url || undefined,
-      howMet: parsed.met_at || undefined,
-      aiSummary: parsed.summary || undefined,
-      keyFacts: parsed.key_facts,
-      sharedInterests: parsed.shared_interests,
-      opportunities: parsed.opportunities,
-      relationshipScore: p.relationshipScore,
-      statedCloseness: p.relationshipScore,
-      tagNames: p.tagNames,
-    };
-    if (contactId) {
-      // Merge: never overwrite contacts.notes — the new material lives on the timeline.
-      await updateContactForUser(userId, contactId, { fullName: parsed.name || undefined, ...fields }, WRITE_OPTS);
-      updated += 1;
-    } else {
-      if (!parsed.name) throw new Error("A name is required to create a contact");
-      const row = await createContactForUser(
+  try {
+    // 1. Participants → contacts + interactions.
+    for (const p of input.participants) {
+      const { parsed } = p;
+      let contactId = p.mergeContactId || null;
+      let wasCreated = false;
+      const fields = {
+        company: parsed.company || undefined,
+        title: parsed.role || undefined,
+        location: parsed.location || undefined,
+        email: parsed.email || undefined,
+        linkedinUrl: parsed.linkedin_url || undefined,
+        howMet: parsed.met_at || undefined,
+        aiSummary: parsed.summary || undefined,
+        keyFacts: parsed.key_facts,
+        sharedInterests: parsed.shared_interests,
+        opportunities: parsed.opportunities,
+        relationshipScore: p.relationshipScore,
+        statedCloseness: p.relationshipScore,
+        tagNames: p.tagNames,
+      };
+      if (contactId) {
+        // Merge: never overwrite contacts.notes — the new material lives on the timeline.
+        await updateContactForUser(userId, contactId, { fullName: parsed.name || undefined, ...fields }, WRITE_OPTS);
+        updated += 1;
+      } else {
+        if (!parsed.name) throw new Error("A name is required to create a contact");
+        const row = await createContactForUser(
+          userId,
+          { fullName: parsed.name, ...fields, source: "ai_capture", notes: p.notes },
+          WRITE_OPTS
+        );
+        contactId = row.id;
+        created += 1;
+        wasCreated = true;
+      }
+      contactIds.push(contactId);
+      if (parsed.name) contactIdByName.set(parsed.name.trim().toLowerCase(), contactId);
+
+      const interactionDate = p.interactionDate?.trim() || parsed.interaction_date?.trim() || input.anchorIso;
+      const { row, created: interactionCreated } = await logNoteInteractionForUser(
         userId,
-        { fullName: parsed.name, ...fields, source: "ai_capture", notes: p.notes },
+        {
+          contactId,
+          rawNotes: p.notes,
+          aiSummary: parsed.summary || undefined,
+          topics: parsed.topics,
+          actionItems: parsed.action_items,
+          interactionType: p.interactionType || "meeting_note",
+          source: "capture",
+          interactionDate,
+          externalId: noteInteractionExternalId(input.sourceHash, contactId),
+          noteBatchId: batchId,
+        },
         WRITE_OPTS
       );
-      contactId = row.id;
-      created += 1;
-      wasCreated = true;
+      interactionIdByContact.set(contactId, row.id);
+      if (!interactionCreated) result.skipped.duplicate += 1;
+      result.participants.push({ contactId, interactionId: row.id, name: parsed.name || "Unnamed", created: wasCreated, duplicate: !interactionCreated });
     }
-    contactIds.push(contactId);
-    if (parsed.name) contactIdByName.set(parsed.name.trim().toLowerCase(), contactId);
 
-    const interactionDate = p.interactionDate?.trim() || parsed.interaction_date?.trim() || input.anchorIso;
-    const { row, created: interactionCreated } = await logNoteInteractionForUser(
-      userId,
-      {
+    // 2. Dated commitments → reminder drafts.
+    const drafts: ReminderDraft[] = [];
+    for (const c of input.commitments) {
+      const contactId = c.contactId ?? (c.personName ? contactIdByName.get(c.personName.trim().toLowerCase()) ?? null : null);
+      drafts.push({
         contactId,
-        rawNotes: p.notes,
-        aiSummary: parsed.summary || undefined,
-        topics: parsed.topics,
-        actionItems: parsed.action_items,
-        interactionType: p.interactionType || "meeting_note",
-        source: "capture",
-        interactionDate,
-        externalId: noteInteractionExternalId(input.sourceHash, contactId),
-        noteBatchId: batchId,
-      },
-      WRITE_OPTS
-    );
-    interactionIdByContact.set(contactId, row.id);
-    if (!interactionCreated) result.skipped.duplicate += 1;
-    result.participants.push({ contactId, interactionId: row.id, name: parsed.name || "Unnamed", created: wasCreated, duplicate: !interactionCreated });
-  }
-
-  // 2. Dated commitments → reminder drafts.
-  const drafts: ReminderDraft[] = [];
-  for (const c of input.commitments) {
-    const contactId = c.contactId ?? (c.personName ? contactIdByName.get(c.personName.trim().toLowerCase()) ?? null : null);
-    drafts.push({
-      contactId,
-      sourceInteractionId: contactId ? interactionIdByContact.get(contactId) ?? null : null,
-      title: c.title,
-      description: c.description,
-      dueDate: isoDayToLocalNoon(c.dueDateIso),
-      reminderType: c.dateBasis === "vague" ? "ai_suggested" : "extracted_date",
-      actionKind: c.actionKind,
-      dateBasis: c.dateBasis,
-      rawDatePhrase: c.rawDatePhrase,
-      sourceExcerpt: c.sourceExcerpt,
-    });
-  }
-
-  // 3. Fallback follow-up per participant — only when the note gave them nothing else.
-  for (const p of input.participants) {
-    if (!p.createReminder || !p.parsed.name) continue;
-    const contactId = contactIdByName.get(p.parsed.name.trim().toLowerCase());
-    if (!contactId) continue;
-    if (drafts.some((d) => d.contactId === contactId)) continue;
-    const days = p.followUpDays || p.parsed.follow_up_days || DEFAULT_FOLLOW_UP_WINDOW_DAYS;
-    const title = p.parsed.follow_up_recommendation || `Follow up with ${p.parsed.name}`;
-    drafts.push({
-      contactId,
-      sourceInteractionId: interactionIdByContact.get(contactId) ?? null,
-      title,
-      description: p.parsed.suggested_next_message || null,
-      dueDate: windowDueDate(anchor, days),
-      reminderType: "ai_suggested",
-      actionKind: inferReminderActionKind({ title, description: p.parsed.suggested_next_message, reminderType: "ai_suggested", contactId }),
-      dateBasis: "window",
-      rawDatePhrase: null,
-      sourceExcerpt: null,
-    });
-  }
-
-  // 4. Collision rule: a dated commitment beats a window reminder with the same title
-  //    within 3 days for the same person.
-  const kept = drafts.filter((d) => {
-    if (d.dateBasis !== "window") return true;
-    return !drafts.some(
-      (other) => other !== d && other.dateBasis !== "window" && other.contactId === d.contactId &&
-        titlesCollide(other.title, d.title) && withinCollisionWindow(other.dueDate, d.dueDate)
-    );
-  });
-
-  // 5. Insert reminders, idempotent through itemHash.
-  let remindersCreated = 0;
-  if (kept.length) {
-    const listId = await getInboxListId(userId);
-    const inserted = await db
-      .insert(reminders)
-      .values(
-        kept.map((d) => ({
-          userId,
-          contactId: d.contactId,
-          listId,
-          title: d.title,
-          description: d.description,
-          dueDate: d.dueDate,
-          status: "pending",
-          reminderType: d.reminderType,
-          actionKind: d.actionKind,
-          createdBy: "ai",
-          noteBatchId: batchId,
-          sourceInteractionId: d.sourceInteractionId,
-          sourceExcerpt: d.sourceExcerpt,
-          rawDatePhrase: d.rawDatePhrase,
-          dateBasis: d.dateBasis,
-          itemHash: buildSuggestionItemHash(input.sourceHash, isoDay(d.dueDate), d.title),
-        }))
-      )
-      .onConflictDoNothing({ target: [reminders.userId, reminders.itemHash] })
-      .returning();
-    remindersCreated = inserted.length;
-    for (const r of inserted) {
-      result.reminders.push({
-        id: r.id, contactId: r.contactId, title: r.title, dueIso: isoDay(new Date(r.dueDate!)),
-        dateBasis: (r.dateBasis ?? "window") as NoteBatchResult["reminders"][number]["dateBasis"],
-        rawDatePhrase: r.rawDatePhrase, sourceExcerpt: r.sourceExcerpt,
+        sourceInteractionId: contactId ? interactionIdByContact.get(contactId) ?? null : null,
+        title: c.title,
+        description: c.description,
+        dueDate: isoDayToLocalNoon(c.dueDateIso),
+        reminderType: c.dateBasis === "vague" ? "ai_suggested" : "extracted_date",
+        actionKind: c.actionKind,
+        dateBasis: c.dateBasis,
+        rawDatePhrase: c.rawDatePhrase,
+        sourceExcerpt: c.sourceExcerpt,
       });
     }
+
+    // 3. Fallback follow-up per participant — only when the note gave them nothing else.
+    for (const p of input.participants) {
+      if (!p.createReminder || !p.parsed.name) continue;
+      const contactId = contactIdByName.get(p.parsed.name.trim().toLowerCase());
+      if (!contactId) continue;
+      if (drafts.some((d) => d.contactId === contactId)) continue;
+      const days = p.followUpDays || p.parsed.follow_up_days || DEFAULT_FOLLOW_UP_WINDOW_DAYS;
+      const title = p.parsed.follow_up_recommendation || `Follow up with ${p.parsed.name}`;
+      drafts.push({
+        contactId,
+        sourceInteractionId: interactionIdByContact.get(contactId) ?? null,
+        title,
+        description: p.parsed.suggested_next_message || null,
+        dueDate: windowDueDate(anchor, days),
+        reminderType: "ai_suggested",
+        actionKind: inferReminderActionKind({ title, description: p.parsed.suggested_next_message, reminderType: "ai_suggested", contactId }),
+        dateBasis: "window",
+        rawDatePhrase: null,
+        sourceExcerpt: null,
+      });
+    }
+
+    // 4. Collision rule. Dormant until action items push their own `window` drafts here
+    //    (Task 12): the fallback follow-up above is never created alongside another draft,
+    //    so today the only `window` drafts that can collide are the action-item ones.
+    const kept = drafts.filter((d) => {
+      if (d.dateBasis !== "window") return true;
+      return !drafts.some(
+        (other) => other !== d && other.dateBasis !== "window" && other.contactId === d.contactId &&
+          titlesCollide(other.title, d.title) && withinCollisionWindow(other.dueDate, d.dueDate)
+      );
+    });
+
+    // 5. Insert reminders, idempotent through itemHash.
+    if (kept.length) {
+      const listId = await getInboxListId(userId);
+      const inserted = await db
+        .insert(reminders)
+        .values(
+          kept.map((d) => ({
+            userId,
+            contactId: d.contactId,
+            listId,
+            title: d.title,
+            description: d.description,
+            dueDate: d.dueDate,
+            status: "pending",
+            reminderType: d.reminderType,
+            actionKind: d.actionKind,
+            createdBy: "ai",
+            noteBatchId: batchId,
+            sourceInteractionId: d.sourceInteractionId,
+            sourceExcerpt: d.sourceExcerpt,
+            rawDatePhrase: d.rawDatePhrase,
+            dateBasis: d.dateBasis,
+            itemHash: buildSuggestionItemHash(input.sourceHash, isoDay(d.dueDate), d.title),
+          }))
+        )
+        .onConflictDoNothing({ target: [reminders.userId, reminders.itemHash] })
+        .returning();
+      remindersCreated = inserted.length;
+      for (const r of inserted) {
+        result.reminders.push({
+          id: r.id, contactId: r.contactId, title: r.title, dueIso: isoDay(new Date(r.dueDate!)),
+          dateBasis: (r.dateBasis ?? "window") as NoteBatchResult["reminders"][number]["dateBasis"],
+          rawDatePhrase: r.rawDatePhrase, sourceExcerpt: r.sourceExcerpt,
+        });
+      }
+    }
+  } catch (err) {
+    // Persist what was written so the results page and undo can still see it.
+    await db.update(noteBatches).set({ result }).where(eq(noteBatches.id, batchId)).catch(() => null);
+    throw err;
   }
 
   if (contactIds.length) {

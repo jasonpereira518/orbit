@@ -16,7 +16,7 @@ delete process.env.DATABASE_URL;
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, interactions, noteBatches, reminders, userSettings } from "../src/db/schema";
-import { saveNoteBatch, undoNoteBatchForUser, type SaveNoteBatchInput } from "../src/lib/note-batch-save";
+import { dismissNoteReminderForUser, saveNoteBatch, undoNoteBatchForUser, type SaveNoteBatchInput } from "../src/lib/note-batch-save";
 import { hashSourceNote } from "../src/lib/suggested-reminder-utils";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
@@ -90,7 +90,7 @@ async function main() {
   check("  Sarah has no generic follow-up", !titles.includes("Follow up with Sarah Chen"), titles.join(" | "));
   check("  Dev got the fallback follow-up", titles.includes("Follow up with Dev Patel"));
   const kickoff = rems.find((r) => r.title === "Kickoff")!;
-  check("  provenance recorded", kickoff.noteBatchId === first.batchId && kickoff.rawDatePhrase === "Sept 20" && kickoff.dateBasis === "absolute" && Boolean(kickoff.itemHash) && Boolean(kickoff.sourceInteractionId));
+  check("  provenance recorded", kickoff.noteBatchId === first.batchId && kickoff.rawDatePhrase === "Sept 20" && kickoff.dateBasis === "absolute" && Boolean(kickoff.itemHash) && Boolean(kickoff.sourceInteractionId) && kickoff.sourceExcerpt === "Kickoff is Sept 20.");
   check("  reminderType extracted_date for dated", kickoff.reminderType === "extracted_date");
   const sarahId = first.contactIds[0];
   check("  linked to Sarah", kickoff.contactId === sarahId);
@@ -101,6 +101,22 @@ async function main() {
 
   const batch = await db.query.noteBatches.findFirst({ where: eq(noteBatches.id, first.batchId) });
   check("batch row saved", batch?.status === "saved" && batch.anchorBasis === "note");
+
+  // 1b. dismissNoteReminderForUser: dismisses one reminder, leaves the others alone, and is
+  // user-scoped (a no-op for anyone but the owner). Flip it back so downstream counts hold.
+  await dismissNoteReminderForUser(USER, kickoff.id);
+  const afterDismiss = await db.query.reminders.findMany({ where: eq(reminders.userId, USER) });
+  const kickoffAfterDismiss = afterDismiss.find((r) => r.id === kickoff.id)!;
+  check("dismissNoteReminderForUser dismisses the target reminder", kickoffAfterDismiss.status === "dismissed");
+  check("  other reminders stay pending", afterDismiss.filter((r) => r.id !== kickoff.id).every((r) => r.status === "pending"));
+  await db.update(reminders).set({ status: "pending" }).where(eq(reminders.id, kickoff.id));
+  await dismissNoteReminderForUser("someone-else", kickoff.id);
+  const afterWrongUser = await db.query.reminders.findFirst({ where: eq(reminders.id, kickoff.id) });
+  check("  dismissNoteReminderForUser is user-scoped (no-op for another user)", afterWrongUser?.status === "pending");
+
+  // Re-baseline embeddingStaleAt so the merge path below (which never runs createContactForUser,
+  // the only place that stamps it on create) is the thing proving the batch-level UPDATE fires.
+  await db.update(contacts).set({ embeddingStaleAt: null }).where(eq(contacts.userId, USER));
 
   // 2. Re-paste with merge into the existing contacts: nothing new is created.
   const again = input();
@@ -113,6 +129,7 @@ async function main() {
   check("re-paste: still three reminders", rems2.length === 3, String(rems2.length));
   check("re-paste: reported as duplicates", second.result.skipped.duplicate === 2 && second.result.participants.every((p) => p.duplicate), JSON.stringify(second.result.skipped));
   check("re-paste: updated, not created", second.updated === 2 && second.created === 0);
+  check("merge path re-stamps embeddingStaleAt", (await db.query.contacts.findMany({ where: eq(contacts.userId, USER) })).every((c) => c.embeddingStaleAt !== null));
 
   // 3. Undo the first batch: reminders dismissed (not deleted), interactions untouched.
   const undo = await undoNoteBatchForUser(USER, first.batchId);
@@ -133,6 +150,27 @@ async function main() {
   let refused = false;
   try { await undoNoteBatchForUser("someone-else", first.batchId); } catch { refused = true; }
   check("undo is user-scoped", refused);
+
+  // 6. A throw mid-loop must not orphan the batch: the first participant's write already
+  // landed with this batch's noteBatchId, so the partial result must be persisted for undo
+  // and the results page to find, even though saveNoteBatch itself rejects.
+  const priorBatchIds = new Set((await db.query.noteBatches.findMany({ where: eq(noteBatches.userId, USER) })).map((b) => b.id));
+  const partial = input();
+  partial.participants[1] = { ...partial.participants[1], parsed: { ...partial.participants[1].parsed, name: null }, mergeContactId: null };
+  let threw = false;
+  try {
+    await saveNoteBatch(USER, partial);
+  } catch {
+    threw = true;
+  }
+  check("partial batch: throws when a participant has no name and no merge target", threw);
+  const batchesAfter = await db.query.noteBatches.findMany({ where: eq(noteBatches.userId, USER) });
+  const partialBatch = batchesAfter.find((b) => !priorBatchIds.has(b.id));
+  check(
+    "  the failed batch persists the partial result (first participant only)",
+    partialBatch !== undefined && partialBatch.result.participants.length === 1,
+    JSON.stringify(partialBatch?.result.participants)
+  );
 
   await reset();
   console.log("\nsmoke-note-batch: all checks passed");
