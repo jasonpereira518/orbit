@@ -247,6 +247,8 @@ export function BulkNotesPanel({
                   actionKind: s.actionKind,
                   confidenceScore: s.confidenceScore,
                   sourceExcerpt: s.sourceExcerpt,
+                  dateBasis: s.dateBasis,
+                  anchorIso: s.anchorIso,
                 })),
               }
             : undefined

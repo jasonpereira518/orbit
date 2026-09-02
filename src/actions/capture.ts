@@ -12,10 +12,12 @@ import {
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import {
-  extractDatedCommitments,
+  fetchRawCommitments,
+  validateCommitments,
   emptyCommitmentResult,
   type RejectedCounts,
 } from "@/lib/date-commitment-extract";
+import type { DateBasis } from "@/lib/relative-date";
 import {
   buildSuggestionItemHash,
   hashSourceNote,
@@ -71,6 +73,8 @@ export type SuggestedReminderPreview = {
   actionKind: ReminderActionKind;
   confidenceScore: number;
   sourceExcerpt: string;
+  dateBasis: DateBasis;
+  anchorIso: string;
 };
 
 /** What the client echoes back on save, plus any per-row edits. */
@@ -195,15 +199,32 @@ export async function parseBulkCaptureNotes(
 
     // Run both extractions concurrently. The commitment pass is failure-isolated:
     // contact extraction is the core value and must survive a bad dates response.
-    const [personParse, commitmentResult] = await Promise.all([
+    const today = new Date();
+    const [personParse, rawCommitments] = await Promise.all([
       parseMultiPersonNotesWithAI(userId, corpus, mergedHints),
-      extractDatedCommitments(userId, corpus, {
-        today: new Date(),
+      fetchRawCommitments(userId, corpus, {
+        today,
         knownPeople: seedPeople.map((p) => p.name).filter(Boolean) as string[],
-      }).catch(() => emptyCommitmentResult()),
+      }).catch(() => [] as Awaited<ReturnType<typeof fetchRawCommitments>>),
     ]);
 
     const { people, shared_notes, interaction_date } = personParse;
+    // The anchor is the date the notes are ABOUT: what the people pass found, else the
+    // calendar/email hint, else the upload moment. Relative phrases count from it.
+    const anchorSource = interaction_date || mergedHints.eventDate || null;
+    const anchor = anchorSource ? isoDayToLocalNoon(anchorSource) : today;
+    const anchorBasis: "note" | "hint" | "upload" = interaction_date
+      ? "note"
+      : mergedHints.eventDate
+        ? "hint"
+        : "upload";
+    const commitmentResult = (() => {
+      try {
+        return validateCommitments(rawCommitments, corpus, { today, anchor });
+      } catch {
+        return emptyCommitmentResult();
+      }
+    })();
     // A note can legitimately carry dates but no people ("Board review 15th of October"),
     // so only fail when both extractions came back empty.
     if (!people.length && !commitmentResult.commitments.length) {
@@ -282,6 +303,8 @@ export async function parseBulkCaptureNotes(
         actionKind: c.actionKind,
         confidenceScore: c.confidenceScore,
         sourceExcerpt: c.sourceExcerpt,
+        dateBasis: c.dateBasis,
+        anchorIso: c.anchorIso,
       }));
 
     return {
@@ -290,6 +313,8 @@ export async function parseBulkCaptureNotes(
       sharedNotes: shared_notes,
       interactionDate: defaultDate,
       interactionType,
+      anchorIso: isoDay(anchor),
+      anchorBasis,
       hints: mergedHints,
       // Computed server-side and echoed back on save, so the client can't forge them
       // into a hash that would collide with (or evade) another note's dedupe key.

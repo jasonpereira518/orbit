@@ -1,15 +1,19 @@
 /**
- * Pulls absolute-dated commitments and events out of captured note prose.
+ * Pulls dated commitments and events out of captured note prose — absolute, relative
+ * ("next Friday", "in two weeks"), and vague ("soon") alike.
  *
  * Design note: the prompt is only a filter. Everything that actually *guarantees*
- * "absolute dates only" lives in `validateCommitments` below, in TypeScript, so the
+ * correctness — verbatim containment, date resolution, and rejecting phrasing the
+ * grammar can't handle — lives in `validateCommitments` below, in TypeScript, so the
  * behavior holds identically across all three AI providers. In particular the year is
- * always recomputed here and never trusted from the model.
+ * always recomputed here and never trusted from the model, and relative/vague phrases
+ * are resolved deterministically against the anchor, never guessed by the model.
  */
 
 import { z } from "zod";
 import { completeJson } from "@/lib/ai";
 import { MONTHS, atLocalNoon } from "@/lib/interaction-date";
+import { resolveRelativeDate, type DateBasis } from "@/lib/relative-date";
 import {
   isReminderActionKind,
   inferReminderActionKind,
@@ -31,6 +35,8 @@ export type DatedCommitment = {
   /** 0-100. */
   confidenceScore: number;
   sourceExcerpt: string;
+  dateBasis: DateBasis;
+  anchorIso: string;
 };
 
 export type RejectedCounts = {
@@ -58,6 +64,8 @@ const commitmentItemSchema = z.object({
   detail: nullTrimmed,
   raw_date_phrase: z.string().min(1),
   date: z.string(),
+  // Parsed but not trusted: the validator classifies the phrase itself.
+  date_kind: nullTrimmed,
   year_stated: z
     .boolean()
     .nullish()
@@ -106,8 +114,9 @@ const ISO_RE = /\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/;
 const NUMERIC_RE = /\b(\d{1,2})\/(\d{1,2})(?:\/(20\d{2}))?\b/;
 
 /**
- * Phrases that look date-ish but resolve only relative to "now". Rejected even when a
- * month name is also present ("next September"), because the intent is ambiguous.
+ * Classifies a phrase as relative; the grammar in relative-date.ts decides if it
+ * resolves. Rejected even when a month name is also present ("next September"), because
+ * the intent is ambiguous.
  */
 const RELATIVE_RE =
   /\b(next|this|last|coming|following|upcoming|tomorrow|yesterday|today|soon|later|sometime|eod|eow|eom|q[1-4]|in\s+\d+\s+(day|week|month|year)s?|end\s+of\s+(the\s+)?(week|month|quarter|year))\b/i;
@@ -206,6 +215,8 @@ function toIsoDay(d: Date) {
 /* Validation — the layer that actually enforces "absolute dates only"  */
 /* ------------------------------------------------------------------ */
 
+export type ValidateOptions = { today: Date; anchor?: Date };
+
 /**
  * Exported separately from the network call so it can be exercised without an API key.
  * See `scripts/smoke-date-commitments.ts`.
@@ -213,8 +224,12 @@ function toIsoDay(d: Date) {
 export function validateCommitments(
   rawItems: RawCommitmentItem[],
   notes: string,
-  today: Date
+  opts: ValidateOptions
 ): DatedCommitmentResult {
+  const today = opts.today;
+  const anchor = atLocalNoon(opts.anchor ?? today);
+  const anchorIso = toIsoDay(anchor);
+
   const rejected: RejectedCounts = { relative: 0, unverifiable: 0, past: 0 };
   const commitments: DatedCommitment[] = [];
   const seen = new Set<string>();
@@ -236,40 +251,44 @@ export function validateCommitments(
       continue;
     }
 
-    // 2. Relative phrasing is discarded outright, per the absolute-dates-only rule.
-    if (RELATIVE_RE.test(phrase)) {
-      rejected.relative += 1;
-      continue;
-    }
-
-    // 3. The phrase must itself name a calendar date.
-    const md = deriveMonthDay(phrase);
-    if (!md) {
-      rejected.relative += 1;
-      continue;
-    }
-
-    const resolved = resolveDate(md, today);
-    if (!resolved) {
-      rejected.unverifiable += 1;
-      continue;
-    }
-
-    // 4. The model's own ISO date must agree with the phrase we re-derived. Catches the
-    //    "copied Sept 2 correctly but emitted 2026-09-20" class of error.
-    const modelIso = item.date.trim();
-    const modelMatch = modelIso.match(ISO_RE);
-    if (modelMatch) {
-      const modelMonth = Number(modelMatch[2]) - 1;
-      const modelDay = Number(modelMatch[3]);
-      if (modelMonth !== md.month || modelDay !== md.day) {
+    // 2. Relative phrasing resolves against the anchor through the deterministic grammar.
+    //    Unknown relative phrasing is rejected — never guessed.
+    let resolvedDate: Date;
+    let yearInferred = false;
+    let dateBasis: DateBasis;
+    if (RELATIVE_RE.test(phrase) || !deriveMonthDay(phrase)) {
+      const rel = resolveRelativeDate(phrase, anchor);
+      if (!rel) {
+        rejected.relative += 1;
+        continue;
+      }
+      resolvedDate = rel.date;
+      dateBasis = rel.basis;
+    } else {
+      // 3. Absolute: the phrase names a calendar date; the model's ISO must agree.
+      const md = deriveMonthDay(phrase)!;
+      const resolved = resolveDate(md, today);
+      if (!resolved) {
         rejected.unverifiable += 1;
         continue;
       }
+      const modelIso = item.date.trim();
+      const modelMatch = modelIso.match(ISO_RE);
+      if (modelMatch) {
+        const modelMonth = Number(modelMatch[2]) - 1;
+        const modelDay = Number(modelMatch[3]);
+        if (modelMonth !== md.month || modelDay !== md.day) {
+          rejected.unverifiable += 1;
+          continue;
+        }
+      }
+      resolvedDate = resolved.date;
+      yearInferred = resolved.yearInferred;
+      dateBasis = "absolute";
     }
 
-    // 5. A reminder in the past is noise the user has to clear.
-    if (resolved.date < todayStart) {
+    // 4. A reminder in the past (by TODAY, not the anchor) is noise the user has to clear.
+    if (resolvedDate < todayStart) {
       rejected.past += 1;
       continue;
     }
@@ -280,7 +299,7 @@ export function validateCommitments(
       continue;
     }
 
-    const dedupeKey = `${toIsoDay(resolved.date)}|${title.toLowerCase()}`;
+    const dedupeKey = `${toIsoDay(resolvedDate)}|${title.toLowerCase()}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
 
@@ -298,12 +317,14 @@ export function validateCommitments(
       title,
       description: item.detail,
       rawDatePhrase: phrase,
-      dueDate: atLocalNoon(resolved.date),
-      yearInferred: resolved.yearInferred,
+      dueDate: atLocalNoon(resolvedDate),
+      yearInferred,
       personName: item.person_name,
       actionKind,
       confidenceScore: Math.round(item.confidence * 100),
       sourceExcerpt: item.source_excerpt || phrase,
+      dateBasis,
+      anchorIso,
     });
 
     if (commitments.length >= MAX_COMMITMENTS) break;
@@ -339,6 +360,7 @@ Return strict JSON matching this shape:
       "detail": string|null,
       "raw_date_phrase": string,
       "date": "YYYY-MM-DD",
+      "date_kind": "absolute"|"relative"|"vague",
       "year_stated": boolean,
       "person_name": string|null,
       "kind": "call"|"email"|"meet"|"task"|"follow_up",
@@ -348,16 +370,17 @@ Return strict JSON matching this shape:
   ]
 }
 
-ABSOLUTE DATES ONLY. This is the most important rule and it overrides everything else.
-- Extract an item ONLY IF the notes name a specific calendar date, and ONLY IF the date phrase itself contains the month: a month and a day ("Sept 2", "December 1", "15th of October"), or a numeric/ISO date ("9/2", "2026-09-02").
-- If the notes mention a day with the month only somewhere else ("...in September. Board review on the 15th."), DO NOT extract it. The phrase you copy must name the month itself.
-- DISCARD anything dated only by a relative phrase. Discard, without exception: "next Tuesday", "this Friday", "a week from now", "tomorrow", "in two weeks", "next month", "end of the quarter", "Q3", "soon", "later this year", "after the holidays", "EOD", "EOW", "before the offsite", "when I'm back".
-- DISCARD commitments with no date at all ("I'll send the deck", "we should grab coffee sometime").
-- NEVER convert a relative phrase into a calendar date. If you cannot copy an explicit calendar date out of the notes, do not emit the item at all.
+DATED COMMITMENTS. Extract every commitment, follow-up, deadline, or event the notes attach a time to, whether the time is:
+- an absolute calendar date ("Sept 2", "December 1", "15th of October", "9/2", "2026-09-02"), or
+- a relative phrase ("next Tuesday", "in two weeks", "end of the month", "Q4", "tomorrow", "after the holidays"), or
+- a vague phrase ("soon", "at some point", "when you get a chance").
+- DISCARD commitments with no time reference at all ("I'll send the deck", "we should grab coffee").
+- NEVER rewrite a relative or vague phrase into a calendar date. Copy it verbatim into raw_date_phrase and leave "date" as "" for those.
 
 Field rules:
-- raw_date_phrase: the date text copied VERBATIM from the notes, exactly as written and nothing more. It must appear character-for-character somewhere in the notes. Do not normalize, expand, or reformat it.
-- date: that same date as YYYY-MM-DD. If the notes state a year, use it and set year_stated to true. If the notes do NOT state a year, set year_stated to false and use the nearest FUTURE occurrence relative to today — if that month and day already passed this year, use next year.
+- raw_date_phrase: the time text copied VERBATIM from the notes, exactly as written and nothing more — for "she'll send it in two weeks" that is "in two weeks". It must appear character-for-character in the notes.
+- date_kind: "absolute" when raw_date_phrase names a month or numeric date, "relative" when it is anchored to now/the meeting ("next", "in N", "tomorrow", "end of"), "vague" when it names no interval ("soon", "sometime").
+- date: for absolute phrases only, YYYY-MM-DD (infer the nearest FUTURE year when unstated, year_stated=false). For relative and vague phrases use "".
 - title: a short event or action name, 3 to 8 words, e.g. "Project kickoff", "AWS re:Invent", "Board review". Never put the date in the title.
 - detail: one sentence of supporting context from the notes, or null.
 - person_name: the person this involves, spelled exactly as the notes spell it. Use null when the notes name nobody (a conference, an internal review, a deadline).
@@ -369,27 +392,24 @@ Other rules:
 - Use only dates, people, and facts present in the notes. Never invent a date, a person, or an event.
 - Do not extract dates describing something already finished that needs no action ("we met on Aug 3", "she joined in 2019", "shipped it March 4"). Only extract things the user should be reminded about.
 - One object per distinct commitment. If the same event is mentioned twice, emit it once.
-- Return {"commitments": []} when the notes contain no absolute-dated commitments. An empty array is a correct and very common answer.`;
+- Return {"commitments": []} when the notes contain no dated commitments. An empty array is a correct and very common answer.`;
 }
 
-export async function extractDatedCommitments(
+export async function fetchRawCommitments(
   userId: string,
   notes: string,
   options?: { today?: Date; knownPeople?: string[] }
-): Promise<DatedCommitmentResult> {
+): Promise<RawCommitmentItem[]> {
   const trimmed = notes.trim();
-  if (!trimmed) return emptyCommitmentResult();
-
+  if (!trimmed) return [];
   const today = options?.today ?? new Date();
   const todayIso = toIsoDay(today);
   const todayWeekday = WEEKDAY_NAMES[today.getDay()];
   const corpus = trimmed.slice(0, MAX_NOTE_CHARS);
-
   const people = (options?.knownPeople || []).filter(Boolean);
   const peopleBlock = people.length
     ? `People likely mentioned:\n- ${people.join("\n- ")}\n\n`
     : "";
-
   // Today is repeated in the user turn because Gemini takes systemInstruction as a
   // separate config field, where it carries less weight than inline content.
   const content = await completeJson(userId, {
@@ -399,7 +419,21 @@ export async function extractDatedCommitments(
     system: buildSystemPrompt(todayIso, todayWeekday),
     user: `Today: ${todayIso} (${todayWeekday})\n\n${peopleBlock}Notes:\n${corpus}`,
   });
+  return datedCommitmentsSchema.parse(JSON.parse(content)).commitments;
+}
 
-  const parsed = datedCommitmentsSchema.parse(JSON.parse(content));
-  return validateCommitments(parsed.commitments, corpus, today);
+export async function extractDatedCommitments(
+  userId: string,
+  notes: string,
+  options?: { today?: Date; anchor?: Date; knownPeople?: string[] }
+): Promise<DatedCommitmentResult> {
+  const today = options?.today ?? new Date();
+  const raw = await fetchRawCommitments(userId, notes, {
+    today,
+    knownPeople: options?.knownPeople,
+  });
+  return validateCommitments(raw, notes.trim().slice(0, MAX_NOTE_CHARS), {
+    today,
+    anchor: options?.anchor,
+  });
 }

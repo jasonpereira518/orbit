@@ -140,6 +140,13 @@ function SourceLine({ item }: { item: SuggestionReviewItem }) {
         )}
         from &ldquo;{item.rawDatePhrase}&rdquo;
       </button>
+      {item.dateBasis !== "absolute" && (
+        <span className="text-[11px] text-muted-foreground">
+          {" "}
+          · counted from {item.anchorIso}
+          {item.dateBasis === "vague" ? " (no date given, default 2 weeks)" : ""}
+        </span>
+      )}
       {open && (
         <p className="rounded-lg bg-muted/50 p-2 text-xs text-muted-foreground">
           {item.sourceExcerpt}
@@ -150,8 +157,8 @@ function SourceLine({ item }: { item: SuggestionReviewItem }) {
 }
 
 /**
- * Surfaces what the extractor threw away, so the absolute-dates-only rule is visible
- * rather than looking like the AI simply missed things.
+ * Surfaces what the extractor threw away, so it's visible that Orbit is being
+ * deliberately careful rather than looking like it simply missed things.
  */
 function SkippedNote({
   skipped,
@@ -162,7 +169,7 @@ function SkippedNote({
   const parts: string[] = [];
   if (skipped.relative) {
     parts.push(
-      `${skipped.relative} relative ${skipped.relative === 1 ? "date" : "dates"} ("next Tuesday")`
+      `${skipped.relative} unrecognized ${skipped.relative === 1 ? "phrase" : "phrases"} ("in a fortnight")`
     );
   }
   if (skipped.past) {
@@ -175,7 +182,8 @@ function SkippedNote({
 
   return (
     <p className="text-xs text-muted-foreground">
-      Skipped {parts.join(", ")}. Orbit only schedules dates written out in full.
+      Skipped {parts.join(", ")}. Orbit only schedules dates it can verify or resolve
+      with confidence.
     </p>
   );
 }
