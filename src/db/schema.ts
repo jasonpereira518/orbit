@@ -181,6 +181,26 @@ export const userSettings = pgTable("user_settings", {
     withTimezone: true,
   }),
   /**
+   * What this subscription is worth per month, in cents.
+   *
+   * THE MIRROR IS OVERWRITE-ONLY, which is why this has to be stored rather than derived.
+   * `monthlyValueCents` sees only these columns, so without it an annual subscriber at
+   * $50/yr is indistinguishable from a monthly one at $5/mo and books as $5/mo forever.
+   *
+   * Stores the already-normalised monthly equivalent rather than the interval, because one
+   * integer covers any interval, any `interval_count`, a price change, a grandfathered
+   * price and a future coupon — and `monthlyValueCents` then needs no branching at all.
+   *
+   * Null means "never recorded", i.e. every row written before this column existed. That
+   * reads as the monthly price, so no historical figure moves the day it ships.
+   */
+  subscriptionMonthlyCents: integer("subscription_monthly_cents"),
+  /**
+   * Display only — "12 annual / 30 monthly" on the Money screen. Nothing
+   * correctness-critical reads this; `subscriptionMonthlyCents` above carries the money.
+   */
+  subscriptionInterval: text("subscription_interval").$type<"month" | "year">(),
+  /**
    * Provenance for a comped plan. `compedPlan` alone is a fact with no story, and it
    * outranks every real billing signal in `resolvePlan` permanently — so six months later
    * "why is this account on Lifetime?" has to be answerable from the row itself.

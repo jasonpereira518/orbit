@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   subscription_plan text,
   subscription_status text,
   subscription_period_end timestamptz,
+  subscription_monthly_cents integer,
+  subscription_interval text,
   comped_note text,
   comped_at timestamptz,
   comped_by text,
@@ -691,7 +693,7 @@ CREATE TABLE IF NOT EXISTS fundraising_investors (
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 19;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1201,6 +1203,8 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "subscription_plan", "text");
   await ensureColumn(client, "user_settings", "subscription_status", "text");
   await ensureColumn(client, "user_settings", "subscription_period_end", "timestamptz");
+  await ensureColumn(client, "user_settings", "subscription_monthly_cents", "integer");
+  await ensureColumn(client, "user_settings", "subscription_interval", "text");
   await ensureColumn(client, "user_settings", "comped_note", "text");
   await ensureColumn(client, "user_settings", "comped_at", "timestamptz");
   await ensureColumn(client, "user_settings", "comped_by", "text");
@@ -1462,6 +1466,8 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_plan text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_status text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_period_end timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_monthly_cents integer`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_interval text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_note text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_by text`,
