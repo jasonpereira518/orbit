@@ -15,20 +15,13 @@ import { eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contactTags, contacts, interactions, tags } from "../src/db/schema";
 import { recalibrateCloseness } from "../src/lib/closeness-cohort";
+import { scaleContactRows } from "./lib/scale-fixture";
 
 const USER = "demo-user";
 const COUNT = Number(process.argv[2] ?? 5000);
 const INSERT_CHUNK = 500;
 
-const FIRST = ["Ada","Grace","Alan","Katherine","Edsger","Barbara","Donald","Margaret","Linus","Radia","Ken","Frances","Tim","Shafi","Vint","Adele","Bjarne","Anita","Guido","Carol","Yukihiro","Sophie","Rasmus","Jean","Dennis","Hedy","Niklaus","Evelyn","Brian","Mary"];
-const LAST = ["Lovelace","Hopper","Turing","Johnson","Dijkstra","Liskov","Knuth","Hamilton","Torvalds","Perlman","Thompson","Allen","Berners-Lee","Goldwasser","Cerf","Goldberg","Stroustrup","Borg","van Rossum","Shaw","Matsumoto","Wilson","Lerdorf","Bartik","Ritchie","Lamarr","Wirth","Boyd","Kernighan","Keller"];
-const COMPANIES = ["Acme","Northwind","Globex","Initech","Umbrella","Hooli","Stark Industries","Wayne Enterprises","Cyberdyne","Aperture","Black Mesa","Tyrell","Weyland","Soylent","Massive Dynamic","Pied Piper",null];
-const TITLES = ["Engineer","Staff Engineer","Design Lead","Product Manager","Founder","CTO","Recruiter","Data Scientist","Researcher","VP Engineering",null];
-const CITIES = ["Toronto","New York","London","Berlin","Lisbon","San Francisco","Austin","Singapore","Nairobi","São Paulo",null];
-const SCHOOLS = ["Waterloo","MIT","Cambridge","UofT","Stanford","TU Delft",null];
 const TAGS = ["mentor","investor","alum","conference","warm intro","hiring","advisor","friend"];
-
-const pick = <T,>(xs: T[], i: number) => xs[i % xs.length];
 const DAY = 86400000;
 
 async function main() {
@@ -55,37 +48,9 @@ async function main() {
 
   console.log(`Inserting ${COUNT} contacts…`);
   const createdIds: string[] = [];
+  const fixture = scaleContactRows(USER, COUNT);
   for (let start = 0; start < COUNT; start += INSERT_CHUNK) {
-    const batch = [];
-    for (let i = start; i < Math.min(start + INSERT_CHUNK, COUNT); i++) {
-      // Deterministic spread, so a rerun produces the same network.
-      const r = ((i * 2654435761) % 100000) / 100000;
-      const first = pick(FIRST, i);
-      const last = pick(LAST, i * 7 + 3);
-      const interacted = r > 0.55;
-      batch.push({
-        userId: USER,
-        fullName: `${first} ${last} ${i}`,
-        firstName: first,
-        lastName: last,
-        company: pick(COMPANIES, i * 3),
-        title: pick(TITLES, i * 5),
-        location: pick(CITIES, i * 11),
-        school: pick(SCHOOLS, i * 13),
-        email: r > 0.35 ? `${first.toLowerCase()}.${i}@example.com` : null,
-        linkedinUrl: r > 0.4 ? `https://www.linkedin.com/in/${first.toLowerCase()}-${last.toLowerCase().replace(/[^a-z]/g, "")}-${i}/` : null,
-        relationshipScore: 1 + Math.floor(r * 5),
-        statedCloseness: r > 0.85 ? 1 + Math.floor(r * 5) : null,
-        howMet: r > 0.7 ? "Met at a conference" : null,
-        aiSummary: r > 0.5 ? `Works on ${pick(TITLES, i) ?? "things"} at ${pick(COMPANIES, i * 3) ?? "an unlisted company"}.` : null,
-        notes: r > 0.75 ? "Worth following up on the hiring conversation." : null,
-        keyFacts: r > 0.6 ? ["Runs marathons", "Two kids"] : [],
-        sharedInterests: r > 0.8 ? ["sailing", "typography"] : [],
-        dateMet: new Date(Date.now() - (100 + r * 1500) * DAY),
-        lastInteractionAt: interacted ? new Date(Date.now() - r * 400 * DAY) : new Date(Date.now() - 900 * DAY),
-        nextFollowUpAt: i % 23 === 0 ? new Date(Date.now() - 3 * DAY) : null,
-      });
-    }
+    const batch = fixture.slice(start, start + INSERT_CHUNK);
     // Plain `.returning()`: getDb() is a union of the neon and pglite drivers, and the
     // partial-shape overload does not resolve across both.
     const rows = await db.insert(contacts).values(batch).returning();

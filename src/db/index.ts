@@ -14,7 +14,7 @@ import fs from "node:fs";
  * driver, which is why the statement counter hangs off it rather than off `db.execute`.
  * It logs nothing — `logQuery` is used purely as a per-statement callback.
  */
-const countingLogger = { logQuery: () => noteQuery() };
+const countingLogger = { logQuery: (query: string) => noteQuery(query) };
 
 type Db =
   | ReturnType<typeof drizzleNeon<typeof schema>>

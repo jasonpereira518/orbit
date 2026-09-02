@@ -37,6 +37,8 @@ export const ERROR_SOURCES = {
   graphRebuildEmbeddings: "graph.rebuild_embeddings",
   avatarMicrolink: "avatar.microlink",
   apolloSearch: "apollo.search",
+  /** A call that outran `SLOW_CALL_THRESHOLD_MS` — see `src/lib/perf-trace.ts`. */
+  perfSlow: "perf.slow",
 } as const;
 
 export type ErrorEventInput = {

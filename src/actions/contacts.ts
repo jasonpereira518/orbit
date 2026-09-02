@@ -40,17 +40,19 @@ import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import {
   AVATAR_BACKFILL_BATCH_SIZE,
-  AvatarStorageError,
+  AVATAR_BACKFILL_BUDGET_MS,
   downloadAndPersistAvatar,
   fetchLinkedInPhotoUrl,
-  isUnusableAvatarUrl,
   MicrolinkRateLimitError,
 } from "@/lib/contact-avatar";
-import {
-  clientContactAvatarUrl,
-  isDurableAvatarUrl,
-} from "@/lib/contact-avatar-url";
+import { clientContactAvatarUrl } from "@/lib/contact-avatar-url";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
+import {
+  countAvatarBackfillCandidates,
+  findAvatarBackfillCandidates,
+  runAvatarBackfillBatch,
+} from "@/lib/avatar-backfill";
+import { traced } from "@/lib/perf-trace";
 import {
   findRelatedContacts,
   type RelatedContact,
@@ -956,54 +958,17 @@ export async function backfillContactAvatars(
     Math.max(1, Math.floor(limit) || AVATAR_BACKFILL_BATCH_SIZE),
     AVATAR_BACKFILL_BATCH_SIZE
   );
-  const skip = new Set(options.skipIds ?? []);
+  const skipIds = options.skipIds ?? [];
   const db = await getDb();
 
-  const rows = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    columns: {
-      id: true,
-      linkedinUrl: true,
-      profileImageUrl: true,
-    },
-  });
+  // Two bounded statements: the page of work, and the size of the backlog it came from.
+  // The backlog count is what the client shows progress against and uses to stop.
+  const [candidates, backlog] = await Promise.all([
+    findAvatarBackfillCandidates(db, userId, { limit: batchSize, skipIds }),
+    countAvatarBackfillCandidates(db, userId, skipIds),
+  ]);
 
-  const needsWork = rows
-    .filter((r) => {
-      if (skip.has(r.id)) return false;
-      const linkedin = r.linkedinUrl?.trim();
-      const stored = r.profileImageUrl?.trim() || "";
-      if (!linkedin && (!stored || isUnusableAvatarUrl(stored))) return false;
-      // Need LinkedIn resolution when missing/unusable.
-      if (linkedin && isUnusableAvatarUrl(stored)) return true;
-      // Also durably cache remote URLs that aren't in Blob storage yet.
-      if (
-        stored &&
-        !isUnusableAvatarUrl(stored) &&
-        !isDurableAvatarUrl(stored)
-      ) {
-        return true;
-      }
-      return false;
-    })
-    // Prefer free remote→Blob caching work before spending Microlink quota.
-    .sort((a, b) => {
-      const aRemote =
-        Boolean(a.profileImageUrl?.trim()) &&
-        !isUnusableAvatarUrl(a.profileImageUrl) &&
-        !isDurableAvatarUrl(a.profileImageUrl)
-          ? 0
-          : 1;
-      const bRemote =
-        Boolean(b.profileImageUrl?.trim()) &&
-        !isUnusableAvatarUrl(b.profileImageUrl) &&
-        !isDurableAvatarUrl(b.profileImageUrl)
-          ? 0
-          : 1;
-      return aRemote - bRemote;
-    });
-
-  if (needsWork.length === 0) {
+  if (candidates.length === 0) {
     return {
       saved: 0,
       savedIds: [],
@@ -1015,79 +980,32 @@ export async function backfillContactAvatars(
     };
   }
 
-  let saved = 0;
-  const savedIds: string[] = [];
-  const failedIds: string[] = [];
-  let failed = 0;
-  let rateLimitedUntil: number | null = null;
-  let storageError: string | null = null;
-  const batch = needsWork.slice(0, batchSize);
+  const result = await traced(
+    "contacts.backfillAvatars",
+    () =>
+      runAvatarBackfillBatch(candidates, {
+        deadline: Date.now() + AVATAR_BACKFILL_BUDGET_MS,
+        persistRemote: downloadAndPersistAvatar,
+        resolveLinkedIn: fetchLinkedInPhotoUrl,
+        save: async (contactId, photoUrl) => {
+          await db
+            .update(contacts)
+            .set({ profileImageUrl: photoUrl, updatedAt: new Date() })
+            .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+        },
+      }),
+    { userId }
+  );
 
-  for (const contact of batch) {
-    const stored = contact.profileImageUrl?.trim() || "";
-    try {
-      let photoUrl: string | null = null;
-
-      if (stored && !isUnusableAvatarUrl(stored) && !isDurableAvatarUrl(stored)) {
-        photoUrl = await downloadAndPersistAvatar(contact.id, stored);
-      }
-
-      if (!photoUrl && contact.linkedinUrl?.trim()) {
-        try {
-          photoUrl = await fetchLinkedInPhotoUrl(contact.id, contact.linkedinUrl);
-        } catch (err) {
-          if (err instanceof MicrolinkRateLimitError) {
-            rateLimitedUntil = err.resetAt;
-            // Unavatar was already tried inside fetchLinkedInPhotoUrl.
-            failed += 1;
-            continue;
-          }
-          throw err;
-        }
-      }
-
-      if (!photoUrl) {
-        failed += 1;
-        failedIds.push(contact.id);
-        continue;
-      }
-
-      await db
-        .update(contacts)
-        .set({ profileImageUrl: photoUrl, updatedAt: new Date() })
-        .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
-      saved += 1;
-      savedIds.push(contact.id);
-    } catch (err) {
-      if (err instanceof MicrolinkRateLimitError) {
-        rateLimitedUntil = err.resetAt;
-        break;
-      }
-      if (err instanceof AvatarStorageError) {
-        // Every remaining contact would fail the same way — stop the run.
-        storageError = err.message;
-        break;
-      }
-      failed += 1;
-      failedIds.push(contact.id);
-    }
-  }
-
-  const pending = Math.max(0, needsWork.length - saved - failedIds.length);
-  if (saved > 0) {
+  if (result.saved > 0) {
     revalidatePath("/contacts");
     revalidatePath("/");
     revalidatePath("/graph");
   }
 
   return {
-    saved,
-    savedIds,
-    failedIds,
-    pending,
-    failed,
-    rateLimitedUntil,
-    storageError,
+    ...result,
+    pending: Math.max(0, backlog - result.saved - result.failedIds.length),
   };
 }
 

@@ -17,9 +17,9 @@ import {
   inferReminderActionKind,
   isReminderActionKind,
 } from "@/lib/reminder-action-kind";
+import { loadNotificationPanel } from "@/lib/notification-panel";
+import { traced } from "@/lib/perf-trace";
 import { revalidateReminderPaths } from "@/lib/reminder-paths";
-// Type-only: `account-alerts` is the pure half, so this is erased and pulls in nothing.
-import type { AccountAlert } from "@/lib/account-alerts";
 import {
   displayListName,
   ensureReminderLists,
@@ -54,13 +54,18 @@ export async function fetchDashboard() {
       )
       .catch(() => {});
   });
-  const data = await getDashboardData(userId, {
-    // Clerk profile fetch runs concurrently with the DB work; resolved at
-    // its single use site (graphPreview.summary.userName).
-    userName: getCurrentUserProfile()
-      .then((p) => p?.name || undefined)
-      .catch(() => undefined),
-  });
+  const data = await traced(
+    "dashboard.load",
+    () =>
+      getDashboardData(userId, {
+        // Clerk profile fetch runs concurrently with the DB work; resolved at
+        // its single use site (graphPreview.summary.userName).
+        userName: getCurrentUserProfile()
+          .then((p) => p?.name || undefined)
+          .catch(() => undefined),
+      }),
+    { userId }
+  );
 
   // Reuse the contact rows already loaded for the dashboard instead of a
   // second full-network scan for NetworkStatsCard.
@@ -76,7 +81,9 @@ export async function fetchDashboard() {
       title: c.title,
       industry: c.industry,
       howMet: c.howMet,
-      notes: c.notes,
+      // The dashboard scan no longer pulls notes (see getDashboardData); the stats
+      // input declares the field but has never read it.
+      notes: null,
       aiSummary: c.aiSummary,
       keyFacts: c.keyFacts,
       sharedInterests: c.sharedInterests,
@@ -697,193 +704,18 @@ export async function snoozeReminderAction(id: string, days = 7) {
   revalidatePath("/graph");
 }
 
-/**
- * Builds the panel payload. NOT exported — the `"use server"` async-export rule applies
- * only to exports, and keeping this private is what lets it take an options object without
- * widening a Server Function's surface (every export here is reachable by direct POST).
- *
- * `withAlerts` exists so the desktop-notification watcher, which polls this every 90
- * seconds — faster than the panel itself — pays nothing for account alerts it discards.
- */
-async function buildNotificationPanel(
-  userId: string,
-  opts: { withAlerts: boolean }
-) {
-  const db = await getDb();
-  const { aiSuggestions, suggestedReminders } = await import("@/db/schema");
-  const { getEntitlements } = await import("@/lib/entitlements");
-  const { getAccountAlerts, hasErrorAlert } = await import("@/lib/account-health");
+/** Full inbox for the in-app notifications panel. */
+export async function listNotificationPanel() {
+  const userId = await requireUserId();
   const { isAdminUser } = await import("@/lib/admin");
   const { isViewingAsUser } = await import("@/lib/surface-visibility");
-  const now = new Date();
 
-  const [
-    pendingReminders,
-    contactRows,
-    suggestions,
-    datedSuggestions,
-    entitlements,
-    alerts,
-  ] = await Promise.all([
-    db.query.reminders.findMany({
-      where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
-      orderBy: (r, { asc: ascOrder }) => [ascOrder(r.dueDate)],
-      limit: 80,
-    }),
-    db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
-      columns: {
-        id: true,
-        fullName: true,
-        preferredName: true,
-        nextFollowUpAt: true,
-        company: true,
-        title: true,
-      },
-      limit: 300,
-    }),
-    db.query.aiSuggestions.findMany({
-      where: and(
-        eq(aiSuggestions.userId, userId),
-        eq(aiSuggestions.status, "pending")
-      ),
-      orderBy: (s, { desc: descOrder }) => [descOrder(s.confidenceScore)],
-      limit: 30,
-    }),
-    db.query.suggestedReminders.findMany({
-      where: and(
-        eq(suggestedReminders.userId, userId),
-        eq(suggestedReminders.status, "pending")
-      ),
-      orderBy: (s, { asc: ascOrder }) => [ascOrder(s.dueDate)],
-      limit: 25,
-    }),
-    getEntitlements(userId),
-    opts.withAlerts
-      ? getAccountAlerts(userId)
-      : Promise.resolve<AccountAlert[]>([]),
-  ]);
-
-  type PanelItem = {
-    id: string;
-    kind: "reminder" | "follow_up" | "suggestion" | "suggested_reminder";
-    title: string;
-    body: string | null;
-    url: string;
-    dueAt: string | null;
-    urgency: "due" | "upcoming" | "info";
-    reminderId?: string;
-    suggestionId?: string;
-    suggestedReminderId?: string;
-    contactId?: string | null;
-  };
-
-  const items: PanelItem[] = [];
-
-  for (const r of pendingReminders) {
-    const dueAt = r.dueDate ? new Date(r.dueDate) : null;
-    const isDue = !dueAt || dueAt <= now;
-    items.push({
-      id: `reminder:${r.id}`,
-      kind: "reminder",
-      title: r.title,
-      body: r.description,
-      url: r.contactId ? `/contacts/${r.contactId}` : "/reminders",
-      dueAt: dueAt?.toISOString() ?? null,
-      urgency: isDue ? "due" : "upcoming",
-      reminderId: r.id,
-      contactId: r.contactId,
-    });
-  }
-
-  for (const c of contactRows) {
-    if (!c.nextFollowUpAt) continue;
-    const dueAt = new Date(c.nextFollowUpAt);
-    const isDue = dueAt <= now;
-    const daysAhead =
-      (dueAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
-    // Keep due items always; upcoming only within ~2 months to avoid noise.
-    if (!isDue && daysAhead > 60) continue;
-    const name = c.preferredName || c.fullName;
-    items.push({
-      id: `followup:${c.id}:${dueAt.toISOString().slice(0, 10)}`,
-      kind: "follow_up",
-      title: `Follow up with ${name}`,
-      body: [c.title, c.company].filter(Boolean).join(" · ") || null,
-      url: `/contacts/${c.id}`,
-      dueAt: dueAt.toISOString(),
-      urgency: isDue ? "due" : "upcoming",
-      contactId: c.id,
-    });
-  }
-
-  for (const s of suggestions) {
-    const related = Array.isArray(s.relatedContactIds)
-      ? (s.relatedContactIds as string[])
-      : [];
-    items.push({
-      id: `suggestion:${s.id}`,
-      kind: "suggestion",
-      title: s.title,
-      body: s.description,
-      url: related[0] ? `/contacts/${related[0]}` : "/dashboard",
-      dueAt: null,
-      urgency: "info",
-      suggestionId: s.id,
-      contactId: related[0] ?? null,
-    });
-  }
-
-  for (const s of datedSuggestions) {
-    const due = new Date(s.dueDate);
-    // Deliberately "info", never "due", even once the date arrives. `dueCount` drives
-    // the bell badge and listDueNotificationItems fires OS desktop notifications off
-    // urgency === "due" — an unconfirmed AI guess must never reach either. The date is
-    // carried in the body text instead.
-    items.push({
-      id: `suggested_reminder:${s.id}`,
-      kind: "suggested_reminder",
-      title: s.title,
-      body: `${due.toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      })} · from your notes`,
-      url: "/reminders",
-      dueAt: due.toISOString(),
-      urgency: "info",
-      suggestedReminderId: s.id,
-      contactId: s.contactId,
-    });
-  }
-
-  const urgencyRank = { due: 0, upcoming: 1, info: 2 } as const;
-  items.sort((a, b) => {
-    const ur = urgencyRank[a.urgency] - urgencyRank[b.urgency];
-    if (ur !== 0) return ur;
-    const aTime = a.dueAt ? new Date(a.dueAt).getTime() : Number.POSITIVE_INFINITY;
-    const bTime = b.dueAt ? new Date(b.dueAt).getTime() : Number.POSITIVE_INFINITY;
-    return aTime - bTime;
+  const panel = await loadNotificationPanel(userId, new Date(), {
+    withAlerts: true,
   });
 
-  const dueCount = items.filter((i) => i.urgency === "due").length;
-
   return {
-    items,
-    dueCount,
-    totalCount: items.length,
-    // Drives the extension promo in the panel: paid plans get an install link,
-    // everyone else gets the pitch and a route to the plans page.
-    canUseExtension: entitlements.canUseExtension,
-    /**
-     * Account health, as a SIBLING of `items` and never an entry in it. That placement is
-     * the structural guarantee that alerts can never become OS desktop notifications:
-     * `listDueNotificationItems` maps `panel.items` alone, so there is no discipline to
-     * forget. `alertDot` never contributes to the bell's numeric badge — a persistent
-     * condition like a missing API key would pin the count forever.
-     */
-    alerts,
-    alertDot: hasErrorAlert(alerts),
+    ...panel,
     /**
      * Whether to offer the operator console in the panel footer.
      *
@@ -896,15 +728,8 @@ async function buildNotificationPanel(
      * this only decides whether a LINK is drawn — `/admin` does its own checking, since a
      * hidden link is not access control.
      */
-    canOpenAdmin:
-      isAdminUser(userId) && !(await isViewingAsUser(userId)),
+    canOpenAdmin: isAdminUser(userId) && !(await isViewingAsUser(userId)),
   };
-}
-
-/** Full inbox for the in-app notifications panel. */
-export async function listNotificationPanel() {
-  const userId = await requireUserId();
-  return buildNotificationPanel(userId, { withAlerts: true });
 }
 
 /** Lightweight payload for browser/desktop notification polling. */
@@ -913,7 +738,7 @@ export async function listDueNotificationItems() {
   const userId = await requireUserId();
   const [notifiedIds, panel] = await Promise.all([
     getDesktopNotifiedIds(),
-    buildNotificationPanel(userId, { withAlerts: false }),
+    loadNotificationPanel(userId, new Date(), { withAlerts: false }),
   ]);
   const notified = new Set(notifiedIds);
 

@@ -18,6 +18,12 @@ const MAX_INLINE_BYTES = 120_000;
 
 /** How many LinkedIn photos to resolve per backfill tick. */
 export const AVATAR_BACKFILL_BATCH_SIZE = 5;
+/**
+ * Wall-clock budget for one backfill tick. The tick runs as a server action on whatever
+ * page is open, so it must return well inside the function ceiling whatever the network
+ * does; anything unattempted is simply pending for the next tick.
+ */
+export const AVATAR_BACKFILL_BUDGET_MS = 15_000;
 
 /**
  * Thrown when the photo store itself fails, as opposed to a contact simply
@@ -208,7 +214,7 @@ export async function downloadImageBytes(
         Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
         Referer: "https://www.linkedin.com/",
       },
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(8_000),
       redirect: "follow",
     });
     if (!res.ok) return null;
@@ -317,7 +323,7 @@ async function resolveLinkedInOgImage(
 
     const res = await fetch(endpoint, {
       headers,
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(8_000),
     });
 
     noteMicrolinkHeaders(res);
