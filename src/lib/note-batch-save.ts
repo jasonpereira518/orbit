@@ -279,15 +279,16 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
       );
     });
 
-    // 5. Insert reminders, idempotent through itemHash.
+    // 5. Insert reminders, idempotent through itemHash. An action-item draft hashes its
+    //    own item id rather than its title: two participants in one batch can share the
+    //    same action-item text and the same window due date, and hashing the title would
+    //    collide them under the (userId, itemHash) unique index, silently dropping the
+    //    second reminder. The item id is unique per row, so this stays collision-free while
+    //    remaining idempotent across re-pastes — `action_items` rows are keyed by
+    //    (interactionId, text) and the interaction by externalId, so a re-paste resolves to
+    //    the same item id and therefore the same hash.
     if (kept.length) {
       const listId = await getInboxListId(userId);
-      // itemHash is unique per (userId, itemHash) and deterministic from
-      // sourceHash+dueIso+title, so it doubles as the key back to each draft's
-      // actionItemId once `.onConflictDoNothing()` tells us which rows actually landed.
-      const actionItemIdByHash = new Map(
-        kept.filter((d) => d.actionItemId).map((d) => [buildSuggestionItemHash(input.sourceHash, isoDay(d.dueDate), d.title), d.actionItemId!])
-      );
       const inserted = await db
         .insert(reminders)
         .values(
@@ -307,7 +308,10 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
             sourceExcerpt: d.sourceExcerpt,
             rawDatePhrase: d.rawDatePhrase,
             dateBasis: d.dateBasis,
-            itemHash: buildSuggestionItemHash(input.sourceHash, isoDay(d.dueDate), d.title),
+            actionItemId: d.actionItemId,
+            itemHash: d.actionItemId
+              ? buildSuggestionItemHash(input.sourceHash, isoDay(d.dueDate), `action-item:${d.actionItemId}`)
+              : buildSuggestionItemHash(input.sourceHash, isoDay(d.dueDate), d.title),
           }))
         )
         .onConflictDoNothing({ target: [reminders.userId, reminders.itemHash] })
@@ -319,10 +323,9 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
           dateBasis: (r.dateBasis ?? "window") as NoteBatchResult["reminders"][number]["dateBasis"],
           rawDatePhrase: r.rawDatePhrase, sourceExcerpt: r.sourceExcerpt,
         });
-        const actionItemId = r.itemHash ? actionItemIdByHash.get(r.itemHash) : undefined;
-        if (actionItemId) {
-          await db.update(actionItems).set({ reminderId: r.id }).where(eq(actionItems.id, actionItemId));
-          const entry = result.actionItems.find((a) => a.id === actionItemId);
+        if (r.actionItemId) {
+          await db.update(actionItems).set({ reminderId: r.id }).where(eq(actionItems.id, r.actionItemId));
+          const entry = result.actionItems.find((a) => a.id === r.actionItemId);
           if (entry) entry.reminderId = r.id;
         }
       }

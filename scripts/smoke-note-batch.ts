@@ -112,7 +112,7 @@ async function main() {
   check("action item became a window reminder", Boolean(deck) && deck.dateBasis === "window" && deck.reminderType === "ai_suggested");
   check("  due anchor + 14d", isoDayOf(deck.dueDate!) === "2026-09-15");
   const items = await db.query.actionItems.findMany({ where: eq(actionItems.userId, USER) });
-  check("action item row linked to its reminder", items.length === 1 && items[0].reminderId === deck.id);
+  check("action item row linked to its reminder", items.length === 1 && items[0].reminderId === deck.id && deck.actionItemId === items[0].id);
   check("result lists the action item", first.result.actionItems.length === 1 && first.result.actionItems[0].reminderId === deck.id);
 
   const mentionRows = await db.query.interactionMentions.findMany({ where: eq(interactionMentions.userId, USER) });
@@ -225,6 +225,36 @@ async function main() {
   check("collision: Dev has no fallback follow-up from this batch", !devReminders.some((r) => r.title === "Follow up with Dev Patel"));
   const devActionItem = await db.query.actionItems.findFirst({ where: and(eq(actionItems.userId, USER), eq(actionItems.contactId, devId), eq(actionItems.text, "Book kickoff")) });
   check("collision: action item row still exists with no reminder link", devActionItem !== undefined && devActionItem.reminderId === null);
+
+  // 8. Two different contacts in one batch with the identical action-item text and the
+  //    same window due date must not collide on itemHash (which used to hash the title,
+  //    not the item id) — each gets its own reminder.
+  const sharedTextNote = "Caught up with Amy Liu and Ben Cho separately — both want the deck.";
+  const sharedTextInput: SaveNoteBatchInput = {
+    sourceText: sharedTextNote,
+    sourceHash: hashSourceNote(sharedTextNote),
+    anchorIso: "2026-09-01",
+    anchorBasis: "note",
+    entryPoint: "capture",
+    participants: [
+      { notes: sharedTextNote, parsed: parsed("Amy Liu", null, ["Send the deck"], null), createReminder: false, relationshipScore: 2, tagNames: [] },
+      { notes: sharedTextNote, parsed: parsed("Ben Cho", null, ["Send the deck"], null), createReminder: false, relationshipScore: 2, tagNames: [] },
+    ],
+    commitments: [],
+    skipped: { relative: 0, unverifiable: 0, past: 0 },
+  };
+  const sharedText = await saveNoteBatch(USER, sharedTextInput);
+  const sharedTextReminders = await db.query.reminders.findMany({ where: and(eq(reminders.userId, USER), eq(reminders.noteBatchId, sharedText.batchId), eq(reminders.title, "Send the deck")) });
+  check("shared action-item text: two reminders created, not one", sharedTextReminders.length === 2, String(sharedTextReminders.length));
+  const sharedTextItems = await db.query.actionItems.findMany({ where: and(eq(actionItems.userId, USER), eq(actionItems.text, "Send the deck"), inArray(actionItems.contactId, sharedText.contactIds)) });
+  check("shared action-item text: one action item row per contact", sharedTextItems.length === 2, String(sharedTextItems.length));
+  check(
+    "shared action-item text: each item links to a reminder scoped to its own contact",
+    sharedTextItems.every((item) => {
+      const rem = sharedTextReminders.find((r) => r.id === item.reminderId);
+      return Boolean(rem) && rem!.actionItemId === item.id && rem!.contactId === item.contactId;
+    })
+  );
 
   await reset();
   console.log("\nsmoke-note-batch: all checks passed");
