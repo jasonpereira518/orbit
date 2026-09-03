@@ -123,12 +123,54 @@ async function seed() {
     contactCount: 1,
   });
 
-  await db.insert(schema.interactions).values({
+  const [interaction] = await db
+    .insert(schema.interactions)
+    .values({
+      userId: USER,
+      contactId: contact.id,
+      interactionType: "note",
+      rawNotes: "private note about a real person",
+    })
+    .returning();
+
+  // The pasted text a note was parsed out of. Nothing cascades this — both
+  // `note_batch_id` columns are plain uuids with no foreign key — so it only leaves with
+  // the explicit delete in `purgeUserData`.
+  await db.insert(schema.noteBatches).values({
+    userId: USER,
+    sourceHash: "note-batch-hash",
+    sourceText: "the raw notes the user pasted, about named people",
+    anchorDate: now,
+    result: {} as never,
+  });
+
+  // Cascade-covered (from `contacts` / `interactions`), seeded anyway: the cascade is the
+  // thing under test, and an unseeded table proves nothing about it.
+  await db.insert(schema.contactBriefs).values({
     userId: USER,
     contactId: contact.id,
-    interactionType: "note",
-    rawNotes: "private note about a real person",
+    standing: "a generated summary of a real relationship",
   });
+
+  await db.insert(schema.actionItems).values({
+    userId: USER,
+    contactId: contact.id,
+    interactionId: interaction.id,
+    text: "send them the deck",
+    itemHash: "action-item-hash",
+  });
+
+  await db.insert(schema.interactionMentions).values({
+    userId: USER,
+    interactionId: interaction.id,
+    contactId: contact.id,
+    mentionText: "Ada",
+    confidence: 0.9,
+    matchedBy: "exact_name",
+  });
+
+  // `user_id` is the primary key and there is no parent to cascade from.
+  await db.insert(schema.extensionUsage).values({ userId: USER });
 
   const [list] = await db
     .insert(schema.reminderLists)
