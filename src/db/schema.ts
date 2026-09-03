@@ -181,6 +181,26 @@ export const userSettings = pgTable("user_settings", {
     withTimezone: true,
   }),
   /**
+   * What this subscription is worth per month, in cents.
+   *
+   * THE MIRROR IS OVERWRITE-ONLY, which is why this has to be stored rather than derived.
+   * `monthlyValueCents` sees only these columns, so without it an annual subscriber at
+   * $50/yr is indistinguishable from a monthly one at $5/mo and books as $5/mo forever.
+   *
+   * Stores the already-normalised monthly equivalent rather than the interval, because one
+   * integer covers any interval, any `interval_count`, a price change, a grandfathered
+   * price and a future coupon — and `monthlyValueCents` then needs no branching at all.
+   *
+   * Null means "never recorded", i.e. every row written before this column existed. That
+   * reads as the monthly price, so no historical figure moves the day it ships.
+   */
+  subscriptionMonthlyCents: integer("subscription_monthly_cents"),
+  /**
+   * Display only — "12 annual / 30 monthly" on the Money screen. Nothing
+   * correctness-critical reads this; `subscriptionMonthlyCents` above carries the money.
+   */
+  subscriptionInterval: text("subscription_interval").$type<"month" | "year">(),
+  /**
    * Provenance for a comped plan. `compedPlan` alone is a fact with no story, and it
    * outranks every real billing signal in `resolvePlan` permanently — so six months later
    * "why is this account on Lifetime?" has to be answerable from the row itself.
@@ -1699,6 +1719,33 @@ export const broadcastRecipients = pgTable(
  * every future reader remembering to deduplicate. The retry information is not lost; it
  * still lives one table over.
  */
+/**
+ * What a billing event meant financially.
+ *
+ * Declared here rather than in `billing-events.ts` because the column's `$type` and the
+ * module's union were previously spelled out separately, in two files, with nothing
+ * keeping them in step — a kind added to one and forgotten in the other type-checks
+ * cleanly and mis-sorts money at runtime.
+ *
+ * `kind` is a plain `text` column with no CHECK and no `pgEnum`, so adding a member here
+ * needs no DDL and no `SCHEMA_VERSION` bump.
+ *
+ * `payment` is recurring cash actually received (an invoice paid). It is deliberately
+ * distinct from `lifetime`, which is one-time cash: folding the two together is the
+ * easiest way to produce a "one-time revenue" figure that quietly includes subscription
+ * renewals.
+ */
+export type BillingEventKind =
+  | "new"
+  | "expansion"
+  | "contraction"
+  | "churn"
+  | "reactivation"
+  | "lifetime"
+  | "payment"
+  | "refund"
+  | "payment_failed";
+
 export const billingEvents = pgTable(
   "billing_events",
   {
@@ -1706,18 +1753,7 @@ export const billingEvents = pgTable(
     source: text("source").$type<"clerk" | "stripe">().notNull(),
     /** The provider's delivery id — `svix-id` for Clerk, the event id for Stripe. */
     eventId: text("event_id").notNull(),
-    kind: text("kind")
-      .$type<
-        | "new"
-        | "expansion"
-        | "contraction"
-        | "churn"
-        | "reactivation"
-        | "lifetime"
-        | "refund"
-        | "payment_failed"
-      >()
-      .notNull(),
+    kind: text("kind").$type<BillingEventKind>().notNull(),
     userId: text("user_id"),
     /** Cash moved, always positive. Zero for a pure status change. */
     amountCents: integer("amount_cents").default(0).notNull(),
