@@ -17,7 +17,8 @@ export function revalidateReminderPaths(contactId?: string | null) {
   }
 }
 
-export function revalidateMentionPaths(contactId?: string | null) {
+export function revalidateMentionPaths(contactId?: string | null, secondaryContactId?: string | null) {
   revalidatePath("/mentions/review");
   if (contactId) revalidatePath(`/contacts/${contactId}`);
+  if (secondaryContactId && secondaryContactId !== contactId) revalidatePath(`/contacts/${secondaryContactId}`);
 }

@@ -2,9 +2,10 @@
 
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts, interactionMentions, unresolvedMentions } from "@/db/schema";
+import { contacts, unresolvedMentions } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { revalidateMentionPaths } from "@/lib/reminder-paths";
+import { dismissUnresolvedMentionForUser, resolveUnresolvedMentionForUser } from "@/lib/unresolved-mentions";
 
 export type UnresolvedMentionRow = {
   id: string;
@@ -37,48 +38,16 @@ export async function listUnresolvedMentions(): Promise<UnresolvedMentionRow[]> 
   return rows.map((r) => ({ ...r, nearContactId: r.nearContactId ?? null, nearContactName: r.nearContactName ?? null }));
 }
 
-async function loadPendingMention(userId: string, mentionId: string) {
-  const db = await getDb();
-  const row = await db.query.unresolvedMentions.findFirst({
-    where: and(eq(unresolvedMentions.id, mentionId), eq(unresolvedMentions.userId, userId)),
-  });
-  if (!row) throw new Error("Mention not found");
-  // Already-resolved is a no-op, not an error: a double-click from a stale client should not surface a scary message.
-  if (row.status !== "pending") return null;
-  return row;
+export async function resolveUnresolvedMentionToContact(mentionId: string, contactId: string): Promise<{ alreadyResolved: boolean }> {
+  const userId = await requireUserId();
+  const result = await resolveUnresolvedMentionForUser(userId, mentionId, contactId);
+  if (!result.alreadyResolved) revalidateMentionPaths(contactId, result.nearContactId);
+  return { alreadyResolved: result.alreadyResolved };
 }
 
-export async function resolveUnresolvedMentionToContact(mentionId: string, contactId: string): Promise<void> {
+export async function dismissUnresolvedMention(mentionId: string): Promise<{ alreadyResolved: boolean }> {
   const userId = await requireUserId();
-  const row = await loadPendingMention(userId, mentionId);
-  if (!row) return;
-  const db = await getDb();
-  const contact = await db.query.contacts.findFirst({
-    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-    columns: { id: true },
-  });
-  if (!contact) throw new Error("Contact not found");
-  await db
-    .update(unresolvedMentions)
-    .set({ status: "resolved", resolvedContactId: contactId, resolvedAt: new Date() })
-    .where(and(eq(unresolvedMentions.id, mentionId), eq(unresolvedMentions.userId, userId)));
-  if (row.interactionId) {
-    await db
-      .insert(interactionMentions)
-      .values({ userId, interactionId: row.interactionId, contactId, mentionText: row.mentionText, confidence: 0.6, matchedBy: "user_pick" })
-      .onConflictDoNothing({ target: [interactionMentions.interactionId, interactionMentions.contactId] });
-  }
-  revalidateMentionPaths(contactId);
-}
-
-export async function dismissUnresolvedMention(mentionId: string): Promise<void> {
-  const userId = await requireUserId();
-  const row = await loadPendingMention(userId, mentionId);
-  if (!row) return;
-  const db = await getDb();
-  await db
-    .update(unresolvedMentions)
-    .set({ status: "dismissed", resolvedAt: new Date() })
-    .where(and(eq(unresolvedMentions.id, mentionId), eq(unresolvedMentions.userId, userId)));
-  revalidateMentionPaths(null);
+  const result = await dismissUnresolvedMentionForUser(userId, mentionId);
+  if (!result.alreadyResolved) revalidateMentionPaths(null);
+  return result;
 }

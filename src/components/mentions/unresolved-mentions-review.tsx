@@ -11,6 +11,7 @@ import {
 } from "@/actions/unresolved-mentions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 
 type ContactOption = { id: string; fullName: string; preferredName: string | null };
 
@@ -21,17 +22,60 @@ function addAsContactHref(m: UnresolvedMentionRow) {
   return `/contacts/new?${params.toString()}`;
 }
 
-export function UnresolvedMentionsReview({ mentions: initial }: { mentions: UnresolvedMentionRow[] }) {
-  const [mentions, setMentions] = useState(initial);
+function ContactPicker({
+  selectedId,
+  onSelect,
+}: {
+  selectedId: string;
+  onSelect: (id: string, label: string) => void;
+}) {
+  const [query, setQuery] = useState("");
   const [contacts, setContacts] = useState<ContactOption[]>([]);
-  const [linking, setLinking] = useState<Record<string, string>>({});
-  const [pending, start] = useTransition();
 
   useEffect(() => {
-    searchContactsForPicker()
-      .then((rows) => setContacts(rows.map((c) => ({ id: c.id, fullName: c.fullName, preferredName: c.preferredName }))))
-      .catch(() => toast.error("Could not load contacts"));
-  }, []);
+    const handle = setTimeout(() => {
+      searchContactsForPicker(query || undefined, 50)
+        .then((rows) => setContacts(rows.map((c) => ({ id: c.id, fullName: c.fullName, preferredName: c.preferredName }))))
+        .catch(() => toast.error("Could not load contacts"));
+    }, 200);
+    return () => clearTimeout(handle);
+  }, [query]);
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Input
+        aria-label="Search contacts to link"
+        placeholder="Search contacts…"
+        className="h-9 w-40"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      <select
+        aria-label="Link to existing contact"
+        className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+        value={selectedId}
+        onChange={(e) => {
+          const id = e.target.value;
+          const label = contacts.find((c) => c.id === id);
+          onSelect(id, label ? label.preferredName || label.fullName : "");
+        }}
+      >
+        <option value="">Link to existing contact…</option>
+        {contacts.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.preferredName || c.fullName}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+export function UnresolvedMentionsReview({ mentions: initial }: { mentions: UnresolvedMentionRow[] }) {
+  const [mentions, setMentions] = useState(initial);
+  const [linking, setLinking] = useState<Record<string, string>>({});
+  const [linkingName, setLinkingName] = useState<Record<string, string>>({});
+  const [pending, start] = useTransition();
 
   function remove(id: string) {
     setMentions((prev) => prev.filter((m) => m.id !== id));
@@ -46,7 +90,7 @@ export function UnresolvedMentionsReview({ mentions: initial }: { mentions: Unre
     start(async () => {
       try {
         await resolveUnresolvedMentionToContact(m.id, contactId);
-        toast.success(`Linked to ${contacts.find((c) => c.id === contactId)?.fullName ?? "contact"}`);
+        toast.success(`Linked to ${linkingName[m.id] || "contact"}`);
         remove(m.id);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Could not link");
@@ -91,19 +135,13 @@ export function UnresolvedMentionsReview({ mentions: initial }: { mentions: Unre
               )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <select
-                aria-label="Link to existing contact"
-                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                value={linking[m.id] ?? ""}
-                onChange={(e) => setLinking((prev) => ({ ...prev, [m.id]: e.target.value }))}
-              >
-                <option value="">Link to existing contact…</option>
-                {contacts.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.preferredName || c.fullName}
-                  </option>
-                ))}
-              </select>
+              <ContactPicker
+                selectedId={linking[m.id] ?? ""}
+                onSelect={(id, label) => {
+                  setLinking((prev) => ({ ...prev, [m.id]: id }));
+                  setLinkingName((prev) => ({ ...prev, [m.id]: label }));
+                }}
+              />
               <Button type="button" size="sm" variant="outline" disabled={pending} onClick={() => link(m)}>
                 Link
               </Button>

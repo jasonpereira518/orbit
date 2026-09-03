@@ -391,7 +391,7 @@ export async function undoNoteBatchForUser(userId: string, batchId: string) {
     where: and(eq(noteBatches.id, batchId), eq(noteBatches.userId, userId)),
   });
   if (!batch) throw new Error("Batch not found");
-  if (batch.status === "undone") return { remindersDismissed: 0, mentionsRemoved: 0 };
+  if (batch.status === "undone") return { remindersDismissed: 0, mentionsRemoved: 0, unresolvedMentionsDismissed: 0 };
 
   const dismissed = await db
     .update(reminders)
@@ -414,8 +414,16 @@ export async function undoNoteBatchForUser(userId: string, batchId: string) {
     mentionsRemoved = removed.length;
   }
 
+  // Bare `.returning()`, not `.returning({ id })` — an explicit field selector defeats
+  // Drizzle's overload resolution in this TS version (see the same note in import-engine.ts).
+  const dismissedMentions = await db
+    .update(unresolvedMentions)
+    .set({ status: "dismissed" })
+    .where(and(eq(unresolvedMentions.userId, userId), eq(unresolvedMentions.noteBatchId, batchId), eq(unresolvedMentions.status, "pending")))
+    .returning();
+
   await db.update(noteBatches).set({ status: "undone", undoneAt: new Date() }).where(eq(noteBatches.id, batchId));
-  return { remindersDismissed: dismissed.length, mentionsRemoved };
+  return { remindersDismissed: dismissed.length, mentionsRemoved, unresolvedMentionsDismissed: dismissedMentions.length };
 }
 
 export async function dismissNoteReminderForUser(userId: string, reminderId: string) {

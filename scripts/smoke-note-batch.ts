@@ -188,6 +188,7 @@ async function main() {
   const undo = await undoNoteBatchForUser(USER, first.batchId);
   check("undo dismissed four reminders", undo.remindersDismissed === 4, String(undo.remindersDismissed));
   check("undo removed mention links", undo.mentionsRemoved === 1);
+  check("undo dismissed the batch's own unresolved mention", undo.unresolvedMentionsDismissed === 1, String(undo.unresolvedMentionsDismissed));
   const survivors = await db.query.interactionMentions.findMany({ where: eq(interactionMentions.userId, USER) });
   check("  a foreign mention on the same interaction survives undo", survivors.length === 1 && survivors[0].contactId === zed.id, JSON.stringify(survivors.map((m) => m.mentionText)));
   const afterUndo = await db.query.reminders.findMany({ where: eq(reminders.userId, USER) });
@@ -196,6 +197,8 @@ async function main() {
   check("  interactions survive", (await db.query.interactions.findMany({ where: eq(interactions.userId, USER) })).length === 2);
   const undone = await db.query.noteBatches.findFirst({ where: eq(noteBatches.id, first.batchId) });
   check("  batch marked undone", undone?.status === "undone" && undone.undoneAt !== null);
+  const rajAfterUndo = await db.query.unresolvedMentions.findFirst({ where: eq(unresolvedMentions.id, first.result.unresolvedMentions[0].id!) });
+  check("  the Raj unresolved mention is now dismissed", rajAfterUndo?.status === "dismissed", JSON.stringify(rajAfterUndo));
 
   // 4. Paste a third time after undo: the dismissed rows block re-creation.
   const third = await saveNoteBatch(USER, again);
