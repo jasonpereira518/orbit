@@ -1,6 +1,7 @@
 "use server";
 
 import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
+import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getEntitlements } from "@/lib/entitlements";
 import {
   LIFETIME_METADATA_KEY,
@@ -71,6 +72,13 @@ export async function startLifetimeCheckout(): Promise<CheckoutResult> {
     return { url: session.url };
   } catch (err) {
     console.error("Stripe checkout session failed:", err);
+    await recordErrorEvent({
+      source: ERROR_SOURCES.stripeCheckout,
+      kind: stripeErrorKind(err),
+      userId,
+      message: err,
+      context: { plan: "lifetime" },
+    });
     return { error: "Could not start checkout. Please try again." };
   }
 }
@@ -139,6 +147,13 @@ export async function startProCheckout(
     return { url: session.url };
   } catch (err) {
     console.error("Stripe subscription checkout failed:", err);
+    await recordErrorEvent({
+      source: ERROR_SOURCES.stripeCheckout,
+      kind: stripeErrorKind(err),
+      userId,
+      message: err,
+      context: { plan: "pro" },
+    });
     return { error: "Could not start checkout. Please try again." };
   }
 }
@@ -186,4 +201,15 @@ export async function triggerDemoCelebration(): Promise<{ ok: boolean }> {
     note: "Live demo shortcut (Ctrl+Shift+U)",
   });
   return { ok: true };
+}
+
+/**
+ * Low-cardinality kind for a failed checkout: Stripe's own error `code` when it has one
+ * (`resource_missing` is the live one — a price id from the wrong mode), else its `type`.
+ */
+function stripeErrorKind(err: unknown): string {
+  const e = err as { code?: unknown; type?: unknown } | null;
+  if (e && typeof e.code === "string") return e.code;
+  if (e && typeof e.type === "string") return e.type;
+  return "unknown";
 }

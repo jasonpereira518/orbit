@@ -13,7 +13,7 @@ export default function GroupError({
     <ErrorFallback
       error={error}
       retry={unstable_retry}
-      home={{ href: "/dashboard", label: "Go to dashboard" }}
+      home={{ href: "/sign-in", label: "Back to sign in" }}
     />
   );
 }

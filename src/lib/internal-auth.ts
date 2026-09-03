@@ -53,3 +53,18 @@ export function internalFetch(path: string, init: RequestInit = {}): Promise<Res
   for (const [k, v] of Object.entries(internalAuthHeaders())) headers.set(k, v);
   return fetch(`${getAppBaseUrl()}${path}`, { ...init, headers });
 }
+
+/**
+ * Gate for the deep health view. Accepts `?token=` (so a browser or a monitor can use it)
+ * or a bearer, compared in constant time. No token configured → the deep view is off.
+ */
+export function isHealthTokenValid(request: Request): boolean {
+  const expected = process.env.HEALTH_TOKEN?.trim();
+  if (!expected) return false;
+  const url = new URL(request.url);
+  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+  const presented = url.searchParams.get("token") ?? bearer;
+  const a = Buffer.from(presented);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}

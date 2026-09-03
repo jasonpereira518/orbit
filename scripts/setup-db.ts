@@ -38,6 +38,7 @@ import { sql } from "drizzle-orm";
   "usage_events",
   "admin_audit_log",
   "cron_runs",
+  "ops_alert_state",
   "webhook_deliveries",
   "error_events",
   "app_surface_flags",

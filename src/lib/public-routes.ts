@@ -36,4 +36,8 @@ export const PUBLIC_ROUTES = [
   "/api/imports/(.*)/continue",
   "/api/embeddings/backfill",
   "/api/linkedin/timeline-events/backfill",
+  "/api/ops/sweep",
+  // Genuinely public: the liveness probe the uptime monitor polls. Its shallow body says
+  // only "up or down" plus the deployed sha; the deep view needs HEALTH_TOKEN.
+  "/api/health",
 ] as const;

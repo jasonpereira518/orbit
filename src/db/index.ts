@@ -568,6 +568,17 @@ CREATE TABLE IF NOT EXISTS cron_runs (
 );
 CREATE INDEX IF NOT EXISTS cron_runs_job_started_idx ON cron_runs(job, started_at);
 CREATE INDEX IF NOT EXISTS cron_runs_started_idx ON cron_runs(started_at);
+CREATE TABLE IF NOT EXISTS ops_alert_state (
+  id text PRIMARY KEY,
+  severity text NOT NULL,
+  active boolean NOT NULL DEFAULT true,
+  opened_at timestamptz NOT NULL DEFAULT now(),
+  last_seen_at timestamptz NOT NULL DEFAULT now(),
+  last_notified_at timestamptz,
+  notify_count integer NOT NULL DEFAULT 0,
+  detail jsonb NOT NULL DEFAULT '{}',
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source text NOT NULL DEFAULT 'clerk',
@@ -778,8 +789,9 @@ CREATE TABLE IF NOT EXISTS non_dilutive_funding (
  * stamped 20 is missing v19's indexes, so neither number can stand for both.
  * v22 = non_dilutive_funding, plus fundraising_investors.received_at.
  * v23 = contact_embeddings.content_hash (hybrid contact search).
+ * v24 = ops_alert_state (the production-readiness ops sweep's alert ledger).
  */
-export const SCHEMA_VERSION = 23;
+export const SCHEMA_VERSION = 24;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a

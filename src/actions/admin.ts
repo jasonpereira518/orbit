@@ -14,6 +14,8 @@ import * as broadcast from "@/lib/broadcasts";
 import { recordAdminAction } from "@/lib/admin-operations";
 import { resolvePlan } from "@/lib/entitlements";
 import { setCompedPlan } from "@/lib/user-settings";
+import { runOpsSweep } from "@/lib/ops-sweep";
+import { notifySlack } from "@/lib/ops-notify";
 import {
   setSurfaceHidden,
   VIEW_AS_USER_COOKIE,
@@ -579,5 +581,49 @@ export async function deleteBroadcastAction(input: {
   });
 
   revalidateBroadcasts();
+  return { ok: true };
+}
+
+/**
+ * Run the known-condition sweep now, from the console, rather than waiting up to ten
+ * minutes for the scheduler. Audited like every other privileged action.
+ */
+export async function runOpsSweepAction(): Promise<{
+  ok: true;
+  opened: string[];
+  reminded: string[];
+  recovered: string[];
+  active: string[];
+}> {
+  const adminUserId = await requireAdminUserId();
+  const result = await runOpsSweep({ trigger: "manual" });
+  await recordAdminAction({
+    adminUserId,
+    action: "ops.sweep",
+    detail: {
+      opened: result.opened,
+      reminded: result.reminded,
+      recovered: result.recovered,
+      active: result.active.length,
+      deliveryFailures: result.deliveryFailures,
+    },
+  });
+  revalidatePath("/admin/health");
+  return {
+    ok: true,
+    opened: result.opened,
+    reminded: result.reminded,
+    recovered: result.recovered,
+    active: result.active,
+  };
+}
+
+/** Prove the Slack webhook is wired, from the console. */
+export async function sendTestAlertAction(): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await notifySlack(
+    `:mega: Test alert from the Orbit admin console (sent by \`${adminUserId}\`). If you can read this, ops alerts reach Slack.`
+  );
+  await recordAdminAction({ adminUserId, action: "ops.test_alert" });
   return { ok: true };
 }

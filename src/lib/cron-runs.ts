@@ -13,7 +13,8 @@ import { toUserFacingError } from "@/lib/errors";
  * and because the finish write must land before the lambda freezes.
  */
 
-export type CronJobName = "imports.process-stalled";
+/** `ops.sweep` is the ten-minute known-condition sweep (`src/lib/ops-sweep.ts`). */
+export type CronJobName = "imports.process-stalled" | "ops.sweep";
 
 export type CronRunStatus = "ok" | "partial" | "failed";
 

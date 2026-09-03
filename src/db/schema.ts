@@ -1498,6 +1498,27 @@ export const cronRuns = pgTable(
 );
 
 /**
+ * One row per known ops condition (`src/lib/ops-alerts.ts`), keyed by condition id.
+ *
+ * This is what turns a ten-minute sweep into something a human can stand to have in Slack:
+ * the sweep announces a condition when it opens, reminds on a per-severity cadence while it
+ * persists, and announces the recovery — and it can only do that by remembering what it
+ * said last time. A dozen rows at most; bounded by the condition catalogue, not by traffic.
+ */
+export const opsAlertState = pgTable("ops_alert_state", {
+  /** Condition id, e.g. `webhook.invalid_streak:clerk`. */
+  id: text("id").primaryKey(),
+  severity: text("severity").$type<"critical" | "warning" | "info">().notNull(),
+  active: boolean("active").default(true).notNull(),
+  openedAt: timestamp("opened_at", { withTimezone: true }).defaultNow().notNull(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
+  lastNotifiedAt: timestamp("last_notified_at", { withTimezone: true }),
+  notifyCount: integer("notify_count").default(0).notNull(),
+  detail: jsonb("detail").$type<Record<string, unknown>>().default({}).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
  * One row per inbound webhook delivery, including the ones that are rejected or ignored.
  *
  * A silently dropped `subscriptionItem.*` event desyncs billing from `user_settings`, which

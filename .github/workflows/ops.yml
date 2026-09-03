@@ -1,0 +1,81 @@
+# The scheduler Orbit's Hobby plan does not have.
+#
+# Vercel Hobby runs crons at most once a day, so this workflow drives the two things that
+# need to happen more often: the known-condition ops sweep (every ten minutes) and the
+# process-stalled job (hourly, so a lost import continuation stalls for an hour, not a day).
+# It also tells the sweep where `main` is, so production pinned to an old deploy by a
+# failed build shows up as `deploy.drift`.
+#
+# Caveats, both absorbed by the Better Stack heartbeat the sweep pings on success: GitHub
+# schedules routinely lag 5–30 minutes under load, and on a public repository they are
+# disabled after 60 days without a commit. If the heartbeat goes quiet, look here first.
+#
+# Secrets: APP_URL (https://orbit.jasonpereira.live), CRON_SECRET (the same value as the
+# Vercel env var), SLACK_OPS_CRITICAL_WEBHOOK_URL (for the "app is down" fallback).
+name: ops
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+    - cron: "7 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ops
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: main
+
+      - name: Health probe
+        id: health
+        continue-on-error: true
+        run: |
+          code=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 15 "$APP_URL/api/health" || echo "000")
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "health: HTTP $code"; cat /tmp/health.json 2>/dev/null; echo
+          test "$code" = "200"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+
+      - name: Page on a down probe
+        if: steps.health.outcome == 'failure' && secrets.SLACK_OPS_CRITICAL_WEBHOOK_URL != ''
+        run: |
+          curl -sS --max-time 10 -X POST -H 'content-type: application/json' \
+            --data "{\"text\":\":rotating_light: *[critical] /api/health answered HTTP ${{ steps.health.outputs.code }}* from the scheduler. If the uptime monitor agrees, production is down.\"}" \
+            "$SLACK_OPS_CRITICAL_WEBHOOK_URL"
+        env:
+          SLACK_OPS_CRITICAL_WEBHOOK_URL: ${{ secrets.SLACK_OPS_CRITICAL_WEBHOOK_URL }}
+
+      - name: Run the ops sweep
+        if: steps.health.outcome == 'success'
+        run: |
+          main_sha=$(git rev-parse HEAD)
+          main_at=$(git log -1 --format=%cI)
+          curl -sS --fail-with-body --max-time 55 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" -H 'content-type: application/json' \
+            --data "{\"mainSha\":\"$main_sha\",\"mainCommittedAt\":\"$main_at\"}" \
+            "$APP_URL/api/ops/sweep"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      - name: Run the stalled-import backstop (hourly)
+        if: github.event.schedule == '7 * * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 300 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/imports/process-stalled"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}

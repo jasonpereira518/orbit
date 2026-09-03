@@ -109,6 +109,13 @@ async function main() {
   const stripeRows = await invalidRowsSince("stripe");
   check("stripe records exactly one invalid row for three rejections", stripeRows.length === 1, `got ${stripeRows.length}`);
 
+  // Leave the local ledger as it was found: a rejected-delivery streak is a real alert
+  // condition for the ops sweep, and this script manufactures one on purpose.
+  const db = await getDb();
+  await db
+    .delete(webhookDeliveries)
+    .where(and(eq(webhookDeliveries.outcome, "invalid"), gte(webhookDeliveries.createdAt, STARTED)));
+
   console.log("\nAll webhook-guard checks passed.");
 }
 
