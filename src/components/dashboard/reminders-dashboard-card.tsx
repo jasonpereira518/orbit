@@ -20,6 +20,7 @@ export type DashboardReminderItem = {
   actionKind?: ReminderActionKind;
   contactId?: string | null;
   contactName?: string | null;
+  noteBatchId?: string | null;
 };
 
 export function RemindersDashboardCard({
@@ -66,6 +67,7 @@ export function RemindersDashboardCard({
                   actionKind={r.actionKind}
                   contactId={r.contactId}
                   contactName={r.contactName}
+                  noteBatchId={r.noteBatchId}
                 />
               ))}
             </div>
