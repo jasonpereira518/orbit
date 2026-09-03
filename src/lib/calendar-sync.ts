@@ -14,7 +14,13 @@ import {
   nameFromNetworkingTitle,
   peopleFromDescription,
 } from "@/lib/calendar-classify";
-import { findDuplicateCandidates, daysAgo } from "@/lib/duplicates";
+import {
+  addToDuplicateIndex,
+  buildDuplicateIndex,
+  daysAgo,
+  findDuplicateCandidatesIndexed,
+  type DuplicateIndex,
+} from "@/lib/duplicates";
 import { upsertContactEmbedding } from "@/lib/search";
 import { refreshOutreachSuggestions } from "@/lib/reminders";
 import { contactHeadroomForUser } from "@/lib/contact-writes";
@@ -93,35 +99,39 @@ function icsFetchErrorMessage(url: string, status: number) {
  */
 async function resolveOrCreateContact(
   userId: string,
-  existing: Contact[],
+  duplicateIndex: DuplicateIndex,
   person: { name: string; email: string },
   titleHint: string | null
-): Promise<{ contact: Contact | null; created: boolean; list: Contact[] }> {
+): Promise<{ contact: Contact | null; created: boolean }> {
   const db = await getDb();
   const fullName = person.name || titleHint || person.email.split("@")[0] || "Calendar contact";
 
-  const dups = findDuplicateCandidates(existing, {
+  const dups = findDuplicateCandidatesIndexed(duplicateIndex, {
     fullName: person.name || titleHint || undefined,
     email: person.email || undefined,
   });
 
   if (dups[0] && dups[0].confidence >= 0.6) {
-    const contact = dups[0].contact;
-    if (person.email && !contact.email) {
+    const matchId = dups[0].contact.id;
+    if (person.email && !dups[0].contact.email) {
       const [updated] = await db
         .update(contacts)
         .set({ email: person.email, updatedAt: new Date() })
-        .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)))
+        .where(and(eq(contacts.id, matchId), eq(contacts.userId, userId)))
         .returning();
-      const list = existing.map((c) => (c.id === contact.id ? updated : c));
-      return { contact: updated, created: false, list };
+      return { contact: updated, created: false };
     }
-    return { contact, created: false, list: existing };
+    // The index only carries the narrow dedup-matching columns (see DuplicateSubject
+    // in duplicates.ts) — the caller needs the full row.
+    const contact = await db.query.contacts.findFirst({
+      where: and(eq(contacts.id, matchId), eq(contacts.userId, userId)),
+    });
+    return { contact: contact ?? null, created: false };
   }
 
   const headroom = await contactHeadroomForUser(userId);
   if (headroom !== null && headroom < 1) {
-    return { contact: null, created: false, list: existing };
+    return { contact: null, created: false };
   }
 
   const parts = fullName.trim().split(/\s+/);
@@ -142,7 +152,8 @@ async function resolveOrCreateContact(
     })
     .returning();
 
-  return { contact: created, created: true, list: [...existing, created] };
+  addToDuplicateIndex(duplicateIndex, created);
+  return { contact: created, created: true };
 }
 
 export async function applyNetworkingEvents(
@@ -166,9 +177,22 @@ export async function applyNetworkingEvents(
     return t >= now - SYNC_WINDOW_PAST_MS && t <= now + SYNC_WINDOW_FUTURE_MS;
   });
 
-  let existing = await db.query.contacts.findMany({
+  // Narrow columns, matching the pattern the other import/sync entry points use: dedup
+  // matching only reads these six fields, so there's no reason to pull notes/aiSummary/
+  // keyFacts/etc. across the wire for every contact on every sync cycle.
+  const existing = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
+    columns: {
+      id: true,
+      fullName: true,
+      email: true,
+      linkedinUrl: true,
+      xHandle: true,
+      company: true,
+      title: true,
+    },
   });
+  const duplicateIndex = buildDuplicateIndex(existing);
 
   const stats: CalendarSyncStats = {
     scanned: windowed.length,
@@ -220,11 +244,10 @@ export async function applyNetworkingEvents(
     for (const person of counterparts) {
       const resolved = await resolveOrCreateContact(
         userId,
-        existing,
+        duplicateIndex,
         person,
         titleHint
       );
-      existing = resolved.list;
       if (resolved.created) stats.contactsCreated++;
 
       const contact = resolved.contact;

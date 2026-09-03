@@ -66,15 +66,6 @@ function companyKey(company: string | null | undefined) {
   return normalizePhrase(company);
 }
 
-function sharedCount(a: string[], b: string[]) {
-  const setB = new Set(b.map((t) => t.toLowerCase()));
-  let n = 0;
-  for (const t of a) {
-    if (setB.has(t.toLowerCase())) n += 1;
-  }
-  return n;
-}
-
 function contactCorpus(c: RelatedContactCandidate) {
   return [
     c.aiSummary || "",
@@ -100,13 +91,49 @@ function nameAliases(c: RelatedContactCandidate) {
   return [...names];
 }
 
-function mentionsOther(a: RelatedContactCandidate, b: RelatedContactCandidate) {
-  const text = contactCorpus(a);
-  if (!text) return false;
-  return nameAliases(b).some((alias) => {
+/**
+ * Per-contact text/alias/tag data, built once per contact instead of
+ * rebuilt (corpus/aliases/tag-Sets) on every `other` the loop below visits —
+ * `source`'s own corpus/aliases in particular were previously recomputed on
+ * every single iteration even though `source` never changes.
+ */
+type ContactSignals = {
+  corpus: string;
+  aliases: string[];
+  tagSet: Set<string>;
+  interestSet: Set<string>;
+};
+
+function buildContactSignals(
+  contacts: RelatedContactCandidate[]
+): Map<string, ContactSignals> {
+  const map = new Map<string, ContactSignals>();
+  for (const c of contacts) {
+    map.set(c.id, {
+      corpus: contactCorpus(c),
+      aliases: nameAliases(c),
+      tagSet: new Set((c.tags || []).map((t) => t.toLowerCase())),
+      interestSet: new Set((c.sharedInterests || []).map((t) => t.toLowerCase())),
+    });
+  }
+  return map;
+}
+
+function mentionsOtherSignals(a: ContactSignals, b: ContactSignals) {
+  if (!a.corpus) return false;
+  return b.aliases.some((alias) => {
     if (alias.length < 3) return false;
-    return text.includes(alias);
+    return a.corpus.includes(alias);
   });
+}
+
+/** Counts overlap with multiplicity from `aList` (raw) against `bSet` (already lowercased). */
+function sharedCountFromSignals(aList: string[], bSet: Set<string>) {
+  let n = 0;
+  for (const t of aList) {
+    if (bSet.has(t.toLowerCase())) n += 1;
+  }
+  return n;
 }
 
 function reasonLabel(
@@ -139,9 +166,14 @@ function reasonLabel(
 
 function bestReason(
   source: RelatedContactCandidate,
-  other: RelatedContactCandidate
+  other: RelatedContactCandidate,
+  sourceSignals: ContactSignals,
+  otherSignals: ContactSignals
 ): RelatedReason | null {
-  if (mentionsOther(source, other) || mentionsOther(other, source)) {
+  if (
+    mentionsOtherSignals(sourceSignals, otherSignals) ||
+    mentionsOtherSignals(otherSignals, sourceSignals)
+  ) {
     return "mention";
   }
   if (
@@ -166,11 +198,14 @@ function bestReason(
   if (sourceSchool.length >= 3 && sourceSchool === otherSchool) {
     return "school";
   }
-  if (sharedCount(source.tags || [], other.tags || []) >= 2) {
+  if (sharedCountFromSignals(source.tags || [], otherSignals.tagSet) >= 2) {
     return "sharedTags";
   }
   if (
-    sharedCount(source.sharedInterests || [], other.sharedInterests || []) >= 2
+    sharedCountFromSignals(
+      source.sharedInterests || [],
+      otherSignals.interestSet
+    ) >= 2
   ) {
     return "sharedInterests";
   }
@@ -199,17 +234,20 @@ export function findRelatedContacts(
     )
     .slice(0, 40);
 
+  const signals = buildContactSignals(contacts);
+  const sourceSignals = signals.get(source.id)!;
   const scored: Array<RelatedContact & { score: number }> = [];
 
   for (const other of contacts) {
     if (other.id === contactId) continue;
-    const reason = bestReason(source, other);
+    const otherSignals = signals.get(other.id)!;
+    const reason = bestReason(source, other, sourceSignals, otherSignals);
     if (!reason) continue;
 
     const weight = REASON_WEIGHT[reason];
     const strengthBoost = (other.relationshipScore ?? 2) * 4;
 
-    const otherCorpus = contactCorpus(other);
+    const otherCorpus = otherSignals.corpus;
     let introBoost = 0;
     if (goalTokens.length > 0 && otherCorpus) {
       const hits = goalTokens.filter((t) => otherCorpus.includes(t)).length;
