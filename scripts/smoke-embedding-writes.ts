@@ -3,6 +3,8 @@
  * Uses an injected stub embedder — no AI calls. Stop dev servers first.
  * Run: npx tsx scripts/smoke-embedding-writes.ts
  */
+import "./smoke/_env";
+
 import { eq, and } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, contactEmbeddings } from "../src/db/schema";

@@ -167,9 +167,6 @@ async function seed() {
     matchedBy: "exact_name",
   });
 
-  // `user_id` is the primary key and there is no parent to cascade from.
-  await db.insert(schema.extensionUsage).values({ userId: USER });
-
   const [list] = await db
     .insert(schema.reminderLists)
     .values({ userId: USER, name: "Inbox", nameNormalized: "inbox" })

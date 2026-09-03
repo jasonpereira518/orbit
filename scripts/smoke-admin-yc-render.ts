@@ -7,21 +7,12 @@
  * and builds the whole element tree, which catches what actually breaks here: a loader that
  * throws, a column that was never selected, a null dereference in a row mapping.
  *
- * WHY IT DOES NOT LOAD `.env.local`. Every other smoke script in this repo starts with
- * `config({ path: ".env.local" })`, and `.env.local` sets `DATABASE_URL` to the SHARED
- * REMOTE Neon database. A seeding script that loads it does not exercise a local database
- * at all — it writes rows into, and deletes rows out of, the database everyone else is
- * using. This script deletes `DATABASE_URL` instead and runs entirely on local PGlite.
- *
- * PGlite is single-writer: stop this worktree's dev server before running this, or the
- * two writers will corrupt `.data/pglite` unrecoverably.
- *
  * WHAT IT DOES NOT COVER: client components render as elements, not DOM, so this proves
  * the forms and charts receive well-formed props, not that they behave.
  *
  * Run: npx tsx scripts/smoke-admin-yc-render.ts
  */
-delete process.env.DATABASE_URL;
+import "./smoke/_env";
 
 import { eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";

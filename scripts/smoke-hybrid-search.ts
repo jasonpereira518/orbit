@@ -11,6 +11,8 @@
  * Stop dev servers on .data/pglite first.
  * Run: npx tsx scripts/smoke-hybrid-search.ts
  */
+import "./smoke/_env";
+
 import { eq } from "drizzle-orm";
 import { getDb, isPgvectorAvailable } from "../src/db";
 import { contacts, contactEmbeddings, tags, contactTags } from "../src/db/schema";
