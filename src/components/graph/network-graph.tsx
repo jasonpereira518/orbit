@@ -2090,7 +2090,10 @@ export function NetworkGraph({
         {/* Keyed on `enabled`, not `active`: in the "show all" view `active` is false by
             definition, and hiding the chip there would strand the viewer with no way back. */}
         {!compact && constellationFilter?.enabled && (
-          <div className="pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2">
+          // Bottom centre, not top: the canvas toolbar (clusters, search, re-engage, refresh)
+          // owns the top strip, and a chip there renders underneath the search field. The
+          // bottom band is empty between the Key button and the view controls.
+          <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2 max-w-[calc(100%-2rem)]">
             <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/10 bg-[#080b12]/85 px-3 py-1 text-[11px] text-white/70 backdrop-blur-md">
               <Stars className="size-3 text-white/50" aria-hidden />
               {showAllStars ? (
