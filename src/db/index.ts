@@ -757,7 +757,7 @@ CREATE TABLE IF NOT EXISTS fundraising_investors (
  * contact_briefs) plus reminder/interaction provenance columns.
  * v18 = legacy action-item backfill guards on jsonb_typeof(action_items) = 'array'.
  */
-export const SCHEMA_VERSION = 20;
+export const SCHEMA_VERSION = 21;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -884,6 +884,9 @@ export const SCALE_DDL: string[] = [
   // create, update and logInteraction, so it is not a cold path.
   `CREATE INDEX IF NOT EXISTS contacts_user_company_norm_idx ON contacts(user_id, lower(trim(company)))`,
   `CREATE INDEX IF NOT EXISTS contacts_user_school_norm_idx ON contacts(user_id, lower(trim(school)))`,
+  // Lets upsertContactEmbedding and rebuildContactEmbeddingsBatch skip the embedding API
+  // call entirely when a row's source content hasn't changed since it was last embedded.
+  `ALTER TABLE contact_embeddings ADD COLUMN IF NOT EXISTS content_hash text`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
@@ -925,13 +928,19 @@ export async function applyScaleSchema(run: StatementRunner) {
 
   // Fuzzy name matching. Available on Neon as an extension and bundled with PGlite (see
   // `ensureReady`), so local search finally behaves like production — unlike pgvector,
-  // which PGlite has no build of at all. If it is unavailable the index is skipped and
-  // search still works through `search_tsv`; only typo tolerance is lost.
+  // whose PGlite build ships only in a separate package pinned to a newer PGlite than
+  // this project uses (see `migratePgvector`). If it is unavailable the index is skipped
+  // and search still works through `search_tsv`; only typo tolerance is lost.
   try {
     await run(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+    // The predicates in searchCondition and the hybrid search arms compare
+    // lower(column), so the index must be on the identical expression or the
+    // planner ignores it. The old contacts_name_trgm on the raw columns was
+    // never usable; drop it on the way through.
+    await run(`DROP INDEX IF EXISTS contacts_name_trgm`);
     await run(
       `CREATE INDEX IF NOT EXISTS contacts_name_trgm
-       ON contacts USING gin(full_name gin_trgm_ops, company gin_trgm_ops)`
+       ON contacts USING gin(lower(full_name) gin_trgm_ops, lower(coalesce(company, '')) gin_trgm_ops)`
     );
     globalForDb.orbitTrigram = true;
   } catch {
@@ -1431,6 +1440,10 @@ export function isPgvectorAvailable() {
   return Boolean(globalForDb.orbitPgvector);
 }
 
+export function isTrigramAvailable() {
+  return Boolean(globalForDb.orbitTrigram);
+}
+
 /**
  * The raw Neon client, or null on the PGlite path.
  *
@@ -1445,10 +1458,15 @@ export function neonClient() {
 /**
  * Copies JSONB embeddings into the pgvector column for rows written before it existed.
  *
- * Deliberately NOT on the boot path any more. It is one `UPDATE` per row, and on
- * `neon-http` every statement is its own HTTPS request — so a cold start could spend 500
- * sequential round trips here before serving its first request. The daily cron drains it
- * instead; until a row is copied, search just falls back for that row.
+ * Deliberately NOT on the boot path any more. Normally one round trip per run (a single
+ * batched `UPDATE ... FROM (VALUES ...)`) rather than one per row, so it can be called more
+ * aggressively than before if needed — but the daily cron cadence is left alone here. If the
+ * batched statement fails (e.g. one malformed/wrong-dimension embedding in the window), this
+ * falls back to per-row updates so a single bad row can't wedge the whole window: the SELECT
+ * has no cursor, so a permanently-failing batch would otherwise re-select and re-fail the
+ * same rows on every future cron run. Bad rows are logged and skipped; everything else in the
+ * window still drains. Returns the number of rows actually copied. Until a row is copied,
+ * search just falls back for that row.
  */
 export async function backfillEmbeddingVectors(
   sql: ReturnType<typeof neon>,
@@ -1466,29 +1484,67 @@ export async function backfillEmbeddingVectors(
     embedding: number[];
   }>;
 
-  let copied = 0;
-  for (const row of rows) {
-    const embedding = row.embedding;
-    if (!Array.isArray(embedding) || embedding.length === 0) continue;
-    const literal = formatVectorLiteral(embedding);
+  const valid = rows.filter(
+    (row) => Array.isArray(row.embedding) && row.embedding.length > 0
+  );
+  if (valid.length === 0) return 0;
+
+  const params: unknown[] = [];
+  const tuples = valid
+    .map((row, i) => {
+      params.push(row.id, formatVectorLiteral(row.embedding));
+      return `($${i * 2 + 1}::uuid, $${i * 2 + 2}::vector)`;
+    })
+    .join(", ");
+  try {
     await sql.query(
-      `UPDATE contact_embeddings
-       SET embedding_vector = $1::vector
-       WHERE id = $2`,
-      [literal, row.id]
+      `UPDATE contact_embeddings AS ce
+       SET embedding_vector = v.vec
+       FROM (VALUES ${tuples}) AS v(id, vec)
+       WHERE ce.id = v.id`,
+      params
     );
-    copied += 1;
+    return valid.length;
+  } catch (err) {
+    console.error(
+      `[backfillEmbeddingVectors] batched update failed for ${valid.length} rows, falling back to per-row:`,
+      err
+    );
+  }
+
+  let copied = 0;
+  for (const row of valid) {
+    try {
+      const literal = formatVectorLiteral(row.embedding);
+      await sql.query(
+        `UPDATE contact_embeddings
+         SET embedding_vector = $1::vector
+         WHERE id = $2`,
+        [literal, row.id]
+      );
+      copied += 1;
+    } catch (err) {
+      console.error(`[backfillEmbeddingVectors] failed to copy row ${row.id}:`, err);
+    }
   }
   return copied;
 }
 
-async function migratePgvector(sql: ReturnType<typeof neon>) {
+/**
+ * pgvector installs on Neon. The pinned `@electric-sql/pglite` (0.5.x, `^0.5.4`) has no
+ * `vector` extension export — that moved to a separate `@electric-sql/pglite-pgvector`
+ * package pinned to PGlite `0.5.8` — so this is only ever called on the Neon path. Local
+ * dev intentionally degrades to the bounded in-memory cosine fallback (see
+ * `src/lib/search.ts`). Revisit if PGlite is upgraded to >=0.5.8 alongside
+ * `@electric-sql/pglite-pgvector`.
+ */
+async function migratePgvector(run: StatementRunner) {
   try {
-    await sql.query(`CREATE EXTENSION IF NOT EXISTS vector`);
-    await sql.query(
+    await run(`CREATE EXTENSION IF NOT EXISTS vector`);
+    await run(
       `ALTER TABLE contact_embeddings ADD COLUMN IF NOT EXISTS embedding_vector vector(1536)`
     );
-    await sql.query(
+    await run(
       `CREATE INDEX IF NOT EXISTS embeddings_vector_hnsw_idx
        ON contact_embeddings USING hnsw (embedding_vector vector_cosine_ops)`
     );
@@ -1695,7 +1751,7 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     }
   }
 
-  await migratePgvector(sql);
+  await migratePgvector((statement) => sql.query(statement));
 
   await applyScaleSchema((statement) => sql.query(statement));
 }
@@ -1732,8 +1788,10 @@ async function ensureReady(): Promise<void> {
     // Absolute string path — requires serverExternalPackages for @electric-sql/pglite.
     // `pg_trgm` has to be supplied at construction: PGlite loads extension bundles when the
     // instance is built, not on demand from `CREATE EXTENSION`. This is what gives local dev
-    // the same fuzzy search as production — pgvector has no PGlite build, so vector search
-    // still degrades locally, but keyword search no longer does.
+    // the same fuzzy search as production. A vector build exists upstream only as a separate
+    // package (`@electric-sql/pglite-pgvector`) pinned to a newer PGlite than the one this
+    // project has installed; it is not installed here, so local vector search uses the JS
+    // fallback instead.
     const open = () =>
       PGlite.create({ dataDir, extensions: { pg_trgm } });
 
