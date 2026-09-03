@@ -22,8 +22,8 @@ delete process.env.DATABASE_URL;
 
 // Real-looking secrets so each verifier reaches its "signature does not match" branch
 // rather than its "not configured" branch. None talk to a network.
-process.env.CLERK_WEBHOOK_SIGNING_SECRET = "whsec_dGVzdHNlY3JldHRlc3RzZWNyZXQ=";
-process.env.RESEND_WEBHOOK_SECRET = "whsec_dGVzdHNlY3JldHRlc3RzZWNyZXQ=";
+process.env.CLERK_WEBHOOK_SIGNING_SECRET = "whsec_test_smoke_only_not_a_real_secret";
+process.env.RESEND_WEBHOOK_SECRET = "whsec_test_smoke_only_not_a_real_secret";
 process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_smoke_only_not_a_real_secret";
 process.env.STRIPE_SECRET_KEY ||= "sk_test_smoke_only_not_a_real_key";
 
