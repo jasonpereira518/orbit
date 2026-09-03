@@ -11,6 +11,7 @@ import {
   contacts,
   billingEvents,
   errorEvents,
+  extensionUsage,
   feedback,
   gateEvents,
   gmailConnections,
@@ -163,6 +164,18 @@ export async function purgeUserData(
   await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
   await db.delete(usageEvents).where(eq(usageEvents.userId, userId));
   await db.delete(errorEvents).where(eq(errorEvents.userId, userId));
+  // Rolling rate-limit counters for the browser extension, plus `last_seen_at` — a record
+  // of when the user last used it. Keyed on `user_id` as the primary key, so it belongs to
+  // the user-scoped sweep by the same rule the doc comment above states: the two ledgers
+  // that are deliberately kept name their column something other than `user_id` precisely
+  // to stay out of it. Leaving it also meant a deleted-then-returning user inherited their
+  // own stale rate-limit window.
+  //
+  // The FOURTH table to reach production user-scoped and unpurged, after
+  // `outlook_connections`, `suggested_reminders` and `recruiter_messages`. Same story every
+  // time: `smoke-purge.ts` derives its list from `schema.ts` and had gone red on it, and the
+  // failure sat unread because a red suite stops being information once it is normal.
+  await db.delete(extensionUsage).where(eq(extensionUsage.userId, userId));
 
   // What they told us, and which walls they hit. Both are personal — one is literally
   // their own words — so erasure means erasure, even though the churn reasons are the

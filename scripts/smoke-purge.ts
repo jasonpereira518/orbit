@@ -247,6 +247,15 @@ async function seed() {
     lastScanAt: new Date(),
   });
 
+  // Rate-limit counters for the extension. `user_id` is the primary key here, so there is no
+  // separate id to supply.
+  await db.insert(schema.extensionUsage).values({
+    userId: USER,
+    requestCount: 7,
+    aiCount: 2,
+    lastSeenAt: new Date(),
+  });
+
   for (const table of [schema.gmailConnections, schema.outlookConnections]) {
     await db.insert(table).values({
       userId: USER,
