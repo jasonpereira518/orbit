@@ -18,7 +18,7 @@ config({ path: ".env.local" });
 config();
 
 import { sql } from "drizzle-orm";
-import { getDb, rowsOf } from "../src/db";
+import { getDb, rowsOf } from "../../../src/db";
 
 const COLUMNS: Array<[column: string, definition: string]> = [
   ["comped_note", "text"],

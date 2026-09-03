@@ -16,7 +16,7 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 config();
 
-import { getDb } from "../src/db";
+import { getDb } from "../../../src/db";
 import { sql } from "drizzle-orm";
 
 const STATEMENTS = [

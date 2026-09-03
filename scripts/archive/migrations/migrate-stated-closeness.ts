@@ -10,7 +10,7 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 config();
 
-import { getDb } from "../src/db";
+import { getDb } from "../../../src/db";
 import { sql } from "drizzle-orm";
 
 // Mirrors the `contacts.relationship_score` schema default (see

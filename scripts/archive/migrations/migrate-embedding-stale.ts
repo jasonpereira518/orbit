@@ -11,7 +11,7 @@ config({ path: ".env.local" });
 config();
 
 import { sql } from "drizzle-orm";
-import { getDb } from "../src/db";
+import { getDb } from "../../../src/db";
 
 async function main() {
   const db = await getDb();

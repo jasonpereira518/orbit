@@ -1,11 +1,8 @@
-import { and, count, inArray, isNotNull, lt, eq } from "drizzle-orm";
+import { count, isNotNull, lt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
-import { contacts, errorEvents, imports, usageEvents } from "@/db/schema";
-import {
-  RESUMABLE_IMPORT_TYPES,
-  runImportJobById,
-} from "@/lib/import-job-dispatch";
+import { contacts, errorEvents, usageEvents } from "@/db/schema";
+import { resumeStalledImports } from "@/lib/import-stall";
 import {
   finishCronRun,
   startCronRun,
@@ -24,14 +21,7 @@ import { isInternalRequest } from "@/lib/internal-auth";
 
 export const maxDuration = 300;
 
-/**
- * How long a server-owned import must be untouched before this backstop resumes it.
- *
- * Deliberately different from `WEDGED_IMPORT_MS` in `src/lib/admin-ops.ts` (10 min). The
- * two thresholds are not a discrepancy to reconcile — they mark the two ownership classes.
- * This one means "the cron will pick this up"; that one means "nothing ever will."
- */
-export const CRON_STALL_THRESHOLD_MS = 3 * 60 * 1000;
+// The stall threshold and the resume limit live in `src/lib/import-stall.ts`.
 
 /**
  * `usage_events` is write-only and nothing user-facing reads it, so without a sweep it
@@ -121,6 +111,8 @@ export async function GET(request: Request) {
     stalledFound: 0,
     resumed: 0,
     resumeFailed: 0,
+    /** Marked failed after MAX_STALL_RESUMES; the user has to re-upload. */
+    resumeGaveUp: 0,
     usageEventsPruned: 0,
     errorEventsPruned: 0,
     cohortsRecalibrated: 0,
@@ -139,28 +131,11 @@ export async function GET(request: Request) {
 
   try {
     const db = await getDb();
-    const staleBefore = new Date(Date.now() - CRON_STALL_THRESHOLD_MS);
-    const stalled = await db.query.imports.findMany({
-      where: and(
-        // Every server-owned job kind, not just LinkedIn — a stalled Gmail recruiter
-        // scan needs the same backstop, and it is the longer-running of the two.
-        inArray(imports.importType, [...RESUMABLE_IMPORT_TYPES]),
-        eq(imports.status, "processing"),
-        lt(imports.updatedAt, staleBefore)
-      ),
-    });
-    stats.stalledFound = stalled.length;
-
-    for (const job of stalled) {
-      // One bad import must not stop the others — but the swallow becomes a number
-      // rather than disappearing.
-      try {
-        await runImportJobById(job.id);
-        stats.resumed += 1;
-      } catch {
-        stats.resumeFailed += 1;
-      }
-    }
+    const sweep = await resumeStalledImports({ now: new Date() });
+    stats.stalledFound = sweep.found;
+    stats.resumed = sweep.resumed;
+    stats.resumeFailed = sweep.resumeFailed;
+    stats.resumeGaveUp = sweep.gaveUp;
 
     try {
       stats.usageEventsPruned = await pruneOlderThan(
