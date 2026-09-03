@@ -12,10 +12,7 @@ import {
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { contactHasNotesSql } from "@/lib/contact-notes-sql";
 import { getConstellationConfig } from "@/lib/constellation-config";
-import {
-  constellationEligibility,
-  meetsConstellationFloor,
-} from "@/lib/constellation-eligibility";
+import { constellationEligibility } from "@/lib/constellation-eligibility";
 
 /**
  * The constellation payload, as a plain function of `userId`.
@@ -41,9 +38,26 @@ export type UserSocialLinks = {
   website?: string;
 };
 
+/**
+ * Which slice of the network to ship.
+ *
+ * `"engaged"` is the default and the product's intent: the chart is the people you actually
+ * know. `"all"` is the explicit escape hatch behind the chart's "show all" control, fetched
+ * only when someone asks for it.
+ *
+ * The distinction exists for weight, not just for looks. At 3,000 contacts this payload is
+ * ~2.1 MB — 741 bytes a head — so shipping everyone and hiding most of them in the browser
+ * would mean every visit paid the full cost of a view it wasn't showing. Filtering here is
+ * what keeps the option to see everything from taxing the default.
+ */
+export type GraphScope = "engaged" | "all";
+
 export async function loadGraphData(
   userId: string,
-  options: { profile: Promise<UserProfile | null> | UserProfile | null }
+  options: {
+    profile: Promise<UserProfile | null> | UserProfile | null;
+    scope?: GraphScope;
+  }
 ) {
   const db = await getDb();
 
@@ -160,42 +174,48 @@ export async function loadGraphData(
   });
 
   /*
-   * Eligibility is computed here and applied in the client.
+   * The payload carries only what the chart will draw.
    *
-   * Dropping ineligible contacts from this payload would have been the obvious move, and it
-   * collides with four separate things: it destroys hand-dragged star positions (the render
-   * map is pruned to the payload), it contradicts `summary.total`, it empties the comet list
-   * (which derives from `contacts.filter(dormant)` — very nearly the same population this
-   * hides), and it would have to be written twice, because the dashboard preview re-derives
-   * its own payload rather than calling this function.
+   * An earlier cut shipped everyone and filtered in the browser, which kept a few things
+   * trivially consistent but meant every visit paid the full weight of the unfiltered view —
+   * ~2.1 MB at 3,000 contacts — to render a fraction of it. The option to see everything is
+   * not allowed to tax the default, so the split happens here and `scope: "all"` is fetched
+   * only when someone actually asks for it.
    *
-   * So the server decides and the client draws: `NetworkGraph` filters on `substantive`
-   * alongside the company/school/score filters it already has, and everything computed from
-   * the full set stays correct by construction.
+   * What that costs, and why each is fine:
+   *   - Saved star positions: `positionsFromPayload` prunes to the payload for rendering, but
+   *     no longer writes that pruned map back (see `graph-positions.ts`), so a narrower view
+   *     cannot delete a layout.
+   *   - `summary.total` and `scoreCounts`: computed over ALL rows below, not the visible set,
+   *     so the numbers keep describing the network rather than the picture.
+   *   - The comet list: now scoped to people you have actually engaged with, which is what
+   *     "re-engage" was always meant to mean — 400 LinkedIn connections you never spoke to
+   *     were never really "drifting".
    */
   const eligibleCount = graphContacts.filter((c) => c.substantive).length;
-  const filterActive =
-    constellationConfig.enabled &&
-    meetsConstellationFloor(eligibleCount, graphContacts.length);
+  const filterActive = constellationConfig.enabled && options.scope !== "all";
+  const visibleContacts = filterActive
+    ? graphContacts.filter((c) => c.substantive)
+    : graphContacts;
 
-  const { clusters: built } = buildConstellationClusters(graphContacts);
+  const { clusters: built } = buildConstellationClusters(visibleContacts);
   const clusters: GraphCluster[] = toNamedGraphClusters(built);
 
+  // The filter dropdowns list what is actually on the chart. An option that can only ever
+  // yield an empty sky is a dead end, and the user has no way to see why.
   const companies = [
     ...new Set(
-      graphContacts.map((c) => (c.company || "").trim()).filter(Boolean)
+      visibleContacts.map((c) => (c.company || "").trim()).filter(Boolean)
     ),
   ].sort((a, b) => a.localeCompare(b));
 
   const schools = [
     ...new Set(
-      graphContacts.map((c) => (c.school || "").trim()).filter(Boolean)
+      visibleContacts.map((c) => (c.school || "").trim()).filter(Boolean)
     ),
   ].sort((a, b) => a.localeCompare(b));
 
-  const tags = [
-    ...new Set(rows.flatMap((c) => c.contactTags.map((ct) => ct.tag.name))),
-  ];
+  const tags = [...new Set(visibleContacts.flatMap((c) => c.tags))];
 
   const scoreCounts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
   let dormantCount = 0;
@@ -220,7 +240,7 @@ export async function loadGraphData(
   const profile = await options.profile;
 
   return {
-    contacts: graphContacts,
+    contacts: visibleContacts,
     companies,
     schools,
     tags,
@@ -234,17 +254,19 @@ export async function loadGraphData(
       dormantCount,
       overdueCount,
       /**
-       * Whether the filter is actually in force, and how many stars it costs.
+       * What the chart is currently showing, and what it would show the other way.
        *
-       * `active` is not the same as the operator's switch: it also requires the safety floor
-       * (`meetsConstellationFloor`), so a network where too little would survive renders whole.
-       * The client needs the distinction to explain an empty sky honestly rather than telling
-       * someone with 800 contacts to go add some.
+       * `available` is what makes the "show all" control honest: the chip can say how many
+       * more there are without this payload having to carry them.
        */
       constellationFilter: {
         active: filterActive,
-        shown: filterActive ? eligibleCount : graphContacts.length,
-        hidden: filterActive ? graphContacts.length - eligibleCount : 0,
+        /** True when the operator has the feature on at all, whatever this request asked for. */
+        enabled: constellationConfig.enabled,
+        scope: (options.scope ?? "engaged") as GraphScope,
+        shown: visibleContacts.length,
+        engaged: eligibleCount,
+        available: graphContacts.length,
       },
       userName: profile?.name || "You",
       userImageUrl: profile?.imageUrl || null,

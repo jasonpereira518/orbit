@@ -11,14 +11,12 @@
  *   rows are ALL undirected
  * - intent signals, which exist because `rateContacts` writes no interaction: without them a
  *   contact the user rated 5/5 "closest" in the setup wizard is hidden from their own sky
- * - the safety floor, which is the difference between a filter and an outage
  *
  * Run: npx tsx scripts/smoke-constellation-eligibility.ts
  */
 import {
   clampThresholds,
   constellationEligibility,
-  meetsConstellationFloor,
   DEFAULT_CONSTELLATION_THRESHOLDS,
   EMPTY_SIGNAL_COUNTS,
   MAX_MESSAGE_THRESHOLD,
@@ -184,28 +182,5 @@ check(
   "a fractional threshold rounds rather than making the comparison undecidable",
   clampThresholds({ minInbound: 2.6 }).minInbound === 3
 );
-
-console.log("\nThe safety floor…");
-// The LinkedIn *connections* adapter logs no interactions at all, and the setup wizard leads
-// with it. Without this floor those users open /graph to an empty sky.
-check(
-  "a connections-only network (nobody qualifies) does not get filtered",
-  !meetsConstellationFloor(0, 800)
-);
-check(
-  "14 qualifying is below the count floor even at a healthy share",
-  !meetsConstellationFloor(14, 20)
-);
-check("15 of 20 clears both", meetsConstellationFloor(15, 20));
-check(
-  "15 qualifying out of 4,000 is below the share floor — still an empty-looking sky",
-  !meetsConstellationFloor(15, 4000)
-);
-check("800 of 4,000 clears the share floor", meetsConstellationFloor(800, 4000));
-check(
-  "exactly 20% counts as clearing it",
-  meetsConstellationFloor(200, 1000)
-);
-check("an empty network is never filtered", !meetsConstellationFloor(0, 0));
 
 console.log("\nAll constellation eligibility checks passed.");

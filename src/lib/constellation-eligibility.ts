@@ -183,25 +183,15 @@ export function isConstellationEligible(
   return constellationEligibility(counts, fields, thresholds).eligible;
 }
 
-/**
- * Below this much of a network qualifying, the filter switches itself off for that user.
+/*
+ * There is deliberately no "safety floor" here any more.
  *
- * This is the difference between a feature and an outage. The LinkedIn *connections* adapter
- * logs no interactions at all, so a user whose network came from that import — which the
- * setup wizard leads with — qualifies nobody. Without a floor they open `/graph` to an empty
- * sky and a card inviting them to add contacts they already have.
+ * An earlier version auto-disabled the filter for any network where too little survived it,
+ * to stop a connections-only import (which logs no interactions at all) opening `/graph` to
+ * an empty sky. That solved the right problem the wrong way: it made the engaged-only chart
+ * NOT the default for exactly the users it targeted, and it did so silently.
  *
- * A ratio alone is not enough (20% of 5 people is one star), and a count alone is not enough
- * (15 qualifying out of 4,000 is still an empty-looking sky), so both must clear.
+ * The explicit "show all your connections" toggle solves it better. An empty sky is now
+ * explicable and one click from recoverable, and the chart genuinely starts empty and fills
+ * as the user writes notes — which is the intended experience, not a failure of it.
  */
-export const CONSTELLATION_FLOOR_MIN_ELIGIBLE = 15;
-export const CONSTELLATION_FLOOR_MIN_SHARE = 0.2;
-
-export function meetsConstellationFloor(
-  eligibleCount: number,
-  totalContacts: number
-): boolean {
-  if (totalContacts === 0) return false;
-  if (eligibleCount < CONSTELLATION_FLOOR_MIN_ELIGIBLE) return false;
-  return eligibleCount / totalContacts >= CONSTELLATION_FLOOR_MIN_SHARE;
-}

@@ -20,10 +20,7 @@ import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { contactHasNotesSql } from "@/lib/contact-notes-sql";
 import { getConstellationConfig } from "@/lib/constellation-config";
-import {
-  constellationEligibility,
-  meetsConstellationFloor,
-} from "@/lib/constellation-eligibility";
+import { constellationEligibility } from "@/lib/constellation-eligibility";
 
 const AUTO_SUGGESTION_TYPES = [
   "dormant_high_value",
@@ -598,10 +595,13 @@ export async function getDashboardData(
 
   const userName = (await options?.userName) || "You";
 
+  // The preview mirrors /graph: engaged-only by default. It has no "show all" of its own —
+  // the link into /graph is where that lives — so this is always the engaged scope.
   const previewEligibleCount = graphContacts.filter((c) => c.substantive).length;
-  const previewFilterActive =
-    constellationConfig.enabled &&
-    meetsConstellationFloor(previewEligibleCount, graphContacts.length);
+  const previewFilterActive = constellationConfig.enabled;
+  const previewVisible = previewFilterActive
+    ? graphContacts.filter((c) => c.substantive)
+    : graphContacts;
 
   const { clusters: builtClusters } = buildConstellationClusters(graphContacts);
   const clusters = toNamedGraphClusters(builtClusters);
@@ -709,16 +709,18 @@ export async function getDashboardData(
   const strongTies =
     networkMetrics.tierCounts.inner + networkMetrics.tierCounts.mid;
 
+  // Filter FIRST, then cap. Capping first would spend the budget on contacts that are about
+  // to be hidden and render far fewer than the cap allows.
   const graphPreviewContacts =
-    graphContacts.length > GRAPH_PREVIEW_CONTACT_CAP
-      ? [...graphContacts]
+    previewVisible.length > GRAPH_PREVIEW_CONTACT_CAP
+      ? [...previewVisible]
           .sort(
             (a, b) =>
               (b.orbitScore ?? b.relationshipScore ?? 0) -
               (a.orbitScore ?? a.relationshipScore ?? 0)
           )
           .slice(0, GRAPH_PREVIEW_CONTACT_CAP)
-      : graphContacts;
+      : previewVisible;
 
   return {
     stats: {
@@ -761,10 +763,11 @@ export async function getDashboardData(
         // or a 150-contact slice would look like a filtered one.
         constellationFilter: {
           active: previewFilterActive,
-          shown: previewFilterActive ? previewEligibleCount : graphContacts.length,
-          hidden: previewFilterActive
-            ? graphContacts.length - previewEligibleCount
-            : 0,
+          enabled: constellationConfig.enabled,
+          scope: "engaged" as const,
+          shown: graphPreviewContacts.length,
+          engaged: previewEligibleCount,
+          available: graphContacts.length,
         },
         userName,
         userImageUrl: null,

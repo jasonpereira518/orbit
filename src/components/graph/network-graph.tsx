@@ -26,9 +26,11 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
+  getFullGraphData,
   getGraphData,
   refreshConstellationBatch,
 } from "@/actions/graph";
+import { toast } from "sonner";
 import { searchDashboardContacts } from "@/actions/search";
 import {
   Select,
@@ -670,10 +672,11 @@ function GraphCanvas(props: {
   onFocusCluster: (clusterId: string) => void;
   resetToken: number;
   compact?: boolean;
-  /** False once the viewer has asked to see everyone, via the "show all" escape hatch. */
+  /** Whether this payload is the engaged-only scope (vs. the full network). */
   constellationFilterOn: boolean;
+  onShowAll: () => void;
+  loadingAll: boolean;
 }) {
-  const constellationFilterOn = props.constellationFilterOn;
   // Keyword is the one filter driven by continuous typing — debounce it so
   // the (potentially expensive) filter/layout rebuild below doesn't run on
   // every keystroke. Company/school/minScore come from discrete selects.
@@ -686,11 +689,9 @@ function GraphCanvas(props: {
   const filteredContacts = useMemo(() => {
     const kw = debouncedKeyword.trim().toLowerCase();
     return props.data.contacts.filter((c) => {
-      // The constellation filter sits here, as a peer of the company/school/score filters
-      // rather than as a narrower payload. `data.contacts` therefore stays the whole
-      // network, which is what keeps saved star positions, `summary.*` and the comet list
-      // correct without any of them needing to know this feature exists.
-      if (constellationFilterOn && !c.substantive) return false;
+      // No `substantive` check here: the server already shipped only what this scope draws,
+      // so filtering again would be redundant — and would silently hide pinned-in contacts
+      // in the "show all" view.
       if (props.company !== "all" && c.company !== props.company) return false;
       if (props.school !== "all" && (c.school || "") !== props.school) {
         return false;
@@ -717,7 +718,6 @@ function GraphCanvas(props: {
     });
   }, [
     props.data.contacts,
-    constellationFilterOn,
     props.company,
     props.school,
     debouncedKeyword,
@@ -769,6 +769,8 @@ function GraphCanvasInner({
   compact,
   data,
   constellationFilterOn,
+  onShowAll,
+  loadingAll,
 }: {
   company: string;
   school: string;
@@ -793,6 +795,8 @@ function GraphCanvasInner({
   compact?: boolean;
   data: GraphPayload;
   constellationFilterOn: boolean;
+  onShowAll: () => void;
+  loadingAll: boolean;
 }) {
   const router = useRouter();
   const { fitView, getNodes, getViewport, setViewport } = useReactFlow();
@@ -1441,7 +1445,7 @@ function GraphCanvasInner({
       {isEmpty && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="pointer-events-auto max-w-sm rounded-2xl border border-white/10 bg-[#080b12]/90 px-6 py-5 text-center shadow-xl backdrop-blur-md">
-            {data.contacts.length === 0 ? (
+            {data.summary.total === 0 ? (
               <>
                 <p className="font-[family-name:var(--font-display)] text-lg text-white">
                   Your sky is empty
@@ -1456,22 +1460,34 @@ function GraphCanvasInner({
                   Add a contact
                 </Link>
               </>
-            ) : constellationFilterOn &&
-              !data.contacts.some((c) => c.substantive) ? (
+            ) : constellationFilterOn && data.contacts.length === 0 ? (
               <>
                 <p className="font-[family-name:var(--font-display)] text-lg text-white">
                   Nobody here yet
                 </p>
                 <p className="mt-1 text-sm text-white/55">
-                  Your chart shows people you have notes on, met, or really talked with.
-                  Write a note about someone and they appear here.
+                  Your chart shows the people you have notes on, met, or really talked with.
+                  Write a note about someone and they take their place in the sky.
                 </p>
-                <Link
-                  href="/capture"
-                  className="mt-4 inline-flex h-8 items-center rounded-lg bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/15"
-                >
-                  Add notes
-                </Link>
+                <div className="mt-4 flex items-center justify-center gap-2">
+                  <Link
+                    href="/capture"
+                    className="inline-flex h-8 items-center rounded-lg bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/15"
+                  >
+                    Add notes
+                  </Link>
+                  <button
+                    type="button"
+                    disabled={loadingAll}
+                    onClick={onShowAll}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm text-white/70 hover:text-white disabled:opacity-60"
+                  >
+                    {loadingAll && (
+                      <Loader2 className="size-3 animate-spin" aria-hidden />
+                    )}
+                    Show all {data.summary.total.toLocaleString()}
+                  </button>
+                </div>
               </>
             ) : (
               <>
@@ -1537,11 +1553,27 @@ export function NetworkGraph({
   /**
    * The viewer's own override of the constellation filter, for this session.
    *
-   * A filter that removes most of somebody's network without saying so is indistinguishable
+   * A chart that removes most of somebody's network without saying so is indistinguishable
    * from data loss, so the chip that announces it also has to be able to undo it. Deliberately
-   * not persisted: the operator's setting is the default, and this is a look, not a preference.
+   * not persisted: engaged-only is the product's default and every visit starts there.
+   *
+   * The wider set is FETCHED, not merely unhidden — the default payload does not carry the
+   * people it isn't drawing. `allData` caches it for the session, so the first "show all"
+   * costs one round trip and every toggle after that is instant.
    */
   const [showAllStars, setShowAllStars] = useState(false);
+  const [loadingAll, setLoadingAll] = useState(false);
+  // `loadData` is memoised with no deps and must not resubscribe on every toggle, so it reads
+  // the current scope through a ref rather than closing over the state.
+  const showAllStarsRef = useRef(false);
+  /**
+   * One payload per scope, so flipping the view costs at most one fetch each way.
+   * `data` always holds whichever is on screen; these are what it swaps between.
+   */
+  const scopeCache = useRef<{
+    engaged: GraphPayload | null;
+    all: GraphPayload | null;
+  }>({ engaged: initialData, all: null });
   const [searchHitIds, setSearchHitIds] = useState<Set<string>>(new Set());
   const [focusCluster, setFocusCluster] = useState<string | null>(null);
   const [zoomToken, setZoomToken] = useState(0);
@@ -1651,9 +1683,45 @@ export function NetworkGraph({
     getGraphData()
       .then((payload) => {
         lastFetchAt.current = Date.now();
-        applyGraphPayload(payload, setData, setPositionOverrides);
+        scopeCache.current.engaged = payload;
+        // The wider set is now stale too, but re-fetching it here would defeat the point of
+        // not loading it — drop it and let the next "show all" pay for a fresh one.
+        scopeCache.current.all = null;
+        if (!showAllStarsRef.current) {
+          applyGraphPayload(payload, setData, setPositionOverrides);
+        }
       })
       .catch(console.error);
+  }, []);
+
+  /**
+   * Switch between the people you know and everyone.
+   *
+   * The wider payload is fetched on demand and cached for the session; going back is free.
+   * A failure leaves the toggle where it was rather than showing a half-empty chart.
+   */
+  const setScope = useCallback((wantAll: boolean) => {
+    const cached = wantAll ? scopeCache.current.all : scopeCache.current.engaged;
+    if (cached) {
+      showAllStarsRef.current = wantAll;
+      setShowAllStars(wantAll);
+      applyGraphPayload(cached, setData, setPositionOverrides);
+      return;
+    }
+    if (!wantAll) return;
+    setLoadingAll(true);
+    getFullGraphData()
+      .then((payload) => {
+        scopeCache.current.all = payload;
+        showAllStarsRef.current = true;
+        setShowAllStars(true);
+        applyGraphPayload(payload, setData, setPositionOverrides);
+      })
+      .catch((err) => {
+        console.error(err);
+        toast.error("Could not load the rest of your network.");
+      })
+      .finally(() => setLoadingAll(false));
   }, []);
 
   useEffect(() => {
@@ -1970,10 +2038,10 @@ export function NetworkGraph({
       });
   }, [data]);
 
-  // The filter is in force only if the operator enabled it, the network cleared the safety
-  // floor on the server, AND this viewer has not asked to see everyone.
   const constellationFilter = data?.summary.constellationFilter;
-  const constellationFilterOn = Boolean(constellationFilter?.active) && !showAllStars;
+  // The payload already contains only what should be drawn, so the client no longer filters
+  // by `substantive` — this stays only so the empty state can explain WHY a sky is empty.
+  const constellationFilterOn = Boolean(constellationFilter?.active);
 
   if (!data) {
     return (
@@ -2019,35 +2087,41 @@ export function NetworkGraph({
           drops two thirds of someone's contacts is indistinguishable from data loss — so it
           announces itself, with the undo right next to the claim.
         */}
-        {!compact && constellationFilter?.active && (
+        {/* Keyed on `enabled`, not `active`: in the "show all" view `active` is false by
+            definition, and hiding the chip there would strand the viewer with no way back. */}
+        {!compact && constellationFilter?.enabled && (
           <div className="pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2">
             <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/10 bg-[#080b12]/85 px-3 py-1 text-[11px] text-white/70 backdrop-blur-md">
               <Stars className="size-3 text-white/50" aria-hidden />
               {showAllStars ? (
                 <>
                   <span className="tabular-nums">
-                    Showing all {data.summary.total.toLocaleString()}
+                    All {data.summary.total.toLocaleString()} connections
                   </span>
                   <button
                     type="button"
-                    onClick={() => setShowAllStars(false)}
+                    onClick={() => setScope(false)}
                     className="text-white/90 underline underline-offset-2 hover:text-white"
                   >
-                    Only people you know
+                    Just people you know
                   </button>
                 </>
               ) : (
                 <>
                   <span className="tabular-nums">
-                    Showing {constellationFilter.shown.toLocaleString()} of{" "}
-                    {data.summary.total.toLocaleString()}
+                    {constellationFilter.shown.toLocaleString()} of{" "}
+                    {data.summary.total.toLocaleString()} you&apos;ve engaged with
                   </span>
                   <button
                     type="button"
-                    onClick={() => setShowAllStars(true)}
-                    className="text-white/90 underline underline-offset-2 hover:text-white"
+                    disabled={loadingAll}
+                    onClick={() => setScope(true)}
+                    className="inline-flex items-center gap-1 text-white/90 underline underline-offset-2 hover:text-white disabled:opacity-60"
                   >
-                    Show all
+                    {loadingAll && (
+                      <Loader2 className="size-3 animate-spin" aria-hidden />
+                    )}
+                    Show all connections
                   </button>
                 </>
               )}
@@ -2497,6 +2571,8 @@ export function NetworkGraph({
           <GraphCanvas
             data={data}
             constellationFilterOn={constellationFilterOn}
+            onShowAll={() => setScope(true)}
+            loadingAll={loadingAll}
             company={company}
             school={school}
             keyword={keyword}

@@ -175,17 +175,43 @@ async function main() {
   // Unfiltered on purpose, and now load-bearing: the constellation filter hides stars but
   // must never change what Orbit says the network *is*. This is the guard on that.
   check("graph reports every contact", graph.summary.total === N + 5, `got ${graph.summary.total}`);
+  // The whole point of filtering server-side: the default view must not carry the people it
+  // is not drawing. At ~741 bytes a contact, shipping them anyway is megabytes per visit.
   check(
-    "graph ships every contact, with eligibility decided per contact rather than by omission",
-    graph.contacts.length === N + 5 &&
-      graph.contacts.every((c) => typeof c.substantive === "boolean"),
-    `${graph.contacts.length} contacts`
+    "graph ships only the contacts it draws",
+    graph.contacts.length === graph.summary.constellationFilter.shown &&
+      graph.contacts.length < graph.summary.total,
+    `${graph.contacts.length} shipped of ${graph.summary.total}`
   );
   check(
-    "the filter reports what it would hide",
-    graph.summary.constellationFilter.shown + graph.summary.constellationFilter.hidden ===
-      graph.summary.total,
-    JSON.stringify(graph.summary.constellationFilter)
+    "and reports the full network as available behind the 'show all' control",
+    graph.summary.constellationFilter.available === graph.summary.total
+  );
+
+  console.log("\nConstellation, show-all scope (loadGraphData scope:all)…");
+  startQueryCount();
+  const graphAll = await loadGraphData(USER, {
+    profile: Promise.resolve(null),
+    scope: "all",
+  });
+  const graphAllCount = stopQueryCount();
+  console.log(`  statements: ${graphAllCount}`);
+  check("show-all issues ≤ 9 statements", graphAllCount <= 9, `got ${graphAllCount}`);
+  check(
+    "show-all carries the whole network",
+    graphAll.contacts.length === N + 5,
+    `${graphAll.contacts.length}`
+  );
+  const engagedBytes = JSON.stringify(graph.contacts).length;
+  const allBytes = JSON.stringify(graphAll.contacts).length;
+  check(
+    "and the default view is materially lighter than it",
+    engagedBytes < allBytes,
+    `engaged ${(engagedBytes / 1024).toFixed(0)} KB vs all ${(allBytes / 1024).toFixed(0)} KB`
+  );
+  console.log(
+    `  engaged ${(engagedBytes / 1024).toFixed(0)} KB · all ${(allBytes / 1024).toFixed(0)} KB` +
+      ` (${((1 - engagedBytes / allBytes) * 100).toFixed(0)}% smaller)`
   );
   check("graph still resolves an inline avatar to the avatar route", graphJson.includes("/api/avatars/"));
 

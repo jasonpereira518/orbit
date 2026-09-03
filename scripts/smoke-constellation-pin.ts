@@ -87,30 +87,31 @@ run(async () => {
 
     console.log("Without any pin…");
     let payload = await graph();
-    const byId = (id: string) => payload.contacts.find((c) => c.id === id);
+    const inPayload = (id: string) => payload.contacts.some((c) => c.id === id);
     check("the filter is live for this network", payload.summary.constellationFilter.active);
-    check("a contact with nothing is not substantive", byId(barren)?.substantive === false);
-    check("a contact with notes is", byId(written)?.substantive === true);
+    check(
+      "the payload carries only engaged contacts, not the whole network",
+      payload.contacts.length < payload.summary.total,
+      `${payload.contacts.length} of ${payload.summary.total}`
+    );
+    check("a contact with nothing is not drawn", !inPayload(barren));
+    check("a contact with notes is", inPayload(written));
     const totalBefore = payload.summary.total;
 
     console.log("\nPinning in…");
     await setPin(USER, barren, "in");
     payload = await graph();
     check(
-      "a contact with no evidence at all becomes substantive",
-      payload.contacts.find((c) => c.id === barren)?.substantive === true
-    );
-    check(
-      "and is still shipped in the payload, not injected",
-      payload.contacts.length === totalBefore
+      "a contact with no evidence at all joins the chart",
+      payload.contacts.some((c) => c.id === barren)
     );
 
     console.log("\nPinning out…");
     await setPin(USER, written, "out");
     payload = await graph();
     check(
-      "a contact with notes stops being substantive",
-      payload.contacts.find((c) => c.id === written)?.substantive === false
+      "a contact with notes drops off it",
+      !payload.contacts.some((c) => c.id === written)
     );
     check(
       "summary.total is unmoved by either pin — it describes the network, not the chart",
@@ -118,10 +119,8 @@ run(async () => {
       `${payload.summary.total} vs ${totalBefore}`
     );
     check(
-      "and the filter accounts for every contact",
-      payload.summary.constellationFilter.shown +
-        payload.summary.constellationFilter.hidden ===
-        payload.summary.total
+      "and the filter reports the whole network as available behind it",
+      payload.summary.constellationFilter.available === payload.summary.total
     );
 
     console.log("\nBack to automatic…");
@@ -130,8 +129,8 @@ run(async () => {
     payload = await graph();
     check(
       "the rule takes over again for both",
-      payload.contacts.find((c) => c.id === written)?.substantive === true &&
-        payload.contacts.find((c) => c.id === barren)?.substantive === false
+      payload.contacts.some((c) => c.id === written) &&
+        !payload.contacts.some((c) => c.id === barren)
     );
 
     console.log("\nWhat the pin must not touch…");
