@@ -43,16 +43,17 @@ const PATHS = [
       "Paste meeting notes — Orbit pulls out the people. Needs a free AI key; we'll walk you through it.",
   },
   {
+    id: "linkedin-later" as const,
+    icon: Upload,
+    title: "LinkedIn (start it now, takes a day)",
+    description:
+      "LinkedIn takes about a day to build your export. Kick it off now and Orbit reminds you when it lands.",
+  },
+  {
     id: "manual" as const,
     icon: UserPlus,
     title: "Add someone manually",
     description: "Enter a name, company, and how you know them.",
-  },
-  {
-    id: "linkedin-later" as const,
-    icon: Upload,
-    title: "LinkedIn (takes a day)",
-    description: "Request your export now; Orbit reminds you to upload it tomorrow.",
   },
 ];
 
@@ -63,7 +64,7 @@ const STEP_TITLES: Record<WizardStep, string> = {
   manual: "Add someone manually",
   capture: "Capture from notes",
   import: "Import LinkedIn connections",
-  "linkedin-later": "LinkedIn (takes a day)",
+  "linkedin-later": "Start your LinkedIn export",
   triage: "Rate a few people",
   "ai-key": "Turn on AI (optional)",
   review: "You're set up",
@@ -78,11 +79,14 @@ export function SetupWizard({
   hasApiKey = true,
   googleConfigured,
   contactLimit,
+  linkedInRequested = false,
 }: {
   initialStepId?: string | null;
   hasApiKey?: boolean;
   googleConfigured: boolean;
   contactLimit: number | null;
+  /** True once the export has already been requested, so the step is not offered again. */
+  linkedInRequested?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -94,6 +98,13 @@ export function SetupWizard({
   // session — set true the moment a key is verified, on either the Capture path
   // (inline panel) or the dedicated ai-key step (wizard panel).
   const [aiOn, setAiOn] = useState(hasApiKey);
+  // The LinkedIn export is the one thing here that cannot be hurried: LinkedIn takes
+  // about a day to build it, so a request made during setup is a usable import tomorrow
+  // and a request made whenever someone eventually notices the fourth option is a week
+  // of nothing. Every path therefore passes through the request step once, before
+  // triage, instead of it being a door most people never open — one click skips it, and
+  // anyone who already requested it (or came in via the LinkedIn path) never sees it.
+  const [linkedInHandled, setLinkedInHandled] = useState(linkedInRequested);
   const paths = googleConfigured
     ? PATHS
     : PATHS.filter((path) => path.id !== "connect-google");
@@ -119,6 +130,13 @@ export function SetupWizard({
   const addResult = useCallback((result: WizardResult) => {
     setResults((r) => [...r, result]);
   }, []);
+
+  // Deliberately a plain function rather than a useCallback: it must close over the
+  // current `linkedInHandled` every render, and each child callback below is recreated
+  // per render anyway.
+  function goAfterPeople() {
+    goTo(linkedInHandled ? "triage" : "linkedin-later");
+  }
 
   const finish = useCallback(() => {
     start(async () => {
@@ -174,7 +192,7 @@ export function SetupWizard({
                   contactLimit={contactLimit}
                   onImported={(count) => {
                     addResult({ kind: "google", count });
-                    goTo("triage");
+                    goAfterPeople();
                   }}
                   onSkip={() => goTo("add-people")}
                 />
@@ -186,7 +204,7 @@ export function SetupWizard({
                   <WizardAddManual
                     onCreated={() => {
                       addResult({ kind: "manual" });
-                      goTo("triage");
+                      goAfterPeople();
                     }}
                   />
                 </div>
@@ -200,7 +218,7 @@ export function SetupWizard({
                     onKeyVerified={() => setAiOn(true)}
                     onSaved={(count) => {
                       addResult({ kind: "capture", count });
-                      goTo("triage");
+                      goAfterPeople();
                     }}
                   />
                 </div>
@@ -211,6 +229,7 @@ export function SetupWizard({
                   <BackRow onBack={() => goTo("add-people")} />
                   <WizardImport
                     onContinue={() => {
+                      setLinkedInHandled(true);
                       addResult({ kind: "import" });
                       goTo("triage");
                     }}
@@ -223,10 +242,12 @@ export function SetupWizard({
                   <BackRow onBack={() => goTo("add-people")} />
                   <WizardLinkedInLater
                     onContinue={(result) => {
+                      setLinkedInHandled(true);
                       if (result) addResult(result);
                       goTo("triage");
                     }}
                     onImportNow={(result) => {
+                      setLinkedInHandled(true);
                       if (result) addResult(result);
                       goTo("import");
                     }}

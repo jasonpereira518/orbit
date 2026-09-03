@@ -97,6 +97,8 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
         <div className="reveal-mount" style={revealDelay(70)}>
           <LinkedInExportNudge
             requestedAt={linkedInExport.requestedAt as string}
+            inboxSearchUrl={linkedInExport.inboxSearchUrl}
+            inboxSearchLabel={linkedInExport.inboxSearchLabel}
             showImportsLink
           />
         </div>

@@ -69,10 +69,16 @@ export function WizardLinkedInLater({
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        LinkedIn builds the export in the background and emails you a link,
-        usually within a day.
-      </p>
+      <div className="rounded-xl border border-primary/25 bg-accent/50 px-3 py-2.5">
+        <p className="text-sm font-medium text-ink">
+          Start this now — it&apos;s the one thing that can&apos;t be hurried.
+        </p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          LinkedIn builds the export in the background and emails you a link,
+          usually within a day. Requesting it takes about ten seconds, and it
+          runs while you finish setting up.
+        </p>
+      </div>
 
       <div className="flex flex-wrap gap-2">
         <a
@@ -112,7 +118,7 @@ export function WizardLinkedInLater({
           className="bg-primary text-primary-foreground hover:bg-primary/90"
           onClick={() => onContinue(result())}
         >
-          Continue
+          {requested ? "Continue" : "Skip for now"}
         </Button>
       </div>
     </div>

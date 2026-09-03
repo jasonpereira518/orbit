@@ -72,7 +72,11 @@ export default async function ImportsPage() {
       </div>
 
       {showLinkedInNudge && (
-        <LinkedInExportNudge requestedAt={linkedInExport.requestedAt as string} />
+        <LinkedInExportNudge
+          requestedAt={linkedInExport.requestedAt as string}
+          inboxSearchUrl={linkedInExport.inboxSearchUrl}
+          inboxSearchLabel={linkedInExport.inboxSearchLabel}
+        />
       )}
 
       <ImportHub

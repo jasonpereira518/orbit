@@ -19,11 +19,13 @@ export function SetupWizardLazy({
   hasApiKey = true,
   googleConfigured,
   contactLimit,
+  linkedInRequested = false,
 }: {
   initialStepId?: string | null;
   hasApiKey?: boolean;
   googleConfigured: boolean;
   contactLimit: number | null;
+  linkedInRequested?: boolean;
 }) {
   return (
     <SetupWizard
@@ -31,6 +33,7 @@ export function SetupWizardLazy({
       hasApiKey={hasApiKey}
       googleConfigured={googleConfigured}
       contactLimit={contactLimit}
+      linkedInRequested={linkedInRequested}
     />
   );
 }

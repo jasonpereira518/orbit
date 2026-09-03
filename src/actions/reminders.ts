@@ -19,6 +19,8 @@ import {
 } from "@/lib/reminder-action-kind";
 import { revalidateReminderPaths } from "@/lib/reminder-paths";
 import { reminderHref } from "@/lib/reminder-links";
+import { linkedInArchiveSearch } from "@/lib/inbox-search";
+import { ensureUserSettings } from "@/lib/user-settings";
 import {
   displayListName,
   ensureReminderLists,
@@ -746,6 +748,13 @@ export async function listNotificationPanel() {
     title: string;
     body: string | null;
     url: string;
+    /**
+     * A second destination outside Orbit, rendered beside the in-app link. Set only where
+     * the next real step happens somewhere else — today the LinkedIn reminder, whose
+     * actual blocker is finding one email in an inbox, not opening Imports.
+     */
+    externalUrl?: string;
+    externalLabel?: string;
     dueAt: string | null;
     urgency: "due" | "upcoming" | "info";
     reminderId?: string;
@@ -756,15 +765,28 @@ export async function listNotificationPanel() {
 
   const items: PanelItem[] = [];
 
+  // Which webmail to point at depends on the user's own address, mirrored from Clerk.
+  // Resolved once here rather than per reminder; `ensureUserSettings` is request-cached
+  // and `getEntitlements` above already paid for the row.
+  const ownEmail = (await ensureUserSettings(userId)).email;
+
   for (const r of pendingReminders) {
     const dueAt = r.dueDate ? new Date(r.dueDate) : null;
     const isDue = !dueAt || dueAt <= now;
+    const archiveSearch =
+      r.reminderType === "linkedin_export"
+        ? linkedInArchiveSearch(ownEmail)
+        : null;
     items.push({
       id: `reminder:${r.id}`,
       kind: "reminder",
       title: r.title,
       body: r.description,
       url: reminderHref(r),
+      ...(archiveSearch && {
+        externalUrl: archiveSearch.url,
+        externalLabel: archiveSearch.label,
+      }),
       dueAt: dueAt?.toISOString() ?? null,
       urgency: isDue ? "due" : "upcoming",
       reminderId: r.id,

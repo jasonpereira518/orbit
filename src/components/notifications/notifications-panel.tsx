@@ -15,6 +15,7 @@ import {
   CheckCircle2,
   Clock,
   Loader2,
+  Mail,
   Sparkles,
   UserRound,
   X,
@@ -571,6 +572,20 @@ function NotificationRow({
               Dismiss
             </Button>
           )}
+        {item.externalUrl && (
+          // Deliberately a plain <a target="_blank">, not a Link with onNavigate: the
+          // point of this one is that the next step is NOT in Orbit. Closing the panel
+          // and navigating away would lose the reminder the user is still working on.
+          <a
+            href={item.externalUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+          >
+            <Mail className="h-3.5 w-3.5" />
+            {item.externalLabel ?? "Open email"}
+          </a>
+        )}
         <Link
           href={item.url}
           onClick={onNavigate}

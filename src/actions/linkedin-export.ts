@@ -10,10 +10,22 @@ import { ensureUserSettings } from "@/lib/user-settings";
 import { getInboxListId } from "@/lib/reminder-lists";
 import { revalidateReminderPaths } from "@/lib/reminder-paths";
 import { retireLinkedInExportReminders } from "@/lib/linkedin-export";
+import {
+  LINKEDIN_ARCHIVE_SEARCH,
+  linkedInArchiveSearch,
+} from "@/lib/inbox-search";
 import { LINKEDIN_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-connections";
 import { LINKEDIN_MESSAGES_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-messages";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The reminder's wording, hoisted so the insert and the refresh below cannot drift.
+ * It names the inbox first because that is the actual blocker a day later: the export
+ * link arrives by email, and "find one email from yesterday" is where people stall.
+ */
+const REMINDER_TITLE = "Check your email for your LinkedIn export";
+const REMINDER_DESCRIPTION = `LinkedIn emails a download link within about a day. Search your inbox for \u201C${LINKEDIN_ARCHIVE_SEARCH}\u201D, download the ZIP, then upload it in Imports.`;
 
 /**
  * Stamps `linkedin_export_requested_at` the first time the user requests an export.
@@ -70,6 +82,19 @@ export async function scheduleLinkedInExportReminder(): Promise<{
   if (existing) {
     reminderId = existing.id;
     dueDate = existing.dueDate ? new Date(existing.dueDate) : new Date();
+    // Idempotent on the row, not on its wording: a reminder created before the inbox
+    // search existed still says only "open Imports", which leaves the person holding it
+    // with the exact problem the search link was added to solve. The due date and status
+    // are left alone — this refreshes the instructions, it does not reschedule anything.
+    if (
+      existing.title !== REMINDER_TITLE ||
+      existing.description !== REMINDER_DESCRIPTION
+    ) {
+      await db
+        .update(reminders)
+        .set({ title: REMINDER_TITLE, description: REMINDER_DESCRIPTION })
+        .where(eq(reminders.id, existing.id));
+    }
   } else {
     const listId = await getInboxListId(userId);
     dueDate = new Date(Date.now() + ONE_DAY_MS);
@@ -79,9 +104,8 @@ export async function scheduleLinkedInExportReminder(): Promise<{
       .values({
         userId,
         listId,
-        title: "Upload your LinkedIn export to Orbit",
-        description:
-          "LinkedIn emails a download link within about a day. Open Imports and drop the ZIP in.",
+        title: REMINDER_TITLE,
+        description: REMINDER_DESCRIPTION,
         dueDate,
         reminderType: "linkedin_export",
         actionKind: "task",
@@ -108,15 +132,28 @@ export async function scheduleLinkedInExportReminder(): Promise<{
 export async function getLinkedInExportStatus(): Promise<{
   requestedAt: string | null;
   hasLinkedInImport: boolean;
+  inboxSearchUrl: string;
+  inboxSearchLabel: string;
 }> {
   const userId = await requireUserId();
   const settings = await ensureUserSettings(userId);
+
+  // Resolved here rather than at each mount point: both callers (the dashboard and
+  // /imports) already await this, and the address it depends on is on the row this
+  // function has already loaded, so the link costs nothing extra and cannot drift
+  // between the two surfaces.
+  const search = linkedInArchiveSearch(settings.email);
 
   // Nothing was ever requested — there's no nudge to retire and no reminder that could be
   // pending, so the `imports` lookup below (this is called on every dashboard/imports render)
   // would only spend a query to reconfirm `false`.
   if (!settings.linkedinExportRequestedAt) {
-    return { requestedAt: null, hasLinkedInImport: false };
+    return {
+      requestedAt: null,
+      hasLinkedInImport: false,
+      inboxSearchUrl: search.url,
+      inboxSearchLabel: search.label,
+    };
   }
 
   const db = await getDb();
@@ -150,6 +187,8 @@ export async function getLinkedInExportStatus(): Promise<{
   return {
     requestedAt: new Date(settings.linkedinExportRequestedAt).toISOString(),
     hasLinkedInImport,
+    inboxSearchUrl: search.url,
+    inboxSearchLabel: search.label,
   };
 }
 

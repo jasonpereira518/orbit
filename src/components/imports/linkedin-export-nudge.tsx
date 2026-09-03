@@ -5,7 +5,8 @@ import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import { dismissLinkedInExportNudge } from "@/actions/linkedin-export";
 import { toast } from "@/lib/toast";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 /**
  * Shown on the dashboard and on /imports while a requested LinkedIn export hasn't
@@ -16,8 +17,14 @@ import { Button } from "@/components/ui/button";
 export function LinkedInExportNudge({
   requestedAt,
   showImportsLink = false,
+  inboxSearchUrl,
+  inboxSearchLabel,
 }: {
   requestedAt: string;
+  /** Opens the user's own webmail already searching for LinkedIn's archive email —
+   *  resolved server-side from their address, since this component cannot read it. */
+  inboxSearchUrl?: string;
+  inboxSearchLabel?: string;
   /** True on the dashboard mount, where "upload it here" needs an actual link to /imports.
    *  False (default) on the /imports mount, where the upload UI is already on the page. */
   showImportsLink?: boolean;
@@ -58,16 +65,28 @@ export function LinkedInExportNudge({
         )}{" "}
         when it arrives.
       </p>
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        disabled={pending}
-        className="shrink-0 text-muted-foreground"
-        onClick={handleDismiss}
-      >
-        Dismiss
-      </Button>
+      <div className="flex shrink-0 items-center gap-1">
+        {inboxSearchUrl && (
+          <a
+            href={inboxSearchUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          >
+            {inboxSearchLabel ?? "Find the email"}
+          </a>
+        )}
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={pending}
+          className="text-muted-foreground"
+          onClick={handleDismiss}
+        >
+          Dismiss
+        </Button>
+      </div>
     </div>
   );
 }
