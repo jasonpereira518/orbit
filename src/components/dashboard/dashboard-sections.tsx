@@ -67,7 +67,7 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
           className="reveal-mount rounded-2xl border border-dashed border-border/70 px-6 py-10 text-center"
           style={revealDelay(60)}
         >
-          <h2 className="font-[family-name:var(--font-display)] text-2xl text-primary">
+          <h2 className="font-[family-name:var(--font-display)] text-2xl text-ink">
             Your orbit is empty
           </h2>
           <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
@@ -98,7 +98,11 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
       )}
 
       <div
-        className="reveal-mount grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
+        // Two across on a phone. One-per-row pushed the four cards to roughly three
+        // screens of scrolling before the first thing you can act on, which is the
+        // wrong trade on the surface that is supposed to answer "what should I do
+        // today" — the cards are four short numbers and fit side by side fine.
+        className="reveal-mount grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4"
         style={revealDelay(60)}
       >
         <StatCard
@@ -119,7 +123,9 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
           value={data.stats.strongConnections}
           icon={<Sparkles className="h-4 w-4" />}
           href="/graph"
-          subtitle="Inner + mid orbit"
+          // Counted from the absolute tiers, like the Network depth card — so it uses
+          // that card's words, not the cohort-ranked orbit badges'.
+          subtitle="Close + warm"
         />
         <StatCard
           label="Reminders"
@@ -134,12 +140,26 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
 
 export async function ChartsSection({ bundle }: { bundle: DashboardBundle }) {
   const { data } = await bundle;
+  // On an empty account this card is six zero rows, a zero-width bar and a paragraph
+  // explaining how a measurement of nothing is computed — the only thing on the
+  // first-run dashboard that neither says anything nor offers anything to do. Every
+  // other card here has a real empty state with a call to action; this one earns its
+  // place as soon as there is a single contact to measure.
+  const showDepth = data.stats.totalContacts > 0;
   return (
     <>
-      <div className="reveal-mount min-w-0 [&>*]:h-full" style={revealDelay(120)}>
-        <NetworkDepthChart metrics={data.networkMetrics} />
-      </div>
-      <div className="reveal-mount min-w-0 [&>*]:h-full" style={revealDelay(160)}>
+      {showDepth && (
+        <div
+          className="reveal-mount min-w-0 lg:flex-1 [&>*]:h-full"
+          style={revealDelay(120)}
+        >
+          <NetworkDepthChart metrics={data.networkMetrics} />
+        </div>
+      )}
+      <div
+        className="reveal-mount min-w-0 lg:flex-1 [&>*]:h-full"
+        style={revealDelay(160)}
+      >
         <DashboardGraphPreview graphPreview={data.graphPreview} />
       </div>
     </>
@@ -153,8 +173,13 @@ export async function SuggestedOutreachSection({
 }) {
   const { data } = await bundle;
   return (
-    <div className="reveal-mount h-full min-w-0 [&>*]:h-full" style={revealDelay(180)}>
+    <div
+      className="reveal-mount h-full min-w-0 lg:flex-1 [&>*]:h-full"
+      style={revealDelay(180)}
+    >
       <SuggestedOutreachCard
+        networkIsEmpty={data.stats.totalContacts === 0}
+        dueFollowUpCount={data.stats.dueFollowUps}
         items={data.suggestions.map((s) => {
           const contactId = s.relatedContactIds?.[0] ?? null;
           const meta = contactMeta(data, contactId);
@@ -180,8 +205,21 @@ export async function OutreachPerformanceSection({
   summary: OutreachSummary;
 }) {
   const outreachPerformance = await summary;
+  // Nothing sent and nothing built: the card renders "—", "0 positive / 0 sent" and an
+  // invitation into a paid surface. That is a hole on the dashboard for every account that
+  // has never run a campaign, which is most of them and all new ones. It reappears the
+  // moment there is a campaign to report on.
+  if (
+    outreachPerformance.accountMetrics.sentCount === 0 &&
+    outreachPerformance.accountMetrics.campaignCount === 0
+  ) {
+    return null;
+  }
   return (
-    <div className="reveal-mount h-full min-w-0 [&>*]:h-full" style={revealDelay(180)}>
+    <div
+      className="reveal-mount h-full min-w-0 lg:flex-1 [&>*]:h-full"
+      style={revealDelay(180)}
+    >
       <OutreachPerformanceCard
         accountRate={outreachPerformance.accountMetrics.successfulReplyRate}
         sentCount={outreachPerformance.accountMetrics.sentCount}
@@ -213,6 +251,7 @@ export async function RemindersAndFollowUpsSection({
             contactName: r.contactId
               ? data.contactNameById.get(r.contactId) ?? null
               : null,
+            noteBatchId: r.noteBatchId,
           }))}
         />
       </div>
@@ -376,7 +415,7 @@ function StatCard({
         <span className="text-xs font-medium uppercase tracking-wide">{label}</span>
         {icon}
       </div>
-      <p className="mt-3 font-[family-name:var(--font-display)] text-3xl text-primary">
+      <p className="mt-3 font-[family-name:var(--font-display)] text-3xl text-ink">
         {value}
       </p>
       {subtitle && (

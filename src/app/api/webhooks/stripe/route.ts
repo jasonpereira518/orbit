@@ -3,159 +3,94 @@ import type Stripe from "stripe";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
-import {
-  LIFETIME_METADATA_KEY,
-  LIFETIME_METADATA_VALUE,
-  PRO_METADATA_VALUE,
-  SUBSCRIPTION_USER_METADATA_KEY,
-  getStripe,
-} from "@/lib/stripe";
+import { getStripe } from "@/lib/stripe";
 import {
   findUserIdByStripeCustomerId,
   setLifetimePurchase,
   setSubscriptionState,
-  type SubscriptionMirror,
 } from "@/lib/user-settings";
-import { classifyMovement, monthlyValueCents, recordBillingEvent } from "@/lib/billing-events";
+import {
+  hasPriorRevenue,
+  monthlyValueCents,
+  recordBillingEvent,
+} from "@/lib/billing-events";
+import {
+  decideStripeEvent,
+  stripeEventSubject,
+  type DecideContext,
+} from "@/lib/billing-stripe";
+import {
+  WEBHOOK_REASONS,
+  recordWebhookDelivery,
+} from "@/lib/webhook-deliveries";
 
 /**
  * Fulfils Stripe purchases: the one-time Orbit Lifetime tier and the recurring Orbit Pro
- * subscription.
+ * subscription, and records what each event meant financially.
  *
  * Webhooks — not the success page — are what actually grant the plan. A customer can pay
  * and then lose their connection before any redirect loads, so the redirect is a
  * convenience and this endpoint is the guarantee.
  *
- * NOTE: `customer.subscription.updated` and `customer.subscription.deleted` must also be
- * enabled on this endpoint in the Stripe Dashboard — handling them in code alone is not
- * enough.
- */
-
-/** `checkout.session.completed` fires for instant methods; the async variant covers
- *  delayed ones (bank debits), where funds land after the session closes. */
-const FULFIL_EVENTS = new Set<Stripe.Event["type"]>([
-  "checkout.session.completed",
-  "checkout.session.async_payment_succeeded",
-]);
-
-/** Renewals, cancellations, and payment failures for the Pro subscription. */
-const SUBSCRIPTION_EVENTS = new Set<Stripe.Event["type"]>([
-  "customer.subscription.updated",
-  "customer.subscription.deleted",
-]);
-
-/** `customer` arrives as an id, an expanded object, or null depending on the object. */
-function customerIdOf(obj: {
-  customer: string | Stripe.Customer | Stripe.DeletedCustomer | null;
-}) {
-  const customer = obj.customer;
-  if (!customer) return null;
-  return typeof customer === "string" ? customer : customer.id;
-}
-
-/**
- * Where the paid-through timestamp lives moved across Stripe API versions: recent
- * versions carry `current_period_end` on the subscription item, older ones on the
- * subscription root. The SDK is unpinned here, so read the item first and fall back.
- */
-function periodEndOf(subscription: Stripe.Subscription): number | null {
-  const item = subscription.items?.data?.[0] as
-    | { current_period_end?: number }
-    | undefined;
-  if (typeof item?.current_period_end === "number") {
-    return item.current_period_end;
-  }
-  const root = (subscription as unknown as { current_period_end?: number })
-    .current_period_end;
-  if (typeof root === "number") return root;
-  console.error(
-    `Stripe subscription ${subscription.id} carries no current_period_end on item or root.`
-  );
-  return null;
-}
-
-/**
- * Same status semantics the legacy Clerk mirror used: `canceled` keeps the plan with its
- * period end so access runs to the paid-through date (`resolvePlan` handles the expiry),
- * while states where money never settled clear the mirror entirely.
- */
-function mirrorForStatus(
-  status: Stripe.Subscription.Status,
-  periodEnd: number | null
-): SubscriptionMirror {
-  switch (status) {
-    case "active":
-    case "trialing":
-      return { plan: "orbit", status: "active", periodEnd };
-    case "past_due":
-      return { plan: "orbit", status: "past_due", periodEnd };
-    case "canceled":
-      return { plan: "orbit", status: "canceled", periodEnd };
-    default:
-      // incomplete, incomplete_expired, unpaid, paused — never live entitlement.
-      return { plan: null, status: null, periodEnd: null };
-  }
-}
-
-/**
- * Books the Pro subscription's MRR movement into `billing_events`, mirroring exactly the
- * pattern the legacy Clerk webhook used (see git history of api/webhooks/clerk/route.ts):
- * read the recurring value BEFORE the mirror is overwritten — the only moment both sides of
- * a transition are knowable — then classify the before/after delta and record it.
+ * THIS FILE IS A DRIVER, NOT A DECISION. What each event means lives in
+ * `@/lib/billing-stripe`, as a pure function of (event, context). That split exists
+ * because the old shape — read the mirror, write it, read it back to see what changed —
+ * could only ever run inside a live request against a live database, which made it both
+ * untestable in isolation and impossible for a backfill to replay. The backfill now shares
+ * this exact logic rather than reimplementing it and drifting.
  *
- * Called from both the checkout-completion branch (the "new" transition) and the
- * subscription-lifecycle branch (renewals, cancellations, dunning). Safe to call from both:
- * the checkout branch's optimistic grant already establishes the new cents value, so the
- * very next `customer.subscription.updated` for that same transition reads identical
- * before/after state and `classifyMovement` naturally returns null — no double-count.
+ * MUST ALSO BE ENABLED IN THE STRIPE DASHBOARD — handling an event type in code is not
+ * enough, and a type that is handled here but not subscribed there simply never arrives:
+ *
+ *   checkout.session.completed          checkout.session.async_payment_succeeded
+ *   customer.subscription.created       customer.subscription.updated
+ *   customer.subscription.deleted       invoice.paid
+ *   invoice.payment_failed              charge.refunded
+ *   charge.dispute.created              charge.dispute.closed
  */
-async function recordProMovement(
-  eventId: string | null,
-  userId: string,
-  apply: () => Promise<void>,
-  detail: Record<string, unknown>
-) {
+
+/**
+ * Resolve the event to an account.
+ *
+ * The only step that needs the database, which is why it is here and not in the pure
+ * module: `client_reference_id` and subscription metadata cover our own checkout flow, and
+ * the customer-id lookup covers everything created in the Stripe dashboard instead.
+ */
+async function attribute(event: Stripe.Event): Promise<string | null> {
+  const { userIdHint, customerId } = stripeEventSubject(event);
+  if (userIdHint) return userIdHint;
+  if (!customerId) return null;
+  return findUserIdByStripeCustomerId(customerId);
+}
+
+/**
+ * The recurring value of this account immediately before the event.
+ *
+ * Read once, before anything is written — the only moment both sides of a transition are
+ * knowable, since applying the mirror overwrites the "before".
+ */
+async function readBeforeCents(userId: string, now: Date): Promise<number> {
   const db = await getDb();
-  const before = await db.query.userSettings.findFirst({
+  const row = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
     columns: {
       subscriptionPlan: true,
       subscriptionStatus: true,
       subscriptionPeriodEnd: true,
+      subscriptionMonthlyCents: true,
     },
   });
-  const beforeCents =
-    before?.subscriptionPlan === "orbit"
-      ? monthlyValueCents(before.subscriptionStatus, before.subscriptionPeriodEnd)
-      : 0;
-
-  await apply();
-
-  const after = await db.query.userSettings.findFirst({
-    where: eq(userSettings.userId, userId),
-    columns: { subscriptionStatus: true, subscriptionPeriodEnd: true },
-  });
-  const afterCents = monthlyValueCents(
-    after?.subscriptionStatus ?? null,
-    after?.subscriptionPeriodEnd ?? null
+  if (row?.subscriptionPlan !== "orbit") return 0;
+  return monthlyValueCents(
+    row.subscriptionStatus,
+    row.subscriptionPeriodEnd,
+    now,
+    row.subscriptionMonthlyCents
   );
-
-  const movement = classifyMovement(beforeCents, afterCents);
-  // No event id means no way to deduplicate, and Stripe retries — recording would risk
-  // counting the same movement several times.
-  if (movement && eventId) {
-    await recordBillingEvent({
-      source: "stripe",
-      eventId,
-      kind: movement.kind,
-      userId,
-      mrrDeltaCents: movement.deltaCents,
-      detail: { ...detail, beforeCents, afterCents },
-    });
-  }
 }
 
 export async function POST(req: NextRequest) {
+  const startedAt = Date.now();
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!secret) {
     console.error("STRIPE_WEBHOOK_SECRET is not set; refusing webhook.");
@@ -176,84 +111,89 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     // Includes replay attempts and stale secrets after a roll — both should be rejected.
     console.error("Stripe webhook verification failed:", err);
+    // Recorded even though nothing can be trusted about the body: a burst of these is how
+    // a rolled secret announces itself, and it is invisible if only valid events are logged.
+    await recordWebhookDelivery({
+      source: "stripe",
+      outcome: "invalid",
+      reason: WEBHOOK_REASONS.signatureInvalid,
+      error: err,
+      durationMs: Date.now() - startedAt,
+    });
     return new Response("Verification failed", { status: 400 });
   }
 
-  if (FULFIL_EVENTS.has(event.type)) {
-    const session = event.data.object as Stripe.Checkout.Session;
+  try {
+    const now = new Date();
+    const userId = await attribute(event);
+    const beforeCents = userId ? await readBeforeCents(userId, now) : 0;
+    const ctx: DecideContext = {
+      userId,
+      beforeCents,
+      // Only consulted when there is nothing to lose by asking: a 0-to-positive move is
+      // the sole case where new and reactivation differ.
+      hadPriorRevenue:
+        userId && beforeCents === 0 ? await hasPriorRevenue(userId) : false,
+      now,
+    };
 
-    // The metadata routes the grant, so a session for any other product — or a plan
-    // added later — cannot hand out the wrong tier by accident.
-    const planMeta = session.metadata?.[LIFETIME_METADATA_KEY];
-    const userId = session.client_reference_id;
+    const decision = decideStripeEvent(event, ctx);
 
-    // `unpaid` covers sessions that completed without funds actually settling.
-    if (userId && session.payment_status !== "unpaid") {
-      if (planMeta === LIFETIME_METADATA_VALUE) {
-        // Idempotent by design: Stripe retries for up to three days, and both event
-        // types above can fire for the same session. `setLifetimePurchase` keeps the
-        // first purchase timestamp and ignores repeats.
-        await setLifetimePurchase(userId, {
-          stripeCustomerId: customerIdOf(session),
-        });
-      } else if (planMeta === PRO_METADATA_VALUE) {
-        // Grant immediately so entitlements are live when the buyer lands back on the
-        // settings page; the first `customer.subscription.updated` fills in the real
-        // period end. Overwrite-idempotent, so retries are harmless.
-        await recordProMovement(
-          event.id,
-          userId,
-          () =>
-            setSubscriptionState(
-              userId,
-              { plan: "orbit", status: "active", periodEnd: null },
-              { stripeCustomerId: customerIdOf(session) }
-            ),
-          { checkoutSessionId: session.id }
-        );
-      }
+    if (decision.mirror?.type === "lifetime") {
+      // Idempotent by design: Stripe retries for up to three days, and both fulfil event
+      // types fire for the same session. `setLifetimePurchase` keeps the first timestamp.
+      await setLifetimePurchase(decision.mirror.userId, {
+        stripeCustomerId: decision.mirror.stripeCustomerId,
+      });
+    } else if (decision.mirror?.type === "subscription") {
+      await setSubscriptionState(
+        decision.mirror.userId,
+        {
+          plan: decision.mirror.plan,
+          status: decision.mirror.status,
+          periodEnd: decision.mirror.periodEnd,
+          monthlyCents: decision.mirror.monthlyCents,
+          interval: decision.mirror.interval,
+        },
+        { stripeCustomerId: decision.mirror.stripeCustomerId }
+      );
     }
-  }
 
-  if (SUBSCRIPTION_EVENTS.has(event.type)) {
-    const subscription = event.data.object as Stripe.Subscription;
-
-    // Ignore subscriptions for unrelated products. Absent metadata still proceeds —
-    // a dashboard-created subscription carries none — and is attributed by customer id.
-    const planMeta = subscription.metadata?.[LIFETIME_METADATA_KEY];
-    if (!planMeta || planMeta === PRO_METADATA_VALUE) {
-      const userId =
-        subscription.metadata?.[SUBSCRIPTION_USER_METADATA_KEY] ||
-        (await (async () => {
-          const customerId = customerIdOf(subscription);
-          return customerId
-            ? await findUserIdByStripeCustomerId(customerId)
-            : null;
-        })());
-
-      if (userId) {
-        // A `deleted` event is terminal regardless of the status snapshot it carries.
-        const status =
-          event.type === "customer.subscription.deleted"
-            ? "canceled"
-            : subscription.status;
-        await recordProMovement(
-          event.id,
-          userId,
-          () =>
-            setSubscriptionState(
-              userId,
-              mirrorForStatus(status, periodEndOf(subscription)),
-              { stripeCustomerId: customerIdOf(subscription) }
-            ),
-          { subscriptionId: subscription.id, stripeStatus: status }
-        );
-      } else {
-        console.error(
-          `Stripe subscription ${subscription.id} could not be attributed to a user.`
-        );
-      }
+    for (const booking of decision.bookings) {
+      await recordBillingEvent({ source: "stripe", ...booking });
     }
+
+    if (decision.outcome === "ignored" && decision.reason === "missing_user_id") {
+      console.error(
+        `Stripe ${event.type} (${event.id}) could not be attributed to a user.`
+      );
+    }
+
+    await recordWebhookDelivery({
+      source: "stripe",
+      eventId: event.id,
+      eventType: event.type,
+      outcome: decision.outcome,
+      reason: decision.reason ?? null,
+      targetUserId: decision.targetUserId,
+      resourceId: decision.resourceId,
+      detail: { bookings: decision.bookings.length },
+      durationMs: Date.now() - startedAt,
+    });
+  } catch (err) {
+    console.error(`Stripe webhook handler failed for ${event.id}:`, err);
+    await recordWebhookDelivery({
+      source: "stripe",
+      eventId: event.id,
+      eventType: event.type,
+      outcome: "error",
+      reason: WEBHOOK_REASONS.handlerThrew,
+      error: err,
+      durationMs: Date.now() - startedAt,
+    });
+    // Non-2xx so Stripe retries. The bookings that did land are keyed idempotently, so a
+    // retry re-applies the rest without duplicating what already succeeded.
+    return new Response("Handler failed", { status: 500 });
   }
 
   return new Response("OK", { status: 200 });

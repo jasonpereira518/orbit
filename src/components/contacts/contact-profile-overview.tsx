@@ -24,6 +24,7 @@ export function ContactProfileOverview({
   industry,
   closeness,
   lastTouchAt,
+  hasLoggedInteraction,
   frequencyLabel,
   howMetSummary,
 }: {
@@ -34,6 +35,8 @@ export function ContactProfileOverview({
   industry: string | null;
   closeness: ClosenessBreakdown;
   lastTouchAt: Date | string | null;
+  /** See ContactStatPills — `lastTouchAt` alone cannot tell the two cases apart. */
+  hasLoggedInteraction: boolean;
   frequencyLabel: string;
   howMetSummary: string | null;
 }) {
@@ -97,7 +100,7 @@ export function ContactProfileOverview({
             <CardTitle>Key facts</CardTitle>
           </CardHeader>
           <CardContent>
-            <ul className="list-disc space-y-1.5 pl-5 text-sm text-primary">
+            <ul className="list-disc space-y-1.5 pl-5 text-sm text-ink">
               {keyFacts.map((f) => (
                 <li key={f}>{f}</li>
               ))}
@@ -112,7 +115,7 @@ export function ContactProfileOverview({
             <CardTitle>Shared interests</CardTitle>
           </CardHeader>
           <CardContent>
-            <ul className="list-disc space-y-1.5 pl-5 text-sm text-primary">
+            <ul className="list-disc space-y-1.5 pl-5 text-sm text-ink">
               {sharedInterests.map((interest) => (
                 <li key={interest}>{interest}</li>
               ))}
@@ -127,7 +130,7 @@ export function ContactProfileOverview({
             <CardTitle>Industry</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-primary">{industry}</p>
+            <p className="text-sm text-ink">{industry}</p>
           </CardContent>
         </Card>
       ) : null}
@@ -148,7 +151,7 @@ export function ContactProfileOverview({
               <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2">
                 <div>
                   <p className="text-xs text-muted-foreground">Strength</p>
-                  <p className="mt-0.5 text-lg font-medium text-primary">
+                  <p className="mt-0.5 text-lg font-medium text-ink">
                     {Math.round(closeness.strength * 100)}%
                   </p>
                 </div>
@@ -156,12 +159,31 @@ export function ContactProfileOverview({
                   {/* Both lines feed the score: recency and cadence are
                       separate components of closeness. */}
                   <p className="text-xs text-muted-foreground">Activity</p>
-                  <p className="mt-0.5 text-sm text-primary">
-                    Last interaction {recencyLabel}
-                  </p>
-                  <p className="mt-0.5 text-sm text-muted-foreground">
-                    Frequency · {frequencyLabel}
-                  </p>
+                  {hasLoggedInteraction ? (
+                    <>
+                      <p className="mt-0.5 text-sm text-ink">
+                        Last interaction {recencyLabel}
+                      </p>
+                      <p className="mt-0.5 text-sm text-muted-foreground">
+                        Frequency · {frequencyLabel}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      {/* Nothing logged. Saying "last interaction 23 days ago" here —
+                          off an import stamp — next to a timeline reading "no
+                          interactions yet" is the kind of contradiction that costs
+                          trust in every other number on the page. */}
+                      <p className="mt-0.5 text-sm text-ink">
+                        No interactions logged
+                      </p>
+                      <p className="mt-0.5 text-sm text-muted-foreground">
+                        {lastTouchAt
+                          ? `In your network ${recencyLabel}`
+                          : "Add a note to start the history"}
+                      </p>
+                    </>
+                  )}
                 </div>
               </div>
             </div>

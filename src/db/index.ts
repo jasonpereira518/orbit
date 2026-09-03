@@ -5,8 +5,16 @@ import { PGlite } from "@electric-sql/pglite";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import * as schema from "./schema";
 import { formatVectorLiteral } from "@/lib/pgvector";
+import { noteQuery } from "@/lib/query-counter";
 import path from "node:path";
 import fs from "node:fs";
+
+/**
+ * Drizzle's logger hook is the only place every statement funnels through regardless of
+ * driver, which is why the statement counter hangs off it rather than off `db.execute`.
+ * It logs nothing — `logQuery` is used purely as a per-statement callback.
+ */
+const countingLogger = { logQuery: () => noteQuery() };
 
 type Db =
   | ReturnType<typeof drizzleNeon<typeof schema>>
@@ -49,6 +57,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   subscription_plan text,
   subscription_status text,
   subscription_period_end timestamptz,
+  subscription_monthly_cents integer,
+  subscription_interval text,
   comped_note text,
   comped_at timestamptz,
   comped_by text,
@@ -85,6 +95,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   email text,
   phone text,
   linkedin_url text,
+  x_handle text,
   website text,
   profile_image_url text,
   relationship_score integer NOT NULL DEFAULT 2,
@@ -103,10 +114,21 @@ CREATE TABLE IF NOT EXISTS contacts (
   follow_up_status text DEFAULT 'none',
   ai_summary text,
   notes text,
+  embedding_stale_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS contacts_user_id_idx ON contacts(user_id);
+CREATE INDEX IF NOT EXISTS contacts_user_linkedin_idx ON contacts(user_id, linkedin_url);
+CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle);
+CREATE TABLE IF NOT EXISTS extension_usage (
+  user_id text PRIMARY KEY,
+  window_started_at timestamptz NOT NULL DEFAULT now(),
+  request_count integer NOT NULL DEFAULT 0,
+  ai_window_started_at timestamptz NOT NULL DEFAULT now(),
+  ai_count integer NOT NULL DEFAULT 0,
+  last_seen_at timestamptz
+);
 CREATE TABLE IF NOT EXISTS user_goals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -135,6 +157,7 @@ CREATE TABLE IF NOT EXISTS interactions (
   same_day_order integer NOT NULL DEFAULT 0,
   source text,
   external_id text,
+  note_batch_id uuid,
   raw_notes text,
   ai_summary text,
   topics jsonb DEFAULT '[]',
@@ -165,6 +188,13 @@ CREATE TABLE IF NOT EXISTS reminders (
   reminder_type text NOT NULL DEFAULT 'manual',
   action_kind text NOT NULL DEFAULT 'task',
   created_by text NOT NULL DEFAULT 'user',
+  note_batch_id uuid,
+  source_interaction_id uuid REFERENCES interactions(id) ON DELETE SET NULL,
+  action_item_id uuid,
+  source_excerpt text,
+  raw_date_phrase text,
+  date_basis text,
+  item_hash text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS suggested_reminders (
@@ -190,6 +220,58 @@ CREATE TABLE IF NOT EXISTS suggested_reminders (
 CREATE INDEX IF NOT EXISTS suggested_reminders_user_status_idx ON suggested_reminders(user_id, status);
 CREATE INDEX IF NOT EXISTS suggested_reminders_batch_idx ON suggested_reminders(capture_batch_id);
 CREATE UNIQUE INDEX IF NOT EXISTS suggested_reminders_user_item_uidx ON suggested_reminders(user_id, item_hash);
+CREATE TABLE IF NOT EXISTS note_batches (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  source_hash text NOT NULL,
+  source_text text NOT NULL,
+  entry_point text NOT NULL DEFAULT 'capture',
+  seed_contact_id uuid,
+  anchor_date timestamptz NOT NULL,
+  anchor_basis text NOT NULL DEFAULT 'upload',
+  status text NOT NULL DEFAULT 'saved',
+  result jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  undone_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS note_batches_user_created_idx ON note_batches(user_id, created_at);
+CREATE INDEX IF NOT EXISTS note_batches_user_source_idx ON note_batches(user_id, source_hash);
+CREATE TABLE IF NOT EXISTS interaction_mentions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  interaction_id uuid NOT NULL REFERENCES interactions(id) ON DELETE CASCADE,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  mention_text text NOT NULL,
+  confidence real NOT NULL,
+  matched_by text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS interaction_mentions_interaction_contact_uidx ON interaction_mentions(interaction_id, contact_id);
+CREATE INDEX IF NOT EXISTS interaction_mentions_user_contact_idx ON interaction_mentions(user_id, contact_id);
+CREATE TABLE IF NOT EXISTS action_items (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  interaction_id uuid NOT NULL REFERENCES interactions(id) ON DELETE CASCADE,
+  text text NOT NULL,
+  position integer NOT NULL DEFAULT 0,
+  status text NOT NULL DEFAULT 'open',
+  completed_at timestamptz,
+  item_hash text NOT NULL,
+  reminder_id uuid REFERENCES reminders(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS action_items_user_item_hash_uidx ON action_items(user_id, item_hash);
+CREATE INDEX IF NOT EXISTS action_items_user_contact_status_idx ON action_items(user_id, contact_id, status);
+CREATE TABLE IF NOT EXISTS contact_briefs (
+  contact_id uuid PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  standing text NOT NULL,
+  recent_discussions jsonb NOT NULL DEFAULT '[]',
+  generated_at timestamptz NOT NULL DEFAULT now(),
+  basis_interaction_id uuid,
+  model text
+);
 CREATE TABLE IF NOT EXISTS imports (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -527,6 +609,47 @@ CREATE TABLE IF NOT EXISTS feedback (
 );
 CREATE INDEX IF NOT EXISTS feedback_kind_created_idx ON feedback(kind, created_at);
 CREATE INDEX IF NOT EXISTS feedback_user_created_idx ON feedback(user_id, created_at);
+CREATE TABLE IF NOT EXISTS interest_list_signups (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  email text NOT NULL,
+  referrer text,
+  utm_source text,
+  utm_medium text,
+  utm_campaign text,
+  landing_path text,
+  unsubscribe_token text NOT NULL,
+  unsubscribed_at timestamptz,
+  welcome_planet text,
+  follow_up_sent_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
+CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_token_uidx ON interest_list_signups(unsubscribe_token);
+CREATE INDEX IF NOT EXISTS interest_list_signups_created_idx ON interest_list_signups(created_at);
+CREATE TABLE IF NOT EXISTS broadcasts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  subject text NOT NULL,
+  body text NOT NULL,
+  status text NOT NULL DEFAULT 'draft',
+  created_by text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  sent_at timestamptz,
+  recipient_count integer NOT NULL DEFAULT 0,
+  sent_count integer NOT NULL DEFAULT 0,
+  failed_count integer NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS broadcasts_created_idx ON broadcasts(created_at);
+CREATE TABLE IF NOT EXISTS broadcast_recipients (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  broadcast_id uuid NOT NULL,
+  signup_id uuid NOT NULL,
+  email text NOT NULL,
+  sent_at timestamptz,
+  error text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS broadcast_recipients_pair_uidx ON broadcast_recipients(broadcast_id, signup_id);
+CREATE INDEX IF NOT EXISTS broadcast_recipients_broadcast_idx ON broadcast_recipients(broadcast_id);
 CREATE TABLE IF NOT EXISTS billing_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source text NOT NULL,
@@ -565,6 +688,49 @@ CREATE TABLE IF NOT EXISTS gate_events (
 CREATE INDEX IF NOT EXISTS gate_events_feature_created_idx ON gate_events(feature, created_at);
 CREATE INDEX IF NOT EXISTS gate_events_user_created_idx ON gate_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action, created_at);
+CREATE TABLE IF NOT EXISTS app_surface_flags (
+  surface_key text PRIMARY KEY,
+  hidden_at timestamptz NOT NULL DEFAULT now(),
+  hidden_by text NOT NULL
+);
+CREATE TABLE IF NOT EXISTS startup_expenses (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  category text NOT NULL,
+  amount_usd real NOT NULL,
+  incurred_at timestamptz NOT NULL,
+  note text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS cash_snapshots (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  as_of timestamptz NOT NULL,
+  balance_usd real NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS acquisition_spend (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  channel text NOT NULL,
+  amount_usd real NOT NULL,
+  period_start timestamptz NOT NULL,
+  period_end timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS fundraising_rounds (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  target_usd real NOT NULL,
+  status text NOT NULL DEFAULT 'open',
+  closed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS fundraising_investors (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  round_id uuid NOT NULL REFERENCES fundraising_rounds(id),
+  name text NOT NULL,
+  amount_usd real NOT NULL,
+  committed_at timestamptz NOT NULL,
+  note text
+);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -586,8 +752,12 @@ CREATE INDEX IF NOT EXISTS admin_audit_log_action_idx ON admin_audit_log(action,
  * of them no-ops after the first deploy, blocking the first request. One SELECT confirms a
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
+ *
+ * v17 = note processing tables (note_batches, interaction_mentions, action_items,
+ * contact_briefs) plus reminder/interaction provenance columns.
+ * v18 = legacy action-item backfill guards on jsonb_typeof(action_items) = 'array'.
  */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 21;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -701,6 +871,19 @@ export const SCALE_DDL: string[] = [
   // base and outreach refresh had no usable index for their scans.
   `CREATE INDEX IF NOT EXISTS interactions_user_date_idx ON interactions(user_id, interaction_date DESC)`,
   `CREATE INDEX IF NOT EXISTS embeddings_user_src_idx ON contact_embeddings(user_id, source_type, contact_id)`,
+  // Reminders had `(user_id, status)`, `(user_id, due_date)` and `(user_id, list_id)` but
+  // nothing on contact_id, while eight hot paths filter by it — the contact detail page,
+  // every reminder write, calendar sync, and the import engine's per-chunk `inArray` dedupe.
+  // Each of those was a per-user index scan plus a filter instead of a point lookup.
+  `CREATE INDEX IF NOT EXISTS reminders_user_contact_idx ON reminders(user_id, contact_id)`,
+  // Company/school concentration in `src/lib/closeness-materialize.ts` counts with
+  // `lower(trim(company)) = $1`. A b-tree on the bare column cannot serve that — Postgres
+  // could only use the user_id prefix and then filter every one of that user's entries —
+  // so these are expression indexes matching the predicate exactly. `lower` and `btrim`
+  // are both immutable, which is what makes them indexable. This runs on every contact
+  // create, update and logInteraction, so it is not a cold path.
+  `CREATE INDEX IF NOT EXISTS contacts_user_company_norm_idx ON contacts(user_id, lower(trim(company)))`,
+  `CREATE INDEX IF NOT EXISTS contacts_user_school_norm_idx ON contacts(user_id, lower(trim(school)))`,
   // Lets upsertContactEmbedding and rebuildContactEmbeddingsBatch skip the embedding API
   // call entirely when a row's source content hasn't changed since it was last embedded.
   `ALTER TABLE contact_embeddings ADD COLUMN IF NOT EXISTS content_hash text`,
@@ -931,6 +1114,8 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "twilio_auth_token_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_from_number", "text");
   await ensureColumn(client, "user_settings", "theme", "text");
+  await ensureColumn(client, "user_settings", "yc_mode_enabled", "boolean DEFAULT false");
+  await ensureColumn(client, "user_settings", "estimated_monthly_churn_pct", "real");
   await ensureColumn(
     client,
     "user_settings",
@@ -1091,6 +1276,8 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "subscription_plan", "text");
   await ensureColumn(client, "user_settings", "subscription_status", "text");
   await ensureColumn(client, "user_settings", "subscription_period_end", "timestamptz");
+  await ensureColumn(client, "user_settings", "subscription_monthly_cents", "integer");
+  await ensureColumn(client, "user_settings", "subscription_interval", "text");
   await ensureColumn(client, "user_settings", "comped_note", "text");
   await ensureColumn(client, "user_settings", "comped_at", "timestamptz");
   await ensureColumn(client, "user_settings", "comped_by", "text");
@@ -1112,13 +1299,68 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "signup_landing_path", "text");
   await ensureColumn(client, "user_settings", "signup_attributed_at", "timestamptz");
 
+  // Embedding staleness: imports flag contacts here instead of embedding inline, and a
+  // separate backfill drains them. The dedupe is safe to re-run — it only ever deletes rows
+  // that lose the (user_id, contact_id, source_type, source_id) tiebreak, and once the
+  // unique index exists no more duplicates can be created for it to find.
+  //
+  // The key includes `source_id` because that is the real uniqueness contract:
+  // `upsertContactEmbedding` (src/lib/search.ts) keys its existence check on all four
+  // columns, and calendar-sync writes one `"meeting"` row per meeting with a distinct
+  // `source_id`. A three-column key would both delete every meeting embedding but the
+  // newest and make every subsequent meeting write raise a unique violation that
+  // `upsertContactEmbedding`'s catch swallows. `source_id` is nullable and Postgres
+  // indexes NULLs as distinct by default, so rows with a null `source_id` are simply
+  // unconstrained — which matches the writer, since `upsertContactEmbedding` skips its
+  // existence check entirely when no `source_id` is supplied.
+  await ensureColumn(client, "contacts", "embedding_stale_at", "timestamptz");
+
+  try {
+    await client.exec(
+      `CREATE INDEX IF NOT EXISTS contacts_embedding_stale_idx
+       ON contacts(user_id) WHERE embedding_stale_at IS NOT NULL`
+    );
+  } catch {
+    // Index may already exist
+  }
+
+  try {
+    await client.exec(`
+      DELETE FROM contact_embeddings a
+      USING contact_embeddings b
+      WHERE a.user_id = b.user_id
+        AND a.contact_id = b.contact_id
+        AND a.source_type = b.source_type
+        AND a.source_id = b.source_id
+        AND (a.created_at < b.created_at OR (a.created_at = b.created_at AND a.id < b.id))
+    `);
+  } catch {
+    // Nothing to dedupe
+  }
+
+  // An earlier revision of this migration created the same-named index on only three
+  // columns. Drop it by name before creating the correct one, or a database that already
+  // migrated keeps the over-strict key forever. Both statements are no-ops once the
+  // four-column index is in place.
+  try {
+    await client.exec(`DROP INDEX IF EXISTS embeddings_user_contact_source_uidx`);
+  } catch {
+    // Index may not exist
+  }
+
+  try {
+    await client.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS embeddings_user_contact_source_id_uidx
+       ON contact_embeddings(user_id, contact_id, source_type, source_id)`
+    );
+  } catch {
+    // Index may already exist
+  }
+
   // `query` rather than `exec`: it returns `{ rows }`, which `rowsOf` understands, so the
   // schema-version SELECT reads the same on both drivers. Every statement here is a single
   // command, which is what `query` requires.
   await applyScaleSchema((statement) => client.query(statement));
-}
-
-/**
 
   // Admin console v2: operator suspension, plus the indexes the cross-user roster/trend
   // queries need. Same reasoning as the block above — the DDL template only helps a
@@ -1126,6 +1368,21 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "suspended_at", "timestamptz");
   await ensureColumn(client, "user_settings", "suspended_reason", "text");
   await ensureColumn(client, "user_settings", "suspended_by", "text");
+
+  // Same reasoning: a local database built by the version that first added
+  // `interest_list_signups` has the table but neither of these columns.
+  await ensureColumn(client, "interest_list_signups", "welcome_planet", "text");
+  await ensureColumn(client, "interest_list_signups", "follow_up_sent_at", "timestamptz");
+
+  // Schema v17: note processing provenance columns.
+  await ensureColumn(client, "interactions", "note_batch_id", "uuid");
+  await ensureColumn(client, "reminders", "note_batch_id", "uuid");
+  await ensureColumn(client, "reminders", "source_interaction_id", "uuid REFERENCES interactions(id) ON DELETE SET NULL");
+  await ensureColumn(client, "reminders", "action_item_id", "uuid");
+  await ensureColumn(client, "reminders", "source_excerpt", "text");
+  await ensureColumn(client, "reminders", "raw_date_phrase", "text");
+  await ensureColumn(client, "reminders", "date_basis", "text");
+  await ensureColumn(client, "reminders", "item_hash", "text");
 
   for (const statement of ADMIN_V2_STATEMENTS) {
     try {
@@ -1155,6 +1412,17 @@ const ADMIN_V2_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS user_settings_email_idx ON user_settings(email)`,
   `CREATE INDEX IF NOT EXISTS user_settings_last_active_idx ON user_settings(last_active_at)`,
   `CREATE INDEX IF NOT EXISTS usage_events_failures_idx ON usage_events(user_id, created_at) WHERE success = 0`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS reminders_user_item_hash_uidx ON reminders(user_id, item_hash)`,
+  `CREATE INDEX IF NOT EXISTS reminders_note_batch_idx ON reminders(note_batch_id)`,
+  `CREATE INDEX IF NOT EXISTS interactions_note_batch_idx ON interactions(note_batch_id)`,
+  // Legacy action items → rows. Idempotent through the unique (user_id, item_hash) index.
+  // The hash formula MUST equal actionItemHash() in src/lib/action-items.ts.
+  `INSERT INTO action_items (user_id, contact_id, interaction_id, text, position, item_hash)
+   SELECT i.user_id, i.contact_id, i.id, a.value, a.ordinality - 1,
+          encode(sha256(convert_to(i.id::text || '|' || lower(btrim(a.value)), 'UTF8')), 'hex')
+   FROM interactions i, jsonb_array_elements_text(COALESCE(i.action_items, '[]'::jsonb)) WITH ORDINALITY a
+   WHERE jsonb_typeof(i.action_items) = 'array' AND btrim(a.value) <> ''
+   ON CONFLICT (user_id, item_hash) DO NOTHING`,
 ];
 
 /**
@@ -1333,10 +1601,14 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS social_links jsonb DEFAULT '{}'`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_plan text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lifetime_purchased_at timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS yc_mode_enabled boolean DEFAULT false`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS estimated_monthly_churn_pct real`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS stripe_customer_id text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_plan text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_status text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_period_end timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_monthly_cents integer`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_interval text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_note text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_by text`,
@@ -1368,6 +1640,9 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `CREATE INDEX IF NOT EXISTS error_events_user_created_idx ON error_events(user_id, created_at)`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
+    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS x_handle text`,
+    `CREATE INDEX IF NOT EXISTS contacts_user_linkedin_idx ON contacts(user_id, linkedin_url)`,
+    `CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle)`,
     `CREATE INDEX IF NOT EXISTS companies_user_idx ON companies(user_id)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS companies_user_name_uidx ON companies(user_id, name_normalized)`,
     `CREATE INDEX IF NOT EXISTS user_goals_user_idx ON user_goals(user_id)`,
@@ -1404,6 +1679,11 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_token_created_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS calendar_feed_last_fetched_at timestamptz`,
+    // Added a version after the table itself. A preview deployment of the branch that
+    // introduced `interest_list_signups` already created it without these, and
+    // CREATE TABLE IF NOT EXISTS will never go back and add a column to it.
+    `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS welcome_planet text`,
+    `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS follow_up_sent_at timestamptz`,
     `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
     `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
@@ -1421,7 +1701,41 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_reason text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_by text`,
+    `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS note_batch_id uuid`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS note_batch_id uuid`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS source_interaction_id uuid REFERENCES interactions(id) ON DELETE SET NULL`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS action_item_id uuid`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS source_excerpt text`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS raw_date_phrase text`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS date_basis text`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS item_hash text`,
     ...ADMIN_V2_STATEMENTS,
+    // Embedding staleness: imports flag contacts here instead of embedding inline, and a
+    // separate backfill drains them. The dedupe is safe to re-run — it only ever deletes
+    // rows that lose the (user_id, contact_id, source_type, source_id) tiebreak, and once
+    // the unique index exists no more duplicates can be created for it to find.
+    //
+    // `source_id` is part of the key because that is the real uniqueness contract:
+    // `upsertContactEmbedding` keys its existence check on all four columns, and
+    // calendar-sync writes one `"meeting"` row per meeting with a distinct `source_id`.
+    // The DROP is load-bearing: an earlier revision created this same-named index on only
+    // three columns, which would delete every meeting embedding but the newest and then
+    // make each subsequent meeting write raise a swallowed unique violation. NULL
+    // `source_id`s index as distinct (Postgres default), so unkeyed rows stay
+    // unconstrained — matching the writer, which skips its existence check without one.
+    `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS embedding_stale_at timestamptz`,
+    `CREATE INDEX IF NOT EXISTS contacts_embedding_stale_idx
+     ON contacts(user_id) WHERE embedding_stale_at IS NOT NULL`,
+    `DELETE FROM contact_embeddings a
+     USING contact_embeddings b
+     WHERE a.user_id = b.user_id
+       AND a.contact_id = b.contact_id
+       AND a.source_type = b.source_type
+       AND a.source_id = b.source_id
+       AND (a.created_at < b.created_at OR (a.created_at = b.created_at AND a.id < b.id))`,
+    `DROP INDEX IF EXISTS embeddings_user_contact_source_uidx`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS embeddings_user_contact_source_id_uidx
+     ON contact_embeddings(user_id, contact_id, source_type, source_id)`,
   ];
 
   for (const statement of alters) {
@@ -1440,6 +1754,22 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
   await migratePgvector((statement) => sql.query(statement));
 
   await applyScaleSchema((statement) => sql.query(statement));
+}
+
+/**
+ * Move an unopenable local PGlite directory aside so a fresh one can be created.
+ * Returns the new path, or null if it could not be moved (in which case the caller should
+ * surface the original open error rather than pretend it recovered).
+ */
+function quarantineDataDir(dataDir: string): string | null {
+  try {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const quarantined = `${dataDir}-corrupt-${stamp}`;
+    fs.renameSync(dataDir, quarantined);
+    return quarantined;
+  } catch {
+    return null;
+  }
 }
 
 async function ensureReady(): Promise<void> {
@@ -1462,13 +1792,70 @@ async function ensureReady(): Promise<void> {
     // package (`@electric-sql/pglite-pgvector`) pinned to a newer PGlite than the one this
     // project has installed; it is not installed here, so local vector search uses the JS
     // fallback instead.
-    globalForDb.orbitPglite = await PGlite.create({
-      dataDir,
-      extensions: { pg_trgm },
-    });
+    const open = () =>
+      PGlite.create({ dataDir, extensions: { pg_trgm } });
+
+    try {
+      globalForDb.orbitPglite = await open();
+    } catch (err) {
+      // A local PGlite directory that will not open is not recoverable: the failure is a
+      // bare WASM `Aborted()` with no diagnostics, and `pg_resetwal` is not available. It
+      // happens when two processes write the directory at once (`next dev` plus a build or
+      // a script) or when one exits without checkpointing, and until now it bricked local
+      // development until someone deleted the directory by hand — with the real cause
+      // buried under a stack trace that points at `PGlite.create`.
+      //
+      // So: quarantine it and start again. The directory is gitignored local fixture data,
+      // it is already unreadable, and the schema is reapplied below automatically. Moved
+      // rather than deleted, because it costs nothing to keep and the alternative is
+      // destroying something on the user's behalf without being asked.
+      const quarantined = quarantineDataDir(dataDir);
+      if (!quarantined) throw err;
+
+      console.error(
+        `[orbit] Local database at ${dataDir} could not be opened and has been reset.\n` +
+          `[orbit] The unreadable copy is at ${quarantined}.\n` +
+          `[orbit] This is almost always two processes writing it at once — a build or a ` +
+          `tsx script running while 'next dev' is up. Stop the dev server first.`
+      );
+
+      fs.mkdirSync(dataDir, { recursive: true });
+      // The replacement directory is empty, so the DDL sweep has to run against it even if
+      // an earlier open in this same process already marked the schema reconciled.
+      schemaReconciled = undefined;
+      globalForDb.orbitPglite = await open();
+    }
   }
 
   await globalForDb.orbitPglite.waitReady;
+}
+
+/**
+ * Flush and release the local PGlite instance.
+ *
+ * MUST be called before `process.exit()` by any script that writes to the local database.
+ *
+ * Scripts here exit with an explicit `process.exit(0)` (importing `next/server` anywhere
+ * in the graph keeps the event loop alive, so draining is not an option). That terminates
+ * the process without letting embedded Postgres checkpoint, which leaves `global/pg_control`
+ * pointing at an older redo position than the WAL actually contains. The next open then
+ * fails inside the WASM build with a bare `Aborted()` and no diagnostics, and there is no
+ * `pg_resetwal` to repair it — the data directory is simply gone. That has happened once
+ * already; it costs the whole local dev database.
+ *
+ * No-op against Neon: there is no local instance to close.
+ */
+export async function closeDb(): Promise<void> {
+  const pglite = globalForDb.orbitPglite;
+  if (!pglite) return;
+  try {
+    await pglite.close();
+  } catch {
+    // Already closed, or never finished opening. Nothing useful to do here.
+  }
+  globalForDb.orbitPglite = undefined;
+  globalForDb.orbitDrizzle = undefined;
+  globalForDb.orbitReady = undefined;
 }
 
 export async function getDb(): Promise<Db> {
@@ -1517,15 +1904,15 @@ export async function getDb(): Promise<Db> {
   // per request — each rebuild reconstructs the relational query metadata from `schema`.
   if (process.env.NODE_ENV !== "production") {
     if (globalForDb.orbitNeonSql) {
-      return drizzleNeon(globalForDb.orbitNeonSql, { schema }) as Db;
+      return drizzleNeon(globalForDb.orbitNeonSql, { schema, logger: countingLogger }) as Db;
     }
-    return drizzlePglite(globalForDb.orbitPglite!, { schema });
+    return drizzlePglite(globalForDb.orbitPglite!, { schema, logger: countingLogger });
   }
 
   if (!globalForDb.orbitDrizzle) {
     globalForDb.orbitDrizzle = globalForDb.orbitNeonSql
-      ? (drizzleNeon(globalForDb.orbitNeonSql, { schema }) as Db)
-      : drizzlePglite(globalForDb.orbitPglite!, { schema });
+      ? (drizzleNeon(globalForDb.orbitNeonSql, { schema, logger: countingLogger }) as Db)
+      : drizzlePglite(globalForDb.orbitPglite!, { schema, logger: countingLogger });
   }
   return globalForDb.orbitDrizzle;
 }

@@ -1,22 +1,52 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { imports } from "@/db/schema";
-import { runLinkedInImportJob } from "@/lib/import-job-processor";
+import { LINKEDIN_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-connections";
+import { GOOGLE_CONTACTS_IMPORT_TYPE } from "@/lib/import-adapters/google-contacts";
+import { OUTLOOK_CONTACTS_IMPORT_TYPE } from "@/lib/import-adapters/outlook-contacts";
+import { LINKEDIN_MESSAGES_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-messages";
+import {
+  CALENDAR_CSV_IMPORT_TYPE,
+  CALENDAR_ICS_IMPORT_TYPE,
+} from "@/lib/import-adapters/calendar";
+import { runImportJob } from "@/lib/import-engine";
 import {
   GMAIL_SCAN_IMPORT_TYPE,
   runGmailRecruiterScanJob,
 } from "@/lib/gmail-scan-processor";
 
-export const LINKEDIN_IMPORT_TYPE = "linkedin_connections";
+/**
+ * Re-exported from their adapters, which is where these constants now live: the adapter
+ * registry has to key on them, and importing them from here would close a cycle
+ * (dispatch -> engine -> registry -> dispatch). Every existing call site keeps working.
+ */
+export {
+  LINKEDIN_IMPORT_TYPE,
+  GOOGLE_CONTACTS_IMPORT_TYPE,
+  OUTLOOK_CONTACTS_IMPORT_TYPE,
+  LINKEDIN_MESSAGES_IMPORT_TYPE,
+  CALENDAR_ICS_IMPORT_TYPE,
+  CALENDAR_CSV_IMPORT_TYPE,
+};
 
 /**
  * Import types that own their own server-side processing and can therefore be resumed.
  *
  * The stalled-job cron filters on this list. Anything missing here still runs, but a
  * job whose invocation dies mid-flight would sit in `processing` forever.
+ *
+ * As of Task 15, this is every import type Orbit has — calendar (both formats) was the last
+ * client-driven kind. Nothing is left client-driven; a hypothetical future one would just be
+ * absent from this list, same as `GMAIL_SCAN_IMPORT_TYPE`'s own separate processor is present
+ * despite not routing through the generic engine below.
  */
 export const RESUMABLE_IMPORT_TYPES = [
   LINKEDIN_IMPORT_TYPE,
+  GOOGLE_CONTACTS_IMPORT_TYPE,
+  OUTLOOK_CONTACTS_IMPORT_TYPE,
+  LINKEDIN_MESSAGES_IMPORT_TYPE,
+  CALENDAR_ICS_IMPORT_TYPE,
+  CALENDAR_CSV_IMPORT_TYPE,
   GMAIL_SCAN_IMPORT_TYPE,
 ] as const;
 
@@ -39,9 +69,14 @@ export async function runImportJobById(importId: string): Promise<void> {
     case GMAIL_SCAN_IMPORT_TYPE:
       return runGmailRecruiterScanJob(importId);
     case LINKEDIN_IMPORT_TYPE:
-      return runLinkedInImportJob(importId);
+    case GOOGLE_CONTACTS_IMPORT_TYPE:
+    case OUTLOOK_CONTACTS_IMPORT_TYPE:
+    case LINKEDIN_MESSAGES_IMPORT_TYPE:
+    case CALENDAR_ICS_IMPORT_TYPE:
+    case CALENDAR_CSV_IMPORT_TYPE:
+      return runImportJob(importId);
     default:
-      // Client-driven kinds (e.g. the LinkedIn messages import) have no server runner.
+      // Import types with no server-side runner land here — none remain today.
       return;
   }
 }

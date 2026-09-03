@@ -11,6 +11,7 @@ import {
   isNavActive,
   type AppNavItem,
 } from "@/components/layout/app-nav";
+import { isHrefHidden, surfaceKeyForHref } from "@/lib/surfaces";
 import { OrbitLogo } from "@/components/orbit-logo";
 import type { Plan } from "@/lib/plan-limits";
 import { SPRING_PILL } from "@/lib/motion";
@@ -22,16 +23,23 @@ import { clerkAppearance } from "@/lib/clerk-appearance";
 function SidebarNavLink({
   item,
   pathname,
+  hiddenFromUsers = false,
 }: {
   item: AppNavItem;
   pathname: string;
+  /**
+   * Visible to this viewer but hidden from everyone else — only ever true for an operator,
+   * who is exempt. Marked rather than dropped: the person who can undo a forgotten toggle
+   * is the one person who cannot see its effect, so the nav has to tell them.
+   */
+  hiddenFromUsers?: boolean;
 }) {
   const active = isNavActive(pathname, item.href);
   const Icon = item.icon;
   return (
     <Link
       href={item.href}
-      title={item.label}
+      title={hiddenFromUsers ? `${item.label} — hidden from users` : item.label}
       className={cn(
         "relative flex items-center justify-center gap-2.5 rounded-xl px-2 py-2.5 text-sm transition-colors lg:justify-start lg:px-3 lg:py-2",
         active
@@ -51,6 +59,11 @@ function SidebarNavLink({
       )}
       <Icon className="relative z-10 h-4 w-4 shrink-0" />
       <span className="relative z-10 hidden lg:inline">{item.label}</span>
+      {hiddenFromUsers && (
+        <span className="relative z-10 ml-auto hidden rounded-full border border-border/70 px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground lg:inline">
+          Hidden
+        </span>
+      )}
     </Link>
   );
 }
@@ -60,12 +73,26 @@ export function AppSidebar({
   clerkOn,
   demoMode,
   plan,
+  hidden,
+  hiddenForUsers,
 }: {
   pathname: string;
   clerkOn: boolean;
   demoMode: boolean;
   plan: Plan;
+  /** Surfaces hidden from this viewer. Empty for an exempt operator. */
+  hidden: ReadonlySet<string>;
+  /** Surfaces hidden from ordinary users, whether or not this viewer is exempt. */
+  hiddenForUsers: ReadonlySet<string>;
 }) {
+  const core = APP_NAV_CORE.filter((item) => !isHrefHidden(item.href, hidden));
+  const extras = APP_NAV_EXTRAS.filter((item) => !isHrefHidden(item.href, hidden));
+  const captureHidden = hidden.has("page.capture");
+  const tagged = (item: AppNavItem) => {
+    const key = surfaceKeyForHref(item.href);
+    return key !== null && hiddenForUsers.has(key);
+  };
+
   return (
     <aside className="liquid-glass flex h-full w-[4.5rem] flex-col text-sidebar-foreground lg:w-60">
       <div className="flex items-center justify-between gap-2 px-3 py-5 lg:px-5 lg:py-6">
@@ -74,7 +101,9 @@ export function AppSidebar({
           className="flex min-w-0 flex-1 items-center justify-center gap-2.5 lg:justify-start"
           title="Back to landing page"
         >
-          <OrbitLogo size="md" plan={plan} />
+          <span data-app-logo className="inline-flex shrink-0">
+            <OrbitLogo size="md" plan={plan} />
+          </span>
           <div className="hidden min-w-0 lg:block">
             <p className="font-[family-name:var(--font-display)] text-lg leading-none tracking-tight text-sidebar-primary">
               Orbit
@@ -87,6 +116,9 @@ export function AppSidebar({
         <ThemeToggle className="hidden h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground lg:inline-flex" />
       </div>
 
+      {/* Not part of the nav array, so filtering that list would leave this shortcut as a
+          live door into a hidden page. */}
+      {!captureHidden && (
       <div className="px-2 pb-3 lg:px-3">
         <Link
           href="/capture"
@@ -101,29 +133,35 @@ export function AppSidebar({
           <span className="hidden lg:inline">Log interaction</span>
         </Link>
       </div>
+      )}
 
       <nav className="relative flex flex-1 flex-col gap-0.5 px-1.5 lg:px-2">
-        {APP_NAV_CORE.map((item) => (
+        {core.map((item) => (
           <SidebarNavLink
             key={item.href}
             item={item}
             pathname={pathname}
+            hiddenFromUsers={tagged(item)}
           />
         ))}
 
-        <div className="my-2 flex items-center gap-2 px-2 lg:px-3">
-          <div className="h-px flex-1 bg-border/60" />
-          <span className="hidden text-[10px] font-medium uppercase tracking-wider text-muted-foreground/80 lg:inline">
-            Extras
-          </span>
-          <div className="hidden h-px flex-1 bg-border/60 lg:block" />
-        </div>
+        {/* The divider labels the group below it, so it goes when the group does. */}
+        {extras.length > 0 && (
+          <div className="my-2 flex items-center gap-2 px-2 lg:px-3">
+            <div className="h-px flex-1 bg-border/60" />
+            <span className="hidden text-[10px] font-medium uppercase tracking-wider text-muted-foreground/80 lg:inline">
+              Extras
+            </span>
+            <div className="hidden h-px flex-1 bg-border/60 lg:block" />
+          </div>
+        )}
 
-        {APP_NAV_EXTRAS.map((item) => (
+        {extras.map((item) => (
           <SidebarNavLink
             key={item.href}
             item={item}
             pathname={pathname}
+            hiddenFromUsers={tagged(item)}
           />
         ))}
 

@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "extension-panel-preview",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "extension", "run", "preview:design"],
+      "port": 5174
+    },
+    {
+      "name": "orbit-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3001,
+      "autoPort": true
+    }
+  ]
+}

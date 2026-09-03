@@ -14,7 +14,7 @@ export function HelpSettings() {
   return (
     <section className="space-y-3 rounded-2xl border border-border/70 bg-card p-6">
       <div>
-        <h2 className="text-lg font-medium text-primary">Help</h2>
+        <h2 className="text-lg font-medium text-ink">Help</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Replay the first-run walkthrough, or jump straight into a guided
           setup for adding people to your orbit.

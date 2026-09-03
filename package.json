@@ -12,7 +12,11 @@
     "db:setup": "tsx scripts/setup-db.ts",
     "db:seed": "tsx scripts/seed-demo.ts",
     "db:seed:graph": "tsx scripts/seed-graph-fixture.ts",
-    "db:check": "tsx scripts/smoke-schema-ddl.ts"
+    "db:seed:showcase": "tsx scripts/seed-showcase.ts",
+    "db:check": "tsx scripts/smoke-schema-ddl.ts",
+    "ext:dev": "npm --prefix extension run dev",
+    "ext:build": "npm --prefix extension run build",
+    "ext:zip": "npm --prefix extension run zip"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.3",
@@ -52,7 +56,6 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/jszip": "^3.4.0",
     "@types/node": "^20",
     "@types/papaparse": "^5.5.2",
     "@types/react": "^19",

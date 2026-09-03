@@ -25,7 +25,7 @@ export default async function SignUpPage({
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-6">
         <OrbitLogo size="lg" />
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-primary">
+        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
           Orbit
         </h1>
         <p className="max-w-md text-center text-muted-foreground">

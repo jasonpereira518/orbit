@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { companies } from "@/db/schema";
 import {
@@ -66,16 +66,31 @@ export async function companyFieldsForWrite(
   return { companyId: resolved.id, company: resolved.name };
 }
 
-export type CompanyResolver = (
+export type CompanyResolver = ((
   rawName: string | null | undefined
-) => Promise<{ id: string; name: string } | null>;
+) => Promise<{ id: string; name: string } | null>) & {
+  /**
+   * Resolve a whole batch of names in two statements rather than up to two per *row*.
+   *
+   * Call this once before resolving a batch concurrently. Without it, a bulk write's
+   * `Promise.all(rows.map(...))` fires every lookup simultaneously, so every row sharing
+   * the same not-yet-existing company misses the cache at the same instant — the cache is
+   * only written once a resolution *completes*, and none have. Each of those rows then
+   * pays its own `SELECT` + `INSERT`, and all but the first hits the unique index and pays
+   * a third statement in `resolveCompany`'s race-recovery path. That is a per-row cost
+   * hiding inside a bulk write, and it is invisible to any benchmark that reuses a database
+   * where the companies already exist.
+   */
+  prime(rawNames: Array<string | null | undefined>): Promise<void>;
+};
 
 /**
  * Preloads all of a user's companies into memory and returns a resolver that
  * avoids a DB round trip per lookup for names already seen. Falls back to
  * `resolveCompany` (find-or-create) for cache misses, then caches the result.
  * Use for bulk operations (e.g. CSV import) instead of calling `resolveCompany`
- * once per row.
+ * once per row — and call `prime()` on each batch first, for the reason its own
+ * doc comment gives.
  */
 export async function createCompanyResolver(
   userId: string
@@ -88,7 +103,7 @@ export async function createCompanyResolver(
     existing.map((row) => [row.nameNormalized, { id: row.id, name: row.name }])
   );
 
-  return async (rawName) => {
+  const resolve = (async (rawName) => {
     const display = rawName ? displayCompanyName(rawName) : "";
     if (!display) return null;
     const normalized = normalizeCompanyName(display);
@@ -99,7 +114,60 @@ export async function createCompanyResolver(
     const resolved = await resolveCompany(userId, rawName);
     if (resolved) cache.set(normalized, resolved);
     return resolved;
+  }) as CompanyResolver;
+
+  resolve.prime = async (rawNames) => {
+    // Distinct normalized keys only, so the statements below scale with the number of
+    // distinct companies in the batch rather than with the number of rows. The first
+    // spelling of a name wins as the display value, matching `resolveCompany`'s
+    // first-writer-wins behavior.
+    const wanted = new Map<string, string>();
+    for (const rawName of rawNames) {
+      const display = rawName ? displayCompanyName(rawName) : "";
+      if (!display) continue;
+      const normalized = normalizeCompanyName(display);
+      if (cache.has(normalized) || wanted.has(normalized)) continue;
+      wanted.set(normalized, display);
+    }
+    if (wanted.size === 0) return;
+
+    // Statement 1: whatever already exists. The constructor's preload covers everything the
+    // user had at job start, but a multi-chunk import creates companies as it goes and a
+    // second process may be doing the same, so this is not redundant with it.
+    const found = await db.query.companies.findMany({
+      where: and(
+        eq(companies.userId, userId),
+        inArray(companies.nameNormalized, [...wanted.keys()])
+      ),
+    });
+    for (const row of found) {
+      cache.set(row.nameNormalized, { id: row.id, name: row.name });
+      wanted.delete(row.nameNormalized);
+    }
+    if (wanted.size === 0) return;
+
+    // Statement 2: create the rest. `DO UPDATE` with a self-assignment rather than
+    // `DO NOTHING` purely so conflicting rows still come back from `RETURNING` — a row
+    // another process inserted between the SELECT above and this INSERT would otherwise be
+    // silently absent from the result and fall through to a per-row lookup, which is the
+    // cost this method exists to remove. The keys are distinct by construction, so no
+    // single statement can affect the same conflict target twice.
+    const inserted = await db
+      .insert(companies)
+      .values(
+        [...wanted].map(([nameNormalized, name]) => ({ userId, name, nameNormalized }))
+      )
+      .onConflictDoUpdate({
+        target: [companies.userId, companies.nameNormalized],
+        set: { nameNormalized: sql`excluded.name_normalized` },
+      })
+      .returning();
+    for (const row of inserted) {
+      cache.set(row.nameNormalized, { id: row.id, name: row.name });
+    }
   };
+
+  return resolve;
 }
 
 /** Attach companyId + canonical company text using a preloaded resolver (see `createCompanyResolver`). */

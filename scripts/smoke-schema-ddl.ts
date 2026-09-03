@@ -1,5 +1,5 @@
 /**
- * Guards the two invariants that keep the hand-maintained bootstrap DDL in
+ * Guards the three invariants that keep the hand-maintained bootstrap DDL in
  * `src/db/index.ts` honest. Orbit deliberately does not use `drizzle-kit push` (it would
  * drop the runtime-created `contact_embeddings.embedding_vector` column and its HNSW
  * index), so every column is carried by hand — and hand-maintained lists drift.
@@ -10,7 +10,19 @@
  *      once built with `push`; the Neon database never gets it and the first `select`
  *      naming it fails with 42703.
  *
- *   2. VERSION — if the DDL changed, `SCHEMA_VERSION` was bumped. `getDb()` skips the
+ *   2. INDEX PARITY — every `uniqueIndex` declared in `schema.ts` has a matching
+ *      `CREATE UNIQUE INDEX` in the DDL, by name AND by column list. Nothing at runtime
+ *      reads Drizzle's index metadata, so a stale declaration is invisible until someone
+ *      runs `drizzle-kit push`/`generate` — which `package.json` still ships as
+ *      `db:push`/`db:generate`, and `drizzle.config.ts` points at this schema. A key that
+ *      disagrees with the DDL therefore sits harmless until the day it is applied to
+ *      whatever `DATABASE_URL` resolves to, and then rewrites a live uniqueness contract.
+ *      This check exists because that happened: `embeddings_user_contact_source_uidx` was
+ *      corrected in all three hand-written SQL sites and left stale in `schema.ts`, where
+ *      the column check below could not see it — it iterates `table.columns` and never
+ *      looked at indexes at all.
+ *
+ *   3. VERSION — if the DDL changed, `SCHEMA_VERSION` was bumped. `getDb()` skips the
  *      entire migration sweep when the version recorded in `schema_migrations` already
  *      matches, so DDL that lands without a bump never runs on any instance that has
  *      already migrated. This is not hypothetical: #41 added six `user_settings` columns
@@ -165,6 +177,89 @@ const pgliteEnsured = ensuredColumns(pgliteBody);
  */
 const RUNTIME_MANAGED = new Set(["contact_embeddings.embedding_vector"]);
 
+/**
+ * Unique indexes the DDL creates, keyed by index name. Parsed from the whole of
+ * `src/db/index.ts` rather than from the four statement lists the fingerprint walks,
+ * because unique indexes are created in more places than those lists cover — the `DDL`
+ * template, the Neon `alters`, and the PGlite migration body's own `client.exec` calls.
+ * "Created anywhere in the file" is the right question here: the failure this catches is a
+ * declaration that disagrees with the SQL, not one backend having it and the other not.
+ *
+ * `CREATE` only — the file also carries a `DROP INDEX IF EXISTS` for the superseded
+ * three-column embeddings index, which must not be read as a definition.
+ */
+function ddlUniqueIndexes(): Map<string, { table: string; columns: string[] }> {
+  const found = new Map<string, { table: string; columns: string[] }>();
+  const re =
+    /CREATE\s+UNIQUE\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_]\w*)\s+ON\s+(\w+)\s*\(([^)]*)\)/gi;
+  for (const [, name, table, columns] of src.matchAll(re)) {
+    found.set(name, {
+      table,
+      columns: columns
+        .split(",")
+        .map((c) => c.trim().replace(/\s+(asc|desc)$/i, "").replace(/"/g, ""))
+        .filter(Boolean),
+    });
+  }
+  return found;
+}
+
+const ddlIndexes = ddlUniqueIndexes();
+
+type IndexDrift = { table: string; name: string; problem: string };
+const indexDrift: IndexDrift[] = [];
+let indexesChecked = 0;
+
+for (const value of Object.values(schema)) {
+  if (!is(value, PgTable)) continue;
+  const table = getTableConfig(value);
+  for (const idx of table.indexes) {
+    // Non-unique indexes are performance hints: a missing one is slow, not wrong, and the
+    // DDL carries several the schema does not declare. Only the uniqueness contracts are
+    // correctness-bearing, so only those are pinned.
+    if (!idx.config.unique) continue;
+    indexesChecked += 1;
+
+    const declared = idx.config.columns.map(
+      (c) => (c as { name?: string }).name ?? "<expression>"
+    );
+    // Drizzle permits an unnamed index; the DDL side is matched by name, so an anonymous
+    // one cannot be mirrored at all and is reported rather than silently skipped.
+    const name = idx.config.name;
+    if (!name) {
+      indexDrift.push({
+        table: table.name,
+        name: "<unnamed>",
+        problem:
+          `unique index on (${declared.join(", ")}) has no name, so it cannot be matched ` +
+          `against the DDL — give it one`,
+      });
+      continue;
+    }
+
+    const inDdl = ddlIndexes.get(name);
+    if (!inDdl) {
+      indexDrift.push({
+        table: table.name,
+        name,
+        problem:
+          `declared on (${declared.join(", ")}) but no CREATE UNIQUE INDEX of that name ` +
+          `exists in src/db/index.ts`,
+      });
+      continue;
+    }
+    if (inDdl.columns.join(",") !== declared.join(",")) {
+      indexDrift.push({
+        table: table.name,
+        name,
+        problem:
+          `schema.ts declares (${declared.join(", ")}) but the DDL creates ` +
+          `(${inDdl.columns.join(", ")})`,
+      });
+    }
+  }
+}
+
 function has(map: ColumnSets, table: string, column: string) {
   return map.get(table)?.has(column) ?? false;
 }
@@ -259,11 +354,27 @@ try {
 // ---------------------------------------------------------------- report
 
 console.log(
-  `schema-ddl: checked ${checked} columns across ${created.size} tables ` +
-    `(SCHEMA_VERSION ${schemaVersion})`
+  `schema-ddl: checked ${checked} columns and ${indexesChecked} unique indexes across ` +
+    `${created.size} tables (SCHEMA_VERSION ${schemaVersion})`
 );
 
 const problems: string[] = [];
+
+if (indexDrift.length > 0) {
+  const lines = [`${indexDrift.length} unique index(es) drifted from the bootstrap DDL:`, ""];
+  for (const { table, name, problem } of indexDrift) {
+    lines.push(`    ${table}.${name}`);
+    lines.push(`        ${problem}`);
+  }
+  lines.push(
+    "",
+    "  A uniqueness key declared in schema.ts but not matched in the DDL is only inert",
+    "  until someone runs `npm run db:push` or `db:generate` — drizzle.config.ts points at",
+    "  schema.ts, so either would apply THIS key to whatever DATABASE_URL resolves to.",
+    "  Make the declaration and every CREATE UNIQUE INDEX agree on name and columns."
+  );
+  problems.push(lines.join("\n"));
+}
 
 if (drift.length > 0) {
   const lines = [`${drift.length} column(s) drifted from the bootstrap DDL:`, ""];
@@ -312,6 +423,7 @@ if (!lock) {
 
 if (problems.length === 0) {
   console.log("  ok  every schema.ts column is covered by the bootstrap DDL");
+  console.log("  ok  every schema.ts unique index matches the DDL by name and columns");
   console.log(`  ok  DDL matches the recorded fingerprint for version ${schemaVersion}`);
   process.exit(0);
 }

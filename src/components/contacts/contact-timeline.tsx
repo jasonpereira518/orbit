@@ -327,8 +327,9 @@ export function ContactTimeline({
                         return (
                           <li
                             key={i.id}
+                            id={`interaction-${i.id}`}
                             data-day-key={key}
-                            className="border-l-2 border-primary/25 pl-4"
+                            className="scroll-mt-4 border-l-2 border-primary/25 pl-4"
                           >
                             <div className="flex flex-wrap items-start justify-between gap-2">
                               <div className="min-w-0 flex-1">
@@ -342,7 +343,7 @@ export function ContactTimeline({
                                     {typeLabel(i.interactionType)}
                                   </span>
                                 </p>
-                                <p className="mt-1 text-sm text-primary">
+                                <p className="mt-1 text-sm text-ink">
                                   {oneLine(i)}
                                 </p>
                                 {(i.actionItems || []).length > 0 ? (
@@ -424,7 +425,7 @@ export function ContactTimeline({
           <SheetHeader>
             <SheetTitle>Notes</SheetTitle>
           </SheetHeader>
-          <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-primary">
+          <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-ink">
             {notesOpen?.rawNotes?.trim() || "No notes."}
           </p>
         </SheetContent>

@@ -22,6 +22,15 @@ export const WEBHOOK_REASONS = {
   unmappedStatus: "unmapped_status",
   missingUserId: "missing_user_id",
   handlerThrew: "handler_threw",
+  // Stripe-side outcomes. See `STRIPE_IGNORE_REASONS` in `billing-stripe.ts`, which is
+  // the pure module's copy — kept in step by the smoke test rather than by an import,
+  // because that module must not reach anything that touches the database.
+  unpaidSession: "unpaid_session",
+  noSubscriptionOnInvoice: "no_subscription_on_invoice",
+  zeroAmount: "zero_amount",
+  currencyUnsupported: "currency_unsupported",
+  disputeWon: "dispute_won",
+  noMovement: "no_movement",
 } as const;
 
 export type WebhookOutcome = "handled" | "ignored" | "invalid" | "error";

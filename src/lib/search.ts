@@ -10,24 +10,41 @@ export function computeContentHash(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
-/** One set-based UPDATE per batch instead of one HTTPS round trip per row. */
-async function persistEmbeddingVectorsBatch(
+/**
+ * Rows per statement. Unlike `closeness-materialize.ts`'s `WRITE_CHUNK` (500, for rows of
+ * a few scalars each), a row here embeds a full 1,536-dim vector literal — roughly 18KB of
+ * text — so 500 of them would build a multi-megabyte statement, well past what `neon-http`
+ * will accept. 50 keeps a single statement in the ~1MB range regardless of caller size.
+ */
+const VECTOR_WRITE_CHUNK = 50;
+
+/**
+ * Copy embeddings into the pgvector column for many rows, chunked across statements.
+ *
+ * This used to be one `UPDATE` per row awaited in a loop, which on `neon-http` is one
+ * HTTPS request each — the largest single cost in a bulk import, and entirely invisible
+ * from the outside because the result is identical either way. It was later batched into
+ * one `UPDATE ... FROM (VALUES ...)` per call, which was safe only because every caller at
+ * the time pre-chunked upstream; chunking now happens here so no future caller can pass an
+ * unbounded set and build an oversized statement.
+ */
+export async function persistEmbeddingVectors(
   rows: Array<{ id: string; embedding: number[] }>
 ) {
   if (!isPgvectorAvailable() || rows.length === 0) return;
   const db = await getDb();
-  const values = sql.join(
-    rows.map(
-      (r) => sql`(${r.id}::uuid, ${formatVectorLiteral(r.embedding)}::vector)`
-    ),
-    sql`, `
-  );
-  await db.execute(sql`
-    UPDATE contact_embeddings AS ce
-    SET embedding_vector = v.vec
-    FROM (VALUES ${values}) AS v(id, vec)
-    WHERE ce.id = v.id
-  `);
+  for (let i = 0; i < rows.length; i += VECTOR_WRITE_CHUNK) {
+    const chunk = rows.slice(i, i + VECTOR_WRITE_CHUNK);
+    const tuples = chunk.map(
+      (row) => sql`(${row.id}::uuid, ${formatVectorLiteral(row.embedding)}::vector)`
+    );
+    await db.execute(sql`
+      UPDATE contact_embeddings AS e
+      SET embedding_vector = v.vec
+      FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, vec)
+      WHERE e.id = v.id
+    `);
+  }
 }
 
 export async function upsertContactEmbedding(
@@ -64,7 +81,7 @@ export async function upsertContactEmbedding(
         .update(contactEmbeddings)
         .set({ embedding, content, contentHash })
         .where(eq(contactEmbeddings.id, existing.id));
-      await persistEmbeddingVectorsBatch([{ id: existing.id, embedding }]);
+      await persistEmbeddingVectors([{ id: existing.id, embedding }]);
       return;
     }
 
@@ -73,7 +90,7 @@ export async function upsertContactEmbedding(
       .values({ userId, contactId, sourceType, sourceId, embedding, content, contentHash })
       .returning();
     if (inserted?.id) {
-      await persistEmbeddingVectorsBatch([{ id: inserted.id, embedding }]);
+      await persistEmbeddingVectors([{ id: inserted.id, embedding }]);
     }
   } catch {
     // AI key may be missing; skip embeddings silently
@@ -184,7 +201,7 @@ type ContactEmbeddingSource = {
  *    `rebuildContactEmbeddingsBatch` whenever the combined content would overflow — see
  *    `PROFILE_CONTENT_TRUNCATION_LIMIT` below.
  */
-function buildContactEmbeddingContent(
+export function buildContactEmbeddingContent(
   contact: ContactEmbeddingSource,
   options: { includeNotes?: boolean } = {}
 ): string {
@@ -381,5 +398,5 @@ export async function rebuildContactEmbeddingsBatch(
     for (const u of toUpdate) vectorRows.push({ id: u.id, embedding: u.embedding });
   }
 
-  await persistEmbeddingVectorsBatch(vectorRows);
+  await persistEmbeddingVectors(vectorRows);
 }

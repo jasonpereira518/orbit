@@ -260,7 +260,7 @@ export function AskVisual() {
         className="ml-3 flex items-center gap-2.5 rounded-2xl bg-[#e8f3f1]/[0.05] px-4 py-3 md:ml-6"
         style={reduced ? undefined : a}
       >
-        <span className="h-5 w-5 rounded-full bg-[#599de7]/40" />
+        <span className="h-5 w-5 rounded-full bg-brand-pro/40" />
         <span className="-ml-4 h-5 w-5 rounded-full bg-[#f2c14e]/40" />
         <p className="text-xs text-[#9aada8]">
           Two people — Elena via AWS, Tom from your MIT cluster.

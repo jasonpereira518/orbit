@@ -1,5 +1,16 @@
 import type { LucideIcon } from "lucide-react";
-import { Activity, Gauge, ScrollText, TrendingUp, Users, Wallet } from "lucide-react";
+import {
+  Activity,
+  Flame,
+  Gauge,
+  HandCoins,
+  LayoutTemplate,
+  Scale,
+  ScrollText,
+  TrendingUp,
+  Users,
+  Wallet,
+} from "lucide-react";
 
 export type AdminNavItem = {
   href: string;
@@ -20,12 +31,26 @@ export const ADMIN_NAV: AdminNavItem[] = [
   // "What is broken across everyone, right now" — the cross-account view of signals the
   // inspector only ever showed one account at a time.
   { href: "/admin/health", label: "Health", icon: Activity },
+  // The only screen in the console that changes the product rather than reporting on it:
+  // which pages, dashboard cards, and settings sections every user can see.
+  { href: "/admin/product", label: "Product", icon: LayoutTemplate },
   // Trends live here rather than on the overview, which stays triage-only by design.
   { href: "/admin/growth", label: "Growth", icon: TrendingUp },
   // Route is /admin/billing, but the screen covers money in AND money out — "Billing"
   // alone reads as revenue-only.
   { href: "/admin/billing", label: "Money", icon: Wallet },
   { href: "/admin/audit", label: "Audit", icon: ScrollText },
+];
+
+/**
+ * The YC-mode nav — a full replacement for `ADMIN_NAV`, not an addition to it. Toggling
+ * modes changes which of these two arrays `AdminShell` renders.
+ */
+export const ADMIN_YC_NAV: AdminNavItem[] = [
+  { href: "/admin/yc/runway", label: "Runway", icon: Flame },
+  { href: "/admin/yc/revenue", label: "Revenue", icon: TrendingUp },
+  { href: "/admin/yc/economics", label: "Unit Economics", icon: Scale },
+  { href: "/admin/yc/fundraising", label: "Fundraising", icon: HandCoins },
 ];
 
 export function isAdminNavActive(pathname: string, href: string) {

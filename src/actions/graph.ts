@@ -5,7 +5,7 @@ import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getDb } from "@/db";
 import { contacts, userSettings } from "@/db/schema";
 import { listGoals } from "@/actions/goals";
-import { requireUserId, getCurrentUserProfile } from "@/lib/auth";
+import { getCurrentUserProfile } from "@/lib/auth";
 import { closenessTier } from "@/lib/closeness";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { isCometContact } from "@/lib/comet";
@@ -15,6 +15,7 @@ import {
   toNamedGraphClusters,
 } from "@/lib/constellation-clusters";
 import { clientContactAvatarUrl } from "@/lib/contact-avatar-url";
+import { requireUserForSurface } from "@/lib/plan-guards";
 
 export type GraphCluster = {
   /** @deprecated use `name` — kept for UI that keyed on company */
@@ -34,7 +35,7 @@ export type UserSocialLinks = {
 };
 
 export async function getGraphData() {
-  const userId = await requireUserId();
+  const userId = await requireUserForSurface("page.graph");
   const profile = await getCurrentUserProfile();
   const db = await getDb();
 
@@ -102,6 +103,7 @@ export async function getGraphData() {
       closenessTier: breakdown?.tier ?? ("outer" as const),
       orbitScore: breakdown?.orbitScore ?? 1,
       lastInteractionAt: c.lastInteractionAt,
+      hasLoggedInteraction: closenessCohort.interactedIds.has(c.id),
       nextFollowUpAt: c.nextFollowUpAt,
       tags,
       aiSummary: c.aiSummary,
@@ -192,7 +194,7 @@ export async function refreshConstellationBatch(input?: {
   offset?: number;
   limit?: number;
 }) {
-  const userId = await requireUserId();
+  const userId = await requireUserForSurface("page.graph");
   const db = await getDb();
   const offset = Math.max(0, input?.offset ?? 0);
   const limit = Math.min(20, Math.max(1, input?.limit ?? 8));

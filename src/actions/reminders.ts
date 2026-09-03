@@ -18,6 +18,8 @@ import {
   isReminderActionKind,
 } from "@/lib/reminder-action-kind";
 import { revalidateReminderPaths } from "@/lib/reminder-paths";
+// Type-only: `account-alerts` is the pure half, so this is erased and pulls in nothing.
+import type { AccountAlert } from "@/lib/account-alerts";
 import {
   displayListName,
   ensureReminderLists,
@@ -27,6 +29,7 @@ import {
 } from "@/lib/reminder-lists";
 import {
   completeReminder,
+  ensureOutreachSuggestions,
   generateDueFollowUps,
   getDashboardData,
   maybeRefreshOutreachSuggestions,
@@ -35,6 +38,10 @@ import {
 
 export async function fetchDashboard() {
   const userId = await requireUserId();
+  // One exception to the deferred rebuild below: an account that has never had a queue
+  // built has nothing to render, so deferring would show an empty card on the first
+  // visit and the real one only on the second. Builds once, then never again.
+  await ensureOutreachSuggestions(userId).catch(() => {});
   // Calendar sync and the suggestion rebuild are slow; run both after the
   // response instead of on the dashboard's critical path. Suggestions are
   // stale-while-revalidate: this load renders whatever exists, the next
@@ -146,6 +153,10 @@ export async function listRemindersPage(options?: {
 
   const totals = { pending: 0, done: 0 };
   for (const r of allReminders) {
+    // Dismissed rows (killed by a note-batch undo) count toward neither bucket — they
+    // aren't open work and aren't a completed task, so folding them into "done" would
+    // inflate that badge with reminders the done filter itself doesn't return.
+    if (r.status === "dismissed") continue;
     const isPending = r.status === "pending";
     if (isPending) totals.pending += 1;
     else totals.done += 1;
@@ -168,7 +179,9 @@ export async function listRemindersPage(options?: {
     if (status === "done") {
       return r.status === "done" || r.status === "completed";
     }
-    return true;
+    // "all" still excludes dismissed rows: those are reminders an undone note batch
+    // killed, not a state the reminders page should ever surface as a list item.
+    return r.status !== "dismissed";
   });
 
   const startOfToday = new Date();
@@ -228,6 +241,7 @@ export async function listRemindersPage(options?: {
         contactName: c ? c.preferredName?.trim() || c.fullName : null,
         contactEmail: c?.email ?? null,
         contactPhone: c?.phone ?? null,
+        noteBatchId: r.noteBatchId,
         createdAt: r.createdAt,
       };
     }),
@@ -683,15 +697,34 @@ export async function snoozeReminderAction(id: string, days = 7) {
   revalidatePath("/graph");
 }
 
-/** Full inbox for the in-app notifications panel. */
-export async function listNotificationPanel() {
-  const userId = await requireUserId();
+/**
+ * Builds the panel payload. NOT exported — the `"use server"` async-export rule applies
+ * only to exports, and keeping this private is what lets it take an options object without
+ * widening a Server Function's surface (every export here is reachable by direct POST).
+ *
+ * `withAlerts` exists so the desktop-notification watcher, which polls this every 90
+ * seconds — faster than the panel itself — pays nothing for account alerts it discards.
+ */
+async function buildNotificationPanel(
+  userId: string,
+  opts: { withAlerts: boolean }
+) {
   const db = await getDb();
   const { aiSuggestions, suggestedReminders } = await import("@/db/schema");
+  const { getEntitlements } = await import("@/lib/entitlements");
+  const { getAccountAlerts, hasErrorAlert } = await import("@/lib/account-health");
+  const { isAdminUser } = await import("@/lib/admin");
+  const { isViewingAsUser } = await import("@/lib/surface-visibility");
   const now = new Date();
 
-  const [pendingReminders, contactRows, suggestions, datedSuggestions] =
-    await Promise.all([
+  const [
+    pendingReminders,
+    contactRows,
+    suggestions,
+    datedSuggestions,
+    entitlements,
+    alerts,
+  ] = await Promise.all([
     db.query.reminders.findMany({
       where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
       orderBy: (r, { asc: ascOrder }) => [ascOrder(r.dueDate)],
@@ -725,6 +758,10 @@ export async function listNotificationPanel() {
       orderBy: (s, { asc: ascOrder }) => [ascOrder(s.dueDate)],
       limit: 25,
     }),
+    getEntitlements(userId),
+    opts.withAlerts
+      ? getAccountAlerts(userId)
+      : Promise.resolve<AccountAlert[]>([]),
   ]);
 
   type PanelItem = {
@@ -831,18 +868,57 @@ export async function listNotificationPanel() {
 
   const dueCount = items.filter((i) => i.urgency === "due").length;
 
-  return { items, dueCount, totalCount: items.length };
+  return {
+    items,
+    dueCount,
+    totalCount: items.length,
+    // Drives the extension promo in the panel: paid plans get an install link,
+    // everyone else gets the pitch and a route to the plans page.
+    canUseExtension: entitlements.canUseExtension,
+    /**
+     * Account health, as a SIBLING of `items` and never an entry in it. That placement is
+     * the structural guarantee that alerts can never become OS desktop notifications:
+     * `listDueNotificationItems` maps `panel.items` alone, so there is no discipline to
+     * forget. `alertDot` never contributes to the bell's numeric badge — a persistent
+     * condition like a missing API key would pin the count forever.
+     */
+    alerts,
+    alertDot: hasErrorAlert(alerts),
+    /**
+     * Whether to offer the operator console in the panel footer.
+     *
+     * Resolved here because `isAdminUser` reads `ADMIN_USER_IDS`, which is deliberately not
+     * a `NEXT_PUBLIC_*` variable — shipping the allowlist to every browser is exactly what
+     * that comment in `lib/admin.ts` forbids. A boolean is all the client needs.
+     *
+     * False while an operator is previewing as an ordinary user: the point of that mode is
+     * to see what a user sees, and the view-as banner already carries its own Exit. Note
+     * this only decides whether a LINK is drawn — `/admin` does its own checking, since a
+     * hidden link is not access control.
+     */
+    canOpenAdmin:
+      isAdminUser(userId) && !(await isViewingAsUser(userId)),
+  };
+}
+
+/** Full inbox for the in-app notifications panel. */
+export async function listNotificationPanel() {
+  const userId = await requireUserId();
+  return buildNotificationPanel(userId, { withAlerts: true });
 }
 
 /** Lightweight payload for browser/desktop notification polling. */
 export async function listDueNotificationItems() {
   const { getDesktopNotifiedIds } = await import("@/actions/notifications");
+  const userId = await requireUserId();
   const [notifiedIds, panel] = await Promise.all([
     getDesktopNotifiedIds(),
-    listNotificationPanel(),
+    buildNotificationPanel(userId, { withAlerts: false }),
   ]);
   const notified = new Set(notifiedIds);
 
+  // `panel.items` only — account alerts live beside it and must never fire an OS
+  // notification, for the same reason `suggested_reminder` is pinned to "info" above.
   return panel.items
     .filter((i) => i.urgency === "due" && !notified.has(i.id))
     .slice(0, 12)

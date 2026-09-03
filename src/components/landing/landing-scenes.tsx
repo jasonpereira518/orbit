@@ -180,7 +180,7 @@ export function SceneFinale({
               Get the occasional note on what&apos;s new in Orbit.
             </p>
             <div className="mt-4">
-              <WaitlistForm clerkOn={clerkOn} demoMode={demoMode} />
+              <WaitlistForm />
             </div>
             <p className="mt-3 text-xs text-[#6d807c]">
               No commitments. Interest list only.

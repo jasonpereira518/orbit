@@ -21,7 +21,7 @@ export function AvatarSyncStatus() {
 
   return (
     <div className="border-t border-border/60 pt-4">
-      <h3 className="text-sm font-medium text-primary">Contact photos</h3>
+      <h3 className="text-sm font-medium text-ink">Contact photos</h3>
       <div className="mt-2 flex items-start gap-2.5">
         <div className="mt-0.5 shrink-0">
           {job.status === "running" ? (

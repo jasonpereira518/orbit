@@ -1,3 +1,4 @@
+import { clerkClient } from "@clerk/nextjs/server";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
@@ -9,7 +10,11 @@ import {
   userSettings,
 } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
-import { runLinkedInImportJob } from "@/lib/import-job-processor";
+import { getAppBaseUrl } from "@/lib/app-url";
+import {
+  RESUMABLE_IMPORT_TYPES,
+  runImportJobById,
+} from "@/lib/import-job-dispatch";
 import { purgeUserData } from "@/lib/user-data";
 
 /**
@@ -150,15 +155,62 @@ export async function recordAccountView(
   }
 }
 
+/* ---------------------------------------------------------------------- sign-in link */
+
+/** How long a minted link stays valid before its first (only) use. */
+const SIGN_IN_LINK_EXPIRES_SECONDS = 30 * 24 * 60 * 60;
+
+/**
+ * Mint a one-click sign-in URL for any account, for the operator to hand to whoever needs
+ * to be signed in as that user without knowing (or resetting) their password — the
+ * showcase demo account being the motivating case, but nothing here is specific to it.
+ *
+ * This is Clerk's own "sign-in token" ticket strategy: a distinct first factor from
+ * password or an emailed code, single-use, consumed the instant the link is opened once.
+ * No expiry value changes that — `SIGN_IN_LINK_EXPIRES_SECONDS` only bounds how long an
+ * UNUSED link stays valid, which is why it is generous; it is not a session length.
+ *
+ * The token itself is never written to the audit log — only that one was minted, and
+ * when. Anyone who could read the token from an audit row could sign in as the account it
+ * names, which would make the log itself a credential.
+ */
+export async function mintSignInLink(
+  adminUserId: string,
+  input: { targetUserId: string }
+): Promise<{ url: string; expiresInSeconds: number }> {
+  await requireAccount(input.targetUserId);
+
+  const clerk = await clerkClient();
+  const token = await clerk.signInTokens.createSignInToken({
+    userId: input.targetUserId,
+    expiresInSeconds: SIGN_IN_LINK_EXPIRES_SECONDS,
+  });
+
+  await recordAdminAction({
+    adminUserId,
+    action: "auth.sign_in_link",
+    targetUserId: input.targetUserId,
+    detail: { expiresInSeconds: SIGN_IN_LINK_EXPIRES_SECONDS },
+  });
+
+  const url = `${getAppBaseUrl()}/sign-in?__clerk_ticket=${encodeURIComponent(token.token)}`;
+  return { url, expiresInSeconds: SIGN_IN_LINK_EXPIRES_SECONDS };
+}
+
 /* ------------------------------------------------------------------------------ imports */
 
 /**
  * Re-arm a failed or stuck import, and return the id of the job to run.
  *
- * Only LinkedIn connection imports are resumable: they are the one type that stages
- * `import_job_rows`, which is what lets `runLinkedInImportJob` pick up where it stopped.
- * It re-reads job and row status from the database rather than assuming a fresh start,
- * which is exactly what makes a manual retry safe.
+ * Only the types in `RESUMABLE_IMPORT_TYPES` can be re-armed: they are the ones that own
+ * their server-side processing and stage progress as they go, which is what lets the
+ * runner pick up where it stopped. It re-reads job and row status from the database
+ * rather than assuming a fresh start, which is exactly what makes a manual retry safe.
+ * Client-driven kinds have no server runner to hand the job back to, so there is nothing
+ * to resume and the user has to re-upload.
+ *
+ * That list is the same one the `process-stalled` cron filters on, deliberately: a manual
+ * retry is the operator doing by hand what the backstop would eventually do on its own.
  *
  * The job is deliberately not started here. It is time-boxed with self-continuation and can
  * run far longer than a server action should, so the caller schedules it with `after()` —
@@ -180,9 +232,10 @@ export async function retryImport(adminUserId: string, input: {
     ),
   });
   if (!job) throw new Error("No such import.");
-  if (job.importType !== "linkedin_connections") {
+  const resumable: readonly string[] = RESUMABLE_IMPORT_TYPES;
+  if (!resumable.includes(job.importType)) {
     throw new Error(
-      "Only LinkedIn connection imports stage resumable rows; this type has to be re-uploaded by the user."
+      "Only server-owned imports stage resumable progress; this type has to be re-uploaded by the user."
     );
   }
   if (job.status === "completed") throw new Error("That import already completed.");
@@ -205,10 +258,16 @@ export async function retryImport(adminUserId: string, input: {
   return { importId: input.importId };
 }
 
-/** Runs a re-armed job, swallowing failures the processor already records on the job row. */
+/**
+ * Runs a re-armed job, swallowing failures the processor already records on the job row.
+ *
+ * Dispatches on the row's `import_type` rather than calling one runner: the Gmail
+ * recruiter scan has its own processor, and handing it to the generic engine would run
+ * the wrong one against its rows.
+ */
 export async function runImportJob(importId: string): Promise<void> {
   try {
-    await runLinkedInImportJob(importId);
+    await runImportJobById(importId);
   } catch {
     // The processor writes its own error onto the import row; nothing to add here.
   }
@@ -424,18 +483,7 @@ export async function deleteAccount(adminUserId: string, input: {
 }): Promise<void> {
   const reason = requireReason(input.reason, 8);
   assertNotOperator(adminUserId, input.targetUserId);
-
-  const account = await requireAccount(input.targetUserId);
-  const expected = (account.email ?? "").trim().toLowerCase();
-  const provided = input.confirmEmail.trim().toLowerCase();
-  if (!expected) {
-    throw new Error(
-      "This account has no email on file, so the confirmation cannot be checked. Delete it with scripts/ instead."
-    );
-  }
-  if (expected !== provided) {
-    throw new Error("That email does not match this account.");
-  }
+  const account = await confirmAccountEmail(input.targetUserId, input.confirmEmail);
 
   await recordAdminAction({
     adminUserId,
@@ -446,7 +494,70 @@ export async function deleteAccount(adminUserId: string, input: {
   });
 
   await purgeUserData(input.targetUserId);
+}
 
+/** Shared by `deleteAccount` and `hardDeleteAccount`: resolves the account and checks the
+ * typed email against it, so the operator cannot fire either action against the row next to
+ * the one they meant. */
+async function confirmAccountEmail(targetUserId: string, confirmEmail: string) {
+  const account = await requireAccount(targetUserId);
+  const expected = (account.email ?? "").trim().toLowerCase();
+  const provided = confirmEmail.trim().toLowerCase();
+  if (!expected) {
+    throw new Error(
+      "This account has no email on file, so the confirmation cannot be checked. Delete it with scripts/ instead."
+    );
+  }
+  if (expected !== provided) {
+    throw new Error("That email does not match this account.");
+  }
+  return account;
+}
+
+/**
+ * Hard-delete an account: every row this user's id touches, INCLUDING the fields
+ * `deleteAccount` deliberately preserves (credentials, billing/subscription links, the
+ * suspension record, the Clerk identity mirror) — plus the Clerk login itself, so the person
+ * can never sign in again. This is "delete the entire account," not "delete their data."
+ *
+ * The DB purge runs before the Clerk API call, deliberately: if Clerk's `deleteUser` fails,
+ * the account is left in a half-deleted state either way, and "all local data is gone, Clerk
+ * login still works" is the safer half to be stuck in than "Clerk login is gone, but billing/
+ * suspension/credentials are still sitting in `user_settings`" — the DB side is fully
+ * idempotent to retry, so a failed Clerk call is a "run it again" note, not corruption.
+ *
+ * The audit row is written before either destructive step, since it is the one artifact that
+ * legitimately outlives the account (see `purgeUserData`'s doc comment on `admin_audit_log`).
+ */
+export async function hardDeleteAccount(adminUserId: string, input: {
+  targetUserId: string;
+  confirmEmail: string;
+  reason: string;
+}): Promise<void> {
+  const reason = requireReason(input.reason, 20);
+  assertNotOperator(adminUserId, input.targetUserId);
+  const account = await confirmAccountEmail(input.targetUserId, input.confirmEmail);
+
+  await recordAdminAction({
+    adminUserId,
+    action: "account.hard_delete",
+    targetUserId: input.targetUserId,
+    detail: { email: account.email },
+    reason,
+  });
+
+  await purgeUserData(input.targetUserId, { keepSettings: false });
+
+  try {
+    const clerk = await clerkClient();
+    await clerk.users.deleteUser(input.targetUserId);
+  } catch (err) {
+    throw new Error(
+      `Account data was permanently deleted, but removing the Clerk login failed: ${
+        err instanceof Error ? err.message : String(err)
+      }. Remove user ${input.targetUserId} manually in the Clerk dashboard.`
+    );
+  }
 }
 
 /* ---------------------------------------------------------------------- the audit trail */

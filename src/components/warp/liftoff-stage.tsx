@@ -47,14 +47,14 @@ function clamp01(v: number) {
 }
 
 /**
- * The journey, painted.
+ * The lift-off, painted.
  *
  * One canvas, one rAF loop, every beat derived from elapsed time rather than
  * from React state — the provider re-renders at most five times per run, which
  * is nowhere near enough to drive an animation. `run` is read through a ref so
  * a phase change never restarts the loop mid-flight.
  */
-export function WarpStage({ run }: { run: WarpRun }) {
+export function LiftoffStage({ run }: { run: WarpRun }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const runRef = useRef(run);
   // The loop reads phase through a ref so a transition never restarts it
@@ -329,7 +329,7 @@ export function WarpStage({ run }: { run: WarpRun }) {
         const out =
           state.phase === "arriving" && state.arrivingAt !== null
             ? 1 - span(now - state.arrivingAt, [0, REDUCED_MS])
-            : state.phase === "descending" || state.phase === "landing"
+            : state.phase === "inbound" || state.phase === "landing"
               ? 1 - span(elapsed, [0, REDUCED_MS])
               : 1;
         canvas!.style.opacity = String(Math.min(fadeIn, out));
@@ -337,7 +337,7 @@ export function WarpStage({ run }: { run: WarpRun }) {
         return;
       }
 
-      if (state.phase === "descending" || state.phase === "landing") {
+      if (state.phase === "inbound" || state.phase === "landing") {
         // Falling: the ramp runs backwards, roughly 2.5x the pace of the climb.
         const fall = span(elapsed, REENTRY.fall);
         const altitude = 1 - easeIn(fall);
@@ -360,7 +360,7 @@ export function WarpStage({ run }: { run: WarpRun }) {
       }
 
       // ── Ascent, cruise, arrival ───────────────────────────────────────────
-      const climbing = state.phase === "ascending";
+      const climbing = state.phase === "outbound";
       const decelerating = state.phase === "arriving" && state.arrivingAt !== null;
       const sinceArrive = decelerating ? now - state.arrivingAt! : 0;
 

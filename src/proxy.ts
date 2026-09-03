@@ -1,6 +1,7 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { PUBLIC_ROUTES } from "@/lib/public-routes";
+import { getAppBaseUrl } from "@/lib/app-url";
 import {
   ATTRIBUTION_COOKIE,
   ATTRIBUTION_MAX_AGE_S,
@@ -14,6 +15,29 @@ import {
 const isPublicRoute = createRouteMatcher([...PUBLIC_ROUTES]);
 
 const configured = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
+
+/**
+ * Origins allowed to present a Clerk session to this app.
+ *
+ * Opt-in, and deliberately gated on EXTENSION_ORIGIN being set: passing
+ * `authorizedParties` replaces Clerk's default origin check entirely, so an
+ * incomplete list locks users out. Preview deployments in particular get a
+ * dynamic *.vercel.app host that no static list can predict — so unless the
+ * extension is actually configured, we leave Clerk's default behavior alone.
+ *
+ * When it is set, EXTENSION_ORIGIN is the extension's own origin, derived from
+ * its stable ID (pinned by the `key` field in its manifest). The host users
+ * actually browse is re-included via `getAppBaseUrl()` (APP_BASE_URL, or the
+ * project's production domain on Vercel) — forgetting it would lock every
+ * normal browser session out of the app.
+ */
+const extensionOrigins = (process.env.EXTENSION_ORIGIN ?? "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+
+const authorizedParties =
+  extensionOrigins.length > 0 ? [...extensionOrigins, getAppBaseUrl()] : [];
 
 function withPathname(req: Request) {
   const requestHeaders = new Headers(req.headers);
@@ -68,12 +92,15 @@ function withFirstTouch(req: Request, url: URL, res: NextResponse) {
 }
 
 export default configured
-  ? clerkMiddleware(async (auth, req) => {
-      if (!isPublicRoute(req)) {
-        await auth.protect();
-      }
-      return withPathname(req);
-    })
+  ? clerkMiddleware(
+      async (auth, req) => {
+        if (!isPublicRoute(req)) {
+          await auth.protect();
+        }
+        return withPathname(req);
+      },
+      authorizedParties.length > 0 ? { authorizedParties } : undefined
+    )
   : function middleware(req: Request) {
       if (process.env.NODE_ENV === "production") {
         return new NextResponse("Authentication is not configured", {

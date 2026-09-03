@@ -170,6 +170,14 @@ export type SubscriptionMirror = {
   plan: "orbit" | null;
   status: "active" | "past_due" | "canceled" | null;
   periodEnd: number | null;
+  /**
+   * What the subscription is worth per month, in cents. Optional so existing callers keep
+   * compiling; omitting it leaves the stored value alone rather than clearing it, because
+   * "I did not look at the price" and "this subscription is worth nothing" are different
+   * statements and only one of them should be able to zero out someone's MRR.
+   */
+  monthlyCents?: number | null;
+  interval?: "month" | "year" | null;
 };
 
 /**
@@ -198,6 +206,12 @@ export async function setSubscriptionState(
       subscriptionPlan: mirror.plan,
       subscriptionStatus: mirror.status,
       subscriptionPeriodEnd: epochToDate(mirror.periodEnd),
+      ...(mirror.monthlyCents !== undefined
+        ? { subscriptionMonthlyCents: mirror.monthlyCents }
+        : {}),
+      ...(mirror.interval !== undefined
+        ? { subscriptionInterval: mirror.interval }
+        : {}),
       ...(opts.stripeCustomerId !== undefined
         ? { stripeCustomerId: opts.stripeCustomerId }
         : {}),

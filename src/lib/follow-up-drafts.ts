@@ -45,7 +45,7 @@ export type FollowUpDraft = {
   contactName: string;
 };
 
-function buildConversationTranscript(
+export function buildConversationTranscript(
   rows: Array<{
     interactionType: string;
     interactionDate: Date | null;
@@ -67,7 +67,7 @@ function buildConversationTranscript(
     .slice(0, 12_000);
 }
 
-type ContactRow = typeof contacts.$inferSelect;
+export type ContactRow = typeof contacts.$inferSelect;
 
 async function loadContactContext(userId: string, contactId: string) {
   const db = await getDb();
@@ -88,7 +88,7 @@ async function loadContactContext(userId: string, contactId: string) {
   return { contact, recent };
 }
 
-function buildProfileBlock(contact: ContactRow) {
+export function buildProfileBlock(contact: ContactRow) {
   const howMet = formatHowMetSummary({
     metContext: contact.metContext,
     dateMet: contact.dateMet,
@@ -151,6 +151,33 @@ async function draftFromContext(input: {
     ? `User intent for this message: ${input.intent.trim()}`
     : null;
 
+  /**
+   * Who the message is from.
+   *
+   * Without it the model wrote "Best," and then stopped, because it had no name to put
+   * on the next line — every emailed draft ended on a dangling comma, which is the one
+   * thing in a generated message that reads as unfinished. Dynamically imported so this
+   * module keeps its current (DB + AI only) import graph, and best-effort: a failed
+   * profile lookup must never cost the user their draft.
+   */
+  let senderFirstName: string | null = null;
+  try {
+    const { getCurrentUserProfile } = await import("@/lib/auth");
+    const profile = await getCurrentUserProfile();
+    const first = profile?.name?.trim().split(/\s+/)[0];
+    if (first && first.toLowerCase() !== "you") senderFirstName = first;
+  } catch {
+    // Leave it null; the sign-off rule below handles the unknown case.
+  }
+
+  // A text message signed "Best, Jason" reads like a form letter, and a sign-off with
+  // nobody's name under it reads like a bug. Only email gets one, and only when we know
+  // the name to write.
+  const signOffRule =
+    input.channel === "email" && senderFirstName
+      ? `End with a short sign-off followed by "${senderFirstName}" on its own line.`
+      : "Do not write a sign-off, signature, or placeholder name — end on the final sentence.";
+
   const content = await completeJson(input.userId, {
     operation: "followup.draft",
     temperature: 0.5,
@@ -168,6 +195,7 @@ Rules:
 - Do not invent facts, meetings, or shared history that are not in the context.
 - If conversation history is thin, lean on the reminder title/notes and known profile details.
 - Prefer a soft, specific CTA (one ask) over a laundry list.
+- ${signOffRule}
 ${intentBlock ? "- Honor the user's stated intent when drafting." : ""}`,
     user: `${goalsBlock}
 

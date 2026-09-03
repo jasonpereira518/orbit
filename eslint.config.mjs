@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Claude Code session data — contains full repo worktrees.
     ".claude/**",
+    // The browser extension is a separate project with its own config.
+    "extension/**",
   ]),
 ]);
 

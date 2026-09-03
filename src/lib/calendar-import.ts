@@ -219,3 +219,49 @@ export function mapCalendarCsvRow(row: Record<string, string>): CalendarCsvRow {
     attendees: get("Attendees", "Guests", "Participants"),
   };
 }
+
+/**
+ * Resolved-identity key for deduping one event's people list: email if present (the
+ * stronger, near-unique signal), else the normalized name. Two entries that resolve to the
+ * same key are treated as the same attendee — most commonly the organizer also listed as an
+ * ATTENDEE (routine in ICS exports), or the same person appearing twice with slightly
+ * different casing.
+ */
+export function personIdentityKey(person: { name: string; email: string }): string {
+  const email = person.email.trim().toLowerCase();
+  if (email) return `email:${email}`;
+  return `name:${person.name.trim().toLowerCase()}`;
+}
+
+/**
+ * One event's people (attendees plus the organizer, if any), deduped by resolved identity.
+ *
+ * Without the dedupe, an event whose organizer is also listed as an ATTENDEE (routine in ICS
+ * exports) would explode into two `import_job_rows` for the same person once
+ * `confirmCalendarImport` (src/actions/imports.ts) turns each event into one row per
+ * (event, attendee) pair — inflating `totalRows`/progress by that pair, and producing two
+ * identical `calendar_event` rows whose `interactions()` output collapses safely (Postgres
+ * dedupes same-key rows within one `ON CONFLICT ... DO UPDATE` insert) but whose
+ * `reminders()` output does not, since the engine only dedupes reminder candidates against
+ * what already exists in the table, never against each other within the same insert — see
+ * `ImportAdapter.reminders`'s doc comment in `src/lib/import-engine.ts`.
+ *
+ * Lives here, not in `src/actions/imports.ts`, for the same reason `windowCalendarEvents`
+ * does (see its own comment): it's a pure function with no DB/auth dependency, and a
+ * `"use server"` module can only export async functions, which would make this untestable
+ * outside a full server-action call. `scripts/smoke-parsers.ts` exercises it directly.
+ */
+export function peopleFromEvent(event: ParsedCalendarEvent) {
+  const people: Array<{ name: string; email: string }> = [...event.attendees];
+  if (event.organizer) people.push(event.organizer);
+  const seen = new Set<string>();
+  const deduped: Array<{ name: string; email: string }> = [];
+  for (const person of people) {
+    if (!person.email && !person.name) continue;
+    const key = personIdentityKey(person);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(person);
+  }
+  return deduped;
+}

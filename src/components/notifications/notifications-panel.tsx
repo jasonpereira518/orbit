@@ -1,7 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState, useTransition } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  useTransition,
+} from "react";
 import { formatDistanceToNow } from "date-fns";
 import {
   Bell,
@@ -10,6 +16,7 @@ import {
   CheckCircle2,
   Clock,
   Loader2,
+  Shield,
   Sparkles,
   UserRound,
   X,
@@ -37,6 +44,8 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { ExtensionPromo } from "@/components/notifications/extension-promo";
+import { AccountAlerts } from "@/components/notifications/account-alerts";
 import {
   dismissBackgroundJob,
   useActiveBackgroundJobCount,
@@ -47,35 +56,153 @@ import {
 type PanelData = Awaited<ReturnType<typeof listNotificationPanel>>;
 type PanelItem = PanelData["items"][number];
 
+/**
+ * The floating window's own geometry, mirrored from the `data-[side=floating]`
+ * utilities in `src/components/ui/sheet.tsx` (`inset-y-4 right-4`, `sm:max-w-md`).
+ *
+ * Duplicated here because the panel is portalled and positioned by CSS, so its box does
+ * not exist to measure at the moment the bell is clicked — and the transform-origin has
+ * to be correct on the very first painted frame or the window visibly jumps as it opens.
+ * Keep the two in step.
+ */
+const PANEL_INSET_PX = 16;
+const PANEL_MAX_W_PX = 384; // sm:max-w-sm = 24rem
+
+/** Where the window should appear to grow from: the middle of the bell that was clicked. */
+function originFromButton(button: HTMLElement | null): string {
+  if (!button) return "top right";
+  const rect = button.getBoundingClientRect();
+  if (rect.width === 0) return "top right";
+  const panelWidth = Math.min(
+    window.innerWidth - PANEL_INSET_PX * 2,
+    PANEL_MAX_W_PX
+  );
+  const panelLeft = window.innerWidth - PANEL_INSET_PX - panelWidth;
+  return `${Math.round(rect.left + rect.width / 2 - panelLeft)}px ${Math.round(
+    rect.top + rect.height / 2 - PANEL_INSET_PX
+  )}px`;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Shared panel state                                                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One poll for the whole app, not one per mounted button.
+ *
+ * `AppShell` renders this button twice — once in the mobile header, once in the fixed
+ * desktop slot — and CSS hides whichever breakpoint does not apply. CSS does not stop
+ * React from mounting both, so a per-component effect meant two `listNotificationPanel()`
+ * round trips on every page load and two more every two minutes, in every open tab,
+ * forever. Hoisting the state above the component means both mounts read one cache, share
+ * one timer, and collapse simultaneous refreshes into a single request.
+ *
+ * The same shape as `src/lib/background-jobs.ts`, which this component already consumes.
+ */
+const REFRESH_MS = 120_000;
+
+type PanelSnapshot = { data: PanelData | null; loading: boolean };
+
+const EMPTY_SNAPSHOT: PanelSnapshot = { data: null, loading: false };
+
+let snapshot: PanelSnapshot = EMPTY_SNAPSHOT;
+let inFlight: Promise<void> | null = null;
+let latestRequest = 0;
+let timerId: number | null = null;
+const listeners = new Set<() => void>();
+
+function setSnapshot(next: Partial<PanelSnapshot>) {
+  snapshot = { ...snapshot, ...next };
+  for (const listener of listeners) listener();
+}
+
+/**
+ * Refreshes the panel.
+ *
+ * Ambient callers (mount, the interval, opening the sheet) share whatever request is
+ * already running — that is what collapses the two mounts' first fetch into one.
+ * `force` is for refreshing *after* a mutation, which must not be served by a request
+ * that was issued before the mutation landed, or the panel silently reverts what the
+ * user just did. `requestId` keeps the newest response the winner regardless of the
+ * order the two come back in.
+ */
+function refreshPanel(force = false): Promise<void> {
+  if (inFlight && !force) return inFlight;
+
+  const requestId = ++latestRequest;
+  setSnapshot({ loading: true });
+
+  const run = listNotificationPanel()
+    .then((next) => {
+      if (requestId === latestRequest) setSnapshot({ data: next });
+    })
+    .catch(() => {
+      if (requestId === latestRequest) toast.error("Could not load notifications");
+    })
+    .finally(() => {
+      if (requestId !== latestRequest) return;
+      inFlight = null;
+      setSnapshot({ loading: false });
+    });
+
+  inFlight = run;
+  return run;
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  // First mount starts the shared timer; the last unmount stops it.
+  if (listeners.size === 1 && timerId === null) {
+    timerId = window.setInterval(() => {
+      // A hidden tab has no badge to update, and the old per-component interval kept
+      // every backgrounded tab polling regardless.
+      if (document.visibilityState === "visible") void refreshPanel();
+    }, REFRESH_MS);
+  }
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) {
+      if (timerId !== null) {
+        window.clearInterval(timerId);
+        timerId = null;
+      }
+      // Dropped when the shell unmounts (signing out, or navigating to marketing) so a
+      // subsequent session cannot paint the previous account's counts before its own
+      // first fetch lands. Costs nothing: remounting refetches regardless.
+      snapshot = EMPTY_SNAPSHOT;
+    }
+  };
+}
+
+function getSnapshot() {
+  return snapshot;
+}
+
+function getServerSnapshot(): PanelSnapshot {
+  return EMPTY_SNAPSHOT;
+}
+
 export function NotificationsPanelButton() {
   const [open, setOpen] = useState(false);
-  const [data, setData] = useState<PanelData | null>(null);
-  const [loading, setLoading] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  // Captured on click rather than read during render: there are two bells mounted (mobile
+  // header and desktop fixed, hidden from each other by CSS), and this resolves to
+  // whichever one the user actually pressed.
+  const [origin, setOrigin] = useState("top right");
+  const { data, loading } = useSyncExternalStore(
+    subscribe,
+    getSnapshot,
+    getServerSnapshot
+  );
   const [pending, start] = useTransition();
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      const next = await listNotificationPanel();
-      setData(next);
-    } catch {
-      toast.error("Could not load notifications");
-    } finally {
-      setLoading(false);
-    }
+  useEffect(() => {
+    void refreshPanel();
   }, []);
 
   useEffect(() => {
-    void refresh();
-    const id = window.setInterval(() => {
-      void refresh();
-    }, 120_000);
-    return () => window.clearInterval(id);
-  }, [refresh]);
-
-  useEffect(() => {
-    if (open) void refresh();
-  }, [open, refresh]);
+    if (open) void refreshPanel();
+  }, [open]);
 
   const jobs = useBackgroundJobs();
   const activeJobCount = useActiveBackgroundJobCount();
@@ -86,13 +213,18 @@ export function NotificationsPanelButton() {
     data?.items.filter((i) => i.urgency === "upcoming") ?? [];
   const suggestionItems =
     data?.items.filter((i) => i.urgency === "info") ?? [];
+  const alerts = data?.alerts ?? [];
+  // Account alerts deliberately do NOT count here. They live in the pinned footer, so an
+  // alert-only account should still see the scroll area say there is nothing due rather
+  // than render an empty region with no explanation.
+  const hasAnything = (data?.totalCount ?? 0) > 0 || jobs.length > 0;
 
   function runAction(label: string, action: () => Promise<unknown>) {
     start(async () => {
       try {
         await action();
         toast.success(label);
-        await refresh();
+        await refreshPanel(true);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Action failed");
       }
@@ -105,13 +237,31 @@ export function NotificationsPanelButton() {
         type="button"
         variant="outline"
         size="icon"
-        className="relative size-10 rounded-full border-border/70 bg-background/90 shadow-md backdrop-blur-md hover:bg-background"
-        aria-label={
-          badgeCount > 0
-            ? `Open notifications, ${badgeCount} due or in progress`
-            : "Open notifications"
-        }
-        onClick={() => setOpen(true)}
+        className={cn(
+          "relative size-10 rounded-full border-border/70 bg-background/90 shadow-md backdrop-blur-md transition-opacity hover:bg-background",
+          // The open window covers this exact spot, and the glass is see-through enough
+          // that the bell would read as a smudge underneath it. Hiding it also sells the
+          // illusion that the button became the panel. Opacity rather than `hidden` so it
+          // stays focusable for the focus base-ui returns here on close.
+          open
+            ? "pointer-events-none opacity-0 duration-fast"
+            : // Held back until the closing window has almost finished collapsing onto
+              // this spot, so the two are never on screen together — the button appears to
+              // be what the panel turned back into, rather than something waiting behind it.
+              "opacity-100 delay-100 duration-base"
+        )}
+        aria-label={[
+          "Open notifications",
+          badgeCount > 0 ? `${badgeCount} due or in progress` : null,
+          data?.alertDot ? "account needs attention" : null,
+        ]
+          .filter(Boolean)
+          .join(", ")}
+        ref={buttonRef}
+        onClick={() => {
+          setOrigin(originFromButton(buttonRef.current));
+          setOpen(true);
+        }}
       >
         <Bell className="h-4 w-4" />
         {badgeCount > 0 && (
@@ -119,16 +269,29 @@ export function NotificationsPanelButton() {
             {badgeCount > 99 ? "99+" : badgeCount}
           </span>
         )}
+        {/* Opposite corner from the count on purpose: alerts never add to the badge, and a
+            dot sharing a corner with a two-digit number would collide with it. */}
+        {data?.alertDot && (
+          <span
+            aria-hidden
+            className="absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full bg-destructive ring-2 ring-background"
+          />
+        )}
       </Button>
 
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent
-          side="right"
-          className="w-full gap-0 p-0 sm:max-w-md"
+          side="floating"
+          className="liquid-glass liquid-glass-panel gap-0 p-0"
+          // Lighter than the shared default (`bg-black/10` + `backdrop-blur-xs`): the page
+          // behind stays legible, and the window's own backdrop-filter does the blurring.
+          // That is what makes this read as a pane of glass rather than as a modal.
+          overlayClassName="bg-black/5 supports-backdrop-filter:backdrop-blur-[1.5px]"
+          style={{ transformOrigin: origin }}
           showCloseButton
         >
           <SheetHeader className="border-b border-border/60 pr-12">
-            <SheetTitle className="font-[family-name:var(--font-display)] text-lg text-primary">
+            <SheetTitle className="font-[family-name:var(--font-display)] text-lg text-ink">
               Notifications
             </SheetTitle>
             <SheetDescription>
@@ -136,14 +299,16 @@ export function NotificationsPanelButton() {
             </SheetDescription>
           </SheetHeader>
 
-          <div className="flex-1 overflow-y-auto px-4 py-4">
+          <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+            {data && <ExtensionPromo canUseExtension={data.canUseExtension} />}
+
             {loading && !data ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
-            ) : (!data || data.totalCount === 0) && jobs.length === 0 ? (
+            ) : !hasAnything ? (
               <div className="rounded-2xl border border-dashed border-border/70 px-4 py-10 text-center">
                 <Bell className="mx-auto h-5 w-5 text-muted-foreground" />
-                <p className="mt-3 text-sm font-medium text-primary">
-                  You&apos;re all caught up
+                <p className="mt-3 text-sm font-medium text-ink">
+                  {alerts.length > 0 ? "Nothing due" : "You're all caught up"}
                 </p>
                 <p className="mt-1 text-sm text-muted-foreground">
                   New reminders and follow-ups will show up here.
@@ -151,12 +316,6 @@ export function NotificationsPanelButton() {
               </div>
             ) : (
               <div className="space-y-6">
-                <Section title="Tasks" count={jobs.length}>
-                  {jobs.map((job) => (
-                    <JobRow key={job.id} job={job} />
-                  ))}
-                </Section>
-
                 <Section title="Due now" count={dueItems.length}>
                   {dueItems.map((item) => (
                     <NotificationRow
@@ -258,11 +417,24 @@ export function NotificationsPanelButton() {
                     />
                   ))}
                 </Section>
+
+                {/* Background work, below the things the user is actually being asked to
+                    do. Named for what it is — these are imports and backfills, not tasks. */}
+                <Section title="In progress" count={jobs.length}>
+                  {jobs.map((job) => (
+                    <JobRow key={job.id} job={job} />
+                  ))}
+                </Section>
               </div>
             )}
+
+            {/* Outside the ternary above, so an account whose only news is an alert still
+                sees it — that branch renders the "nothing due" empty state instead of the
+                section list. */}
+            <AccountAlerts alerts={alerts} onNavigate={() => setOpen(false)} />
           </div>
 
-          <div className="border-t border-border/60 p-4">
+          <div className="flex items-center justify-between gap-3 border-t border-border/60 p-4">
             <Link
               href="/dashboard"
               onClick={() => setOpen(false)}
@@ -270,6 +442,23 @@ export function NotificationsPanelButton() {
             >
               Open dashboard
             </Link>
+
+            {/* Operators only, and the only way into the console from inside the product —
+                there is no nav entry for it anywhere else. `canOpenAdmin` is resolved on
+                the server; see the note on it in `listNotificationPanel`. */}
+            {data?.canOpenAdmin && (
+              <Link
+                href="/admin"
+                onClick={() => setOpen(false)}
+                className={cn(
+                  buttonVariants({ variant: "outline", size: "sm" }),
+                  "h-7 gap-1.5 px-2.5 text-xs"
+                )}
+              >
+                <Shield className="h-3.5 w-3.5" />
+                Admin console
+              </Link>
+            )}
           </div>
         </SheetContent>
       </Sheet>
@@ -319,7 +508,7 @@ function JobRow({ job }: { job: BackgroundJob }) {
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="font-medium text-primary">
+          <p className="font-medium text-ink">
             {job.status === "running"
               ? job.cancelling
                 ? "Stopping…"

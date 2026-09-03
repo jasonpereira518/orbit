@@ -140,12 +140,7 @@ export function CaptureForm({
           preferredContactName={initialContactName}
           hasApiKey={hasApiKey}
           onSaved={(res) => {
-            if (res.contactIds.length === 1) {
-              router.push(`/contacts/${res.contactIds[0]}`);
-            } else {
-              router.push("/contacts");
-            }
-            router.refresh();
+            router.push(`/capture/${res.batchId}`);
           }}
         />
       )}
@@ -154,7 +149,7 @@ export function CaptureForm({
         <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
           <Field label="Contact">
             {initialContactId ? (
-              <p className="rounded-lg border border-border/60 bg-muted/40 px-3 py-2 text-sm font-medium text-primary">
+              <p className="rounded-lg border border-border/60 bg-muted/40 px-3 py-2 text-sm font-medium text-ink">
                 {initialContactName || "Selected contact"}
               </p>
             ) : (

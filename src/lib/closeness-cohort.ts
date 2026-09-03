@@ -66,6 +66,13 @@ export type ClosenessCohortResult = {
   averageRaw: number;
   goals: string[];
   touchCounts: Map<string, number>;
+  /**
+   * Contacts with at least one `interactions` row, ever. Already computed here to feed
+   * the score; exported so surfaces can tell "we spoke N days ago" apart from "you
+   * imported them N days ago" without a second query — `contacts.lastInteractionAt`
+   * is stamped on every create and cannot answer that.
+   */
+  interactedIds: Set<string>;
   inputs: ClosenessCohortInputs;
 };
 
@@ -158,6 +165,9 @@ async function readStoredCohortResult(
       .select({
         contactId: interactions.contactId,
         recent: sql<number>`count(*) filter (where ${interactions.interactionDate} >= ${since})::int`,
+        // Same group-by, one more aggregate: "has this ever been touched at all",
+        // which the recent-window count cannot answer. See `interactedIds`.
+        total: sql<number>`count(*)::int`,
       })
       .from(interactions)
       .where(eq(interactions.userId, userId))
@@ -176,6 +186,9 @@ async function readStoredCohortResult(
     goals: goalRows.map((g) => g.text),
     touchCounts: new Map(
       touchRows.map((r) => [r.contactId, Number(r.recent) || 0])
+    ),
+    interactedIds: new Set(
+      touchRows.filter((r) => Number(r.total) > 0).map((r) => r.contactId)
     ),
     inputs: {
       maxCompany: snapshot.maxCompany ?? 1,
@@ -367,6 +380,7 @@ async function buildCohortResult(
     averageRaw,
     goals,
     touchCounts,
+    interactedIds: everInteracted,
     inputs: { maxCompany, maxSchool, userDomain, mailConnected },
   };
 }

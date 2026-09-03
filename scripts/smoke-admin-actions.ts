@@ -162,6 +162,39 @@ async function main() {
     /operator account/i
   );
 
+  await refuses(
+    "hard-deleting your own account is refused",
+    () =>
+      actions.hardDeleteAccount(ADMIN, {
+        targetUserId: ADMIN,
+        confirmEmail: "whatever@example.test",
+        reason: "testing the self-target guard, well over twenty characters",
+      }),
+    /your own account/i
+  );
+
+  await refuses(
+    "hard-deleting another operator is refused",
+    () =>
+      actions.hardDeleteAccount(ADMIN, {
+        targetUserId: OTHER_OP,
+        confirmEmail: "whatever@example.test",
+        reason: "testing the operator guard, well over twenty characters",
+      }),
+    /operator account/i
+  );
+
+  await refuses(
+    "a hard delete reason shorter than 20 characters is refused",
+    () =>
+      actions.hardDeleteAccount(ADMIN, {
+        targetUserId: TARGET,
+        confirmEmail: "target@example.test",
+        reason: "too short",
+      }),
+    /at least/i
+  );
+
   /* ---------------------------------------------------------------------- suspension */
 
   const suspended = await actions.setAccountSuspended(ADMIN, {
@@ -228,12 +261,19 @@ async function main() {
     })
     .returning();
 
-  const [csvJob] = await db
+  // A client-driven kind: it has no server runner, so there is nothing to resume. As of
+  // Task 15 (calendar moving onto the resumable engine, the last kind still client-driven
+  // batch by batch), there is no real import type left that this is true of — every one of
+  // them now stages `import_job_rows` and runs through the engine. The guard this proves
+  // still has to hold for whatever the *next* one-off/legacy type turns out to be, so this
+  // uses a made-up type that is deliberately absent from `RESUMABLE_IMPORT_TYPES` rather
+  // than a real (and, as of this task, wrong) example.
+  const [clientJob] = await db
     .insert(imports)
     .values({
       userId: TARGET,
-      importType: "google_contacts",
-      fileName: "contacts.csv",
+      importType: "legacy_manual_export",
+      fileName: "export.csv",
       status: "failed",
     })
     .returning();
@@ -243,7 +283,7 @@ async function main() {
     () =>
       actions.retryImport(ADMIN, {
         targetUserId: TARGET,
-        importId: csvJob.id,
+        importId: clientJob.id,
         reason: "user asked",
       }),
     /re-uploaded/i
@@ -271,13 +311,38 @@ async function main() {
   check("retry clears the error message", retried?.errorMessage === null);
   check("retry writes an audit row", (await auditRows("import.retry")).length === 1);
 
+  // Google and Outlook contacts stage `import_job_rows` through the same engine now, so a
+  // retry has to reach them too — the operator's only alternative is waiting on the cron.
+  const [googleJob] = await db
+    .insert(imports)
+    .values({
+      userId: TARGET,
+      importType: "google_contacts",
+      fileName: "google-contacts",
+      status: "failed",
+      errorMessage: "boom",
+    })
+    .returning();
+  await actions.retryImport(ADMIN, {
+    targetUserId: TARGET,
+    importId: googleJob.id,
+    reason: "connector import died mid-run",
+  });
+  const retriedGoogle = await db.query.imports.findFirst({
+    where: eq(imports.id, googleJob.id),
+  });
+  check(
+    "a Google contacts import can be re-armed",
+    retriedGoogle?.status === "processing" && retriedGoogle?.errorMessage === null
+  );
+
   await actions.cancelImport(ADMIN, {
     targetUserId: TARGET,
-    importId: csvJob.id,
+    importId: clientJob.id,
     reason: "wedged, user starting over",
   });
   const cancelled = await db.query.imports.findFirst({
-    where: eq(imports.id, csvJob.id),
+    where: eq(imports.id, clientJob.id),
   });
   check("cancel sets the status", cancelled?.status === "cancelled");
   check("cancel writes an audit row", (await auditRows("import.cancel")).length === 1);
@@ -414,10 +479,32 @@ async function main() {
   const afterDelete = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, TARGET),
   });
-  check("the account row is gone", afterDelete === undefined);
+  // `deleteAccount` (as opposed to a hard delete) deliberately keeps the settings row alive
+  // with its account/identity/credential fields intact — see `purgeUserData`'s doc comment.
+  check(
+    "the settings row survives with its identity mirror intact",
+    afterDelete?.email === "target@example.test"
+  );
+  check(
+    "but app state like the calendar feed token still resets",
+    afterDelete?.calendarFeedToken === null
+  );
   check(
     "the account's contacts are gone",
     (await db.query.contacts.findMany({ where: eq(contacts.userId, TARGET) })).length === 0
+  );
+
+  // Hard delete is exercised for its guards only — the happy path calls Clerk's real API to
+  // remove the login, which this script has no disposable test user to safely exercise.
+  await refuses(
+    "hard-deleting with a mismatched confirmation email is refused",
+    () =>
+      actions.hardDeleteAccount(ADMIN, {
+        targetUserId: TARGET,
+        confirmEmail: "not-the-right@example.test",
+        reason: "should never get here, comfortably past twenty characters",
+      }),
+    /does not match/i
   );
 
   // The property that makes this auditable at all: purgeUserData deliberately spares the

@@ -56,11 +56,27 @@ const strList = z
   .array(z.string())
   .nullish()
   .transform((v) => v ?? []);
+/** "participant" (talked with/met/messaged) vs "mentioned" (only referred to). */
+const personPresence = z
+  .string()
+  .nullish()
+  .transform((v): "participant" | "mentioned" => (v === "mentioned" ? "mentioned" : "participant"));
+export const noteMentionSchema = z.object({
+  name: z.string().nullish().transform((v) => (v ?? "").trim()),
+  context: nullStr.optional().transform((v) => v ?? null),
+  near_person: nullStr.optional().transform((v) => v ?? null),
+});
+export type NoteMention = z.infer<typeof noteMentionSchema>;
+const mentionList = z
+  .array(noteMentionSchema)
+  .nullish()
+  .transform((v) => (v ?? []).filter((m) => m.name.length > 0));
 
 export const noteParseSchema = z.object({
   name: nullStr,
   company: nullStr,
   role: nullStr,
+  presence: personPresence,
   location: nullStr,
   email: nullStr,
   linkedin_url: nullStr,
@@ -112,6 +128,8 @@ export const multiPersonNoteParseSchema = z.object({
         .transform((v) => v?.trim() || ""),
     }),
   ),
+  /** People only referred to, never actually present (a cofounder, "she'll intro me to Raj"). */
+  mentions: mentionList,
 });
 
 export type ParsedMultiPersonNotes = z.infer<typeof multiPersonNoteParseSchema>;
@@ -123,6 +141,7 @@ const personIdentitySchema = z.object({
   email: nullStr.optional(),
   company: nullStr.optional(),
   role: nullStr.optional(),
+  presence: personPresence,
 });
 
 const multiPersonIdentitySchema = z.object({
@@ -134,6 +153,7 @@ const multiPersonIdentitySchema = z.object({
   interaction_date: nullStr.optional(),
   met_at: nullStr.optional(),
   people: z.array(personIdentitySchema),
+  mentions: mentionList,
 });
 
 const personDetailBatchSchema = z.object({
@@ -205,6 +225,31 @@ function hasPersonalProviderKey(
   return Boolean(settings?.anthropicApiKeyEncrypted);
 }
 
+/**
+ * Whether a key EXISTS for this provider, without decrypting it.
+ *
+ * The notifications panel asks this every 120 seconds to decide whether to show the
+ * "add your API key" alert. `getProviderApiKey` would answer the same question, but it
+ * runs `decryptOrNull` — pulling a live secret into memory on a polling path, purely to
+ * test presence. Presence is all the alert needs.
+ *
+ * The difference is one edge case: a key that is stored but no longer decryptable (a
+ * rotated `ENCRYPTION_KEY`) reads as present here and as absent to `getProviderApiKey`.
+ * `getAiCapability` deliberately keeps the stricter, decrypting check — the extension
+ * degrades to heuristics off it and must not be told a key works when it does not. The
+ * alert accepts the weaker check because that failure mode is an ops incident that breaks
+ * every account at once and is loud on its own, not something one user can act on.
+ */
+export function hasAiKeyFor(
+  provider: AiProvider,
+  settings?: ProviderKeySettings | null,
+): boolean {
+  return (
+    hasPersonalProviderKey(provider, settings) ||
+    Boolean(getEnvProviderKey(provider))
+  );
+}
+
 export function getProviderApiKey(
   provider: AiProvider,
   settings?: ProviderKeySettings | null,
@@ -248,6 +293,27 @@ export async function getAiConfig(userId: string) {
     : "user";
 
   return { provider, model, apiKey, settings, keyOwner };
+}
+
+/**
+ * Whether this user can make AI calls at all, without throwing.
+ *
+ * `getAiConfig` throws when no key is configured, which is the right shape for
+ * call sites that need the key but wrong for ones that need to *decide* — the
+ * extension has to degrade to heuristics rather than surface an error, since
+ * having no key is a normal state (env keys are ignored on Vercel).
+ */
+export async function getAiCapability(userId: string): Promise<{
+  hasKey: boolean;
+  provider: AiProvider;
+}> {
+  const settings = await loadSettings(userId);
+  const provider = resolveAiProvider(settings?.aiProvider);
+  return { hasKey: Boolean(getProviderApiKey(provider, settings)), provider };
+}
+
+export async function userHasAiKey(userId: string): Promise<boolean> {
+  return (await getAiCapability(userId)).hasKey;
 }
 
 /** Resolve which embedding API to use for semantic search. */
@@ -838,6 +904,7 @@ Rules:
 
 const PERSON_FIELD_SHAPE = `{
   "name": string|null,
+  "presence": "participant"|"mentioned",
   "company": string|null,
   "role": string|null,
   "location": string|null,
@@ -931,12 +998,15 @@ Return strict JSON matching this shape:
     }
   ],
   "interaction_date": string|null,
+  "mentions": [ { "name": string, "context": string|null, "near_person": string|null } ],
   "people": [
     ${PERSON_FIELD_SHAPE}
   ]
 }
 Rules:
 - Create one object per distinct person clearly mentioned in the notes.
+- people[] is for PARTICIPANTS: people the user actually talked with, met, or messaged in these notes. Set presence "participant".
+- Anyone only referred to — a cofounder, a boss, "she'll intro me to Raj", a speaker they watched — is a MENTION. Put them in mentions[] with the sentence fragment as context and near_person = the participant whose section mentioned them. Do NOT create a people[] entry for them unless the notes give real profile detail (role, company, contact info); if you do, set presence "mentioned".
 - Skip vague groups ("a few engineers") with no identifiable person.
 - Extract only information supported by the notes. Use null when unknown. Do not invent people or facts.
 - Include every key on every person object. Use null (or [] for arrays) when unknown — never omit keys.
@@ -970,6 +1040,7 @@ Rules:
       interaction_date: p.interaction_date || defaultDate,
       met_at: p.met_at || null,
     })),
+    mentions: parsed.mentions,
   };
 }
 
@@ -997,8 +1068,9 @@ Return strict JSON:
   ],
   "interaction_date": string|null,
   "met_at": string|null,
+  "mentions": [ { "name": string, "context": string|null, "near_person": string|null } ],
   "people": [
-    { "name": string, "email": string|null, "company": string|null, "role": string|null }
+    { "name": string, "email": string|null, "company": string|null, "role": string|null, "presence": "participant"|"mentioned" }
   ]
 }
 Rules:
@@ -1006,7 +1078,9 @@ Rules:
 - Do not invent people. Prefer seed attendees when they clearly belong to this event.
 - shared_notes hold ONLY multi-person context (not person-only facts). person_names must match people[].name (or [] for everyone).
 - interaction_date: YYYY-MM-DD when known from notes/hints; else null.
-- Keep people list complete even for long dumps.`,
+- Keep people list complete even for long dumps.
+- people[] is for PARTICIPANTS: people the user actually talked with, met, or messaged in these notes. Set presence "participant".
+- Anyone only referred to — a cofounder, a boss, "she'll intro me to Raj", a speaker they watched — is a MENTION. Put them in mentions[] with the sentence fragment as context and near_person = the participant whose section mentioned them. Do NOT create a people[] entry for them unless the notes give real profile detail (role, company, contact info); if you do, set presence "mentioned".`,
   });
 
   const identity = multiPersonIdentitySchema.parse(JSON.parse(identityRaw));
@@ -1036,13 +1110,14 @@ Rules:
           email: seed.email ?? null,
           company: null,
           role: null,
+          presence: "participant",
         });
       }
     }
   }
 
   if (!peopleIds.length) {
-    return { shared_notes: [], interaction_date: null, people: [] };
+    return { shared_notes: [], interaction_date: null, people: [], mentions: identity.mentions };
   }
 
   const shared_notes = normalizeSharedNotes(
@@ -1098,6 +1173,7 @@ Rules:
 
       const merged: ParsedPersonNote = {
         name: requested.name,
+        presence: requested.presence,
         company: found?.company || requested.company || null,
         role: found?.role || requested.role || null,
         location: found?.location || null,
@@ -1150,6 +1226,7 @@ Rules:
     shared_notes,
     interaction_date: defaultDate,
     people: detailed,
+    mentions: identity.mentions,
   };
 }
 
@@ -1300,6 +1377,40 @@ export async function chatWithNetwork(
     relevance: number;
   }>,
   priorTurns: Array<{ role: "user" | "assistant"; content: string }> = [],
+  /**
+   * Exhaustive membership for any organisation the question named. Unlike `contactsContext`
+   * — a relevance-ranked top-K — this is a complete group-by, so the model can state a
+   * count instead of guessing one from a truncated list. See `@/lib/chat-roster`.
+   */
+  orgRosters: Array<{
+    kind: "company" | "school";
+    name: string;
+    total: number;
+    people: Array<{ id: string; name: string; title: string | null }>;
+    truncated: boolean;
+  }> = [],
+  /**
+   * Who the product itself says needs attention — overdue follow-ups and the standing
+   * outreach queue. Present only for questions about reconnecting. See `@/lib/chat-attention`.
+   */
+  attention: {
+    overdue: Array<{
+      id: string;
+      name: string;
+      title: string | null;
+      company: string | null;
+      daysOverdue: number;
+      daysSinceTouch: number | null;
+      hasLoggedInteraction: boolean;
+    }>;
+    suggestions: Array<{
+      id: string;
+      name: string;
+      title: string | null;
+      company: string | null;
+      reason: string;
+    }>;
+  } | null = null,
   recruitersContext: Array<{
     id: string;
     fullName: string;
@@ -1356,13 +1467,60 @@ export async function chatWithNetwork(
 
   const hasRecruiters = recruitersContext.length > 0;
 
+  const attentionBlock = (() => {
+    if (!attention) return "";
+    const lines: string[] = [];
+    for (const c of attention.overdue) {
+      const where = [c.title, c.company].filter(Boolean).join(" @ ");
+      // "last touch" is only stated when a touch was actually logged; otherwise
+      // `lastInteractionAt` is the day they were added and saying otherwise invents history.
+      const touch =
+        c.hasLoggedInteraction && c.daysSinceTouch != null
+          ? `, last spoke ${c.daysSinceTouch}d ago`
+          : ", no conversation logged yet";
+      lines.push(
+        `- [id=${c.id}] ${c.name}${where ? ` (${where})` : ""} — follow-up ${c.daysOverdue}d overdue${touch}`
+      );
+    }
+    const overdueBlock = lines.length
+      ? `Overdue follow-ups (${attention.overdue.length}):\n${lines.join("\n")}`
+      : "Overdue follow-ups: none";
+    const queue = attention.suggestions
+      .map(
+        (s) =>
+          `- [id=${s.id}] ${s.name}${
+            [s.title, s.company].filter(Boolean).length
+              ? ` (${[s.title, s.company].filter(Boolean).join(" @ ")})`
+              : ""
+          }${s.reason ? ` — ${s.reason}` : ""}`
+      )
+      .join("\n");
+    return `${overdueBlock}${queue ? `\n\nOutreach queue:\n${queue}` : ""}`;
+  })();
+
+  const rosterBlock = orgRosters
+    .map((r) => {
+      const shown = r.people
+        .map((p) => `- [id=${p.id}] ${p.name}${p.title ? ` — ${p.title}` : ""}`)
+        .join("\n");
+      const note = r.truncated
+        ? `(closest ${r.people.length} of ${r.total} listed)`
+        : "(complete)";
+      return `${r.name} — ${r.total} ${r.total === 1 ? "person" : "people"} ${note}\n${shown}`;
+    })
+    .join("\n\n");
+
   const content = await completeJson(userId, {
     operation: "chat.answer",
     temperature: 0.3,
-    user: `${historyBlock ? `Prior conversation:\n${historyBlock}\n\n` : ""}Question: ${question}\n\nContacts:\n${contextBlock || "(no contacts found)"}${hasRecruiters ? `\n\nRecruiters:\n${recruitersBlock}` : ""}`,
+    user: `${historyBlock ? `Prior conversation:\n${historyBlock}\n\n` : ""}Question: ${question}\n\nContacts (relevance-ranked, not exhaustive):\n${contextBlock || "(no contacts found)"}${rosterBlock ? `\n\nComplete roster:\n${rosterBlock}` : ""}${attentionBlock ? `\n\nNeeds attention (computed from this user's own follow-up dates and outreach queue):\n${attentionBlock}` : ""}${hasRecruiters ? `\n\nRecruiters:\n${recruitersBlock}` : ""}`,
     system: `You are Orbit, a personal networking assistant.
-Answer using the provided contacts${hasRecruiters ? " and recruiters" : ""} (including summaries, notes, key facts, and LinkedIn messages). Never invent people or message content.
+Answer using the provided contacts${hasRecruiters ? " and recruiters" : ""} (including summaries, notes, key facts, and LinkedIn messages). Never invent people, companies, dates, or message content — if the lists do not say it, you do not know it.
 Use prior conversation for context when present, but ground every recommendation in the provided lists.
+The Contacts list is a relevance-ranked subset, so never present it as everyone the user knows and never count from it.
+${attentionBlock ? "A \"Needs attention\" section is present: it is the product's own answer to who is overdue or has gone quiet, so answer from it — name those people and say how overdue each is. Do not reply that you lack information while it is present.\n" : ""}${rosterBlock ? "A \"Complete roster\" section is present: its totals are authoritative and exhaustive for those organisations. Use that number when the question asks who or how many the user knows somewhere, and name people from it rather than from the Contacts list. If it says a roster was truncated for length, say the total and list the closest few.\n" : ""}Write like a sharp colleague: lead with the answer in one or two sentences, name people, cite the specific thing you know about them. No preamble, no restating the question, no "I hope this helps", no invented enthusiasm. If nothing in the lists answers the question, say so plainly and suggest what the user could add.
+Titles and companies say where someone works today and nothing more — never turn "Founder @ Acme" into "founded Acme", or a seniority into a history you were not given.
+Each recommendation's reason must point at a concrete detail from that person's summary, notes, key facts, or messages — not a generic statement that they work in the field. Any draft_message must sound like the user wrote it: short, specific to what they actually discussed, no flattery and no filler openers.
 ${hasRecruiters ? "When the question is about recruiters, prefer recruiters the user already logged (personal_rating / status present), then highly rated community recruiters. Do not invent email/phone — contact details may be locked." : ""}
 Return JSON:
 {

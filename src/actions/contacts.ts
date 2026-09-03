@@ -2,7 +2,7 @@
 
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { getDb, rowsOf } from "@/db";
+import { getDb } from "@/db";
 import { contactTags, contacts, interactions, reminders, tags } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import {
@@ -25,7 +25,7 @@ import {
   type ContactWriteOptions,
   type LogInteractionInput,
 } from "@/lib/contact-writes";
-import { generateAndStorePersonSummary } from "@/lib/person-summary";
+import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { rebuildContactEmbedding } from "@/lib/search";
 import {
   selectTriageCandidates,
@@ -597,7 +597,12 @@ export async function getContact(id: string) {
           asc(interactions.sameDayOrder),
         ],
       },
-      reminders: { orderBy: [desc(reminders.createdAt)] },
+      // `dismissed` is the undo tombstone: the row survives so the batch item_hash keeps
+      // blocking a re-paste, but it must never show up as a live reminder on the profile.
+      reminders: {
+        where: (r, { ne }) => ne(r.status, "dismissed"),
+        orderBy: [desc(reminders.createdAt)],
+      },
     },
   });
 
@@ -803,8 +808,13 @@ export async function updateInteraction(
     .where(eq(interactions.id, interactionId))
     .returning();
 
+  if (input.actionItems !== undefined) {
+    const { syncActionItems } = await import("@/lib/action-items");
+    await syncActionItems(userId, interactionId, existing.contactId, input.actionItems);
+  }
+
   await rebuildContactEmbedding(userId, existing.contactId);
-  void generateAndStorePersonSummary(userId, existing.contactId).catch(
+  void generateAndStoreContactBrief(userId, existing.contactId).catch(
     () => null
   );
 
@@ -863,13 +873,13 @@ export async function reorderSameDayInteractions(
 
 export async function regenerateContactSummary(contactId: string) {
   const userId = await requireUserId();
-  const summary = await generateAndStorePersonSummary(userId, contactId, {
+  const out = await generateAndStoreContactBrief(userId, contactId, {
     force: true,
   });
   revalidatePath(`/contacts/${contactId}`);
   revalidatePath("/graph");
   revalidatePath("/dashboard");
-  return { summary };
+  return { summary: out?.summary ?? null };
 }
 
 export type LinkedInRefreshTarget = {
@@ -1415,231 +1425,6 @@ export async function listRelatedContacts(
     limit,
     goals
   );
-}
-
-export type MutualContact = {
-  id: string;
-  fullName: string;
-  preferredName: string | null;
-  firstName: string | null;
-  title: string | null;
-  company: string | null;
-  school: string | null;
-  location: string | null;
-  profileImageUrl: string | null;
-  linkedinUrl: string | null;
-  email: string | null;
-  phone: string | null;
-  mutualCount: number;
-};
-
-function extractLinkedinSlug(url: string | null | undefined): string | null {
-  const t = url?.trim();
-  if (!t) return null;
-  const match = t.match(/linkedin\.com\/in\/([^/?#]+)/i);
-  return match ? match[1].toLowerCase() : null;
-}
-
-/**
- * Mutuals for a specific contact `contactId` (belonging to the signed-in user):
- * for each other account, count how many of the signed-in user's contacts
- * overlap with that other account's contacts, given that other account also
- * has the profile contact (matched by contact id and/or LinkedIn slug).
- *
- * Returns only the signed-in user's contacts (so we never expose other users).
- */
-export async function listMutualContacts(
-  contactId: string,
-  limit = 6
-): Promise<MutualContact[]> {
-  const userId = await requireUserId();
-  const db = await getDb();
-
-  const viewerContact = await db.query.contacts.findFirst({
-    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-    columns: {
-      id: true,
-      fullName: true,
-      preferredName: true,
-      firstName: true,
-      title: true,
-      company: true,
-      school: true,
-      location: true,
-      profileImageUrl: true,
-      linkedinUrl: true,
-      email: true,
-      phone: true,
-    },
-  });
-
-  if (!viewerContact) return [];
-
-  const profileLinkedinSlug = extractLinkedinSlug(viewerContact.linkedinUrl);
-  // If we can't match this contact identity across accounts, return nothing.
-  if (!profileLinkedinSlug) return [];
-
-  const viewerContacts = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    columns: {
-      id: true,
-      fullName: true,
-      preferredName: true,
-      firstName: true,
-      title: true,
-      company: true,
-      school: true,
-      location: true,
-      profileImageUrl: true,
-      linkedinUrl: true,
-      email: true,
-      phone: true,
-    },
-  });
-
-  // Map "identity key" => viewer contact ids.
-  // We can have duplicates in rare cases (e.g. if the same LinkedIn URL was
-  // imported twice), so keep arrays.
-  const viewerKeyToIds = new Map<string, string[]>();
-  const viewerById = new Map<string, MutualContact>();
-
-  for (const c of viewerContacts) {
-    const linkedinSlug = extractLinkedinSlug(c.linkedinUrl);
-
-    if (c.id) {
-      viewerById.set(c.id, {
-        id: c.id,
-        fullName: c.fullName,
-        preferredName: c.preferredName ?? null,
-        firstName: c.firstName ?? null,
-        title: c.title ?? null,
-        company: c.company ?? null,
-        school: c.school ?? null,
-        location: c.location ?? null,
-        profileImageUrl: c.profileImageUrl ?? null,
-        linkedinUrl: c.linkedinUrl ?? null,
-        email: c.email ?? null,
-        phone: c.phone ?? null,
-        mutualCount: 0, // filled later
-      });
-    }
-
-    const keys: string[] = [`i:${c.id}`];
-    if (linkedinSlug) keys.push(`l:${linkedinSlug}`);
-
-    for (const key of keys) {
-      const existing = viewerKeyToIds.get(key);
-      if (existing) existing.push(c.id);
-      else viewerKeyToIds.set(key, [c.id]);
-    }
-  }
-
-  const profileKeys = new Set<string>([`i:${viewerContact.id}`]);
-  if (profileLinkedinSlug) profileKeys.add(`l:${profileLinkedinSlug}`);
-
-  // How many other accounts to credit a mutual from. A cap, not a correctness bound —
-  // beyond a couple of dozen the count stops meaning anything to a reader.
-  const MAX_PEER_ACCOUNTS = 20;
-
-  /*
-   * One query where there used to be twenty-one.
-   *
-   * The old shape was `ILIKE '%/in/<slug>%'` across every user's contacts — a leading
-   * wildcard on an unindexed column, so a full scan of the whole table — followed by up to
-   * 20 sequential 250-row scans, one per peer account, with the overlap computed in
-   * JavaScript against every one of the viewer's own contacts loaded into memory.
-   *
-   * `linkedin_slug` is now a generated, indexed column, which turns the identity match into
-   * an equality join and lets the overlap count be a GROUP BY. The 250-row-per-peer cap is
-   * gone with it: it existed to bound the scan, and silently made mutual counts depend on
-   * how recently the peer had touched the contact.
-   *
-   * Note this reads other accounts' rows, exactly as before, and returns only the viewer's
-   * own contacts. It is worth being clear that a mutual count still discloses that *some*
-   * other account holds a given LinkedIn profile; that is a property of the feature, not of
-   * this rewrite.
-   */
-  const mutualRows = rowsOf<{ id: string; mutual_count: number }>(
-    await db.execute(sql`
-      with peers as (
-        select distinct user_id
-        from contacts
-        where linkedin_slug = ${profileLinkedinSlug}
-          and user_id <> ${userId}
-        limit ${MAX_PEER_ACCOUNTS}
-      ),
-      peer_slugs as (
-        select distinct c.user_id, c.linkedin_slug
-        from contacts c
-        join peers p on p.user_id = c.user_id
-        where c.linkedin_slug is not null
-      )
-      select v.id, count(distinct ps.user_id)::int as mutual_count
-      from contacts v
-      join peer_slugs ps on ps.linkedin_slug = v.linkedin_slug
-      where v.user_id = ${userId}
-        and v.id <> ${contactId}
-        and v.linkedin_slug is not null
-      group by v.id
-      order by mutual_count desc, v.id
-      limit ${limit}
-    `)
-  );
-
-  if (mutualRows.length === 0) return [];
-
-  // Display columns for the handful of rows that survived, rather than every contact the
-  // viewer has — the old version loaded the whole network to build a lookup map.
-  const detail = await db.query.contacts.findMany({
-    where: and(
-      eq(contacts.userId, userId),
-      inArray(
-        contacts.id,
-        mutualRows.map((r) => r.id)
-      )
-    ),
-    columns: {
-      id: true,
-      fullName: true,
-      preferredName: true,
-      firstName: true,
-      title: true,
-      company: true,
-      school: true,
-      location: true,
-      profileImageUrl: true,
-      linkedinUrl: true,
-      email: true,
-      phone: true,
-    },
-  });
-
-  const countById = new Map(mutualRows.map((r) => [r.id, Number(r.mutual_count)]));
-  const result: MutualContact[] = detail.map((c) => ({
-    id: c.id,
-    fullName: c.fullName,
-    preferredName: c.preferredName ?? null,
-    firstName: c.firstName ?? null,
-    title: c.title ?? null,
-    company: c.company ?? null,
-    school: c.school ?? null,
-    location: c.location ?? null,
-    profileImageUrl: clientContactAvatarUrl(c.id, c.profileImageUrl),
-    linkedinUrl: c.linkedinUrl ?? null,
-    email: c.email ?? null,
-    phone: c.phone ?? null,
-    mutualCount: countById.get(c.id) ?? 0,
-  }));
-
-  result.sort(
-    (a, b) =>
-      b.mutualCount - a.mutualCount ||
-      (a.fullName || "").localeCompare(b.fullName || "", undefined, {
-        sensitivity: "base",
-      })
-  );
-
-  return result.slice(0, limit);
 }
 
 /** Lightweight contact payload for the floating ask bar person chip. */

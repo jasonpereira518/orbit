@@ -9,8 +9,10 @@ import {
   userGoals,
   type ChatRecommendation,
 } from "@/db/schema";
-import { requireUserId } from "@/lib/auth";
 import { chatWithNetwork } from "@/lib/ai";
+import { getAttentionBrief, isAttentionQuestion } from "@/lib/chat-attention";
+import { getClosenessCohort } from "@/lib/closeness-cohort";
+import { findOrgRosters } from "@/lib/chat-roster";
 import { getQueryEmbedding } from "@/lib/embedding-cache";
 import { hybridSearchContacts, type RankedContact } from "@/lib/hybrid-search";
 import {
@@ -21,6 +23,7 @@ import {
 } from "@/lib/chat-retrieval";
 import { isRecruiterIntent } from "@/lib/recruiters";
 import { loadRecruitersForChat } from "@/actions/recruiters";
+import { requireUserForSurface } from "@/lib/plan-guards";
 
 const TITLE_MAX = 72;
 const PRIOR_TURN_LIMIT = 8;
@@ -68,7 +71,7 @@ function titleFromQuestion(question: string) {
 }
 
 export async function listChatThreads() {
-  const userId = await requireUserId();
+  const userId = await requireUserForSurface("page.chat");
   const db = await getDb();
   return db.query.chatThreads.findMany({
     where: eq(chatThreads.userId, userId),
@@ -83,7 +86,7 @@ export async function listChatThreads() {
 }
 
 export async function getChatThread(threadId: string) {
-  const userId = await requireUserId();
+  const userId = await requireUserForSurface("page.chat");
   const db = await getDb();
 
   const thread = await db.query.chatThreads.findFirst({
@@ -104,7 +107,7 @@ export async function getChatThread(threadId: string) {
 
 export async function createChatThread() {
   try {
-    const userId = await requireUserId();
+    const userId = await requireUserForSurface("page.chat");
     const db = await getDb();
     const [row] = await db.insert(chatThreads).values({ userId }).returning();
     if (!row) throw new Error("Could not create chat thread");
@@ -121,7 +124,7 @@ export async function createChatThread() {
 }
 
 export async function deleteChatThread(threadId: string) {
-  const userId = await requireUserId();
+  const userId = await requireUserForSurface("page.chat");
   const db = await getDb();
   const existing = await db.query.chatThreads.findFirst({
     where: and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)),
@@ -139,7 +142,7 @@ export async function askNetwork(
   options?: { threadId?: string; contactId?: string }
 ) {
   try {
-    const userId = await requireUserId();
+    const userId = await requireUserForSurface("page.chat");
     const db = await getDb();
     const q = question.trim();
     if (!q) throw new Error("Question is required");
@@ -274,6 +277,20 @@ export async function askNetwork(
       ? `[Focus: answer primarily about the pinned contact id=${focusContactId}. You may use other contacts only for intros/context.]\n\n${q}`
       : q;
 
+    // Exhaustive membership for any organisation the question names — the one thing a
+    // relevance-ranked top-K cannot supply. Never fatal: a failure here just means the
+    // answer falls back to the retrieved subset.
+    const orgRosters = await findOrgRosters(userId, q).catch(() => []);
+
+    // Who the dashboard would say needs attention. Only for questions that ask; see
+    // `isAttentionQuestion`. Failure is non-fatal — the answer just loses this grounding.
+    const attention = isAttentionQuestion(q)
+      ? await getAttentionBrief(
+          userId,
+          (await getClosenessCohort(userId).catch(() => null))?.interactedIds
+        ).catch(() => null)
+      : null;
+
     const recruiterIntent = isRecruiterIntent(q);
     const recruitersForChat = recruiterIntent
       ? await loadRecruitersForChat(q, 8)
@@ -292,6 +309,8 @@ export async function askNetwork(
       scopedQuestion,
       budgeted,
       priorTurns,
+      orgRosters,
+      attention,
       recruitersForChat.map((r) => ({
         id: r.id,
         fullName: r.fullName,
@@ -307,9 +326,17 @@ export async function askNetwork(
       }))
     );
 
-    // Allow-list must reflect what the model actually saw, not everything retrieved —
-    // budgetContactsContext can drop trailing contacts once the char budget runs out.
-    const allowedContacts = new Set(budgeted.map((c) => c.id));
+    // Roster and attention contacts are as legitimate a recommendation as retrieved ones —
+    // they came from the same user's own rows — so they must not be filtered out for being
+    // outside the retrieval pass. But the retrieval side of the allow-list must reflect what
+    // the model actually saw, not everything retrieved — budgetContactsContext can drop
+    // trailing contacts once the char budget runs out.
+    const allowedContacts = new Set([
+      ...budgeted.map((c) => c.id),
+      ...orgRosters.flatMap((r) => r.people.map((p) => p.id)),
+      ...(attention?.overdue.map((c) => c.id) ?? []),
+      ...(attention?.suggestions.map((c) => c.id) ?? []),
+    ]);
     const allowedRecruiters = new Set(recruitersForChat.map((r) => r.id));
     const recommendations = (result.recommendations || []).filter((r) => {
       if (r.recruiter_id) return allowedRecruiters.has(r.recruiter_id);

@@ -36,6 +36,7 @@ export function ConfirmActionDialog({
   minReason = 4,
   typedConfirmation,
   typedConfirmationHint,
+  redirectTo,
   onConfirm,
 }: {
   trigger: React.ReactNode;
@@ -47,6 +48,9 @@ export function ConfirmActionDialog({
   /** When set, must be typed verbatim (case-insensitively) before the button enables. */
   typedConfirmation?: string;
   typedConfirmationHint?: string;
+  /** When set, navigate here on success instead of refreshing the current page — for
+   * actions (like a hard delete) after which the current page no longer exists. */
+  redirectTo?: string;
   onConfirm: (reason: string) => Promise<unknown>;
 }) {
   const router = useRouter();
@@ -74,7 +78,11 @@ export function ConfirmActionDialog({
         toast.success(`${confirmLabel} — done.`);
         setOpen(false);
         reset();
-        router.refresh();
+        if (redirectTo) {
+          router.push(redirectTo);
+        } else {
+          router.refresh();
+        }
       } catch (e) {
         // Surfaced verbatim: these are the server's own guard messages ("Refusing to act on
         // your own account"), and paraphrasing them would hide which guard fired.

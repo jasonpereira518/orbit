@@ -342,7 +342,7 @@ export function ContactForm({
       </div>
       <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
         <div>
-          <p className="text-sm font-medium text-primary">How you met</p>
+          <p className="text-sm font-medium text-ink">How you met</p>
           <p className="mt-0.5 text-xs text-muted-foreground">
             Context, when it happened, and any details you want to remember.
           </p>

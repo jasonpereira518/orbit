@@ -121,7 +121,7 @@ export function KnowledgeBaseView({
       {empty ? (
         <div className="rounded-2xl border border-dashed border-border/70 px-6 py-12 text-center">
           <BookOpen className="mx-auto h-8 w-8 text-muted-foreground" />
-          <h2 className="mt-3 font-[family-name:var(--font-display)] text-xl text-primary">
+          <h2 className="mt-3 font-[family-name:var(--font-display)] text-xl text-ink">
             Your knowledge base is empty
           </h2>
           <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
@@ -195,7 +195,7 @@ export function KnowledgeBaseView({
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium text-primary">
+                        <span className="font-medium text-ink">
                           {entry.contactName}
                         </span>
                         <Badge variant="secondary" className="text-[10px]">
@@ -244,7 +244,7 @@ function Stat({
         {icon}
         <span className="text-xs uppercase tracking-wide">{label}</span>
       </div>
-      <p className="mt-1 font-[family-name:var(--font-display)] text-2xl text-primary">
+      <p className="mt-1 font-[family-name:var(--font-display)] text-2xl text-ink">
         {value}
       </p>
     </div>

@@ -9,6 +9,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowUp,
   History,
@@ -93,6 +94,7 @@ function formatThreadLabel(thread: ThreadSummary) {
 }
 
 export function ChatPanel() {
+  const router = useRouter();
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [threadTitle, setThreadTitle] = useState<string | null>(null);
@@ -404,7 +406,7 @@ export function ChatPanel() {
           </DropdownMenu>
 
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-primary">
+            <p className="truncate text-sm font-medium text-ink">
               {headerTitle}
             </p>
             <p className="truncate text-xs text-muted-foreground">
@@ -452,7 +454,7 @@ export function ChatPanel() {
                 <>
                   {messages.length === 0 && !pending && (
                     <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-                      <p className="font-[family-name:var(--font-display)] text-xl text-primary sm:text-2xl">
+                      <p className="font-[family-name:var(--font-display)] text-xl text-ink sm:text-2xl">
                         Ask your network
                       </p>
                       <p className="max-w-md text-sm text-muted-foreground">
@@ -572,7 +574,23 @@ export function ChatPanel() {
             </SheetDescription>
           </SheetHeader>
           <div className="p-4">
-            <BulkNotesPanel compact />
+            <BulkNotesPanel
+              compact
+              onSaved={(res) => {
+                setNotesOpen(false);
+                router.refresh();
+                const peopleCount = res.created + res.updated;
+                toast.success(
+                  `Saved ${peopleCount} ${peopleCount === 1 ? "person" : "people"} and ${res.remindersCreated} ${res.remindersCreated === 1 ? "reminder" : "reminders"}`,
+                  {
+                    action: {
+                      label: "See what was created",
+                      onClick: () => router.push(`/capture/${res.batchId}`),
+                    },
+                  }
+                );
+              }}
+            />
           </div>
         </SheetContent>
       </Sheet>

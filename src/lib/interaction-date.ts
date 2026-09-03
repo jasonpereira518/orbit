@@ -30,7 +30,7 @@ export const MONTHS: Record<string, number> = {
   dec: 11,
 };
 
-const WEEKDAYS: Record<string, number> = {
+export const WEEKDAYS: Record<string, number> = {
   sunday: 0,
   sun: 0,
   monday: 1,

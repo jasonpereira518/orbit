@@ -16,7 +16,11 @@ import {
 } from "@/components/imports/import-history";
 import { ImportProgress } from "@/components/imports/import-utils";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cancelImportJob, useImportJob } from "@/lib/import-job-runner";
+import {
+  cancelImportJob,
+  useImportJob,
+  type ImportJobKind,
+} from "@/lib/import-job-runner";
 import { LockedFeature } from "@/components/locked-feature";
 import { SPRING_PILL } from "@/lib/motion";
 import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
@@ -68,6 +72,25 @@ const TABS: {
   },
 ];
 
+/**
+ * Which tab an in-flight import job belongs to. Google/Outlook contacts imports render
+ * inside the "connections" tab alongside LinkedIn connections (see the panel below), so
+ * both map there rather than getting their own tab. `null` for kinds this hub doesn't
+ * surface a tab for.
+ */
+function tabForImportJobKind(kind: ImportJobKind): ImportTab | null {
+  switch (kind) {
+    case "connections":
+    case "google_contacts":
+    case "outlook_contacts":
+      return "connections";
+    case "messages":
+      return "messages";
+    case "calendar":
+      return "calendar";
+  }
+}
+
 const PanelSkeleton = () => (
   <div className="space-y-3 rounded-xl border border-border/60 p-4">
     <Skeleton className="h-5 w-40" />
@@ -116,6 +139,19 @@ const CalendarImportSection = dynamic(
   { loading: () => <PanelSkeleton /> },
 );
 
+/**
+ * Which tab owns each linkable anchor on this page. Keep in step with the `id`s below and
+ * with the `cta.href` values in `src/lib/account-alerts.ts` — a hash that is not in here
+ * simply will not open its tab, silently.
+ */
+const TAB_FOR_ANCHOR: Record<string, ImportTab | undefined> = {
+  "import-panel-connections": "connections",
+  "import-google-contacts": "connections",
+  "import-outlook-contacts": "connections",
+  "import-panel-messages": "messages",
+  "import-panel-calendar": "calendar",
+};
+
 export function ImportHub({
   history,
   calendarSubscriptions = [],
@@ -141,15 +177,37 @@ export function ImportHub({
     setMounted((prev) => (prev[tab] ? prev : { ...prev, [tab]: true }));
   }, [tab]);
 
-  // When returning mid-import, open the relevant tab and show progress.
+  // When returning mid-import, open the relevant tab and show progress. Google/Outlook
+  // contacts imports render inside the "connections" tab alongside LinkedIn connections
+  // (see the panel below), so both map there rather than getting their own tab.
   useEffect(() => {
     if (job?.status !== "running") return;
-    if (job.kind !== "connections" && job.kind !== "messages") return;
-    setTab(job.kind);
-    setMounted((prev) =>
-      prev[job.kind] ? prev : { ...prev, [job.kind]: true },
-    );
+    const targetTab = tabForImportJobKind(job.kind);
+    if (!targetTab) return;
+    setTab(targetTab);
+    setMounted((prev) => (prev[targetTab] ? prev : { ...prev, [targetTab]: true }));
   }, [job]);
+
+  // An account alert can link straight at a card inside one of these panels, but the panels
+  // are lazily mounted and `hidden` when inactive — so the anchor alone would land on
+  // nothing. Open the tab the hash belongs to, and let `SectionFlash` (which waits while
+  // the target is still off-screen) glow the card once it is actually visible.
+  //
+  // `hashchange` as well as mount, because the notifications panel is reachable FROM this
+  // page: clicking "Reconnect Gmail" while the calendar tab happens to be open changes the
+  // hash without remounting anything, and a mount-only effect would leave the reader
+  // staring at the wrong tab with no glow.
+  useEffect(() => {
+    function openTabForHash() {
+      const target = TAB_FOR_ANCHOR[window.location.hash.slice(1)];
+      if (!target) return;
+      setTab(target);
+      setMounted((prev) => (prev[target] ? prev : { ...prev, [target]: true }));
+    }
+    openTabForHash();
+    window.addEventListener("hashchange", openTabForHash);
+    return () => window.removeEventListener("hashchange", openTabForHash);
+  }, []);
 
   const runningProgress =
     job?.status === "running" && job.progress ? job.progress : null;
@@ -203,7 +261,9 @@ export function ImportHub({
               />
               <span className="relative z-10">
                 {t.label}
-                {job?.status === "running" && job.kind === t.id ? " ·…" : ""}
+                {job?.status === "running" && tabForImportJobKind(job.kind) === t.id
+                  ? " ·…"
+                  : ""}
               </span>
             </button>
           );
@@ -278,7 +338,10 @@ export function ImportHub({
         </span>
       </Link>
 
-      <ImportHistory history={history} />
+      {/* Target for the "import didn't finish" alerts. */}
+      <div id="import-history" className="scroll-mt-8">
+        <ImportHistory history={history} />
+      </div>
     </div>
   );
 }

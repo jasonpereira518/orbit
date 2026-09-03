@@ -8,23 +8,48 @@ import {
   disconnectOutlook,
   type OutlookConnectionStatus,
 } from "@/actions/outlook";
-import {
-  previewOutlookContacts,
-  confirmOutlookContactsImport,
-  type OutlookContactPerson,
-} from "@/actions/imports";
+import { previewOutlookContacts, type OutlookContactPerson } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
+import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { toast } from "@/lib/toast";
+import { IntegrationUnavailable } from "@/components/imports/integration-unavailable";
 
 export function OutlookContactsImport() {
   const router = useRouter();
+  const job = useImportJob();
   const [pending, start] = useTransition();
   const [status, setStatus] = useState<OutlookConnectionStatus | null>(null);
   const [people, setPeople] = useState<OutlookContactPerson[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
+
+  const outlookJob =
+    job?.kind === "outlook_contacts" && job.status === "running" ? job : null;
+  const importProgress = outlookJob?.progress ?? null;
+  const busy = pending || job?.status === "running";
+
+  // Clear local review UI once this job finishes (toast handled globally by
+  // ImportJobWatcher, same as the LinkedIn connections import). The setState calls are
+  // deferred a microtask so this reads as reacting to the external job-runner singleton
+  // (react-hooks/set-state-in-effect's own carve-out: "calling setState in a callback
+  // function when external state changes") rather than an unconditional synchronous
+  // setState in the effect body.
+  useEffect(() => {
+    if (!job || job.kind !== "outlook_contacts") return;
+    if (
+      job.status !== "completed" &&
+      job.status !== "failed" &&
+      job.status !== "cancelled"
+    )
+      return;
+    queueMicrotask(() => {
+      setPeople([]);
+      setSelected(new Set());
+      setLoaded(false);
+    });
+  }, [job]);
 
   useEffect(() => {
     getOutlookConnectionStatus().then(setStatus).catch(() => {});
@@ -56,22 +81,24 @@ export function OutlookContactsImport() {
 
   if (!status.configured) {
     return (
-      <section className="space-y-2 rounded-2xl border border-dashed border-border/70 bg-card/50 p-6">
-        <h2 className="text-lg font-medium text-primary">Outlook Contacts</h2>
-        <p className="text-sm text-muted-foreground">
-          Set <code className="text-xs">MICROSOFT_CLIENT_ID</code>,{" "}
-          <code className="text-xs">MICROSOFT_CLIENT_SECRET</code>, and{" "}
-          <code className="text-xs">MICROSOFT_REDIRECT_URI</code> to enable this.
-        </p>
-      </section>
+      <IntegrationUnavailable
+        id="import-outlook-contacts"
+        title="Outlook Contacts"
+        blurb="Not connected yet. Import from LinkedIn above, or paste your notes into Capture and Orbit will pull the people out."
+        envVars={[
+          "MICROSOFT_CLIENT_ID",
+          "MICROSOFT_CLIENT_SECRET",
+          "MICROSOFT_REDIRECT_URI",
+        ]}
+      />
     );
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
+    <section id="import-outlook-contacts" className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-medium text-primary">Outlook Contacts</h2>
+          <h2 className="text-lg font-medium text-ink">Outlook Contacts</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             {status.connected
               ? `Connected as ${status.emailAddress}`
@@ -81,7 +108,7 @@ export function OutlookContactsImport() {
         <div className="flex flex-wrap gap-2">
           {!status.connected ? (
             <Button
-              disabled={pending}
+              disabled={busy}
               onClick={() =>
                 start(async () => {
                   try {
@@ -98,7 +125,7 @@ export function OutlookContactsImport() {
           ) : (
             <>
               <Button
-                disabled={pending}
+                disabled={busy}
                 onClick={() =>
                   start(async () => {
                     try {
@@ -121,7 +148,7 @@ export function OutlookContactsImport() {
               </Button>
               <Button
                 variant="outline"
-                disabled={pending}
+                disabled={busy}
                 onClick={() =>
                   start(async () => {
                     await disconnectOutlook();
@@ -165,24 +192,25 @@ export function OutlookContactsImport() {
             }}
           />
           <Button
-            disabled={pending || selected.size === 0}
+            disabled={busy || selected.size === 0}
             className="bg-primary text-primary-foreground hover:bg-primary/90"
-            onClick={() =>
-              start(async () => {
-                try {
-                  const res = await confirmOutlookContactsImport([...selected]);
-                  toast.success(`Saved: ${res.created} created, ${res.updated} updated`);
-                  setPeople([]);
-                  setSelected(new Set());
-                  setLoaded(false);
-                  router.refresh();
-                } catch (err) {
-                  toast.error(err instanceof Error ? err.message : "Import failed");
-                }
-              })
-            }
+            onClick={() => {
+              if (busy) return;
+              try {
+                const ids = [...selected];
+                startImportJob({ kind: "outlook_contacts", ids });
+                // Clear the review list immediately; progress lives in the runner.
+                setPeople([]);
+                setSelected(new Set());
+                setLoaded(false);
+              } catch (err) {
+                toast.error(err instanceof Error ? err.message : "Import failed");
+              }
+            }}
           >
-            Import {selected.size} selected
+            {importProgress
+              ? `Importing… ${importProgress.done}/${importProgress.total}`
+              : `Import ${selected.size} selected`}
           </Button>
         </>
       )}

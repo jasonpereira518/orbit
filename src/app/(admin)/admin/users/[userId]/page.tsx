@@ -13,6 +13,7 @@ import {
   Th,
 } from "@/components/admin/primitives";
 import { CompPlanButton } from "@/components/admin/comp-plan-dialog";
+import { SignInLinkButton } from "@/components/admin/sign-in-link-dialog";
 import { CopyId } from "@/components/admin/copy-id";
 import { ContactsFilterBar } from "@/components/admin/contacts-filter-bar";
 import { AccountDangerZone } from "@/components/admin/account-actions";
@@ -137,7 +138,7 @@ export default async function AdminUserDetailPage({
           </Avatar>
 
           <div className="min-w-0">
-            <h1 className="truncate font-[family-name:var(--font-display)] text-2xl text-primary">
+            <h1 className="truncate font-[family-name:var(--font-display)] text-2xl text-ink">
               {displayName(identity)}
             </h1>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
@@ -153,15 +154,21 @@ export default async function AdminUserDetailPage({
           </div>
         </div>
 
-        <CompPlanButton
-          targetUserId={identity.userId}
-          email={identity.email}
-          currentPlan={billing.plan}
-          currentSource={billing.source}
-          contactCount={footprint.contacts}
-          compedNote={billing.compedNote}
-          variant="button"
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <SignInLinkButton
+            targetUserId={identity.userId}
+            email={identity.email}
+          />
+          <CompPlanButton
+            targetUserId={identity.userId}
+            email={identity.email}
+            currentPlan={billing.plan}
+            currentSource={billing.source}
+            contactCount={footprint.contacts}
+            compedNote={billing.compedNote}
+            variant="button"
+          />
+        </div>
       </div>
 
       <div className="flex gap-8">

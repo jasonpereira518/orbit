@@ -99,7 +99,7 @@ export function NetworkStatsCard({ stats }: { stats: NetworkStats }) {
     >
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-6 [&::-webkit-details-marker]:hidden">
         <div>
-          <p className="text-sm font-medium text-primary">Your orbit in numbers</p>
+          <p className="text-sm font-medium text-ink">Your orbit in numbers</p>
           <p className="mt-0.5 text-sm text-muted-foreground">{stats.subheadline}</p>
         </div>
         <ChevronDown className="h-5 w-5 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
@@ -114,7 +114,7 @@ export function NetworkStatsCard({ stats }: { stats: NetworkStats }) {
               <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                 {item.label}
               </dt>
-              <dd className="mt-1 font-[family-name:var(--font-display)] text-2xl leading-none text-primary">
+              <dd className="mt-1 font-[family-name:var(--font-display)] text-2xl leading-none text-ink">
                 <AnimatedStatValue item={item} active={open} />
               </dd>
               <dd className="mt-1.5 min-h-[1rem] text-xs text-muted-foreground">

@@ -31,7 +31,7 @@ export function AdminPageHeader({
     <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
       <div>
         {/* The only Fraunces on the page. */}
-        <h1 className="font-[family-name:var(--font-display)] text-2xl text-primary">
+        <h1 className="font-[family-name:var(--font-display)] text-2xl text-ink">
           {title}
         </h1>
         {subtitle && (

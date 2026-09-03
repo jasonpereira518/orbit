@@ -39,7 +39,7 @@ export function OutreachPerformanceCard({
       <CardContent className="flex flex-1 flex-col space-y-4">
         <div>
           <div className="text-xs text-muted-foreground">Account successful reply rate</div>
-          <div className="mt-1 font-[family-name:var(--font-display)] text-3xl text-primary">
+          <div className="mt-1 font-[family-name:var(--font-display)] text-3xl text-ink">
             {formatReplyRate(accountRate)}
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -59,7 +59,7 @@ export function OutreachPerformanceCard({
                 href={`/outreach/${campaign.id}`}
                 className="flex items-center justify-between rounded-xl border border-border/60 px-3 py-2 text-sm transition-colors hover:bg-muted/40"
               >
-                <span className="truncate font-medium text-primary">
+                <span className="truncate font-medium text-ink">
                   {campaign.name}
                 </span>
                 <span className="shrink-0 text-muted-foreground">

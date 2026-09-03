@@ -7,6 +7,7 @@ import {
   LIFETIME_METADATA_VALUE,
   LIFETIME_PRICE_ID,
   PRO_ANNUAL_PRICE_ID,
+  PRO_BILLING_PERIOD_METADATA_KEY,
   PRO_METADATA_VALUE,
   PRO_MONTHLY_PRICE_ID,
   SUBSCRIPTION_USER_METADATA_KEY,
@@ -17,6 +18,8 @@ import {
 import { getAppBaseUrl } from "@/lib/app-url";
 import { lifetimeOffer } from "@/lib/lifetime-offer";
 import type { BillingPeriod } from "@/lib/plan-copy";
+import type { Plan } from "@/lib/plan-limits";
+import { setCompedPlan } from "@/lib/user-settings";
 
 export type CheckoutResult = { url: string } | { error: string };
 
@@ -58,8 +61,9 @@ export async function startLifetimeCheckout(): Promise<CheckoutResult> {
       // Prefills the email without forcing it — the customer can still change it.
       customer_email: profile?.email || undefined,
       // The plan card here already reads "Orbit Lifetime" once the webhook lands, so this
-      // page confirms the purchase without needing a bespoke success screen.
-      success_url: `${baseUrl}/settings#settings-plan`,
+      // page confirms the purchase without needing a bespoke success screen. `upgraded`
+      // arms the celebration watcher's fast poll — the webhook may not have landed yet.
+      success_url: `${baseUrl}/settings?upgraded=lifetime#settings-plan`,
       cancel_url: `${baseUrl}/pricing`,
     });
 
@@ -109,17 +113,25 @@ export async function startProCheckout(
       line_items: [{ price: priceId, quantity: 1 }],
       // How the webhook knows who paid — same rationale as the Lifetime session above.
       client_reference_id: userId,
-      metadata: { [LIFETIME_METADATA_KEY]: PRO_METADATA_VALUE },
+      metadata: {
+        [LIFETIME_METADATA_KEY]: PRO_METADATA_VALUE,
+        // Read by the webhook's optimistic grant, which happens before any subscription
+        // object exists to read a price from. Without it annual books as $5/mo and the
+        // next subscription event looks like a -83 contraction.
+        [PRO_BILLING_PERIOD_METADATA_KEY]: period,
+      },
       // Copied onto the subscription object itself, so `customer.subscription.*` events
       // (renewals, cancellations) can be attributed without a session in hand.
       subscription_data: {
         metadata: {
           [LIFETIME_METADATA_KEY]: PRO_METADATA_VALUE,
           [SUBSCRIPTION_USER_METADATA_KEY]: userId,
+          [PRO_BILLING_PERIOD_METADATA_KEY]: period,
         },
       },
       customer_email: profile?.email || undefined,
-      success_url: `${baseUrl}/settings#settings-plan`,
+      // `upgraded` arms the celebration watcher's fast poll; see the Lifetime session.
+      success_url: `${baseUrl}/settings?upgraded=pro#settings-plan`,
       cancel_url: `${baseUrl}/pricing`,
     });
 
@@ -140,4 +152,38 @@ export async function startProCheckout(
  */
 export async function getLifetimeAvailability() {
   return { purchasable: isStripeConfigured() };
+}
+
+/**
+ * The resolved plan, for the celebration watcher's polls. `getEntitlements`
+ * memoizes per request only, so every poll is a fresh read — which is the
+ * point: this is how a webhook grant or an admin/demo comp reaches a client
+ * that has no realtime channel.
+ */
+export async function getCurrentPlan(): Promise<Plan> {
+  const userId = await requireUserId();
+  const { plan } = await getEntitlements(userId);
+  return plan;
+}
+
+/**
+ * Live-demo cheat code: grants Lifetime with a keypress instead of a real checkout.
+ *
+ * Deliberately narrow. This is reachable from production (see the comment in
+ * `plan-celebration-watcher.tsx` on why it has to be), so the gate can't be "is this
+ * dev/staging" — it has to be "is this literally the one account the showcase runs
+ * from". `DEMO_ACCOUNT_USER_ID` names that account's Clerk id; every other caller,
+ * however they reached this action, gets `{ ok: false }` and nothing changes. Unset
+ * (the default in any environment that hasn't configured a showcase account) disables
+ * the shortcut entirely rather than falling back to some other check.
+ */
+export async function triggerDemoCelebration(): Promise<{ ok: boolean }> {
+  const userId = await requireUserId();
+  const demoAccountId = process.env.DEMO_ACCOUNT_USER_ID?.trim();
+  if (!demoAccountId || userId !== demoAccountId) return { ok: false };
+
+  await setCompedPlan(userId, "lifetime", {
+    note: "Live demo shortcut (Ctrl+Shift+U)",
+  });
+  return { ok: true };
 }

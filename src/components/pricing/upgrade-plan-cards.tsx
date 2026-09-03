@@ -20,10 +20,10 @@ import { cn } from "@/lib/utils";
  */
 const ACCENT = {
   orbit: {
-    surface: "border-[#599de7]/40 bg-[#070b18]/80",
-    tick: "text-[#599de7]",
+    surface: "border-brand-pro/40 bg-[#070b18]/80",
+    tick: "text-brand-pro",
     glow: "radial-gradient(circle, rgba(89,157,231,0.20), transparent 68%)",
-    badge: { label: "Most popular", className: "bg-[#599de7] text-[#081326]" },
+    badge: { label: "Most popular", className: "bg-brand-pro text-[#081326]" },
   },
   lifetime: {
     surface: "border-[#f2c14e]/40 bg-[#070b18]/80",

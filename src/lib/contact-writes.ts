@@ -11,11 +11,11 @@
  * `src/lib/search.ts`, which already take `userId` as their first argument.
  */
 
-import { and, count, eq, inArray } from "drizzle-orm";
+import { and, count, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getDb } from "@/db";
-import { contactTags, contacts, interactions, tags } from "@/db/schema";
+import { contactTags, contacts, interactions, tags, type Interaction } from "@/db/schema";
 import { PaywallError, getEntitlements } from "@/lib/entitlements";
 import { recordGateHit } from "@/lib/gate-events";
 import {
@@ -24,7 +24,7 @@ import {
   type CompanyResolver,
 } from "@/lib/companies";
 import { isMetContext } from "@/lib/met-context";
-import { generateAndStorePersonSummary } from "@/lib/person-summary";
+import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { markCohortDirty, rescoreContact } from "@/lib/closeness-materialize";
 import {
   rebuildContactEmbedding,
@@ -36,7 +36,7 @@ export type ContactWriteOptions = {
   skipRevalidate?: boolean;
   /** Skip the synchronous embedding API call; caller will rebuild embeddings in a batch. */
   skipEmbedding?: boolean;
-  /** Skip the fire-and-forget person-summary refresh; caller will defer it (e.g. via `after()`). */
+  /** Skip the fire-and-forget contact-brief refresh; caller will defer it (e.g. via `after()`). */
   skipSummary?: boolean;
   /**
    * Skip per-contact closeness scoring. For bulk paths only: they recalibrate the whole
@@ -44,6 +44,14 @@ export type ContactWriteOptions = {
    * is about to be redrawn anyway.
    */
   skipCloseness?: boolean;
+  /**
+   * Pre-computed remaining contact allowance, or `null` for unlimited.
+   *
+   * Bulk import loops know this already — they counted once at job start and track it in
+   * memory. Without it every chunk pays a fresh `count(*)` over the whole contacts table
+   * to re-derive a number that has not changed since the previous chunk.
+   */
+  headroom?: number | null;
 };
 
 export type ContactInput = {
@@ -58,6 +66,7 @@ export type ContactInput = {
   email?: string;
   phone?: string;
   linkedinUrl?: string;
+  xHandle?: string;
   website?: string;
   profileImageUrl?: string | null;
   relationshipScore?: number;
@@ -80,8 +89,23 @@ export type ContactInput = {
    * `dateMet`). Used by importers that know the real relationship age — e.g.
    * a LinkedIn "Connected On" date — so that age-based scoring isn't blind to
    * imported history.
+   *
+   * On create this is a direct override (see `contactInsertValues`). On merge
+   * (`bulkMergeContactsForUser`) it WIDENS rather than overwrites: the merge SQL takes
+   * `LEAST(existing, incoming)`, so a re-import can only push this earlier, never later —
+   * an import re-discovering an older message than it saw last time should not make the
+   * relationship look younger than the last import already established.
    */
   firstInteractionAt?: string | Date | null;
+  /**
+   * Merge-only widening input for `last_interaction_at` — there is no create-time
+   * equivalent (`contactInsertValues` derives `last_interaction_at` from `dateMet` on
+   * create; see its comment). `bulkMergeContactsForUser` takes `GREATEST(existing,
+   * incoming)`, so a re-import can only push this later, never earlier: a CSV re-exported
+   * six months later, with six months of new conversation, should advance recency scoring
+   * to the newest message it found, not leave it frozen at the first import.
+   */
+  lastInteractionAt?: string | Date | null;
   howMet?: string;
   notes?: string;
   aiSummary?: string;
@@ -103,6 +127,8 @@ export type LogInteractionInput = {
   interactionDate?: string | Date;
   /** When true, parse a date from rawNotes if interactionDate is omitted. */
   parseDateFromNotes?: boolean;
+  externalId?: string;
+  noteBatchId?: string;
 };
 
 /** Thrown when a write targets a contact the user does not own (or that no longer exists). */
@@ -232,6 +258,7 @@ function contactInsertValues(
     email: input.email,
     phone: input.phone,
     linkedinUrl: input.linkedinUrl,
+    xHandle: input.xHandle,
     website: input.website,
     profileImageUrl: input.profileImageUrl ?? null,
     relationshipScore: input.relationshipScore ?? 2,
@@ -387,7 +414,10 @@ export async function createContactsBulkForUser(
   // Take what fits rather than failing the whole batch: a free user importing 847
   // LinkedIn connections should still get their first 500, and the caller reports the
   // shortfall by comparing `created.length` against what it passed in.
-  const headroom = await contactHeadroomForUser(userId);
+  const headroom =
+    options?.headroom !== undefined
+      ? options.headroom
+      : await contactHeadroomForUser(userId);
   if (headroom !== null && headroom < 1) return [];
   const admitted =
     headroom === null ? inputs : inputs.slice(0, headroom);
@@ -395,15 +425,23 @@ export async function createContactsBulkForUser(
   const db = await getDb();
   const now = new Date();
 
+  // Two statements for the whole batch's distinct company names, instead of up to three
+  // per row. See `CompanyResolver.prime` — without this, the `Promise.all` below makes
+  // every row sharing a not-yet-existing company miss the resolver's cache simultaneously.
+  await companyResolve.prime(admitted.map((input) => input.company));
   const companyFieldsList = await Promise.all(
     admitted.map((input) =>
       companyFieldsForWriteCached(companyResolve, input.company)
     )
   );
 
-  const values = admitted.map((input, i) =>
-    contactInsertValues(userId, input, companyFieldsList[i], now)
-  );
+  const values = admitted.map((input, i) => ({
+    ...contactInsertValues(userId, input, companyFieldsList[i], now),
+    // Flagged, not embedded. `skipEmbedding` used to mean "the caller will embed these in
+    // a batch"; it now means "the backfill will" — the same promise with the provider call
+    // moved out of the write loop.
+    ...(options?.skipEmbedding ? { embeddingStaleAt: now } : {}),
+  }));
 
   const created = await db.insert(contacts).values(values).returning();
 
@@ -435,6 +473,128 @@ export async function createContactsBulkForUser(
   }
 
   return created;
+}
+
+/**
+ * Apply a column patch to many existing contacts in one statement.
+ *
+ * The import merge path used to call `updateContactForUser` per row, which re-resolved the
+ * company through the *uncached* `companyFieldsForWrite` — throwing away the resolver the
+ * caller had already preloaded and spending two to three round trips per merged row.
+ *
+ * IMPORTANT: this is the second contact-write path in the codebase. Its column list must
+ * be kept in sync by hand with `updateContactForUser` below — with two deliberate
+ * exceptions. Not `relationshipScore`, because mirroring that into `statedCloseness` is
+ * reserved for a human moving the slider (see the comment on `relationshipScore` in
+ * `updateContactForUser`). And not `firstInteractionAt`/`lastInteractionAt`: those two use
+ * WIDEN, not COALESCE-set-or-leave-alone (see below), which is import-merge-specific
+ * semantics that make no sense for a person editing a contact by hand — `updateContactForUser`
+ * does not write either column at all, on purpose, and should not gain matching
+ * `LEAST`/`GREATEST` clauses just to "stay in sync."
+ *
+ * `undefined` means "leave alone", matching `updateContactForUser`'s `!== undefined`
+ * checks: each field is passed as NULL and coalesced against the existing column. The two
+ * interaction-timestamp columns are the one exception to "leave alone" — see below.
+ *
+ * KNOWN LIMITATION: COALESCE cannot tell "this field was explicitly normalized/resolved to
+ * null" apart from "this field was never mentioned" — both arrive as SQL NULL in the VALUES
+ * tuple, so this path can only set a column or leave it alone, never clear one. Four fields
+ * can legitimately resolve to null from a defined input, and for all four that null is
+ * indistinguishable from absence here: `company`/`companyId` (an unresolvable or blank name
+ * resolves to `{company: null, companyId: null}` via `companyFieldsForWriteCached`),
+ * `metContext` (an invalid string normalizes to null via `normalizeMetContext`),
+ * `profileImageUrl`, and `dateMet` (both typed nullable on `ContactInput`).
+ * `updateContactForUser` does not have this problem — its `!== undefined` checks see the
+ * whole patch object, including a null-valued one, and apply it — so it can clear any of
+ * these where this path cannot. It stays safe only because today's one caller (the LinkedIn
+ * merge builder in `import-job-processor.ts`) never asks to clear any of them. The day an
+ * importer needs to clear one of these fields during a merge, this silently keeps the stale
+ * value instead; that importer needs a different encoding here (e.g. a sentinel that
+ * distinguishes "clear" from "leave alone"), not a fix to this comment.
+ *
+ * `first_interaction_at`/`last_interaction_at` deliberately do NOT follow the
+ * set-or-leave-alone rule above — they WIDEN via `LEAST`/`GREATEST` instead of `COALESCE`.
+ * An import merging in more history should only ever grow the known interaction window,
+ * never narrow or clobber it: a messages CSV re-exported six months later, carrying six
+ * months of new conversation, must be able to push `last_interaction_at` forward even
+ * though the column is already non-null (ruling out COALESCE, which only fires on NULL),
+ * and a re-import that happens not to mention an earlier/later date than what is already
+ * stored must leave both columns exactly where they are (ruling out a plain overwrite).
+ * `LEAST`/`GREATEST` ignore NULL operands and return the non-null one — verified against
+ * this project's own PGlite, not assumed — so an input that supplies neither leaves both
+ * columns untouched, and one that supplies only a later date advances only that side.
+ */
+export async function bulkMergeContactsForUser(
+  userId: string,
+  merges: Array<{ contactId: string; input: Partial<ContactInput> }>,
+  companyResolve: CompanyResolver
+) {
+  if (merges.length === 0) return;
+  const db = await getDb();
+  const now = new Date();
+
+  // See `createContactsBulkForUser` above, and `CompanyResolver.prime` itself.
+  await companyResolve.prime(
+    merges.map((m) => (m.input.company !== undefined ? m.input.company : null))
+  );
+  const companyFields = await Promise.all(
+    merges.map((m) =>
+      m.input.company !== undefined
+        ? companyFieldsForWriteCached(companyResolve, m.input.company)
+        : Promise.resolve({ company: null, companyId: null })
+    )
+  );
+
+  const tuples = merges.map((m, i) => {
+    const v = m.input;
+    return sql`(
+      ${m.contactId}::uuid,
+      ${companyFields[i].company}::text,
+      ${companyFields[i].companyId}::uuid,
+      ${v.title ?? null}::text,
+      ${v.email ?? null}::text,
+      ${v.phone ?? null}::text,
+      ${v.linkedinUrl ?? null}::text,
+      ${v.firstName ?? null}::text,
+      ${v.lastName ?? null}::text,
+      ${v.profileImageUrl ?? null}::text,
+      ${v.source ?? null}::text,
+      ${v.howMet ?? null}::text,
+      ${normalizeMetContext(v.metContext)}::text,
+      ${safeTimestamp(v.dateMet)}::timestamptz,
+      ${safeTimestamp(v.firstInteractionAt)}::timestamptz,
+      ${safeTimestamp(v.lastInteractionAt)}::timestamptz
+    )`;
+  });
+
+  await db.execute(sql`
+    UPDATE contacts AS c
+    SET company           = COALESCE(v.company, c.company),
+        company_id        = COALESCE(v.company_id, c.company_id),
+        title             = COALESCE(v.title, c.title),
+        email             = COALESCE(v.email, c.email),
+        phone             = COALESCE(v.phone, c.phone),
+        linkedin_url      = COALESCE(v.linkedin_url, c.linkedin_url),
+        first_name        = COALESCE(v.first_name, c.first_name),
+        last_name         = COALESCE(v.last_name, c.last_name),
+        profile_image_url = COALESCE(v.profile_image_url, c.profile_image_url),
+        source            = COALESCE(v.source, c.source),
+        how_met           = COALESCE(v.how_met, c.how_met),
+        met_context       = COALESCE(v.met_context, c.met_context),
+        date_met          = COALESCE(v.date_met, c.date_met),
+        -- WIDEN, not set-or-leave-alone — see this function's doc comment. A re-import
+        -- can only push the known interaction window outward, never narrow it.
+        first_interaction_at = LEAST(c.first_interaction_at, v.first_interaction_at),
+        last_interaction_at  = GREATEST(c.last_interaction_at, v.last_interaction_at),
+        embedding_stale_at = ${now},
+        updated_at        = ${now}
+    FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(
+      id, company, company_id, title, email, phone, linkedin_url,
+      first_name, last_name, profile_image_url, source, how_met, met_context, date_met,
+      first_interaction_at, last_interaction_at
+    )
+    WHERE c.id = v.id AND c.user_id = ${userId}
+  `);
 }
 
 export async function updateContactForUser(
@@ -470,6 +630,7 @@ export async function updateContactForUser(
       ...(input.linkedinUrl !== undefined
         ? { linkedinUrl: input.linkedinUrl }
         : {}),
+      ...(input.xHandle !== undefined ? { xHandle: input.xHandle } : {}),
       ...(input.website !== undefined ? { website: input.website } : {}),
       ...(input.profileImageUrl !== undefined
         ? { profileImageUrl: input.profileImageUrl }
@@ -541,7 +702,7 @@ export async function updateContactForUser(
     // `after()` rather than a bare floating promise: on Vercel the function can be
     // suspended the moment the response is sent, which would cut an unawaited summary
     // request off partway through.
-    after(() => generateAndStorePersonSummary(userId, id).catch(() => null));
+    after(() => generateAndStoreContactBrief(userId, id).catch(() => null));
   }
 
   await scoreAfterWrite(userId, id, options);
@@ -610,8 +771,15 @@ export async function logInteractionForUser(
       source: input.source,
       interactionDate: when,
       sameDayOrder: 0,
+      externalId: input.externalId,
+      noteBatchId: input.noteBatchId,
     })
     .returning();
+
+  if (input.actionItems?.length) {
+    const { syncActionItems } = await import("@/lib/action-items");
+    await syncActionItems(userId, row.id, input.contactId, input.actionItems);
+  }
 
   if ((input.rawNotes || input.aiSummary) && !options?.skipEmbedding) {
     await rebuildContactEmbedding(userId, input.contactId);
@@ -620,7 +788,7 @@ export async function logInteractionForUser(
   // Significant change: refresh stored person summary
   if (!options?.skipSummary) {
     after(() =>
-      generateAndStorePersonSummary(userId, input.contactId).catch(() => null)
+      generateAndStoreContactBrief(userId, input.contactId).catch(() => null)
     );
   }
 
@@ -636,4 +804,35 @@ export async function logInteractionForUser(
   }
 
   return row;
+}
+
+/**
+ * `logInteractionForUser` for note pastes: keyed on `externalId` so a second paste of the
+ * same note is a no-op rather than a duplicate timeline row. When the row already exists the
+ * side effects (embedding, summary, closeness) are skipped — nothing changed.
+ */
+export async function logNoteInteractionForUser(
+  userId: string,
+  input: LogInteractionInput & { externalId: string },
+  options?: ContactWriteOptions
+): Promise<{ row: Interaction; created: boolean }> {
+  const db = await getDb();
+  const existing = await db.query.interactions.findFirst({
+    where: and(eq(interactions.userId, userId), eq(interactions.externalId, input.externalId)),
+  });
+  if (existing) return { row: existing, created: false };
+  try {
+    const row = await logInteractionForUser(userId, input, options);
+    return { row, created: true };
+  } catch (err) {
+    // Lost a race with a concurrent paste of the same note: the unique index fired.
+    const message = err instanceof Error ? err.message : String(err);
+    if (/interactions_user_external_uidx|duplicate key/i.test(message)) {
+      const row = await db.query.interactions.findFirst({
+        where: and(eq(interactions.userId, userId), eq(interactions.externalId, input.externalId)),
+      });
+      if (row) return { row, created: false };
+    }
+    throw err;
+  }
 }

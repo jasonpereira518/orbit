@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
+import { addDays, format } from "date-fns";
 import { toast } from "@/lib/toast";
 import {
   confirmBulkCapture,
@@ -14,6 +15,12 @@ import {
 } from "@/actions/capture";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
 import { getSettings } from "@/actions/settings";
+import type { SaveNoteBatchOutput } from "@/lib/note-batch-save";
+import {
+  pickLockedParticipant,
+  withLockedSeedPerson,
+  type PreviewMention,
+} from "@/lib/note-batches";
 import type {
   CaptureParseHints,
   ParsedNote,
@@ -52,6 +59,8 @@ type ReviewItem = BulkNotePersonPreview & {
   relationshipScore: number;
   tagNames: string;
   followUpDays: number;
+  /** Locked to `lockedParticipantId` — the panel was opened from that contact's profile. */
+  locked?: boolean;
 };
 
 const CAPTURE_FILE_ACCEPT = [
@@ -88,20 +97,28 @@ export function BulkNotesPanel({
   compact = false,
   preferredContactId = null,
   preferredContactName = null,
+  lockedParticipantId = null,
+  lockedParticipantName = null,
+  entryPoint,
   hasApiKey: hasApiKeyProp,
   onSaved,
 }: {
   compact?: boolean;
   preferredContactId?: string | null;
   preferredContactName?: string | null;
+  /**
+   * When set, the parse is seeded with this person and whichever parsed item matches
+   * them is force-merged into this contact and can't be redirected to "Create new" or
+   * another merge target — used when the panel is opened from that contact's profile.
+   */
+  lockedParticipantId?: string | null;
+  lockedParticipantName?: string | null;
+  /** Where the panel was opened from. Affects the default `onSaved` behavior. */
+  entryPoint?: "capture" | "profile";
   /** When known from the server, skips a settings round-trip. */
   hasApiKey?: boolean;
   /** Called after a successful save. Defaults to staying on the paste step. */
-  onSaved?: (result: {
-    created: number;
-    updated: number;
-    contactIds: string[];
-  }) => void;
+  onSaved?: (result: SaveNoteBatchOutput) => void;
 }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -117,13 +134,18 @@ export function BulkNotesPanel({
   const [reviewIndex, setReviewIndex] = useState(0);
   const [slideDirection, setSlideDirection] = useState<1 | -1>(1);
   const [suggestions, setSuggestions] = useState<SuggestionReviewItem[]>([]);
-  const [captureBatchId, setCaptureBatchId] = useState<string | null>(null);
+  const [sourceText, setSourceText] = useState<string | null>(null);
   const [sourceHash, setSourceHash] = useState<string | null>(null);
+  const [anchorIso, setAnchorIso] = useState<string | null>(null);
+  const [anchorBasis, setAnchorBasis] = useState<
+    "note" | "hint" | "upload" | null
+  >(null);
   const [skipped, setSkipped] = useState<{
     relative: number;
     unverifiable: number;
     past: number;
   } | null>(null);
+  const [mentions, setMentions] = useState<PreviewMention[]>([]);
   const [hasApiKey, setHasApiKey] = useState(hasApiKeyProp ?? true);
   const [pending, start] = useTransition();
 
@@ -158,7 +180,9 @@ export function BulkNotesPanel({
       );
     }
     if (checkedDates) {
-      parts.push(`${checkedDates} ${checkedDates === 1 ? "date" : "dates"}`);
+      parts.push(
+        `${checkedDates} ${checkedDates === 1 ? "reminder" : "reminders"}`
+      );
     }
     return parts.length ? `Save ${parts.join(" + ")}` : "Save";
   })();
@@ -173,9 +197,12 @@ export function BulkNotesPanel({
     setSharedNotes([]);
     setReviewIndex(0);
     setSuggestions([]);
-    setCaptureBatchId(null);
+    setSourceText(null);
     setSourceHash(null);
+    setAnchorIso(null);
+    setAnchorBasis(null);
     setSkipped(null);
+    setMentions([]);
   }
 
   function decide(decision: "accepted" | "discarded") {
@@ -230,40 +257,54 @@ export function BulkNotesPanel({
           toast.error("Nothing to save — accept a person or a date");
           return;
         }
-        const res = await confirmBulkCapture(
-          payload,
-          captureBatchId && sourceHash && checkedSuggestions.length
-            ? {
-                captureBatchId,
-                sourceHash,
-                items: checkedSuggestions.map((s) => ({
-                  key: s.key,
-                  title: s.title,
-                  description: s.description,
-                  rawDatePhrase: s.rawDatePhrase,
-                  dueDateIso: s.dueDateIso,
-                  yearInferred: s.yearInferred,
-                  personName: s.personNameOverride ?? s.personName,
-                  actionKind: s.actionKind,
-                  confidenceScore: s.confidenceScore,
-                  sourceExcerpt: s.sourceExcerpt,
-                })),
-              }
-            : undefined
-        );
-        const datePart = res.suggestionsStaged
-          ? `, ${res.suggestionsStaged} ${
-              res.suggestionsStaged === 1 ? "date" : "dates"
-            } to review`
-          : "";
-        toast.success(
-          `Saved: ${res.created} created, ${res.updated} updated${datePart}`
-        );
+        const res = await confirmBulkCapture(payload, {
+          sourceHash: sourceHash!,
+          sourceText: sourceText!,
+          anchorIso: anchorIso!,
+          anchorBasis: anchorBasis ?? "upload",
+          entryPoint: entryPoint ?? "capture",
+          seedContactId: lockedParticipantId ?? null,
+          commitments: checkedSuggestions.map((s) => ({
+            title: s.title,
+            description: s.description,
+            rawDatePhrase: s.rawDatePhrase,
+            dueDateIso: s.dueDateIso,
+            yearInferred: s.yearInferred,
+            personName: s.personNameOverride ?? s.personName,
+            actionKind: s.actionKind,
+            confidenceScore: s.confidenceScore,
+            sourceExcerpt: s.sourceExcerpt,
+            dateBasis: s.dateBasis,
+            anchorIso: s.anchorIso,
+          })),
+          mentions,
+          skipped: skipped ?? { relative: 0, unverifiable: 0, past: 0 },
+        });
+        // The profile entry point's default path gets its own toast below (a link to
+        // the fuller capture results, not a raw count) — every other path shares this
+        // one summary toast, so it's hoisted here instead of repeated per branch.
+        if (onSaved || entryPoint !== "profile") {
+          toast.success(
+            `Saved: ${res.created} created, ${res.updated} updated, ${res.remindersCreated} reminders`
+          );
+        }
         if (onSaved) {
           onSaved(res);
-        } else {
+        } else if (entryPoint === "profile") {
+          // Stay on the profile — nothing to navigate to here — and offer a link to
+          // the fuller capture results (mentions, reminders, dedupe) instead of
+          // dragging the user off the page they were already looking at.
           resetToPaste();
           router.refresh();
+          toast.success("Saved — view what was created", {
+            action: {
+              label: "Open",
+              onClick: () => router.push(`/capture/${res.batchId}`),
+            },
+          });
+        } else {
+          resetToPaste();
+          router.push(`/capture/${res.batchId}`);
         }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Save failed");
@@ -415,7 +456,11 @@ export function BulkNotesPanel({
             onClick={() =>
               start(async () => {
                 try {
-                  const res = await parseBulkCaptureNotes(notes, captureHints);
+                  const hints: CaptureParseHints | null =
+                    lockedParticipantId && lockedParticipantName
+                      ? withLockedSeedPerson(captureHints, lockedParticipantName)
+                      : captureHints;
+                  const res = await parseBulkCaptureNotes(notes, hints);
                   if (!res.ok) {
                     const missingKey = isMissingAiApiKeyError(res.error);
                     if (missingKey) setHasApiKey(false);
@@ -425,8 +470,20 @@ export function BulkNotesPanel({
                     return;
                   }
                   setSharedNotes(res.sharedNotes || []);
+                  const lockedKey =
+                    lockedParticipantId && lockedParticipantName
+                      ? pickLockedParticipant(
+                          res.items.map((item) => ({
+                            key: item.key,
+                            name: item.parsed.name,
+                            duplicateIds: item.duplicates.map((d) => d.id),
+                          })),
+                          { id: lockedParticipantId, name: lockedParticipantName }
+                        )
+                      : null;
                   setItems(
                     res.items.map((item) => {
+                      const isLocked = lockedKey !== null && item.key === lockedKey;
                       const preferredMatch =
                         preferredContactId &&
                         item.duplicates.some((d) => d.id === preferredContactId)
@@ -435,8 +492,10 @@ export function BulkNotesPanel({
                       return {
                         ...item,
                         decision: "pending" as const,
-                        mergeContactId:
-                          preferredMatch || item.suggestedMergeId,
+                        mergeContactId: isLocked
+                          ? lockedParticipantId
+                          : preferredMatch || item.suggestedMergeId,
+                        locked: isLocked,
                         createReminder: Boolean(
                           item.parsed.follow_up_recommendation
                         ),
@@ -448,9 +507,12 @@ export function BulkNotesPanel({
                     })
                   );
                   const found = res.suggestedReminders || [];
-                  setCaptureBatchId(res.captureBatchId);
+                  setSourceText(res.sourceText);
                   setSourceHash(res.sourceHash);
+                  setAnchorIso(res.anchorIso);
+                  setAnchorBasis(res.anchorBasis);
                   setSkipped(res.suggestionsSkipped || null);
+                  setMentions(res.mentions || []);
                   setSuggestions(
                     found.map((s) => ({
                       ...s,
@@ -494,7 +556,7 @@ export function BulkNotesPanel({
             <div>
               <h2
                 className={cn(
-                  "font-medium text-primary",
+                  "font-medium text-ink",
                   compact ? "text-base" : "text-lg"
                 )}
               >
@@ -530,7 +592,7 @@ export function BulkNotesPanel({
 
           {sharedNotes.length > 0 && reviewIndex === 0 && (
             <div className="space-y-2 rounded-2xl border border-sky-200/80 bg-sky-50/60 p-3 dark:border-sky-900/50 dark:bg-sky-950/20">
-              <p className="text-xs font-medium text-primary">
+              <p className="text-xs font-medium text-ink">
                 Shared context ({sharedNotes.length}) — applied to matching
                 people
               </p>
@@ -568,6 +630,7 @@ export function BulkNotesPanel({
                   compact={compact}
                   preferredContactId={preferredContactId}
                   preferredContactName={preferredContactName}
+                  lockedParticipantName={lockedParticipantName}
                   onChange={(next) =>
                     setItems((prev) =>
                       prev.map((p, i) => (i === reviewIndex ? next : p))
@@ -618,7 +681,7 @@ export function BulkNotesPanel({
             <div>
               <h2
                 className={cn(
-                  "font-medium text-primary",
+                  "font-medium text-ink",
                   compact ? "text-base" : "text-lg"
                 )}
               >
@@ -681,6 +744,32 @@ export function BulkNotesPanel({
             </p>
           )}
 
+          {(() => {
+            const itemCount = accepted.reduce((n, i) => n + i.parsed.action_items.length, 0);
+            if (itemCount === 0) return null;
+            const dueLabel = anchorIso
+              ? format(addDays(new Date(`${anchorIso}T12:00:00`), 14), "MMM d")
+              : "in 2 weeks";
+            return (
+              <p className="text-xs text-muted-foreground">
+                {itemCount} action item{itemCount === 1 ? "" : "s"} will also become reminders due {dueLabel}
+              </p>
+            );
+          })()}
+
+          {mentions.length > 0 && (
+            <div className="rounded-xl border border-border/60 bg-muted/30 p-3 text-xs">
+              <p className="mb-1 font-medium">Mentioned, not met</p>
+              <ul className="space-y-0.5">
+                {mentions.map((m) => (
+                  <li key={m.text}>
+                    “{m.text}” {m.contactId ? <>→ linked to an existing contact ({Math.round(m.confidence * 100)}%)</> : <span className="text-muted-foreground">— no match; you can add them after saving</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <SuggestedRemindersReview
             items={suggestions}
             people={accepted.map((item) => ({
@@ -722,12 +811,14 @@ function PersonReviewCard({
   compact,
   preferredContactId,
   preferredContactName,
+  lockedParticipantName,
 }: {
   item: ReviewItem;
   onChange: (next: ReviewItem) => void;
   compact?: boolean;
   preferredContactId?: string | null;
   preferredContactName?: string | null;
+  lockedParticipantName?: string | null;
 }) {
   const updateParsed = (patch: Partial<ParsedNote>) =>
     onChange({ ...item, parsed: { ...item.parsed, ...patch } });
@@ -857,51 +948,63 @@ function PersonReviewCard({
       )}
 
       <div className="space-y-1.5 rounded-xl border border-border/60 bg-muted/30 p-2.5">
-        <p className="text-xs font-medium">Save as</p>
-        <label className="flex items-center gap-2 text-xs">
-          <input
-            type="radio"
-            name={`merge-${item.key}`}
-            checked={!item.mergeContactId}
-            onChange={() => onChange({ ...item, mergeContactId: null })}
-          />
-          Create new contact
-        </label>
-        {showPreferred && (
-          <label className="flex items-center gap-2 text-xs">
-            <input
-              type="radio"
-              name={`merge-${item.key}`}
-              checked={item.mergeContactId === preferredContactId}
-              onChange={() =>
-                onChange({ ...item, mergeContactId: preferredContactId })
-              }
-            />
-            Merge into {preferredContactName}
-          </label>
-        )}
-        {item.duplicates.map((d) => (
-          <label key={d.id} className="flex items-start gap-2 text-xs">
-            <input
-              type="radio"
-              className="mt-0.5"
-              name={`merge-${item.key}`}
-              checked={item.mergeContactId === d.id}
-              onChange={() => onChange({ ...item, mergeContactId: d.id })}
-            />
-            <span>
-              Update{" "}
-              <Link
-                href={`/contacts/${d.id}`}
-                className="text-primary underline"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {d.fullName}
-              </Link>
-              {d.company ? ` (${d.company})` : ""}
+        {item.locked ? (
+          <p className="text-xs text-muted-foreground">
+            Logging on{" "}
+            <span className="font-medium text-foreground">
+              {lockedParticipantName}
             </span>
-          </label>
-        ))}
+            &apos;s timeline
+          </p>
+        ) : (
+          <>
+            <p className="text-xs font-medium">Save as</p>
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="radio"
+                name={`merge-${item.key}`}
+                checked={!item.mergeContactId}
+                onChange={() => onChange({ ...item, mergeContactId: null })}
+              />
+              Create new contact
+            </label>
+            {showPreferred && (
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="radio"
+                  name={`merge-${item.key}`}
+                  checked={item.mergeContactId === preferredContactId}
+                  onChange={() =>
+                    onChange({ ...item, mergeContactId: preferredContactId })
+                  }
+                />
+                Merge into {preferredContactName}
+              </label>
+            )}
+            {item.duplicates.map((d) => (
+              <label key={d.id} className="flex items-start gap-2 text-xs">
+                <input
+                  type="radio"
+                  className="mt-0.5"
+                  name={`merge-${item.key}`}
+                  checked={item.mergeContactId === d.id}
+                  onChange={() => onChange({ ...item, mergeContactId: d.id })}
+                />
+                <span>
+                  Update{" "}
+                  <Link
+                    href={`/contacts/${d.id}`}
+                    className="text-primary underline"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {d.fullName}
+                  </Link>
+                  {d.company ? ` (${d.company})` : ""}
+                </span>
+              </label>
+            ))}
+          </>
+        )}
       </div>
 
       <div

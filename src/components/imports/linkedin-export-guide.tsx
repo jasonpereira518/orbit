@@ -55,13 +55,10 @@ const MESSAGES_FINAL: GuideStep = {
 function GuideImage({ src, alt }: { src?: string; alt: string }) {
   const [failed, setFailed] = useState(false);
 
-  if (!src || failed) {
-    return (
-      <div className="mt-2 flex h-28 w-full items-center justify-center rounded-lg border border-dashed border-border/70 bg-muted/30 text-xs text-muted-foreground">
-        Screenshot coming soon
-      </div>
-    );
-  }
+  // The step's own text is the instruction; the screenshot only illustrates it. If one
+  // fails to load, showing nothing is better than a box telling the user Orbit is
+  // unfinished — which is what "Screenshot coming soon" read as.
+  if (!src || failed) return null;
 
   return (
     // eslint-disable-next-line @next/next/no-img-element -- static guide screenshots in public/
@@ -113,7 +110,7 @@ export function LinkedInExportGuide({ variant }: { variant: GuideVariant }) {
                   {index + 1}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="font-medium text-primary">{step.title}</p>
+                  <p className="font-medium text-ink">{step.title}</p>
                   <p className="mt-0.5 text-sm text-muted-foreground">
                     {step.body}
                   </p>

@@ -457,7 +457,7 @@ export function ContactsList({
                           </ContactAvatarPreview>
 
                           <div className="min-w-0 flex-1">
-                            <p className="truncate font-medium text-primary">
+                            <p className="truncate font-medium text-ink">
                               {c.preferredName || c.fullName}
                             </p>
                             <div className="mt-0.5 flex min-w-0 items-center gap-2">
@@ -468,10 +468,22 @@ export function ContactsList({
                                 />
                               </p>
                               {c.closenessTier && (
-                                <ClosenessTierBadge
-                                  tier={c.closenessTier}
-                                  className="shrink-0"
-                                />
+                                <>
+                                  {/* On a phone the word badge ("INNER ORBIT") took ~90px
+                                      of a 375px row and cut the role to "VP Engin…". The
+                                      colour is the part that scans at a glance, and the
+                                      percentage chip on the right already carries the
+                                      number, so below sm the tier is just its dot. */}
+                                  <ClosenessTierBadge
+                                    tier={c.closenessTier}
+                                    dotOnly
+                                    className="sm:hidden"
+                                  />
+                                  <ClosenessTierBadge
+                                    tier={c.closenessTier}
+                                    className="hidden shrink-0 sm:inline-flex"
+                                  />
+                                </>
                               )}
                             </div>
                             {details && (
