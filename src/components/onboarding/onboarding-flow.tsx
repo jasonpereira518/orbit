@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronLeft, ChevronRight, Pause, Play, Sparkles } from "lucide-react";
-import { completeOnboarding, saveOnboardingStep, skipOnboarding } from "@/actions/onboarding";
+import { completeOnboarding, saveOnboardingStep } from "@/actions/onboarding";
 import { markWizardOffered } from "@/actions/onboarding-wizard";
 import { TourSidebar } from "@/components/onboarding/tour-sidebar";
 import { TourCursor } from "@/components/onboarding/tour-cursor";
@@ -65,13 +65,27 @@ export function OnboardingFlow({
   const [pending, start] = useTransition();
   const [offerFor, setOfferFor] = useState<"skip" | null>(null);
 
-  const finishSkip = useCallback(() => {
-    start(async () => {
-      const res = await skipOnboarding();
-      router.replace(res.redirectTo);
-      router.refresh();
-    });
-  }, [router]);
+  // Both ways out of the tour mark it done; they differ only in where they land.
+  const finishTo = useCallback(
+    (redirectTo: string) => {
+      start(async () => {
+        const res = await completeOnboarding(redirectTo);
+        router.replace(res.redirectTo);
+        router.refresh();
+      });
+    },
+    [router]
+  );
+
+  // Skipping the tour is someone asking to get on with it, not asking to be left on an
+  // empty dashboard with nothing to do, so it lands on the guided setup. The deliberate
+  // "I'll do it myself" at the end of the tour is the exit that still goes to the
+  // dashboard — see `declineWizard`. If setup is already finished, the wizard route
+  // sends them to the dashboard itself, so a tour replay never traps anyone.
+  const skipToSetup = useCallback(
+    () => finishTo("/onboarding/wizard"),
+    [finishTo]
+  );
 
   const offerWizard = useCallback(() => {
     setOfferFor("skip");
@@ -87,8 +101,8 @@ export function OnboardingFlow({
   }, [router]);
 
   const declineWizard = useCallback(() => {
-    finishSkip();
-  }, [finishSkip]);
+    finishTo("/dashboard");
+  }, [finishTo]);
 
   const step = TOUR_STEPS[stepIndex]!;
   const isFirst = stepIndex === 0;
@@ -291,9 +305,9 @@ export function OnboardingFlow({
                 size="sm"
                 disabled={pending}
                 className="text-muted-foreground"
-                onClick={finishSkip}
+                onClick={skipToSetup}
               >
-                Skip tour
+                Skip to setup
               </Button>
 
               <Button
