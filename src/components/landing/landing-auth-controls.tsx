@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { UserButton } from "@clerk/nextjs";
+import { UserButton, useAuth } from "@clerk/nextjs";
 import { clerkAppearance } from "@/lib/clerk-appearance";
 
 const ghostClass =
@@ -17,19 +17,13 @@ const ctaGhostClass =
   "inline-flex items-center justify-center rounded-full border border-white/20 bg-white/5 px-6 py-3 text-sm text-[#e8f3f1] transition-colors hover:border-white/35 hover:bg-white/10";
 
 /**
- * Auth state is resolved server-side (see (marketing)/page.tsx), so the
- * correct variant renders from the first frame — signed-out visitors get
- * real sign-in/sign-up links, signed-in users get "Open app". Only the
- * Clerk avatar menu waits for hydration, behind a fixed-size placeholder
- * so nothing shifts.
+ * The marketing pages are static and shared by every visitor, so who is signed in is
+ * resolved HERE, in the browser, once Clerk has loaded — not on the server. Signed-out
+ * visitors (the audience) see the right buttons from the first frame; the rare signed-in
+ * visitor sees them swap to "Open app" a few hundred milliseconds in. `signedIn` remains
+ * accepted as a server-known hint for any caller that has one.
  */
-export function LandingAuthControls({
-  clerkOn,
-  demoMode,
-  signedIn = false,
-  variant,
-  mobileVisible = false,
-}: {
+type Props = {
   clerkOn: boolean;
   demoMode: boolean;
   signedIn?: boolean;
@@ -40,7 +34,32 @@ export function LandingAuthControls({
    * stack full-width below sm — a real tap target instead of nothing.
    */
   mobileVisible?: boolean;
-}) {
+};
+
+/**
+ * Entry point. `useAuth()` throws outside a <ClerkProvider>, and the provider is only
+ * mounted when Clerk is configured — including at build time, where these pages are now
+ * prerendered — so the hook lives in a child that only exists when Clerk does.
+ */
+export function LandingAuthControls(props: Props) {
+  if (!props.clerkOn) return <AuthControlsView {...props} isSignedIn={false} />;
+  return <ClerkAwareControls {...props} />;
+}
+
+function ClerkAwareControls(props: Props) {
+  const auth = useAuth();
+  // Clerk reports `undefined` until it has loaded; until then the server-known hint holds.
+  const isSignedIn = auth.isSignedIn !== undefined ? auth.isSignedIn : Boolean(props.signedIn);
+  return <AuthControlsView {...props} isSignedIn={isSignedIn} />;
+}
+
+function AuthControlsView({
+  clerkOn,
+  demoMode,
+  isSignedIn,
+  variant,
+  mobileVisible = false,
+}: Props & { isSignedIn: boolean }) {
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
     setHydrated(true);
@@ -69,7 +88,7 @@ export function LandingAuthControls({
     );
   }
 
-  if (signedIn) {
+  if (isSignedIn) {
     return (
       <div
         className={

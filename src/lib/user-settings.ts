@@ -28,7 +28,7 @@ const ACTIVITY_THROTTLE_MS = 15 * 60 * 1000;
  * load) both see `existing` as absent and both reach the insert. Without the conflict
  * clause the second one throws a unique-violation on `user_id` instead of resolving like
  * the first. `RETURNING` comes back empty for whichever request loses that race, so it
- * re-reads the row the winner just created.
+ * re-reads the row the winner just created. `scripts/smoke-user-settings-race.ts` pins it.
  */
 export const ensureUserSettings = cache(async (userId: string) => {
   const db = await getDb();

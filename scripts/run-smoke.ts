@@ -62,6 +62,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-account-alerts": "pglite",
   "smoke-action-items": "pglite",
   "smoke-admin": "pglite",
+  "smoke-app-pulse": "pglite",
   "smoke-admin-actions": "pglite",
   "smoke-admin-yc-render": "pglite",
   "smoke-admin-export": "pglite",
@@ -97,7 +98,9 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-surface-visibility": "pglite",
   "smoke-trigram-search": "pglite",
   "smoke-usage-events": "pglite",
+  "smoke-user-settings-race": "pglite",
   "smoke-webhook-guard": "pglite",
+  "smoke-write-path": "pglite",
   // manual ----------------------------------------------------------------------------
   "smoke-import-perf": "manual", // wall-clock budgets; run by hand or nightly
 };

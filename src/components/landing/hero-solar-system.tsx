@@ -182,13 +182,16 @@ function PlanetSphere({ p }: { p: PlanetDef }) {
       }}
     >
       <div className="hero-planet-sphere">
-        {/* eslint-disable-next-line @next/next/no-img-element -- decorative hero art */}
-        <img
-          className="hero-planet-art"
-          src={`/landing/planets/${p.id}.png`}
-          alt=""
-          draggable={false}
-        />
+        <picture>
+          <source type="image/avif" srcSet={`/landing/planets/${p.id}.avif`} />
+          <source type="image/webp" srcSet={`/landing/planets/${p.id}.webp`} />
+          <img
+            className="hero-planet-art"
+            src={`/landing/planets/${p.id}.png`}
+            alt=""
+            draggable={false}
+          />
+        </picture>
       </div>
       <div className="hero-planet-atmosphere" />
     </div>
@@ -343,13 +346,16 @@ export function HeroSolarSystem({
             transform: "translate(-50%, -50%)",
           }}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element -- decorative hero art */}
-          <img
-            className="hero-solar-sun-art h-full w-full object-contain"
-            src="/landing/planets/sun.png"
-            alt=""
-            draggable={false}
-          />
+          <picture>
+            <source type="image/avif" srcSet="/landing/planets/sun.avif" />
+            <source type="image/webp" srcSet="/landing/planets/sun.webp" />
+            <img
+              className="hero-solar-sun-art h-full w-full object-contain"
+              src="/landing/planets/sun.png"
+              alt=""
+              draggable={false}
+            />
+          </picture>
         </div>
 
         <div

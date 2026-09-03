@@ -60,14 +60,18 @@ function EarthSprite({
   );
 
   return (
-    <motion.img
-      src="/landing/planets/earth.png"
-      alt=""
-      aria-hidden
-      draggable={false}
-      className="pointer-events-none absolute left-0 top-0 max-w-none"
-      style={{ x, y, width: size, height: size }}
-    />
+    <picture>
+      <source type="image/avif" srcSet="/landing/planets/earth.avif" />
+      <source type="image/webp" srcSet="/landing/planets/earth.webp" />
+      <motion.img
+        src="/landing/planets/earth.png"
+        alt=""
+        aria-hidden
+        draggable={false}
+        className="pointer-events-none absolute left-0 top-0 max-w-none"
+        style={{ x, y, width: size, height: size }}
+      />
+    </picture>
   );
 }
 

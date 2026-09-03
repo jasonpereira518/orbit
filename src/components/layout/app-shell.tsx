@@ -5,7 +5,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { MotionConfig } from "motion/react";
 import { AppSidebar } from "@/components/layout/app-sidebar";
-import { AppStarfield } from "@/components/layout/app-starfield";
+// Canvas-only decoration: no reason for its code to be in the shell's first load, and it
+// renders nothing on the server anyway.
+const AppStarfield = dynamic(
+  () => import("@/components/layout/app-starfield").then((m) => m.AppStarfield),
+  { ssr: false }
+);
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { ViewAsUserBanner } from "@/components/layout/view-as-user-banner";
 import { OrbitLogo } from "@/components/orbit-logo";

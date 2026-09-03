@@ -47,14 +47,22 @@ export async function persistEmbeddingVectors(
   }
 }
 
+/**
+ * Returns true only when an embedding row was actually written or updated. A missing key,
+ * a provider failure, or unchanged content (the stored embedding is still correct) all
+ * return false — but for different reasons callers must not treat alike. Callers that mark
+ * a contact `embedding_stale_at` must NOT clear the marker on a swallowed failure (the
+ * backfill has to get another go); they SHOULD clear it on a same-content skip (there is
+ * nothing left to redo).
+ */
 export async function upsertContactEmbedding(
   userId: string,
   contactId: string,
   sourceType: string,
   content: string,
   sourceId?: string
-) {
-  if (!content.trim()) return;
+): Promise<boolean> {
+  if (!content.trim()) return false;
 
   try {
     const db = await getDb();
@@ -72,7 +80,7 @@ export async function upsertContactEmbedding(
       : undefined;
 
     // Unchanged content: the stored embedding is still correct — skip the API call.
-    if (existing?.contentHash === contentHash) return;
+    if (existing?.contentHash === contentHash) return false;
 
     const embedding = await createEmbedding(userId, content);
 
@@ -82,7 +90,7 @@ export async function upsertContactEmbedding(
         .set({ embedding, content, contentHash })
         .where(eq(contactEmbeddings.id, existing.id));
       await persistEmbeddingVectors([{ id: existing.id, embedding }]);
-      return;
+      return true;
     }
 
     const [inserted] = await db
@@ -92,8 +100,10 @@ export async function upsertContactEmbedding(
     if (inserted?.id) {
       await persistEmbeddingVectors([{ id: inserted.id, embedding }]);
     }
+    return Boolean(inserted?.id);
   } catch {
     // AI key may be missing; skip embeddings silently
+    return false;
   }
 }
 
@@ -253,32 +263,34 @@ function splitProfileEmbeddingContent(
   };
 }
 
-export async function rebuildContactEmbedding(userId: string, contactId: string) {
+/** True only when a row was actually written; see `upsertContactEmbedding`. */
+export async function rebuildContactEmbedding(userId: string, contactId: string): Promise<boolean> {
   const db = await getDb();
   const contact = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
     with: { contactTags: { with: { tag: true } } },
   });
-  if (!contact) return;
+  if (!contact) return false;
 
   const { profile, notes } = splitProfileEmbeddingContent(contact);
-  await upsertContactEmbedding(userId, contactId, "profile", profile, contactId);
+  const profileWritten = await upsertContactEmbedding(userId, contactId, "profile", profile, contactId);
   if (notes) {
-    await upsertContactEmbedding(userId, contactId, "notes", notes, contactId);
-  } else {
-    // Content shrank back under the split threshold — drop the now-stale "notes" row so it
-    // doesn't keep contributing to semantic search / content-boost matching forever.
-    await db
-      .delete(contactEmbeddings)
-      .where(
-        and(
-          eq(contactEmbeddings.userId, userId),
-          eq(contactEmbeddings.contactId, contactId),
-          eq(contactEmbeddings.sourceType, "notes"),
-          eq(contactEmbeddings.sourceId, contactId)
-        )
-      );
+    const notesWritten = await upsertContactEmbedding(userId, contactId, "notes", notes, contactId);
+    return profileWritten || notesWritten;
   }
+  // Content shrank back under the split threshold — drop the now-stale "notes" row so it
+  // doesn't keep contributing to semantic search / content-boost matching forever.
+  await db
+    .delete(contactEmbeddings)
+    .where(
+      and(
+        eq(contactEmbeddings.userId, userId),
+        eq(contactEmbeddings.contactId, contactId),
+        eq(contactEmbeddings.sourceType, "notes"),
+        eq(contactEmbeddings.sourceId, contactId)
+      )
+    );
+  return profileWritten;
 }
 
 /** Rebuild "profile" (and, when content overflows, "notes") embeddings for many contacts

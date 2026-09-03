@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getCurrentPlan, triggerDemoCelebration } from "@/actions/billing";
+import { useAppPulse } from "@/lib/app-pulse-store";
 import type { Plan } from "@/lib/plan-limits";
 import {
   PLAN_RANK,
@@ -30,10 +31,6 @@ const CelebrationStage = dynamic(
  * and the next page load pick it up. */
 const FAST_POLL_MS = 2_000;
 const FAST_POLL_ATTEMPTS = 30;
-
-/** Ambient: how long a comped user waits before the fanfare finds them.
- * DueNotificationsWatcher's cadence, slightly tightened. */
-const AMBIENT_POLL_MS = 75_000;
 
 type ActiveRun = {
   plan: PaidPlan;
@@ -171,31 +168,13 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Feed 3 — ambient poll, so a comp granted while the user is in the app
-  // finds them within a minute or two (there is no realtime channel).
+  // Feed 3 — the app pulse, so a comp granted while the user is in the app finds them
+  // within a couple of minutes (there is no realtime channel). Shares the one poll every
+  // tab already makes instead of running a 75 s timer of its own.
+  const pulsePlan = useAppPulse().pulse?.plan;
   useEffect(() => {
-    let running = false;
-    async function tick() {
-      if (running || document.visibilityState !== "visible") return;
-      running = true;
-      try {
-        maybeCelebrate(await getCurrentPlan());
-      } catch {
-        // ignore network / auth blips
-      } finally {
-        running = false;
-      }
-    }
-    const interval = window.setInterval(tick, AMBIENT_POLL_MS);
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void tick();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [maybeCelebrate]);
+    if (pulsePlan) maybeCelebrate(pulsePlan);
+  }, [pulsePlan, maybeCelebrate]);
 
   // Dev preview — fakes the animation only, never touches billing. `NODE_ENV`
   // is inlined at build time, so this half doesn't exist in production bundles.

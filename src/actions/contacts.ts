@@ -26,7 +26,7 @@ import {
   type LogInteractionInput,
 } from "@/lib/contact-writes";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
-import { rebuildContactEmbedding } from "@/lib/search";
+import { scheduleEmbeddingRebuild } from "@/lib/contact-writes";
 import {
   selectTriageCandidates,
   type TriageCandidate,
@@ -815,7 +815,7 @@ export async function updateInteraction(
     await syncActionItems(userId, interactionId, existing.contactId, input.actionItems);
   }
 
-  await rebuildContactEmbedding(userId, existing.contactId);
+  await scheduleEmbeddingRebuild(userId, existing.contactId);
   void generateAndStoreContactBrief(userId, existing.contactId).catch(
     () => null
   );

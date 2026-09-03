@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { auth } from "@clerk/nextjs/server";
 import {
   ArrowUpRight,
   Bug,
@@ -168,14 +167,8 @@ const FAQ: readonly FaqItem[] = [
 ];
 
 export default async function ContactPage() {
-  const clerkOn = isClerkConfigured();
-  // Public page: resolve auth optionally so signed-out visitors never hit a throw.
-  const { userId } = clerkOn ? await auth() : { userId: null };
-  const authProps = {
-    clerkOn,
-    demoMode: isDemoMode(),
-    signedIn: Boolean(userId),
-  };
+  // Static page; the header's signed-in variant resolves in the browser.
+  const authProps = { clerkOn: isClerkConfigured(), demoMode: isDemoMode() };
   // No mail credentials, no form: a contact form that always fails is worse
   // than sending people to the links below.
   const formEnabled = await isContactFormEnabled();
