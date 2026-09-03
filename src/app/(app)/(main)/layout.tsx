@@ -13,7 +13,12 @@ import { surfaceForPathname } from "@/lib/surfaces";
  * does not abort/restart background photo fills.
  */
 /** Floating ask bar + chat actions need longer than the default serverless limit. */
-export const maxDuration = 60;
+// TEMPORARY STOPGAP (Sept 2026): 300, not 60. Heavy accounts were hitting the 60s wall on
+// /dashboard and /graph (Vercel "Task timed out after 60 seconds"); the real fix is the
+// query-shape work tracked in the production-readiness plan, and this converts a hard
+// error into a slow success only while that lands. Revert to 60 once `perf.slow` traces
+// stay quiet for a week. 300 is the Fluid Compute ceiling on the Hobby plan.
+export const maxDuration = 300;
 
 export default async function MainAppLayout({
   children,

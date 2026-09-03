@@ -63,7 +63,7 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { interactions } from "@/db/schema";
-import { getAppBaseUrl } from "@/lib/app-url";
+import { internalFetch } from "@/lib/internal-auth";
 import {
   extractLinkedInTimelineEvents,
   type LinkedInTimelineEvent,
@@ -136,14 +136,10 @@ const PENDING_TIMELINE_CONTACTS = sql`
  * cron re-kicks anything still pending.
  */
 export async function kickLinkedInTimelineBackfill(userId: string) {
-  const secret = process.env.CRON_SECRET;
   try {
-    await fetch(`${getAppBaseUrl()}/api/linkedin/timeline-events/backfill`, {
+    await internalFetch("/api/linkedin/timeline-events/backfill", {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
-      },
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ userId }),
     });
   } catch {

@@ -60,9 +60,26 @@ function main() {
     console.log(`  ${ok ? "ok  " : "FAIL"} ${route} stays protected`);
     if (!ok) leaked.push(route);
   }
+  // Internal job routes. Vercel Cron, the ops scheduler and the app's own self-continuation
+  // `fetch` carry no Clerk session, so these must be exempt from `auth.protect()` — they
+  // authenticate with CRON_SECRET via `isInternalRequest()` instead. One missing here means
+  // the cron never runs and a long import cannot continue, and it only shows in production.
+  const internalRoutes = [
+    "/api/imports/process-stalled",
+    "/api/imports/imp_abc123/continue",
+    "/api/embeddings/backfill",
+    "/api/linkedin/timeline-events/backfill",
+  ];
+  const blocked: string[] = [];
+  for (const route of internalRoutes) {
+    const ok = check(route);
+    console.log(`  ${ok ? "ok  " : "FAIL"} ${route} ${ok ? "is exempt from Clerk" : "is behind Clerk"}`);
+    if (!ok) blocked.push(route);
+  }
+
   const guardedOk = leaked.length === 0;
 
-  if (missing.length > 0 || !guardedOk) {
+  if (missing.length > 0 || !guardedOk || blocked.length > 0) {
     if (missing.length > 0) {
       console.error(
         `\nFAILED: add ${missing.join(", ")} to PUBLIC_ROUTES in src/lib/public-routes.ts`
@@ -71,6 +88,11 @@ function main() {
     if (leaked.length > 0) {
       console.error(
         `\nFAILED: ${leaked.join(", ")} must NOT be in PUBLIC_ROUTES — they require a session`
+      );
+    }
+    if (blocked.length > 0) {
+      console.error(
+        `\nFAILED: ${blocked.join(", ")} must be in PUBLIC_ROUTES — cron and self-continuation calls carry no Clerk session`
       );
     }
     process.exit(1);

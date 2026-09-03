@@ -9,7 +9,7 @@ import {
   type GmailSenderRowPayload,
   type ImportStats,
 } from "@/db/schema";
-import { getAppBaseUrl } from "@/lib/app-url";
+import { internalFetch } from "@/lib/internal-auth";
 import { failImport } from "@/lib/import-job-processor";
 import {
   RECRUITER_QUERY_TERMS,
@@ -58,12 +58,8 @@ async function patchStats(importId: string, patch: Partial<ImportStats>) {
 
 /** Kick a fresh invocation so the remaining work continues past this function's ceiling. */
 async function scheduleContinuation(importId: string) {
-  const secret = process.env.CRON_SECRET;
   try {
-    await fetch(`${getAppBaseUrl()}/api/imports/${importId}/continue`, {
-      method: "POST",
-      headers: secret ? { Authorization: `Bearer ${secret}` } : undefined,
-    });
+    await internalFetch(`/api/imports/${importId}/continue`, { method: "POST" });
   } catch {
     // Best-effort — the process-stalled cron picks the job back up either way.
   }

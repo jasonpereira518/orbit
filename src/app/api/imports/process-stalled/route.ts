@@ -20,6 +20,7 @@ import {
   usersWithPendingTimelineEvents,
 } from "@/lib/linkedin-timeline-backfill";
 import { backfillEmbeddingVectors, neonClient } from "@/db";
+import { isInternalRequest } from "@/lib/internal-auth";
 
 export const maxDuration = 300;
 
@@ -107,9 +108,8 @@ async function pruneOlderThan(
  */
 export async function GET(request: Request) {
   // Auth first, before any write: an unauthenticated probe must not be able to
-  // insert ledger rows.
-  const secret = process.env.CRON_SECRET;
-  if (secret && request.headers.get("authorization") !== `Bearer ${secret}`) {
+  // insert ledger rows. Fail-closed shared secret — see internal-auth.ts.
+  if (!isInternalRequest(request)) {
     return new NextResponse(null, { status: 401 });
   }
 

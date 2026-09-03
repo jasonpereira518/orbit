@@ -19,6 +19,7 @@ import {
   stripeEventSubject,
   type DecideContext,
 } from "@/lib/billing-stripe";
+import { shouldRecordThrottled } from "@/lib/error-events";
 import {
   WEBHOOK_REASONS,
   recordWebhookDelivery,
@@ -111,15 +112,17 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     // Includes replay attempts and stale secrets after a roll — both should be rejected.
     console.error("Stripe webhook verification failed:", err);
-    // Recorded even though nothing can be trusted about the body: a burst of these is how
-    // a rolled secret announces itself, and it is invisible if only valid events are logged.
-    await recordWebhookDelivery({
-      source: "stripe",
-      outcome: "invalid",
-      reason: WEBHOOK_REASONS.signatureInvalid,
-      error: err,
-      durationMs: Date.now() - startedAt,
-    });
+    // Recorded (once per hour, since this precedes authentication) so a rolled secret shows
+    // up in the ledger the ops sweep reads. Stores nothing from the body.
+    if (shouldRecordThrottled("webhook.stripe.invalid")) {
+      await recordWebhookDelivery({
+        source: "stripe",
+        outcome: "invalid",
+        reason: WEBHOOK_REASONS.signatureInvalid,
+        error: err,
+        durationMs: Date.now() - startedAt,
+      });
+    }
     return new Response("Verification failed", { status: 400 });
   }
 

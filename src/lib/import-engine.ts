@@ -17,7 +17,7 @@ import {
   createContactsBulkForUser,
   type ContactInput,
 } from "@/lib/contact-writes";
-import { getAppBaseUrl } from "@/lib/app-url";
+import { internalFetch } from "@/lib/internal-auth";
 import { createCompanyResolver } from "@/lib/companies";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { refreshOutreachSuggestions } from "@/lib/reminders";
@@ -147,12 +147,8 @@ export type ImportAdapter<P> = {
 
 /** Kick a self-continuation request so remaining rows keep processing in a fresh invocation. */
 async function scheduleContinuation(importId: string) {
-  const secret = process.env.CRON_SECRET;
   try {
-    await fetch(`${getAppBaseUrl()}/api/imports/${importId}/continue`, {
-      method: "POST",
-      headers: secret ? { Authorization: `Bearer ${secret}` } : undefined,
-    });
+    await internalFetch(`/api/imports/${importId}/continue`, { method: "POST" });
   } catch {
     // Best-effort — the process-stalled cron will pick this job back up.
   }
