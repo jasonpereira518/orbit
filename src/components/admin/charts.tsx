@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { formatCents, formatMicros } from "@/lib/format-money";
 import { cn } from "@/lib/utils";
 
 /**
@@ -33,20 +34,6 @@ import { cn } from "@/lib/utils";
  */
 
 /* ------------------------------------------------------------------- helpers -------- */
-
-export function formatCents(cents: number): string {
-  const dollars = cents / 100;
-  if (Math.abs(dollars) >= 1000) {
-    return `$${(dollars / 1000).toFixed(1)}k`;
-  }
-  // Whole dollars where the cents are zero: every Orbit price is a whole number, and
-  // ".00" on all of them reads as a rounding artefact rather than a precise figure.
-  return dollars % 1 === 0 ? `$${dollars}` : `$${dollars.toFixed(2)}`;
-}
-
-export function formatMicros(micros: number): string {
-  return formatCents(Math.round(micros / 10_000));
-}
 
 /** A window selector. Closed set — never interpolated from anything a user typed. */
 export function WindowToggle<T extends string | number>({

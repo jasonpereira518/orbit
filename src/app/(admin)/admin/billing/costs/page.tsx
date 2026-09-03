@@ -7,13 +7,9 @@ import {
   MiniBars,
 } from "@/components/admin/primitives";
 import { MoneyTabs } from "@/components/admin/money-tabs";
-import {
-  RankedBars,
-  RevenueCostChart,
-  formatCents,
-  formatMicros,
-} from "@/components/admin/charts";
+import { RankedBars, RevenueCostChart } from "@/components/admin/charts";
 import { CostEntryForm } from "@/components/admin/money/cost-forms";
+import { formatCents, formatMicros } from "@/lib/format-money";
 import { MONTHLY_CENTS } from "@/lib/billing-events";
 import { breakEvenSubscribers, infraBreakdown, monthStart } from "@/lib/infra-costs";
 import {
