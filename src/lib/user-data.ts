@@ -11,11 +11,13 @@ import {
   contacts,
   billingEvents,
   errorEvents,
+  extensionUsage,
   feedback,
   gateEvents,
   gmailConnections,
   imports,
   interactions,
+  noteBatches,
   outlookConnections,
   outreachCampaigns,
   reminderLists,
@@ -34,10 +36,15 @@ import { recomputeRecruiterRating } from "@/lib/recruiters";
  * Delete all Orbit data for a user (does not delete the Clerk account).
  *
  * Every table carrying a `user_id` must be handled here, either by an explicit delete or
- * by a cascade from one. The two covered by cascade, so deliberately absent below:
- *   - `chat_messages`   → cascades from `chat_threads`
- *   - `import_job_rows` → cascades from `imports`
- * Nothing else may be omitted. `suggested_reminders` looks like it would cascade but does
+ * by a cascade from one. The five covered by cascade, so deliberately absent below:
+ *   - `chat_messages`        → cascades from `chat_threads`
+ *   - `import_job_rows`      → cascades from `imports`
+ *   - `action_items`         → cascades from `contacts` and `interactions`
+ *   - `contact_briefs`       → cascades from `contacts`
+ *   - `interaction_mentions` → cascades from `contacts` and `interactions`
+ * Nothing else may be omitted. A `user_id` column is not on its own evidence of a cascade:
+ * `note_batches` and `extension_usage` both have one and neither has a foreign key to
+ * anything, so both are deleted explicitly below. `suggested_reminders` looks like it would cascade but does
  * not: both of its foreign keys are `on delete set null`, so its rows outlive the reminders
  * and contacts they point at. `outlook_connections` has no parent at all.
  *
@@ -100,6 +107,11 @@ export async function purgeUserData(
   await db.delete(closenessCohorts).where(eq(closenessCohorts.userId, userId));
   await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
   await db.delete(interactions).where(eq(interactions.userId, userId));
+  // The pasted text a note was parsed out of, kept so a save can be undone. `source_text`
+  // is the user's own prose about named people, which makes this the most sensitive row
+  // here. Nothing cascades it: `reminders.note_batch_id` and `interactions.note_batch_id`
+  // are plain uuid columns with no foreign key, so deleting either leaves this untouched.
+  await db.delete(noteBatches).where(eq(noteBatches.userId, userId));
   // Before `reminders` and `contacts`: its FKs are `set null`, so deleting those first
   // would rewrite these rows on the way to deleting them anyway.
   await db.delete(suggestedReminders).where(eq(suggestedReminders.userId, userId));
@@ -141,6 +153,10 @@ export async function purgeUserData(
   await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
   await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
   await db.delete(usageEvents).where(eq(usageEvents.userId, userId));
+  // Extension rate-limit counters, keyed by `user_id` as the primary key with no parent
+  // to cascade from. Not content, but it is a per-user row and the rule above admits no
+  // exceptions that are not written down.
+  await db.delete(extensionUsage).where(eq(extensionUsage.userId, userId));
   await db.delete(errorEvents).where(eq(errorEvents.userId, userId));
 
   // What they told us, and which walls they hit. Both are personal — one is literally
