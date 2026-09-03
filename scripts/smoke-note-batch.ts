@@ -6,12 +6,9 @@
  * Writes to the local PGlite file. Stop this worktree's dev server first.
  * Run: npx tsx scripts/smoke-note-batch.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import "./smoke/_env";
 process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke-note-batch";
 process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-note-batch";
-delete process.env.DATABASE_URL;
 
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";

@@ -41,15 +41,21 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-ics-feed": "pure",
   "smoke-import-progress-card": "pure",
   "smoke-lifetime-pricing": "pure",
+  "smoke-locked-participant": "pure",
+  "smoke-mention-resolution": "pure",
+  "smoke-note-parse-schema": "pure",
   "smoke-ops-alerts": "pure",
   "smoke-parsers": "pure",
   "smoke-public-routes": "pure",
   "smoke-recruiter-scan": "pure",
+  "smoke-relative-date": "pure",
   "smoke-scale-schema": "pure", // own in-memory PGlite
   "smoke-schema-ddl": "pure",
   "smoke-warp-chrono": "pure",
   "smoke-warp-journeys": "pure",
   // pglite ----------------------------------------------------------------------------
+  "smoke-account-alerts": "pglite",
+  "smoke-action-items": "pglite",
   "smoke-admin": "pglite",
   "smoke-admin-actions": "pglite",
   "smoke-admin-export": "pglite",
@@ -58,6 +64,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-admin-unmasked": "pglite",
   "smoke-avatar-migration": "pglite",
   "smoke-broadcasts": "pglite",
+  "smoke-contact-brief": "pglite",
   "smoke-contacts-page": "pglite", // own in-memory PGlite, but imports the DDL from ../src/db
   "smoke-embedding-backfill": "pglite",
   "smoke-entitlements": "pglite",
@@ -69,6 +76,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-interest-list-admin": "pglite",
   "smoke-internal-auth": "pglite", // imports route handlers that reach @/db
   "smoke-linkedin-timeline-backfill": "pglite",
+  "smoke-note-batch": "pglite",
   "smoke-ops-sweep": "pglite",
   "smoke-page-budgets": "pglite",
   "smoke-presence": "pglite",

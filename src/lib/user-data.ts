@@ -106,6 +106,10 @@ export async function purgeUserData(
 
   await db.delete(closenessCohorts).where(eq(closenessCohorts.userId, userId));
   await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
+  // `note_batches` carries the raw pasted note text and has no cascading FK to `contacts`
+  // or `interactions` (its `seed_contact_id` is a plain column) — it survives both of
+  // those deletes below unless removed explicitly.
+  await db.delete(noteBatches).where(eq(noteBatches.userId, userId));
   await db.delete(interactions).where(eq(interactions.userId, userId));
   // The pasted text a note was parsed out of, kept so a save can be undone. `source_text`
   // is the user's own prose about named people, which makes this the most sensitive row
