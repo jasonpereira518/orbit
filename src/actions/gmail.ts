@@ -7,7 +7,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { gmailConnections, imports, userSettings } from "@/db/schema";
 import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
-import { requireSyncUser } from "@/lib/plan-guards";
+import { requireContactsImportUser, requireSyncUser } from "@/lib/plan-guards";
 import { getAiConfig } from "@/lib/ai";
 import {
   GMAIL_SCAN_IMPORT_TYPE,
@@ -16,8 +16,15 @@ import {
 import {
   buildGmailAuthUrl,
   getGmailOAuthConfigSummary,
+  hasContactsScope,
+  hasMailboxScope,
   hasSendScope,
+  type GoogleScopeSet,
 } from "@/lib/gmail";
+import {
+  decodeGmailOAuthState,
+  encodeGmailOAuthState,
+} from "@/lib/gmail-oauth-state";
 
 const OAUTH_STATE_COOKIE = "orbit_gmail_oauth_state";
 
@@ -31,6 +38,10 @@ export type GmailConnectionStatus = {
    * and can scan, but must reconnect before Orbit can send on their behalf.
    */
   canSend: boolean;
+  /** True once this connection has consented to the People API (contacts) scope. */
+  canImportContacts: boolean;
+  /** True once this connection has consented to gmail.readonly (the recruiter scan). */
+  canScanMailbox: boolean;
   /** Safe: configured redirect URI only (no secrets). */
   redirectUri: string | null;
 };
@@ -45,6 +56,8 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
       emailAddress: null,
       lastSyncedAt: null,
       canSend: false,
+      canImportContacts: false,
+      canScanMailbox: false,
       redirectUri: summary.redirectUri,
     };
   }
@@ -54,20 +67,27 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
     where: eq(gmailConnections.userId, userId),
   });
 
+  const active = Boolean(conn && conn.status === "active");
   return {
     configured: true,
-    connected: Boolean(conn && conn.status === "active"),
+    connected: active,
     emailAddress: conn?.emailAddress || null,
     lastSyncedAt: conn?.lastSyncedAt?.toISOString() || null,
-    canSend: Boolean(conn && conn.status === "active" && hasSendScope(conn.scopes)),
+    canSend: active && hasSendScope(conn!.scopes),
+    canImportContacts: active && hasContactsScope(conn!.scopes),
+    canScanMailbox: active && hasMailboxScope(conn!.scopes),
     redirectUri: summary.redirectUri,
   };
 }
 
-export async function startGmailOAuth(
-  returnTo?: string
-): Promise<{ url: string }> {
-  const userId = await requireSyncUser();
+export async function startGmailOAuth(opts: {
+  returnTo?: string;
+  scopes: GoogleScopeSet;
+}): Promise<{ url: string }> {
+  const userId =
+    opts.scopes === "contacts"
+      ? await requireContactsImportUser()
+      : await requireSyncUser();
   const summary = getGmailOAuthConfigSummary();
   if (!summary.configured) {
     const hint = summary.redirectUriError
@@ -82,12 +102,18 @@ export async function startGmailOAuth(
   console.info("[gmail-oauth] starting auth", {
     redirectUri: summary.redirectUri,
     hasClientId: summary.hasClientId,
+    scopes: opts.scopes,
   });
 
   // returnTo is a same-origin path only — never an absolute/external URL.
   const safeReturnTo =
-    returnTo && returnTo.startsWith("/") ? returnTo : "";
-  const state = `${userId}:${crypto.randomUUID()}:${encodeURIComponent(safeReturnTo)}`;
+    opts.returnTo && opts.returnTo.startsWith("/") ? opts.returnTo : "";
+  const state = encodeGmailOAuthState({
+    userId,
+    nonce: crypto.randomUUID(),
+    returnTo: safeReturnTo,
+    scopes: opts.scopes,
+  });
   const jar = await cookies();
   jar.set(OAUTH_STATE_COOKIE, state, {
     httpOnly: true,
@@ -97,7 +123,7 @@ export async function startGmailOAuth(
     maxAge: 600,
   });
 
-  return { url: buildGmailAuthUrl(state) };
+  return { url: buildGmailAuthUrl(state, opts.scopes) };
 }
 
 export async function disconnectGmail() {
@@ -109,17 +135,22 @@ export async function disconnectGmail() {
 
 export async function consumeGmailOAuthState(
   state: string | null
-): Promise<{ userId: string; returnTo: string | null }> {
+): Promise<{ userId: string; returnTo: string | null; scopes: GoogleScopeSet }> {
   const jar = await cookies();
   const expected = jar.get(OAUTH_STATE_COOKIE)?.value;
   jar.delete(OAUTH_STATE_COOKIE);
   if (!state || !expected || state !== expected) {
     throw new Error("Invalid OAuth state");
   }
-  const [userId, , encodedReturnTo] = state.split(":");
-  if (!userId) throw new Error("Invalid OAuth state");
-  const returnTo = encodedReturnTo ? decodeURIComponent(encodedReturnTo) : "";
-  return { userId, returnTo: returnTo.startsWith("/") ? returnTo : null };
+  // A malformed or scope-less state fails closed as a state mismatch — never defaults to
+  // the mailbox scope set.
+  const decoded = decodeGmailOAuthState(state);
+  if (!decoded) throw new Error("Invalid OAuth state");
+  return {
+    userId: decoded.userId,
+    returnTo: decoded.returnTo.startsWith("/") ? decoded.returnTo : null,
+    scopes: decoded.scopes,
+  };
 }
 
 
@@ -167,6 +198,11 @@ export async function startGmailRecruiterScan(): Promise<{ importId: string }> {
   });
   if (!conn || conn.status !== "active") {
     throw new Error("Connect Gmail before scanning.");
+  }
+  if (!hasMailboxScope(conn.scopes)) {
+    throw new Error(
+      "Grant Orbit mailbox access to scan — reconnect Gmail from this page."
+    );
   }
 
   // Fail here rather than after the mailbox sweep: classification is the whole point of

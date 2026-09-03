@@ -78,6 +78,9 @@ export default async function SettingsPage() {
           initialSocialLinks={initialSettings.socialLinks}
         />
       </Section>
+      <Section id="settings-ai" hidden={hidden}>
+        <AiSettings initialSettings={initialSettings} />
+      </Section>
       <Section id="settings-plan" hidden={hidden}>
         <PlanSettings
           entitlements={planOverview.entitlements}
@@ -89,9 +92,6 @@ export default async function SettingsPage() {
       </Section>
       <Section id="settings-appearance" hidden={hidden}>
         <AppearanceSettings initialTheme={initialSettings.theme} />
-      </Section>
-      <Section id="settings-ai" hidden={hidden}>
-        <AiSettings initialSettings={initialSettings} />
       </Section>
       <Section id="settings-notifications" hidden={hidden}>
         <NotificationSettings />

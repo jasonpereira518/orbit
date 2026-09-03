@@ -25,9 +25,9 @@ const COLUMN_ACCENT: Record<Plan, { heading: string; tick: string; tint?: string
  * Every row here is checked against `entitlements.ts`, which is the only place a gate is
  * decided — not against what the tiers *say*. Worth knowing before editing:
  *
- *  - The first block is ungated in code. Capture, chat, the map, LinkedIn import,
- *    reminders, the knowledge base, and export never consult entitlements at all, so they
- *    are true on every plan and stay grouped together.
+ *  - The first block is ungated in code. Capture, chat, the map, LinkedIn import, Google
+ *    and Outlook contacts import, reminders, the knowledge base, and export never consult
+ *    entitlements at all, so they are true on every plan and stay grouped together.
  *  - `canUseOutreach`, `canUseRecruiters`, `canUseSync`, `canUseExtension`, and
  *    `canUseHostedSending` are all plain `plan !== "free"`, so Lifetime matches Pro on
  *    each of them. Sending included: it is capped at `DAILY_SEND_LIMIT` a day on every
@@ -48,11 +48,12 @@ const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
   { label: "Chat with your network", cells: [true, true, true] },
   { label: "Constellation map", cells: [true, true, true] },
   { label: "LinkedIn import", cells: [true, true, true] },
+  { label: "Google and Outlook contacts import", cells: [true, true, true] },
   { label: "Reminders and follow-up feed", cells: [true, true, true] },
   { label: "Knowledge base", cells: [true, true, true] },
   { label: "Export your data", cells: [true, true, true] },
   { label: "Recruiter tracking", cells: [false, true, true] },
-  { label: "Gmail, Outlook, calendar sync", cells: [false, true, true] },
+  { label: "Gmail mailbox sync, sending, and calendar sync", cells: [false, true, true] },
   { label: "Chrome extension", cells: [false, true, true] },
   { label: "Outreach campaigns", cells: [false, true, true] },
   { label: "Email and SMS sending", cells: [false, true, true] },

@@ -52,6 +52,11 @@ const MESSAGES_FINAL: GuideStep = {
   body: "Unzip the archive and upload messages.csv — or the whole ZIP — on this page. Orbit will find messages.csv inside the ZIP if needed.",
 };
 
+const CONNECTIONS_FINAL: GuideStep = {
+  title: "Upload Connections here",
+  body: "Upload the ZIP LinkedIn emailed you — Orbit finds Connections.csv inside.",
+};
+
 function GuideImage({ src, alt }: { src?: string; alt: string }) {
   const [failed, setFailed] = useState(false);
 
@@ -75,7 +80,7 @@ export function LinkedInExportGuide({ variant }: { variant: GuideVariant }) {
   const [open, setOpen] = useState(false);
   const steps =
     variant === "connections"
-      ? SHARED_EXPORT_STEPS
+      ? [...SHARED_EXPORT_STEPS, CONNECTIONS_FINAL]
       : [...SHARED_EXPORT_STEPS, MESSAGES_FINAL];
   const title =
     variant === "connections"

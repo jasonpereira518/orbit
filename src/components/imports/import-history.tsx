@@ -1,32 +1,98 @@
 "use client";
 
+import { useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import {
   Calendar as CalendarIcon,
   FileSpreadsheet,
+  Mail,
   MessageSquare,
+  RotateCw,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { retryImport } from "@/actions/imports";
+import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
 
-const SOURCE_META: Record<string, { icon: LucideIcon; badge: string }> = {
+const SOURCE_META: Record<string, { icon: LucideIcon; badge: string; label: string }> = {
   linkedin_connections: {
     icon: FileSpreadsheet,
     badge: "bg-import-connections/10 text-import-connections",
+    label: "LinkedIn connections",
   },
   linkedin_messages: {
     icon: MessageSquare,
     badge: "bg-import-messages/10 text-import-messages",
+    label: "LinkedIn messages",
   },
   calendar_ics: {
     icon: CalendarIcon,
     badge: "bg-import-calendar/10 text-import-calendar",
+    label: "Calendar",
   },
   calendar_csv: {
     icon: CalendarIcon,
     badge: "bg-import-calendar/10 text-import-calendar",
+    label: "Calendar",
+  },
+  google_contacts: {
+    icon: Users,
+    badge: "bg-import-connections/10 text-import-connections",
+    label: "Google Contacts",
+  },
+  outlook_contacts: {
+    icon: Users,
+    badge: "bg-import-connections/10 text-import-connections",
+    label: "Outlook Contacts",
+  },
+  gmail_recruiter_scan: {
+    icon: Mail,
+    badge: "bg-import-messages/10 text-import-messages",
+    label: "Gmail recruiter scan",
   },
 };
+
+const STATUS_LABELS: Record<string, string> = {
+  pending: "In progress",
+  processing: "In progress",
+  completed: "Done",
+  failed: "Failed",
+  cancelled: "Stopped",
+};
+
+/** Re-arms and resumes a failed, server-owned import. Only rendered when the page has
+ *  already determined (server-side) that this row is eligible — see `canRetry`. */
+function RetryButton({ importId }: { importId: string }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      disabled={pending}
+      onClick={() =>
+        start(async () => {
+          const res = await retryImport(importId);
+          if (!res.ok) {
+            toast.error(res.error);
+            return;
+          }
+          toast.success("Retrying — Orbit picks up where it stopped.");
+          router.refresh();
+        })
+      }
+    >
+      <RotateCw className={cn("h-3.5 w-3.5", pending && "animate-spin")} />
+      Retry
+    </Button>
+  );
+}
 
 export type ImportHistoryItem = {
   id: string;
@@ -57,6 +123,13 @@ export type ImportHistoryItem = {
     eventsProcessed?: number;
   } | null;
   createdAt: Date | string;
+  /**
+   * Whether this row is eligible for the user-facing Retry button: `status === "failed"` and
+   * a resumable import type. Computed server-side (`imports/page.tsx`) rather than here —
+   * this is a "use client" file and `isResumableImportType` lives in a module that reaches
+   * `@/db`, which client components must never import.
+   */
+  canRetry?: boolean;
 };
 
 export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
@@ -71,8 +144,8 @@ export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
 
       {history.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No imports yet. Upload a LinkedIn Connections or Messages file above,
-          or sync a calendar to get started.
+          No imports yet. Connect Google or Outlook above, or upload a
+          LinkedIn export.
         </p>
       ) : (
         <ul className="space-y-2">
@@ -97,7 +170,7 @@ export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
                       {h.fileName || "Import"}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {h.importType ? `${h.importType} · ` : ""}
+                      {meta ? `${meta.label} · ` : ""}
                       {h.contactsCreated ?? 0} created ·{" "}
                       {h.contactsUpdated ?? 0} updated
                       {h.stats?.messagesImported
@@ -130,17 +203,20 @@ export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
                     ) : null}
                   </div>
                 </div>
-                <Badge
-                  variant={
-                    h.status === "failed"
-                      ? "destructive"
-                      : h.status === "processing" || h.status === "cancelled"
-                        ? "secondary"
-                        : "outline"
-                  }
-                >
-                  {h.status}
-                </Badge>
+                <div className="flex shrink-0 items-center gap-2">
+                  {h.canRetry ? <RetryButton importId={h.id} /> : null}
+                  <Badge
+                    variant={
+                      h.status === "failed"
+                        ? "destructive"
+                        : h.status === "processing" || h.status === "cancelled"
+                          ? "secondary"
+                          : "outline"
+                    }
+                  >
+                    {STATUS_LABELS[h.status] ?? h.status}
+                  </Badge>
+                </div>
               </li>
             );
           })}

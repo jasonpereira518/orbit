@@ -7,27 +7,47 @@ import { ReauthRequiredError, isRefreshRejection } from "@/lib/errors";
 const GOOGLE_CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts.readonly";
 
 /**
- * Sending as the user, rather than through Orbit's own Resend domain, is what makes a
- * recruiter reply land in their inbox and the message appear in their Sent folder.
- *
- * This is a Google *restricted* scope: it works immediately for the developer account
- * and listed test users, but public launch requires app verification and likely a
- * security assessment. Adding it here also invalidates existing consents — every
- * already-connected user must reconnect, which is why `hasSendScope` exists.
+ * Google tiers scopes by how much scrutiny an app requesting them gets. `contacts.readonly`
+ * (People API) above is a *sensitive* scope. Sending as the user, rather than through
+ * Orbit's own Resend domain, is what makes a recruiter reply land in their inbox and the
+ * message appear in their Sent folder — but `gmail.readonly` and `gmail.send` below are
+ * Google *restricted* scopes: they work immediately for the developer account and listed
+ * test users, but public launch requires app verification and likely a security
+ * assessment. Adding either here also invalidates existing consents — every
+ * already-connected user must reconnect, which is why `hasSendScope`/`hasMailboxScope`
+ * exist. Splitting the consent screen by flow (contacts-only for importing, mailbox for
+ * Pro recruiter scanning/sending) keeps a first-run contacts import off the restricted
+ * tier entirely.
  */
 const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+const GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 
-const GMAIL_SCOPES = [
-  "https://www.googleapis.com/auth/gmail.readonly",
-  GMAIL_SEND_SCOPE,
+export type GoogleScopeSet = "contacts" | "mailbox";
+
+const BASE_SCOPES = [
+  "openid",
   "https://www.googleapis.com/auth/userinfo.email",
   GOOGLE_CONTACTS_SCOPE,
-  "openid",
-].join(" ");
+];
+
+const GOOGLE_SCOPE_SETS: Record<GoogleScopeSet, string[]> = {
+  contacts: BASE_SCOPES,
+  mailbox: [...BASE_SCOPES, GMAIL_READONLY_SCOPE, GMAIL_SEND_SCOPE],
+};
+
+/** Space-joined OAuth scope string for the given consent set. */
+export function googleScopesFor(set: GoogleScopeSet): string {
+  return GOOGLE_SCOPE_SETS[set].join(" ");
+}
 
 /** True once a connection has re-consented to the People API scope. */
 export function hasContactsScope(scopes: string | null | undefined) {
   return Boolean(scopes?.includes(GOOGLE_CONTACTS_SCOPE));
+}
+
+/** True once a connection has granted mailbox read access (the recruiter scan). */
+export function hasMailboxScope(scopes: string | null | undefined) {
+  return Boolean(scopes?.includes(GMAIL_READONLY_SCOPE));
 }
 
 /** True once a connection has re-consented to sending. Connections made before the
@@ -105,7 +125,7 @@ export function getGmailOAuthConfigSummary(): {
   };
 }
 
-export function buildGmailAuthUrl(state: string) {
+export function buildGmailAuthUrl(state: string, scopeSet: GoogleScopeSet) {
   const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
   if (!clientId) throw new Error("GOOGLE_CLIENT_ID is not configured");
   const redirectUri = getGoogleRedirectUri();
@@ -114,9 +134,10 @@ export function buildGmailAuthUrl(state: string) {
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: GMAIL_SCOPES,
+    scope: googleScopesFor(scopeSet),
     access_type: "offline",
     prompt: "consent",
+    include_granted_scopes: "true",
     state,
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
@@ -190,7 +211,8 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> 
 export async function upsertGmailConnection(
   userId: string,
   tokens: TokenResponse,
-  emailAddress: string
+  emailAddress: string,
+  opts?: { requestedScopes?: string }
 ) {
   const db = await getDb();
   const expiresAt = tokens.expires_in
@@ -206,6 +228,11 @@ export async function upsertGmailConnection(
     ? encrypt(tokens.refresh_token)
     : existing?.refreshTokenEncrypted || null;
 
+  // Google's token response omits `scope` when the granted set didn't change from the
+  // last consent — never default a contacts-only connection up to the full mailbox set
+  // just because Google left the field out.
+  const scopes = tokens.scope || opts?.requestedScopes || existing?.scopes || null;
+
   if (existing) {
     const [updated] = await db
       .update(gmailConnections)
@@ -214,7 +241,7 @@ export async function upsertGmailConnection(
         accessTokenEncrypted: accessEnc,
         refreshTokenEncrypted: refreshEnc,
         tokenExpiresAt: expiresAt,
-        scopes: tokens.scope || GMAIL_SCOPES,
+        scopes,
         status: "active",
         updatedAt: new Date(),
       })
@@ -231,7 +258,7 @@ export async function upsertGmailConnection(
       accessTokenEncrypted: accessEnc,
       refreshTokenEncrypted: refreshEnc,
       tokenExpiresAt: expiresAt,
-      scopes: tokens.scope || GMAIL_SCOPES,
+      scopes,
       status: "active",
     })
     .returning();
@@ -308,7 +335,12 @@ export async function getValidAccessToken(userId: string): Promise<string> {
   }
 
   // The upsert resets status to "active", which is the only path back from needs_reauth.
-  await upsertGmailConnection(userId, refreshed, conn.emailAddress);
+  // A token refresh response never carries `scope` at all, so the existing connection's
+  // scopes are the fallback — never the full mailbox set — to avoid silently upgrading a
+  // contacts-only connection's stored scopes.
+  await upsertGmailConnection(userId, refreshed, conn.emailAddress, {
+    requestedScopes: conn.scopes ?? undefined,
+  });
   await touchLastSynced({ id: conn.id, lastSyncedAt: null });
   return refreshed.access_token;
 }

@@ -181,6 +181,11 @@ export function GmailImportPanel({
               ? `Connected as ${connection.emailAddress}. Orbit searches your whole mailbox for recruiter threads and writes a private summary of each one.`
               : "Search your whole mailbox for recruiters, the companies they hired for, and a summary of every conversation."}
           </p>
+          {connection.connected && !connection.canScanMailbox ? (
+            <p className="mt-1 text-sm text-muted-foreground">
+              Orbit only has contacts access to this account.
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
           {!connection.connected ? (
@@ -189,7 +194,7 @@ export function GmailImportPanel({
               onClick={() =>
                 start(async () => {
                   try {
-                    const { url } = await startGmailOAuth();
+                    const { url } = await startGmailOAuth({ scopes: "mailbox" });
                     window.location.href = url;
                   } catch (err) {
                     toast.error(
@@ -203,28 +208,48 @@ export function GmailImportPanel({
             </Button>
           ) : (
             <>
-              <Button
-                disabled={pending || running}
-                onClick={() =>
-                  start(async () => {
-                    try {
-                      const { importId } = await startGmailRecruiterScan();
-                      const next = await getGmailScanStatus(importId);
-                      if (next) {
-                        setScan(next);
-                        mirror(next);
+              {connection.canScanMailbox ? (
+                <Button
+                  disabled={pending || running}
+                  onClick={() =>
+                    start(async () => {
+                      try {
+                        const { importId } = await startGmailRecruiterScan();
+                        const next = await getGmailScanStatus(importId);
+                        if (next) {
+                          setScan(next);
+                          mirror(next);
+                        }
+                        toast.success("Scan started — this can take a few minutes");
+                      } catch (err) {
+                        toast.error(
+                          err instanceof Error ? err.message : "Could not start scan"
+                        );
                       }
-                      toast.success("Scan started — this can take a few minutes");
-                    } catch (err) {
-                      toast.error(
-                        err instanceof Error ? err.message : "Could not start scan"
-                      );
-                    }
-                  })
-                }
-              >
-                {running ? "Scanning…" : scan ? "Scan again" : "Scan mailbox"}
-              </Button>
+                    })
+                  }
+                >
+                  {running ? "Scanning…" : scan ? "Scan again" : "Scan mailbox"}
+                </Button>
+              ) : (
+                <Button
+                  disabled={pending}
+                  onClick={() =>
+                    start(async () => {
+                      try {
+                        const { url } = await startGmailOAuth({ scopes: "mailbox" });
+                        window.location.href = url;
+                      } catch (err) {
+                        toast.error(
+                          err instanceof Error ? err.message : "OAuth failed"
+                        );
+                      }
+                    })
+                  }
+                >
+                  Grant mailbox access
+                </Button>
+              )}
               <Button
                 variant="outline"
                 disabled={pending || running}

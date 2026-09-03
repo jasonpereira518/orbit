@@ -23,10 +23,13 @@ import type { WizardStep } from "@/components/onboarding/wizard/setup-wizard";
 const WIZARD_STEP_IDS: Record<WizardStep, true> = {
   intro: true,
   "add-people": true,
+  "connect-google": true,
   manual: true,
   capture: true,
   import: true,
+  "linkedin-later": true,
   triage: true,
+  "ai-key": true,
   review: true,
 };
 const VALID_WIZARD_STEPS = new Set<string>(Object.keys(WIZARD_STEP_IDS));

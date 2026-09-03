@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import {
   Calendar as CalendarIcon,
+  ChevronDown,
   FileSpreadsheet,
   MessageSquare,
   NotebookPen,
@@ -54,7 +55,7 @@ const TABS: {
 }[] = [
   {
     id: "connections",
-    label: "Connections",
+    label: "People",
     icon: FileSpreadsheet,
     activeText: "text-import-connections",
   },
@@ -159,11 +160,17 @@ export function ImportHub({
 }: {
   history: ImportHistoryItem[];
   calendarSubscriptions?: CalendarSub[];
-  /** Calendar sync is a paid feature; LinkedIn import stays free on every plan. */
+  /** Calendar sync is a paid feature; LinkedIn, Google, and Outlook contacts imports are free on every plan. */
   canUseSync?: boolean;
 }) {
   const job = useImportJob();
   const [tab, setTab] = useState<ImportTab>("connections");
+  // Collapsed by default — Google and Outlook lead the People tab now, and LinkedIn is the
+  // occasional path. Open it at mount when a LinkedIn connections import is already running,
+  // so returning mid-import doesn't hide its own progress behind a closed disclosure.
+  const [linkedInOpen, setLinkedInOpen] = useState(
+    () => job?.kind === "connections" && job.status === "running"
+  );
   // Mount panels on first visit so inactive tabs don't load code upfront,
   // but keep them mounted afterward so in-flight imports survive switches.
   const [mounted, setMounted] = useState<Record<ImportTab, boolean>>({
@@ -278,9 +285,37 @@ export function ImportHub({
           hidden={tab !== "connections"}
           className="space-y-6"
         >
-          <LinkedInConnectionsImport />
           <GoogleContactsImport />
           <OutlookContactsImport />
+          <div className="space-y-3">
+            <button
+              type="button"
+              aria-expanded={linkedInOpen}
+              aria-controls="linkedin-connections-disclosure"
+              onClick={() => setLinkedInOpen((prev) => !prev)}
+              className="flex w-full items-start justify-between gap-3 rounded-xl border border-border/60 bg-muted/30 px-4 py-3 text-left transition-colors hover:border-border"
+            >
+              <span className="min-w-0">
+                <span className="block text-sm font-medium text-foreground">
+                  Have a LinkedIn export?
+                </span>
+                <span className="block text-sm text-muted-foreground">
+                  Upload the ZIP or Connections.csv LinkedIn emailed you —
+                  exports take about a day.
+                </span>
+              </span>
+              <ChevronDown
+                aria-hidden="true"
+                className={cn(
+                  "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                  linkedInOpen && "rotate-180"
+                )}
+              />
+            </button>
+            <div id="linkedin-connections-disclosure" hidden={!linkedInOpen}>
+              <LinkedInConnectionsImport />
+            </div>
+          </div>
         </div>
       )}
       {mounted.messages && (
@@ -314,7 +349,7 @@ export function ImportHub({
                 "New people from invites land in your contacts",
                 "Follow-up reminders created automatically",
               ]}
-              note="LinkedIn imports stay free on every plan."
+              note="LinkedIn, Google, and Outlook contacts imports are free on every plan."
             />
           )}
         </div>

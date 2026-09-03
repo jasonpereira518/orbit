@@ -18,6 +18,7 @@ import type {
   KnowledgeStats,
 } from "@/actions/knowledge";
 import { Badge } from "@/components/ui/badge";
+import { EmptyOrbit } from "@/components/empty-orbit";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -104,7 +105,7 @@ export function KnowledgeBaseView({
         />
         <Stat
           icon={<BookOpen className="h-4 w-4" />}
-          label="Searchable chunks"
+          label="Search index"
           value={stats.embeddings}
         />
       </div>
@@ -119,30 +120,10 @@ export function KnowledgeBaseView({
       </p>
 
       {empty ? (
-        <div className="rounded-2xl border border-dashed border-border/70 px-6 py-12 text-center">
-          <BookOpen className="mx-auto h-8 w-8 text-muted-foreground" />
-          <h2 className="mt-3 font-[family-name:var(--font-display)] text-xl text-ink">
-            Your knowledge base is empty
-          </h2>
-          <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-            Import LinkedIn connections and messages, or log notes from Capture.
-            Everything you store about people shows up here and powers Chat.
-          </p>
-          <div className="mt-5 flex flex-wrap justify-center gap-3">
-            <Link
-              href="/imports"
-              className="rounded-xl bg-primary px-4 py-2 text-sm text-primary-foreground"
-            >
-              Import LinkedIn
-            </Link>
-            <Link
-              href="/capture"
-              className="rounded-xl border border-border/70 px-4 py-2 text-sm"
-            >
-              Log a note
-            </Link>
-          </div>
-        </div>
+        <EmptyOrbit
+          compact
+          hint="Notes, messages, and summaries about your people will appear here."
+        />
       ) : (
         <>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">

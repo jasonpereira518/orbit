@@ -12,6 +12,11 @@ import {
   ImportFilePicker,
   ImportWarningBanner,
 } from "@/components/imports/import-utils";
+import {
+  CONNECTIONS_ENTRY,
+  MESSAGES_ENTRY,
+  readCsvFromArchive,
+} from "@/lib/csv-archive";
 
 const LARGE_FILE_WARNING_BYTES = 15 * 1024 * 1024;
 import {
@@ -74,8 +79,8 @@ export function LinkedInConnectionsImport() {
               LinkedIn connections
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Upload your Connections CSV, review everyone, then import into
-              your orbit. Imports keep running if you leave this page.
+              Upload your Connections CSV or ZIP, review everyone, then import
+              into your orbit. Imports keep running if you leave this page.
             </p>
           </div>
         </div>
@@ -83,7 +88,7 @@ export function LinkedInConnectionsImport() {
       </div>
 
       <ImportFilePicker
-        accept=".csv,text/csv"
+        accept=".csv,.zip,text/csv,application/zip"
         disabled={busy}
         fileName={fileName}
         onFile={(file) => {
@@ -94,13 +99,23 @@ export function LinkedInConnectionsImport() {
           }
           start(async () => {
             try {
-              setFileName(file.name);
-              const text = await file.text();
+              const { text, fileName: name, siblingCsvs } =
+                await readCsvFromArchive(file, {
+                  entryPattern: CONNECTIONS_ENTRY,
+                  fallbackName: "Connections.csv",
+                  missingMessage: "No Connections.csv found in that ZIP.",
+                });
+              setFileName(name);
               setCsvText(text);
               const res = await previewLinkedInCsv(text);
               if ("error" in res) throw new Error(res.error);
               applyPreview(res);
               toast.success(`Loaded ${res.totalRows} people`);
+              if (siblingCsvs.some((n) => MESSAGES_ENTRY.test(n))) {
+                toast.message(
+                  "Also found messages.csv — upload the same ZIP on the Messages tab to see who you actually talk to.",
+                );
+              }
             } catch (err) {
               setPeople([]);
               setSelected(new Set());

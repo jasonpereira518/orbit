@@ -56,6 +56,7 @@ import {
   ContactInspectPanel,
   type InspectSelection,
 } from "@/components/graph/contact-inspect-panel";
+import { EMPTY_ORBIT_ACTIONS } from "@/components/empty-orbit";
 import {
   buildHybridGraphLayout,
   type ClusterLabelData,
@@ -1429,17 +1430,21 @@ function GraphCanvasInner({
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="pointer-events-auto max-w-sm rounded-2xl border border-white/10 bg-[#080b12]/90 px-6 py-5 text-center shadow-xl backdrop-blur-md">
             <p className="font-[family-name:var(--font-display)] text-lg text-white">
-              Your sky is empty
+              Your sky is empty — add people and they appear as stars.
             </p>
-            <p className="mt-1 text-sm text-white/55">
-              Add contacts and they will appear as stars in your constellation.
-            </p>
-            <Link
-              href="/contacts/new"
-              className="mt-4 inline-flex h-8 items-center rounded-lg bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/15"
-            >
-              Add a contact
-            </Link>
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+              {/* Light-on-dark card, not EmptyOrbit itself — its chrome is
+                  built for the bright surfaces, not this dark sky. */}
+              {EMPTY_ORBIT_ACTIONS.slice(0, 2).map((action) => (
+                <Link
+                  key={action.href}
+                  href={action.href}
+                  className="inline-flex h-8 items-center rounded-lg bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/15"
+                >
+                  {action.label}
+                </Link>
+              ))}
+            </div>
           </div>
         </div>
       )}

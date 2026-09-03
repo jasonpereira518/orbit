@@ -779,7 +779,7 @@ CREATE TABLE IF NOT EXISTS non_dilutive_funding (
  * v22 = non_dilutive_funding, plus fundraising_investors.received_at.
  * v23 = contact_embeddings.content_hash (hybrid contact search).
  */
-export const SCHEMA_VERSION = 23;
+export const SCHEMA_VERSION = 24;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1206,6 +1206,12 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "outreach_messages", "outcome_notes", "text");
   await ensureColumn(client, "outreach_messages", "replied_at", "timestamptz");
   await ensureColumn(client, "user_settings", "wizard_offered_at", "timestamptz");
+  await ensureColumn(
+    client,
+    "user_settings",
+    "linkedin_export_requested_at",
+    "timestamptz"
+  );
   await ensureColumn(client, "user_settings", "wizard_step", "text");
   await ensureColumn(client, "user_settings", "wizard_completed_at", "timestamptz");
   await ensureColumn(client, "user_settings", "email", "text");
@@ -1719,6 +1725,7 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `CREATE INDEX IF NOT EXISTS embeddings_user_idx ON contact_embeddings(user_id)`,
     `CREATE INDEX IF NOT EXISTS embeddings_contact_idx ON contact_embeddings(contact_id)`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_offered_at timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_export_requested_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_step text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wizard_completed_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email text`,

@@ -38,6 +38,12 @@ export type Entitlements = {
   canUseRecruiters: boolean;
   canUseSync: boolean;
   canUseExtension: boolean;
+  /**
+   * Google and Outlook contacts import. Free on every plan — kept as a FeatureKey anyway so
+   * it flows through the single resolver and gate-hit telemetry, and can be gated later
+   * without touching callers.
+   */
+  canUseContactsImport: boolean;
 };
 
 /** Feature keys that `requireEntitlement` can gate on. */
@@ -47,7 +53,8 @@ export type FeatureKey =
   | "hostedEnrichment"
   | "recruiters"
   | "sync"
-  | "extension";
+  | "extension"
+  | "contactsImport";
 
 /**
  * Thrown when a user's plan does not cover an action. Carries enough structure for the
@@ -131,6 +138,7 @@ export function entitlementsForPlan(
     canUseRecruiters: paid,
     canUseSync: paid,
     canUseExtension: paid,
+    canUseContactsImport: true,
   };
 }
 
@@ -165,8 +173,9 @@ const FEATURE_DENIAL: Record<FeatureKey, string> = {
   hostedEnrichment:
     "Contact enrichment on Orbit's credits requires Orbit Pro. On any other plan, add your own Apollo key in Settings.",
   recruiters: "Recruiter tracking is available on Orbit Pro and Orbit Lifetime.",
-  sync: "Mailbox and calendar sync are available on Orbit Pro and Orbit Lifetime.",
+  sync: "Mailbox and calendar sync are available on Orbit Pro and Orbit Lifetime. Google and Outlook contacts import is free on every plan.",
   extension: "The Orbit extension is available on Orbit Pro and Orbit Lifetime.",
+  contactsImport: "Contacts import is included on every plan.",
 };
 
 const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
@@ -176,6 +185,7 @@ const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
   recruiters: "canUseRecruiters",
   sync: "canUseSync",
   extension: "canUseExtension",
+  contactsImport: "canUseContactsImport",
 };
 
 /**

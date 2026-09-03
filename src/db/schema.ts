@@ -82,6 +82,15 @@ export const userSettings = pgTable("user_settings", {
   }),
   onboardingStep: text("onboarding_step"),
   wizardOfferedAt: timestamp("wizard_offered_at", { withTimezone: true }),
+  /**
+   * Stamped the moment the user requests a LinkedIn export (from the wizard's
+   * `linkedin-later` step or `/imports`) and nulled again once they dismiss the nudge —
+   * it doubles as "requested" and "nudge visible", so `markLinkedInExportRequested` /
+   * `scheduleLinkedInExportReminder` and `dismissLinkedInExportNudge` are its only writers.
+   */
+  linkedinExportRequestedAt: timestamp("linkedin_export_requested_at", {
+    withTimezone: true,
+  }),
   wizardStep: text("wizard_step"),
   wizardCompletedAt: timestamp("wizard_completed_at", { withTimezone: true }),
   theme: text("theme").$type<"light" | "dark" | "system">(),

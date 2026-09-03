@@ -1,10 +1,12 @@
 "use client";
 
-import { type ReactNode, useRef } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { AlertTriangle, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { toast } from "@/lib/toast";
 import { useEtaCountdown } from "@/lib/use-eta-countdown";
+import { MESSAGES_ENTRY, readCsvFromArchive } from "@/lib/csv-archive";
 
 export type ImportProgressState = {
   done: number;
@@ -27,27 +29,36 @@ export async function readCsvOrZipMessages(file: File): Promise<{
   text: string;
   fileName: string;
 }> {
-  const lower = file.name.toLowerCase();
-  if (lower.endsWith(".zip")) {
-    const { default: JSZip } = await import("jszip");
-    const zip = await JSZip.loadAsync(await file.arrayBuffer());
-    const entry =
-      zip.file(/messages\.csv$/i)[0] ||
-      Object.values(zip.files).find(
-        (f) => !f.dir && /messages\.csv$/i.test(f.name)
-      );
-    if (!entry) {
-      throw new Error(
-        "No messages.csv found in ZIP. Export Messages from LinkedIn."
-      );
-    }
-    const text = await entry.async("string");
-    return { text, fileName: entry.name.split("/").pop() || "messages.csv" };
-  }
-  return { text: await file.text(), fileName: file.name };
+  return readCsvFromArchive(file, {
+    entryPattern: MESSAGES_ENTRY,
+    fallbackName: "messages.csv",
+    missingMessage: "No messages.csv found in ZIP. Export Messages from LinkedIn.",
+  });
 }
 
-/** Styled file picker that matches Orbit buttons (hides native Choose File UI). */
+/**
+ * Whether `file` satisfies `accept` — a comma list mixing extensions (`.csv`) and MIME types
+ * (`text/csv`). Matches by extension OR MIME type: a dropped file's reported `type` is
+ * sometimes empty (some OSes don't map every extension to a MIME type), so extension alone
+ * has to be enough, and vice versa for a MIME type Orbit doesn't also list an extension for.
+ */
+function fileMatchesAccept(file: File, accept: string): boolean {
+  const patterns = accept
+    .split(",")
+    .map((p) => p.trim().toLowerCase())
+    .filter(Boolean);
+  if (patterns.length === 0) return true;
+
+  const name = file.name.toLowerCase();
+  const type = file.type.toLowerCase();
+  return patterns.some((pattern) =>
+    pattern.startsWith(".") ? name.endsWith(pattern) : type === pattern
+  );
+}
+
+/** Styled file picker that matches Orbit buttons (hides native Choose File UI). The wrapper
+ *  doubles as a drop zone; the Button stays the only focusable/interactive control so the
+ *  wrapper itself is a plain `div`, not a button. */
 export function ImportFilePicker({
   accept,
   disabled,
@@ -66,9 +77,45 @@ export function ImportFilePicker({
   className?: string;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
 
   return (
-    <div className={cn("flex flex-wrap items-center gap-3", className)}>
+    <div
+      data-dragging={dragging ? "true" : undefined}
+      className={cn(
+        "flex flex-wrap items-center gap-3 rounded-xl border border-dashed border-border/70 p-4 transition-colors",
+        "data-[dragging=true]:border-primary/60 data-[dragging=true]:bg-accent/50",
+        className
+      )}
+      onDragOver={(e) => {
+        // preventDefault() unconditionally — omitting it while disabled leaves the browser's
+        // default drop behavior in place, so a file dropped during a running import navigates
+        // the tab to that file instead of being ignored.
+        e.preventDefault();
+        e.dataTransfer.dropEffect = disabled ? "none" : "copy";
+        if (disabled) return;
+        setDragging(true);
+      }}
+      onDragLeave={(e) => {
+        // Fires whenever the cursor moves onto a child (the Button, filename span, caption)
+        // too, not just when it truly exits the wrapper — only clear the highlight once the
+        // pointer's next target is outside this element, or every child boundary flickers it.
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        setDragging(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragging(false);
+        if (disabled) return;
+        const file = e.dataTransfer.files?.[0];
+        if (!file) return;
+        if (!fileMatchesAccept(file, accept)) {
+          toast.error("That file type isn't supported here.");
+          return;
+        }
+        onFile(file);
+      }}
+    >
       <input
         ref={inputRef}
         type="file"
@@ -95,6 +142,9 @@ export function ImportFilePicker({
         title={fileName || undefined}
       >
         {fileName || emptyLabel}
+      </span>
+      <span className="hidden text-xs text-muted-foreground sm:inline">
+        or drop a file here
       </span>
     </div>
   );

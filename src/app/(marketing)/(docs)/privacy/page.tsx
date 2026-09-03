@@ -102,7 +102,7 @@ const PROCESSORS = [
   {
     name: "Google and Microsoft",
     badge: "Optional",
-    body: "Gmail and Outlook mailbox sync, and calendar events, for the accounts you connect yourself.",
+    body: "Gmail and Outlook mailbox sync, calendar events, and Google and Outlook contacts, for the accounts you connect yourself.",
   },
   {
     name: "LinkedIn",

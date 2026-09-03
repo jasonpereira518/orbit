@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { imports } from "@/db/schema";
 import { LINKEDIN_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-connections";
@@ -50,6 +50,12 @@ export const RESUMABLE_IMPORT_TYPES = [
   GMAIL_SCAN_IMPORT_TYPE,
 ] as const;
 
+/** Whether `type` owns its own server-side processing and can therefore be re-armed and
+ *  resumed — see `RESUMABLE_IMPORT_TYPES` above. */
+export function isResumableImportType(type: string): boolean {
+  return (RESUMABLE_IMPORT_TYPES as readonly string[]).includes(type);
+}
+
 /**
  * Single entry point for resuming any server-owned import job.
  *
@@ -79,4 +85,37 @@ export async function runImportJobById(importId: string): Promise<void> {
       // Import types with no server-side runner land here — none remain today.
       return;
   }
+}
+
+/**
+ * Re-arm a failed or stuck import for another run: clears the error and flips the row back
+ * to `processing` so `runImportJobById` (via the engine's own resumable loop) picks up where
+ * it stopped rather than starting over.
+ *
+ * Deliberately does not run the job itself — same reasoning as the rest of this module's
+ * callers: a resumed job can run far longer than the caller's own request/action, so
+ * scheduling it is left to the caller via `after()`.
+ *
+ * The `fromStatuses` guard lives in the `UPDATE ... WHERE` itself, not a separate read
+ * beforehand — a caller checking `status === "failed"` and then unconditionally writing
+ * leaves a window where two concurrent retries of the same row can both pass that read and
+ * both schedule a run. Folding the status into the `WHERE` makes the database the single
+ * arbiter: only the request that actually flips the row wins, and `.returning()` tells the
+ * caller whether that was them. Defaults to `["failed"]` for the common (user-facing) case;
+ * the admin console retries from a wider set of non-completed statuses and passes that in.
+ */
+export async function rearmImportJob(
+  importId: string,
+  fromStatuses: readonly string[] = ["failed"]
+): Promise<boolean> {
+  const db = await getDb();
+  // Bare `.returning()`, not `.returning({ id: imports.id })` — an explicit field selector
+  // defeats Drizzle's overload resolution in this TS version (same note in `import-engine.ts`
+  // and `interest-list.ts`). Bare returns every column; only `.length` is used here.
+  const rows = await db
+    .update(imports)
+    .set({ status: "processing", errorMessage: null, updatedAt: new Date() })
+    .where(and(eq(imports.id, importId), inArray(imports.status, fromStatuses)))
+    .returning();
+  return rows.length > 0;
 }

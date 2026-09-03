@@ -3,12 +3,15 @@ import { formatDistanceToNow } from "date-fns";
 import { Bell, Sparkles, Users } from "lucide-react";
 import type { getOutreachPerformanceSummary } from "@/actions/outreach";
 import type { fetchDashboard } from "@/actions/reminders";
+import { getLinkedInExportStatus } from "@/actions/linkedin-export";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { DashboardGraphPreview } from "@/components/dashboard/dashboard-graph-preview";
 import { DueFollowUpRow } from "@/components/dashboard/due-follow-up-row";
+import { EmptyOrbit } from "@/components/empty-orbit";
 import { GenerateFollowUpsButton } from "@/components/dashboard/generate-follow-ups-button";
 import { GoalsSummary } from "@/components/dashboard/goals-summary";
+import { LinkedInExportNudge } from "@/components/imports/linkedin-export-nudge";
 import { NetworkDepthChart } from "@/components/dashboard/network-depth-chart";
 import { NetworkStatsCard } from "@/components/dashboard/network-stats-card";
 import { PlanLaunchCard } from "@/components/dashboard/plan-launch-card";
@@ -19,6 +22,9 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+
+/** Beyond this the export almost certainly isn't coming; the nudge stops offering it. */
+const LINKEDIN_NUDGE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * Async server sections for the streamed dashboard. Every bundle section
@@ -56,44 +62,45 @@ function contactMeta(data: BundleData, contactId: string | null | undefined) {
 const revealDelay = (ms: number) =>
   ({ "--reveal-delay": `${ms}ms` }) as React.CSSProperties;
 
+/**
+ * Plain module-level function, not inlined in the component: `Date.now()` in the render
+ * body itself trips `react-hooks/purity` (impure call during render).
+ */
+function shouldShowLinkedInNudge(status: {
+  requestedAt: string | null;
+  hasLinkedInImport: boolean;
+}): boolean {
+  if (!status.requestedAt || status.hasLinkedInImport) return false;
+  return (
+    Date.now() - new Date(status.requestedAt).getTime() <
+    LINKEDIN_NUDGE_MAX_AGE_MS
+  );
+}
+
 export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
-  const { data } = await bundle;
+  const [{ data }, linkedInExport] = await Promise.all([
+    bundle,
+    getLinkedInExportStatus(),
+  ]);
   const isEmptyNetwork = data.stats.totalContacts === 0;
+  const showLinkedInNudge = shouldShowLinkedInNudge(linkedInExport);
 
   return (
     <>
       {isEmptyNetwork && (
-        <div
-          className="reveal-mount rounded-2xl border border-dashed border-border/70 px-6 py-10 text-center"
-          style={revealDelay(60)}
-        >
-          <h2 className="font-[family-name:var(--font-display)] text-2xl text-ink">
-            Your orbit is empty
-          </h2>
-          <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-            Import LinkedIn connections, capture notes from a meeting, or add
-            someone by hand — then Orbit can remind you who to reach out to.
-          </p>
-          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-            <Link
-              href="/imports"
-              className={cn(buttonVariants(), "bg-primary text-primary-foreground")}
-            >
-              Import LinkedIn
-            </Link>
-            <Link
-              href="/capture"
-              className={cn(buttonVariants({ variant: "outline" }))}
-            >
-              Capture notes
-            </Link>
-            <Link
-              href="/contacts/new"
-              className={cn(buttonVariants({ variant: "ghost" }))}
-            >
-              Add a contact
-            </Link>
-          </div>
+        <div className="reveal-mount" style={revealDelay(60)}>
+          <EmptyOrbit showSetupLink />
+        </div>
+      )}
+
+      {showLinkedInNudge && (
+        <div className="reveal-mount" style={revealDelay(70)}>
+          <LinkedInExportNudge
+            requestedAt={linkedInExport.requestedAt as string}
+            inboxSearchUrl={linkedInExport.inboxSearchUrl}
+            inboxSearchLabel={linkedInExport.inboxSearchLabel}
+            showImportsLink
+          />
         </div>
       )}
 
@@ -313,29 +320,7 @@ export async function RecentlyUpdatedSection({
         </CardHeader>
         <CardContent className="space-y-2">
           {data.recentContacts.length === 0 ? (
-            <div className="space-y-3">
-              <Empty hint="No contacts yet." />
-              <div className="flex flex-wrap gap-2">
-                <Link
-                  href="/imports"
-                  className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-                >
-                  Import
-                </Link>
-                <Link
-                  href="/capture"
-                  className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-                >
-                  Capture
-                </Link>
-                <Link
-                  href="/contacts/new"
-                  className={cn(buttonVariants({ size: "sm" }))}
-                >
-                  Add contact
-                </Link>
-              </div>
-            </div>
+            <Empty hint="People you add will show up here." />
           ) : (
             data.recentContacts.map((c) => {
               const tier = tierForContact(data, c.id);

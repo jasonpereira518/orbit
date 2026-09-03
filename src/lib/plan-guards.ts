@@ -51,6 +51,12 @@ export async function requireSyncUser() {
   return userId;
 }
 
+export async function requireContactsImportUser() {
+  const userId = await requireUserId();
+  await requireEntitlement(userId, "contactsImport");
+  return userId;
+}
+
 /** Auth plus "this surface is switched on", for pages with no plan gate of their own. */
 export async function requireUserForSurface(surfaceKey: string) {
   const userId = await requireUserId();

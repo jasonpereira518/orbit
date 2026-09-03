@@ -12,8 +12,13 @@ import {
   isDemoMode,
 } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
-import { isOnboardingGatedPath, needsOnboarding } from "@/lib/onboarding";
+import {
+  hasAnyContacts,
+  isOnboardingGatedPath,
+  needsOnboarding,
+} from "@/lib/onboarding";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
+import { QUIET_UNTIL_FIRST_CONTACT } from "@/lib/surfaces";
 import { resolveThemePreference } from "@/lib/theme";
 
 /**
@@ -80,8 +85,8 @@ export default async function AppLayout({
 
   const theme = resolveThemePreference(settings.theme);
 
-  // Both feed the same render and neither reads the other, so they go together rather than
-  // back to back — one round trip on the critical path instead of two.
+  // All three feed the same render and none reads another, so they go together rather than
+  // back to back — one round trip on the critical path instead of three.
   //
   // `plan` is only for the tier ring on the mark; `getEntitlements` is request-cached and
   // reads the same `user_settings` row bootstrapped above, so it costs nothing extra.
@@ -90,9 +95,14 @@ export default async function AppLayout({
   // layout that wraps the whole product, because the nav lives in client components that
   // cannot read the database themselves. `hiddenForUsers` rides along so an exempt operator
   // can be shown a "Hidden" tag on items their users are not getting — see `AppSidebar`.
-  const [{ plan }, visibility] = await Promise.all([
+  //
+  // `seeded` drives `quiet` below (progressive nav until the first contact). `hasAnyContacts`
+  // is request-cached and `needsOnboarding` above already called it for first-run users, so
+  // this only ever costs a real query for returning users who skip the onboarding gate.
+  const [{ plan }, visibility, seeded] = await Promise.all([
     getEntitlements(userId),
     resolveSurfaceVisibility(userId),
+    hasAnyContacts(userId),
   ]);
 
   return (
@@ -104,6 +114,7 @@ export default async function AppLayout({
       hidden={[...visibility.hidden]}
       hiddenForUsers={[...visibility.hiddenForUsers]}
       viewingAsUser={visibility.viewingAsUser}
+      quiet={seeded ? [] : [...QUIET_UNTIL_FIRST_CONTACT]}
     >
       {/* Renders nothing; keeps `last_active_at` fresh enough for the admin roster to
           answer "active now". One per tab, not one per route. */}

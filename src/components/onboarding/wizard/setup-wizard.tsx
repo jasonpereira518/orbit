@@ -3,31 +3,51 @@
 import { useCallback, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
-import { ChevronLeft, Sparkles, Upload, UserPlus } from "lucide-react";
+import { ChevronLeft, Contact, Sparkles, Upload, UserPlus } from "lucide-react";
 import { completeWizard, saveWizardStep } from "@/actions/onboarding-wizard";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { WizardAddManual } from "@/components/onboarding/wizard/wizard-add-manual";
 import { WizardCapture } from "@/components/onboarding/wizard/wizard-capture";
+import { WizardConnectGoogle } from "@/components/onboarding/wizard/wizard-connect-google";
 import { WizardImport } from "@/components/onboarding/wizard/wizard-import";
+import { WizardLinkedInLater } from "@/components/onboarding/wizard/wizard-linkedin-later";
 import { WizardReview, type WizardResult } from "@/components/onboarding/wizard/wizard-review";
 import { WizardTriage } from "@/components/onboarding/wizard/wizard-triage";
+import { WizardAiKey } from "@/components/onboarding/wizard/wizard-ai-key";
 
 export type WizardStep =
   | "intro"
   | "add-people"
+  | "connect-google"
   | "manual"
   | "capture"
   | "import"
+  | "linkedin-later"
   | "triage"
+  | "ai-key"
   | "review";
 
 const PATHS = [
   {
-    id: "import" as const,
+    id: "connect-google" as const,
+    icon: Contact,
+    title: "Import Google Contacts",
+    description: "Two clicks. Orbit only reads your contacts, never your email.",
+  },
+  {
+    id: "capture" as const,
+    icon: Sparkles,
+    title: "Capture from notes",
+    description:
+      "Paste meeting notes — Orbit pulls out the people. Needs a free AI key; we'll walk you through it.",
+  },
+  {
+    id: "linkedin-later" as const,
     icon: Upload,
-    title: "Import LinkedIn",
-    description: "Bring in connections from a Connections.csv export.",
+    title: "LinkedIn (start it now, takes a day)",
+    description:
+      "LinkedIn takes about a day to build your export. Kick it off now and Orbit reminds you when it lands.",
   },
   {
     id: "manual" as const,
@@ -35,42 +55,38 @@ const PATHS = [
     title: "Add someone manually",
     description: "Enter a name, company, and how you know them.",
   },
-  {
-    id: "capture" as const,
-    icon: Sparkles,
-    title: "Capture from notes",
-    description: "Paste meeting notes — AI extracts people and context.",
-  },
 ];
 
 const STEP_TITLES: Record<WizardStep, string> = {
   intro: "Let's set up your orbit",
   "add-people": "How do you want to add your first people?",
+  "connect-google": "Import your Google contacts",
   manual: "Add someone manually",
   capture: "Capture from notes",
   import: "Import LinkedIn connections",
+  "linkedin-later": "Start your LinkedIn export",
   triage: "Rate a few people",
+  "ai-key": "Turn on AI (optional)",
   review: "You're set up",
 };
 
 function isValidStep(step: string | null | undefined): step is WizardStep {
-  return (
-    step === "intro" ||
-    step === "add-people" ||
-    step === "manual" ||
-    step === "capture" ||
-    step === "import" ||
-    step === "triage" ||
-    step === "review"
-  );
+  return step != null && Object.hasOwn(STEP_TITLES, step);
 }
 
 export function SetupWizard({
   initialStepId = null,
   hasApiKey = true,
+  googleConfigured,
+  contactLimit,
+  linkedInRequested = false,
 }: {
   initialStepId?: string | null;
   hasApiKey?: boolean;
+  googleConfigured: boolean;
+  contactLimit: number | null;
+  /** True once the export has already been requested, so the step is not offered again. */
+  linkedInRequested?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -78,6 +94,20 @@ export function SetupWizard({
     isValidStep(initialStepId) ? initialStepId : "intro"
   );
   const [results, setResults] = useState<WizardResult[]>([]);
+  // Initialized once from the server-provided prop and never re-read during the
+  // session — set true the moment a key is verified, on either the Capture path
+  // (inline panel) or the dedicated ai-key step (wizard panel).
+  const [aiOn, setAiOn] = useState(hasApiKey);
+  // The LinkedIn export is the one thing here that cannot be hurried: LinkedIn takes
+  // about a day to build it, so a request made during setup is a usable import tomorrow
+  // and a request made whenever someone eventually notices the fourth option is a week
+  // of nothing. Every path therefore passes through the request step once, before
+  // triage, instead of it being a door most people never open — one click skips it, and
+  // anyone who already requested it (or came in via the LinkedIn path) never sees it.
+  const [linkedInHandled, setLinkedInHandled] = useState(linkedInRequested);
+  const paths = googleConfigured
+    ? PATHS
+    : PATHS.filter((path) => path.id !== "connect-google");
 
   const goTo = useCallback((next: WizardStep) => {
     setStep(next);
@@ -100,6 +130,13 @@ export function SetupWizard({
   const addResult = useCallback((result: WizardResult) => {
     setResults((r) => [...r, result]);
   }, []);
+
+  // Deliberately a plain function rather than a useCallback: it must close over the
+  // current `linkedInHandled` every render, and each child callback below is recreated
+  // per render anyway.
+  function goAfterPeople() {
+    goTo(linkedInHandled ? "triage" : "linkedin-later");
+  }
 
   const finish = useCallback(() => {
     start(async () => {
@@ -147,7 +184,18 @@ export function SetupWizard({
               )}
 
               {step === "add-people" && (
-                <PathStep onChoose={(id) => goTo(id)} />
+                <PathStep paths={paths} onChoose={(id) => goTo(id)} />
+              )}
+
+              {step === "connect-google" && (
+                <WizardConnectGoogle
+                  contactLimit={contactLimit}
+                  onImported={(count) => {
+                    addResult({ kind: "google", count });
+                    goAfterPeople();
+                  }}
+                  onSkip={() => goTo("add-people")}
+                />
               )}
 
               {step === "manual" && (
@@ -156,7 +204,7 @@ export function SetupWizard({
                   <WizardAddManual
                     onCreated={() => {
                       addResult({ kind: "manual" });
-                      goTo("triage");
+                      goAfterPeople();
                     }}
                   />
                 </div>
@@ -167,9 +215,10 @@ export function SetupWizard({
                   <BackRow onBack={() => goTo("add-people")} />
                   <WizardCapture
                     hasApiKey={hasApiKey}
+                    onKeyVerified={() => setAiOn(true)}
                     onSaved={(count) => {
                       addResult({ kind: "capture", count });
-                      goTo("triage");
+                      goAfterPeople();
                     }}
                   />
                 </div>
@@ -180,6 +229,7 @@ export function SetupWizard({
                   <BackRow onBack={() => goTo("add-people")} />
                   <WizardImport
                     onContinue={() => {
+                      setLinkedInHandled(true);
                       addResult({ kind: "import" });
                       goTo("triage");
                     }}
@@ -187,7 +237,40 @@ export function SetupWizard({
                 </div>
               )}
 
-              {step === "triage" && <WizardTriage onDone={() => goTo("review")} />}
+              {step === "linkedin-later" && (
+                <div className="space-y-4">
+                  <BackRow onBack={() => goTo("add-people")} />
+                  <WizardLinkedInLater
+                    onContinue={(result) => {
+                      setLinkedInHandled(true);
+                      if (result) addResult(result);
+                      goTo("triage");
+                    }}
+                    onImportNow={(result) => {
+                      setLinkedInHandled(true);
+                      if (result) addResult(result);
+                      goTo("import");
+                    }}
+                  />
+                </div>
+              )}
+
+              {step === "triage" && (
+                <WizardTriage
+                  onDone={() => goTo(aiOn ? "review" : "ai-key")}
+                />
+              )}
+
+              {step === "ai-key" && (
+                <WizardAiKey
+                  onVerified={() => {
+                    setAiOn(true);
+                    addResult({ kind: "ai-key" });
+                    goTo("review");
+                  }}
+                  onSkip={() => goTo("review")}
+                />
+              )}
 
               {step === "review" && (
                 <WizardReview
@@ -209,9 +292,9 @@ function IntroStep({ onNext }: { onNext: () => void }) {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        Two minutes, three ways to start — pick whichever fits what you
-        already have on hand: a LinkedIn export, some raw notes, or just a
-        name you want to remember.
+        Two minutes. Start with the people already in your Google Contacts,
+        paste notes from a coffee chat, or add one name. LinkedIn takes a
+        day — kick it off now and Orbit will nudge you.
       </p>
       <Button
         type="button"
@@ -225,13 +308,17 @@ function IntroStep({ onNext }: { onNext: () => void }) {
 }
 
 function PathStep({
+  paths,
   onChoose,
 }: {
-  onChoose: (id: "manual" | "capture" | "import") => void;
+  paths: typeof PATHS;
+  onChoose: (
+    id: "connect-google" | "manual" | "capture" | "linkedin-later"
+  ) => void;
 }) {
   return (
     <ul className="space-y-3">
-      {PATHS.map((path) => {
+      {paths.map((path) => {
         const Icon = path.icon;
         return (
           <li key={path.id}>

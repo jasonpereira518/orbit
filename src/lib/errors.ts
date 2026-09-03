@@ -1,6 +1,6 @@
 /** Shown whenever AI features fail because the user has no provider key. */
 export const MISSING_AI_API_KEY_MESSAGE =
-  "Add your AI API key in Settings to use this feature.";
+  "Orbit needs an AI key for this — add a free Gemini API key (about a minute).";
 
 export function isMissingAiApiKeyError(message: string | null | undefined) {
   if (!message) return false;

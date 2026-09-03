@@ -397,7 +397,10 @@ function SendIdentityCard({ identity }: { identity: GmailSendIdentity }) {
             onClick={() =>
               start(async () => {
                 try {
-                  const { url } = await startGmailOAuth("/recruiters/compose");
+                  const { url } = await startGmailOAuth({
+                    returnTo: "/recruiters/compose",
+                    scopes: "mailbox",
+                  });
                   window.location.href = url;
                 } catch (err) {
                   toast.error(err instanceof Error ? err.message : "OAuth failed");
@@ -425,8 +428,8 @@ function ReconnectBanner() {
             Reconnect Gmail to send
           </p>
           <p className="mt-1 max-w-prose text-sm text-muted-foreground">
-            Your Gmail connection was made before Orbit could send on your behalf. You
-            can draft now, but sending needs permission you haven&apos;t granted yet.
+            Orbit has contacts-only access to this Google account. Sending needs mailbox
+            permission — reconnect to grant it.
           </p>
         </div>
       </div>
@@ -436,7 +439,10 @@ function ReconnectBanner() {
         onClick={() =>
           start(async () => {
             try {
-              const { url } = await startGmailOAuth("/recruiters/compose");
+              const { url } = await startGmailOAuth({
+                returnTo: "/recruiters/compose",
+                scopes: "mailbox",
+              });
               window.location.href = url;
             } catch (err) {
               toast.error(err instanceof Error ? err.message : "OAuth failed");

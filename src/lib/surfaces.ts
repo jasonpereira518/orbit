@@ -253,3 +253,9 @@ export function surfaceForPathname(pathname: string): Surface | null {
   }
   return best;
 }
+
+/**
+ * Page surfaces hidden from the nav (not blocked) until the account has a contact. Empty
+ * the array to disable.
+ */
+export const QUIET_UNTIL_FIRST_CONTACT = ["page.graph", "page.outreach", "page.knowledge"] as const;

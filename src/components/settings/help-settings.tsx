@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { resetOnboarding } from "@/actions/onboarding";
 import { resetWizard } from "@/actions/onboarding-wizard";
 import { Button } from "@/components/ui/button";
+import { HelpFaqList } from "@/components/help/help-sheet";
 
 export function HelpSettings() {
   const router = useRouter();
@@ -49,6 +50,12 @@ export function HelpSettings() {
         >
           Run guided setup
         </Button>
+      </div>
+      <div className="border-t border-border/70 pt-4">
+        <h3 className="mb-3 text-sm font-medium text-ink">
+          Frequently asked questions
+        </h3>
+        <HelpFaqList />
       </div>
     </section>
   );

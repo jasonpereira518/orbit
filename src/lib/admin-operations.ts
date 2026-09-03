@@ -12,7 +12,8 @@ import {
 import { isAdminUser } from "@/lib/admin";
 import { getAppBaseUrl } from "@/lib/app-url";
 import {
-  RESUMABLE_IMPORT_TYPES,
+  isResumableImportType,
+  rearmImportJob,
   runImportJobById,
 } from "@/lib/import-job-dispatch";
 import { purgeUserData } from "@/lib/user-data";
@@ -200,6 +201,15 @@ export async function mintSignInLink(
 /* ------------------------------------------------------------------------------ imports */
 
 /**
+ * Every status `retryImport` (below) allows re-arming from — anything but `completed`,
+ * which is refused by its own explicit check before either the audit row or the re-arm
+ * runs. Passed straight to `rearmImportJob`'s `fromStatuses` so its guard and its write
+ * happen in one atomic `UPDATE ... WHERE`, matching what `retryImport` already checked,
+ * rather than that check and the write racing against a second retry of the same row.
+ */
+const ADMIN_RETRYABLE_STATUSES = ["pending", "processing", "failed", "cancelled"] as const;
+
+/**
  * Re-arm a failed or stuck import, and return the id of the job to run.
  *
  * Only the types in `RESUMABLE_IMPORT_TYPES` can be re-armed: they are the ones that own
@@ -232,8 +242,7 @@ export async function retryImport(adminUserId: string, input: {
     ),
   });
   if (!job) throw new Error("No such import.");
-  const resumable: readonly string[] = RESUMABLE_IMPORT_TYPES;
-  if (!resumable.includes(job.importType)) {
+  if (!isResumableImportType(job.importType)) {
     throw new Error(
       "Only server-owned imports stage resumable progress; this type has to be re-uploaded by the user."
     );
@@ -250,10 +259,12 @@ export async function retryImport(adminUserId: string, input: {
     reason,
   });
 
-  await db
-    .update(imports)
-    .set({ status: "processing", errorMessage: null, updatedAt: new Date() })
-    .where(eq(imports.id, input.importId));
+  const rearmed = await rearmImportJob(input.importId, ADMIN_RETRYABLE_STATUSES);
+  if (!rearmed) {
+    throw new Error(
+      "This import's status changed before the retry could be applied. Refresh and try again."
+    );
+  }
 
   return { importId: input.importId };
 }

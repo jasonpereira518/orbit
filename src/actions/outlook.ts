@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { getDb } from "@/db";
 import { outlookConnections } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { requireSyncUser } from "@/lib/plan-guards";
+import { requireContactsImportUser } from "@/lib/plan-guards";
 import { buildMicrosoftAuthUrl, getOutlookOAuthConfigSummary } from "@/lib/outlook";
 
 const OAUTH_STATE_COOKIE = "orbit_outlook_oauth_state";
@@ -47,7 +47,7 @@ export async function getOutlookConnectionStatus(): Promise<OutlookConnectionSta
 }
 
 export async function startOutlookOAuth(returnTo?: string): Promise<{ url: string }> {
-  const userId = await requireSyncUser();
+  const userId = await requireContactsImportUser();
   const summary = getOutlookOAuthConfigSummary();
   if (!summary.configured) {
     const hint = summary.redirectUriError ? ` (${summary.redirectUriError})` : "";

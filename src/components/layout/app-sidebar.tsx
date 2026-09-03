@@ -18,6 +18,7 @@ import { SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { HelpSheet } from "@/components/help/help-sheet";
 import { clerkAppearance } from "@/lib/clerk-appearance";
 
 function SidebarNavLink({
@@ -176,7 +177,10 @@ export function AppSidebar({
         </div>
       </nav>
 
-      <div className="mx-2 mb-2 mt-auto border-t border-black/[0.06] p-2 dark:border-white/10 lg:mx-3 lg:mb-3 lg:p-3">
+      {/* `flex-wrap` lets the help button drop to its own centered line at the
+          icon-only width, where the account control already claims most of
+          the 4.5rem column — at `lg+` there's room for both on one row. */}
+      <div className="mx-2 mb-2 mt-auto flex flex-wrap items-center justify-center gap-2 border-t border-black/[0.06] p-2 dark:border-white/10 lg:mx-3 lg:mb-3 lg:flex-nowrap lg:justify-between lg:p-3">
         {clerkOn ? (
           <div className="flex items-center justify-center gap-3 lg:justify-start">
             <UserButton appearance={clerkAppearance} />
@@ -193,6 +197,7 @@ export function AppSidebar({
             Sign in required
           </p>
         )}
+        <HelpSheet className="shrink-0 text-muted-foreground hover:text-foreground" />
       </div>
     </aside>
   );

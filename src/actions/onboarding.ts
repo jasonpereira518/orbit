@@ -38,10 +38,6 @@ export async function completeOnboarding(redirectTo?: string) {
   return { ok: true as const, redirectTo: redirectTo || "/dashboard" };
 }
 
-export async function skipOnboarding() {
-  return completeOnboarding("/dashboard");
-}
-
 /** Persist the current tour step so a refresh resumes mid-walkthrough. */
 export async function saveOnboardingStep(step: string) {
   if (!VALID_ONBOARDING_STEPS.has(step)) return { ok: false as const };
