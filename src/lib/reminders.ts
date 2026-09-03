@@ -30,6 +30,8 @@ const AUTO_SUGGESTION_TYPES = [
   "dormant_high_value",
   "post_event",
   "linkedin_thread_quiet",
+  "open_commitment",
+  "closed_the_loop",
 ] as const;
 
 const MAX_AUTO_SUGGESTIONS = 12;
@@ -45,6 +47,8 @@ const MAX_AUTO_SUGGESTIONS = 12;
 const GRAPH_PREVIEW_CONTACT_CAP = 150;
 
 const AUTO_TYPE_PRIORITY: Record<(typeof AUTO_SUGGESTION_TYPES)[number], number> = {
+  closed_the_loop: 5,
+  open_commitment: 4,
   post_event: 3,
   linkedin_thread_quiet: 2,
   dormant_high_value: 1,
@@ -155,6 +159,40 @@ async function buildOutreachSuggestions(userId: string) {
       description: `Gone quiet — last touch ${idle} day${idle === 1 ? "" : "s"} ago`,
       relatedContactIds: [c.id],
       confidenceScore: 80,
+    });
+  }
+
+  const discoveryEligibleIds = all.filter(isDiscoveryEligible).map((c) => c.id);
+  const signals = await getActionItemSignalsBatch(userId, discoveryEligibleIds);
+
+  const openCommitment = all.filter(
+    (c) =>
+      isDiscoveryEligible(c) &&
+      !!signals.get(c.id)?.openCount &&
+      (signals.get(c.id)?.oldestOpenAgeDays ?? 0) >= OPEN_ITEM_ELIGIBLE_DAYS
+  );
+  for (const c of openCommitment) {
+    const signal = signals.get(c.id)!;
+    upsertCandidate(c.id, {
+      suggestionType: "open_commitment",
+      title: `Reach out to ${contactDisplayName(c)}`,
+      description: `You noted "${signal.oldestOpenText}" ${signal.oldestOpenAgeDays} day${signal.oldestOpenAgeDays === 1 ? "" : "s"} ago — still open`,
+      relatedContactIds: [c.id],
+      confidenceScore: 82,
+    });
+  }
+
+  const closedTheLoop = all.filter(
+    (c) => isDiscoveryEligible(c) && signals.get(c.id)?.recentCompletionAgeDays !== undefined
+  );
+  for (const c of closedTheLoop) {
+    const signal = signals.get(c.id)!;
+    upsertCandidate(c.id, {
+      suggestionType: "closed_the_loop",
+      title: `Reach out to ${contactDisplayName(c)}`,
+      description: `You finished "${signal.recentCompletionText}" ${signal.recentCompletionAgeDays} day${signal.recentCompletionAgeDays === 1 ? "" : "s"} ago — good moment to follow up`,
+      relatedContactIds: [c.id],
+      confidenceScore: 88,
     });
   }
 
