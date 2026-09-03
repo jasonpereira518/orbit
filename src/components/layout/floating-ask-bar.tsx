@@ -18,6 +18,7 @@ import { toast } from "@/lib/toast";
 import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
 import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
 import { askNetwork, createChatThread } from "@/actions/chat";
+import { streamChat } from "@/lib/chat-stream-client";
 import { getAskBarContact } from "@/actions/contacts";
 import { searchDashboardContacts } from "@/actions/search";
 import { createReminder } from "@/actions/reminders";
@@ -68,6 +69,8 @@ type AssistantMessage = {
   answer: string;
   recommendations: ChatResult["recommendations"];
   retrieved: ChatResult["retrieved"];
+  /** True while the answer is still arriving from `/api/chat`. */
+  streaming?: boolean;
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
@@ -116,7 +119,13 @@ export function FloatingAskBar() {
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [lastUserQuery, setLastUserQuery] = useState("");
   const [searchPending, startSearch] = useTransition();
-  const [chatPending, startChat] = useTransition();
+  // Plain state, not a transition: streamed tokens must render as they arrive, and
+  // updates inside `startTransition` are deferred until the async work settles.
+  const [chatPending, setChatPending] = useState(false);
+  // The "searching" bubble makes sense until the first token; after that the answer
+  // itself is the progress indicator.
+  const awaitingFirstToken =
+    chatPending && !messages.some((m) => m.role === "assistant" && m.streaming);
 
   const [profileContact, setProfileContact] = useState<AskBarContact | null>(
     null
@@ -317,32 +326,65 @@ export function FloatingAskBar() {
       setOpen(true);
 
       const contactId = activeContactId;
-      startChat(async () => {
+      const assistantId = newId();
+      setChatPending(true);
+      void (async () => {
+        let threadId: string;
         try {
-          const threadId = await ensureChatThread();
-          const res = await askNetwork(q, { threadId, contactId: contactId ?? undefined });
-          if (!res.ok) {
-            toast.error(res.error);
-            setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
-            setQuery(q);
-            return;
-          }
-          const assistantMsg: AssistantMessage = {
-            id: newId(),
-            role: "assistant",
-            answer: res.answer,
-            recommendations: res.recommendations,
-            retrieved: res.retrieved,
-          };
-          setMessages((prev) => [...prev, assistantMsg]);
+          threadId = await ensureChatThread();
         } catch (err) {
-          toast.error(
-            toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message
-          );
+          toast.error(toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message);
           setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
           setQuery(q);
+          setChatPending(false);
+          return;
         }
-      });
+
+        let placed = false;
+        const patch = (fn: (m: AssistantMessage) => AssistantMessage) =>
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId && m.role === "assistant" ? fn(m) : m))
+          );
+        const ensurePlaceholder = () => {
+          if (placed) return;
+          placed = true;
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: assistantId,
+              role: "assistant",
+              answer: "",
+              recommendations: [],
+              retrieved: [],
+              streaming: true,
+            },
+          ]);
+        };
+
+        await streamChat(
+          { question: q, threadId, contactId: contactId ?? undefined },
+          {
+            onAnswer: (delta) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, answer: m.answer + delta }));
+            },
+            onRecommendations: (items) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, recommendations: items }));
+            },
+            onDone: (info) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, retrieved: info.retrieved, streaming: false }));
+            },
+            onError: (message) => {
+              toast.error(message);
+              setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
+              setQuery(q);
+            },
+          }
+        );
+        setChatPending(false);
+      })();
     },
     [activeContactId, chatPending, ensureChatThread]
   );
@@ -568,7 +610,7 @@ export function FloatingAskBar() {
                         </div>
                       )
                     )}
-                    {chatPending && (
+                    {awaitingFirstToken && (
                       <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
                         <Loader2 className="size-3.5 animate-spin" />
                         Searching your network…
