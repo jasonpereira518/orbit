@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ContactForm } from "@/components/contacts/contact-form";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import { LockedFeature } from "@/components/locked-feature";
@@ -35,9 +36,9 @@ export default async function NewContactPage() {
         </h1>
         <p className="mt-1 text-muted-foreground">
           Quick manual entry. Prefer{" "}
-          <a href="/capture" className="text-primary underline">
+          <Link href="/capture" className="text-primary underline">
             AI capture
-          </a>{" "}
+          </Link>{" "}
           for messy notes.
         </p>
       </div>
