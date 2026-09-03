@@ -89,6 +89,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-instrumentation-streams": "pglite",
   "smoke-interest-list-admin": "pglite",
   "smoke-internal-auth": "pglite", // imports route handlers that reach @/db
+  "smoke-linkedin-direction": "pglite",
   "smoke-linkedin-timeline-backfill": "pglite",
   "smoke-note-batch": "pglite",
   "smoke-ops-sweep": "pglite",

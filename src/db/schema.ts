@@ -914,7 +914,19 @@ export type LinkedInMessageThreadRowPayload = {
    * pull it back. `null` is excluded from the range instead, which is what "we don't know
    * when this was sent" actually means.
    */
-  messages: { id: string; body: string; sentAt: string | null }[];
+  /**
+   * `direction` is optional, not merely nullable, and that distinction is load-bearing: these
+   * payloads are persisted as JSONB in `import_job_rows`, so a job queued or stalled before
+   * this field existed resumes through the current adapter with the key absent entirely. The
+   * adapter must resolve that to null — never to a guess — so those rows read as "unknown"
+   * rather than being permanently mislabelled by a deploy boundary.
+   */
+  messages: {
+    id: string;
+    body: string;
+    sentAt: string | null;
+    direction?: "in" | "out" | null;
+  }[];
 };
 
 /**

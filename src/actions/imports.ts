@@ -11,6 +11,7 @@ import {
   imports,
   importJobRows,
   outlookConnections,
+  userSettings,
   type CalendarEventRowPayload,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
@@ -30,9 +31,11 @@ import {
 } from "@/lib/import-job-dispatch";
 import { parseLinkedInConnectionsCsv } from "@/lib/linkedin-connections";
 import {
+  messageDirection,
   parseLinkedInMessagesCsv,
   participantIdentity,
   resolveConversations,
+  resolveSelfIdentity,
   nameFromLinkedInSlug,
   type ParsedLinkedInMessage,
 } from "@/lib/linkedin-messages";
@@ -304,6 +307,22 @@ export async function cancelImportSession(importId: string) {
   return updated;
 }
 
+/**
+ * The user's own LinkedIn URL, as they entered it in settings.
+ *
+ * Handed to `resolveSelfIdentity` so it never has to guess who owns an export. Both the
+ * preview and the import must pass the same value: if one infers an owner and the other is
+ * told one, the review screen can show a sent/received split that the written rows contradict.
+ */
+async function storedSelfLinkedInUrl(userId: string): Promise<string | null> {
+  const db = await getDb();
+  const settings = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { socialLinks: true },
+  });
+  return settings?.socialLinks?.linkedin?.trim() || null;
+}
+
 export async function previewLinkedInMessagesCsv(csvText: string) {
   const userId = await requireUserId();
   const { columns, messages } = parseLinkedInMessagesCsv(csvText);
@@ -312,16 +331,36 @@ export async function previewLinkedInMessagesCsv(csvText: string) {
   }
 
   const db = await getDb();
-  const existing = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-  });
+  const [existing, storedSelfUrl] = await Promise.all([
+    db.query.contacts.findMany({ where: eq(contacts.userId, userId) }),
+    storedSelfLinkedInUrl(userId),
+  ]);
 
-  const conversations = resolveConversations(messages, existing);
+  const self = resolveSelfIdentity(messages, storedSelfUrl);
+  const conversations = resolveConversations(messages, existing, self.url || null);
+
+  // Per-thread sent/received split, so an inverted owner guess is visible on the review
+  // screen rather than discovered later in twenty thousand mislabelled rows.
+  const directionByConversation = new Map<string, { sent: number; received: number }>();
+  for (const m of messages) {
+    const direction = messageDirection(m, self);
+    if (!direction || !m.conversationId) continue;
+    const split = directionByConversation.get(m.conversationId) || {
+      sent: 0,
+      received: 0,
+    };
+    if (direction === "out") split.sent += 1;
+    else split.received += 1;
+    directionByConversation.set(m.conversationId, split);
+  }
+
   const people = conversations.map((c) => ({
     id: c.conversationId,
     conversationId: c.conversationId,
     title: c.conversationTitle,
     messageCount: c.messageCount,
+    sentByYou: directionByConversation.get(c.conversationId)?.sent ?? null,
+    receivedFromThem: directionByConversation.get(c.conversationId)?.received ?? null,
     latestDate: c.latestDate?.toISOString() ?? null,
     sampleContent: c.sampleContent,
     match: c.match,
@@ -377,7 +416,9 @@ export async function startLinkedInMessagesImport(
   const db = await getDb();
 
   const { messages } = parseLinkedInMessagesCsv(csvText);
-  const conversations = resolveConversations(messages, []);
+  // Same owner the preview resolved, from the same stored URL — see `storedSelfLinkedInUrl`.
+  const self = resolveSelfIdentity(messages, await storedSelfLinkedInUrl(userId));
+  const conversations = resolveConversations(messages, [], self.url || null);
   const selected =
     selectedConversationIds === undefined
       ? null
@@ -433,6 +474,12 @@ export async function startLinkedInMessagesImport(
               // the conversation's date range, not silently reported as 1970 (see
               // `LinkedInMessageThreadRowPayload.messages`).
               sentAt: m.parsedDate ? m.parsedDate.toISOString() : null,
+              // Deliberately NOT part of `linkedInMessageExternalId` above. That id hashes
+              // (conversation, date, content), so a re-upload reproduces it exactly and the
+              // engine's ON CONFLICT DO UPDATE writes direction onto rows imported before
+              // this column existed. Hashing direction would make those inserts instead,
+              // duplicating every message rather than backfilling it.
+              direction: messageDirection(m, self),
             })),
         },
       };

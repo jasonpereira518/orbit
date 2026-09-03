@@ -173,9 +173,15 @@ export function LinkedInMessagesImport() {
                   : p.willCreate
                     ? "Will create new contact"
                     : p.title,
-              meta: `${p.messageCount} message${p.messageCount === 1 ? "" : "s"}${
-                p.sampleContent ? ` · ${p.sampleContent}` : ""
-              }`,
+              // The sent/received split is the tell for an inverted owner guess: if Orbit
+              // decided the wrong person owns this export, every thread reads backwards, and
+              // here is where that is cheap to notice rather than after the rows are written.
+              // Absent when direction could not be established at all.
+              meta: `${
+                p.sentByYou !== null && p.receivedFromThem !== null
+                  ? `${p.sentByYou} sent · ${p.receivedFromThem} received`
+                  : `${p.messageCount} message${p.messageCount === 1 ? "" : "s"}`
+              }${p.sampleContent ? ` · ${p.sampleContent}` : ""}`,
               isRepeat: p.isRepeat,
               repeatReason: p.match?.reason || "Already in your network",
             }))}
