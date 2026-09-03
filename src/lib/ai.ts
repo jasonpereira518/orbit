@@ -180,6 +180,17 @@ const CAPTURE_MAX_OUTPUT_TOKENS = 8192;
 const GEMINI_EMBEDDING_MODEL = "gemini-embedding-001";
 const OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
 
+/**
+ * Cheapest usable model per provider, for accuracy-stage calls (query
+ * understanding, rerank) where the user's configured model would be overkill.
+ * Values must exist in PROVIDER_MODELS (smoke-fast-model.ts enforces this).
+ */
+export const FAST_MODELS: Record<AiProvider, string> = {
+  gemini: "gemini-3.1-flash-lite",
+  openai: "gpt-4o-mini",
+  anthropic: "claude-haiku-4-5",
+};
+
 type ProviderKeySettings = {
   geminiApiKeyEncrypted?: string | null;
   openaiApiKeyEncrypted?: string | null;
@@ -488,9 +499,12 @@ export async function completeJson(
     maxOutputTokens?: number;
     /** Call-site label for usage telemetry, e.g. "capture.parse". */
     operation?: string;
+    /** "fast" routes to FAST_MODELS[provider] instead of the user's configured model. */
+    speed?: "fast";
   },
 ): Promise<string> {
-  const { provider, model, apiKey, keyOwner } = await getAiConfig(userId);
+  const { provider, model: configuredModel, apiKey, keyOwner } = await getAiConfig(userId);
+  const model = input.speed === "fast" ? FAST_MODELS[provider] : configuredModel;
   const temperature = input.temperature ?? 0.2;
   const maxOutputTokens = input.maxOutputTokens ?? 4096;
   const system = `${input.system}\n\nRespond with valid JSON only. No markdown fences.`;
@@ -1420,11 +1434,11 @@ export async function chatWithNetwork(
       const messages =
         c.recentMessages && c.recentMessages.length
           ? `Recent LinkedIn messages:\n${c.recentMessages
-              .slice(0, 6)
+              .slice(0, 8)
               .map((m) => `- ${m}`)
               .join("\n")}`
           : "";
-      return `${i + 1}. [id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | score=${c.relationshipScore} | tags=${c.tags.join(", ")} | relevance=${c.relevance.toFixed(2)}\nSummary: ${c.aiSummary || "n/a"}\nNotes: ${(c.notes || "").slice(0, 400)}${facts ? `\n${facts}` : ""}${messages ? `\n${messages}` : ""}`;
+      return `${i + 1}. [id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | score=${c.relationshipScore} | tags=${c.tags.join(", ")} | relevance=${c.relevance.toFixed(2)}\nSummary: ${c.aiSummary || "n/a"}\nNotes: ${(c.notes || "").slice(0, 1200)}${facts ? `\n${facts}` : ""}${messages ? `\n${messages}` : ""}`;
     })
     .join("\n\n");
 
