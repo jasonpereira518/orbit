@@ -14,13 +14,17 @@ import {
   type CalendarEventRowPayload,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { requireContactsImportUser } from "@/lib/plan-guards";
+import { requireContactsImportUser, requireSyncUser } from "@/lib/plan-guards";
+import { isPaywallError } from "@/lib/entitlements";
 import {
   DUPLICATE_MERGE_CONFIDENCE,
   buildDuplicateIndex,
   findDuplicateCandidatesIndexed,
 } from "@/lib/duplicates";
 import { runLinkedInImportJob } from "@/lib/import-job-processor";
+import { GMAIL_SCAN_IMPORT_TYPE } from "@/lib/gmail-scan-processor";
+import { retireLinkedInExportReminders } from "@/lib/linkedin-export";
+import { revalidateReminderPaths } from "@/lib/reminder-paths";
 import {
   GOOGLE_CONTACTS_IMPORT_TYPE,
   OUTLOOK_CONTACTS_IMPORT_TYPE,
@@ -221,6 +225,10 @@ export async function startLinkedInImport(
     })
   );
 
+  // The upload just arrived — retire the "upload your export" reminder this row was for.
+  await retireLinkedInExportReminders(userId);
+  revalidateReminderPaths();
+
   after(() => runLinkedInImportJob(importRow.id).catch(() => {}));
 
   revalidatePath("/imports");
@@ -335,6 +343,21 @@ export async function retryImport(
       ok: false,
       error: "This import can't be retried automatically — re-upload the file",
     };
+  }
+
+  // The Gmail recruiter scan is Sync-plan-only (see `requireSyncUser`) — without this, a
+  // free user whose scan failed mid-run could re-arm it from the Retry button alone, since
+  // `requireUserId` above is the only gate `retryImport` otherwise applies. `verifyAndSaveAiKey`-
+  // style: surface the paywall as a toast-able result, not an unhandled throw.
+  if (existing.importType === GMAIL_SCAN_IMPORT_TYPE) {
+    try {
+      await requireSyncUser();
+    } catch (err) {
+      if (isPaywallError(err)) {
+        return { ok: false, error: err.message };
+      }
+      throw err;
+    }
   }
 
   // The status check above is a fast, user-friendly read; `rearmImportJob`'s own
@@ -486,6 +509,10 @@ export async function startLinkedInMessagesImport(
       };
     })
   );
+
+  // The upload just arrived — retire the "upload your export" reminder this row was for.
+  await retireLinkedInExportReminders(userId);
+  revalidateReminderPaths();
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
 

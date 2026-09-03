@@ -2,12 +2,14 @@
 
 import { and, eq, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { getDb } from "@/db";
 import { imports, reminders, userSettings } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { getInboxListId } from "@/lib/reminder-lists";
 import { revalidateReminderPaths } from "@/lib/reminder-paths";
+import { retireLinkedInExportReminders } from "@/lib/linkedin-export";
 import { LINKEDIN_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-connections";
 import { LINKEDIN_MESSAGES_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-messages";
 
@@ -108,9 +110,16 @@ export async function getLinkedInExportStatus(): Promise<{
   hasLinkedInImport: boolean;
 }> {
   const userId = await requireUserId();
-  const db = await getDb();
   const settings = await ensureUserSettings(userId);
 
+  // Nothing was ever requested — there's no nudge to retire and no reminder that could be
+  // pending, so the `imports` lookup below (this is called on every dashboard/imports render)
+  // would only spend a query to reconfirm `false`.
+  if (!settings.linkedinExportRequestedAt) {
+    return { requestedAt: null, hasLinkedInImport: false };
+  }
+
+  const db = await getDb();
   const importRow = await db.query.imports.findFirst({
     where: and(
       eq(imports.userId, userId),
@@ -120,12 +129,27 @@ export async function getLinkedInExportStatus(): Promise<{
       ])
     ),
   });
+  const hasLinkedInImport = Boolean(importRow);
+
+  // Covers imports that predate this fix — `startLinkedInImport`/`startLinkedInMessagesImport`
+  // retire the reminder themselves going forward, but a user who uploaded before this shipped
+  // would otherwise carry a "done" import next to a permanently pending reminder.
+  //
+  // Deferred via `after()`, not run inline: this is called directly from the dashboard's and
+  // /imports's Server Component render (`StatsSection`, `ImportsPage`), and `revalidatePath`
+  // throws when called during render — same reason `imports/page.tsx` wraps
+  // `syncStaleCalendarSubscriptions` (which also revalidates) in `after()` at its call site.
+  if (hasLinkedInImport) {
+    after(() =>
+      retireLinkedInExportReminders(userId)
+        .then(() => revalidateReminderPaths())
+        .catch(() => {})
+    );
+  }
 
   return {
-    requestedAt: settings.linkedinExportRequestedAt
-      ? new Date(settings.linkedinExportRequestedAt).toISOString()
-      : null,
-    hasLinkedInImport: Boolean(importRow),
+    requestedAt: new Date(settings.linkedinExportRequestedAt).toISOString(),
+    hasLinkedInImport,
   };
 }
 

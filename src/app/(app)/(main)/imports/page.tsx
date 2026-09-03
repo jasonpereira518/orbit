@@ -10,6 +10,7 @@ import { LinkedInExportNudge } from "@/components/imports/linkedin-export-nudge"
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { isResumableImportType } from "@/lib/import-job-dispatch";
+import { GMAIL_SCAN_IMPORT_TYPE } from "@/lib/gmail-scan-processor";
 
 /** Large connections imports process in the background via after(); allow it room to run. */
 export const maxDuration = 300;
@@ -47,10 +48,15 @@ export default async function ImportsPage() {
 
   // canRetry is computed here, server-side, rather than in the client `ImportHistory` row:
   // that component must never import anything reaching `@/db`, and `isResumableImportType`
-  // lives in a module that does.
+  // lives in a module that does. The Gmail recruiter scan is additionally Sync-plan-gated
+  // (see `requireSyncUser` in `retryImport`) — hiding the button for a user who can't use it
+  // avoids a Retry click that always bounces off the paywall.
   const historyWithRetry = history.map((h) => ({
     ...h,
-    canRetry: h.status === "failed" && isResumableImportType(h.importType),
+    canRetry:
+      h.status === "failed" &&
+      isResumableImportType(h.importType) &&
+      (h.importType !== GMAIL_SCAN_IMPORT_TYPE || entitlements.canUseSync),
   }));
 
   return (

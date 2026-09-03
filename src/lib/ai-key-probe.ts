@@ -69,13 +69,21 @@ export async function probeAiKey(
 ): Promise<ProbeResult> {
   try {
     if (provider === "gemini") {
-      const client = new GoogleGenAI({ apiKey });
+      // `@google/genai`'s `GoogleGenAIOptions` has no top-level `timeout`/`maxRetries` like
+      // the other two SDKs — the equivalent lives under `httpOptions` (`HttpOptions.timeout`,
+      // in ms) and `httpOptions.retryOptions.attempts` (1 means no retries; the SDK defaults
+      // to 5 attempts with up to a 60s backoff each, which could otherwise turn one slow
+      // probe into minutes).
+      const client = new GoogleGenAI({
+        apiKey,
+        httpOptions: { timeout: 15_000, retryOptions: { attempts: 1 } },
+      });
       await client.models.get({ model });
     } else if (provider === "openai") {
-      const client = new OpenAI({ apiKey });
+      const client = new OpenAI({ apiKey, timeout: 15_000, maxRetries: 0 });
       await client.models.retrieve(model);
     } else {
-      const client = new Anthropic({ apiKey });
+      const client = new Anthropic({ apiKey, timeout: 15_000, maxRetries: 0 });
       await client.models.retrieve(model);
     }
     return { ok: true };

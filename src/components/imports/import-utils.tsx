@@ -88,8 +88,12 @@ export function ImportFilePicker({
         className
       )}
       onDragOver={(e) => {
-        if (disabled) return;
+        // preventDefault() unconditionally — omitting it while disabled leaves the browser's
+        // default drop behavior in place, so a file dropped during a running import navigates
+        // the tab to that file instead of being ignored.
         e.preventDefault();
+        e.dataTransfer.dropEffect = disabled ? "none" : "copy";
+        if (disabled) return;
         setDragging(true);
       }}
       onDragLeave={(e) => {

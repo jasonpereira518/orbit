@@ -6,6 +6,7 @@ import { formatDistanceToNow } from "date-fns";
 import {
   Calendar as CalendarIcon,
   FileSpreadsheet,
+  Mail,
   MessageSquare,
   RotateCw,
   Users,
@@ -47,6 +48,11 @@ const SOURCE_META: Record<string, { icon: LucideIcon; badge: string; label: stri
     icon: Users,
     badge: "bg-import-connections/10 text-import-connections",
     label: "Outlook Contacts",
+  },
+  gmail_recruiter_scan: {
+    icon: Mail,
+    badge: "bg-import-messages/10 text-import-messages",
+    label: "Gmail recruiter scan",
   },
 };
 

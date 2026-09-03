@@ -1,10 +1,10 @@
 "use client";
 
-import { useId, useState, useTransition } from "react";
+import { type FormEvent, useId, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Check, ChevronDown, Loader2 } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { verifyAndSaveAiKey } from "@/actions/settings";
+import { saveAiSettings, verifyAndSaveAiKey } from "@/actions/settings";
 import {
   AI_PROVIDERS,
   DEFAULT_MODELS,
@@ -77,6 +77,14 @@ export function AiKeyPanel({
   const models = PROVIDER_MODELS[provider];
   const activeProviderStatus = providers?.find((p) => p.id === provider);
 
+  // Settings only: the active provider already has a key (personal or env) it can run with,
+  // so leaving the key field blank and just changing the provider/model dropdowns should
+  // still be savable — see `handleSaveSettings` below.
+  const canSaveWithoutKey =
+    variant === "settings" &&
+    !apiKey.trim() &&
+    Boolean(activeProviderStatus?.hasPersonalKey || activeProviderStatus?.usingEnv);
+
   function resetCheckState() {
     if (checkStatus !== "idle") {
       setCheckStatus("idle");
@@ -108,6 +116,36 @@ export function AiKeyPanel({
         );
       }
     });
+  }
+
+  /** Saves the provider/model selection alone, keeping whatever key is already on file —
+   *  the settings-only path for switching model or active provider without re-pasting a key. */
+  function handleSaveSettings() {
+    if (pending) return;
+    start(async () => {
+      try {
+        await saveAiSettings({ provider, model });
+        setCheckStatus("saved");
+        setErrorMessage(null);
+        toast.success("AI settings saved");
+        onVerified?.({ provider, model });
+        router.refresh();
+      } catch (err) {
+        setCheckStatus("error");
+        setErrorMessage(
+          err instanceof Error ? err.message : "Something went wrong. Try again."
+        );
+      }
+    });
+  }
+
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (canSaveWithoutKey) {
+      handleSaveSettings();
+    } else {
+      handleVerify();
+    }
   }
 
   return (
@@ -142,53 +180,56 @@ export function AiKeyPanel({
         </p>
       )}
 
-      <div className="space-y-1.5">
-        <Label htmlFor={`${uid}-key`}>{providerMeta.label} API key</Label>
-        <Input
-          id={`${uid}-key`}
-          type="password"
-          autoComplete="off"
-          placeholder={providerMeta.keyPlaceholder}
-          value={apiKey}
-          onChange={(e) => {
-            setApiKey(e.target.value);
-            resetCheckState();
-          }}
-        />
-        {checkStatus === "error" && errorMessage && (
-          <p role="alert" className="text-sm text-destructive">
-            {errorMessage}
-          </p>
-        )}
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          disabled={pending || !apiKey.trim()}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
-          onClick={handleVerify}
-        >
-          {pending ? (
-            <>
-              <Loader2 className="size-4 animate-spin" />
-              Verifying…
-            </>
-          ) : checkStatus === "saved" ? (
-            <>
-              <Check className="size-4" />
-              Saved
-            </>
-          ) : (
-            "Verify and save"
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-1.5">
+          <Label htmlFor={`${uid}-key`}>{providerMeta.label} API key</Label>
+          <Input
+            id={`${uid}-key`}
+            type="password"
+            autoComplete="off"
+            placeholder={providerMeta.keyPlaceholder}
+            value={apiKey}
+            onChange={(e) => {
+              setApiKey(e.target.value);
+              resetCheckState();
+            }}
+          />
+          {checkStatus === "error" && errorMessage && (
+            <p role="alert" className="text-sm text-destructive">
+              {errorMessage}
+            </p>
           )}
-        </Button>
-        {variant === "wizard" && onSkip && (
-          <Button type="button" variant="ghost" onClick={onSkip}>
-            Skip for now
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="submit"
+            disabled={pending || (!apiKey.trim() && !canSaveWithoutKey)}
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            {pending ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                {canSaveWithoutKey ? "Saving…" : "Verifying…"}
+              </>
+            ) : checkStatus === "saved" ? (
+              <>
+                <Check className="size-4" />
+                Saved
+              </>
+            ) : canSaveWithoutKey ? (
+              "Save settings"
+            ) : (
+              "Verify and save"
+            )}
           </Button>
-        )}
-      </div>
+          {variant === "wizard" && onSkip && (
+            <Button type="button" variant="ghost" onClick={onSkip}>
+              Skip for now
+            </Button>
+          )}
+        </div>
+      </form>
 
       <details
         className="group rounded-lg border border-border/60"
@@ -239,9 +280,11 @@ export function AiKeyPanel({
                 onChange={(e) => {
                   if (e.target.value === "__custom__") {
                     setCustomModel(true);
+                    resetCheckState();
                     return;
                   }
                   setModel(e.target.value);
+                  resetCheckState();
                 }}
               >
                 {models.map((m) => (

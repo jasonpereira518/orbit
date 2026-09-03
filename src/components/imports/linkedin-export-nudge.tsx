@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import { dismissLinkedInExportNudge } from "@/actions/linkedin-export";
 import { toast } from "@/lib/toast";
@@ -12,7 +13,15 @@ import { Button } from "@/components/ui/button";
  * the server caller via `getLinkedInExportStatus()` — this component only renders the
  * card and handles Dismiss once it's told to show.
  */
-export function LinkedInExportNudge({ requestedAt }: { requestedAt: string }) {
+export function LinkedInExportNudge({
+  requestedAt,
+  showImportsLink = false,
+}: {
+  requestedAt: string;
+  /** True on the dashboard mount, where "upload it here" needs an actual link to /imports.
+   *  False (default) on the /imports mount, where the upload UI is already on the page. */
+  showImportsLink?: boolean;
+}) {
   const [dismissed, setDismissed] = useState(false);
   const [pending, startTransition] = useTransition();
 
@@ -39,8 +48,15 @@ export function LinkedInExportNudge({ requestedAt }: { requestedAt: string }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/60 bg-muted/30 px-4 py-3 text-sm">
       <p className="text-ink">
-        LinkedIn export requested {dateLabel} — upload it here when it
-        arrives.
+        LinkedIn export requested {dateLabel} —{" "}
+        {showImportsLink ? (
+          <Link href="/imports" className="underline underline-offset-2">
+            Open Imports
+          </Link>
+        ) : (
+          "upload it here"
+        )}{" "}
+        when it arrives.
       </p>
       <Button
         type="button"

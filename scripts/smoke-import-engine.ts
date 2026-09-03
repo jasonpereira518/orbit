@@ -50,6 +50,7 @@ import {
 } from "../src/lib/import-job-processor";
 import { runImportJobById } from "../src/lib/import-job-dispatch";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { retireLinkedInExportReminders } from "../src/lib/linkedin-export";
 
 const USER = "smoke-import-engine-user";
 
@@ -1187,6 +1188,46 @@ async function main() {
     "re-upload logs no duplicate reminder",
     (remindersAgain?.value ?? 0) === 1,
     `rows ${remindersAgain?.value}`
+  );
+
+  // --- retireLinkedInExportReminders: the pure DB helper backing "the pending LinkedIn
+  // export reminder is retired once the upload lands" (src/lib/linkedin-export.ts).
+  // `startLinkedInImport`/`startLinkedInMessagesImport` call it right after creating the
+  // import row, and `getLinkedInExportStatus` calls it for imports that predate the fix —
+  // both are `"use server"` actions that need a live request (`revalidatePath`,
+  // `requireUserId`), which this headless suite doesn't have, so this exercises the helper
+  // directly: seed a pending `linkedin_export` reminder for this user, then confirm the
+  // helper flips it to done and leaves an unrelated reminder alone.
+  const [pendingExportReminder] = await db6
+    .insert(reminders)
+    .values({
+      userId: USER,
+      title: "Upload your LinkedIn export to Orbit",
+      dueDate: new Date(),
+      reminderType: "linkedin_export",
+      actionKind: "task",
+      createdBy: "user",
+      status: "pending",
+    })
+    .returning();
+  await retireLinkedInExportReminders(USER);
+  const retiredExportReminder = await db6.query.reminders.findFirst({
+    where: eq(reminders.id, pendingExportReminder.id),
+  });
+  check(
+    "retireLinkedInExportReminders marks the pending linkedin_export reminder done",
+    retiredExportReminder?.status === "done",
+    JSON.stringify(retiredExportReminder)
+  );
+  const untouchedFollowUp = await db6.query.reminders.findFirst({
+    // `followUp` was already asserted non-null by the "typed post_meeting" check above,
+    // which throws (via `check()`) before this line would ever run with it undefined.
+    where: eq(reminders.id, followUp?.id ?? ""),
+  });
+  check(
+    "retireLinkedInExportReminders leaves other reminder types alone",
+    untouchedFollowUp?.reminderType === "post_meeting" && untouchedFollowUp?.status === "pending",
+    JSON.stringify(untouchedFollowUp)
   );
 
   await reset();

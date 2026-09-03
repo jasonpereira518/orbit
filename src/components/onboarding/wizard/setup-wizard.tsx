@@ -70,7 +70,7 @@ const STEP_TITLES: Record<WizardStep, string> = {
 };
 
 function isValidStep(step: string | null | undefined): step is WizardStep {
-  return step != null && step in STEP_TITLES;
+  return step != null && Object.hasOwn(STEP_TITLES, step);
 }
 
 export function SetupWizard({
