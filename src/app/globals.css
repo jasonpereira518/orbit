@@ -54,6 +54,7 @@
   --color-tier-lifetime: var(--tier-lifetime);
   --color-tier-pro: var(--tier-pro);
   --color-ink: var(--ink);
+  --color-admin-nav-hover: var(--admin-nav-hover);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -122,6 +123,9 @@
      lets `--primary` be an accent in both themes without dragging body content
      with it. Light is unchanged from before the split. */
   --ink: #0f3d3e;
+  /* Admin nav hover wash. Carries its own alpha rather than being tinted at the call
+     site, because the hover span uses `opacity` for its fade-in — the two would fight. */
+  --admin-nav-hover: rgb(15 61 62 / 0.10);
   --radius: 0.625rem;
   --sidebar: #f7f8f6;
   --sidebar-foreground: #1a1c1a;
@@ -208,6 +212,7 @@
   --tier-lifetime: #f2c14e;
   --tier-pro: #599de7;
   --ink: #e4ebf6;
+  --admin-nav-hover: rgb(124 195 226 / 0.16);
   /* Shadows on a dark ground want to be deeper than the surface, not neutral
      black — a pure-black shadow over navy reads as a dead hole. */
   --shadow-color: 218deg 60% 3%;
@@ -236,6 +241,13 @@
   --primary-foreground: #fff3e9;
   --accent: #ffeede;
   --accent-foreground: #f26625;
+  /* Deliberately NOT `--primary` at a low alpha. #f26625 is a deep, heavily saturated
+     orange; behind 13px nav labels any alpha of it reads burnt rather than light. This is
+     that same hue mixed toward white, so it stays unmistakably YC orange while going pale,
+     and carries a higher alpha to keep the hover as *present* as the saturated version was.
+     `--accent` is not reusable here: it is a pale peach in light mode but a dark brown in
+     dark mode, so it would invert the intent on one of the two themes. */
+  --admin-nav-hover: rgb(255 178 127 / 0.45);
 }
 
 .dark .yc-theme {
@@ -243,6 +255,9 @@
   --primary-foreground: #2a1000;
   --accent: #47280f;
   --accent-foreground: #ff9152;
+  /* Dark mode needs no lightening — `--primary` is already a pale-bright orange here, so
+     this is that value at the alpha the wash wants. */
+  --admin-nav-hover: rgb(255 145 82 / 0.20);
 }
 
 @layer base {

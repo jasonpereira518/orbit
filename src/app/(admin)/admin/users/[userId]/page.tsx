@@ -75,11 +75,6 @@ export default async function AdminUserDetailPage({
   const detail = await getAdminUserDetail(decoded);
   if (!detail) notFound();
 
-  // Opening an account is itself a recorded act. This is what remains of the reveal gate:
-  // the operator no longer justifies a look, but the look is still on the record. Throttled
-  // to one row an hour inside `recordAccountView`, and it never throws.
-  await recordAccountView(adminUserId, decoded);
-
   const contactsPage = Math.max(
     Number.parseInt(query.contactsPage ?? "1", 10) || 1,
     1
@@ -87,7 +82,14 @@ export default async function AdminUserDetailPage({
   const contactsQ = query.contactsQ?.trim() ?? "";
   const before = query.before ? new Date(query.before) : null;
 
-  const [audit, contactPage, timeline] = await Promise.all([
+  // `recordAccountView` depends only on `adminUserId`/`decoded`, not on `detail` — it stays
+  // after the `notFound()` gate so a mistyped/nonexistent id never gets logged as a view,
+  // but otherwise has no reason to block starting the three reads below.
+  const [, audit, contactPage, timeline] = await Promise.all([
+    // Opening an account is itself a recorded act. This is what remains of the reveal
+    // gate: the operator no longer justifies a look, but the look is still on the record.
+    // Throttled to one row an hour inside `recordAccountView`, and it never throws.
+    recordAccountView(adminUserId, decoded),
     getAuditTrail(decoded).catch(() => []),
     listAdminContacts(decoded, {
       page: contactsPage,
