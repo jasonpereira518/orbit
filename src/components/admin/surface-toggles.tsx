@@ -130,6 +130,10 @@ export function SurfaceToggles({
  *
  * `/dashboard` rather than back to the console: the point of the mode is to look at the
  * product, and the console is the one place it changes nothing.
+ *
+ * Entering redirects from inside `setViewAsUserAction` itself (one round trip instead of
+ * awaiting the action here and then separately `router.push`ing — see that action's
+ * comment). Exiting stays on this page, so it still needs its own `router.refresh()`.
  */
 export function ViewAsUserButton({ active }: { active: boolean }) {
   const router = useRouter();
@@ -143,7 +147,6 @@ export function ViewAsUserButton({ active }: { active: boolean }) {
         start(async () => {
           await setViewAsUserAction({ on: !active });
           if (active) router.refresh();
-          else router.push("/dashboard");
         })
       }
       className={cn(

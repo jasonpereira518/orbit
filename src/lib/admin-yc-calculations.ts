@@ -66,3 +66,106 @@ export function computeFundraisingProgress(
   if (targetUsd === 0) return 0;
   return (raisedUsd / targetUsd) * 100;
 }
+
+/**
+ * One piece of money coming in, flattened from either `fundraising_investors` (dilutive)
+ * or `non_dilutive_funding`. The two tables stay separate — their lifecycles genuinely
+ * differ — and meet here, so there is exactly one place that decides what counts.
+ */
+export type CapitalInflow = {
+  amountUsd: number;
+  dilutive: boolean;
+  /** Credits and other value that never lands in a bank account. */
+  inKind: boolean;
+  repayable: boolean;
+  repaidUsd: number;
+  /** `null` means committed or awarded, but not yet landed. */
+  receivedAt: Date | null;
+  expiresAt: Date | null;
+};
+
+export type CapitalTotals = {
+  dilutiveCashReceivedUsd: number;
+  nonDilutiveCashReceivedUsd: number;
+  /** Cash that actually landed, from every source. The headline number. */
+  bankedUsd: number;
+  inKindActiveUsd: number;
+  inKindExpiredUsd: number;
+  committedNotReceivedUsd: number;
+  debtOutstandingUsd: number;
+  /** `bankedUsd + inKindActiveUsd`. Never rendered without its own derivation beside it. */
+  totalCapitalInUsd: number;
+  netOfDebtUsd: number;
+};
+
+/**
+ * Add up everything the company has been given, in a way that cannot flatter itself.
+ *
+ * Four rules, each of which exists because breaking it overstates the money on hand:
+ *
+ *  1. **In-kind never enters `bankedUsd`.** Credits do not pay salaries. This is the whole
+ *     reason `non_dilutive_funding.form` exists as a column separate from `kind`.
+ *  2. **Expired in-kind counts as nothing** except `inKindExpiredUsd` — which exists only
+ *     so that the total dropping one day is explicable rather than mysterious.
+ *  3. **Committed-but-not-received counts as nothing.** A signed SAFE is not money, and a
+ *     grant letter is not money.
+ *  4. **A loan is banked but still owed.** Loan cash really is in the account, so excluding
+ *     it would understate; but reporting it without `debtOutstandingUsd` beside it is the
+ *     one way this page could actively mislead. You cannot owe money you were never given,
+ *     so an unreceived loan creates no debt.
+ *
+ * Unlike the ratios above, these are sums: an empty set is genuinely `0`, not `null`.
+ */
+export function computeCapitalTotals(
+  inflows: CapitalInflow[],
+  asOf: Date
+): CapitalTotals {
+  const totals = {
+    dilutiveCashReceivedUsd: 0,
+    nonDilutiveCashReceivedUsd: 0,
+    bankedUsd: 0,
+    inKindActiveUsd: 0,
+    inKindExpiredUsd: 0,
+    committedNotReceivedUsd: 0,
+    debtOutstandingUsd: 0,
+    totalCapitalInUsd: 0,
+    netOfDebtUsd: 0,
+  };
+
+  for (const inflow of inflows) {
+    // Rule 2 comes first: an expired credit is spent regardless of how it arrived.
+    if (inflow.inKind && inflow.expiresAt && inflow.expiresAt.getTime() <= asOf.getTime()) {
+      totals.inKindExpiredUsd += inflow.amountUsd;
+      continue;
+    }
+
+    // Rule 3.
+    if (!inflow.receivedAt) {
+      totals.committedNotReceivedUsd += inflow.amountUsd;
+      continue;
+    }
+
+    // Rule 1.
+    if (inflow.inKind) {
+      totals.inKindActiveUsd += inflow.amountUsd;
+      continue;
+    }
+
+    totals.bankedUsd += inflow.amountUsd;
+    if (inflow.dilutive) {
+      totals.dilutiveCashReceivedUsd += inflow.amountUsd;
+    } else {
+      totals.nonDilutiveCashReceivedUsd += inflow.amountUsd;
+    }
+
+    // Rule 4. Clamped at zero so an over-recorded repayment reads as settled rather than
+    // as the lender owing us money.
+    if (inflow.repayable) {
+      totals.debtOutstandingUsd += Math.max(0, inflow.amountUsd - inflow.repaidUsd);
+    }
+  }
+
+  totals.totalCapitalInUsd = totals.bankedUsd + totals.inKindActiveUsd;
+  totals.netOfDebtUsd = totals.totalCapitalInUsd - totals.debtOutstandingUsd;
+  return totals;
+}
