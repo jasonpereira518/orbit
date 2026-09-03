@@ -10,15 +10,18 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import { HELP_FAQ } from "@/components/help/help-faq";
 
 /**
  * The FAQ alone, as `<details>`/`<summary>` cards — keyboard-operable and
  * usable without JS. Shared by the help sheet and Settings → Help so the
  * copy only lives in `help-faq.ts`.
+ *
+ * `onNavigate` fires when a CTA link is clicked — the help sheet uses it to
+ * close itself so the destination page doesn't render behind a stale sheet.
+ * Settings → Help renders the list inline and passes nothing.
  */
-export function HelpFaqList() {
+export function HelpFaqList({ onNavigate }: { onNavigate?: () => void } = {}) {
   return (
     <div className="space-y-2">
       {HELP_FAQ.map((item) => (
@@ -38,9 +41,8 @@ export function HelpFaqList() {
             {item.href && item.cta && (
               <Link
                 href={item.href}
-                className={cn(
-                  buttonVariants({ variant: "outline", size: "sm" })
-                )}
+                onClick={onNavigate}
+                className={buttonVariants({ variant: "outline", size: "sm" })}
               >
                 {item.cta}
               </Link>
@@ -93,7 +95,7 @@ export function HelpSheet({
             <SheetTitle>Help</SheetTitle>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto px-4 pb-4">
-            <HelpFaqList />
+            <HelpFaqList onNavigate={() => setOpen(false)} />
           </div>
         </SheetContent>
       </Sheet>
