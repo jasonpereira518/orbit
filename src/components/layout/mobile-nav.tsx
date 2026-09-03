@@ -14,6 +14,7 @@ import {
   isNavActive,
 } from "@/components/layout/app-nav";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { HelpSheet } from "@/components/help/help-sheet";
 import {
   Sheet,
   SheetContent,
@@ -416,7 +417,15 @@ export function MobileNav({
                 <p className="text-xs text-muted-foreground">Sign in required</p>
               )}
             </div>
-            <ThemeToggle className="h-9 w-9 text-muted-foreground hover:text-foreground" />
+            <div className="flex items-center gap-1">
+              {/* Nested sheets can fight over focus/z-index, so close "More"
+                  first rather than stacking Help on top of it. */}
+              <HelpSheet
+                className="h-9 w-9 text-muted-foreground hover:text-foreground"
+                onBeforeOpen={() => setMoreOpen(false)}
+              />
+              <ThemeToggle className="h-9 w-9 text-muted-foreground hover:text-foreground" />
+            </div>
           </div>
         </SheetContent>
       </Sheet>
