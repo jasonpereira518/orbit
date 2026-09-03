@@ -18,6 +18,12 @@ import {
 import { computeNetworkMetrics } from "@/lib/network-metrics";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
+import { contactHasNotesSql } from "@/lib/contact-notes-sql";
+import { getConstellationConfig } from "@/lib/constellation-config";
+import {
+  constellationEligibility,
+  meetsConstellationFloor,
+} from "@/lib/constellation-eligibility";
 
 const AUTO_SUGGESTION_TYPES = [
   "dormant_high_value",
@@ -433,6 +439,7 @@ export async function getDashboardData(
         relationshipScore: true,
         statedCloseness: true,
         priorityLevel: true,
+        constellationPin: true,
         source: true,
         industry: true,
         metContext: true,
@@ -452,7 +459,11 @@ export async function getDashboardData(
         updatedAt: true,
         notes: false,
       },
-      extras: { avatarUrl: clientAvatarUrlSql.as("avatar_url") },
+      extras: {
+        avatarUrl: clientAvatarUrlSql.as("avatar_url"),
+        // Computed, never the column — see contact-notes-sql.ts and the budget smoke.
+        hasNotes: contactHasNotesSql.as("has_notes"),
+      },
       orderBy: (c, { desc }) => [desc(c.updatedAt)],
       with: { contactTags: { with: { tag: true } } },
     })
@@ -465,6 +476,7 @@ export async function getDashboardData(
     goals,
     goalTexts,
     closenessCohort,
+    constellationConfig,
   ] = await Promise.all([
     contactRowsPromise,
     db.query.reminders.findMany({
@@ -488,6 +500,7 @@ export async function getDashboardData(
     listActiveGoalTextsForUser(userId),
     // Donates the scan above rather than repeating it.
     getClosenessCohort(userId, contactRowsPromise),
+    getConstellationConfig(),
   ]);
 
   // `profileImageUrl` keeps its name for the cards that render these rows, but it is now
@@ -550,10 +563,30 @@ export async function getDashboardData(
       website: c.website ?? null,
       profileImageUrl: c.profileImageUrl,
       dormant,
+      // Same rule and the same shared predicate as `loadGraphData` — this payload path is a
+      // parallel implementation, so the decision has to come from one place or the two
+      // surfaces will quietly disagree about who is on the chart.
+      substantive: constellationEligibility(
+        closenessCohort.constellationSignals.get(c.id),
+        {
+          pin: c.constellationPin ?? null,
+          hasNotesText: Boolean(c.hasNotes),
+          statedCloseness: c.statedCloseness ?? null,
+          priorityLevel: c.priorityLevel ?? 0,
+          nextFollowUpAt: c.nextFollowUpAt ?? null,
+          tagCount: (c.tags ?? []).length,
+        },
+        constellationConfig.thresholds
+      ).eligible,
     };
   });
 
   const userName = (await options?.userName) || "You";
+
+  const previewEligibleCount = graphContacts.filter((c) => c.substantive).length;
+  const previewFilterActive =
+    constellationConfig.enabled &&
+    meetsConstellationFloor(previewEligibleCount, graphContacts.length);
 
   const { clusters: builtClusters } = buildConstellationClusters(graphContacts);
   const clusters = toNamedGraphClusters(builtClusters);
@@ -708,6 +741,16 @@ export async function getDashboardData(
         strongTies,
         dormantCount,
         overdueCount,
+        // Computed over the WHOLE network, not the capped preview list: the cap is a
+        // rendering budget, and `active` still has to reflect the real shape of the network
+        // or a 150-contact slice would look like a filtered one.
+        constellationFilter: {
+          active: previewFilterActive,
+          shown: previewFilterActive ? previewEligibleCount : graphContacts.length,
+          hidden: previewFilterActive
+            ? graphContacts.length - previewEligibleCount
+            : 0,
+        },
         userName,
         userImageUrl: null,
         userEmail: null,

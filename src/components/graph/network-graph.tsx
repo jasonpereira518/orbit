@@ -87,6 +87,7 @@ import {
   RefreshCw,
   Search,
   Sparkles,
+  Stars,
 } from "lucide-react";
 
 type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
@@ -669,7 +670,10 @@ function GraphCanvas(props: {
   onFocusCluster: (clusterId: string) => void;
   resetToken: number;
   compact?: boolean;
+  /** False once the viewer has asked to see everyone, via the "show all" escape hatch. */
+  constellationFilterOn: boolean;
 }) {
+  const constellationFilterOn = props.constellationFilterOn;
   // Keyword is the one filter driven by continuous typing — debounce it so
   // the (potentially expensive) filter/layout rebuild below doesn't run on
   // every keystroke. Company/school/minScore come from discrete selects.
@@ -682,6 +686,11 @@ function GraphCanvas(props: {
   const filteredContacts = useMemo(() => {
     const kw = debouncedKeyword.trim().toLowerCase();
     return props.data.contacts.filter((c) => {
+      // The constellation filter sits here, as a peer of the company/school/score filters
+      // rather than as a narrower payload. `data.contacts` therefore stays the whole
+      // network, which is what keeps saved star positions, `summary.*` and the comet list
+      // correct without any of them needing to know this feature exists.
+      if (constellationFilterOn && !c.substantive) return false;
       if (props.company !== "all" && c.company !== props.company) return false;
       if (props.school !== "all" && (c.school || "") !== props.school) {
         return false;
@@ -708,6 +717,7 @@ function GraphCanvas(props: {
     });
   }, [
     props.data.contacts,
+    constellationFilterOn,
     props.company,
     props.school,
     debouncedKeyword,
@@ -758,6 +768,7 @@ function GraphCanvasInner({
   layout,
   compact,
   data,
+  constellationFilterOn,
 }: {
   company: string;
   school: string;
@@ -781,6 +792,7 @@ function GraphCanvasInner({
   layout: ReturnType<typeof buildHybridGraphLayout>;
   compact?: boolean;
   data: GraphPayload;
+  constellationFilterOn: boolean;
 }) {
   const router = useRouter();
   const { fitView, getNodes, getViewport, setViewport } = useReactFlow();
@@ -1263,27 +1275,19 @@ function GraphCanvasInner({
       }
       if (node.id === "me" || node.type === "user") {
         const d = node.data as GraphNodeData;
-        const scoreCounts: Record<number, number> = {
-          1: 0,
-          2: 0,
-          3: 0,
-          4: 0,
-          5: 0,
-        };
-        for (const c of data.contacts) {
-          const s = Math.min(
-            5,
-            Math.max(1, c.orbitScore ?? c.relationshipScore ?? 2)
-          );
-          scoreCounts[s] = (scoreCounts[s] || 0) + 1;
-        }
         onSelect({
           type: "user",
           data: d,
           summary: {
             total: data.summary.total,
             companyCount: data.summary.companyCount,
-            scoreCounts,
+            // The server's counts, computed over the whole network — not a client recompute
+            // over `data.contacts`. That recompute sat directly beneath `total`, which has
+            // always been the full network, so the two disagreed whenever the payload was a
+            // subset: the dashboard preview caps at 150, and the constellation filter narrows
+            // it further. A ring histogram summing to 150 under a headline of 1,240 reads as
+            // a bug in the numbers rather than as two different questions.
+            scoreCounts: data.summary.scoreCounts,
             strongTies: data.summary.strongTies,
             dormantCount: data.summary.dormantCount,
             overdueCount: data.summary.overdueCount,
@@ -1429,21 +1433,58 @@ function GraphCanvasInner({
         />
       </ReactFlow>
 
+      {/*
+        Three different empty skies, which used to be one. "Add contacts" is right only when
+        there genuinely are none — said to someone whose 800 contacts were filtered out it is
+        both wrong and unactionable, and it points at the one button that will not help.
+      */}
       {isEmpty && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="pointer-events-auto max-w-sm rounded-2xl border border-white/10 bg-[#080b12]/90 px-6 py-5 text-center shadow-xl backdrop-blur-md">
-            <p className="font-[family-name:var(--font-display)] text-lg text-white">
-              Your sky is empty
-            </p>
-            <p className="mt-1 text-sm text-white/55">
-              Add contacts and they will appear as stars in your constellation.
-            </p>
-            <Link
-              href="/contacts/new"
-              className="mt-4 inline-flex h-8 items-center rounded-lg bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/15"
-            >
-              Add a contact
-            </Link>
+            {data.contacts.length === 0 ? (
+              <>
+                <p className="font-[family-name:var(--font-display)] text-lg text-white">
+                  Your sky is empty
+                </p>
+                <p className="mt-1 text-sm text-white/55">
+                  Add contacts and they will appear as stars in your constellation.
+                </p>
+                <Link
+                  href="/contacts/new"
+                  className="mt-4 inline-flex h-8 items-center rounded-lg bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/15"
+                >
+                  Add a contact
+                </Link>
+              </>
+            ) : constellationFilterOn &&
+              !data.contacts.some((c) => c.substantive) ? (
+              <>
+                <p className="font-[family-name:var(--font-display)] text-lg text-white">
+                  Nobody here yet
+                </p>
+                <p className="mt-1 text-sm text-white/55">
+                  Your chart shows people you have notes on, met, or really talked with.
+                  Write a note about someone and they appear here.
+                </p>
+                <Link
+                  href="/capture"
+                  className="mt-4 inline-flex h-8 items-center rounded-lg bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/15"
+                >
+                  Add notes
+                </Link>
+              </>
+            ) : (
+              <>
+                <p className="font-[family-name:var(--font-display)] text-lg text-white">
+                  No stars match
+                </p>
+                <p className="mt-1 text-sm text-white/55">
+                  {constellationFilterOn
+                    ? "Nobody fits these filters and the people you know. Widen the filters, or show everyone."
+                    : "Nobody fits these filters. Try widening them."}
+                </p>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -1493,6 +1534,14 @@ export function NetworkGraph({
   const [keyword, setKeyword] = useState("");
   const [minScore, setMinScore] = useState("1");
   const [search, setSearch] = useState("");
+  /**
+   * The viewer's own override of the constellation filter, for this session.
+   *
+   * A filter that removes most of somebody's network without saying so is indistinguishable
+   * from data loss, so the chip that announces it also has to be able to undo it. Deliberately
+   * not persisted: the operator's setting is the default, and this is a look, not a preference.
+   */
+  const [showAllStars, setShowAllStars] = useState(false);
   const [searchHitIds, setSearchHitIds] = useState<Set<string>>(new Set());
   const [focusCluster, setFocusCluster] = useState<string | null>(null);
   const [zoomToken, setZoomToken] = useState(0);
@@ -1921,6 +1970,11 @@ export function NetworkGraph({
       });
   }, [data]);
 
+  // The filter is in force only if the operator enabled it, the network cleared the safety
+  // floor on the server, AND this viewer has not asked to see everyone.
+  const constellationFilter = data?.summary.constellationFilter;
+  const constellationFilterOn = Boolean(constellationFilter?.active) && !showAllStars;
+
   if (!data) {
     return (
       <div
@@ -1959,6 +2013,47 @@ export function NetworkGraph({
         )}
       >
         <Starfield />
+
+        {/*
+          Say it out loud. The filter can remove most of a network, and a chart that quietly
+          drops two thirds of someone's contacts is indistinguishable from data loss — so it
+          announces itself, with the undo right next to the claim.
+        */}
+        {!compact && constellationFilter?.active && (
+          <div className="pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2">
+            <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/10 bg-[#080b12]/85 px-3 py-1 text-[11px] text-white/70 backdrop-blur-md">
+              <Stars className="size-3 text-white/50" aria-hidden />
+              {showAllStars ? (
+                <>
+                  <span className="tabular-nums">
+                    Showing all {data.summary.total.toLocaleString()}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowAllStars(false)}
+                    className="text-white/90 underline underline-offset-2 hover:text-white"
+                  >
+                    Only people you know
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="tabular-nums">
+                    Showing {constellationFilter.shown.toLocaleString()} of{" "}
+                    {data.summary.total.toLocaleString()}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowAllStars(true)}
+                    className="text-white/90 underline underline-offset-2 hover:text-white"
+                  >
+                    Show all
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         {!compact && (
           <>
@@ -2401,6 +2496,7 @@ export function NetworkGraph({
         <ReactFlowProvider>
           <GraphCanvas
             data={data}
+            constellationFilterOn={constellationFilterOn}
             company={company}
             school={school}
             keyword={keyword}

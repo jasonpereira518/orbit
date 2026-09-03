@@ -10,6 +10,12 @@ import {
   toNamedGraphClusters,
 } from "@/lib/constellation-clusters";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
+import { contactHasNotesSql } from "@/lib/contact-notes-sql";
+import { getConstellationConfig } from "@/lib/constellation-config";
+import {
+  constellationEligibility,
+  meetsConstellationFloor,
+} from "@/lib/constellation-eligibility";
 
 /**
  * The constellation payload, as a plain function of `userId`.
@@ -56,6 +62,10 @@ export async function loadGraphData(
         title: true,
         relationshipScore: true,
         statedCloseness: true,
+        // Constellation eligibility inputs. `priorityLevel` and `constellationPin` are the
+        // only additions; the rest were already here.
+        priorityLevel: true,
+        constellationPin: true,
         lastInteractionAt: true,
         firstInteractionAt: true,
         nextFollowUpAt: true,
@@ -76,12 +86,17 @@ export async function loadGraphData(
         createdAt: true,
         industry: true,
       },
-      extras: { avatarUrl: clientAvatarUrlSql.as("avatar_url") },
+      extras: {
+        avatarUrl: clientAvatarUrlSql.as("avatar_url"),
+        // Computed, never the column: `notes` is multi-KB per row and deliberately excluded
+        // above, and `smoke-page-budgets` asserts it never appears bare in this scan.
+        hasNotes: contactHasNotesSql.as("has_notes"),
+      },
       with: { contactTags: { with: { tag: true } } },
     })
   );
 
-  const [rows, goals, settings, closenessCohort] = await Promise.all([
+  const [rows, goals, settings, closenessCohort, constellationConfig] = await Promise.all([
     contactRowsPromise,
     db.query.userGoals.findMany({
       where: eq(userGoals.userId, userId),
@@ -92,6 +107,9 @@ export async function loadGraphData(
     }),
     // Donates the scan above rather than repeating it.
     getClosenessCohort(userId, contactRowsPromise),
+    // The one statement this feature adds. A one-row select on a singleton table, and the
+    // reason `smoke-page-budgets` allows the graph 9 statements rather than 8.
+    getConstellationConfig(),
   ]);
 
   const graphContacts = rows.map((c) => {
@@ -126,8 +144,39 @@ export async function loadGraphData(
       website: c.website,
       profileImageUrl: c.avatarUrl,
       dormant,
+      substantive: constellationEligibility(
+        closenessCohort.constellationSignals.get(c.id),
+        {
+          pin: c.constellationPin,
+          hasNotesText: Boolean(c.hasNotes),
+          statedCloseness: c.statedCloseness,
+          priorityLevel: c.priorityLevel,
+          nextFollowUpAt: c.nextFollowUpAt,
+          tagCount: tags.length,
+        },
+        constellationConfig.thresholds
+      ).eligible,
     };
   });
+
+  /*
+   * Eligibility is computed here and applied in the client.
+   *
+   * Dropping ineligible contacts from this payload would have been the obvious move, and it
+   * collides with four separate things: it destroys hand-dragged star positions (the render
+   * map is pruned to the payload), it contradicts `summary.total`, it empties the comet list
+   * (which derives from `contacts.filter(dormant)` — very nearly the same population this
+   * hides), and it would have to be written twice, because the dashboard preview re-derives
+   * its own payload rather than calling this function.
+   *
+   * So the server decides and the client draws: `NetworkGraph` filters on `substantive`
+   * alongside the company/school/score filters it already has, and everything computed from
+   * the full set stays correct by construction.
+   */
+  const eligibleCount = graphContacts.filter((c) => c.substantive).length;
+  const filterActive =
+    constellationConfig.enabled &&
+    meetsConstellationFloor(eligibleCount, graphContacts.length);
 
   const { clusters: built } = buildConstellationClusters(graphContacts);
   const clusters: GraphCluster[] = toNamedGraphClusters(built);
@@ -184,6 +233,19 @@ export async function loadGraphData(
       strongTies,
       dormantCount,
       overdueCount,
+      /**
+       * Whether the filter is actually in force, and how many stars it costs.
+       *
+       * `active` is not the same as the operator's switch: it also requires the safety floor
+       * (`meetsConstellationFloor`), so a network where too little would survive renders whole.
+       * The client needs the distinction to explain an empty sky honestly rather than telling
+       * someone with 800 contacts to go add some.
+       */
+      constellationFilter: {
+        active: filterActive,
+        shown: filterActive ? eligibleCount : graphContacts.length,
+        hidden: filterActive ? graphContacts.length - eligibleCount : 0,
+      },
       userName: profile?.name || "You",
       userImageUrl: profile?.imageUrl || null,
       userEmail: profile?.email || null,
