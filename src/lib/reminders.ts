@@ -57,8 +57,19 @@ function contactDisplayName(c: {
 }
 
 /** Contacts without a scheduled follow-up are eligible for discovery suggestions. */
-function isDiscoveryEligible(c: { nextFollowUpAt: Date | string | null }) {
-  return !c.nextFollowUpAt;
+/**
+ * Whether a contact can be suggested for outreach at all.
+ *
+ * An existing follow-up already covers them — and a contact pinned off the constellation is
+ * one the user has explicitly said not to show them. Nagging "reach out to X, gone quiet"
+ * about somebody they deliberately removed from their own chart is the most annoying way
+ * this could leak, and it is the one place the pin has to reach beyond `/graph`.
+ */
+function isDiscoveryEligible(c: {
+  nextFollowUpAt: Date | string | null;
+  constellationPin: "in" | "out" | null;
+}) {
+  return !c.nextFollowUpAt && c.constellationPin !== "out";
 }
 
 /**
@@ -108,6 +119,10 @@ async function buildOutreachSuggestions(userId: string) {
       lastInteractionAt: true,
       firstInteractionAt: true,
       nextFollowUpAt: true,
+      // Read by `isDiscoveryEligible`. Required, not optional, on that predicate's parameter:
+      // an optional field here would let a caller forget the column and quietly never
+      // suppress anything, with nothing failing to say so.
+      constellationPin: true,
     },
   });
 

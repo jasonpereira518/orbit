@@ -1,4 +1,5 @@
 import { formatDistanceToNow } from "date-fns";
+import { ConstellationPinPill } from "@/components/contacts/constellation-pin-pill";
 import { Badge } from "@/components/ui/badge";
 import {
   closenessTierChipClass,
@@ -10,6 +11,7 @@ export function ContactStatPills({
   closeness,
   lastTouchAt,
   hasLoggedInteraction,
+  constellation,
 }: {
   closeness: ClosenessBreakdown;
   lastTouchAt: Date | string | null;
@@ -20,6 +22,15 @@ export function ContactStatPills({
    * happened, right next to a timeline that says "no interactions yet".
    */
   hasLoggedInteraction: boolean;
+  /**
+   * Omitted when the constellation filter is off globally — a control with no effect is
+   * worse than no control. Any stored pin is preserved either way.
+   */
+  constellation?: {
+    contactId: string;
+    pin: "in" | "out" | null;
+    substantive: boolean;
+  };
 }) {
   const pct = Math.round(closeness.closeness * 100);
   const since = lastTouchAt
@@ -54,6 +65,13 @@ export function ContactStatPills({
       >
         {lastLabel}
       </Badge>
+      {constellation && (
+        <ConstellationPinPill
+          contactId={constellation.contactId}
+          pin={constellation.pin}
+          substantive={constellation.substantive}
+        />
+      )}
     </div>
   );
 }
