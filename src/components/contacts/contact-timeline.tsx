@@ -327,8 +327,9 @@ export function ContactTimeline({
                         return (
                           <li
                             key={i.id}
+                            id={`interaction-${i.id}`}
                             data-day-key={key}
-                            className="border-l-2 border-primary/25 pl-4"
+                            className="scroll-mt-4 border-l-2 border-primary/25 pl-4"
                           >
                             <div className="flex flex-wrap items-start justify-between gap-2">
                               <div className="min-w-0 flex-1">

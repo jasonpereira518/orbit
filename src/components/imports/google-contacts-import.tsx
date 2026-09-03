@@ -205,6 +205,7 @@ export function GoogleContactsImport({
   if (!status.configured) {
     return (
       <IntegrationUnavailable
+        id="import-google-contacts"
         title="Google Contacts"
         blurb="Google isn't available on this deployment yet. Upload a LinkedIn export, or paste your notes into Capture and Orbit will pull the people out."
         envVars={[
@@ -220,6 +221,7 @@ export function GoogleContactsImport({
 
   return (
     <Wrapper
+      id="import-google-contacts"
       className={
         compact
           ? "space-y-4"

@@ -140,6 +140,19 @@ const CalendarImportSection = dynamic(
   { loading: () => <PanelSkeleton /> },
 );
 
+/**
+ * Which tab owns each linkable anchor on this page. Keep in step with the `id`s below and
+ * with the `cta.href` values in `src/lib/account-alerts.ts` — a hash that is not in here
+ * simply will not open its tab, silently.
+ */
+const TAB_FOR_ANCHOR: Record<string, ImportTab | undefined> = {
+  "import-panel-connections": "connections",
+  "import-google-contacts": "connections",
+  "import-outlook-contacts": "connections",
+  "import-panel-messages": "messages",
+  "import-panel-calendar": "calendar",
+};
+
 export function ImportHub({
   history,
   calendarSubscriptions = [],
@@ -181,6 +194,27 @@ export function ImportHub({
     setTab(targetTab);
     setMounted((prev) => (prev[targetTab] ? prev : { ...prev, [targetTab]: true }));
   }, [job]);
+
+  // An account alert can link straight at a card inside one of these panels, but the panels
+  // are lazily mounted and `hidden` when inactive — so the anchor alone would land on
+  // nothing. Open the tab the hash belongs to, and let `SectionFlash` (which waits while
+  // the target is still off-screen) glow the card once it is actually visible.
+  //
+  // `hashchange` as well as mount, because the notifications panel is reachable FROM this
+  // page: clicking "Reconnect Gmail" while the calendar tab happens to be open changes the
+  // hash without remounting anything, and a mount-only effect would leave the reader
+  // staring at the wrong tab with no glow.
+  useEffect(() => {
+    function openTabForHash() {
+      const target = TAB_FOR_ANCHOR[window.location.hash.slice(1)];
+      if (!target) return;
+      setTab(target);
+      setMounted((prev) => (prev[target] ? prev : { ...prev, [target]: true }));
+    }
+    openTabForHash();
+    window.addEventListener("hashchange", openTabForHash);
+    return () => window.removeEventListener("hashchange", openTabForHash);
+  }, []);
 
   const runningProgress =
     job?.status === "running" && job.progress ? job.progress : null;
@@ -339,7 +373,10 @@ export function ImportHub({
         </span>
       </Link>
 
-      <ImportHistory history={history} />
+      {/* Target for the "import didn't finish" alerts. */}
+      <div id="import-history" className="scroll-mt-8">
+        <ImportHistory history={history} />
+      </div>
     </div>
   );
 }

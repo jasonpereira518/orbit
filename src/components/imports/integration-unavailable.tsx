@@ -10,16 +10,19 @@
  * the NODE_ENV check.
  */
 export function IntegrationUnavailable({
+  id,
   title,
   blurb,
   envVars = [],
 }: {
+  /** Anchor, so an account alert can link at this card and `SectionFlash` can glow it. */
+  id?: string;
   title: string;
   blurb: string;
   envVars?: string[];
 }) {
   return (
-    <section className="space-y-2 rounded-2xl border border-dashed border-border/70 bg-card/50 p-6">
+    <section id={id} className="space-y-2 rounded-2xl border border-dashed border-border/70 bg-card/50 p-6">
       <h2 className="text-lg font-medium text-ink">{title}</h2>
       <p className="text-sm text-muted-foreground">{blurb}</p>
       {process.env.NODE_ENV === "development" && envVars.length > 0 ? (

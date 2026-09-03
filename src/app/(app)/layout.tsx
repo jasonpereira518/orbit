@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { AppShell } from "@/components/layout/app-shell";
+import { SectionFlash } from "@/components/layout/section-flash";
 import { PresenceHeartbeat } from "@/components/layout/presence-heartbeat";
 import { captureAttribution } from "@/lib/attribution-capture";
 import {
@@ -118,6 +119,11 @@ export default async function AppLayout({
       {/* Renders nothing; keeps `last_active_at` fresh enough for the admin roster to
           answer "active now". One per tab, not one per route. */}
       <PresenceHeartbeat />
+
+      {/* Also renders nothing. Glows whatever `#id` the URL names, so any link that points
+          at a card — every account alert does — lands with that card called out. Mounted
+          here so it works on every route rather than being wired up page by page. */}
+      <SectionFlash />
       {children}
     </AppShell>
   );

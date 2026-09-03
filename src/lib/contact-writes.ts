@@ -15,7 +15,7 @@ import { and, count, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getDb } from "@/db";
-import { contactTags, contacts, interactions, tags } from "@/db/schema";
+import { contactTags, contacts, interactions, tags, type Interaction } from "@/db/schema";
 import { PaywallError, getEntitlements } from "@/lib/entitlements";
 import { recordGateHit } from "@/lib/gate-events";
 import {
@@ -24,7 +24,7 @@ import {
   type CompanyResolver,
 } from "@/lib/companies";
 import { isMetContext } from "@/lib/met-context";
-import { generateAndStorePersonSummary } from "@/lib/person-summary";
+import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { markCohortDirty, rescoreContact } from "@/lib/closeness-materialize";
 import {
   rebuildContactEmbedding,
@@ -36,7 +36,7 @@ export type ContactWriteOptions = {
   skipRevalidate?: boolean;
   /** Skip the synchronous embedding API call; caller will rebuild embeddings in a batch. */
   skipEmbedding?: boolean;
-  /** Skip the fire-and-forget person-summary refresh; caller will defer it (e.g. via `after()`). */
+  /** Skip the fire-and-forget contact-brief refresh; caller will defer it (e.g. via `after()`). */
   skipSummary?: boolean;
   /**
    * Skip per-contact closeness scoring. For bulk paths only: they recalibrate the whole
@@ -127,6 +127,8 @@ export type LogInteractionInput = {
   interactionDate?: string | Date;
   /** When true, parse a date from rawNotes if interactionDate is omitted. */
   parseDateFromNotes?: boolean;
+  externalId?: string;
+  noteBatchId?: string;
 };
 
 /** Thrown when a write targets a contact the user does not own (or that no longer exists). */
@@ -700,7 +702,7 @@ export async function updateContactForUser(
     // `after()` rather than a bare floating promise: on Vercel the function can be
     // suspended the moment the response is sent, which would cut an unawaited summary
     // request off partway through.
-    after(() => generateAndStorePersonSummary(userId, id).catch(() => null));
+    after(() => generateAndStoreContactBrief(userId, id).catch(() => null));
   }
 
   await scoreAfterWrite(userId, id, options);
@@ -769,8 +771,15 @@ export async function logInteractionForUser(
       source: input.source,
       interactionDate: when,
       sameDayOrder: 0,
+      externalId: input.externalId,
+      noteBatchId: input.noteBatchId,
     })
     .returning();
+
+  if (input.actionItems?.length) {
+    const { syncActionItems } = await import("@/lib/action-items");
+    await syncActionItems(userId, row.id, input.contactId, input.actionItems);
+  }
 
   if ((input.rawNotes || input.aiSummary) && !options?.skipEmbedding) {
     await rebuildContactEmbedding(userId, input.contactId);
@@ -779,7 +788,7 @@ export async function logInteractionForUser(
   // Significant change: refresh stored person summary
   if (!options?.skipSummary) {
     after(() =>
-      generateAndStorePersonSummary(userId, input.contactId).catch(() => null)
+      generateAndStoreContactBrief(userId, input.contactId).catch(() => null)
     );
   }
 
@@ -795,4 +804,35 @@ export async function logInteractionForUser(
   }
 
   return row;
+}
+
+/**
+ * `logInteractionForUser` for note pastes: keyed on `externalId` so a second paste of the
+ * same note is a no-op rather than a duplicate timeline row. When the row already exists the
+ * side effects (embedding, summary, closeness) are skipped — nothing changed.
+ */
+export async function logNoteInteractionForUser(
+  userId: string,
+  input: LogInteractionInput & { externalId: string },
+  options?: ContactWriteOptions
+): Promise<{ row: Interaction; created: boolean }> {
+  const db = await getDb();
+  const existing = await db.query.interactions.findFirst({
+    where: and(eq(interactions.userId, userId), eq(interactions.externalId, input.externalId)),
+  });
+  if (existing) return { row: existing, created: false };
+  try {
+    const row = await logInteractionForUser(userId, input, options);
+    return { row, created: true };
+  } catch (err) {
+    // Lost a race with a concurrent paste of the same note: the unique index fired.
+    const message = err instanceof Error ? err.message : String(err);
+    if (/interactions_user_external_uidx|duplicate key/i.test(message)) {
+      const row = await db.query.interactions.findFirst({
+        where: and(eq(interactions.userId, userId), eq(interactions.externalId, input.externalId)),
+      });
+      if (row) return { row, created: false };
+    }
+    throw err;
+  }
 }

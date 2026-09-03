@@ -25,7 +25,7 @@ import {
   type ContactWriteOptions,
   type LogInteractionInput,
 } from "@/lib/contact-writes";
-import { generateAndStorePersonSummary } from "@/lib/person-summary";
+import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { rebuildContactEmbedding } from "@/lib/search";
 import {
   selectTriageCandidates,
@@ -589,7 +589,12 @@ export async function getContact(id: string) {
           asc(interactions.sameDayOrder),
         ],
       },
-      reminders: { orderBy: [desc(reminders.createdAt)] },
+      // `dismissed` is the undo tombstone: the row survives so the batch item_hash keeps
+      // blocking a re-paste, but it must never show up as a live reminder on the profile.
+      reminders: {
+        where: (r, { ne }) => ne(r.status, "dismissed"),
+        orderBy: [desc(reminders.createdAt)],
+      },
     },
   });
 
@@ -795,8 +800,13 @@ export async function updateInteraction(
     .where(eq(interactions.id, interactionId))
     .returning();
 
+  if (input.actionItems !== undefined) {
+    const { syncActionItems } = await import("@/lib/action-items");
+    await syncActionItems(userId, interactionId, existing.contactId, input.actionItems);
+  }
+
   await rebuildContactEmbedding(userId, existing.contactId);
-  void generateAndStorePersonSummary(userId, existing.contactId).catch(
+  void generateAndStoreContactBrief(userId, existing.contactId).catch(
     () => null
   );
 
@@ -855,13 +865,13 @@ export async function reorderSameDayInteractions(
 
 export async function regenerateContactSummary(contactId: string) {
   const userId = await requireUserId();
-  const summary = await generateAndStorePersonSummary(userId, contactId, {
+  const out = await generateAndStoreContactBrief(userId, contactId, {
     force: true,
   });
   revalidatePath(`/contacts/${contactId}`);
   revalidatePath("/graph");
   revalidatePath("/dashboard");
-  return { summary };
+  return { summary: out?.summary ?? null };
 }
 
 export type LinkedInRefreshTarget = {

@@ -1,17 +1,16 @@
 import { cache } from "react";
 import { recordGateHit } from "@/lib/gate-events";
 import { ensureUserSettings } from "@/lib/user-settings";
-import { FREE_CONTACT_LIMIT, PLAN_LABELS, type Plan } from "@/lib/plan-limits";
+import {
+  FREE_CONTACT_LIMIT,
+  PLAN_LABELS,
+  type Plan,
+  type PlanSource,
+} from "@/lib/plan-limits";
 
 // Re-exported so server code keeps importing plan identity from this module, while
 // client components can reach `plan-limits` directly without pulling in the database.
-export { FREE_CONTACT_LIMIT, PLAN_LABELS, type Plan };
-
-/**
- * Where a user's plan came from. Purely informational for UI ("Comped", "Orbit Lifetime"),
- * but also the tiebreaker documented in `resolvePlan` below.
- */
-export type PlanSource = "comp" | "lifetime" | "subscription" | "free";
+export { FREE_CONTACT_LIMIT, PLAN_LABELS, type Plan, type PlanSource };
 
 export type Entitlements = {
   plan: Plan;

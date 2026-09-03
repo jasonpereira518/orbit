@@ -459,6 +459,7 @@ export const interactions = pgTable(
     sameDayOrder: integer("same_day_order").default(0).notNull(),
     source: text("source"),
     externalId: text("external_id"),
+    noteBatchId: uuid("note_batch_id"),
     rawNotes: text("raw_notes"),
     aiSummary: text("ai_summary"),
     topics: jsonb("topics").$type<string[]>().default([]),
@@ -526,12 +527,22 @@ export const reminders = pgTable(
       .default("task")
       .notNull(),
     createdBy: text("created_by").default("user").notNull(),
+    /** Set when the reminder came out of a note paste; links to the results page and drives "From notes". */
+    noteBatchId: uuid("note_batch_id"),
+    sourceInteractionId: uuid("source_interaction_id").references(() => interactions.id, { onDelete: "set null" }),
+    actionItemId: uuid("action_item_id"),
+    sourceExcerpt: text("source_excerpt"),
+    rawDatePhrase: text("raw_date_phrase"),
+    dateBasis: text("date_basis").$type<ReminderDateBasis>(),
+    /** `buildSuggestionItemHash(sourceHash, dueIso, title)`; soft-unique per user (NULLs allowed) so a re-paste cannot recreate a reminder. */
+    itemHash: text("item_hash"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
     index("reminders_user_status_idx").on(t.userId, t.status),
     index("reminders_due_idx").on(t.userId, t.dueDate),
     index("reminders_list_idx").on(t.userId, t.listId),
+    uniqueIndex("reminders_user_item_hash_uidx").on(t.userId, t.itemHash),
   ]
 );
 
@@ -589,6 +600,103 @@ export const suggestedReminders = pgTable(
     uniqueIndex("suggested_reminders_user_item_uidx").on(t.userId, t.itemHash),
   ]
 );
+
+export type ReminderDateBasis = "absolute" | "relative" | "vague" | "window";
+
+/**
+ * What one confirmed note paste produced, rendered by `/capture/[batchId]`. Stored as a
+ * snapshot: the rows it points at may later be edited or dismissed, and the page shows
+ * live status alongside this record of what was created.
+ */
+export type NoteBatchResult = {
+  participants: { contactId: string; interactionId: string | null; name: string; created: boolean; duplicate: boolean }[];
+  mentions: { interactionId: string; contactId: string; text: string; confidence: number; matchedBy: string }[];
+  unresolvedMentions: { text: string; context: string | null }[];
+  actionItems: { id: string; contactId: string; text: string; reminderId: string | null }[];
+  reminders: { id: string; contactId: string | null; title: string; dueIso: string; dateBasis: ReminderDateBasis; rawDatePhrase: string | null; sourceExcerpt: string | null }[];
+  skipped: { relative: number; unverifiable: number; past: number; duplicate: number };
+};
+
+/** One confirmed paste of notes — the unit the results page and Undo operate on. */
+export const noteBatches = pgTable(
+  "note_batches",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    sourceHash: text("source_hash").notNull(),
+    sourceText: text("source_text").notNull(),
+    entryPoint: text("entry_point").$type<"capture" | "profile">().default("capture").notNull(),
+    seedContactId: uuid("seed_contact_id"),
+    /** The date relative phrases were counted from. */
+    anchorDate: timestamp("anchor_date", { withTimezone: true }).notNull(),
+    anchorBasis: text("anchor_basis").$type<"note" | "hint" | "upload">().default("upload").notNull(),
+    status: text("status").$type<"saved" | "undone">().default("saved").notNull(),
+    result: jsonb("result").$type<NoteBatchResult>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    undoneAt: timestamp("undone_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("note_batches_user_created_idx").on(t.userId, t.createdAt),
+    index("note_batches_user_source_idx").on(t.userId, t.sourceHash),
+  ]
+);
+
+/** A contact named in a note they were not a participant of. Shown on both profiles. */
+export const interactionMentions = pgTable(
+  "interaction_mentions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    interactionId: uuid("interaction_id").notNull().references(() => interactions.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
+    mentionText: text("mention_text").notNull(),
+    confidence: real("confidence").notNull(),
+    matchedBy: text("matched_by").$type<"exact_name" | "name_company" | "first_name_unique" | "user_pick">().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("interaction_mentions_interaction_contact_uidx").on(t.interactionId, t.contactId),
+    index("interaction_mentions_user_contact_idx").on(t.userId, t.contactId),
+  ]
+);
+
+/**
+ * One row per action item extracted from (or typed into) an interaction, with completion
+ * state. `interactions.action_items` stays as a write-through denorm for existing readers;
+ * this table is the source of truth for "open next steps".
+ */
+export const actionItems = pgTable(
+  "action_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id").notNull().references(() => contacts.id, { onDelete: "cascade" }),
+    interactionId: uuid("interaction_id").notNull().references(() => interactions.id, { onDelete: "cascade" }),
+    text: text("text").notNull(),
+    position: integer("position").default(0).notNull(),
+    status: text("status").$type<"open" | "done">().default("open").notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    /** sha256(interactionId + "|" + lower(btrim(text))) — btrim semantics (ASCII spaces only), mirrored by actionItemHash in src/lib/action-items.ts. */
+    itemHash: text("item_hash").notNull(),
+    reminderId: uuid("reminder_id").references(() => reminders.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("action_items_user_item_hash_uidx").on(t.userId, t.itemHash),
+    index("action_items_user_contact_status_idx").on(t.userId, t.contactId, t.status),
+  ]
+);
+
+/** The structured profile brief. 1:1 with contacts; kept off `contacts` because that table is scanned whole on hot paths. */
+export const contactBriefs = pgTable("contact_briefs", {
+  contactId: uuid("contact_id").primaryKey().references(() => contacts.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
+  standing: text("standing").notNull(),
+  recentDiscussions: jsonb("recent_discussions").$type<{ interactionId: string; dateIso: string; line: string }[]>().default([]).notNull(),
+  generatedAt: timestamp("generated_at", { withTimezone: true }).defaultNow().notNull(),
+  basisInteractionId: uuid("basis_interaction_id"),
+  model: text("model"),
+});
 
 export type ImportStats = {
   skipped?: number;
@@ -1769,11 +1877,12 @@ export const fundraisingInvestors = pgTable("fundraising_investors", {
   note: text("note"),
 });
 
-export const contactsRelations = relations(contacts, ({ many }) => ({
+export const contactsRelations = relations(contacts, ({ one, many }) => ({
   interactions: many(interactions),
   reminders: many(reminders),
   contactTags: many(contactTags),
   embeddings: many(contactEmbeddings),
+  brief: one(contactBriefs, { fields: [contacts.id], references: [contactBriefs.contactId] }),
 }));
 
 export const tagsRelations = relations(tags, ({ many }) => ({
@@ -1791,11 +1900,28 @@ export const contactTagsRelations = relations(contactTags, ({ one }) => ({
   }),
 }));
 
-export const interactionsRelations = relations(interactions, ({ one }) => ({
+export const interactionsRelations = relations(interactions, ({ one, many }) => ({
   contact: one(contacts, {
     fields: [interactions.contactId],
     references: [contacts.id],
   }),
+  mentions: many(interactionMentions),
+  actionItems: many(actionItems),
+}));
+
+export const noteBatchesRelations = relations(noteBatches, ({ many }) => ({
+  reminders: many(reminders),
+}));
+export const interactionMentionsRelations = relations(interactionMentions, ({ one }) => ({
+  interaction: one(interactions, { fields: [interactionMentions.interactionId], references: [interactions.id] }),
+  contact: one(contacts, { fields: [interactionMentions.contactId], references: [contacts.id] }),
+}));
+export const actionItemsRelations = relations(actionItems, ({ one }) => ({
+  interaction: one(interactions, { fields: [actionItems.interactionId], references: [interactions.id] }),
+  contact: one(contacts, { fields: [actionItems.contactId], references: [contacts.id] }),
+}));
+export const contactBriefsRelations = relations(contactBriefs, ({ one }) => ({
+  contact: one(contacts, { fields: [contactBriefs.contactId], references: [contacts.id] }),
 }));
 
 export const reminderListsRelations = relations(reminderLists, ({ many }) => ({
@@ -1811,6 +1937,7 @@ export const remindersRelations = relations(reminders, ({ one }) => ({
     fields: [reminders.listId],
     references: [reminderLists.id],
   }),
+  noteBatch: one(noteBatches, { fields: [reminders.noteBatchId], references: [noteBatches.id] }),
 }));
 
 export const suggestedRemindersRelations = relations(
@@ -1920,6 +2047,10 @@ export type Interaction = typeof interactions.$inferSelect;
 export type Reminder = typeof reminders.$inferSelect;
 export type ReminderList = typeof reminderLists.$inferSelect;
 export type SuggestedReminder = typeof suggestedReminders.$inferSelect;
+export type NoteBatch = typeof noteBatches.$inferSelect;
+export type InteractionMention = typeof interactionMentions.$inferSelect;
+export type ActionItem = typeof actionItems.$inferSelect;
+export type ContactBrief = typeof contactBriefs.$inferSelect;
 export type Tag = typeof tags.$inferSelect;
 export type AiSuggestion = typeof aiSuggestions.$inferSelect;
 export type ImportRecord = typeof imports.$inferSelect;

@@ -87,6 +87,7 @@ export function ReminderCard({
   lists,
   showListMove = false,
   compact = false,
+  noteBatchId,
 }: {
   id: string;
   title: string;
@@ -102,9 +103,11 @@ export function ReminderCard({
   lists?: ReminderCardListOption[];
   showListMove?: boolean;
   compact?: boolean;
+  /** When this reminder came from a confirmed note paste, links the type chip back to its results page. */
+  noteBatchId?: string | null;
 }) {
   const due = dueLabel(dueDate);
-  const typeLabel = TYPE_LABELS[reminderType] ?? "Task";
+  const typeLabel = noteBatchId ? "From notes" : TYPE_LABELS[reminderType] ?? "Task";
   const router = useRouter();
   const [pending, start] = useTransition();
   const [draft, setDraft] = useState<string | null>(null);
@@ -141,14 +144,26 @@ export function ReminderCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-medium">{title}</p>
-            <span
-              className={cn(
-                "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-                TYPE_STYLES[reminderType] ?? TYPE_STYLES.manual
-              )}
-            >
-              {typeLabel}
-            </span>
+            {noteBatchId ? (
+              <Link
+                href={`/capture/${noteBatchId}`}
+                className={cn(
+                  "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide hover:underline",
+                  TYPE_STYLES[reminderType] ?? TYPE_STYLES.manual
+                )}
+              >
+                {typeLabel}
+              </Link>
+            ) : (
+              <span
+                className={cn(
+                  "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                  TYPE_STYLES[reminderType] ?? TYPE_STYLES.manual
+                )}
+              >
+                {typeLabel}
+              </span>
+            )}
             {!compact && (
               <span className="rounded-full bg-muted/80 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                 {kindLabel}
