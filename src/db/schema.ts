@@ -1323,6 +1323,10 @@ export const adminAuditLog = pgTable(
     index("admin_audit_log_created_idx").on(t.createdAt),
     index("admin_audit_log_target_idx").on(t.targetUserId),
     index("admin_audit_log_action_idx").on(t.action, t.createdAt),
+    // Serves `recordAccountView`'s throttle lookup (admin_user_id + target_user_id +
+    // action, filtered on created_at) — the only admin-console query that leads with
+    // admin_user_id. Runs on every account-inspector page view.
+    index("admin_audit_log_admin_target_idx").on(t.adminUserId, t.targetUserId, t.createdAt),
   ]
 );
 
@@ -1714,51 +1718,80 @@ export const appSurfaceFlags = pgTable("app_surface_flags", {
  * Manually-entered spend, for the YC-mode Runway page's burn calculation. No integration
  * exists to pull this automatically — Orbit has no bank/accounting connection.
  */
-export const startupExpenses = pgTable("startup_expenses", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  category: text("category").notNull(),
-  amountUsd: real("amount_usd").notNull(),
-  incurredAt: timestamp("incurred_at", { withTimezone: true }).notNull(),
-  note: text("note"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const startupExpenses = pgTable(
+  "startup_expenses",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    category: text("category").notNull(),
+    amountUsd: real("amount_usd").notNull(),
+    incurredAt: timestamp("incurred_at", { withTimezone: true }).notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  // `loadRunwayMetrics` filters and sorts on this column on every Runway page load.
+  (t) => [index("startup_expenses_incurred_idx").on(t.incurredAt)]
+);
 
 /** Point-in-time cash-on-hand entries. The latest row is "current" cash for Runway. */
-export const cashSnapshots = pgTable("cash_snapshots", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  asOf: timestamp("as_of", { withTimezone: true }).notNull(),
-  balanceUsd: real("balance_usd").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const cashSnapshots = pgTable(
+  "cash_snapshots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    asOf: timestamp("as_of", { withTimezone: true }).notNull(),
+    balanceUsd: real("balance_usd").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  // `loadRunwayMetrics` reads only the latest row (`ORDER BY as_of DESC LIMIT 1`).
+  (t) => [index("cash_snapshots_as_of_idx").on(t.asOf)]
+);
 
 /** Manually-logged acquisition spend by channel, for the Unit Economics CAC calculation. */
-export const acquisitionSpend = pgTable("acquisition_spend", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  channel: text("channel").notNull(),
-  amountUsd: real("amount_usd").notNull(),
-  periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
-  periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const acquisitionSpend = pgTable(
+  "acquisition_spend",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    channel: text("channel").notNull(),
+    amountUsd: real("amount_usd").notNull(),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  // `loadUnitEconomics` sums rows by `created_at` (see that function's comment for why it's
+  // not `period_start`/`period_end`), on every Unit Economics page load.
+  (t) => [index("acquisition_spend_created_idx").on(t.createdAt)]
+);
 
-export const fundraisingRounds = pgTable("fundraising_rounds", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  name: text("name").notNull(),
-  targetUsd: real("target_usd").notNull(),
-  status: text("status").$type<"open" | "closed">().notNull().default("open"),
-  closedAt: timestamp("closed_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const fundraisingRounds = pgTable(
+  "fundraising_rounds",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: text("name").notNull(),
+    targetUsd: real("target_usd").notNull(),
+    status: text("status").$type<"open" | "closed">().notNull().default("open"),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("fundraising_rounds_created_idx").on(t.createdAt)]
+);
 
 /** No FK-cascade delete: closing/deleting a round should not silently erase commitments. */
-export const fundraisingInvestors = pgTable("fundraising_investors", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  roundId: uuid("round_id").notNull().references(() => fundraisingRounds.id),
-  name: text("name").notNull(),
-  amountUsd: real("amount_usd").notNull(),
-  committedAt: timestamp("committed_at", { withTimezone: true }).notNull(),
-  note: text("note"),
-});
+export const fundraisingInvestors = pgTable(
+  "fundraising_investors",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    roundId: uuid("round_id").notNull().references(() => fundraisingRounds.id),
+    name: text("name").notNull(),
+    amountUsd: real("amount_usd").notNull(),
+    committedAt: timestamp("committed_at", { withTimezone: true }).notNull(),
+    note: text("note"),
+  },
+  (t) => [
+    // The FK `loadFundraisingSummary` buckets investors by in JS today — indexed so a
+    // future SQL-side join or per-round lookup doesn't inherit an unindexed scan.
+    index("fundraising_investors_round_idx").on(t.roundId),
+    index("fundraising_investors_committed_idx").on(t.committedAt),
+  ]
+);
 
 export const contactsRelations = relations(contacts, ({ many }) => ({
   interactions: many(interactions),

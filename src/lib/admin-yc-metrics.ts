@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lte } from "drizzle-orm";
+import { desc, eq, gte } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   acquisitionSpend,
@@ -79,13 +79,19 @@ export async function loadUnitEconomics(now = new Date()) {
 
   const [spendRows, rows, settings] = await Promise.all([
     db.query.acquisitionSpend.findMany({
-      // Overlap-based, not start-based: `LogAcquisitionSpendForm` always writes
-      // `periodEnd = now` at write time, so a start-based filter (`periodStart >= since`
-      // computed at *read* time) fails on essentially every later read — the row's period
-      // always starts before the read's `since`, and the spend silently drops out of every
-      // CAC calculation. Counting a row whose period *overlaps* the trailing-30-day window
-      // fixes that: it ends on/after the window start and starts on/before now.
-      where: and(gte(acquisitionSpend.periodEnd, since), lte(acquisitionSpend.periodStart, now)),
+      // Filtered on `created_at` (when the row was logged), not `period_start`/`period_end`
+      // (the self-reported period the row claims to cover). `LogAcquisitionSpendForm`
+      // always writes `periodStart = now-30d, periodEnd = now` at write time, so every row
+      // claims to cover "the trailing 30 days" as of whenever it was submitted. A filter on
+      // that self-reported period has to pick one of two wrong behaviors: filtering on
+      // `periodStart` at read time makes spend silently vanish once its 30-day-old period
+      // start recedes past the window (a stale row is simply dropped from every future CAC
+      // calculation), while filtering on period *overlap* makes logging spend more than
+      // once in a 30-day span — the expected workflow — double- or triple-count the same
+      // dollars, since each new row's rolling window overlaps almost entirely with the
+      // last one's. `created_at` has neither failure: it is a fixed point in time, so a row
+      // counts exactly once, for exactly the 30 days after it was actually logged.
+      where: gte(acquisitionSpend.createdAt, since),
     }),
     loadAdminUserRows(),
     (async () => {

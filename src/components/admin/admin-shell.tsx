@@ -68,17 +68,22 @@ export function AdminShell({
                   href={item.href}
                   aria-current={active ? "page" : undefined}
                   className={cn(
-                    "relative rounded-lg px-3 py-1.5 text-sm transition-colors duration-fast",
+                    "group relative rounded-lg px-3 py-1.5 text-sm transition-colors duration-fast",
                     active
                       ? "text-primary"
                       : "text-muted-foreground hover:text-foreground"
                   )}
                 >
-                  {active && (
+                  {active ? (
                     <motion.span
                       layoutId="admin-nav-pill"
                       className="absolute inset-0 rounded-lg bg-accent/12"
                       transition={{ type: "spring", stiffness: 400, damping: 34 }}
+                    />
+                  ) : (
+                    <span
+                      aria-hidden
+                      className="absolute inset-0 rounded-lg bg-admin-nav-hover opacity-0 transition-opacity duration-fast group-hover:opacity-100"
                     />
                   )}
                   <span className="relative flex items-center gap-1.5">

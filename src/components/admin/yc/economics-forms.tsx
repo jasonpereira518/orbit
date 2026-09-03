@@ -33,7 +33,7 @@ export function LogAcquisitionSpendForm() {
 
   return (
     <div className="flex flex-wrap items-end gap-2">
-      <div>
+      <div className="space-y-1.5">
         <Label htmlFor="spend-channel">Channel</Label>
         <Input
           id="spend-channel"
@@ -43,7 +43,7 @@ export function LogAcquisitionSpendForm() {
           className="w-36"
         />
       </div>
-      <div>
+      <div className="space-y-1.5">
         <Label htmlFor="spend-amount">Amount (USD, this period)</Label>
         <Input
           id="spend-amount"
@@ -77,7 +77,7 @@ export function EstimatedChurnForm({ currentPct }: { currentPct: number | null }
 
   return (
     <div className="flex flex-wrap items-end gap-2">
-      <div>
+      <div className="space-y-1.5">
         <Label htmlFor="churn-pct">Estimated monthly churn (%)</Label>
         <Input
           id="churn-pct"

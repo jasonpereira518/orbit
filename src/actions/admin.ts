@@ -2,6 +2,7 @@
 
 import { desc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { after } from "next/server";
 import { getDb } from "@/db";
@@ -270,6 +271,12 @@ export async function setSurfaceHiddenAction(input: {
  *
  * Session-length (no `maxAge`) on purpose: a preview mode that outlived the browser would
  * eventually be mistaken for the product being broken.
+ *
+ * Entering redirects itself (see `setYcModeAction` for why: one round trip instead of the
+ * caller awaiting this and then separately calling `router.push`). Exiting does not — the
+ * caller stays on the same admin page, so it only needs the cookie change and `revalidatePath`
+ * to pick up; setting/deleting a cookie already re-renders the current page on its own, and
+ * callers additionally `router.refresh()` to be sure every server component above them re-runs.
  */
 export async function setViewAsUserAction(input: {
   on: boolean;
@@ -294,6 +301,9 @@ export async function setViewAsUserAction(input: {
   });
 
   revalidatePath("/", "layout");
+  if (input.on) {
+    redirect("/dashboard");
+  }
   return { ok: true };
 }
 
@@ -303,8 +313,15 @@ export async function setViewAsUserAction(input: {
  * Purely a personal preference on the operator's own `userSettings` row — it never touches
  * another user's data or visibility, so unlike `setSurfaceHiddenAction` / `setViewAsUserAction`
  * it does not go through `recordAdminAction`. Same shape as `saveThemePreference`.
+ *
+ * Redirects itself rather than returning and letting the client `router.push()`: per Next's
+ * server-actions guide, a `redirect()` thrown from inside the action completes the mutation,
+ * the cache invalidation, and the destination's render in one round trip, instead of the
+ * client waiting on the action response before it can even start a second navigation fetch.
+ * Scoped to `/admin` rather than `/`, `"layout"` — this setting is never read outside the
+ * console, so invalidating the whole site on every toggle bought nothing.
  */
-export async function setYcModeAction(input: { on: boolean }): Promise<{ ok: true }> {
+export async function setYcModeAction(input: { on: boolean }): Promise<never> {
   const adminUserId = await requireAdminUserId();
   const db = await getDb();
 
@@ -316,8 +333,8 @@ export async function setYcModeAction(input: { on: boolean }): Promise<{ ok: tru
       set: { ycModeEnabled: input.on, updatedAt: new Date() },
     });
 
-  revalidatePath("/", "layout");
-  return { ok: true };
+  revalidatePath("/admin", "layout");
+  redirect(input.on ? "/admin/yc" : "/admin");
 }
 
 /**

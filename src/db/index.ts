@@ -691,7 +691,7 @@ CREATE TABLE IF NOT EXISTS fundraising_investors (
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
  */
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 19;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -818,6 +818,25 @@ export const SCALE_DDL: string[] = [
   // create, update and logInteraction, so it is not a cold path.
   `CREATE INDEX IF NOT EXISTS contacts_user_company_norm_idx ON contacts(user_id, lower(trim(company)))`,
   `CREATE INDEX IF NOT EXISTS contacts_user_school_norm_idx ON contacts(user_id, lower(trim(school)))`,
+
+  // --- YC-mode admin console --------------------------------------------------------
+  //
+  // Every one of these tables shipped with `CREATE TABLE IF NOT EXISTS` above and no
+  // index beyond its primary key. Small at launch, but each row is a hand-entered log
+  // entry an operator adds over the life of the company, and every YC-mode page load
+  // filters or sorts on exactly the column indexed here — see the matching Drizzle
+  // `index()` call on each table in `schema.ts` for which query it serves.
+  `CREATE INDEX IF NOT EXISTS startup_expenses_incurred_idx ON startup_expenses(incurred_at)`,
+  `CREATE INDEX IF NOT EXISTS cash_snapshots_as_of_idx ON cash_snapshots(as_of)`,
+  `CREATE INDEX IF NOT EXISTS acquisition_spend_created_idx ON acquisition_spend(created_at)`,
+  `CREATE INDEX IF NOT EXISTS fundraising_rounds_created_idx ON fundraising_rounds(created_at)`,
+  `CREATE INDEX IF NOT EXISTS fundraising_investors_round_idx ON fundraising_investors(round_id)`,
+  `CREATE INDEX IF NOT EXISTS fundraising_investors_committed_idx ON fundraising_investors(committed_at)`,
+
+  // The one admin_audit_log query that leads with admin_user_id (`recordAccountView`'s
+  // throttle check) had no supporting index — its three existing indexes lead with
+  // created_at, target_user_id, and action respectively.
+  `CREATE INDEX IF NOT EXISTS admin_audit_log_admin_target_idx ON admin_audit_log(admin_user_id, target_user_id, created_at)`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */

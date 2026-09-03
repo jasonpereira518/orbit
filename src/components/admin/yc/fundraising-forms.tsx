@@ -29,7 +29,7 @@ export function CreateRoundForm() {
 
   return (
     <div className="flex flex-wrap items-end gap-2">
-      <div>
+      <div className="space-y-1.5">
         <Label htmlFor="round-name">Round name</Label>
         <Input
           id="round-name"
@@ -39,7 +39,7 @@ export function CreateRoundForm() {
           className="w-32"
         />
       </div>
-      <div>
+      <div className="space-y-1.5">
         <Label htmlFor="round-target">Target (USD)</Label>
         <Input
           id="round-target"
@@ -81,7 +81,7 @@ export function AddInvestorForm({ roundId }: { roundId: string }) {
 
   return (
     <div className="flex flex-wrap items-end gap-2">
-      <div>
+      <div className="space-y-1.5">
         <Label htmlFor={`investor-name-${roundId}`}>Investor</Label>
         <Input
           id={`investor-name-${roundId}`}
@@ -91,7 +91,7 @@ export function AddInvestorForm({ roundId }: { roundId: string }) {
           className="w-32"
         />
       </div>
-      <div>
+      <div className="space-y-1.5">
         <Label htmlFor={`investor-amount-${roundId}`}>Amount (USD)</Label>
         <Input
           id={`investor-amount-${roundId}`}

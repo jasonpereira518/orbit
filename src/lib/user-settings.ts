@@ -20,7 +20,16 @@ import { userSettings } from "@/db/schema";
  */
 const ACTIVITY_THROTTLE_MS = 15 * 60 * 1000;
 
-/** Ensure a per-user settings row exists (idempotent). Cached per request. */
+/**
+ * Ensure a per-user settings row exists (idempotent). Cached per request.
+ *
+ * The insert is `onConflictDoNothing` rather than a plain insert: two near-simultaneous
+ * first requests for the same brand-new user (two tabs, or a webhook racing the first page
+ * load) both see `existing` as absent and both reach the insert. Without the conflict
+ * clause the second one throws a unique-violation on `user_id` instead of resolving like
+ * the first. `RETURNING` comes back empty for whichever request loses that race, so it
+ * re-reads the row the winner just created.
+ */
 export const ensureUserSettings = cache(async (userId: string) => {
   const db = await getDb();
   const existing = await db.query.userSettings.findFirst({
@@ -31,8 +40,19 @@ export const ensureUserSettings = cache(async (userId: string) => {
   const [created] = await db
     .insert(userSettings)
     .values({ userId, lastActiveAt: new Date() })
+    .onConflictDoNothing({ target: userSettings.userId })
     .returning();
-  return created;
+  if (created) return created;
+
+  // Lost the race: a concurrent request's insert won, so this one's RETURNING came back
+  // empty. The row is guaranteed to exist now (unique on `user_id`) — read it back.
+  const settled = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+  });
+  if (!settled) {
+    throw new Error(`ensureUserSettings: no row for ${userId} after an insert race`);
+  }
+  return settled;
 });
 
 /**
