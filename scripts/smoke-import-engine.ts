@@ -81,6 +81,10 @@ async function reset() {
   await db.delete(interactions).where(eq(interactions.userId, USER));
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(imports).where(eq(imports.userId, USER));
+  // Explicit, not left to the `contacts` delete's cascade: a reminder with no `contactId`
+  // (e.g. a `linkedin_export` reminder, which is never tied to a contact) doesn't cascade
+  // and would otherwise survive `reset()` and leak into the next run's reminder-count checks.
+  await db.delete(reminders).where(eq(reminders.userId, USER));
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
   await ensureUserSettings(USER);
 }
@@ -1229,6 +1233,12 @@ async function main() {
     untouchedFollowUp?.reminderType === "post_meeting" && untouchedFollowUp?.status === "pending",
     JSON.stringify(untouchedFollowUp)
   );
+  // Clean up what this check seeded: it has no `contactId`, so — unlike the post_meeting
+  // reminder above — it would not cascade-delete when `reset()` clears the user's contacts.
+  // `reset()` below now also deletes every reminder for this user directly, but this check
+  // doesn't rely on that alone: leaving no residue here keeps this block correct even if
+  // `reset()`'s reminder cleanup is ever narrowed or reordered.
+  await db6.delete(reminders).where(eq(reminders.id, pendingExportReminder.id));
 
   await reset();
   const db = await getDb();
