@@ -8,10 +8,7 @@
  *
  * Run: npx tsx scripts/smoke-ops-sweep.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
-delete process.env.DATABASE_URL;
+import "./smoke/_env";
 // Off Vercel nothing is required, so `config.missing` cannot fire and muddy the scenario.
 delete process.env.VERCEL_ENV;
 

@@ -8,9 +8,7 @@
  *
  * Run: npx tsx scripts/smoke-admin-gate.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import "./smoke/_env";
 
 function check(label: string, condition: boolean) {
   if (!condition) throw new Error(`${label} failed`);

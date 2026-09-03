@@ -3,6 +3,8 @@
  * name still matches via the % operator. Stop dev servers on .data/pglite first.
  * Run: npx tsx scripts/smoke-trigram-search.ts
  */
+import "./smoke/_env";
+
 import { getDb, isTrigramAvailable, rowsOf } from "../src/db";
 import { contacts } from "../src/db/schema";
 import { sql, eq } from "drizzle-orm";

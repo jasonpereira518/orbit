@@ -13,9 +13,7 @@
  *
  * Run: npx tsx scripts/smoke-purge.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import "./smoke/_env";
 
 import { eq, getTableColumns, getTableName, sql } from "drizzle-orm";
 import { PgTable } from "drizzle-orm/pg-core";
@@ -169,9 +167,6 @@ async function seed() {
     matchedBy: "exact_name",
   });
 
-  // `user_id` is the primary key and there is no parent to cascade from.
-  await db.insert(schema.extensionUsage).values({ userId: USER });
-
   const [list] = await db
     .insert(schema.reminderLists)
     .values({ userId: USER, name: "Inbox", nameNormalized: "inbox" })
@@ -288,6 +283,12 @@ async function seed() {
     kind: "completion",
     keyOwner: "user",
   });
+
+  // Per-user rate-limit window for the browser extension. Keyed on user id and nothing
+  // else, so it is easy to forget it is personal data at all — which is how it became the
+  // fourth user-scoped table to ship unpurged (found the first time this suite ran on a
+  // fresh database instead of one that happened to hold a leftover row).
+  await db.insert(schema.extensionUsage).values({ userId: USER, requestCount: 3, aiCount: 1 });
 
   return { recruiterId: recruiter.id };
 }

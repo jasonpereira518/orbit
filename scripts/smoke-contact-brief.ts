@@ -4,12 +4,9 @@
  * Writes to local PGlite. Stop the worktree dev server first.
  * Run: npx tsx scripts/smoke-contact-brief.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import "./smoke/_env";
 process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke-brief";
 process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-brief";
-delete process.env.DATABASE_URL;
 // Force the no-key fallback path: local dev may carry provider keys in .env.local.
 delete process.env.GEMINI_API_KEY;
 delete process.env.OPENAI_API_KEY;

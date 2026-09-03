@@ -11,9 +11,7 @@
  *
  * Run: npx tsx scripts/smoke-recruiter-sharing.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import "./smoke/_env";
 
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";

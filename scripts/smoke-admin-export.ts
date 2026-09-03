@@ -8,9 +8,7 @@
  *
  * Run: npx tsx scripts/smoke-admin-export.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import "./smoke/_env";
 
 import { readFileSync } from "node:fs";
 import { inArray, like } from "drizzle-orm";

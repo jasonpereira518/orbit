@@ -63,7 +63,6 @@ export function Reveal({
     setState("pending");
     return observe(el, () => setState("in"));
     // Once-only by design: never re-run after the first reveal.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reduced]);
 
   return (

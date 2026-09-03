@@ -37,15 +37,7 @@
  *
  * Run: npx tsx scripts/smoke-import-resumption-auth.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
-
-// Force the local PGlite database, explicitly rather than by hoping DATABASE_URL is absent.
-// `getDb()` picks PGlite exactly when DATABASE_URL is unset, and this repo's .env.local sets
-// it to a shared remote Neon URL — so without this delete, `reset()` below would hard-delete
-// rows in that remote database. dotenv only fills in *unset* vars, so this must run after it.
-delete process.env.DATABASE_URL;
+import "./smoke/_env";
 
 // Reproduce the production auth shape the resumption paths actually run in: Clerk configured
 // (so `isDemoMode()` is false) but no request, so `auth()` resolves no user. These are never

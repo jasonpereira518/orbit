@@ -1,0 +1,61 @@
+# The gate `main` never had: typecheck, lint, a production build, and the smoke suite.
+#
+# Nothing here needs a secret. The build runs without Clerk or database keys (the app
+# fails closed at runtime, not at build), `check:env` only gates VERCEL builds via
+# vercel.json, and the smoke suite runs against a throwaway PGlite directory — there is no
+# `.env.local` in CI, and scripts/smoke/_env.ts deletes DATABASE_URL regardless.
+#
+# Turn this into a real gate in GitHub → Settings → Branches → main: require the `check`
+# and `smoke` status checks before merging.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: typecheck · lint · build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run lint
+      - name: Cache the Next.js compiler output
+        uses: actions/cache@v4
+        with:
+          path: .next/cache
+          key: next-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**/*.[jt]s', 'src/**/*.[jt]sx') }}
+          restore-keys: |
+            next-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
+      - run: npm run build
+        env:
+          # Keep the Sentry build plugin quiet and source-map upload off in CI.
+          SENTRY_AUTH_TOKEN: ""
+
+  smoke:
+    name: smoke suite (PGlite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm test

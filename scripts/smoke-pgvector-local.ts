@@ -6,6 +6,8 @@
  * True dev/prod parity requires upgrading to pglite >=0.5.8 + @electric-sql/pglite-pgvector.
  * Run: npx tsx scripts/smoke-pgvector-local.ts
  */
+import "./smoke/_env";
+
 import { getDb, isPgvectorAvailable, rowsOf } from "../src/db";
 import { pgvectorSearchContacts } from "../src/lib/search";
 import { sql } from "drizzle-orm";

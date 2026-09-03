@@ -11,9 +11,7 @@
  *
  * Run: npx tsx scripts/smoke-admin-actions.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import "./smoke/_env";
 
 import { and, eq, inArray, like } from "drizzle-orm";
 import { getDb } from "../src/db";

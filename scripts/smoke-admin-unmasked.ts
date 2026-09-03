@@ -13,9 +13,7 @@
  *
  * Run: npx tsx scripts/smoke-admin-unmasked.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import "./smoke/_env";
 
 import { eq, inArray, like } from "drizzle-orm";
 import { getDb } from "../src/db";

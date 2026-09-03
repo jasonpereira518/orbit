@@ -1510,7 +1510,13 @@ export function NetworkGraph({
   });
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [cssFullscreen, setCssFullscreen] = useState(false);
-  const lastFetchAt = useRef(initialData ? Date.now() : 0);
+  // Set from an effect rather than during render: `Date.now()` in the render body is an
+  // impurity the compiler-era lint (rightly) flags, and "when did we last fetch" is a fact
+  // about the commit, not the render.
+  const lastFetchAt = useRef(0);
+  useEffect(() => {
+    if (initialData) lastFetchAt.current = Date.now();
+  }, [initialData]);
   const positionsHydrated = useRef(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);

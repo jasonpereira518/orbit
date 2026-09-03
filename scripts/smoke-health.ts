@@ -9,10 +9,7 @@
  *
  * Runs against the local PGlite database. Run: npx tsx scripts/smoke-health.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
-delete process.env.DATABASE_URL;
+import "./smoke/_env";
 
 import { SCHEMA_VERSION } from "../src/db";
 import { checkHealth } from "../src/lib/health";

@@ -5,10 +5,7 @@
  *
  * Runs against the local PGlite database. Run: npx tsx scripts/smoke-avatar-migration.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
-delete process.env.DATABASE_URL;
+import "./smoke/_env";
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";

@@ -51,7 +51,7 @@ export function MobileNav({
   /**
    * Both lists, filtered, BEFORE anything derives an index from them.
    *
-   * The sliding pill is pure index math over `draggableEntries`, and `entryCursor` in the
+   * The sliding pill is pure index math over `draggableEntries`, and the map index in the
    * render below walks the bottom bar in lockstep with it. Filtering at the point of
    * render instead would leave the two walking different lists, and the pill would land
    * on the wrong tab. Everything downstream reads these, never the module constants.
@@ -207,8 +207,6 @@ export function MobileNav({
     }
   }
 
-  let entryCursor = -1;
-
   return (
     <>
       <nav
@@ -236,10 +234,9 @@ export function MobileNav({
             onClickCapture={handleClickCapture}
             onDragStart={(e) => e.preventDefault()}
           >
-            {bottomNav.map((item) => {
+            {/* Every item renders exactly one entry, so the map index is the entry index. */}
+            {bottomNav.map((item, myIndex) => {
               if ("id" in item && item.id === "more") {
-                entryCursor += 1;
-                const myIndex = entryCursor;
                 const displayActive = myIndex === highlightIndex;
                 const Icon = item.icon;
                 return (
@@ -310,8 +307,6 @@ export function MobileNav({
                 );
               }
 
-              entryCursor += 1;
-              const myIndex = entryCursor;
               const displayActive = myIndex === highlightIndex;
 
               return (

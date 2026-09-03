@@ -13,9 +13,7 @@
  *
  * Run: npx tsx scripts/smoke-lifetime-pricing.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import "./smoke/_env";
 
 import { offerForCount } from "../src/lib/lifetime-offer";
 import { planCopyWithOffer } from "../src/lib/plan-copy";

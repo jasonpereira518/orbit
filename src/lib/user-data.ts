@@ -2,14 +2,14 @@ import { eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   aiSuggestions,
+  billingEvents,
   calendarSubscriptions,
-  closenessCohorts,
   chatThreads,
+  closenessCohorts,
   companies,
   contactEmbeddings,
-  contactTags,
   contacts,
-  billingEvents,
+  contactTags,
   errorEvents,
   extensionUsage,
   feedback,
@@ -20,13 +20,13 @@ import {
   noteBatches,
   outlookConnections,
   outreachCampaigns,
+  recruiterMessages,
   reminderLists,
   reminders,
   suggestedReminders,
   tags,
   usageEvents,
   userGoals,
-  recruiterMessages,
   userRecruiterLinks,
   userSettings,
 } from "@/db/schema";
@@ -106,6 +106,10 @@ export async function purgeUserData(
 
   await db.delete(closenessCohorts).where(eq(closenessCohorts.userId, userId));
   await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
+  // `note_batches` carries the raw pasted note text and has no cascading FK to `contacts`
+  // or `interactions` (its `seed_contact_id` is a plain column) — it survives both of
+  // those deletes below unless removed explicitly.
+  await db.delete(noteBatches).where(eq(noteBatches.userId, userId));
   await db.delete(interactions).where(eq(interactions.userId, userId));
   // The pasted text a note was parsed out of, kept so a save can be undone. `source_text`
   // is the user's own prose about named people, which makes this the most sensitive row
@@ -158,6 +162,12 @@ export async function purgeUserData(
   // exceptions that are not written down.
   await db.delete(extensionUsage).where(eq(extensionUsage.userId, userId));
   await db.delete(errorEvents).where(eq(errorEvents.userId, userId));
+  // The extension's per-user rate-limit window. A counter, not prose — but it is keyed on
+  // the person, and the FOURTH user-scoped table found unpurged (after `outlook_connections`,
+  // `suggested_reminders` and `recruiter_messages`). Caught the first time
+  // `scripts/smoke-purge.ts` ran against a fresh database rather than one that happened to
+  // carry a leftover row for its fixture user.
+  await db.delete(extensionUsage).where(eq(extensionUsage.userId, userId));
 
   // What they told us, and which walls they hit. Both are personal — one is literally
   // their own words — so erasure means erasure, even though the churn reasons are the

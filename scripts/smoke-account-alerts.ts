@@ -6,21 +6,15 @@
  *
  * Run: npx tsx scripts/smoke-account-alerts.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import "./smoke/_env";
 
 /**
- * Two env facts this test depends on, set BEFORE any module that reads them is imported.
+ * One more env fact this test depends on, set BEFORE any module that reads it is imported.
  *
- *  - `DATABASE_URL` unset forces the PGlite path in `src/db/index.ts`. `.env.local` is
- *    loaded above and, where it exists, points at the SHARED Neon database — this script
- *    deletes rows, so inheriting that would delete them from production.
  *  - `VERCEL` set makes `allowEnvProviderKeys()` false, which is what production does. Any
  *    `GEMINI_API_KEY` lying around in the environment would otherwise satisfy the AI-key
  *    predicate and the `ai.no_key` cases below would silently pass for the wrong reason.
  */
-delete process.env.DATABASE_URL;
 process.env.VERCEL = "1";
 
 /**
