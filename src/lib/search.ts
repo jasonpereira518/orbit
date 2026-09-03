@@ -1,14 +1,14 @@
-import { eq, and, ilike, inArray, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import { getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import { contactEmbeddings, contacts } from "@/db/schema";
 import { metContextLabel } from "@/lib/met-context";
-import { createEmbedding, createEmbeddingsBatch, cosineSimilarity } from "@/lib/ai";
+import { createEmbedding, createEmbeddingsBatch } from "@/lib/ai";
 import { formatVectorLiteral } from "@/lib/pgvector";
-import {
-  ERROR_SOURCES,
-  recordErrorEvent,
-  shouldRecordThrottled,
-} from "@/lib/error-events";
+
+export function computeContentHash(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
 
 /**
  * Rows per statement. Unlike `closeness-materialize.ts`'s `WRITE_CHUNK` (500, for rows of
@@ -47,10 +47,6 @@ export async function persistEmbeddingVectors(
   }
 }
 
-async function persistEmbeddingVector(rowId: string, embedding: number[]) {
-  await persistEmbeddingVectors([{ id: rowId, embedding }]);
-}
-
 export async function upsertContactEmbedding(
   userId: string,
   contactId: string,
@@ -61,42 +57,40 @@ export async function upsertContactEmbedding(
   if (!content.trim()) return;
 
   try {
-    const embedding = await createEmbedding(userId, content);
     const db = await getDb();
+    const contentHash = computeContentHash(content);
 
-    if (sourceId) {
-      const existing = await db.query.contactEmbeddings.findFirst({
-        where: and(
-          eq(contactEmbeddings.userId, userId),
-          eq(contactEmbeddings.contactId, contactId),
-          eq(contactEmbeddings.sourceType, sourceType),
-          eq(contactEmbeddings.sourceId, sourceId)
-        ),
-      });
-      if (existing) {
-        await db
-          .update(contactEmbeddings)
-          .set({ embedding, content })
-          .where(eq(contactEmbeddings.id, existing.id));
-        await persistEmbeddingVector(existing.id, embedding);
-        return;
-      }
+    const existing = sourceId
+      ? await db.query.contactEmbeddings.findFirst({
+          where: and(
+            eq(contactEmbeddings.userId, userId),
+            eq(contactEmbeddings.contactId, contactId),
+            eq(contactEmbeddings.sourceType, sourceType),
+            eq(contactEmbeddings.sourceId, sourceId)
+          ),
+        })
+      : undefined;
+
+    // Unchanged content: the stored embedding is still correct — skip the API call.
+    if (existing?.contentHash === contentHash) return;
+
+    const embedding = await createEmbedding(userId, content);
+
+    if (existing) {
+      await db
+        .update(contactEmbeddings)
+        .set({ embedding, content, contentHash })
+        .where(eq(contactEmbeddings.id, existing.id));
+      await persistEmbeddingVectors([{ id: existing.id, embedding }]);
+      return;
     }
 
     const [inserted] = await db
       .insert(contactEmbeddings)
-      .values({
-        userId,
-        contactId,
-        sourceType,
-        sourceId,
-        embedding,
-        content,
-      })
+      .values({ userId, contactId, sourceType, sourceId, embedding, content, contentHash })
       .returning();
-
     if (inserted?.id) {
-      await persistEmbeddingVector(inserted.id, embedding);
+      await persistEmbeddingVectors([{ id: inserted.id, embedding }]);
     }
   } catch {
     // AI key may be missing; skip embeddings silently
@@ -120,15 +114,6 @@ const OVERSCAN_FOR_DEDUPE = 4;
 
 /** Below this cosine similarity a hit is noise rather than a weak match. */
 const SEMANTIC_SIMILARITY_FLOOR = 0.25;
-
-/**
- * Ceiling on the in-memory cosine fallback. Each row holds a 1,536-float array, so this is
- * about not materialising the entire embedding table in Node when pgvector is missing.
- */
-const IN_MEMORY_EMBEDDING_SCAN_LIMIT = 2000;
-
-/** Ceiling on embedding rows pulled for the literal-text boost. */
-const CONTENT_BOOST_LIMIT = 200;
 
 export async function pgvectorSearchContacts(
   userId: string,
@@ -181,179 +166,6 @@ export async function pgvectorSearchContacts(
   }));
 }
 
-function inMemorySemanticScores(
-  queryEmbedding: number[],
-  embeddings: Array<{ contactId: string; embedding: number[] }>
-) {
-  const scoreByContact = new Map<string, number>();
-  for (const row of embeddings) {
-    const sim = cosineSimilarity(queryEmbedding, row.embedding);
-    const prev = scoreByContact.get(row.contactId) ?? 0;
-    if (sim > prev) scoreByContact.set(row.contactId, sim);
-  }
-  return scoreByContact;
-}
-
-export async function semanticSearchContacts(
-  userId: string,
-  query: string,
-  limit = 12
-) {
-  const db = await getDb();
-  const allContacts = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    with: {
-      contactTags: { with: { tag: true } },
-    },
-  });
-
-  let queryEmbedding: number[] | null = null;
-  try {
-    queryEmbedding = await createEmbedding(userId, query);
-  } catch {
-    // fall through to keyword search
-  }
-
-  const q = query.toLowerCase();
-  // Loop-invariant: both scoring passes below run per row, and this was being re-split
-  // and re-filtered on every one of them.
-  const qTokens = q.split(/\s+/).filter((t) => t.length > 2);
-  const scoreByContact = new Map<string, number>();
-
-  if (queryEmbedding) {
-    if (isPgvectorAvailable()) {
-      try {
-        const pgHits = await pgvectorSearchContacts(
-          userId,
-          queryEmbedding,
-          limit * 2
-        );
-        for (const hit of pgHits) {
-          scoreByContact.set(hit.contactId, hit.similarity);
-        }
-      } catch (err) {
-        // pgvector query can fail on Neon (extension/dim); fall back below.
-        // Throttled: this fires per search, so a broken index would otherwise write a
-        // row for every query.
-        if (shouldRecordThrottled(ERROR_SOURCES.searchPgvector)) {
-          await recordErrorEvent({
-            source: ERROR_SOURCES.searchPgvector,
-            kind: "query_failed",
-            userId,
-            message: err,
-          });
-        }
-      }
-    }
-
-    // Prefer one embedding read for both vector scores (fallback) and content boost.
-    let embeddingRows:
-      | Array<{ contactId: string; embedding: number[]; content: string | null }>
-      | null = null;
-
-    if (scoreByContact.size === 0) {
-      // The fallback for when pgvector is unavailable — always the case on PGlite, which
-      // has no build of it. Every row carries a 1,536-float JSONB array, so this is capped:
-      // uncapped, a 5,000-contact network materialises tens of millions of floats in Node
-      // to score one query.
-      embeddingRows = await db.query.contactEmbeddings.findMany({
-        where: eq(contactEmbeddings.userId, userId),
-        columns: { contactId: true, embedding: true, content: true },
-        limit: IN_MEMORY_EMBEDDING_SCAN_LIMIT,
-      });
-      if (embeddingRows.length === IN_MEMORY_EMBEDDING_SCAN_LIMIT) {
-        console.warn(
-          `[search] in-memory vector fallback hit its ${IN_MEMORY_EMBEDDING_SCAN_LIMIT}-row cap; results are partial. Enable pgvector for complete semantic search.`
-        );
-      }
-      const inMemory = inMemorySemanticScores(queryEmbedding, embeddingRows);
-      for (const [contactId, sim] of inMemory) {
-        scoreByContact.set(contactId, sim);
-      }
-    }
-
-    // Also boost contacts whose stored embedding text mentions the query (covers LinkedIn
-    // message chunks even when the vector score is middling).
-    //
-    // Matched in Postgres rather than by reading every embedding row and calling
-    // `String.includes` on it. The old shape ran a second unconditional full read of
-    // `contact_embeddings` even when the pgvector search above had already succeeded, purely
-    // to find the handful of rows that mention the query.
-    const contentRows =
-      embeddingRows ??
-      (await db.query.contactEmbeddings.findMany({
-        where: and(
-          eq(contactEmbeddings.userId, userId),
-          ilike(contactEmbeddings.content, `%${query.trim()}%`)
-        ),
-        columns: { contactId: true, content: true },
-        limit: CONTENT_BOOST_LIMIT,
-      }));
-    for (const row of contentRows) {
-      const hay = (row.content || "").toLowerCase();
-      if (!hay) continue;
-      let bump = 0;
-      if (hay.includes(q)) bump = 0.35;
-      else {
-        for (const token of qTokens) {
-          if (hay.includes(token)) bump += 0.08;
-        }
-      }
-      if (bump > 0) {
-        scoreByContact.set(
-          row.contactId,
-          Math.max(scoreByContact.get(row.contactId) ?? 0, bump)
-        );
-      }
-    }
-  }
-  const results = allContacts
-    .map((c) => {
-      let score = scoreByContact.get(c.id) ?? 0;
-      const haystack = [
-        c.fullName,
-        c.preferredName,
-        c.company,
-        c.title,
-        c.location,
-        c.email,
-        c.phone,
-        c.website,
-        c.aiSummary,
-        c.notes,
-        c.industry,
-        c.metContext,
-        c.howMet,
-        ...(c.keyFacts || []),
-        ...(c.opportunities || []),
-        ...(c.sharedInterests || []),
-        ...(c.contactTags?.map((ct) => ct.tag.name) || []),
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-
-      if (haystack.includes(q)) score = Math.max(score, 0.55);
-      for (const token of qTokens) {
-        if (haystack.includes(token)) score += 0.08;
-      }
-
-      score += (c.relationshipScore || 0) * 0.03;
-      score += (c.priorityLevel || 0) * 0.02;
-
-      return {
-        ...c,
-        tags: c.contactTags?.map((ct) => ct.tag.name) || [],
-        relevance: Math.min(score, 1),
-      };
-    })
-    .filter((c) => c.relevance > 0.05)
-    .sort((a, b) => b.relevance - a.relevance)
-    .slice(0, limit);
-
-  return results;
-}
-
 type ContactEmbeddingSource = {
   fullName: string;
   preferredName?: string | null;
@@ -374,7 +186,26 @@ type ContactEmbeddingSource = {
   contactTags?: { tag: { name: string } }[];
 };
 
-export function buildContactEmbeddingContent(contact: ContactEmbeddingSource): string {
+/**
+ * Embedding-content audit (spec §3), re-checked in Task 6:
+ *
+ * 1. This function never absorbs content that has its own source row. LinkedIn messages
+ *    (`src/lib/message-enrichment.ts`) and meeting/interaction notes
+ *    (`src/actions/imports.ts`, `src/lib/calendar-sync.ts`) call `upsertContactEmbedding`
+ *    directly with their own `sourceType`/`sourceId` ("linkedin_message", "meeting") and
+ *    never flow through here — no split needed on that front.
+ * 2. This function's own output CAN exceed the 8,000-char truncation in
+ *    `createEmbedding`/`createEmbeddingsBatch` (`src/lib/ai.ts:1165`) when `notes` is long,
+ *    since `notes` is the one open-ended free-text field folded in below. `notes` is split
+ *    into its own `sourceType: "notes"` row by `rebuildContactEmbedding` /
+ *    `rebuildContactEmbeddingsBatch` whenever the combined content would overflow — see
+ *    `PROFILE_CONTENT_TRUNCATION_LIMIT` below.
+ */
+export function buildContactEmbeddingContent(
+  contact: ContactEmbeddingSource,
+  options: { includeNotes?: boolean } = {}
+): string {
+  const includeNotes = options.includeNotes ?? true;
   return [
     contact.fullName,
     contact.preferredName,
@@ -386,7 +217,7 @@ export function buildContactEmbeddingContent(contact: ContactEmbeddingSource): s
     contact.linkedinUrl,
     contact.website,
     contact.aiSummary,
-    contact.notes,
+    includeNotes ? contact.notes : null,
     metContextLabel(contact.metContext),
     contact.dateMet
       ? new Date(contact.dateMet).toLocaleDateString()
@@ -400,6 +231,28 @@ export function buildContactEmbeddingContent(contact: ContactEmbeddingSource): s
     .join("\n");
 }
 
+/** Matches the embedding-input truncation in `createEmbedding`/`createEmbeddingsBatch`. */
+const PROFILE_CONTENT_TRUNCATION_LIMIT = 8000;
+
+/**
+ * Splits a contact's profile embedding content into a `notes`-free profile chunk plus a
+ * separate `notes` chunk when the combined content would otherwise overflow the 8,000-char
+ * embedding truncation and silently lose its tail. Small contacts keep the single row they
+ * had before, so this doesn't double the row count for the common case.
+ */
+function splitProfileEmbeddingContent(
+  contact: ContactEmbeddingSource
+): { profile: string; notes: string | null } {
+  const full = buildContactEmbeddingContent(contact);
+  if (full.length <= PROFILE_CONTENT_TRUNCATION_LIMIT || !contact.notes?.trim()) {
+    return { profile: full, notes: null };
+  }
+  return {
+    profile: buildContactEmbeddingContent(contact, { includeNotes: false }),
+    notes: contact.notes,
+  };
+}
+
 export async function rebuildContactEmbedding(userId: string, contactId: string) {
   const db = await getDb();
   const contact = await db.query.contacts.findFirst({
@@ -408,14 +261,33 @@ export async function rebuildContactEmbedding(userId: string, contactId: string)
   });
   if (!contact) return;
 
-  const content = buildContactEmbeddingContent(contact);
-  await upsertContactEmbedding(userId, contactId, "profile", content, contactId);
+  const { profile, notes } = splitProfileEmbeddingContent(contact);
+  await upsertContactEmbedding(userId, contactId, "profile", profile, contactId);
+  if (notes) {
+    await upsertContactEmbedding(userId, contactId, "notes", notes, contactId);
+  } else {
+    // Content shrank back under the split threshold — drop the now-stale "notes" row so it
+    // doesn't keep contributing to semantic search / content-boost matching forever.
+    await db
+      .delete(contactEmbeddings)
+      .where(
+        and(
+          eq(contactEmbeddings.userId, userId),
+          eq(contactEmbeddings.contactId, contactId),
+          eq(contactEmbeddings.sourceType, "notes"),
+          eq(contactEmbeddings.sourceId, contactId)
+        )
+      );
+  }
 }
 
-/** Rebuild "profile" embeddings for many contacts with one batched embedding API call. */
+/** Rebuild "profile" (and, when content overflows, "notes") embeddings for many contacts
+ *  with one batched embedding API call. `embedFn` is injectable for tests; it defaults to
+ *  the real batched embedder. */
 export async function rebuildContactEmbeddingsBatch(
   userId: string,
-  contactIds: string[]
+  contactIds: string[],
+  embedFn: (userId: string, texts: string[]) => Promise<number[][]> = createEmbeddingsBatch
 ) {
   const ids = [...new Set(contactIds)];
   if (ids.length === 0) return;
@@ -426,80 +298,105 @@ export async function rebuildContactEmbeddingsBatch(
     with: { contactTags: { with: { tag: true } } },
   });
 
-  const entries = rows
-    .map((contact) => ({ contactId: contact.id, content: buildContactEmbeddingContent(contact) }))
-    .filter((entry) => entry.content.trim().length > 0);
+  const existing = await db.query.contactEmbeddings.findMany({
+    where: and(
+      eq(contactEmbeddings.userId, userId),
+      inArray(contactEmbeddings.sourceType, ["profile", "notes"]),
+      inArray(contactEmbeddings.contactId, ids)
+    ),
+    columns: { id: true, contactId: true, sourceType: true, contentHash: true },
+  });
+  const existingByKey = new Map(
+    existing.map((row) => [`${row.contactId}:${row.sourceType}`, row])
+  );
+
+  type Entry = { contactId: string; sourceType: "profile" | "notes"; content: string; contentHash: string };
+  const candidates: Entry[] = [];
+  for (const contact of rows) {
+    const { profile, notes } = splitProfileEmbeddingContent(contact);
+    if (profile.trim().length > 0) {
+      candidates.push({ contactId: contact.id, sourceType: "profile", content: profile, contentHash: computeContentHash(profile) });
+    }
+    if (notes && notes.trim().length > 0) {
+      candidates.push({ contactId: contact.id, sourceType: "notes", content: notes, contentHash: computeContentHash(notes) });
+    }
+  }
+
+  // Content that shrank back under the split threshold stops producing a "notes" candidate
+  // this run — drop any stored "notes" row for that contact so stale text doesn't keep
+  // contributing to semantic search / content-boost matching. Driven by the candidate set,
+  // not by hash comparison, so this fires even when nothing else changed this run.
+  const notesCandidateContactIds = new Set(
+    candidates.filter((entry) => entry.sourceType === "notes").map((entry) => entry.contactId)
+  );
+  const orphanedNotesRows = existing.filter(
+    (row) => row.sourceType === "notes" && !notesCandidateContactIds.has(row.contactId)
+  );
+  if (orphanedNotesRows.length > 0) {
+    await db.delete(contactEmbeddings).where(
+      inArray(contactEmbeddings.id, orphanedNotesRows.map((row) => row.id))
+    );
+  }
+
+  // Unchanged content keeps its stored embedding — no API call, no write.
+  const entries = candidates.filter(
+    (entry) => existingByKey.get(`${entry.contactId}:${entry.sourceType}`)?.contentHash !== entry.contentHash
+  );
   if (entries.length === 0) return;
 
   let embeddings: number[][];
   try {
-    embeddings = await createEmbeddingsBatch(
-      userId,
-      entries.map((entry) => entry.content)
-    );
+    embeddings = await embedFn(userId, entries.map((entry) => entry.content));
   } catch {
-    // AI key may be missing; skip embeddings silently, matching upsertContactEmbedding.
-    return;
+    return; // AI key may be missing; skip silently, matching upsertContactEmbedding.
   }
 
-  const existing = await db.query.contactEmbeddings.findMany({
-    where: and(
-      eq(contactEmbeddings.userId, userId),
-      eq(contactEmbeddings.sourceType, "profile"),
-      inArray(
-        contactEmbeddings.contactId,
-        entries.map((entry) => entry.contactId)
-      )
-    ),
-  });
-  const existingByContactId = new Map(existing.map((row) => [row.contactId, row]));
-
-  const toInsert: Array<{
-    userId: string;
-    contactId: string;
-    sourceType: string;
-    sourceId: string;
-    embedding: number[];
-    content: string;
-  }> = [];
-  const toUpdate: Array<{ id: string; embedding: number[]; content: string }> = [];
+  const toInsert: Array<typeof contactEmbeddings.$inferInsert> = [];
+  const toUpdate: Array<{ id: string; embedding: number[]; content: string; contentHash: string }> = [];
 
   entries.forEach((entry, index) => {
     const embedding = embeddings[index];
-    const found = existingByContactId.get(entry.contactId);
+    const found = existingByKey.get(`${entry.contactId}:${entry.sourceType}`);
     if (found) {
-      toUpdate.push({ id: found.id, embedding, content: entry.content });
+      toUpdate.push({ id: found.id, embedding, content: entry.content, contentHash: entry.contentHash });
     } else {
       toInsert.push({
         userId,
         contactId: entry.contactId,
-        sourceType: "profile",
+        sourceType: entry.sourceType,
         sourceId: entry.contactId,
         embedding,
         content: entry.content,
+        contentHash: entry.contentHash,
       });
     }
   });
 
-  let inserted: typeof contactEmbeddings.$inferSelect[] = [];
+  const vectorRows: Array<{ id: string; embedding: number[] }> = [];
+
   if (toInsert.length > 0) {
-    inserted = await db.insert(contactEmbeddings).values(toInsert).returning();
+    const inserted = await db.insert(contactEmbeddings).values(toInsert).returning();
+    for (const row of inserted) {
+      vectorRows.push({ id: row.id, embedding: row.embedding as number[] });
+    }
   }
 
   if (toUpdate.length > 0) {
-    const tuples = toUpdate.map(
-      (u) => sql`(${u.id}::uuid, ${JSON.stringify(u.embedding)}::jsonb, ${u.content}::text)`
+    const values = sql.join(
+      toUpdate.map(
+        (u) =>
+          sql`(${u.id}::uuid, ${JSON.stringify(u.embedding)}::jsonb, ${u.content}, ${u.contentHash})`
+      ),
+      sql`, `
     );
     await db.execute(sql`
-      UPDATE contact_embeddings AS e
-      SET embedding = v.embedding, content = v.content
-      FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, embedding, content)
-      WHERE e.id = v.id
+      UPDATE contact_embeddings AS ce
+      SET embedding = v.embedding, content = v.content, content_hash = v.content_hash
+      FROM (VALUES ${values}) AS v(id, embedding, content, content_hash)
+      WHERE ce.id = v.id
     `);
+    for (const u of toUpdate) vectorRows.push({ id: u.id, embedding: u.embedding });
   }
 
-  await persistEmbeddingVectors([
-    ...inserted.map((row) => ({ id: row.id, embedding: row.embedding as number[] })),
-    ...toUpdate.map((u) => ({ id: u.id, embedding: u.embedding })),
-  ]);
+  await persistEmbeddingVectors(vectorRows);
 }
