@@ -59,3 +59,18 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npm test
+
+  extension:
+    name: extension typecheck · build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - run: npm --prefix extension ci --no-audit --no-fund
+      - run: npm --prefix extension run typecheck
+      - run: npm --prefix extension run build

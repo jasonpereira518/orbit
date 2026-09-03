@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import {
   downloadAndPersistAvatar,
   fetchLinkedInPhotoUrl,
@@ -90,15 +91,24 @@ export async function GET(_req: Request, { params }: Params) {
     }
   }
 
-  // No durable photo yet — resolve from LinkedIn (Microlink + Unavatar fallback).
+  // No durable photo yet — resolve from LinkedIn (Microlink + Unavatar fallback). Each
+  // resolution spends third-party quota, so this branch alone is rate limited; the
+  // redirect and data-URL paths above are one read and stay unmetered.
   if (contact.linkedinUrl?.trim()) {
     try {
+      await consumeBucket("avatar.resolve", userId, RATE_LIMITS.avatarResolve);
       const photoUrl = await fetchLinkedInPhotoUrl(contactId, contact.linkedinUrl);
       if (photoUrl) {
         await persistProfileImage(contactId, userId, photoUrl);
         return NextResponse.redirect(photoUrl);
       }
     } catch (err) {
+      if (isRateLimitedError(err)) {
+        return new NextResponse(null, {
+          status: 429,
+          headers: { "Retry-After": String(err.retryAfterSec) },
+        });
+      }
       if (err instanceof MicrolinkRateLimitError) {
         const retryAfterSec = Math.max(
           1,

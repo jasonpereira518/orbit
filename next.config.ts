@@ -1,7 +1,22 @@
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs/config";
+import { buildSecurityHeaders } from "./src/lib/security-headers";
 
 const nextConfig: NextConfig = {
+  // HSTS, nosniff, referrer and frame policies, and a Content-Security-Policy that starts
+  // report-only (CSP_ENFORCE=1 to enforce). See src/lib/security-headers.ts.
+  async headers() {
+    return [
+      {
+        source: "/(.*)",
+        headers: buildSecurityHeaders({
+          dev: process.env.NODE_ENV !== "production",
+          enforce: process.env.CSP_ENFORCE === "1",
+          clerkPublishableKey: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
+        }),
+      },
+    ];
+  },
   env: {
     // Inlined at build time; /api/health reports it so "which build is this" has an answer
     // even when the sha is unhelpful (a redeploy of the same commit).

@@ -37,6 +37,9 @@ export const PUBLIC_ROUTES = [
   "/api/embeddings/backfill",
   "/api/linkedin/timeline-events/backfill",
   "/api/ops/sweep",
+  // Genuinely public: browsers POST Content-Security-Policy violation reports here with
+  // no session. The handler stores nothing but a directive and a URI, throttled.
+  "/api/csp-report",
   // Genuinely public: the liveness probe the uptime monitor polls. Its shallow body says
   // only "up or down" plus the deployed sha; the deep view needs HEALTH_TOKEN.
   "/api/health",

@@ -72,6 +72,8 @@ function main() {
     "/api/ops/sweep",
     // The uptime monitor has no session either.
     "/api/health",
+    // Browsers report CSP violations without one.
+    "/api/csp-report",
   ];
   const blocked: string[] = [];
   for (const route of internalRoutes) {

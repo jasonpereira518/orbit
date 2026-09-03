@@ -1506,6 +1506,17 @@ export const cronRuns = pgTable(
 );
 
 /**
+ * Fixed-window rate-limit counters, one row per (scope, key) — see `src/lib/rate-limit.ts`.
+ * In Postgres rather than memory because a serverless instance's memory is neither shared
+ * nor durable. Bounded by scopes × users; rows are tiny and reused every window.
+ */
+export const rateLimitBuckets = pgTable("rate_limit_buckets", {
+  bucket: text("bucket").primaryKey(),
+  windowStartedAt: timestamp("window_started_at", { withTimezone: true }).defaultNow().notNull(),
+  count: integer("count").default(0).notNull(),
+});
+
+/**
  * One row per known ops condition (`src/lib/ops-alerts.ts`), keyed by condition id.
  *
  * This is what turns a ten-minute sweep into something a human can stand to have in Slack:

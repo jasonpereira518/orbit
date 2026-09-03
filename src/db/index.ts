@@ -580,6 +580,11 @@ CREATE TABLE IF NOT EXISTS ops_alert_state (
   detail jsonb NOT NULL DEFAULT '{}',
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+  bucket text PRIMARY KEY,
+  window_started_at timestamptz NOT NULL DEFAULT now(),
+  count integer NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source text NOT NULL DEFAULT 'clerk',
@@ -792,8 +797,9 @@ CREATE TABLE IF NOT EXISTS non_dilutive_funding (
  * v23 = contact_embeddings.content_hash (hybrid contact search).
  * v24 = ops_alert_state (the production-readiness ops sweep's alert ledger).
  * v25 = imports.stall_resumes (the process-stalled cron's give-up counter).
+ * v26 = rate_limit_buckets (DB-backed rate limiting for chat, capture, and avatar resolve).
  */
-export const SCHEMA_VERSION = 25;
+export const SCHEMA_VERSION = 26;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a

@@ -44,6 +44,12 @@ export const ERROR_SOURCES = {
    * nowhere else, and the one failure that means nobody can pay — the ops sweep pages on it.
    */
   stripeCheckout: "stripe.checkout",
+  /**
+   * A Content-Security-Policy violation reported by a browser (`/api/csp-report`). `kind`
+   * is the violated directive; the blocked URI lives in context. Throttled per
+   * (directive, blocked URI) so one noisy extension is one row an hour, not one a view.
+   */
+  cspReport: "csp.report",
 } as const;
 
 export type ErrorEventInput = {

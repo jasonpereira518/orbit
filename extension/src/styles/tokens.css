@@ -54,6 +54,7 @@
   --color-tier-lifetime: var(--tier-lifetime);
   --color-tier-pro: var(--tier-pro);
   --color-ink: var(--ink);
+  --color-admin-nav-hover: var(--admin-nav-hover);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -115,6 +116,9 @@
      lets `--primary` be an accent in both themes without dragging body content
      with it. Light is unchanged from before the split. */
   --ink: #0f3d3e;
+  /* Admin nav hover wash. Carries its own alpha rather than being tinted at the call
+     site, because the hover span uses `opacity` for its fade-in — the two would fight. */
+  --admin-nav-hover: rgb(15 61 62 / 0.10);
   --radius: 0.625rem;
   --sidebar: #f7f8f6;
   --sidebar-foreground: #1a1c1a;
@@ -200,6 +204,7 @@
   --tier-lifetime: #f2c14e;
   --tier-pro: #599de7;
   --ink: #e4ebf6;
+  --admin-nav-hover: rgb(124 195 226 / 0.16);
   /* Shadows on a dark ground want to be deeper than the surface, not neutral
      black — a pure-black shadow over navy reads as a dead hole. */
   --shadow-color: 218deg 60% 3%;

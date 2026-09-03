@@ -12,6 +12,7 @@ import { prepareChatContext } from "@/lib/chat-context";
 import { persistAssistantTurn } from "@/lib/chat-persist";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { traced } from "@/lib/perf-trace";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 
 
 
@@ -98,6 +99,7 @@ async function askNetworkInner(
 ) {
   try {
     const userId = await requireUserForSurface("page.chat");
+    await consumeBucket("chat", userId, RATE_LIMITS.chat);
     const db = await getDb();
     const threadId = options?.threadId ?? null;
 
