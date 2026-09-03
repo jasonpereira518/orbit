@@ -10,8 +10,9 @@ import {
   Th,
 } from "@/components/admin/primitives";
 import { MoneyTabs } from "@/components/admin/money-tabs";
-import { DistributionChart, formatMicros } from "@/components/admin/charts";
+import { DistributionChart } from "@/components/admin/charts";
 import { USAGE_EVENT_RETENTION_DAYS } from "@/lib/admin-health";
+import { formatMicros } from "@/lib/format-money";
 import { costToRunBreakdown, costToRunPerUser } from "@/lib/money-metrics";
 
 export const metadata = { title: "Admin · Money · Cost to run" };

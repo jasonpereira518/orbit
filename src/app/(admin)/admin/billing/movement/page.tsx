@@ -13,7 +13,7 @@ import {
   TrendTable,
 } from "@/components/admin/primitives";
 import { MoneyTabs } from "@/components/admin/money-tabs";
-import { formatCents } from "@/components/admin/charts";
+import { formatCents } from "@/lib/format-money";
 import { loadAdminUserRows } from "@/lib/admin-metrics";
 import { MONTHLY_CENTS } from "@/lib/billing-events";
 import { lifetimeOffer } from "@/lib/lifetime-offer";

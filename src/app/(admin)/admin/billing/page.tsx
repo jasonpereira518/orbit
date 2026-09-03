@@ -12,7 +12,7 @@ import {
   TrendBars,
 } from "@/components/admin/primitives";
 import { MoneyTabs } from "@/components/admin/money-tabs";
-import { formatCents } from "@/components/admin/charts";
+import { formatCents } from "@/lib/format-money";
 import {
   buildPlanBreakdown,
   loadAdminUserRows,
