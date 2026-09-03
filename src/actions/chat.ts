@@ -24,6 +24,7 @@ import {
 import { isRecruiterIntent } from "@/lib/recruiters";
 import { loadRecruitersForChat } from "@/actions/recruiters";
 import { requireUserForSurface } from "@/lib/plan-guards";
+import { traced } from "@/lib/perf-trace";
 
 const TITLE_MAX = 72;
 const PRIOR_TURN_LIMIT = 8;
@@ -141,6 +142,15 @@ export async function askNetwork(
   question: string,
   options?: { threadId?: string; contactId?: string }
 ) {
+  // Traced because this is the one action with no upper bound of its own: retrieval plus
+  // a full model completion, on a user's own key. A slow provider used to be invisible.
+  return traced("chat.askNetwork", () => askNetworkInner(question, options));
+}
+
+async function askNetworkInner(
+  question: string,
+  options?: { threadId?: string; contactId?: string }
+) {
   try {
     const userId = await requireUserForSurface("page.chat");
     const db = await getDb();
@@ -149,7 +159,7 @@ export async function askNetwork(
 
     const threadId = options?.threadId;
     const focusContactId = options?.contactId?.trim() || null;
-    let thread =
+    const thread =
       threadId != null
         ? await db.query.chatThreads.findFirst({
             where: and(

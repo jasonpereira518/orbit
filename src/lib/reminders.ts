@@ -8,7 +8,7 @@ import {
   reminders,
   userGoals,
 } from "@/db/schema";
-import { listActiveGoalTexts } from "@/actions/goals";
+import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { daysAgo } from "@/lib/duplicates";
 import { isCometContact } from "@/lib/comet";
 import {
@@ -17,7 +17,7 @@ import {
 } from "@/lib/constellation-clusters";
 import { computeNetworkMetrics } from "@/lib/network-metrics";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
-import { clientContactAvatarUrl } from "@/lib/contact-avatar-url";
+import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 
 const AUTO_SUGGESTION_TYPES = [
   "dormant_high_value",
@@ -89,8 +89,20 @@ export function refreshOutreachSuggestions(userId: string): Promise<void> {
 
 async function buildOutreachSuggestions(userId: string) {
   const db = await getDb();
+  // Only what the candidate predicates below read. This ran unprojected — every column,
+  // notes and inline avatars included — on a first dashboard visit.
   const all = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
+    columns: {
+      id: true,
+      fullName: true,
+      preferredName: true,
+      priorityLevel: true,
+      relationshipScore: true,
+      lastInteractionAt: true,
+      firstInteractionAt: true,
+      nextFollowUpAt: true,
+    },
   });
 
   // Clear pending auto suggestions so we regenerate fresh ones
@@ -395,10 +407,13 @@ export async function getDashboardData(
   const contactRowsPromise = Promise.resolve(
     db.query.contacts.findMany({
       where: eq(contacts.userId, userId),
-      // Explicit projection rather than the whole row. `notes` is still here — the
-      // constellation preview this feeds reads it — but naming the columns keeps the
-      // dashboard from silently picking up every column added to `contacts` later.
-      // `contacts_user_updated_idx` now backs the ordering.
+      // Explicit projection rather than the whole row, and deliberately WITHOUT the two
+      // wide columns: `notes` (multi-KB) and `profile_image_url` (base64 up to 120 KB).
+      // Together they were most of the bytes this scan moved for every contact, and the
+      // dashboard stripped both before rendering. The constellation preview searched
+      // notes; it now matches /graph, which never had them. The browser-safe avatar URL
+      // is computed in SQL instead (`avatarUrl` below). `contacts_user_updated_idx` backs
+      // the ordering. `scripts/smoke-page-budgets.ts` asserts this shape.
       columns: {
         id: true,
         userId: true,
@@ -414,7 +429,7 @@ export async function getDashboardData(
         phone: true,
         linkedinUrl: true,
         website: true,
-        profileImageUrl: true,
+        profileImageUrl: false,
         relationshipScore: true,
         statedCloseness: true,
         priorityLevel: true,
@@ -435,15 +450,16 @@ export async function getDashboardData(
         orbitScore: true,
         createdAt: true,
         updatedAt: true,
-        notes: true,
+        notes: false,
       },
+      extras: { avatarUrl: clientAvatarUrlSql.as("avatar_url") },
       orderBy: (c, { desc }) => [desc(c.updatedAt)],
       with: { contactTags: { with: { tag: true } } },
     })
   );
 
   const [
-    allContactRows,
+    scannedRows,
     pendingReminders,
     suggestions,
     goals,
@@ -469,10 +485,14 @@ export async function getDashboardData(
       where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
       orderBy: (g, { desc }) => [desc(g.createdAt)],
     }),
-    listActiveGoalTexts(),
+    listActiveGoalTextsForUser(userId),
     // Donates the scan above rather than repeating it.
     getClosenessCohort(userId, contactRowsPromise),
   ]);
+
+  // `profileImageUrl` keeps its name for the cards that render these rows, but it is now
+  // the browser-safe URL from SQL — never the stored data: URL.
+  const allContactRows = scannedRows.map((c) => ({ ...c, profileImageUrl: c.avatarUrl }));
 
   const enrichedContacts = allContactRows.map((c) => {
     const tags = c.contactTags.map((ct) => ct.tag.name);
@@ -522,13 +542,13 @@ export async function getDashboardData(
       howMet: c.howMet ?? null,
       metContext: c.metContext ?? null,
       dateMet: c.dateMet ?? null,
-      notes: c.notes ?? null,
+      notes: null as string | null,
       sharedInterests: c.sharedInterests ?? null,
       email: c.email ?? null,
       phone: c.phone ?? null,
       linkedinUrl: c.linkedinUrl ?? null,
       website: c.website ?? null,
-      profileImageUrl: clientContactAvatarUrl(c.id, c.profileImageUrl),
+      profileImageUrl: c.profileImageUrl,
       dormant,
     };
   });
