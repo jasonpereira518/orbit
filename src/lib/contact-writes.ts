@@ -397,8 +397,13 @@ export async function createContactForUser(
  * a script with no request scope). Keyword search reads the row, not the embedding, so a
  * just-saved contact is findable by name immediately and semantically within seconds.
  *
- * `after()` needs a request scope; outside one (tsx scripts) the task simply runs in the
- * background of the current process.
+ * `after()` needs a request scope; outside one (tsx scripts) the task runs on a macrotask
+ * boundary instead of a bare `void` call — a plain `void task()` starts executing
+ * synchronously up to its first `await`, and every `await` further up this same call (e.g.
+ * `scoreAfterWrite`) gives it more turns to advance, so it can reach its own database call
+ * before the write that scheduled it has even returned. `setTimeout` pushes it past the
+ * entire synchronous-plus-microtask chain of the caller, matching what "after the
+ * response" means inside a real request.
  */
 function deferEmbeddingRebuild(userId: string, contactId: string, staleAt: Date) {
   const task = async () => {
@@ -419,7 +424,7 @@ function deferEmbeddingRebuild(userId: string, contactId: string, staleAt: Date)
   try {
     after(task);
   } catch {
-    void task();
+    setTimeout(() => void task(), 0);
   }
 }
 
