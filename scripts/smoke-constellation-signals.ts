@@ -45,10 +45,9 @@ async function reset() {
 
 async function addContact(fullName: string): Promise<string> {
   const db = await getDb();
-  const [row] = await db
-    .insert(contacts)
-    .values({ userId: USER, fullName })
-    .returning({ id: contacts.id });
+  // Bare `.returning()` — the projected form doesn't resolve across the neon/pglite union
+  // that `getDb()` returns. Returns every column instead of one, which costs nothing here.
+  const [row] = await db.insert(contacts).values({ userId: USER, fullName }).returning();
   return row.id;
 }
 
