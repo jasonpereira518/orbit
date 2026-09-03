@@ -18,6 +18,13 @@ import {
 import { computeNetworkMetrics } from "@/lib/network-metrics";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { clientContactAvatarUrl } from "@/lib/contact-avatar-url";
+import {
+  ActionItemSignal,
+  CLOSE_LOOP_SCORE_BOOST,
+  CLOSE_LOOP_WINDOW_DAYS,
+  OPEN_ITEM_ELIGIBLE_DAYS,
+  getActionItemSignalsBatch,
+} from "@/lib/action-item-signals";
 
 const AUTO_SUGGESTION_TYPES = [
   "dormant_high_value",
@@ -225,18 +232,28 @@ async function buildOutreachSuggestions(userId: string) {
   return suggestions;
 }
 
-function followUpCandidateScore(contact: {
-  priorityLevel: number;
-  relationshipScore: number;
-  lastInteractionAt: Date | string | null;
-  nextFollowUpAt: Date | string | null;
-}) {
+function followUpCandidateScore(
+  contact: {
+    priorityLevel: number;
+    relationshipScore: number;
+    lastInteractionAt: Date | string | null;
+    nextFollowUpAt: Date | string | null;
+  },
+  signal?: ActionItemSignal
+) {
   const idleDays = Math.min(daysAgo(contact.lastInteractionAt), 365);
   const idleScore = Number.isFinite(idleDays) ? idleDays / 30 : 2;
+  const openItemUrgency = signal?.openCount ? 1 + signal.oldestOpenAgeDays / 14 : 0;
+  const closeTheLoopBoost =
+    signal?.recentCompletionAgeDays !== undefined && signal.recentCompletionAgeDays <= CLOSE_LOOP_WINDOW_DAYS
+      ? CLOSE_LOOP_SCORE_BOOST
+      : 0;
   return (
     (contact.priorityLevel || 0) * 4 +
     (contact.relationshipScore || 0) * 2 +
-    idleScore -
+    idleScore +
+    openItemUrgency +
+    closeTheLoopBoost -
     (contact.nextFollowUpAt ? 1 : 0)
   );
 }
@@ -251,6 +268,7 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
   const all = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
   });
+  const signals = await getActionItemSignalsBatch(userId, all.map((c) => c.id));
 
   const alreadyDueIds = new Set(
     all
@@ -266,16 +284,20 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
         const ms = new Date(c.nextFollowUpAt).getTime() - now.getTime();
         if (ms > 24 * 60 * 60 * 1000) return false;
       }
-      // Prefer people who have gone quiet or have no follow-up yet
+      // Prefer people who have gone quiet, have no follow-up yet, or have an
+      // action-item signal (an aging open commitment, or a recent un-followed-up completion).
       const idle = daysAgo(c.lastInteractionAt);
+      const signal = signals.get(c.id);
       return (
         !c.nextFollowUpAt ||
         idle >= 14 ||
         (c.priorityLevel || 0) >= 2 ||
-        (c.relationshipScore || 0) >= 4
+        (c.relationshipScore || 0) >= 4 ||
+        (!!signal?.openCount && signal.oldestOpenAgeDays >= OPEN_ITEM_ELIGIBLE_DAYS) ||
+        (signal?.recentCompletionAgeDays !== undefined && signal.recentCompletionAgeDays <= CLOSE_LOOP_WINDOW_DAYS)
       );
     })
-    .sort((a, b) => followUpCandidateScore(b) - followUpCandidateScore(a))
+    .sort((a, b) => followUpCandidateScore(b, signals.get(b.id)) - followUpCandidateScore(a, signals.get(a.id)))
     .slice(0, Math.max(1, Math.min(24, limit)));
 
   let created = 0;
