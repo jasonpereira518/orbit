@@ -33,7 +33,7 @@ export function LogExpenseForm() {
 
   return (
     <div className="flex flex-wrap items-end gap-2">
-      <div>
+      <div className="space-y-1.5">
         <Label htmlFor="expense-category">Category</Label>
         <Input
           id="expense-category"
@@ -43,7 +43,7 @@ export function LogExpenseForm() {
           className="w-32"
         />
       </div>
-      <div>
+      <div className="space-y-1.5">
         <Label htmlFor="expense-amount">Amount (USD)</Label>
         <Input
           id="expense-amount"
@@ -54,7 +54,7 @@ export function LogExpenseForm() {
           className="w-28"
         />
       </div>
-      <div>
+      <div className="space-y-1.5">
         <Label htmlFor="expense-note">Note</Label>
         <Input
           id="expense-note"
@@ -88,7 +88,7 @@ export function UpdateCashForm() {
 
   return (
     <div className="flex flex-wrap items-end gap-2">
-      <div>
+      <div className="space-y-1.5">
         <Label htmlFor="cash-balance">Current cash on hand (USD)</Label>
         <Input
           id="cash-balance"

@@ -20,7 +20,16 @@ import { userSettings } from "@/db/schema";
  */
 const ACTIVITY_THROTTLE_MS = 15 * 60 * 1000;
 
-/** Ensure a per-user settings row exists (idempotent). Cached per request. */
+/**
+ * Ensure a per-user settings row exists (idempotent). Cached per request.
+ *
+ * The insert is `onConflictDoNothing` rather than a plain insert: two near-simultaneous
+ * first requests for the same brand-new user (two tabs, or a webhook racing the first page
+ * load) both see `existing` as absent and both reach the insert. Without the conflict
+ * clause the second one throws a unique-violation on `user_id` instead of resolving like
+ * the first. `RETURNING` comes back empty for whichever request loses that race, so it
+ * re-reads the row the winner just created.
+ */
 export const ensureUserSettings = cache(async (userId: string) => {
   const db = await getDb();
   const existing = await db.query.userSettings.findFirst({
@@ -31,8 +40,19 @@ export const ensureUserSettings = cache(async (userId: string) => {
   const [created] = await db
     .insert(userSettings)
     .values({ userId, lastActiveAt: new Date() })
+    .onConflictDoNothing({ target: userSettings.userId })
     .returning();
-  return created;
+  if (created) return created;
+
+  // Lost the race: a concurrent request's insert won, so this one's RETURNING came back
+  // empty. The row is guaranteed to exist now (unique on `user_id`) — read it back.
+  const settled = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+  });
+  if (!settled) {
+    throw new Error(`ensureUserSettings: no row for ${userId} after an insert race`);
+  }
+  return settled;
 });
 
 /**
@@ -170,6 +190,14 @@ export type SubscriptionMirror = {
   plan: "orbit" | null;
   status: "active" | "past_due" | "canceled" | null;
   periodEnd: number | null;
+  /**
+   * What the subscription is worth per month, in cents. Optional so existing callers keep
+   * compiling; omitting it leaves the stored value alone rather than clearing it, because
+   * "I did not look at the price" and "this subscription is worth nothing" are different
+   * statements and only one of them should be able to zero out someone's MRR.
+   */
+  monthlyCents?: number | null;
+  interval?: "month" | "year" | null;
 };
 
 /**
@@ -198,6 +226,12 @@ export async function setSubscriptionState(
       subscriptionPlan: mirror.plan,
       subscriptionStatus: mirror.status,
       subscriptionPeriodEnd: epochToDate(mirror.periodEnd),
+      ...(mirror.monthlyCents !== undefined
+        ? { subscriptionMonthlyCents: mirror.monthlyCents }
+        : {}),
+      ...(mirror.interval !== undefined
+        ? { subscriptionInterval: mirror.interval }
+        : {}),
       ...(opts.stripeCustomerId !== undefined
         ? { stripeCustomerId: opts.stripeCustomerId }
         : {}),

@@ -190,6 +190,26 @@ export const userSettings = pgTable("user_settings", {
     withTimezone: true,
   }),
   /**
+   * What this subscription is worth per month, in cents.
+   *
+   * THE MIRROR IS OVERWRITE-ONLY, which is why this has to be stored rather than derived.
+   * `monthlyValueCents` sees only these columns, so without it an annual subscriber at
+   * $50/yr is indistinguishable from a monthly one at $5/mo and books as $5/mo forever.
+   *
+   * Stores the already-normalised monthly equivalent rather than the interval, because one
+   * integer covers any interval, any `interval_count`, a price change, a grandfathered
+   * price and a future coupon — and `monthlyValueCents` then needs no branching at all.
+   *
+   * Null means "never recorded", i.e. every row written before this column existed. That
+   * reads as the monthly price, so no historical figure moves the day it ships.
+   */
+  subscriptionMonthlyCents: integer("subscription_monthly_cents"),
+  /**
+   * Display only — "12 annual / 30 monthly" on the Money screen. Nothing
+   * correctness-critical reads this; `subscriptionMonthlyCents` above carries the money.
+   */
+  subscriptionInterval: text("subscription_interval").$type<"month" | "year">(),
+  /**
    * Provenance for a comped plan. `compedPlan` alone is a fact with no story, and it
    * outranks every real billing signal in `resolvePlan` permanently — so six months later
    * "why is this account on Lifetime?" has to be answerable from the row itself.
@@ -1440,6 +1460,10 @@ export const adminAuditLog = pgTable(
     index("admin_audit_log_created_idx").on(t.createdAt),
     index("admin_audit_log_target_idx").on(t.targetUserId),
     index("admin_audit_log_action_idx").on(t.action, t.createdAt),
+    // Serves `recordAccountView`'s throttle lookup (admin_user_id + target_user_id +
+    // action, filtered on created_at) — the only admin-console query that leads with
+    // admin_user_id. Runs on every account-inspector page view.
+    index("admin_audit_log_admin_target_idx").on(t.adminUserId, t.targetUserId, t.createdAt),
   ]
 );
 
@@ -1708,6 +1732,33 @@ export const broadcastRecipients = pgTable(
  * every future reader remembering to deduplicate. The retry information is not lost; it
  * still lives one table over.
  */
+/**
+ * What a billing event meant financially.
+ *
+ * Declared here rather than in `billing-events.ts` because the column's `$type` and the
+ * module's union were previously spelled out separately, in two files, with nothing
+ * keeping them in step — a kind added to one and forgotten in the other type-checks
+ * cleanly and mis-sorts money at runtime.
+ *
+ * `kind` is a plain `text` column with no CHECK and no `pgEnum`, so adding a member here
+ * needs no DDL and no `SCHEMA_VERSION` bump.
+ *
+ * `payment` is recurring cash actually received (an invoice paid). It is deliberately
+ * distinct from `lifetime`, which is one-time cash: folding the two together is the
+ * easiest way to produce a "one-time revenue" figure that quietly includes subscription
+ * renewals.
+ */
+export type BillingEventKind =
+  | "new"
+  | "expansion"
+  | "contraction"
+  | "churn"
+  | "reactivation"
+  | "lifetime"
+  | "payment"
+  | "refund"
+  | "payment_failed";
+
 export const billingEvents = pgTable(
   "billing_events",
   {
@@ -1715,18 +1766,7 @@ export const billingEvents = pgTable(
     source: text("source").$type<"clerk" | "stripe">().notNull(),
     /** The provider's delivery id — `svix-id` for Clerk, the event id for Stripe. */
     eventId: text("event_id").notNull(),
-    kind: text("kind")
-      .$type<
-        | "new"
-        | "expansion"
-        | "contraction"
-        | "churn"
-        | "reactivation"
-        | "lifetime"
-        | "refund"
-        | "payment_failed"
-      >()
-      .notNull(),
+    kind: text("kind").$type<BillingEventKind>().notNull(),
     userId: text("user_id"),
     /** Cash moved, always positive. Zero for a pure status change. */
     amountCents: integer("amount_cents").default(0).notNull(),
@@ -1831,51 +1871,139 @@ export const appSurfaceFlags = pgTable("app_surface_flags", {
  * Manually-entered spend, for the YC-mode Runway page's burn calculation. No integration
  * exists to pull this automatically — Orbit has no bank/accounting connection.
  */
-export const startupExpenses = pgTable("startup_expenses", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  category: text("category").notNull(),
-  amountUsd: real("amount_usd").notNull(),
-  incurredAt: timestamp("incurred_at", { withTimezone: true }).notNull(),
-  note: text("note"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const startupExpenses = pgTable(
+  "startup_expenses",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    category: text("category").notNull(),
+    amountUsd: real("amount_usd").notNull(),
+    incurredAt: timestamp("incurred_at", { withTimezone: true }).notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  // `loadRunwayMetrics` filters and sorts on this column on every Runway page load.
+  (t) => [index("startup_expenses_incurred_idx").on(t.incurredAt)]
+);
 
 /** Point-in-time cash-on-hand entries. The latest row is "current" cash for Runway. */
-export const cashSnapshots = pgTable("cash_snapshots", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  asOf: timestamp("as_of", { withTimezone: true }).notNull(),
-  balanceUsd: real("balance_usd").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const cashSnapshots = pgTable(
+  "cash_snapshots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    asOf: timestamp("as_of", { withTimezone: true }).notNull(),
+    balanceUsd: real("balance_usd").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  // `loadRunwayMetrics` reads only the latest row (`ORDER BY as_of DESC LIMIT 1`).
+  (t) => [index("cash_snapshots_as_of_idx").on(t.asOf)]
+);
 
 /** Manually-logged acquisition spend by channel, for the Unit Economics CAC calculation. */
-export const acquisitionSpend = pgTable("acquisition_spend", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  channel: text("channel").notNull(),
-  amountUsd: real("amount_usd").notNull(),
-  periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
-  periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const acquisitionSpend = pgTable(
+  "acquisition_spend",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    channel: text("channel").notNull(),
+    amountUsd: real("amount_usd").notNull(),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  // `loadUnitEconomics` sums rows by `created_at` (see that function's comment for why it's
+  // not `period_start`/`period_end`), on every Unit Economics page load.
+  (t) => [index("acquisition_spend_created_idx").on(t.createdAt)]
+);
 
-export const fundraisingRounds = pgTable("fundraising_rounds", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  name: text("name").notNull(),
-  targetUsd: real("target_usd").notNull(),
-  status: text("status").$type<"open" | "closed">().notNull().default("open"),
-  closedAt: timestamp("closed_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const fundraisingRounds = pgTable(
+  "fundraising_rounds",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: text("name").notNull(),
+    targetUsd: real("target_usd").notNull(),
+    status: text("status").$type<"open" | "closed">().notNull().default("open"),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("fundraising_rounds_created_idx").on(t.createdAt)]
+);
 
 /** No FK-cascade delete: closing/deleting a round should not silently erase commitments. */
-export const fundraisingInvestors = pgTable("fundraising_investors", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  roundId: uuid("round_id").notNull().references(() => fundraisingRounds.id),
-  name: text("name").notNull(),
-  amountUsd: real("amount_usd").notNull(),
-  committedAt: timestamp("committed_at", { withTimezone: true }).notNull(),
-  note: text("note"),
-});
+export const fundraisingInvestors = pgTable(
+  "fundraising_investors",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    roundId: uuid("round_id").notNull().references(() => fundraisingRounds.id),
+    name: text("name").notNull(),
+    amountUsd: real("amount_usd").notNull(),
+    committedAt: timestamp("committed_at", { withTimezone: true }).notNull(),
+    /**
+     * When the money actually landed. `null` means committed but not wired.
+     *
+     * Without this the page summed commitments and called the result "Raised", which is
+     * the optimistic reading — a term sheet and a bank transfer are not the same event.
+     * Rows written before this column existed read as not-yet-received rather than being
+     * backfilled from `committed_at`, because assuming every past commitment wired would
+     * invent a fact to make an old number look better.
+     */
+    receivedAt: timestamp("received_at", { withTimezone: true }),
+    note: text("note"),
+  },
+  (t) => [
+    // The FK `loadFundingTotals` buckets investors by in JS today — indexed so a
+    // future SQL-side join or per-round lookup doesn't inherit an unindexed scan.
+    index("fundraising_investors_round_idx").on(t.roundId),
+    index("fundraising_investors_committed_idx").on(t.committedAt),
+  ]
+);
+
+/**
+ * Money the company was given that costs no equity: grants, competition prizes, cloud and
+ * model credits, accelerator cash, and loans.
+ *
+ * Kept as its own table rather than folded into `fundraising_investors` because the
+ * lifecycles genuinely differ. A commitment is measured against a round's target and has a
+ * `NOT NULL` round FK; non-dilutive money has no round, no target, and can *expire*. The
+ * two meet in `computeCapitalTotals`, which is the single place that decides what counts.
+ *
+ * `kind` and `form` look like two discriminators for one idea and are not — do not collapse
+ * them. `form` is not derivable from `kind`: some grants are disbursed as compute credits,
+ * some prizes are credit packages, some accelerator awards are cash. **`form` changes the
+ * arithmetic** (in-kind never enters a cash total); `kind` is only a label to group by.
+ *
+ * Amounts are `real` USD to match every other number in the YC-mode subsystem
+ * (`startup_expenses`, `cash_snapshots`, `acquisition_spend`, `fundraising_investors`).
+ * The `amount_cents` integers elsewhere exist because those numbers arrive from Stripe as
+ * integer cents — that is fidelity at an API boundary, not a house style to copy here.
+ */
+export const nonDilutiveFunding = pgTable(
+  "non_dilutive_funding",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    /** Who gave it: "AWS Activate", "Anthropic", "UNC CS Founded". */
+    source: text("source").notNull(),
+    kind: text("kind")
+      .$type<"credit" | "grant" | "prize" | "accelerator" | "loan" | "other">()
+      .notNull(),
+    form: text("form").$type<"cash" | "in_kind">().notNull().default("cash"),
+    /**
+     * Loans and revenue-based financing. Stored rather than derived from `kind === "loan"`
+     * so that a grant with a clawback clause can be marked repayable too.
+     */
+    repayable: boolean("repayable").notNull().default(false),
+    repaidUsd: real("repaid_usd").notNull().default(0),
+    amountUsd: real("amount_usd").notNull(),
+    awardedAt: timestamp("awarded_at", { withTimezone: true }).notNull(),
+    /** `null` means awarded but not yet landed (or, for credits, not yet activated). */
+    receivedAt: timestamp("received_at", { withTimezone: true }),
+    /** Credits expire and grants have use-by dates. Expired money counts as nothing. */
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  // The Funding page lists newest-award-first; nothing filters on the other dates, so they
+  // stay unindexed until something does.
+  (t) => [index("non_dilutive_funding_awarded_idx").on(t.awardedAt)]
+);
 
 export const contactsRelations = relations(contacts, ({ one, many }) => ({
   interactions: many(interactions),

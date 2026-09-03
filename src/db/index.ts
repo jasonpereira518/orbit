@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   subscription_plan text,
   subscription_status text,
   subscription_period_end timestamptz,
+  subscription_monthly_cents integer,
+  subscription_interval text,
   comped_note text,
   comped_at timestamptz,
   comped_by text,
@@ -727,7 +729,22 @@ CREATE TABLE IF NOT EXISTS fundraising_investors (
   name text NOT NULL,
   amount_usd real NOT NULL,
   committed_at timestamptz NOT NULL,
+  received_at timestamptz,
   note text
+);
+CREATE TABLE IF NOT EXISTS non_dilutive_funding (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  source text NOT NULL,
+  kind text NOT NULL,
+  form text NOT NULL DEFAULT 'cash',
+  repayable boolean NOT NULL DEFAULT false,
+  repaid_usd real NOT NULL DEFAULT 0,
+  amount_usd real NOT NULL,
+  awarded_at timestamptz NOT NULL,
+  received_at timestamptz,
+  expires_at timestamptz,
+  note text,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 `;
 
@@ -754,8 +771,14 @@ CREATE TABLE IF NOT EXISTS fundraising_investors (
  * v17 = note processing tables (note_batches, interaction_mentions, action_items,
  * contact_briefs) plus reminder/interaction provenance columns.
  * v18 = legacy action-item backfill guards on jsonb_typeof(action_items) = 'array'.
+ * v19 = YC-mode read indexes (startup_expenses, cash_snapshots, acquisition_spend,
+ * fundraising_rounds/investors) plus the admin audit-log lookup index.
+ * v20 = the Money section's cash ledger and cost tables.
+ * v21 = the merge of the two: a database stamped 19 is missing v20's tables and one
+ * stamped 20 is missing v19's indexes, so neither number can stand for both.
+ * v22 = non_dilutive_funding, plus fundraising_investors.received_at.
  */
-export const SCHEMA_VERSION = 20;
+export const SCHEMA_VERSION = 23;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -882,6 +905,26 @@ export const SCALE_DDL: string[] = [
   // create, update and logInteraction, so it is not a cold path.
   `CREATE INDEX IF NOT EXISTS contacts_user_company_norm_idx ON contacts(user_id, lower(trim(company)))`,
   `CREATE INDEX IF NOT EXISTS contacts_user_school_norm_idx ON contacts(user_id, lower(trim(school)))`,
+
+  // --- YC-mode admin console --------------------------------------------------------
+  //
+  // Every one of these tables shipped with `CREATE TABLE IF NOT EXISTS` above and no
+  // index beyond its primary key. Small at launch, but each row is a hand-entered log
+  // entry an operator adds over the life of the company, and every YC-mode page load
+  // filters or sorts on exactly the column indexed here — see the matching Drizzle
+  // `index()` call on each table in `schema.ts` for which query it serves.
+  `CREATE INDEX IF NOT EXISTS startup_expenses_incurred_idx ON startup_expenses(incurred_at)`,
+  `CREATE INDEX IF NOT EXISTS cash_snapshots_as_of_idx ON cash_snapshots(as_of)`,
+  `CREATE INDEX IF NOT EXISTS acquisition_spend_created_idx ON acquisition_spend(created_at)`,
+  `CREATE INDEX IF NOT EXISTS fundraising_rounds_created_idx ON fundraising_rounds(created_at)`,
+  `CREATE INDEX IF NOT EXISTS fundraising_investors_round_idx ON fundraising_investors(round_id)`,
+  `CREATE INDEX IF NOT EXISTS fundraising_investors_committed_idx ON fundraising_investors(committed_at)`,
+  `CREATE INDEX IF NOT EXISTS non_dilutive_funding_awarded_idx ON non_dilutive_funding(awarded_at)`,
+
+  // The one admin_audit_log query that leads with admin_user_id (`recordAccountView`'s
+  // throttle check) had no supporting index — its three existing indexes lead with
+  // created_at, target_user_id, and action respectively.
+  `CREATE INDEX IF NOT EXISTS admin_audit_log_admin_target_idx ON admin_audit_log(admin_user_id, target_user_id, created_at)`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
@@ -1105,6 +1148,8 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "theme", "text");
   await ensureColumn(client, "user_settings", "yc_mode_enabled", "boolean DEFAULT false");
   await ensureColumn(client, "user_settings", "estimated_monthly_churn_pct", "real");
+  // Deliberately not backfilled from `committed_at` — see the column's comment in schema.ts.
+  await ensureColumn(client, "fundraising_investors", "received_at", "timestamptz");
   await ensureColumn(
     client,
     "user_settings",
@@ -1271,6 +1316,8 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "subscription_plan", "text");
   await ensureColumn(client, "user_settings", "subscription_status", "text");
   await ensureColumn(client, "user_settings", "subscription_period_end", "timestamptz");
+  await ensureColumn(client, "user_settings", "subscription_monthly_cents", "integer");
+  await ensureColumn(client, "user_settings", "subscription_interval", "text");
   await ensureColumn(client, "user_settings", "comped_note", "text");
   await ensureColumn(client, "user_settings", "comped_at", "timestamptz");
   await ensureColumn(client, "user_settings", "comped_by", "text");
@@ -1521,6 +1568,8 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
 
   // Incremental columns for older Neon DBs created before these existed.
   const alters = [
+    // Deliberately not backfilled from `committed_at` — see the column's comment in schema.ts.
+    `ALTER TABLE fundraising_investors ADD COLUMN IF NOT EXISTS received_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_step text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,
@@ -1553,6 +1602,8 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_plan text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_status text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_period_end timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_monthly_cents integer`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_interval text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_note text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_by text`,

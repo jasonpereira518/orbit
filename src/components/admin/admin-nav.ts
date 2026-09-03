@@ -50,7 +50,7 @@ export const ADMIN_YC_NAV: AdminNavItem[] = [
   { href: "/admin/yc/runway", label: "Runway", icon: Flame },
   { href: "/admin/yc/revenue", label: "Revenue", icon: TrendingUp },
   { href: "/admin/yc/economics", label: "Unit Economics", icon: Scale },
-  { href: "/admin/yc/fundraising", label: "Fundraising", icon: HandCoins },
+  { href: "/admin/yc/fundraising", label: "Funding", icon: HandCoins },
 ];
 
 export function isAdminNavActive(pathname: string, href: string) {

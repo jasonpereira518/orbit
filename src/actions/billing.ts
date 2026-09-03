@@ -7,6 +7,7 @@ import {
   LIFETIME_METADATA_VALUE,
   LIFETIME_PRICE_ID,
   PRO_ANNUAL_PRICE_ID,
+  PRO_BILLING_PERIOD_METADATA_KEY,
   PRO_METADATA_VALUE,
   PRO_MONTHLY_PRICE_ID,
   SUBSCRIPTION_USER_METADATA_KEY,
@@ -112,13 +113,20 @@ export async function startProCheckout(
       line_items: [{ price: priceId, quantity: 1 }],
       // How the webhook knows who paid — same rationale as the Lifetime session above.
       client_reference_id: userId,
-      metadata: { [LIFETIME_METADATA_KEY]: PRO_METADATA_VALUE },
+      metadata: {
+        [LIFETIME_METADATA_KEY]: PRO_METADATA_VALUE,
+        // Read by the webhook's optimistic grant, which happens before any subscription
+        // object exists to read a price from. Without it annual books as $5/mo and the
+        // next subscription event looks like a -83 contraction.
+        [PRO_BILLING_PERIOD_METADATA_KEY]: period,
+      },
       // Copied onto the subscription object itself, so `customer.subscription.*` events
       // (renewals, cancellations) can be attributed without a session in hand.
       subscription_data: {
         metadata: {
           [LIFETIME_METADATA_KEY]: PRO_METADATA_VALUE,
           [SUBSCRIPTION_USER_METADATA_KEY]: userId,
+          [PRO_BILLING_PERIOD_METADATA_KEY]: period,
         },
       },
       customer_email: profile?.email || undefined,
