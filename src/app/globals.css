@@ -509,6 +509,216 @@
   opacity: 0.85;
 }
 
+/* Full-height variant of .liquid-glass, for the notifications window — a panel
+ * that floats clear of every screen edge rather than being anchored to one.
+ *
+ * Three things this MUST do, all of them consequences of `.liquid-glass` being
+ * declared outside `@layer base` and therefore beating every Tailwind utility
+ * regardless of specificity:
+ *
+ *  1. Restore `position: fixed`. `.liquid-glass` sets `position: relative`, which
+ *     would otherwise win over the `fixed` utility on the popup and drop the
+ *     panel into the document flow.
+ *  2. Neutralise the `:hover` lightening. That rule exists for small tappable
+ *     surfaces; on a full-height panel it means the whole window brightens
+ *     whenever the cursor crosses it. Written with `:hover` in the selector so
+ *     it outranks both `.liquid-glass:hover` (0,2,0) and, in the dark block
+ *     below, `.dark .liquid-glass:hover` (0,3,0).
+ *  3. Switch `backdrop-filter` OFF. `.liquid-glass` blurs what is behind it, but
+ *     this panel is opaque, so that blur is occluded — and it is the costliest
+ *     thing here, since scaling the panel would make the browser resample it on
+ *     every frame of the open/close.
+ *
+ * The outer drop shadow is kept (unlike .liquid-glass-pill, which drops it):
+ * this surface genuinely floats above scrolling content and needs to read as
+ * lifted off the page. */
+.liquid-glass.liquid-glass-panel {
+  /* Mirror of `--ease-house` (an ease-OUT, which is right for arriving). Leaving reverses
+   * that: the window should let go slowly and accelerate as it reaches the button, so the
+   * exit gets an ease-IN. Using one curve in both directions is what made closing feel
+   * like it stopped dead rather than being drawn in. */
+  --ease-panel-exit: cubic-bezier(0.64, 0, 0.78, 0);
+
+  /* Fill, border and shadow are held in variables so the hover-neutralising rule below
+   * can re-apply the exact same values rather than restating them — the earlier version
+   * restated them and the dark ones had already drifted out of step. */
+  /* Solid. `--popover` is the surface every other panel in the app sits on and it already
+   * adapts per theme, so the window reads as part of the product rather than as a hole
+   * cut in it. Nothing shows through, which is why `backdrop-filter` is switched off
+   * below — see the note there. */
+  --glass-panel-fill: var(--popover);
+  --glass-panel-border: rgba(255, 255, 255, 0.55);
+  --glass-panel-sheen:
+    radial-gradient(
+      120% 80% at 12% -10%,
+      rgba(255, 255, 255, 0.75) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      90% 60% at 100% 100%,
+      rgba(15, 61, 62, 0.06) 0%,
+      transparent 50%
+    );
+  --glass-panel-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.65) inset,
+    0 -1px 0 0 rgba(15, 61, 62, 0.04) inset,
+    0 8px 32px -8px rgba(26, 28, 26, 0.18),
+    0 2px 8px -2px rgba(26, 28, 26, 0.08);
+
+  position: fixed;
+  background: var(--glass-panel-fill);
+  border-color: var(--glass-panel-border);
+  box-shadow: var(--glass-panel-shadow);
+  /* `.liquid-glass` blurs whatever is behind it. With an opaque fill on top, that blur is
+   * invisible — and it is the single most expensive thing on this surface, because scaling
+   * the panel makes the browser resample it every frame. Switched off rather than left to
+   * burn frames for an effect nobody can see. */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  /* `.liquid-glass` declares `transition` as a SHORTHAND, and being unlayered it beats
+   * Tailwind's `transition`/`duration-*` utilities outright — which silently reduces the
+   * open/close to background+border+shadow and makes the window snap into place instead
+   * of sliding. So the full transition is re-declared here.
+   *
+   * `scale` and `translate` are named individually because Tailwind v4 animates the
+   * discrete `scale`/`translate` properties rather than a composite `transform`; listing
+   * `transform` alone would match nothing. */
+  transition:
+    scale var(--transition-duration-slow) var(--ease-house),
+    translate var(--transition-duration-slow) var(--ease-house),
+    opacity var(--transition-duration-slow) var(--ease-house),
+    background var(--transition-duration-base) ease,
+    border-color var(--transition-duration-base) ease,
+    box-shadow var(--transition-duration-base) ease;
+}
+
+/* The see-through tier's darker counterpart, matching `.liquid-glass-pill`. Only the
+ * variables change; every rule above and below reads them. */
+.dark .liquid-glass.liquid-glass-panel {
+  /* `--glass-panel-fill` is inherited from the block above: `--popover` is already
+   * theme-aware, so there is nothing to override here. */
+  --glass-panel-border: rgba(255, 255, 255, 0.16);
+  --glass-panel-sheen:
+    radial-gradient(
+      120% 80% at 12% -10%,
+      rgba(255, 255, 255, 0.12) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      90% 60% at 100% 100%,
+      rgba(124, 195, 226, 0.12) 0%,
+      transparent 50%
+    );
+  --glass-panel-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.14) inset,
+    0 -1px 0 0 rgba(0, 0, 0, 0.25) inset,
+    0 12px 40px -10px rgba(0, 0, 0, 0.55),
+    0 2px 10px -2px rgba(0, 0, 0, 0.35);
+}
+
+/* Neutralise the `:hover` lightening. That rule exists for small tappable surfaces; on a
+ * full-height window it means the whole panel brightens whenever the cursor crosses it.
+ * Both selectors are spelled out so this outranks `.liquid-glass:hover` (0,2,0) AND
+ * `.dark .liquid-glass:hover` (0,3,0) without depending on source order. */
+.liquid-glass.liquid-glass-panel:hover,
+.dark .liquid-glass.liquid-glass-panel:hover {
+  background: var(--glass-panel-fill);
+  border-color: var(--glass-panel-border);
+  box-shadow: var(--glass-panel-shadow);
+}
+
+/* Softer sheen than the base panel — at this fill the full-strength highlight reads as a
+ * milky film rather than a glint. Same reasoning as `.liquid-glass-pill`. */
+.liquid-glass.liquid-glass-panel::before,
+.liquid-glass.liquid-glass-panel:hover::before,
+.dark .liquid-glass.liquid-glass-panel:hover::before {
+  background: var(--glass-panel-sheen);
+  opacity: 0.45;
+}
+
+/* Closing reads as the window going back into the bell it came out of.
+ *
+ * The heavy lifting is the transform-origin the panel sets to the button's centre, so the
+ * collapse already travels to the right point. This adds the two things that make it read
+ * as BECOMING the button rather than just shrinking: the corners round all the way off to
+ * a capsule on the way down, and the scale goes far enough (0.28, set on the variant) that
+ * what lands at the origin is roughly button-sized.
+ *
+ * Slower than the old `fast` exit — at 120ms the collapse was over before the eye could
+ * follow it back, which is the whole point of the gesture. */
+.liquid-glass.liquid-glass-panel[data-starting-style],
+.liquid-glass.liquid-glass-panel[data-ending-style] {
+  /* Set only while a transition is actually running, which is the point: it asks the
+   * compositor to promote the panel for the duration and then hand it back, rather than
+   * holding a permanently promoted layer. */
+  will-change: scale, opacity;
+}
+
+/* Exit accelerates into the button instead of easing out of the gesture. Duration stays on
+ * the shared `slow`: the tier note calls exits `fast`, but that is meant for dismissals —
+ * this one is a journey back to a specific point, and has to be readable to mean anything. */
+.liquid-glass.liquid-glass-panel[data-ending-style] {
+  transition-timing-function: var(--ease-panel-exit);
+}
+
+/* `.liquid-glass > *` forces `position: relative` on every direct child so they stack
+ * above the ::before sheen. The close button is a direct child and needs to stay
+ * absolutely positioned in the corner, so it is exempted — it keeps the z-index. */
+.liquid-glass.liquid-glass-panel > [data-slot="sheet-close"] {
+  position: absolute;
+}
+
+/* The window still appears and disappears, it just stops travelling to do it.
+ * `transform: none` also cancels the starting/ending scale, so the whole
+ * enter/exit collapses to the opacity fade the primitive already provides. */
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="sheet-content"][data-side="floating"] {
+    /* `scale`/`translate`, not `transform`: Tailwind v4 sets the discrete properties, so
+     * cancelling `transform` here would leave the starting-style scale fully applied and
+     * the window would open stuck at its collapsed size. */
+    scale: none !important;
+    translate: none !important;
+    transition-property: opacity;
+  }
+}
+
+/* The glow an account alert leaves on the card it sent you to.
+ *
+ * Shadow only — no border, no background, nothing that changes the card's size — so the
+ * page cannot reflow around a purely decorative cue. Deliberately a soft, spread shadow
+ * sitting BEHIND the card rather than a hard ring around it: a crisp outline reads as a
+ * focus state or a validation error, which is the wrong meaning for "this is the one you
+ * asked about". The radius matches the cards it lands on (`rounded-2xl`). */
+@keyframes section-flash {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 0%, transparent);
+  }
+  18% {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--primary) 14%, transparent),
+      0 6px 28px -4px color-mix(in oklab, var(--primary) 30%, transparent),
+      0 0 44px -6px color-mix(in oklab, var(--primary) 22%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 0%, transparent);
+  }
+}
+
+/* Attribute, not a class: React owns `className` on these cards and rewrites it on
+ * hydration, which strips a class added imperatively. See `section-flash.tsx`. */
+[data-section-flash="on"] {
+  border-radius: 1rem;
+  animation: section-flash 1.6s var(--ease-house) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Still say which card, just without the pulse. */
+  [data-section-flash="on"] {
+    animation: none;
+    box-shadow: 0 6px 24px -4px color-mix(in oklab, var(--primary) 26%, transparent);
+  }
+}
+
 @keyframes trash-wiggle {
   0%,
   100% {

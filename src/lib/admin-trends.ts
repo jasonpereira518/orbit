@@ -78,8 +78,12 @@ function grainInterval(grain: Grain): string {
  *
  * Every trend LEFT JOINs onto this, which is what makes a quiet week render as a zero-height
  * bar rather than disappearing and making the neighbouring weeks look adjacent.
+ *
+ * Exported for `money-metrics.ts`. A second copy of this would be a second chance to get
+ * the gap-filling wrong, and a money chart that silently closes up an empty month is
+ * worse than one that fails to draw.
  */
-function series(grain: Grain, buckets: number) {
+export function series(grain: Grain, buckets: number) {
   const step = grainInterval(grain);
   return sql`
     SELECT gs.bucket_start

@@ -43,6 +43,16 @@ export const PRO_METADATA_VALUE = "orbit";
 export const SUBSCRIPTION_USER_METADATA_KEY = "orbit_user_id";
 
 /**
+ * Which cadence a Pro checkout was for, carried on the session and the subscription.
+ *
+ * The webhook grants the plan optimistically the moment checkout completes, before any
+ * subscription object exists to read a price off. Without this it has to assume monthly —
+ * and once the ledger knows annual is worth $4.17/mo, that assumption books a spurious
+ * -83 contraction on every annual signup when the real subscription event arrives.
+ */
+export const PRO_BILLING_PERIOD_METADATA_KEY = "orbit_billing_period";
+
+/**
  * True only when Stripe can actually take a payment. Everything user-facing checks this
  * first, so a deployment without Stripe keys shows the "not on sale yet" state rather
  * than a button that fails on click.

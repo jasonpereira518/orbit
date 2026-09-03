@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   subscription_plan text,
   subscription_status text,
   subscription_period_end timestamptz,
+  subscription_monthly_cents integer,
+  subscription_interval text,
   comped_note text,
   comped_at timestamptz,
   comped_by text,
@@ -155,6 +157,7 @@ CREATE TABLE IF NOT EXISTS interactions (
   same_day_order integer NOT NULL DEFAULT 0,
   source text,
   external_id text,
+  note_batch_id uuid,
   raw_notes text,
   ai_summary text,
   topics jsonb DEFAULT '[]',
@@ -185,6 +188,13 @@ CREATE TABLE IF NOT EXISTS reminders (
   reminder_type text NOT NULL DEFAULT 'manual',
   action_kind text NOT NULL DEFAULT 'task',
   created_by text NOT NULL DEFAULT 'user',
+  note_batch_id uuid,
+  source_interaction_id uuid REFERENCES interactions(id) ON DELETE SET NULL,
+  action_item_id uuid,
+  source_excerpt text,
+  raw_date_phrase text,
+  date_basis text,
+  item_hash text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS suggested_reminders (
@@ -210,6 +220,58 @@ CREATE TABLE IF NOT EXISTS suggested_reminders (
 CREATE INDEX IF NOT EXISTS suggested_reminders_user_status_idx ON suggested_reminders(user_id, status);
 CREATE INDEX IF NOT EXISTS suggested_reminders_batch_idx ON suggested_reminders(capture_batch_id);
 CREATE UNIQUE INDEX IF NOT EXISTS suggested_reminders_user_item_uidx ON suggested_reminders(user_id, item_hash);
+CREATE TABLE IF NOT EXISTS note_batches (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  source_hash text NOT NULL,
+  source_text text NOT NULL,
+  entry_point text NOT NULL DEFAULT 'capture',
+  seed_contact_id uuid,
+  anchor_date timestamptz NOT NULL,
+  anchor_basis text NOT NULL DEFAULT 'upload',
+  status text NOT NULL DEFAULT 'saved',
+  result jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  undone_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS note_batches_user_created_idx ON note_batches(user_id, created_at);
+CREATE INDEX IF NOT EXISTS note_batches_user_source_idx ON note_batches(user_id, source_hash);
+CREATE TABLE IF NOT EXISTS interaction_mentions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  interaction_id uuid NOT NULL REFERENCES interactions(id) ON DELETE CASCADE,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  mention_text text NOT NULL,
+  confidence real NOT NULL,
+  matched_by text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS interaction_mentions_interaction_contact_uidx ON interaction_mentions(interaction_id, contact_id);
+CREATE INDEX IF NOT EXISTS interaction_mentions_user_contact_idx ON interaction_mentions(user_id, contact_id);
+CREATE TABLE IF NOT EXISTS action_items (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  interaction_id uuid NOT NULL REFERENCES interactions(id) ON DELETE CASCADE,
+  text text NOT NULL,
+  position integer NOT NULL DEFAULT 0,
+  status text NOT NULL DEFAULT 'open',
+  completed_at timestamptz,
+  item_hash text NOT NULL,
+  reminder_id uuid REFERENCES reminders(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS action_items_user_item_hash_uidx ON action_items(user_id, item_hash);
+CREATE INDEX IF NOT EXISTS action_items_user_contact_status_idx ON action_items(user_id, contact_id, status);
+CREATE TABLE IF NOT EXISTS contact_briefs (
+  contact_id uuid PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  standing text NOT NULL,
+  recent_discussions jsonb NOT NULL DEFAULT '[]',
+  generated_at timestamptz NOT NULL DEFAULT now(),
+  basis_interaction_id uuid,
+  model text
+);
 CREATE TABLE IF NOT EXISTS imports (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -690,8 +752,17 @@ CREATE TABLE IF NOT EXISTS fundraising_investors (
  * of them no-ops after the first deploy, blocking the first request. One SELECT confirms a
  * warm schema instead. A database with no version row (anything migrated before this
  * shipped) reads as out of date and takes the full pass once.
+ *
+ * v17 = note processing tables (note_batches, interaction_mentions, action_items,
+ * contact_briefs) plus reminder/interaction provenance columns.
+ * v18 = legacy action-item backfill guards on jsonb_typeof(action_items) = 'array'.
+ * v19 = YC-mode read indexes (startup_expenses, cash_snapshots, acquisition_spend,
+ * fundraising_rounds/investors) plus the admin audit-log lookup index.
+ * v20 = the Money section's cash ledger and cost tables.
+ * v21 = the merge of the two: a database stamped 19 is missing v20's tables and one
+ * stamped 20 is missing v19's indexes, so neither number can stand for both.
  */
-export const SCHEMA_VERSION = 19;
+export const SCHEMA_VERSION = 21;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1220,6 +1291,8 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "user_settings", "subscription_plan", "text");
   await ensureColumn(client, "user_settings", "subscription_status", "text");
   await ensureColumn(client, "user_settings", "subscription_period_end", "timestamptz");
+  await ensureColumn(client, "user_settings", "subscription_monthly_cents", "integer");
+  await ensureColumn(client, "user_settings", "subscription_interval", "text");
   await ensureColumn(client, "user_settings", "comped_note", "text");
   await ensureColumn(client, "user_settings", "comped_at", "timestamptz");
   await ensureColumn(client, "user_settings", "comped_by", "text");
@@ -1316,6 +1389,16 @@ async function migratePglite(client: PGlite) {
   await ensureColumn(client, "interest_list_signups", "welcome_planet", "text");
   await ensureColumn(client, "interest_list_signups", "follow_up_sent_at", "timestamptz");
 
+  // Schema v17: note processing provenance columns.
+  await ensureColumn(client, "interactions", "note_batch_id", "uuid");
+  await ensureColumn(client, "reminders", "note_batch_id", "uuid");
+  await ensureColumn(client, "reminders", "source_interaction_id", "uuid REFERENCES interactions(id) ON DELETE SET NULL");
+  await ensureColumn(client, "reminders", "action_item_id", "uuid");
+  await ensureColumn(client, "reminders", "source_excerpt", "text");
+  await ensureColumn(client, "reminders", "raw_date_phrase", "text");
+  await ensureColumn(client, "reminders", "date_basis", "text");
+  await ensureColumn(client, "reminders", "item_hash", "text");
+
   for (const statement of ADMIN_V2_STATEMENTS) {
     try {
       await client.exec(statement);
@@ -1344,6 +1427,17 @@ const ADMIN_V2_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS user_settings_email_idx ON user_settings(email)`,
   `CREATE INDEX IF NOT EXISTS user_settings_last_active_idx ON user_settings(last_active_at)`,
   `CREATE INDEX IF NOT EXISTS usage_events_failures_idx ON usage_events(user_id, created_at) WHERE success = 0`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS reminders_user_item_hash_uidx ON reminders(user_id, item_hash)`,
+  `CREATE INDEX IF NOT EXISTS reminders_note_batch_idx ON reminders(note_batch_id)`,
+  `CREATE INDEX IF NOT EXISTS interactions_note_batch_idx ON interactions(note_batch_id)`,
+  // Legacy action items → rows. Idempotent through the unique (user_id, item_hash) index.
+  // The hash formula MUST equal actionItemHash() in src/lib/action-items.ts.
+  `INSERT INTO action_items (user_id, contact_id, interaction_id, text, position, item_hash)
+   SELECT i.user_id, i.contact_id, i.id, a.value, a.ordinality - 1,
+          encode(sha256(convert_to(i.id::text || '|' || lower(btrim(a.value)), 'UTF8')), 'hex')
+   FROM interactions i, jsonb_array_elements_text(COALESCE(i.action_items, '[]'::jsonb)) WITH ORDINALITY a
+   WHERE jsonb_typeof(i.action_items) = 'array' AND btrim(a.value) <> ''
+   ON CONFLICT (user_id, item_hash) DO NOTHING`,
 ];
 
 /**
@@ -1481,6 +1575,8 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_plan text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_status text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_period_end timestamptz`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_monthly_cents integer`,
+    `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS subscription_interval text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_note text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS comped_by text`,
@@ -1573,6 +1669,14 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_at timestamptz`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_reason text`,
     `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_by text`,
+    `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS note_batch_id uuid`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS note_batch_id uuid`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS source_interaction_id uuid REFERENCES interactions(id) ON DELETE SET NULL`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS action_item_id uuid`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS source_excerpt text`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS raw_date_phrase text`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS date_basis text`,
+    `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS item_hash text`,
     ...ADMIN_V2_STATEMENTS,
     // Embedding staleness: imports flag contacts here instead of embedding inline, and a
     // separate backfill drains them. The dedupe is safe to re-run — it only ever deletes
@@ -1620,6 +1724,22 @@ async function migrateNeon(sql: ReturnType<typeof neon>) {
   await applyScaleSchema((statement) => sql.query(statement));
 }
 
+/**
+ * Move an unopenable local PGlite directory aside so a fresh one can be created.
+ * Returns the new path, or null if it could not be moved (in which case the caller should
+ * surface the original open error rather than pretend it recovered).
+ */
+function quarantineDataDir(dataDir: string): string | null {
+  try {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const quarantined = `${dataDir}-corrupt-${stamp}`;
+    fs.renameSync(dataDir, quarantined);
+    return quarantined;
+  } catch {
+    return null;
+  }
+}
+
 async function ensureReady(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL?.trim();
 
@@ -1638,13 +1758,70 @@ async function ensureReady(): Promise<void> {
     // instance is built, not on demand from `CREATE EXTENSION`. This is what gives local dev
     // the same fuzzy search as production — pgvector has no PGlite build, so vector search
     // still degrades locally, but keyword search no longer does.
-    globalForDb.orbitPglite = await PGlite.create({
-      dataDir,
-      extensions: { pg_trgm },
-    });
+    const open = () =>
+      PGlite.create({ dataDir, extensions: { pg_trgm } });
+
+    try {
+      globalForDb.orbitPglite = await open();
+    } catch (err) {
+      // A local PGlite directory that will not open is not recoverable: the failure is a
+      // bare WASM `Aborted()` with no diagnostics, and `pg_resetwal` is not available. It
+      // happens when two processes write the directory at once (`next dev` plus a build or
+      // a script) or when one exits without checkpointing, and until now it bricked local
+      // development until someone deleted the directory by hand — with the real cause
+      // buried under a stack trace that points at `PGlite.create`.
+      //
+      // So: quarantine it and start again. The directory is gitignored local fixture data,
+      // it is already unreadable, and the schema is reapplied below automatically. Moved
+      // rather than deleted, because it costs nothing to keep and the alternative is
+      // destroying something on the user's behalf without being asked.
+      const quarantined = quarantineDataDir(dataDir);
+      if (!quarantined) throw err;
+
+      console.error(
+        `[orbit] Local database at ${dataDir} could not be opened and has been reset.\n` +
+          `[orbit] The unreadable copy is at ${quarantined}.\n` +
+          `[orbit] This is almost always two processes writing it at once — a build or a ` +
+          `tsx script running while 'next dev' is up. Stop the dev server first.`
+      );
+
+      fs.mkdirSync(dataDir, { recursive: true });
+      // The replacement directory is empty, so the DDL sweep has to run against it even if
+      // an earlier open in this same process already marked the schema reconciled.
+      schemaReconciled = undefined;
+      globalForDb.orbitPglite = await open();
+    }
   }
 
   await globalForDb.orbitPglite.waitReady;
+}
+
+/**
+ * Flush and release the local PGlite instance.
+ *
+ * MUST be called before `process.exit()` by any script that writes to the local database.
+ *
+ * Scripts here exit with an explicit `process.exit(0)` (importing `next/server` anywhere
+ * in the graph keeps the event loop alive, so draining is not an option). That terminates
+ * the process without letting embedded Postgres checkpoint, which leaves `global/pg_control`
+ * pointing at an older redo position than the WAL actually contains. The next open then
+ * fails inside the WASM build with a bare `Aborted()` and no diagnostics, and there is no
+ * `pg_resetwal` to repair it — the data directory is simply gone. That has happened once
+ * already; it costs the whole local dev database.
+ *
+ * No-op against Neon: there is no local instance to close.
+ */
+export async function closeDb(): Promise<void> {
+  const pglite = globalForDb.orbitPglite;
+  if (!pglite) return;
+  try {
+    await pglite.close();
+  } catch {
+    // Already closed, or never finished opening. Nothing useful to do here.
+  }
+  globalForDb.orbitPglite = undefined;
+  globalForDb.orbitDrizzle = undefined;
+  globalForDb.orbitReady = undefined;
 }
 
 export async function getDb(): Promise<Db> {

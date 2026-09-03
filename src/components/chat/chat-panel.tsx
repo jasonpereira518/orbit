@@ -9,6 +9,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowUp,
   History,
@@ -93,6 +94,7 @@ function formatThreadLabel(thread: ThreadSummary) {
 }
 
 export function ChatPanel() {
+  const router = useRouter();
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [threadTitle, setThreadTitle] = useState<string | null>(null);
@@ -572,7 +574,23 @@ export function ChatPanel() {
             </SheetDescription>
           </SheetHeader>
           <div className="p-4">
-            <BulkNotesPanel compact />
+            <BulkNotesPanel
+              compact
+              onSaved={(res) => {
+                setNotesOpen(false);
+                router.refresh();
+                const peopleCount = res.created + res.updated;
+                toast.success(
+                  `Saved ${peopleCount} ${peopleCount === 1 ? "person" : "people"} and ${res.remindersCreated} ${res.remindersCreated === 1 ? "reminder" : "reminders"}`,
+                  {
+                    action: {
+                      label: "See what was created",
+                      onClick: () => router.push(`/capture/${res.batchId}`),
+                    },
+                  }
+                );
+              }}
+            />
           </div>
         </SheetContent>
       </Sheet>

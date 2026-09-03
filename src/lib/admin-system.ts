@@ -81,6 +81,13 @@ export type ErrorEventSummary = {
 };
 
 export type WebhookHealth = {
+  /**
+   * Deliveries per source, so one noisy provider cannot be read as another's failure.
+   * The table started out Clerk-only; Resend and now Stripe write to it too, and an
+   * unsplit "3 invalid this week" gives an operator no idea which integration to go look
+   * at — or, worse, reads as a Clerk problem out of habit.
+   */
+  bySource: Array<{ source: string; outcome: string; count: number }>;
   byOutcome: Array<{ outcome: string; count: number }>;
   ignored: Array<{ eventType: string | null; reason: string | null; count: number }>;
   retried: Array<{ eventId: string; count: number }>;
@@ -263,7 +270,16 @@ export async function getWebhookHealth(days = 7, now = new Date()): Promise<Webh
   const db = await getDb();
   const since = new Date(now.getTime() - days * DAY_MS);
 
-  const [byOutcome, ignored, retried, recentInvalid] = await Promise.all([
+  const [bySource, byOutcome, ignored, retried, recentInvalid] = await Promise.all([
+    db
+      .select({
+        source: webhookDeliveries.source,
+        outcome: webhookDeliveries.outcome,
+        n: countInt,
+      })
+      .from(webhookDeliveries)
+      .where(gt(webhookDeliveries.createdAt, since))
+      .groupBy(webhookDeliveries.source, webhookDeliveries.outcome),
     db
       .select({ outcome: webhookDeliveries.outcome, n: countInt })
       .from(webhookDeliveries)
@@ -300,6 +316,9 @@ export async function getWebhookHealth(days = 7, now = new Date()): Promise<Webh
   ]);
 
   return {
+    bySource: bySource
+      .map((r) => ({ source: r.source, outcome: r.outcome, count: r.n }))
+      .sort((a, b) => b.count - a.count),
     byOutcome: byOutcome.map((r) => ({ outcome: r.outcome, count: r.n })),
     ignored: ignored.map((r) => ({
       eventType: r.eventType,
