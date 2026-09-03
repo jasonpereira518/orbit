@@ -62,6 +62,10 @@ import {
   type GraphNodeData,
   type NebulaData,
 } from "@/lib/graph-layout";
+import {
+  mergePositionsForStorage,
+  prunePositionsForRender,
+} from "@/lib/graph-positions";
 import { clusterBrandColor } from "@/lib/school-color";
 import { CAMERA_MS } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
@@ -86,7 +90,7 @@ import {
 } from "lucide-react";
 
 type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
-type PositionMap = Record<string, { x: number; y: number }>;
+type PositionMap = import("@/lib/graph-positions").PositionMap;
 
 /**
  * Half-extents from the sun at (0, 0). Zoom is derived from how far
@@ -1449,28 +1453,31 @@ function GraphCanvasInner({
 
 const GRAPH_REFETCH_MIN_MS = 60_000;
 
+/**
+ * No write-back here, deliberately.
+ *
+ * This used to persist the pruned map whenever its size differed from what was stored, to
+ * garbage-collect positions for deleted contacts. But a payload is narrower than the network
+ * for several reasons that have nothing to do with deletion — the dashboard preview caps at
+ * `GRAPH_PREVIEW_CONTACT_CAP`, and the constellation filter narrows it further — and this
+ * runs on every refetch, which fires on window focus. So the cleanup quietly deleted the
+ * saved position of every contact the current view left out. A few hundred stale `{x,y}`
+ * entries cost nothing; a user's lost layout is not recoverable.
+ */
 function applyGraphPayload(
   payload: GraphPayload,
   setData: (payload: GraphPayload) => void,
   setPositionOverrides: (next: PositionMap) => void
 ) {
   setData(payload);
-  const cleaned = positionsFromPayload(payload);
-  setPositionOverrides(cleaned);
-  const loaded = loadPositions(payload.userId);
-  if (Object.keys(cleaned).length !== Object.keys(loaded).length) {
-    savePositions(payload.userId, cleaned);
-  }
+  setPositionOverrides(positionsFromPayload(payload));
 }
 
 function positionsFromPayload(payload: GraphPayload): PositionMap {
-  const ids = new Set(payload.contacts.map((c) => c.id));
-  const loaded = loadPositions(payload.userId);
-  const cleaned: PositionMap = {};
-  for (const [id, pos] of Object.entries(loaded)) {
-    if (ids.has(id)) cleaned[id] = pos;
-  }
-  return cleaned;
+  return prunePositionsForRender(
+    loadPositions(payload.userId),
+    payload.contacts.map((c) => c.id)
+  );
 }
 
 export function NetworkGraph({
@@ -1759,7 +1766,12 @@ export function NetworkGraph({
   const handlePositionOverridesChange = useCallback(
     (next: PositionMap) => {
       setPositionOverrides(next);
-      if (userId && !compact) savePositions(userId, next);
+      // Merge, don't replace: `next` is the render map, so it only mentions contacts this
+      // view can draw. Writing it straight would drop the saved position of everyone the
+      // current payload left out — one drag would flatten the rest of the network's layout.
+      if (userId && !compact) {
+        savePositions(userId, mergePositionsForStorage(loadPositions(userId), next));
+      }
     },
     [userId, compact]
   );
