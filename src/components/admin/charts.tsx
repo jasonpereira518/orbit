@@ -454,6 +454,14 @@ export type RankedRow = {
   sub?: number;
   subLabel?: string;
   detail?: React.ReactNode;
+  /**
+   * What to print in the value column, when the raw `count` is not what a reader wants to
+   * see. `count` still sizes the bar.
+   *
+   * Exists for money: the default cell is sized for the small integers this component was
+   * written for (users, hits), and `525000` neither fits nor reads as dollars.
+   */
+  valueLabel?: string;
 };
 
 /**
@@ -489,7 +497,14 @@ export function RankedBars({
             <span className="w-36 shrink-0 truncate text-muted-foreground">
               {row.label}
             </span>
-            <span className="w-10 shrink-0 text-right tabular-nums">{row.count}</span>
+            <span
+              className={cn(
+                "shrink-0 text-right tabular-nums",
+                row.valueLabel ? "w-24" : "w-10"
+              )}
+            >
+              {row.valueLabel ?? row.count}
+            </span>
             {row.sub != null && (
               <span
                 className={cn(
