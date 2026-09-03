@@ -36,6 +36,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-stream": "pure",
   "smoke-closeness": "pure",
   "smoke-closeness-materialized": "pure",
+  "smoke-constellation-eligibility": "pure",
   "smoke-dashboard-search": "pure",
   "smoke-date-commitments": "pure",
   "smoke-duplicate-index": "pure",
@@ -76,6 +77,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-broadcasts": "pglite",
   "smoke-chat-context": "pglite",
   "smoke-contact-brief": "pglite",
+  "smoke-constellation-signals": "pglite",
   "smoke-contacts-page": "pglite", // own in-memory PGlite, but imports the DDL from ../src/db
   "smoke-csp-report": "pglite",
   "smoke-embedding-backfill": "pglite",
