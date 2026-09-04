@@ -150,6 +150,27 @@ async function seed() {
     standing: "a generated summary of a real relationship",
   });
 
+  // Cascade-covered (from `contacts`), seeded anyway: the cascade is the thing under test,
+  // and an unseeded table proves nothing about it. Holds the prose half of a captured
+  // LinkedIn profile — headline, about, skills — for a real named person.
+  await db.insert(schema.contactProfiles).values({
+    userId: USER,
+    contactId: contact.id,
+    headline: "Computer Scientist at Acme",
+    source: "extension",
+  });
+
+  // Cascade-covered (from `contacts`), seeded anyway, same reasoning as `contactProfiles`
+  // above. Holds one role/school entry from that same captured profile.
+  await db.insert(schema.contactExperiences).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "role",
+    organization: "Acme",
+    organizationNormalized: "acme",
+    source: "extension",
+  });
+
   await db.insert(schema.actionItems).values({
     userId: USER,
     contactId: contact.id,
