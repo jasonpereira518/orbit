@@ -711,6 +711,93 @@ export const contactBriefs = pgTable("contact_briefs", {
   model: text("model"),
 });
 
+/** One entry on a LinkedIn profile: a job, or a school. */
+export type ContactExperienceKind = "role" | "education";
+/** Where a stored profile came from. Drives precedence in `saveContactProfile`. */
+export type ContactProfileSource = "extension" | "apollo";
+
+export type ProfileSkill = { name: string };
+export type ProfileCertification = { name: string; issuer: string | null; year: number | null };
+export type ProfileVolunteering = { organization: string; role: string | null; years: string | null };
+export type ProfilePublication = { title: string; publisher: string | null; year: number | null };
+
+/**
+ * The prose half of a captured LinkedIn profile. Roles and schools live in
+ * `contactExperiences` because they are queried structurally; everything here is read
+ * whole or not at all.
+ *
+ * Deliberately NOT a jsonb column on `contacts`: that table has 27 queries with no
+ * explicit projection, several of which scan it end to end, and every one of them would
+ * start dragging profile blobs across the wire to ignore them. Same reasoning as
+ * `closeness_breakdown` above.
+ */
+export const contactProfiles = pgTable(
+  "contact_profiles",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    headline: text("headline"),
+    about: text("about"),
+    skills: jsonb("skills").$type<ProfileSkill[]>().default([]),
+    certifications: jsonb("certifications").$type<ProfileCertification[]>().default([]),
+    volunteering: jsonb("volunteering").$type<ProfileVolunteering[]>().default([]),
+    publications: jsonb("publications").$type<ProfilePublication[]>().default([]),
+    source: text("source").$type<ContactProfileSource>().notNull(),
+    sourceUrl: text("source_url"),
+    /** The adapter that read this page, so DOM churn is visible in the data. */
+    adapterVersion: text("adapter_version"),
+    /** Extractor diagnostics; a non-empty list drives the "may be incomplete" notice. */
+    warnings: jsonb("warnings").$type<string[]>().default([]),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("contact_profiles_contact_uidx").on(t.userId, t.contactId)]
+);
+
+/**
+ * One role or school. Both kinds share a table: they differ by four nullable columns and
+ * are always read together as one date-ordered list.
+ *
+ * Dates are stored as parts, never as a `Date`. LinkedIn frequently shows a year with no
+ * month, and a synthesized `2019-01-01` would claim a precision the source does not have —
+ * which any future overlap comparison would silently inherit.
+ */
+export const contactExperiences = pgTable(
+  "contact_experiences",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<ContactExperienceKind>().notNull(),
+    organization: text("organization").notNull(),
+    /** `normalizeCompanyKey` output — what "who worked at X" matches on. */
+    organizationNormalized: text("organization_normalized").notNull(),
+    title: text("title"),
+    fieldOfStudy: text("field_of_study"),
+    location: text("location"),
+    description: text("description"),
+    startYear: integer("start_year"),
+    startMonth: integer("start_month"),
+    endYear: integer("end_year"),
+    endMonth: integer("end_month"),
+    isCurrent: boolean("is_current").default(false).notNull(),
+    /** Captured page order, so entries with no dates keep their relative position. */
+    sortIndex: integer("sort_index").default(0).notNull(),
+    source: text("source").$type<ContactProfileSource>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("contact_experiences_contact_idx").on(t.userId, t.contactId, t.sortIndex),
+    index("contact_experiences_org_idx").on(t.userId, t.organizationNormalized),
+  ]
+);
+
 export type ImportStats = {
   skipped?: number;
   /**
@@ -2043,6 +2130,11 @@ export const contactsRelations = relations(contacts, ({ one, many }) => ({
   contactTags: many(contactTags),
   embeddings: many(contactEmbeddings),
   brief: one(contactBriefs, { fields: [contacts.id], references: [contactBriefs.contactId] }),
+  profile: one(contactProfiles, {
+    fields: [contacts.id],
+    references: [contactProfiles.contactId],
+  }),
+  experiences: many(contactExperiences),
 }));
 
 export const tagsRelations = relations(tags, ({ many }) => ({
@@ -2119,6 +2211,20 @@ export const contactEmbeddingsRelations = relations(
     }),
   })
 );
+
+export const contactProfilesRelations = relations(contactProfiles, ({ one }) => ({
+  contact: one(contacts, {
+    fields: [contactProfiles.contactId],
+    references: [contacts.id],
+  }),
+}));
+
+export const contactExperiencesRelations = relations(contactExperiences, ({ one }) => ({
+  contact: one(contacts, {
+    fields: [contactExperiences.contactId],
+    references: [contacts.id],
+  }),
+}));
 
 export const outreachCampaignsRelations = relations(
   outreachCampaigns,

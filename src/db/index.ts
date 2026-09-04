@@ -323,6 +323,44 @@ CREATE TABLE IF NOT EXISTS contact_embeddings (
   content text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS contact_profiles (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  headline text,
+  about text,
+  skills jsonb NOT NULL DEFAULT '[]',
+  certifications jsonb NOT NULL DEFAULT '[]',
+  volunteering jsonb NOT NULL DEFAULT '[]',
+  publications jsonb NOT NULL DEFAULT '[]',
+  source text NOT NULL,
+  source_url text,
+  adapter_version text,
+  warnings jsonb NOT NULL DEFAULT '[]',
+  captured_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS contact_experiences (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  organization text NOT NULL,
+  organization_normalized text NOT NULL,
+  title text,
+  field_of_study text,
+  location text,
+  description text,
+  start_year integer,
+  start_month integer,
+  end_year integer,
+  end_month integer,
+  is_current boolean NOT NULL DEFAULT false,
+  sort_index integer NOT NULL DEFAULT 0,
+  source text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS calendar_subscriptions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -798,8 +836,9 @@ CREATE TABLE IF NOT EXISTS non_dilutive_funding (
  * v24 = ops_alert_state (the production-readiness ops sweep's alert ledger).
  * v25 = imports.stall_resumes (the process-stalled cron's give-up counter).
  * v26 = rate_limit_buckets (DB-backed rate limiting for chat, capture, and avatar resolve).
+ * v27 = contact_profiles + contact_experiences (LinkedIn experience extraction).
  */
-export const SCHEMA_VERSION = 26;
+export const SCHEMA_VERSION = 27;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -963,6 +1002,18 @@ export const SCALE_DDL: string[] = [
    FROM interactions i, jsonb_array_elements_text(COALESCE(i.action_items, '[]'::jsonb)) WITH ORDINALITY a
    WHERE jsonb_typeof(i.action_items) = 'array' AND btrim(a.value) <> ''
    ON CONFLICT (user_id, item_hash) DO NOTHING`,
+
+  // --- LinkedIn profiles -----------------------------------------------------------
+  //
+  // The unique index is what makes a profile row per contact an invariant rather than a
+  // convention: `saveContactProfile` upserts on it.
+  `CREATE UNIQUE INDEX IF NOT EXISTS contact_profiles_contact_uidx
+     ON contact_profiles(user_id, contact_id)`,
+  `CREATE INDEX IF NOT EXISTS contact_experiences_contact_idx
+     ON contact_experiences(user_id, contact_id, sort_index)`,
+  // "Who has ever worked at X" — the exists-subquery in hybrid-search reads this.
+  `CREATE INDEX IF NOT EXISTS contact_experiences_org_idx
+     ON contact_experiences(user_id, organization_normalized)`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
