@@ -18,6 +18,7 @@ import {
   saveContactProfile,
   type IncomingProfile,
 } from "../src/lib/contact-profile";
+import { hybridSearchContacts } from "../src/lib/hybrid-search";
 
 const USER = "smoke-contact-profile-user";
 
@@ -243,6 +244,75 @@ async function main() {
     lines.get(bobId) === "Ramp, ex-PBS · Art School",
     lines.get(bobId) ?? "null"
   );
+
+  // --- past employers are findable ----------------------------------------------
+  //
+  // The whole point of the feature: someone who left Google in 2019 has no Google
+  // anywhere on their contact row, so only the experiences table can find them.
+  const exGoogleId = await makeContact("Grace Hopper", "https://www.linkedin.com/in/grace");
+  await saveContactProfile(USER, exGoogleId, {
+    source: "extension",
+    sourceUrl: "https://www.linkedin.com/in/grace",
+    adapterVersion: "linkedin-2",
+    capturedAt: new Date(),
+    warnings: [],
+    headline: null,
+    about: null,
+    skills: [],
+    certifications: [],
+    volunteering: [],
+    publications: [],
+    experiences: [
+      { kind: "role", organization: "Ramp", title: "Staff Engineer", startYear: 2019,
+        startMonth: null, endYear: null, endMonth: null, isCurrent: true, location: null,
+        description: null, fieldOfStudy: null },
+      { kind: "role", organization: "Google LLC", title: "Engineer", startYear: 2015,
+        startMonth: null, endYear: 2019, endMonth: null, isCurrent: false, location: null,
+        description: null, fieldOfStudy: null },
+      { kind: "education", organization: "Yale", title: "PhD", startYear: null,
+        startMonth: null, endYear: null, endMonth: null, isCurrent: false, location: null,
+        description: null, fieldOfStudy: "Mathematics" },
+    ],
+  });
+
+  const [graceRow] = await db
+    .select({ company: contacts.company })
+    .from(contacts)
+    .where(eq(contacts.id, exGoogleId));
+  check("the contact row itself says nothing about Google", graceRow.company === null);
+
+  // The load-bearing assertion. No filters at all — nothing about this query matches
+  // Grace's name, company, or search_tsv, so ONLY an experience arm can surface her.
+  // If this passes with the arm removed, the test is not testing anything.
+  const bareHits = await hybridSearchContacts(USER, { query: "google", limit: 10 });
+  check(
+    "a bare query surfaces a past employer — the arm produces candidates",
+    bareHits.some((h) => h.id === exGoogleId),
+    bareHits.map((h) => h.fullName).join(", ") || "no hits"
+  );
+
+  const schoolHits = await hybridSearchContacts(USER, { query: "yale", limit: 10 });
+  check(
+    "a past school is surfaced too",
+    schoolHits.some((h) => h.id === exGoogleId),
+    schoolHits.map((h) => h.fullName).join(", ") || "no hits"
+  );
+
+  // And the filter narrows correctly once a candidate exists.
+  const filtered = await hybridSearchContacts(USER, {
+    query: "google",
+    filters: { companies: ["Google"] },
+    limit: 10,
+  });
+  check(
+    "the companies filter keeps a past-employer match",
+    filtered.some((h) => h.id === exGoogleId),
+    filtered.map((h) => h.fullName).join(", ") || "no hits"
+  );
+
+  // A term that matches nobody's history must not drag everyone in.
+  const noise = await hybridSearchContacts(USER, { query: "zzzznotacompany", limit: 10 });
+  check("an unmatched term surfaces nobody through the arm", noise.every((h) => h.id !== exGoogleId));
 
   console.log("\ncontact profile storage: OK");
 }

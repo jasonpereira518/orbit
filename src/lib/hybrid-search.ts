@@ -26,6 +26,12 @@ export type HybridSearchOptions = {
   limit?: number;
 };
 
+/**
+ * One retrieval arm. `experience` reads `contact_experiences` — the only arm that can
+ * produce a contact whose match lives in her history rather than on her contact row.
+ */
+export type ArmName = "fts" | "trigram" | "semantic" | "experience";
+
 export type RankedContact = {
   id: string;
   fullName: string;
@@ -45,7 +51,7 @@ export type RankedContact = {
   tags: string[];
   rrfScore: number;
   relevance: number;
-  matchedArms: Array<"fts" | "trigram" | "semantic">;
+  matchedArms: ArmName[];
   /**
    * True for every row produced by a run whose filters this row satisfied
    * (including all rows when no filters were given at all). False only for
@@ -66,7 +72,6 @@ const IN_MEMORY_EMBEDDING_SCAN_LIMIT = 2000;
 /** A filtered result set smaller than limit/4 triggers the unfiltered recall guard. */
 const RECALL_GUARD_DIVISOR = 4;
 
-type ArmName = "fts" | "trigram" | "semantic";
 type ArmResult = { arm: ArmName; ids: string[] };
 
 /**
@@ -88,6 +93,29 @@ function anyLike(column: SQL, values: string[]): SQL {
   )})`;
 }
 
+/**
+ * Match a stored LinkedIn experience. Companion to `experienceArm` — the arm finds these
+ * contacts, this keeps a filter from throwing them away again.
+ *
+ * An `exists` subquery rather than a term in `search_tsv`: that column is GENERATED, and a
+ * generated column may only read its own row. Mirrors the tag subquery below.
+ */
+function experienceExists(values: string[], kinds: readonly string[]): SQL {
+  return sql`exists (
+    select 1 from contact_experiences ce
+    where ce.contact_id = contacts.id
+      and ce.user_id = contacts.user_id
+      and ce.kind in (${sql.join(kinds.map((k) => sql`${k}`), sql`, `)})
+      and (${sql.join(
+        values.map(
+          (v) =>
+            sql`ce.organization_normalized like ${`%${escapeLikeValue(v.toLowerCase())}%`}`
+        ),
+        sql` or `
+      )})
+  )`;
+}
+
 /** WHERE fragment over the contacts table; null when no filters are set. */
 function filterCondition(filters: SearchFilters | null | undefined): SQL | null {
   if (!filters) return null;
@@ -96,11 +124,25 @@ function filterCondition(filters: SearchFilters | null | undefined): SQL | null 
     (xs ?? []).map((x) => x.trim()).filter((x) => x.length > 0).slice(0, 4);
 
   const companies = clean(filters.companies);
-  if (companies.length) parts.push(anyLike(sql`lower(coalesce(contacts.company, ''))`, companies));
+  if (companies.length) {
+    parts.push(
+      sql`(${anyLike(sql`lower(coalesce(contacts.company, ''))`, companies)} or ${experienceExists(
+        companies,
+        ["role"]
+      )})`
+    );
+  }
   const industries = clean(filters.industries);
   if (industries.length) parts.push(anyLike(sql`lower(coalesce(contacts.industry, ''))`, industries));
   const schools = clean(filters.schools);
-  if (schools.length) parts.push(anyLike(sql`lower(coalesce(contacts.school, ''))`, schools));
+  if (schools.length) {
+    parts.push(
+      sql`(${anyLike(sql`lower(coalesce(contacts.school, ''))`, schools)} or ${experienceExists(
+        schools,
+        ["education"]
+      )})`
+    );
+  }
   const locations = clean(filters.locations);
   if (locations.length) parts.push(anyLike(sql`lower(coalesce(contacts.location, ''))`, locations));
 
@@ -232,6 +274,74 @@ async function trigramArm(
   return rowsOf<{ id: string }>(result).map((r) => r.id);
 }
 
+/**
+ * Candidates whose stored LinkedIn history names the query.
+ *
+ * This is an ARM, not a filter, and the distinction is the whole point. `filterCondition`
+ * narrows what the other arms already found; a contact who left Google in 2019 has no
+ * "google" in `search_tsv`, in her name, or in `contacts.company`, so no filter can reach
+ * her. Only a query that reads `contact_experiences` can put her in the candidate set.
+ *
+ * Terms are matched against `organization_normalized` (see `normalizeCompanyKey`), which is
+ * lowercased and stripped of punctuation — so "Google, LLC" is stored as `google llc` and
+ * the term `google` reaches it by prefix. Ranked exact > prefix > substring so that
+ * "Meta" prefers the employer over "Metabase", and RRF bounds how much a loose substring
+ * match can distort the fused order.
+ *
+ * Served by `contact_experiences_org_idx`.
+ */
+async function experienceArm(
+  userId: string,
+  query: string,
+  expansionTerms: string[],
+  filter: SQL | null,
+  armLimit: number
+): Promise<string[]> {
+  // Single-word queries are used whole; longer ones contribute their content tokens, the
+  // same widening `ftsArm` does and for the same reason — "who did I meet from Google"
+  // must reach `google`.
+  const raw = query.trim().toLowerCase();
+  const tokens = raw.split(/\s+/).filter(Boolean);
+  const terms = [
+    ...(raw ? [raw] : []),
+    ...(tokens.length >= 2 ? contentTokens(query).map((t) => t.toLowerCase()) : []),
+    ...expansionTerms.slice(0, 4).map((t) => t.trim().toLowerCase()),
+  ]
+    // Two-character terms match half the table as substrings and carry no signal.
+    .filter((t) => t.length >= 3);
+  const unique = [...new Set(terms)].slice(0, 6);
+  if (!unique.length) return [];
+
+  const db = await getDb();
+  const matches = sql.join(
+    unique.map((t) => sql`ce.organization_normalized like ${`%${escapeLikeValue(t)}%`}`),
+    sql` or `
+  );
+  const score = sql.join(
+    unique.map(
+      (t) => sql`case
+        when ce.organization_normalized = ${t} then 3
+        when ce.organization_normalized like ${`${escapeLikeValue(t)}%`} then 2
+        else 1 end`
+    ),
+    sql` + `
+  );
+
+  const result = await db.execute(sql`
+    select contacts.id, max(${score}) as match_score
+    from contacts
+    join contact_experiences ce
+      on ce.contact_id = contacts.id and ce.user_id = contacts.user_id
+    where contacts.user_id = ${userId}
+      and (${matches})
+      ${filter ? sql`and ${filter}` : sql``}
+    group by contacts.id
+    order by match_score desc, contacts.id
+    limit ${armLimit}
+  `);
+  return rowsOf<{ id: string }>(result).map((r) => String(r.id));
+}
+
 async function semanticArm(
   userId: string,
   embedding: number[],
@@ -290,6 +400,13 @@ async function semanticArm(
     .map(([contactId]) => contactId);
 }
 
+/**
+ * Reciprocal-rank fusion. Every arm contributes at the same weight — there is no
+ * per-arm coefficient here, and `experience` deliberately does not introduce one: a
+ * stored employer is an exact recorded fact, so it belongs at `fts` parity, which in an
+ * unweighted table means simply joining it. Rank position inside each arm (its own
+ * exact > prefix > substring ordering, for `experience`) is what separates the hits.
+ */
 function fuse(results: ArmResult[]): Map<string, { score: number; arms: ArmName[] }> {
   const fused = new Map<string, { score: number; arms: ArmName[] }>();
   for (const { arm, ids } of results) {
@@ -309,17 +426,19 @@ async function runArms(
   filter: SQL | null,
   armLimit: number
 ): Promise<ArmResult[]> {
-  const [fts, trgm, vec] = await Promise.all([
+  const [fts, trgm, vec, exp] = await Promise.all([
     ftsArm(userId, options.query, options.expansionTerms ?? [], filter, armLimit),
     trigramArm(userId, options.query, filter, armLimit),
     options.embedding?.length
       ? semanticArm(userId, options.embedding, armLimit)
       : Promise.resolve([]),
+    experienceArm(userId, options.query, options.expansionTerms ?? [], filter, armLimit),
   ]);
   return [
     { arm: "fts" as const, ids: fts },
     { arm: "trigram" as const, ids: trgm },
     { arm: "semantic" as const, ids: vec },
+    { arm: "experience" as const, ids: exp },
   ];
 }
 
