@@ -2,7 +2,10 @@
 
 import dynamic from "next/dynamic";
 import type { getGraphData } from "@/actions/graph";
-import { ConstellationLoading } from "@/components/graph/constellation-loading";
+import {
+  ConstellationLoading,
+  CONSTELLATION_STAGE_HEIGHT,
+} from "@/components/graph/constellation-loading";
 
 type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
 
@@ -14,7 +17,7 @@ const NetworkGraphFull = dynamic(
   {
     ssr: false,
     loading: () => (
-      <ConstellationLoading className="h-[calc(100dvh-15rem)] md:h-[calc(100dvh-10.5rem)]" />
+      <ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />
     ),
   }
 );

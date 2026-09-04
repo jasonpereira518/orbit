@@ -44,6 +44,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-env": "pure",
   "smoke-fast-model": "pure",
   "smoke-gmail-send-mime": "pure",
+  "smoke-graph-intro": "pure",
   "smoke-graph-layout": "pure",
   "smoke-graph-positions": "pure",
   "smoke-ics-feed": "pure",
