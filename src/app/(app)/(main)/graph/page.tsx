@@ -1,7 +1,11 @@
 import { Suspense } from "react";
 import { getGraphData } from "@/actions/graph";
+import { ConstellationIntro } from "@/components/graph/constellation-intro";
+import {
+  ConstellationLoading,
+  CONSTELLATION_STAGE_HEIGHT,
+} from "@/components/graph/constellation-loading";
 import { NetworkGraphLazy } from "@/components/graph/network-graph-lazy";
-import { GraphPageSkeleton } from "@/components/loading/page-skeletons";
 
 /**
  * The heading paints from the layout immediately; the full-network scan streams in behind
@@ -23,9 +27,24 @@ export default function GraphPage() {
           you — each figure traced by its own people.
         </p>
       </div>
-      <Suspense fallback={<GraphPageSkeleton />}>
-        <GraphIsland />
-      </Suspense>
+      {/*
+        The intro sits OUTSIDE the boundary so it outlives every phase swap beneath it — the
+        payload streaming, the chunk landing, and every canvas remount thereafter. Inside, it
+        would be unmounted and restarted at each handover.
+
+        The fallback is the bare canvas panel, not `GraphPageSkeleton`: the real <h1> above is
+        outside the boundary and already painted, so the skeleton's own header bars used to
+        render underneath it — a real heading and a grey fake one on screen together.
+        `loading.tsx` still uses the full skeleton, where nothing has painted yet.
+      */}
+      <div className="relative">
+        <ConstellationIntro />
+        <Suspense
+          fallback={<ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />}
+        >
+          <GraphIsland />
+        </Suspense>
+      </div>
     </div>
   );
 }

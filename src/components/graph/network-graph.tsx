@@ -68,6 +68,10 @@ import {
   mergePositionsForStorage,
   prunePositionsForRender,
 } from "@/lib/graph-positions";
+import {
+  markGraphChunkLoaded,
+  markGraphViewportReady,
+} from "@/lib/graph/intro-signal";
 import { clusterBrandColor } from "@/lib/school-color";
 import { CAMERA_MS } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
@@ -93,6 +97,15 @@ import {
 } from "lucide-react";
 
 type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
+/**
+ * Module scope, deliberately — not an effect.
+ *
+ * This file is a lazily-imported chunk, and whether it has EVALUATED is the only honest answer
+ * to "did this document already pay for the graph bundle". The intro asks that question before
+ * the chunk request can even start, to decide whether the coming wait is worth covering.
+ */
+markGraphChunkLoaded();
+
 type PositionMap = import("@/lib/graph-positions").PositionMap;
 
 /**
@@ -834,6 +847,18 @@ function GraphCanvasInner({
     const t = window.setTimeout(() => setViewportReady(true), 1500);
     return () => window.clearTimeout(t);
   }, []);
+
+  /**
+   * Tell the intro the chart is genuinely visible, so it can begin its collapse.
+   *
+   * One effect covers both sources of `viewportReady` — the fitter settling and the 1500ms
+   * safety timer — since neither does anything but set this flag. It re-fires on every remount
+   * of this component, which is harmless: a ready signal can only END an intro run, never start
+   * one, so the per-batch remounts of a refresh cannot replay the animation.
+   */
+  useEffect(() => {
+    if (viewportReady) markGraphViewportReady();
+  }, [viewportReady]);
 
   const focusCompany = useMemo(() => {
     if (focusCluster) {

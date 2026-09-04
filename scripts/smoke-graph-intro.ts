@@ -31,6 +31,7 @@ import {
   getIntroRun,
   markGraphViewportReady,
   registerIntroHost,
+  suppressIntro,
 } from "../src/lib/graph/intro-signal";
 import { IGNITION_FRACTIONS } from "../src/lib/warp/chrono";
 
@@ -212,6 +213,19 @@ async function runChecks() {
     "begin is refused when no intro is mounted (the dashboard preview case)",
     beginIntro("cold-chunk") === false && getIntroRun().status === "idle"
   );
+
+  console.log("\nSuppression is total…");
+  __resetIntroForTests();
+  const release6 = registerIntroHost();
+  suppressIntro();
+  check("an explicit off blocks the predictive triggers", beginIntro("cold-chunk") === false);
+  await sleep(INTRO_LATE_MS + 150);
+  check(
+    "and the late fallback too — 'off' has to mean no intro at all",
+    getIntroRun().status === "idle",
+    "the first browser check caught exactly this: off suppressed the predictors but the net still fired"
+  );
+  release6();
 
   console.log("\nThe late fallback…");
   check(

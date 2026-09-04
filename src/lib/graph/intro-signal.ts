@@ -57,6 +57,7 @@ let endTimer: ReturnType<typeof setTimeout> | null = null;
 let hiddenAt: number | null = null;
 let visibilityBound = false;
 let lateTimer: ReturnType<typeof setTimeout> | null = null;
+let suppressed = false;
 
 const listeners = new Set<(next: IntroRun) => void>();
 
@@ -169,7 +170,20 @@ function bindVisibility() {
  *
  * Returns whether this call owns the run, so a caller can record that it has already decided.
  */
+/**
+ * Turn the intro off entirely for this document — the `?warp=off` escape hatch.
+ *
+ * Has to cancel the late fallback as well as block `beginIntro`, which is the bug the first
+ * browser check caught: "off" suppressed both predictive triggers but the safety net still
+ * fired 1.2s later, so the one switch that is supposed to give a clean baseline did not.
+ */
+export function suppressIntro() {
+  suppressed = true;
+  clearLateFallback();
+}
+
 export function beginIntro(reason: IntroReason): boolean {
+  if (suppressed) return false;
   if (!hostRegistered) return false;
   if (run.status !== "idle") return false;
 
@@ -238,5 +252,6 @@ export function resetIntro() {
 export function __resetIntroForTests() {
   hostRegistered = false;
   chunkLoaded = false;
+  suppressed = false;
   resetIntro();
 }
