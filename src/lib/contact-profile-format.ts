@@ -106,6 +106,48 @@ export function orderExperiences<T extends ExperienceEntry>(entries: T[]): T[] {
   return captured.map((entry) => (isUndated(entry) ? entry : queue.next().value as T));
 }
 
+/**
+ * Strips control characters and collapses whitespace in text captured from a LinkedIn
+ * profile before it reaches a model prompt or a rendered list. The profile's owner wrote
+ * every field themselves, so this is exactly the treatment `untrustedPageBlock`
+ * (`@/lib/conversation-starters`) gives scraped page text -- same attacker model, same fix.
+ * Internal newlines are preserved (collapsed to at most a blank line) for prose fields;
+ * use `sanitizeProfileLine` for values that must stay on one line.
+ *
+ * Built from character codes rather than a literal escape range: this file has been
+ * corrupted before by control-byte escapes turning into real control bytes on disk.
+ */
+function isStrippedControlCode(code: number): boolean {
+  const isTab = code === 9;
+  const isLf = code === 10;
+  const isCr = code === 13;
+  return code < 32 && !isTab && !isLf && !isCr;
+}
+
+export function sanitizeProfileText(value: string): string {
+  let stripped = "";
+  for (const ch of value) {
+    if (!isStrippedControlCode(ch.charCodeAt(0))) stripped += ch;
+  }
+  return stripped
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * The single-line variant: also folds any newline into a space. Required for values that
+ * feed a row-based renderer -- a numbered contact list, a career line, an experience
+ * heading -- where an embedded newline would break the row structure regardless of any
+ * prompt-injection concern.
+ */
+export function sanitizeProfileLine(value: string): string {
+  return sanitizeProfileText(value)
+    .replace(/\n+/g, " ")
+    .replace(/ {2,}/g, " ")
+    .trim();
+}
+
 /** "Mar 2019 – Nov 2023", "2019 – 2023", "2023 – Present", or "" when undated. */
 export function formatExperienceDates(entry: ExperienceEntry): string {
   const part = (year: number | null, month: number | null) => {
@@ -137,14 +179,19 @@ export function careerLine(entries: ExperienceEntry[]): string | null {
   const seen = new Set<string>();
   const parts: string[] = [];
   for (const entry of roles) {
-    const key = entry.organization.trim().toLowerCase();
+    // Sanitized before dedup and display: an organization name is a single-line value, and
+    // `contextBlock` (@/lib/ai) renders this line unfenced in a numbered list — a newline in
+    // it would break the row structure, not just look wrong.
+    const organization = sanitizeProfileLine(entry.organization);
+    const key = organization.toLowerCase();
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    parts.push(entry.isCurrent ? entry.organization : `ex-${entry.organization}`);
+    parts.push(entry.isCurrent ? organization : `ex-${organization}`);
     if (parts.length >= CAREER_LINE_MAX_ORGS) break;
   }
 
-  const school = parts.length < CAREER_LINE_MAX_ORGS ? schools[0]?.organization ?? null : null;
+  const rawSchool = parts.length < CAREER_LINE_MAX_ORGS ? schools[0]?.organization ?? null : null;
+  const school = rawSchool ? sanitizeProfileLine(rawSchool) : null;
   if (!parts.length && !school) return null;
   if (!parts.length) return school;
   return school ? `${parts.join(", ")} · ${school}` : parts.join(", ");
