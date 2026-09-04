@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/sheet";
 import {
   INTERACTION_TYPES,
+  interactionFamilySpec,
   type InteractionTypeValue,
 } from "@/lib/interaction-types";
 import { pickLockedParticipant, withLockedSeedPerson } from "@/lib/note-batches";
@@ -246,8 +247,12 @@ export function LogInteractionSheet({
           <div className="space-y-2">
             <Label>What happened</Label>
             <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+              {/* `INTERACTION_TYPES` is already ordered by family, so tinting each icon
+                  gives the ten options a grouping the eye can use without four extra
+                  headings in an already tall sheet. */}
               {INTERACTION_TYPES.map((t) => {
                 const Icon = t.icon;
+                const fam = interactionFamilySpec(t.value);
                 const selected = t.value === type;
                 return (
                   <button
@@ -260,11 +265,16 @@ export function LogInteractionSheet({
                       "flex items-center gap-1.5 rounded-xl border px-2.5 py-2 text-left text-xs transition-colors",
                       "focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
                       selected
-                        ? "border-primary/60 bg-primary/10 text-ink"
+                        ? fam.chip
                         : "border-border/60 text-muted-foreground hover:border-border hover:text-ink"
                     )}
                   >
-                    <Icon className="size-3.5 shrink-0" />
+                    <Icon
+                      className={cn(
+                        "size-3.5 shrink-0",
+                        selected ? undefined : fam.text
+                      )}
+                    />
                     <span className="truncate">{t.label}</span>
                   </button>
                 );

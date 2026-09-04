@@ -23,9 +23,9 @@ import {
 import { InteractionDetailSheet } from "@/components/contacts/interaction-detail-sheet";
 import { LogInteractionSheet } from "@/components/contacts/log-interaction-sheet";
 import {
+  interactionFamilySpec,
   interactionTypeIcon,
   interactionTypeLabel,
-  isWarmInteractionType,
 } from "@/lib/interaction-types";
 import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
 import { cn } from "@/lib/utils";
@@ -282,7 +282,7 @@ export function ContactTimeline({
                       />
                       {group.items.map((i) => {
                         const Icon = interactionTypeIcon(i.interactionType);
-                        const warm = isWarmInteractionType(i.interactionType);
+                        const family = interactionFamilySpec(i.interactionType);
                         const openCount = openByInteraction.get(i.id) ?? 0;
                         const hasNotes = Boolean(i.rawNotes?.trim());
                         const selected = selectedId === i.id;
@@ -316,14 +316,15 @@ export function ContactTimeline({
                             >
                               <span
                                 className={cn(
-                                  "relative z-[1] mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border bg-card",
+                                  "relative z-[1] mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border",
                                   "transition-[transform,border-color,background-color] duration-(--transition-duration-fast) ease-(--ease-house)",
                                   "group-hover:scale-110",
-                                  warm
-                                    ? "border-primary/40 bg-primary/10 text-primary"
-                                    : "border-border text-muted-foreground",
-                                  selected &&
-                                    "scale-110 border-primary bg-primary/15 text-primary"
+                                  // The family classes carry their own background, so the base
+                                  // must not set one: two `bg-*` utilities of equal specificity
+                                  // are resolved by stylesheet order, not by the order written here.
+                                  selected
+                                    ? cn(family.nodeSelected, "scale-110")
+                                    : family.node
                                 )}
                               >
                                 <Icon className="size-3.5" />
