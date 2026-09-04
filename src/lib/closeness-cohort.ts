@@ -1,7 +1,7 @@
 import { cache } from "react";
 import { and, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { contacts, gmailConnections, interactions, outlookConnections, userGoals, userSettings } from "@/db/schema";
+import { contacts, interactions, userGoals, userSettings } from "@/db/schema";
 import {
   applyClosenessCohort,
   buildClosenessCohort,
@@ -10,7 +10,8 @@ import {
   type ClosenessBreakdown,
   type ClosenessCohort,
 } from "@/lib/closeness";
-import { publicEmailDomain } from "@/lib/closeness-evidence";
+import { isCoveredByConnectedSource, publicEmailDomain } from "@/lib/closeness-evidence";
+import { loadCoverageSources } from "@/lib/provider-connections";
 import {
   buildSnapshot,
   cohortFromSnapshot,
@@ -57,6 +58,12 @@ export type ClosenessCohortInputs = {
   maxSchool: number;
   userDomain: string | null;
   mailConnected: boolean;
+  /**
+   * Optional, not required, because `snapshot` is jsonb and every row stored before this key
+   * existed would otherwise read it as `undefined` and fail a required-field check. Read with
+   * `?? false` until those rows are recalibrated.
+   */
+  calendarConnected?: boolean;
 };
 
 export type ClosenessCohortResult = {
@@ -195,6 +202,7 @@ async function readStoredCohortResult(
       maxSchool: snapshot.maxSchool ?? 1,
       userDomain: snapshot.userDomain ?? null,
       mailConnected: snapshot.mailConnected ?? false,
+      calendarConnected: snapshot.calendarConnected ?? false,
     },
   };
 }
@@ -236,7 +244,7 @@ async function buildCohortResult(
     Date.now() - CADENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000
   );
 
-  const [rows, goalRows, touchRows, settings, gmailConnection, outlookConnection] = await Promise.all([
+  const [rows, goalRows, touchRows, settings, coverageSources] = await Promise.all([
     preloadedRows ??
       db.query.contacts.findMany({
         where: eq(contacts.userId, userId),
@@ -288,19 +296,14 @@ async function buildCohortResult(
       where: eq(userSettings.userId, userId),
       columns: { email: true },
     }),
-    // Whether a mail source is genuinely connected. NOT `userSettings.email`,
-    // which is set for every account and would mark the entire orbit as
-    // covered — inflating evidence for people we have never actually observed.
-    // Gmail and Outlook are both equally wired integrations, so either one
-    // connected counts.
-    db.query.gmailConnections.findFirst({
-      where: eq(gmailConnections.userId, userId),
-      columns: { id: true },
-    }),
-    db.query.outlookConnections.findFirst({
-      where: eq(outlookConnections.userId, userId),
-      columns: { id: true },
-    }),
+    // Which kinds of connected source could plausibly have observed these contacts.
+    //
+    // NOT `userSettings.email`, which is set for every account and would mark the entire
+    // orbit as covered — inflating evidence for people we have never actually observed.
+    // Gmail and Outlook are equally wired integrations so either counts as mail; calendar
+    // additionally requires a connection that has actually completed a sync, because a
+    // grant that has observed nobody is not coverage. See `loadCoverageSources`.
+    loadCoverageSources(userId),
   ]);
 
   const goals = goalRows.map((g) => g.text);
@@ -334,7 +337,7 @@ async function buildCohortResult(
     return domain;
   })();
 
-  const mailConnected = !!gmailConnection || !!outlookConnection;
+  const { mailConnected, calendarConnected } = coverageSources;
 
   // The goal haystack intentionally omits `notes`: keeping it would mean
   // pulling every note body on every request, and the list payload already
@@ -356,7 +359,10 @@ async function buildCohortResult(
         schoolConcentration: c.school
           ? (schoolCounts.get(c.school.trim().toLowerCase()) ?? 0) / maxSchool
           : 0,
-        coveredByConnectedSource: mailConnected && !!c.email,
+        coveredByConnectedSource: isCoveredByConnectedSource(
+          { mailConnected, calendarConnected },
+          c
+        ),
       },
       goals,
       touchCounts.get(c.id) ?? 0
@@ -381,6 +387,6 @@ async function buildCohortResult(
     goals,
     touchCounts,
     interactedIds: everInteracted,
-    inputs: { maxCompany, maxSchool, userDomain, mailConnected },
+    inputs: { maxCompany, maxSchool, userDomain, mailConnected, calendarConnected },
   };
 }

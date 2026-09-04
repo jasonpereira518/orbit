@@ -3,6 +3,7 @@
  * Run: npx tsx scripts/smoke-closeness.ts
  */
 
+import { isCoveredByConnectedSource } from "../src/lib/closeness-evidence";
 import {
   applyClosenessCohort,
   buildClosenessCohort,
@@ -1151,6 +1152,41 @@ console.log("\n19. Triage pays off: a rating outranks everything it replaces");
     Math.abs(withEmail - noEmail) < 1e-12,
     `${withEmail} vs ${noEmail}`
   );
+}
+
+// --- Coverage: which users get it, not which contacts inside a user ------------------------
+// Adding calendar to the coverage predicate must widen the set of USERS who get any coverage
+// (someone who granted calendar but not mailbox access) without widening which contacts
+// inside a given user are covered. The email requirement is what enforces that.
+{
+  const withEmail = { email: "a@example.com" };
+  const withoutEmail = { email: null };
+
+  if (!isCoveredByConnectedSource({ mailConnected: true }, withEmail)) {
+    throw new Error("a connected mailbox must cover a contact with an address");
+  }
+  if (isCoveredByConnectedSource({ mailConnected: true }, withoutEmail)) {
+    throw new Error("coverage must require an address — mail reaches addresses, not names");
+  }
+  if (!isCoveredByConnectedSource({ mailConnected: false, calendarConnected: true }, withEmail)) {
+    throw new Error("a connected calendar alone must count as coverage");
+  }
+  // The rejected wider rule: calendar alone covering everyone regardless of address would
+  // inflate evidence for people Orbit has no way to have observed.
+  if (isCoveredByConnectedSource({ mailConnected: false, calendarConnected: true }, withoutEmail)) {
+    throw new Error("calendar coverage must still require an address");
+  }
+  if (isCoveredByConnectedSource({ mailConnected: false }, withEmail)) {
+    throw new Error("no connected source must mean no coverage");
+  }
+  // Back-compat: a cohort snapshot stored before `calendarConnected` existed reads it as
+  // undefined, and must behave exactly as it did before rather than throwing or covering.
+  if (isCoveredByConnectedSource({ mailConnected: false, calendarConnected: undefined }, withEmail)) {
+    throw new Error("an older snapshot without the key must not gain coverage");
+  }
+  if (!isCoveredByConnectedSource({ mailConnected: true, calendarConnected: undefined }, withEmail)) {
+    throw new Error("an older snapshot without the key must keep its mail coverage");
+  }
 }
 
 console.log("\nAll closeness smoke checks passed.\n");

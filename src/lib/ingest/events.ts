@@ -33,9 +33,9 @@
  * script. This module is loaded by the sync scheduler, by smoke scripts, and (later) by an
  * HTTP route and MCP tools; `revalidatePath` belongs to whichever caller has a request.
  */
-import { sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { interactions } from "@/db/schema";
+import { interactions, reminders } from "@/db/schema";
 import {
   DUPLICATE_MERGE_CONFIDENCE,
   addToDuplicateIndex,
@@ -52,7 +52,7 @@ import {
 } from "@/lib/contact-writes";
 import { createCompanyResolver, type CompanyResolver } from "@/lib/companies";
 import { interactionExternalId } from "@/lib/ingest/external-id";
-import type { InteractionInsert } from "@/lib/import-engine";
+import type { InteractionInsert, ReminderInsert } from "@/lib/import-engine";
 
 /** One identifiable person on an event. Every field optional — sources differ in what they know. */
 export type NetworkParticipant = {
@@ -102,6 +102,17 @@ export type IngestOptions = {
    */
   matchConfidence?: number;
   interactionType?: string;
+  /**
+   * Reminders this source wants alongside each logged interaction — today, the ICS
+   * subscription's post-meeting follow-ups.
+   *
+   * Pure, like the import engine's equivalent: it returns rows and ingest owns the SQL, so a
+   * source cannot accidentally make the write path per-row. Deduped in bulk on
+   * `(contactId, description)`, which is why the description must be deterministic for a
+   * given (event, contact) — a re-sync then reproduces byte-identical candidates and they
+   * are filtered out instead of piling up.
+   */
+  reminders?: (event: NetworkEvent, contactId: string, userId: string) => ReminderInsert[];
 };
 
 export type IngestStats = {
@@ -113,6 +124,7 @@ export type IngestStats = {
   unmatched: number;
   /** Participants that would have been created but for the plan's contact cap. */
   blockedByPlan: number;
+  remindersCreated: number;
 };
 
 export type IngestContext = {
@@ -134,6 +146,7 @@ function emptyStats(): IngestStats {
     interactionsLogged: 0,
     unmatched: 0,
     blockedByPlan: 0,
+    remindersCreated: 0,
   };
 }
 
@@ -437,6 +450,47 @@ export async function ingestEvents(
       .returning();
     stats.interactionsLogged = logged.length;
     for (const { contactId } of resolved) ctx.touchedContactIds.add(contactId);
+
+    // 0-2 statements. A separate insert rather than folded into the one above: `reminders`
+    // is a different table, and unlike `interactions.externalId` it has no soft-unique column
+    // to lean an upsert on. So it dedupes the way the import engine does — one SELECT scoped
+    // to the contacts this batch actually touched, then an exact (contactId, description)
+    // match — rather than a per-row existence check.
+    if (ctx.options.reminders) {
+      const candidates: ReminderInsert[] = [];
+      for (const { pair, contactId } of resolved) {
+        candidates.push(...ctx.options.reminders(pair.event, contactId, ctx.userId));
+      }
+      if (candidates.length > 0) {
+        const contactIds = [
+          ...new Set(
+            candidates
+              .map((r) => r.contactId)
+              .filter((cid): cid is string => typeof cid === "string")
+          ),
+        ];
+        const db2 = await getDb();
+        const existing = contactIds.length
+          ? await db2.query.reminders.findMany({
+              where: and(eq(reminders.userId, ctx.userId), inArray(reminders.contactId, contactIds)),
+              columns: { contactId: true, description: true },
+            })
+          : [];
+        const seen = new Set(existing.map((r) => `${r.contactId}::${r.description ?? ""}`));
+        // Also dedupe within the batch, so two events for one contact cannot insert the same
+        // reminder twice in a single run.
+        const fresh = candidates.filter((r) => {
+          const key = `${r.contactId}::${r.description ?? ""}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        if (fresh.length > 0) {
+          const created = await db2.insert(reminders).values(fresh).returning();
+          stats.remindersCreated = created.length;
+        }
+      }
+    }
   }
 
   return stats;

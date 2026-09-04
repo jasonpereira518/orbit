@@ -272,9 +272,14 @@ async function testMeetingEmbeddings() {
     }))
   );
 
-  // A meeting from the live ICS subscription rather than an import: out of scope for this
-  // phase (it embeds itself as it is written), and the claim's `source` filter is the only
-  // thing keeping it out. Without that assertion the filter could be dropped unnoticed.
+  // A meeting from the live ICS subscription rather than a file import.
+  //
+  // This used to be asserted as OUT of scope, because `applyNetworkingEvents` embedded its
+  // rows inline as it wrote them. That function is gone: the ICS subscription now writes
+  // through the shared ingest path, which flags `embedding_stale_at` and leaves embedding to
+  // this sweep rather than paying an AI round trip per row. So a `calendar_sync` meeting is
+  // now IN scope, and if it ever falls out again its content becomes silently unsearchable —
+  // which is the regression `PENDING_MEETINGS` records having already happened once.
   await db.insert(interactions).values({
     userId: MEETING_USER,
     contactId: attendee.id,
@@ -285,10 +290,12 @@ async function testMeetingEmbeddings() {
     rawNotes: "Meeting: Synced",
   });
 
+  // Three file-imported meetings plus the one written by the live ICS subscription.
+  const SYNCED_MEETINGS = 1;
   const first = await runEmbeddingBackfill(MEETING_USER, stubEmbed);
   check(
-    "meeting phase embeds every imported meeting for one contact",
-    first.embedded === MEETINGS,
+    "meeting phase embeds every calendar meeting for one contact",
+    first.embedded === MEETINGS + SYNCED_MEETINGS,
     JSON.stringify(first)
   );
   check("meeting phase leaves nothing pending", first.remaining === 0, JSON.stringify(first));
@@ -307,7 +314,7 @@ async function testMeetingEmbeddings() {
   // deleted them.
   check(
     "one 'meeting' embedding row per meeting, not one per contact",
-    (meetingRows[0]?.value ?? 0) === MEETINGS,
+    (meetingRows[0]?.value ?? 0) === MEETINGS + SYNCED_MEETINGS,
     `rows ${meetingRows[0]?.value}`
   );
 
@@ -321,8 +328,8 @@ async function testMeetingEmbeddings() {
       )
     );
   check(
-    "the live-sync meeting is left to calendar-sync's own inline embed",
-    (synced[0]?.value ?? 0) === 0,
+    "the live-sync meeting is embedded by this sweep, not left behind",
+    (synced[0]?.value ?? 0) === 1,
     `rows ${synced[0]?.value}`
   );
 
@@ -366,7 +373,7 @@ async function testMeetingEmbeddings() {
       )
     );
   check(
-    "dedupe damage reproduced: one meeting embedding left of three",
+    "dedupe damage reproduced: one meeting embedding left",
     (afterDedupe[0]?.value ?? 0) === 1,
     `rows ${afterDedupe[0]?.value}`
   );
@@ -374,7 +381,7 @@ async function testMeetingEmbeddings() {
   const repair = await runEmbeddingBackfill(MEETING_USER, stubEmbed);
   check(
     "the backfill re-embeds the deleted meetings, and only those",
-    repair.embedded === MEETINGS - 1,
+    repair.embedded === MEETINGS + SYNCED_MEETINGS - 1,
     JSON.stringify(repair)
   );
   const afterRepair = await db
@@ -387,8 +394,8 @@ async function testMeetingEmbeddings() {
       )
     );
   check(
-    "all three meeting embeddings are back",
-    (afterRepair[0]?.value ?? 0) === MEETINGS,
+    "every meeting embedding is back",
+    (afterRepair[0]?.value ?? 0) === MEETINGS + SYNCED_MEETINGS,
     `rows ${afterRepair[0]?.value}`
   );
 

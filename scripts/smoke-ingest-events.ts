@@ -18,6 +18,7 @@ import {
   type NetworkEvent,
 } from "../src/lib/ingest/events";
 import { calendarExternalIdBase } from "../src/lib/ingest/external-id";
+import { pendingMeetingCount } from "../src/lib/embedding-backfill";
 
 const USER = "ingest-smoke-user";
 
@@ -29,6 +30,8 @@ function check(label: string, ok: boolean, detail = "") {
 
 async function reset() {
   const db = await getDb();
+  await db.execute(sql`DELETE FROM reminders WHERE user_id = ${USER}`);
+  await db.execute(sql`DELETE FROM contact_embeddings WHERE user_id = ${USER}`);
   await db.execute(sql`DELETE FROM interactions WHERE user_id = ${USER}`);
   await db.execute(sql`DELETE FROM contacts WHERE user_id = ${USER}`);
   await db.execute(sql`DELETE FROM companies WHERE user_id = ${USER}`);
@@ -225,6 +228,92 @@ run(async () => {
     const ctx = await openIngestContext(USER, CALENDAR_OPTS);
     const stats = await ingestEvents(ctx, [meeting("evt-empty", day1, [{}, { name: "  " }])]);
     check("an identity-less participant is skipped", stats.contactsCreated === 0 && stats.interactionsLogged === 0);
+  }
+
+  // --- The two calendar paths converge on one interaction --------------------------------
+  // Google Calendar's `iCalUID` is the same string as the UID in an .ics export of that
+  // calendar, so a user with BOTH an ICS subscription and the Google connector must end up
+  // with one interaction per (event, contact), not two. This asserts the property the shared
+  // external-id gives us; whether Google really reuses the UID is a live-account question
+  // flagged in the plan.
+  await reset();
+  {
+    const uid = "shared-uid@google.com";
+    const icsCtx = await openIngestContext(USER, { ...CALENDAR_OPTS, source: "calendar_sync" });
+    await ingestEvents(icsCtx, [meeting(uid, day1, [{ name: "Ada Lovelace", email: "ada@example.com" }])]);
+    const afterIcs = await counts();
+
+    const googleCtx = await openIngestContext(USER, { ...CALENDAR_OPTS, source: "google_calendar" });
+    await ingestEvents(googleCtx, [meeting(uid, day1, [{ name: "Ada Lovelace", email: "ada@example.com" }])]);
+    const afterGoogle = await counts();
+
+    check(
+      "an ICS sync then a Google sync of the same event yields ONE interaction",
+      afterGoogle.interactions === afterIcs.interactions && afterIcs.interactions === 1,
+      `${afterIcs.interactions} -> ${afterGoogle.interactions}`
+    );
+    check("and one contact, not two", afterGoogle.contacts === 1, String(afterGoogle.contacts));
+  }
+
+  // --- Post-meeting reminders survive the move onto the shared path -------------------------
+  await reset();
+  {
+    const recent = new Date(Date.now() - 3 * 86400000);
+    const ctx = await openIngestContext(USER, {
+      ...CALENDAR_OPTS,
+      source: "calendar_sync",
+      reminders: (event, contactId, userId) => [
+        {
+          userId,
+          contactId,
+          title: `Follow up after ${event.summary || "meeting"}`,
+          description: `You met with them. Event ${event.externalIdBase.replace(/^cal:/, "")}`,
+          dueDate: new Date(),
+          status: "pending",
+          reminderType: "post_meeting",
+          actionKind: "follow_up",
+          createdBy: "calendar_sync",
+        },
+      ],
+    });
+    const first = await ingestEvents(ctx, [
+      meeting("evt-rem", recent, [{ name: "Grace Hopper", email: "grace@example.com" }]),
+    ]);
+    check("a post-meeting reminder is created", first.remindersCreated === 1, String(first.remindersCreated));
+
+    // Re-syncing the same calendar must not pile up duplicates — the dedupe is on
+    // (contactId, description), which is why the description embeds the event uid.
+    const ctx2 = await openIngestContext(USER, {
+      ...CALENDAR_OPTS,
+      source: "calendar_sync",
+      reminders: ctx.options.reminders,
+    });
+    const again = await ingestEvents(ctx2, [
+      meeting("evt-rem", recent, [{ name: "Grace Hopper", email: "grace@example.com" }]),
+    ]);
+    check("re-syncing creates no duplicate reminder", again.remindersCreated === 0, String(again.remindersCreated));
+
+    const total = rowsOf<{ n: number }>(
+      await db.execute(sql`SELECT count(*)::int AS n FROM reminders WHERE user_id = ${USER}`)
+    )[0];
+    check("exactly one reminder exists", Number(total.n) === 1, String(total.n));
+  }
+
+  // --- Sync-written meetings are claimable by the embedding backfill -------------------------
+  // `applyNetworkingEvents` used to embed inline; it no longer exists, so if PENDING_MEETINGS
+  // does not cover the sync sources their content is silently unsearchable.
+  await reset();
+  {
+    const ctx = await openIngestContext(USER, { ...CALENDAR_OPTS, source: "calendar_sync" });
+    await ingestEvents(ctx, [meeting("evt-embed", day1, [{ name: "Ada Lovelace", email: "ada@example.com" }])]);
+    // Against the REAL predicate, not a restatement of it — a copy here would keep passing
+    // if someone narrowed PENDING_MEETINGS back to calendar_import only.
+    const pending = await pendingMeetingCount(USER);
+    check(
+      "a calendar_sync meeting is visible to the embedding backfill",
+      pending === 1,
+      String(pending)
+    );
   }
 
   await reset();

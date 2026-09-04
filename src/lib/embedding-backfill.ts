@@ -184,18 +184,25 @@ export async function runEmbeddingBackfill(
  * and the route's re-kick loop (see this file's header) would spin on it indefinitely. One
  * fragment, two call sites, no way to drift.
  *
- * Scoped to `source = 'calendar_import'` — the rows the import engine's calendar adapter
- * writes. `interaction_type = 'meeting'` alone would also sweep up the live ICS
- * subscription's rows (`calendar-sync.ts`), which embed themselves inline as they are
- * written; those are excluded by the `NOT EXISTS` anyway, so including them would only add a
- * scan. The content check is what keeps a meeting with no text at all out of the claim
+ * Scoped to the calendar sources by name, not to `interaction_type = 'meeting'` alone, so a
+ * future non-calendar 'meeting' row does not silently join this sweep.
+ *
+ * The list used to be `calendar_import` only, because the live ICS subscription embedded its
+ * own rows inline as it wrote them. That is no longer true: `applyNetworkingEvents` was
+ * replaced by the shared ingest path, which flags `embedding_stale_at` and leaves the
+ * embedding to a batch rather than paying an AI round trip per row. Every calendar source now
+ * depends on this sweep, and leaving one out means its meeting content is silently
+ * unsearchable — which is exactly the regression this phase was written to repair the first
+ * time. If you add a calendar source, add it here.
+ *
+ * The content check is what keeps a meeting with no text at all out of the claim
  * entirely rather than needing a "clear the flag" branch the way the profile phase does —
  * there is no flag here to clear.
  */
 const PENDING_MEETINGS = sql`
   FROM interactions i
   JOIN contacts c ON c.id = i.contact_id
-  WHERE i.source = 'calendar_import'
+  WHERE i.source IN ('calendar_import', 'calendar_sync', 'google_calendar')
     AND i.interaction_type = 'meeting'
     AND i.external_id IS NOT NULL
     AND (btrim(c.full_name) <> '' OR btrim(coalesce(i.raw_notes, '')) <> '')
@@ -208,7 +215,14 @@ const PENDING_MEETINGS = sql`
     )
 `;
 
-async function pendingMeetingCount(userId: string): Promise<number> {
+/**
+ * How many calendar meetings still need a `'meeting'` embedding.
+ *
+ * Exported so a smoke test can assert against the REAL `PENDING_MEETINGS` predicate rather
+ * than a copy of it. A test that restates the source list would keep passing if someone
+ * narrowed the predicate back — which is the precise regression this phase exists to prevent.
+ */
+export async function pendingMeetingCount(userId: string): Promise<number> {
   const db = await getDb();
   const result = await db.execute(sql`
     SELECT count(*)::int AS n ${PENDING_MEETINGS} AND i.user_id = ${userId}

@@ -34,6 +34,10 @@ import {
   type ClaimedConnection,
 } from "@/lib/provider-connections";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
+import {
+  claimDueCalendarSubscriptions,
+  syncCalendarSubscription,
+} from "@/lib/calendar-sync";
 import { ReauthRequiredError } from "@/lib/errors";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 
@@ -52,6 +56,9 @@ export const PER_CONNECTION_BUDGET_MS = 60 * 1000;
 
 /** Claimed per run. Small because each one can take up to a minute. */
 export const CONNECTIONS_PER_RUN = 5;
+
+/** ICS feeds claimed per run. Cheaper than an API sync — one HTTP GET and a parse. */
+export const ICS_SUBSCRIPTIONS_PER_RUN = 10;
 
 /** Cadence for a healthy connection. A floor, never a promise — GitHub cron lags 5-30 minutes. */
 export const SYNC_INTERVAL_MS = 30 * 60 * 1000;
@@ -74,6 +81,9 @@ const DEFAULT_DEPS: SyncDeps = {
 
 export type SyncRunStats = {
   claimed: number;
+  icsClaimed: number;
+  icsSynced: number;
+  icsFailed: number;
   synced: number;
   failed: number;
   skippedNoScope: number;
@@ -86,6 +96,9 @@ export type SyncRunStats = {
 function emptyRunStats(): SyncRunStats {
   return {
     claimed: 0,
+    icsClaimed: 0,
+    icsSynced: 0,
+    icsFailed: 0,
     synced: 0,
     failed: 0,
     skippedNoScope: 0,
@@ -234,6 +247,34 @@ export async function runSyncPass(
         error: err instanceof Error ? err.message : String(err),
         retryable,
       }).catch(() => null);
+    }
+  }
+
+  // ICS subscriptions are a third claimable source, in the same pass.
+  //
+  // They are the only path for Apple Calendar and any other non-Google feed, so they are kept
+  // rather than deprecated — but until now nothing scheduled them: they synced only when a
+  // page render happened to call `syncDueCalendarSubscriptions`, which meant a user who
+  // subscribed and then stopped opening `/imports` silently stopped syncing.
+  if (!deadlineReached(deadline)) {
+    const subs = await claimDueCalendarSubscriptions(ICS_SUBSCRIPTIONS_PER_RUN, now).catch(
+      () => []
+    );
+    stats.icsClaimed = subs.length;
+    for (const sub of subs) {
+      if (deadlineReached(deadline)) {
+        stats.budgetExhausted = true;
+        break;
+      }
+      try {
+        await syncCalendarSubscription(sub.userId, sub.id);
+        stats.icsSynced++;
+      } catch {
+        // The claim already moved `last_synced_at`, so a failing feed waits out the stale
+        // window rather than being re-fetched every run. Counted, never rethrown — one dead
+        // ICS URL must not stop the rest.
+        stats.icsFailed++;
+      }
     }
   }
 

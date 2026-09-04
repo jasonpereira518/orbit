@@ -44,6 +44,12 @@ export type ClosenessCohortSnapshot = {
   maxSchool: number;
   userDomain: string | null;
   mailConnected: boolean;
+  /**
+   * Optional, deliberately. `snapshot` is jsonb and every row written before this key existed
+   * would read a required field as `undefined`, so consumers use `?? false` until the row is
+   * recalibrated. Making it required would break every stored cohort at once.
+   */
+  calendarConnected?: boolean;
 };
 
 /**
