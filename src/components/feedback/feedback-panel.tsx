@@ -14,6 +14,13 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
   AREA_OPTIONS,
@@ -161,21 +168,30 @@ export function FeedbackPanel({
         </div>
 
         <div className="grid gap-1.5">
-          <label htmlFor="feedback-area" className="text-xs font-medium text-muted-foreground">
+          <span id="feedback-area-label" className="text-xs font-medium text-muted-foreground">
             Which part of Orbit?
-          </label>
-          <select
-            id="feedback-area"
+          </span>
+          {/* Orbit's own dropdown rather than a bare `<select>`, whose popup is drawn by the
+              OS and looks like nothing else in the app. The popup portals out at z-50 and
+              mounts after the sheet, so it paints above it. */}
+          <Select
             value={area}
-            onChange={(e) => setArea(e.target.value as FeedbackArea)}
-            className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+            onValueChange={(v) => setArea((v || "other") as FeedbackArea)}
+            // Without `items`, `SelectValue` renders the raw stored value — the trigger
+            // would read "dashboard" rather than "Dashboard".
+            items={AREA_OPTIONS}
           >
-            {AREA_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger aria-labelledby="feedback-area-label" className="h-9 w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {AREA_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         <div className="grid min-h-0 flex-1 gap-1.5">
