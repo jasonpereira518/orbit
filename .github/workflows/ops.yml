@@ -92,6 +92,19 @@ jobs:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
 
+      # Outbound webhook retries. Rides the existing ten-minute schedule rather than adding a
+      # fourth: a delivery that failed can wait ten minutes, and the drain has its own route so
+      # its latency never delays the sweep above.
+      - name: Drain outbound webhooks
+        if: github.event.schedule != '*/15 * * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 55 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/webhooks/outbound/drain"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
       # Continuous connector sync (Google Calendar today). Its own schedule rather than a
       # rider on the ten-minute sweep: that sweep is the alerting path and is already budgeted
       # to 55s, and a provider call of unpredictable latency must not make the alert cadence

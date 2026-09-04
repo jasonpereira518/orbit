@@ -1,0 +1,44 @@
+/**
+ * The retry engine for outbound webhooks.
+ *
+ * Its own route rather than a step inside `runOpsSweep`, deliberately: that sweep is the
+ * alerting path and is already budgeted to 55 seconds, and folding a drain of unpredictable
+ * network latency into it would make Orbit's alert cadence hostage to how slow a customer's
+ * endpoint happens to be today.
+ *
+ * Driven by the existing ten-minute GitHub Actions schedule. Vercel Hobby's single cron slot
+ * belongs to `/api/imports/process-stalled`.
+ */
+import { NextResponse } from "next/server";
+import { finishCronRun, startCronRun } from "@/lib/cron-runs";
+import { isInternalRequest } from "@/lib/internal-auth";
+import { drainDueDeliveries, purgeExpiredIdempotencyKeys } from "@/lib/webhooks/dispatch";
+
+export const maxDuration = 60;
+
+/** Idempotency records are a replay guard, not a log. A day is well past any client retry. */
+const IDEMPOTENCY_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+export async function POST(request: Request) {
+  // Before any write — an unauthenticated probe must not be able to insert ledger rows.
+  if (!isInternalRequest(request)) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  const handle = await startCronRun("webhooks.drain");
+  try {
+    // 45s of a 60s budget, leaving room for the ledger write and the purge below.
+    const stats = await drainDueDeliveries({ budgetMs: 45_000, max: 200 });
+    await purgeExpiredIdempotencyKeys(new Date(Date.now() - IDEMPOTENCY_RETENTION_MS)).catch(
+      () => null
+    );
+    await finishCronRun(handle, {
+      status: stats.failed > 0 ? "partial" : "ok",
+      stats: { ...stats },
+    });
+    return NextResponse.json({ ok: true, ...stats });
+  } catch (err) {
+    await finishCronRun(handle, { status: "failed", error: err });
+    return NextResponse.json({ error: "drain failed" }, { status: 500 });
+  }
+}
