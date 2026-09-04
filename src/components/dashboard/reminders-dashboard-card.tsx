@@ -39,7 +39,7 @@ export function RemindersDashboardCard({
       className="flex h-full flex-col border-border/70 shadow-none scroll-mt-8"
     >
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-        <CardTitle className="text-base">Reminders</CardTitle>
+        <CardTitle as="h2" className="text-base">Reminders</CardTitle>
         <Link
           href="/reminders"
           className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}

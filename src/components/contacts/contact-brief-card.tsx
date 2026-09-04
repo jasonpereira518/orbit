@@ -33,7 +33,7 @@ export function ContactBriefCard({ contactId, standing, recentDiscussions, nextS
   return (
     <Card className="border-border/70 shadow-none">
       <CardHeader className="border-b border-border/50">
-        <CardTitle>Where things stand</CardTitle>
+        <CardTitle as="h2">Where things stand</CardTitle>
         <CardAction>
           <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 text-xs text-muted-foreground" disabled={pending}
             onClick={() => start(async () => {

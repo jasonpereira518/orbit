@@ -219,7 +219,7 @@ export function ContactTimeline({
       className="scroll-mt-24 border-border/70 shadow-none"
     >
       <CardHeader className="border-b border-border/50">
-        <CardTitle>Timeline</CardTitle>
+        <CardTitle as="h2">Timeline</CardTitle>
         <CardAction>
           <Button
             type="button"
