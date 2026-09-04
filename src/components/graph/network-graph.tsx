@@ -676,6 +676,8 @@ function GraphCanvas(props: {
   constellationFilterOn: boolean;
   onShowAll: () => void;
   loadingAll: boolean;
+  /** Called on every pan, zoom or star drag, so overlays can get out of the way. */
+  onViewportActivity: () => void;
 }) {
   // Keyword is the one filter driven by continuous typing — debounce it so
   // the (potentially expensive) filter/layout rebuild below doesn't run on
@@ -771,6 +773,7 @@ function GraphCanvasInner({
   constellationFilterOn,
   onShowAll,
   loadingAll,
+  onViewportActivity,
 }: {
   company: string;
   school: string;
@@ -797,6 +800,7 @@ function GraphCanvasInner({
   constellationFilterOn: boolean;
   onShowAll: () => void;
   loadingAll: boolean;
+  onViewportActivity: () => void;
 }) {
   const router = useRouter();
   const { fitView, getNodes, getViewport, setViewport } = useReactFlow();
@@ -1336,9 +1340,13 @@ function GraphCanvasInner({
     setOrbitNodes((nds) => applyNodeChanges(changes, nds));
   }, []);
 
-  const onNodeDragStart: OnNodeDrag = useCallback((_, node) => {
-    if (node.type === "contact") draggingId.current = node.id;
-  }, []);
+  const onNodeDragStart: OnNodeDrag = useCallback(
+    (_, node) => {
+      onViewportActivity();
+      if (node.type === "contact") draggingId.current = node.id;
+    },
+    [onViewportActivity]
+  );
 
   const onNodeDragStop: OnNodeDrag = useCallback(
     (_, node) => {
@@ -1384,6 +1392,11 @@ function GraphCanvasInner({
         nodeOrigin={[0.5, 0.5]}
         minZoom={0.05}
         maxZoom={2.4}
+        // Driven off `onMove` rather than onMoveStart/onMoveEnd: it fires throughout the
+        // gesture, so the overlay hides on the first frame and un-hides on a timer after the
+        // last one. A start/end pair would leave the chip stuck hidden any time an end event
+        // is missed — a gesture interrupted by a blur, or a wheel-zoom that never "ends".
+        onMove={onViewportActivity}
         onlyRenderVisibleElements
         style={{
           width: "100%",
@@ -1514,6 +1527,15 @@ function GraphCanvasInner({
 const GRAPH_REFETCH_MIN_MS = 60_000;
 
 /**
+ * How long after the last pan/zoom/drag before canvas overlays come back.
+ *
+ * Long enough to span the gaps between frames of one continuous gesture — including the
+ * pauses in a trackpad pinch — so the chip does not flicker back mid-movement, and short
+ * enough that it feels like it returns as soon as you let go.
+ */
+const VIEWPORT_IDLE_MS = 650;
+
+/**
  * No write-back here, deliberately.
  *
  * This used to persist the pruned map whenever its size differed from what was stored, to
@@ -1566,6 +1588,17 @@ export function NetworkGraph({
    */
   const [showAllStars, setShowAllStars] = useState(false);
   const [loadingAll, setLoadingAll] = useState(false);
+  /**
+   * True while the user is panning, zooming or dragging a star.
+   *
+   * The scope chip sits over the bottom of the canvas, which is exactly where stars end up
+   * when you drag the map down — so it steps aside while the view is being moved and comes
+   * back once it settles. A ref mirrors it so the (very frequent) move callback can skip the
+   * state write on every frame of a gesture.
+   */
+  const [viewportBusy, setViewportBusy] = useState(false);
+  const viewportBusyRef = useRef(false);
+  const viewportIdleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // `loadData` is memoised with no deps and must not resubscribe on every toggle, so it reads
   // the current scope through a ref rather than closing over the state.
   const showAllStarsRef = useRef(false);
@@ -1703,6 +1736,25 @@ export function NetworkGraph({
    * The wider payload is fetched on demand and cached for the session; going back is free.
    * A failure leaves the toggle where it was rather than showing a half-empty chart.
    */
+  const handleViewportActivity = useCallback(() => {
+    if (!viewportBusyRef.current) {
+      viewportBusyRef.current = true;
+      setViewportBusy(true);
+    }
+    if (viewportIdleTimer.current) clearTimeout(viewportIdleTimer.current);
+    viewportIdleTimer.current = setTimeout(() => {
+      viewportBusyRef.current = false;
+      setViewportBusy(false);
+    }, VIEWPORT_IDLE_MS);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (viewportIdleTimer.current) clearTimeout(viewportIdleTimer.current);
+    },
+    []
+  );
+
   const setScope = useCallback((wantAll: boolean) => {
     const cached = wantAll ? scopeCache.current.all : scopeCache.current.engaged;
     if (cached) {
@@ -2096,13 +2148,31 @@ export function NetworkGraph({
           // Bottom centre, not top: the canvas toolbar (clusters, search, re-engage, refresh)
           // owns the top strip, and a chip there renders underneath the search field. The
           // bottom band is empty between the Key button and the view controls.
-          <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2 max-w-[calc(100%-2rem)]">
+          <div
+            className={cn(
+              "pointer-events-none absolute bottom-3 left-1/2 z-20 max-w-[calc(100%-2rem)] -translate-x-1/2",
+              // Steps aside while the map is being moved — this sits exactly where stars land
+              // when you drag the view downward.
+              //
+              // Toggled, not faded. An opacity transition here is a state that can be caught
+              // half-finished: a backgrounded tab freezes transitions where they stand, and
+              // this one was repeatedly observed stuck at 0.085 with the element otherwise
+              // "visible". It resolves itself when the tab comes back, but a resting state
+              // that depends on an animation having run is not worth 200ms of polish on an
+              // overlay whose entire job is to be out of the way.
+              viewportBusy && "invisible"
+            )}
+            aria-hidden={viewportBusy}
+          >
             <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/10 bg-[#080b12]/85 px-3 py-1 text-[11px] text-white/70 backdrop-blur-md">
               <Stars className="size-3 text-white/50" aria-hidden />
               {showAllStars ? (
                 <>
-                  <span className="tabular-nums">
-                    All {data.summary.total.toLocaleString()} connections
+                  <span>
+                    <span className="tabular-nums">
+                      {`All ${data.summary.total.toLocaleString()}`}
+                    </span>
+                    {" connections"}
                   </span>
                   <button
                     type="button"
@@ -2114,9 +2184,14 @@ export function NetworkGraph({
                 </>
               ) : (
                 <>
-                  <span className="tabular-nums">
-                    {constellationFilter.shown.toLocaleString()} of{" "}
-                    {data.summary.total.toLocaleString()} you&apos;ve engaged with
+                  {/* Built as one string rather than interleaved expressions and text: JSX
+                      drops whitespace that falls next to a line break, which is how the space
+                      before "you've" went missing when this wrapped. */}
+                  <span>
+                    <span className="tabular-nums">
+                      {`${constellationFilter.shown.toLocaleString()} of ${data.summary.total.toLocaleString()}`}
+                    </span>
+                    {" you\u2019ve engaged with"}
                   </span>
                   <button
                     type="button"
@@ -2584,6 +2659,7 @@ export function NetworkGraph({
             constellationFilterOn={constellationFilterOn}
             onShowAll={() => setScope(true)}
             loadingAll={loadingAll}
+            onViewportActivity={handleViewportActivity}
             company={company}
             school={school}
             keyword={keyword}
