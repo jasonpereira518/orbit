@@ -128,10 +128,18 @@ shipping a permission bump that re-prompts every existing user.
 
 ### What it deliberately does not do
 
-No navigation, no programmatic clicks, no expanding "see more", no auto-scroll,
-no pagination, no "add all" on list pages, no background fetching, and never any
-injected UI on the host page. Every extraction is one read of what the user's own
-browser already rendered, because they clicked the icon.
+No navigation, no auto-scroll, no pagination, no "add all" on list pages, no
+background fetching, and never any injected UI on the host page. Every
+extraction is one read of what the user's own browser already rendered,
+because they clicked the icon.
+
+The one exception: `src/inject/dom/expand.ts` clicks LinkedIn's "see more" /
+"show all" controls, but only when the user explicitly presses "Capture
+experience" in the panel — never on an ordinary panel open. It's bounded to a
+click cap, a time budget, and the subject's own profile sections (see that
+file's header for the full argument, and
+[`MANUAL-VERIFICATION.md`](./MANUAL-VERIFICATION.md) for the live-page
+checklist that's the only verification for it).
 
 Page text is never persisted — it's model input only. The raw blob is never
 cached locally either.
@@ -160,3 +168,12 @@ nothing from the Next app reaches the bundle.
 | `npm run typecheck` / `npm run lint` | The usual |
 | `npm run tokens:sync` | Regenerate `tokens.css` from the app |
 | `npm run zip` | Build and package `release/orbit-<version>.zip` |
+
+## Manual verification
+
+Most of this extension is covered by `scripts/smoke-*.ts` at the repo root (see
+`../scripts/run-smoke.ts`). One feature can't be: LinkedIn profile capture
+clicks on a real, signed-in page, which no automated test can drive. See
+[`MANUAL-VERIFICATION.md`](./MANUAL-VERIFICATION.md) for that checklist —
+re-run it whenever `src/inject/dom/expand.ts`, the LinkedIn adapter, or the
+capture band in `KnownContactView.tsx` changes.

@@ -35,7 +35,11 @@ async function debugLogSchemaVersion(page: PageContext): Promise<void> {
   try {
     const flag = await chrome.storage.local.get("orbit:debugCapture");
     if (!flag["orbit:debugCapture"]) return;
-    console.debug("[orbit] page read", {
+    // console.info, not console.debug: Chrome DevTools hides Debug-level messages unless
+    // the console's level filter is set to Verbose, which is not the default. A
+    // verification step that silently produces nothing under default DevTools settings is
+    // worse than no step at all.
+    console.info("[orbit] page read", {
       schemaVersion: page.schemaVersion,
       hasProfile: "profile" in page,
       url: page.url,
