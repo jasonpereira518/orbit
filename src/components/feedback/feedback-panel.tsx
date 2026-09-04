@@ -132,14 +132,20 @@ export function FeedbackPanel({
     >
       <SheetContent
         side="floating"
-        // `SheetContent` carries no radius of its own — the edge-anchored sides are meant
-        // to sit flush. The floating side is inset on all four edges, so it needs one; the
-        // notifications window gets the same shape from `.liquid-glass-panel`.
-        className="gap-5 overflow-y-auto rounded-2xl p-6"
-        // The floating side already scales from 0.28 on open and back on close; this is
-        // what aims that scale at the button instead of the window's own centre, so it
-        // reads as the button unfolding rather than a panel appearing over it.
+        // The notifications window's treatment, and for the same reasons documented on
+        // `.liquid-glass-panel` in globals.css: it carries the radius, the lifted shadow,
+        // and — the part that matters here — a full re-declaration of the transition with
+        // an ease-OUT arriving and an ease-IN leaving. One curve in both directions is what
+        // made closing feel like it stopped dead rather than being drawn back into the
+        // button. `.liquid-glass` on its own would not match those selectors.
+        className="liquid-glass liquid-glass-panel gap-5 overflow-y-auto p-6"
+        // Lighter than the shared default, exactly as the notifications window does it: the
+        // page behind stays legible instead of being dimmed to a modal.
+        overlayClassName="bg-black/5 supports-backdrop-filter:backdrop-blur-[1.5px]"
+        // What aims the panel's 0.28 scale at the button rather than at the window's own
+        // centre, so it reads as the button unfolding.
         style={{ transformOrigin: origin }}
+        showCloseButton
       >
         <SheetHeader className="p-0">
           <SheetTitle className="font-[family-name:var(--font-display)] text-lg">

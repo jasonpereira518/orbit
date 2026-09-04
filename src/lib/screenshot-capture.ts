@@ -218,6 +218,63 @@ export function releaseFrame(frame: CapturedFrame | null) {
 }
 
 export type CropRect = { x: number; y: number; w: number; h: number };
+
+export type Viewport = { width: number; height: number };
+/** Where the frozen still is painted, in viewport CSS pixels. */
+export type CoverGeometry = { scale: number; left: number; top: number };
+
+/**
+ * Place a captured frame so it COVERS the window, centred.
+ *
+ * This is what makes the crop overlay track the pointer. A shared tab is captured at
+ * exactly the viewport's aspect ratio (viewport x devicePixelRatio), so `scale` comes out
+ * as 1/dpr, `left` and `top` come out zero, and the still lands pixel-for-pixel on top of
+ * the page it is a picture of — dragging feels like dragging on the live page.
+ *
+ * The first version fitted the frame INSIDE the window with padding and a toolbar
+ * allowance and refused to upscale, which shrank the still: you were then dragging across
+ * a miniature, and the selection could not agree with the pointer at any window size.
+ *
+ * Pure, and takes the viewport explicitly rather than reading `window`, so the mapping is
+ * checkable without a browser — see `scripts/smoke-feedback-image.ts`.
+ */
+export function coverGeometry(frame: Viewport, viewport: Viewport): CoverGeometry {
+  // `max` is what covers rather than contains. Upscaling is wanted here: the goal is
+  // alignment with the screen, and the crop is always taken from the original frame pixels
+  // whatever size it is displayed at.
+  const scale = Math.max(viewport.width / frame.width, viewport.height / frame.height);
+  return {
+    scale,
+    left: (viewport.width - frame.width * scale) / 2,
+    top: (viewport.height - frame.height * scale) / 2,
+  };
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+/**
+ * A rectangle in viewport coordinates → the frame pixels under it.
+ *
+ * Clamped to the frame because pointer capture lets a drag continue outside the window,
+ * and because a desktop-share still overflows the viewport on one axis.
+ */
+export function selectionToCrop(
+  selection: { left: number; top: number; width: number; height: number },
+  geometry: CoverGeometry,
+  frame: Viewport
+): CropRect {
+  const { scale, left, top } = geometry;
+  const x = clamp(Math.round((selection.left - left) / scale), 0, frame.width);
+  const y = clamp(Math.round((selection.top - top) / scale), 0, frame.height);
+  return {
+    x,
+    y,
+    w: clamp(Math.round(selection.width / scale), 1, frame.width - x),
+    h: clamp(Math.round(selection.height / scale), 1, frame.height - y),
+  };
+}
 /** A redaction, in 0–1 of the CROP, so it survives the downscale ladder unchanged. */
 export type NormalizedRect = { x: number; y: number; w: number; h: number };
 

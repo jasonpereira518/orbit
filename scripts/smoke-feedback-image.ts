@@ -21,6 +21,7 @@ import {
   decodeScreenshot,
   sanitizePath,
 } from "../src/lib/feedback-submission";
+import { coverGeometry, selectionToCrop } from "../src/lib/screenshot-capture";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -118,6 +119,92 @@ function main() {
   check("a bare word is rejected", sanitizePath("contacts") === null);
   check("undefined is rejected", sanitizePath(undefined) === null);
   check("an over-long path is rejected", sanitizePath(`/${"a".repeat(MAX_PATH)}`) === null);
+
+  console.log("");
+
+  // The crop overlay's geometry. This is where the alignment bug lived: the still used to
+  // be fitted INSIDE the window with padding, so it was drawn smaller than the screen and
+  // the pointer never sat on the pixel it appeared to be selecting.
+  const viewport = { width: 1280, height: 860 };
+  const tabFrame = { width: 2560, height: 1720 }; // a shared tab: viewport x dpr 2
+
+  const tab = coverGeometry(tabFrame, viewport);
+  check("a shared tab is placed at the window's origin", tab.left === 0 && tab.top === 0);
+  check("...at exactly 1/dpr", tab.scale === 0.5, String(tab.scale));
+  check(
+    "...so the still covers the viewport exactly",
+    tabFrame.width * tab.scale === viewport.width &&
+      tabFrame.height * tab.scale === viewport.height
+  );
+
+  // The property the whole overlay rests on: a point on screen maps to the frame pixel
+  // that is actually under it.
+  const origin = selectionToCrop({ left: 0, top: 0, width: 10, height: 10 }, tab, tabFrame);
+  check("the window's top-left maps to the frame's top-left", origin.x === 0 && origin.y === 0);
+
+  const mid = selectionToCrop({ left: 640, top: 430, width: 100, height: 50 }, tab, tabFrame);
+  check(
+    "a point at the window's centre maps to the frame's centre",
+    mid.x === 1280 && mid.y === 860,
+    `${mid.x},${mid.y}`
+  );
+  check("a selection scales by the same factor", mid.w === 200 && mid.h === 100);
+
+  const corner = selectionToCrop(
+    { left: viewport.width - 20, top: viewport.height - 20, width: 20, height: 20 },
+    tab,
+    tabFrame
+  );
+  check(
+    "a selection against the far edge reaches the frame's far edge",
+    corner.x + corner.w === tabFrame.width && corner.y + corner.h === tabFrame.height,
+    `${corner.x + corner.w} x ${corner.y + corner.h}`
+  );
+
+  // Whatever the window size, the mapping stays exact — the regression was size-dependent.
+  for (const vp of [
+    { width: 800, height: 600 },
+    { width: 1920, height: 1080 },
+    { width: 3000, height: 900 },
+    { width: 400, height: 1200 },
+  ]) {
+    const g = coverGeometry(tabFrame, vp);
+    const covers =
+      tabFrame.width * g.scale >= vp.width - 0.001 &&
+      tabFrame.height * g.scale >= vp.height - 0.001;
+    check(`the still covers a ${vp.width}x${vp.height} window`, covers);
+    const centre = selectionToCrop(
+      { left: vp.width / 2, top: vp.height / 2, width: 4, height: 4 },
+      g,
+      tabFrame
+    );
+    check(
+      `...and its centre still maps to the frame's centre`,
+      Math.abs(centre.x - tabFrame.width / 2) <= 1 &&
+        Math.abs(centre.y - tabFrame.height / 2) <= 1,
+      `${centre.x},${centre.y}`
+    );
+  }
+
+  // A whole-desktop share has a different aspect ratio: it overflows on one axis and is
+  // centred, rather than being squashed to fit.
+  const desktop = coverGeometry({ width: 3840, height: 2160 }, viewport);
+  check("a desktop share overflows horizontally", desktop.left < 0);
+  check("...and is centred, not distorted", Math.abs(desktop.top) < 0.001);
+
+  // Pointer capture lets a drag leave the window entirely.
+  const outside = selectionToCrop(
+    { left: -500, top: -500, width: 10_000, height: 10_000 },
+    tab,
+    tabFrame
+  );
+  check(
+    "a drag that leaves the window is clamped to the frame",
+    outside.x === 0 &&
+      outside.y === 0 &&
+      outside.w === tabFrame.width &&
+      outside.h === tabFrame.height
+  );
 
   console.log("\nAll feedback image checks passed.");
 }

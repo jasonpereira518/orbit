@@ -1,28 +1,28 @@
 "use client";
 
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogPortal } from "@/components/ui/dialog";
 import { useDragRect, type DragRect } from "@/components/feedback/use-drag-rect";
-import { MIN_SELECTION_PX, type CapturedFrame, type CropRect } from "@/lib/screenshot-capture";
-
-const TOOLBAR_H = 64;
-const PAD = 32;
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
+import {
+  MIN_SELECTION_PX,
+  coverGeometry,
+  selectionToCrop,
+  type CapturedFrame,
+  type CoverGeometry,
+  type CropRect,
+} from "@/lib/screenshot-capture";
 
 /**
  * Pick the part of a captured frame worth keeping.
  *
  * The frame is already taken by the time this mounts — see `FeedbackWidget.addScreenshot`.
- * That ordering is what makes the coordinate maths trivial: the selection is expressed in
- * the DISPLAYED image's space, and the only transform between it and the frame is one
- * uniform scale. `devicePixelRatio`, scroll offset and `window.innerWidth` never enter it,
- * which is also why sharing the whole desktop instead of the tab is not a failure — the
- * overlay letterboxes whatever arrived and the same division maps the rectangle into it.
+ * That ordering is what keeps the mapping to one scale and one offset: the pointer reports
+ * viewport coordinates, the still is placed at a known position in those same coordinates,
+ * so `devicePixelRatio` and scroll offset never enter it. Sharing a whole desktop instead
+ * of this tab still works — the aspect ratios differ, so the still overflows the window and
+ * is centred, and everything visible remains selectable at true scale.
  */
 export function ScreenshotCaptureOverlay({
   frame,
@@ -33,49 +33,24 @@ export function ScreenshotCaptureOverlay({
   onCancel: () => void;
   onConfirm: (crop: CropRect) => void;
 }) {
-  const imgRef = useRef<HTMLImageElement>(null);
-  const [display, setDisplay] = useState<{ w: number; h: number; fit: number } | null>(null);
-  /**
-   * The painted image's viewport rect, kept in state rather than read off the ref during
-   * render. The drag hook reports viewport coordinates, so both the marquee's offsets and
-   * the crop maths need this — and reading `.current` mid-render is exactly the pattern
-   * that goes stale when the overlay re-renders for another reason.
-   */
-  const [imgBox, setImgBox] = useState<{ left: number; top: number } | null>(null);
+  // Lazy initialiser rather than an effect: this overlay only ever mounts client-side
+  // (`ssr: false`), and computing on the first render means the still is placed before the
+  // first paint instead of flashing an empty backdrop for a frame.
+  const [geometry, setGeometry] = useState<CoverGeometry>(() =>
+    coverGeometry(frame, { width: window.innerWidth, height: window.innerHeight })
+  );
   const [announced, setAnnounced] = useState("");
 
-  // Explicit pixel dimensions rather than `object-contain`, so the rendered box IS the
-  // painted box and mapping back is one division instead of reverse-engineering a letterbox.
-  useLayoutEffect(() => {
-    const measure = () => {
-      const fit = Math.min(
-        (window.innerWidth - PAD * 2) / frame.width,
-        (window.innerHeight - PAD * 2 - TOOLBAR_H) / frame.height,
-        // Never upscale: a magnified screenshot lies about how sharp it is.
-        1
-      );
-      setDisplay({ w: Math.round(frame.width * fit), h: Math.round(frame.height * fit), fit });
-      const box = imgRef.current?.getBoundingClientRect();
-      if (box) setImgBox({ left: box.left, top: box.top });
-    };
-    measure();
+  useEffect(() => {
+    const measure = () =>
+      setGeometry(coverGeometry(frame, { width: window.innerWidth, height: window.innerHeight }));
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
-  }, [frame.width, frame.height]);
+  }, [frame]);
 
   const toCrop = useCallback(
-    (selection: DragRect): CropRect => {
-      if (!imgBox || !display) return { x: 0, y: 0, w: frame.width, h: frame.height };
-      const x = clamp(Math.round((selection.left - imgBox.left) / display.fit), 0, frame.width);
-      const y = clamp(Math.round((selection.top - imgBox.top) / display.fit), 0, frame.height);
-      return {
-        x,
-        y,
-        w: clamp(Math.round(selection.width / display.fit), 1, frame.width - x),
-        h: clamp(Math.round(selection.height / display.fit), 1, frame.height - y),
-      };
-    },
-    [display, imgBox, frame.width, frame.height]
+    (selection: DragRect): CropRect => selectionToCrop(selection, geometry, frame),
+    [geometry, frame]
   );
 
   // Letting go IS the confirmation. There was a "Use selection" step here first; it read as
@@ -91,9 +66,8 @@ export function ScreenshotCaptureOverlay({
   });
 
   const confirm = useCallback(() => {
-    if (rect) onConfirm(toCrop(rect));
-    else onConfirm({ x: 0, y: 0, w: frame.width, h: frame.height });
-  }, [rect, toCrop, onConfirm, frame.width, frame.height]);
+    onConfirm({ x: 0, y: 0, w: frame.width, h: frame.height });
+  }, [onConfirm, frame.width, frame.height]);
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -112,20 +86,16 @@ export function ScreenshotCaptureOverlay({
     [dragging, cancel, confirm]
   );
 
-  // Re-measure once the explicit width/height have been applied: on the first pass the
-  // <img> has not been laid out at its final size yet.
-  useEffect(() => {
-    if (!display) return;
-    const box = imgRef.current?.getBoundingClientRect();
-    if (box) setImgBox({ left: box.left, top: box.top });
-  }, [display]);
+  const live = rect ? toCrop(rect) : null;
 
   return (
     <Dialog open modal onOpenChange={(open) => !open && onCancel()}>
       <DialogPortal>
-        <DialogPrimitive.Backdrop className="fixed inset-0 z-[60] bg-black/80" />
+        {/* No scrim of its own: the still covers the whole window, and dimming behind
+            something opaque only shows at the edges when a desktop share overflows. */}
+        <DialogPrimitive.Backdrop className="fixed inset-0 z-[60] bg-black/40" />
         <DialogPrimitive.Popup
-          className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-4 outline-none"
+          className="fixed inset-0 z-[60] overflow-hidden outline-none"
           aria-label="Select the area to include"
           aria-describedby="feedback-capture-hint"
           onKeyDown={onKeyDown}
@@ -138,25 +108,29 @@ export function ScreenshotCaptureOverlay({
             {announced}
           </div>
 
+          {/* The drag surface is the whole viewport, so a selection can start and end
+              anywhere — including hard against an edge, which a padded, centred box made
+              impossible to reach. */}
           <div
-            className="relative select-none"
-            style={{
-              width: display?.w,
-              height: display?.h,
-              cursor: "crosshair",
-              touchAction: "none",
-            }}
+            className="absolute inset-0 select-none"
+            style={{ cursor: "crosshair", touchAction: "none" }}
             {...handlers}
           >
             {/* eslint-disable-next-line @next/next/no-img-element -- a blob: frame of the
                 user's own screen, with no remote origin for next/image to optimise. */}
             <img
-              ref={imgRef}
               src={frame.previewUrl}
               alt="Screenshot to crop"
               draggable={false}
-              className="h-full w-full rounded-md"
+              className="pointer-events-none absolute max-w-none"
+              style={{
+                left: geometry.left,
+                top: geometry.top,
+                width: frame.width * geometry.scale,
+                height: frame.height * geometry.scale,
+              }}
             />
+
             {rect && (
               <div
                 className="pointer-events-none absolute outline-2 outline-primary"
@@ -164,8 +138,10 @@ export function ScreenshotCaptureOverlay({
                   // One element with an enormous spread shadow is the cheapest possible
                   // scrim-with-a-hole; four positioned panels thrash layout on every frame.
                   boxShadow: "0 0 0 9999px rgba(0,0,0,0.55)",
-                  left: rect.left - (imgBox?.left ?? 0),
-                  top: rect.top - (imgBox?.top ?? 0),
+                  // The drag surface is `inset-0`, so pointer coordinates ARE offsets
+                  // within it. No conversion, and nothing to go stale.
+                  left: rect.left,
+                  top: rect.top,
                   width: rect.width,
                   height: rect.height,
                 }}
@@ -173,18 +149,22 @@ export function ScreenshotCaptureOverlay({
             )}
           </div>
 
-          <div className="flex items-center gap-3 rounded-full bg-popover px-4 py-2 text-popover-foreground shadow-lg">
-            <span className="text-xs text-muted-foreground">
-              Drag any area to attach it
-            </span>
-            {/* Initial focus, and the equal-status path: nothing in the payload is out of
-                reach without a mouse. */}
-            <Button type="button" size="sm" autoFocus onClick={confirm}>
-              Use whole screenshot
-            </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
-              Cancel
-            </Button>
+          {/* Floats over the still rather than taking layout from it, which is what lets
+              the picture occupy the entire window. */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-6 flex justify-center">
+            <div className="pointer-events-auto flex items-center gap-3 rounded-full bg-popover px-4 py-2 text-popover-foreground shadow-lg">
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {live ? `${live.w} × ${live.h}` : "Drag any area to attach it"}
+              </span>
+              {/* Initial focus, and the equal-status path: nothing in the payload is out of
+                  reach without a mouse. */}
+              <Button type="button" size="sm" autoFocus onClick={confirm}>
+                Use whole screenshot
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+                Cancel
+              </Button>
+            </div>
           </div>
         </DialogPrimitive.Popup>
       </DialogPortal>
