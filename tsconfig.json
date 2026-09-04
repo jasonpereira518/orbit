@@ -19,7 +19,11 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      // Also declared in extension/tsconfig.json, pointing at this same file. Declared
+      // here so root-level scripts (the profile-format smoke test) can import the
+      // extension's pure section readers, which take their types from the wire contract.
+      "@contract": ["./src/lib/extension/contract.ts"]
     }
   },
   "include": [

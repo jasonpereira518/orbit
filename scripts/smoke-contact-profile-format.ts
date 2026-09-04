@@ -4,6 +4,8 @@
  *
  * Run: npx tsx scripts/smoke-contact-profile-format.ts
  */
+import { existsSync, readFileSync } from "node:fs";
+import { parseHTML } from "linkedom";
 import {
   careerLine,
   formatExperienceDates,
@@ -11,6 +13,13 @@ import {
   type ExperienceEntry,
 } from "../src/lib/contact-profile-format";
 import { normalizeCompanyKey } from "../src/lib/company-name";
+import {
+  parseDateRange,
+  readProfileSections,
+} from "../extension/src/inject/adapters/linkedin-profile";
+
+const FIXTURE_EXPANDED = "scripts/fixtures/linkedin-profile-expanded.html";
+const FIXTURE_DETAILS = "scripts/fixtures/linkedin-profile-details-experience.html";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -107,6 +116,99 @@ function main() {
   // --- normalization ------------------------------------------------------------
   check("company key collapses punctuation", normalizeCompanyKey("Google, LLC.") === "google llc");
   check("company key collapses case and spacing", normalizeCompanyKey("  STRIPE  ") === "stripe");
+
+  // --- date range parsing (fully specified, no fixture needed) ------------------
+  check(
+    "month-precision range",
+    JSON.stringify(parseDateRange("Mar 2019 - Nov 2023 · 4 yrs 9 mos")) ===
+      JSON.stringify({ startYear: 2019, startMonth: 3, endYear: 2023, endMonth: 11, isCurrent: false })
+  );
+  check(
+    "present means current with no end",
+    JSON.stringify(parseDateRange("Apr 2023 - Present · 1 yr")) ===
+      JSON.stringify({ startYear: 2023, startMonth: 4, endYear: null, endMonth: null, isCurrent: true })
+  );
+  check(
+    "year-only range",
+    JSON.stringify(parseDateRange("2015 - 2019")) ===
+      JSON.stringify({ startYear: 2015, startMonth: null, endYear: 2019, endMonth: null, isCurrent: false })
+  );
+  check(
+    "unparseable text yields nulls, never guesses",
+    JSON.stringify(parseDateRange("Full-time")) ===
+      JSON.stringify({ startYear: null, startMonth: null, endYear: null, endMonth: null, isCurrent: false })
+  );
+
+  // --- empty-page case (no fixture needed) ---------------------------------------
+  const empty = parseHTML("<main></main>").document;
+  check("an empty page asks for the fallback", readProfileSections(empty).parseIncomplete === true);
+
+  // --- adapter section readers over saved markup ---------------------------------
+  //
+  // These fixtures are real rendered LinkedIn pages, saved from a signed-in browser by a
+  // human (see scripts/fixtures/README.md). They cannot be fabricated here: synthetic
+  // markup would only prove the selectors match an invention, not the real page — the
+  // exact failure this test exists to catch. When LinkedIn ships a redesign this is the
+  // test that fails, which is the whole point: the selectors rot silently otherwise, and
+  // the AI fallback would quietly absorb the cost forever.
+  const fixturesPresent = existsSync(FIXTURE_EXPANDED) && existsSync(FIXTURE_DETAILS);
+
+  if (!fixturesPresent) {
+    const requireFixtures = process.env.ORBIT_REQUIRE_FIXTURES === "1";
+    const banner = [
+      "",
+      "#".repeat(78),
+      "#  PENDING: LinkedIn profile fixtures are missing.",
+      "#  The following behaviors are UNVERIFIED against real LinkedIn markup:",
+      "#    - role extraction from an expanded profile page",
+      "#    - current-role detection (exactly one role marked isCurrent)",
+      "#    - education entries classified as kind: \"education\"",
+      "#    - About section extraction",
+      "#    - the /details/experience subpage path",
+      "#  Missing:",
+      `#    ${FIXTURE_EXPANDED}`,
+      `#    ${FIXTURE_DETAILS}`,
+      "#  See scripts/fixtures/README.md for how to capture them from a signed-in",
+      "#  LinkedIn session. Until they exist, readProfileSections' selectors are",
+      "#  UNVERIFIED against real markup — only parseDateRange and the empty-page",
+      "#  case above have real coverage.",
+      "#".repeat(78),
+      "",
+    ].join("\n");
+    console.log(banner);
+    if (requireFixtures) {
+      throw new Error(
+        "ORBIT_REQUIRE_FIXTURES=1 and the LinkedIn profile fixtures are missing — see banner above"
+      );
+    }
+  } else {
+    const expanded = parseHTML(readFileSync(FIXTURE_EXPANDED, "utf8")).document;
+    const read = readProfileSections(expanded);
+
+    check(
+      "reads at least four roles from an expanded page",
+      read.experiences.filter((e) => e.kind === "role").length >= 4
+    );
+    check(
+      "every entry has an organization",
+      read.experiences.every((e) => e.organization.trim().length > 0)
+    );
+    check("at least one role is dated", read.experiences.some((e) => e.startYear !== null));
+    check(
+      "exactly one role is marked current",
+      read.experiences.filter((e) => e.isCurrent).length === 1
+    );
+    check("education is read as education", read.experiences.some((e) => e.kind === "education"));
+    check("about is read", (read.about ?? "").length > 20);
+    check("a complete read does not ask for the fallback", read.parseIncomplete === false);
+
+    const detailsOnly = parseHTML(readFileSync(FIXTURE_DETAILS, "utf8")).document;
+    const detailsRead = readProfileSections(detailsOnly);
+    check(
+      "the details subpage yields roles too",
+      detailsRead.experiences.filter((e) => e.kind === "role").length >= 4
+    );
+  }
 
   console.log("\ncontact profile formatting: OK");
 }
