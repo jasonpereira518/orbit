@@ -32,6 +32,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-admin-yc-calculations": "pure",
   "smoke-avatar-storage": "pure",
   "smoke-chat-pipeline": "pure",
+  "smoke-chat-prompt": "pure",
   "smoke-chat-retrieval": "pure",
   "smoke-chat-stream": "pure",
   "smoke-closeness": "pure",
