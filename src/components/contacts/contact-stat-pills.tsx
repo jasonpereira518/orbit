@@ -1,5 +1,5 @@
 import { formatDistanceToNow } from "date-fns";
-import { ConstellationPinPill } from "@/components/contacts/constellation-pin-pill";
+import { ConstellationPinButton } from "@/components/contacts/constellation-pin-button";
 import { Badge } from "@/components/ui/badge";
 import {
   closenessTierChipClass,
@@ -43,7 +43,9 @@ export function ContactStatPills({
       : `Connected ${since}`;
 
   return (
-    <div className="flex flex-wrap gap-2">
+    // `items-center` so the constellation button sits on the same baseline as the badges —
+    // it is a real button and slightly taller than they are.
+    <div className="flex flex-wrap items-center gap-2">
       <Badge
         variant="secondary"
         className={cn(
@@ -66,7 +68,7 @@ export function ContactStatPills({
         {lastLabel}
       </Badge>
       {constellation && (
-        <ConstellationPinPill
+        <ConstellationPinButton
           contactId={constellation.contactId}
           pin={constellation.pin}
           substantive={constellation.substantive}
