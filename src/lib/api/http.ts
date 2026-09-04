@@ -145,6 +145,21 @@ export async function readJson<T>(
   return result.data;
 }
 
+/**
+ * Run telemetry after the response, or inline if there is no request scope to defer into.
+ *
+ * `after()` throws when called outside a request — which is exactly what happens when a
+ * handler is invoked directly, as the smoke tests do. Telemetry must never be the reason a
+ * request fails, so the throw is caught rather than allowed to escape a working handler.
+ */
+export function deferTelemetry(fn: () => void | Promise<void>): void {
+  try {
+    after(fn);
+  } catch {
+    void Promise.resolve(fn()).catch(() => null);
+  }
+}
+
 export type HandlerContext = { caller: ApiCaller };
 
 /**
@@ -187,7 +202,7 @@ export function apiHandler(
     }
 
     // Telemetry, deferred so it can never delay or fail the response.
-    after(() => touchApiKeyLastUsed(caller.keyId));
+    deferTelemetry(() => touchApiKeyLastUsed(caller.keyId));
 
     try {
       return await handler(request, { caller });
