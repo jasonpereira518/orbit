@@ -24,6 +24,7 @@ import {
 import { upsertContactEmbedding } from "@/lib/search";
 import { refreshOutreachSuggestions } from "@/lib/reminders";
 import { contactHeadroomForUser } from "@/lib/contact-writes";
+import { calendarExternalIdBase, interactionExternalId } from "@/lib/ingest/external-id";
 
 const SYNC_WINDOW_PAST_MS = 90 * 86400000;
 const SYNC_WINDOW_FUTURE_MS = 60 * 86400000;
@@ -49,7 +50,7 @@ function meetingNote(event: ParsedCalendarEvent) {
 }
 
 function externalIdFor(eventUid: string, contactId: string) {
-  return `cal:${eventUid}:${contactId}`;
+  return interactionExternalId(calendarExternalIdBase(eventUid), contactId);
 }
 
 async function fetchIcs(url: string) {

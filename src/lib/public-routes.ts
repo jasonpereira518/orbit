@@ -37,6 +37,7 @@ export const PUBLIC_ROUTES = [
   "/api/embeddings/backfill",
   "/api/linkedin/timeline-events/backfill",
   "/api/ops/sweep",
+  "/api/sync/run",
   // Genuinely public: browsers POST Content-Security-Policy violation reports here with
   // no session. The handler stores nothing but a directive and a URI, throttled.
   "/api/csp-report",

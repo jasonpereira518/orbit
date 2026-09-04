@@ -10,6 +10,9 @@
 # schedules routinely lag 5–30 minutes under load, and on a public repository they are
 # disabled after 60 days without a commit. If the heartbeat goes quiet, look here first.
 #
+# The same caveats make `next_sync_at` a floor rather than a promise for the connector sync
+# below: nothing may assume a fixed interval between runs.
+#
 # Secrets: APP_URL (https://orbit.jasonpereira.live), CRON_SECRET (the same value as the
 # Vercel env var), SLACK_OPS_CRITICAL_WEBHOOK_URL (for the "app is down" fallback).
 name: ops
@@ -18,6 +21,7 @@ on:
   schedule:
     - cron: "*/10 * * * *"
     - cron: "7 * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 concurrency:
@@ -61,8 +65,12 @@ jobs:
         env:
           SLACK_OPS_CRITICAL_WEBHOOK_URL: ${{ secrets.SLACK_OPS_CRITICAL_WEBHOOK_URL }}
 
+      # Excluded from the sync-only schedule on purpose. Without this gate, adding a third
+      # cron would silently raise the sweep's own cadence from every ten minutes to roughly
+      # every six — more alert evaluations and more ledger rows than anyone chose. An empty
+      # `github.event.schedule` (workflow_dispatch) still passes, so a manual run sweeps.
       - name: Run the ops sweep
-        if: steps.health.outcome == 'success'
+        if: github.event.schedule != '*/15 * * * *' && steps.health.outcome == 'success'
         run: |
           main_sha=$(git rev-parse HEAD)
           main_at=$(git log -1 --format=%cI)
@@ -80,6 +88,23 @@ jobs:
           curl -sS --fail-with-body --max-time 300 \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/imports/process-stalled"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Continuous connector sync (Google Calendar today). Its own schedule rather than a
+      # rider on the ten-minute sweep: that sweep is the alerting path and is already budgeted
+      # to 55s, and a provider call of unpredictable latency must not make the alert cadence
+      # hostage to Google being slow.
+      #
+      # Gated on the schedule only. A `secrets.*` reference in an `if:` is not permitted and
+      # fails the whole workflow at parse time — see commit e9bc98e.
+      - name: Run the connector sync (every 15 minutes)
+        if: github.event.schedule == '*/15 * * * *' && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail-with-body --max-time 300 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/sync/run"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}

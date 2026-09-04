@@ -14,7 +14,7 @@ import { toUserFacingError } from "@/lib/errors";
  */
 
 /** `ops.sweep` is the ten-minute known-condition sweep (`src/lib/ops-sweep.ts`). */
-export type CronJobName = "imports.process-stalled" | "ops.sweep";
+export type CronJobName = "imports.process-stalled" | "ops.sweep" | "sync.run";
 
 export type CronRunStatus = "ok" | "partial" | "failed";
 

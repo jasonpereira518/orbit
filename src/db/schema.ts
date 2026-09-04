@@ -1276,6 +1276,67 @@ export const recruiterMessages = pgTable(
   ]
 );
 
+/**
+ * Where a provider's incremental sync left off. Opaque and provider-shaped, keyed by
+ * resource so one column serves every resource a provider exposes — Google Calendar's
+ * `syncToken`/`pageToken` today, Gmail's `historyId` and Graph's `deltaLink` later,
+ * without another migration.
+ *
+ * `pageToken` is stored alongside `syncToken` on purpose: Google only returns
+ * `nextSyncToken` on the FINAL page of a run, so a run stopped mid-chain by the time
+ * budget must resume from the page it reached or it would lose every event before it.
+ */
+export type CalendarSyncCursor = {
+  syncToken?: string | null;
+  pageToken?: string | null;
+  windowStart?: string | null;
+  windowEnd?: string | null;
+};
+
+export type ProviderSyncCursor = {
+  /** Explicitly nullable, not merely optional: "no cursor yet" and "cursor deliberately
+   *  cleared after a 410" are the same state, and callers pass it around as `| null`. */
+  calendar?: CalendarSyncCursor | null;
+};
+
+/**
+ * Continuous-sync bookkeeping, shared byte-for-byte by every provider connection table.
+ *
+ * A function rather than a shared object because each `pgTable` needs its own column
+ * builder instances — reusing one object across two tables aliases them.
+ *
+ * Deliberately NOT folded into the existing `status` column. That one is about *consent*
+ * and has exactly two values on purpose (see its comment below); `admin-system.ts` counts
+ * `status <> 'active'` as "needs reauth", so a transient `'syncing'` there would report
+ * every actively-syncing connection as broken. `syncStatus` is about a *run*. The two are
+ * orthogonal and must stay separate.
+ */
+function syncStateColumns() {
+  return {
+    /** Provider-shaped incremental cursor. Null until the first successful sync. */
+    syncCursor: jsonb("sync_cursor").$type<ProviderSyncCursor>(),
+    /**
+     * When this connection next becomes eligible for a sync run, or NULL for "not
+     * scheduled" — never connected, disarmed after repeated failure, or awaiting reauth.
+     * A floor, never a promise: the scheduler is driven by GitHub Actions, whose cron
+     * routinely lags 5-30 minutes.
+     */
+    nextSyncAt: timestamp("next_sync_at", { withTimezone: true }),
+    syncStatus: text("sync_status").$type<"idle" | "syncing" | "error">(),
+    /**
+     * Lease timestamp, set when a run claims this row. Load-bearing: without it
+     * `syncStatus = 'syncing'` latches forever the first time an invocation is killed
+     * mid-run, and the connection is never swept again. The claim predicate treats a
+     * lease older than its term as reclaimable.
+     */
+    syncStartedAt: timestamp("sync_started_at", { withTimezone: true }),
+    /** Last failure, truncated on write like every other error column here. */
+    syncError: text("sync_error"),
+    /** Consecutive failures: the backoff exponent and the give-up counter. */
+    syncFailures: integer("sync_failures").notNull().default(0),
+  };
+}
+
 export const gmailConnections = pgTable(
   "gmail_connections",
   {
@@ -1298,10 +1359,16 @@ export const gmailConnections = pgTable(
     status: text("status").$type<"active" | "needs_reauth">().default("active").notNull(),
     /** Last time this connection produced a usable access token. */
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    ...syncStateColumns(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [index("gmail_connections_user_idx").on(t.userId)]
+  (t) => [
+    index("gmail_connections_user_idx").on(t.userId),
+    index("gmail_connections_due_idx")
+      .on(t.nextSyncAt)
+      .where(sql`next_sync_at is not null`),
+  ]
 );
 
 export const outlookConnections = pgTable(
@@ -1326,10 +1393,16 @@ export const outlookConnections = pgTable(
     status: text("status").$type<"active" | "needs_reauth">().default("active").notNull(),
     /** Last time this connection produced a usable access token. */
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    ...syncStateColumns(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [index("outlook_connections_user_idx").on(t.userId)]
+  (t) => [
+    index("outlook_connections_user_idx").on(t.userId),
+    index("outlook_connections_due_idx")
+      .on(t.nextSyncAt)
+      .where(sql`next_sync_at is not null`),
+  ]
 );
 
 export type ChatRecommendation = {
