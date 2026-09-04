@@ -5,7 +5,6 @@ import {
   getContactFollowUpSendOptions,
   listRelatedContacts,
 } from "@/actions/contacts";
-import { ContactAddNotesCard } from "@/components/contacts/contact-add-notes-card";
 import { ContactBriefCard } from "@/components/contacts/contact-brief-card";
 import { ContactFollowUpSection } from "@/components/contacts/contact-follow-up-section";
 import { ContactMentionsSection } from "@/components/contacts/contact-mentions-section";
@@ -165,6 +164,10 @@ export default async function ContactDetailPage({
     contact.interactions.map((i) => i.interactionDate)
   );
 
+  // Awaited once here rather than inline: both the brief card's next-steps list and the
+  // timeline's per-interaction "N open" chips read the same rows.
+  const nextSteps = await nextStepsPromise;
+
   const formInitial = {
     fullName: contact.fullName,
     preferredName: contact.preferredName || "",
@@ -239,7 +242,7 @@ export default async function ContactDetailPage({
           contactId={contact.id}
           standing={brief?.standing ?? null}
           recentDiscussions={brief?.recentDiscussions ?? []}
-          nextSteps={(await nextStepsPromise).map((item) => ({
+          nextSteps={nextSteps.map((item) => ({
             ...item,
             interactionDate: new Date(item.interactionDate).toISOString(),
           }))}
@@ -275,19 +278,14 @@ export default async function ContactDetailPage({
         />
       </Suspense>
 
-      {/* Streamed so the settings read never blocks the rest of the profile; no
-          fallback because the card's own place in the flow is what would flicker. */}
-      <Suspense fallback={null}>
-        <StreamedAddNotes
+      {/* Streamed so the settings read never blocks the rest of the profile. The timeline
+          needs it: whether an AI key is configured decides whether logging an interaction
+          extracts a summary or just files the note as written. */}
+      <Suspense fallback={<Skeleton className="h-96 w-full rounded-2xl" />}>
+        <StreamedTimeline
           settings={settingsPromise}
           contactId={contact.id}
           contactName={displayName}
-        />
-      </Suspense>
-
-      <Reveal>
-        <ContactTimeline
-          contactId={contact.id}
           interactions={contact.interactions.map((i) => ({
             id: i.id,
             interactionType: i.interactionType,
@@ -297,8 +295,12 @@ export default async function ContactDetailPage({
             aiSummary: i.aiSummary,
             actionItems: i.actionItems,
           }))}
+          openActionItems={nextSteps.map((item) => ({
+            id: item.id,
+            interactionId: item.interactionId,
+          }))}
         />
-      </Reveal>
+      </Suspense>
 
       <Reveal>
         <ContactRemindersSection reminders={contact.reminders ?? []} />
@@ -340,23 +342,22 @@ async function StreamedFollowUp({
   );
 }
 
-async function StreamedAddNotes({
+async function StreamedTimeline({
   settings,
-  contactId,
-  contactName,
+  ...rest
 }: {
   settings: Promise<{ hasApiKey: boolean }>;
   contactId: string;
   contactName: string;
+  interactions: React.ComponentProps<typeof ContactTimeline>["interactions"];
+  openActionItems: React.ComponentProps<
+    typeof ContactTimeline
+  >["openActionItems"];
 }) {
   const { hasApiKey } = await settings;
   return (
     <div className="reveal-mount">
-      <ContactAddNotesCard
-        contactId={contactId}
-        contactName={contactName}
-        hasApiKey={hasApiKey}
-      />
+      <ContactTimeline {...rest} hasApiKey={hasApiKey} />
     </div>
   );
 }

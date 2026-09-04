@@ -1,27 +1,11 @@
 "use client";
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useTransition,
-} from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import {
-  ArrowDown,
-  ArrowUp,
-  FileText,
-  Pencil,
-  Plus,
-} from "lucide-react";
+import { CircleDashed, FileText, Plus } from "lucide-react";
 import { toast } from "@/lib/toast";
-import {
-  logInteraction,
-  reorderSameDayInteractions,
-  updateInteraction,
-} from "@/actions/contacts";
+import { reorderSameDayInteractions } from "@/actions/contacts";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -31,28 +15,20 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   TimelineDateScrubber,
   monthKeyFromDate,
   monthLabel,
   monthShort,
 } from "@/components/contacts/timeline-date-scrubber";
+import { InteractionDetailSheet } from "@/components/contacts/interaction-detail-sheet";
+import { LogInteractionSheet } from "@/components/contacts/log-interaction-sheet";
+import {
+  interactionTypeIcon,
+  interactionTypeLabel,
+  isWarmInteractionType,
+} from "@/lib/interaction-types";
 import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
+import { cn } from "@/lib/utils";
 
 export type TimelineInteraction = {
   id: string;
@@ -64,51 +40,45 @@ export type TimelineInteraction = {
   actionItems: string[] | null;
 };
 
-const TYPES = [
-  { value: "note", label: "Note" },
-  { value: "meeting", label: "Meeting" },
-  { value: "reach_out", label: "Reach out" },
-  { value: "in_person", label: "In person" },
-  { value: "email", label: "Email" },
-  { value: "linkedin_message", label: "LinkedIn" },
-  { value: "call", label: "Call" },
-] as const;
+/** How many rows get a staggered entrance before the cascade is capped. */
+const STAGGER_LIMIT = 8;
+const STAGGER_STEP_MS = 30;
 
 function dayKey(d: Date | string) {
   return format(new Date(d), "yyyy-MM-dd");
 }
 
-function typeLabel(type: string) {
-  return TYPES.find((t) => t.value === type)?.label || type.replace(/_/g, " ");
-}
-
-function oneLine(i: TimelineInteraction) {
-  const text = (i.aiSummary || i.rawNotes || "").trim();
+/**
+ * The line shown on the row. Two rendered lines' worth is the budget — the row clamps it —
+ * so this only guards against handing the browser a whole pasted note to lay out.
+ */
+function preview(i: TimelineInteraction) {
+  const text = (i.aiSummary || i.rawNotes || "").replace(/\s+/g, " ").trim();
   if (!text) return "Interaction logged";
-  const line = text.split(/\n/)[0]?.trim() || text;
-  return line.length > 160 ? `${line.slice(0, 157)}…` : line;
+  return text.length > 240 ? `${text.slice(0, 237)}…` : text;
 }
 
 export function ContactTimeline({
   contactId,
+  contactName,
   interactions,
+  openActionItems,
+  hasApiKey,
 }: {
   contactId: string;
+  contactName: string;
   interactions: TimelineInteraction[];
+  /** Open items for this contact, from the same query the brief card's next steps use. */
+  openActionItems: { id: string; interactionId: string }[];
+  hasApiKey: boolean;
 }) {
   const router = useRouter();
   useRefreshOnVisible();
   const listRef = useRef<HTMLDivElement>(null);
-  const [pending, start] = useTransition();
-  const [notesOpen, setNotesOpen] = useState<TimelineInteraction | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editing, setEditing] = useState<TimelineInteraction | null>(null);
-  const [formType, setFormType] = useState("note");
-  const [formDate, setFormDate] = useState("");
-  const [formSummary, setFormSummary] = useState("");
-  const [formNotes, setFormNotes] = useState("");
-  const [formActions, setFormActions] = useState("");
+  const [, start] = useTransition();
   const [activeMonth, setActiveMonth] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [logOpen, setLogOpen] = useState(false);
 
   const sorted = useMemo(() => {
     return [...interactions].sort((a, b) => {
@@ -118,6 +88,15 @@ export function ContactTimeline({
       return (a.sameDayOrder ?? 0) - (b.sameDayOrder ?? 0);
     });
   }, [interactions]);
+
+  /** interactionId → count of still-open action items, grouped from data the page already has. */
+  const openByInteraction = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const item of openActionItems) {
+      map.set(item.interactionId, (map.get(item.interactionId) ?? 0) + 1);
+    }
+    return map;
+  }, [openActionItems]);
 
   const monthGroups = useMemo(() => {
     const groups: Array<{
@@ -191,90 +170,48 @@ export function ContactTimeline({
     el?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  function openCreate() {
-    setEditing(null);
-    setFormType("note");
-    setFormDate(format(new Date(), "yyyy-MM-dd"));
-    setFormSummary("");
-    setFormNotes("");
-    setFormActions("");
-    setEditorOpen(true);
+  /** Same-day siblings of `id`, in display order — the basis for the reorder controls. */
+  function sameDaySiblings(id: string) {
+    const target = sorted.find((x) => x.id === id);
+    if (!target) return { list: [] as TimelineInteraction[], index: -1 };
+    const key = dayKey(target.interactionDate);
+    const list = sorted.filter((x) => dayKey(x.interactionDate) === key);
+    return { list, index: list.findIndex((x) => x.id === id) };
   }
 
-  function openEdit(i: TimelineInteraction) {
-    setEditing(i);
-    setFormType(i.interactionType || "note");
-    setFormDate(format(new Date(i.interactionDate), "yyyy-MM-dd"));
-    setFormSummary((i.aiSummary || "").trim());
-    setFormNotes((i.rawNotes || "").trim());
-    setFormActions((i.actionItems || []).join("\n"));
-    setEditorOpen(true);
-  }
+  function move(id: string, direction: -1 | 1) {
+    const { list, index } = sameDaySiblings(id);
+    const j = index + direction;
+    if (index < 0 || !list[j]) return;
 
-  function save() {
-    const actionItems = formActions
-      .split("\n")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const ordered = list.map((x) => x.id);
+    [ordered[index], ordered[j]] = [ordered[j], ordered[index]];
+
     start(async () => {
       try {
-        if (editing) {
-          await updateInteraction(editing.id, {
-            interactionType: formType,
-            interactionDate: formDate,
-            aiSummary: formSummary.trim() || undefined,
-            rawNotes: formNotes.trim() || undefined,
-            actionItems,
-            parseDateFromNotes: !formDate,
-          });
-          toast.success("Interaction updated");
-        } else {
-          await logInteraction({
-            contactId,
-            interactionType: formType,
-            interactionDate: formDate || undefined,
-            aiSummary: formSummary.trim() || undefined,
-            rawNotes: formNotes.trim() || undefined,
-            actionItems,
-            parseDateFromNotes: true,
-          });
-          toast.success("Interaction added");
-        }
-        setEditorOpen(false);
+        await reorderSameDayInteractions(
+          contactId,
+          dayKey(list[index].interactionDate),
+          ordered
+        );
         router.refresh();
       } catch (err) {
-        toast.error(
-          err instanceof Error ? err.message : "Could not save interaction"
-        );
+        toast.error(err instanceof Error ? err.message : "Could not reorder");
       }
     });
   }
 
-  function move(i: TimelineInteraction, direction: -1 | 1) {
-    const key = dayKey(i.interactionDate);
-    const sameDay = sorted.filter((x) => dayKey(x.interactionDate) === key);
-    const idx = sameDay.findIndex((x) => x.id === i.id);
-    const swapWith = sameDay[idx + direction];
-    if (!swapWith) return;
+  const selectedSiblings = selectedId
+    ? sameDaySiblings(selectedId)
+    : { list: [], index: -1 };
 
-    const ordered = sameDay.map((x) => x.id);
-    const j = idx + direction;
-    [ordered[idx], ordered[j]] = [ordered[j], ordered[idx]];
-
-    start(async () => {
-      try {
-        await reorderSameDayInteractions(contactId, key, ordered);
-        router.refresh();
-      } catch (err) {
-        toast.error(
-          err instanceof Error ? err.message : "Could not reorder"
-        );
-      }
-    });
-  }
+  let rowIndex = 0;
 
   return (
-    <Card id="interaction-timeline" className="scroll-mt-24 border-border/70 shadow-none">
+    <Card
+      id="interaction-timeline"
+      className="scroll-mt-24 border-border/70 shadow-none"
+    >
       <CardHeader className="border-b border-border/50">
         <CardTitle>Timeline</CardTitle>
         <CardAction>
@@ -283,18 +220,36 @@ export function ContactTimeline({
             size="sm"
             variant="outline"
             className="h-8 gap-1.5"
-            onClick={openCreate}
+            onClick={() => setLogOpen(true)}
           >
             <Plus className="size-3.5" />
-            Add
+            Log interaction
           </Button>
         </CardAction>
       </CardHeader>
       <CardContent className="pt-4">
         {sorted.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No interactions yet. Add a note or import messages to build history.
-          </p>
+          <div className="flex flex-col items-center gap-3 py-8 text-center">
+            <span className="flex size-11 items-center justify-center rounded-full border border-dashed border-border text-muted-foreground">
+              <CircleDashed className="size-5" />
+            </span>
+            <div>
+              <p className="text-sm text-ink">Nothing logged yet</p>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                Every meeting, intro and run-in you record shows up here.
+              </p>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => setLogOpen(true)}
+            >
+              <Plus className="size-3.5" />
+              Log your first interaction
+            </Button>
+          </div>
         ) : (
           <div className="flex gap-3">
             <div
@@ -309,98 +264,104 @@ export function ContactTimeline({
                     id={`timeline-month-${group.monthKey}`}
                     className="scroll-mt-2"
                   >
-                    <h3 className="sticky top-0 z-[1] mb-3 bg-card/95 py-1.5 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground backdrop-blur">
+                    <h3 className="sticky top-0 z-[2] mb-2 bg-card/95 py-1.5 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground backdrop-blur">
                       {group.label}
                     </h3>
-                    <ul className="space-y-4">
+                    <ul className="relative">
+                      {/* The spine. One continuous rule behind the nodes, fading out at the
+                          foot of each month so the line reads as a thread rather than a border. */}
+                      <span
+                        aria-hidden
+                        className="absolute left-[15px] top-2 bottom-2 w-px bg-gradient-to-b from-primary/30 via-primary/20 to-transparent"
+                      />
                       {group.items.map((i) => {
-                        const key = dayKey(i.interactionDate);
-                        const sameDay = group.items.filter(
-                          (x) => dayKey(x.interactionDate) === key
-                        );
-                        const idx = sameDay.findIndex((x) => x.id === i.id);
-                        const canUp = idx > 0;
-                        const canDown =
-                          idx < sameDay.length - 1 && sameDay.length > 1;
+                        const Icon = interactionTypeIcon(i.interactionType);
+                        const warm = isWarmInteractionType(i.interactionType);
+                        const openCount = openByInteraction.get(i.id) ?? 0;
                         const hasNotes = Boolean(i.rawNotes?.trim());
+                        const selected = selectedId === i.id;
+                        const delay =
+                          rowIndex < STAGGER_LIMIT
+                            ? `${rowIndex * STAGGER_STEP_MS}ms`
+                            : "0ms";
+                        rowIndex += 1;
 
                         return (
                           <li
                             key={i.id}
                             id={`interaction-${i.id}`}
-                            data-day-key={key}
-                            className="scroll-mt-4 border-l-2 border-primary/25 pl-4"
+                            className="reveal-mount scroll-mt-4"
+                            style={
+                              {
+                                "--reveal-delay": delay,
+                              } as React.CSSProperties
+                            }
                           >
-                            <div className="flex flex-wrap items-start justify-between gap-2">
-                              <div className="min-w-0 flex-1">
-                                <p className="text-xs text-muted-foreground">
-                                  {format(
-                                    new Date(i.interactionDate),
-                                    "MMM d, yyyy"
-                                  )}{" "}
-                                  ·{" "}
-                                  <span className="capitalize">
-                                    {typeLabel(i.interactionType)}
-                                  </span>
-                                </p>
-                                <p className="mt-1 text-sm text-ink">
-                                  {oneLine(i)}
-                                </p>
-                                {(i.actionItems || []).length > 0 ? (
-                                  <ul className="mt-2 list-disc space-y-0.5 pl-4 text-xs text-muted-foreground">
-                                    {i.actionItems!.map((item) => (
-                                      <li key={item}>{item}</li>
-                                    ))}
-                                  </ul>
-                                ) : null}
-                              </div>
-                              <div className="flex shrink-0 items-center gap-0.5">
-                                {sameDay.length > 1 ? (
-                                  <>
-                                    <Button
-                                      type="button"
-                                      size="icon-xs"
-                                      variant="ghost"
-                                      disabled={pending || !canUp}
-                                      aria-label="Move earlier in day"
-                                      onClick={() => move(i, -1)}
-                                    >
-                                      <ArrowUp className="size-3.5" />
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      size="icon-xs"
-                                      variant="ghost"
-                                      disabled={pending || !canDown}
-                                      aria-label="Move later in day"
-                                      onClick={() => move(i, 1)}
-                                    >
-                                      <ArrowDown className="size-3.5" />
-                                    </Button>
-                                  </>
-                                ) : null}
-                                {hasNotes ? (
-                                  <Button
-                                    type="button"
-                                    size="icon-xs"
-                                    variant="ghost"
-                                    aria-label="Open notes"
-                                    onClick={() => setNotesOpen(i)}
+                            <button
+                              type="button"
+                              onClick={() => setSelectedId(i.id)}
+                              aria-expanded={selected}
+                              className={cn(
+                                "group relative flex w-full items-start gap-3 rounded-xl py-2 pr-2 text-left",
+                                "transition-colors duration-(--transition-duration-fast) ease-(--ease-house)",
+                                "focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
+                                selected ? "bg-muted/50" : "hover:bg-muted/40"
+                              )}
+                            >
+                              <span
+                                className={cn(
+                                  "relative z-[1] mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border bg-card",
+                                  "transition-[transform,border-color,background-color] duration-(--transition-duration-fast) ease-(--ease-house)",
+                                  "group-hover:scale-110",
+                                  warm
+                                    ? "border-primary/40 bg-primary/10 text-primary"
+                                    : "border-border text-muted-foreground",
+                                  selected &&
+                                    "scale-110 border-primary bg-primary/15 text-primary"
+                                )}
+                              >
+                                <Icon className="size-3.5" />
+                              </span>
+
+                              <span className="min-w-0 flex-1">
+                                <span className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+                                  <time
+                                    dateTime={new Date(
+                                      i.interactionDate
+                                    ).toISOString()}
+                                    className="tabular-nums"
                                   >
-                                    <FileText className="size-3.5" />
-                                  </Button>
+                                    {format(
+                                      new Date(i.interactionDate),
+                                      "MMM d, yyyy"
+                                    )}
+                                  </time>
+                                  <span aria-hidden>·</span>
+                                  <span>
+                                    {interactionTypeLabel(i.interactionType)}
+                                  </span>
+                                </span>
+                                <span className="mt-1 line-clamp-2 block text-sm leading-relaxed text-ink">
+                                  {preview(i)}
+                                </span>
+                                {openCount > 0 || hasNotes ? (
+                                  <span className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                                    {openCount > 0 ? (
+                                      <span className="inline-flex items-center gap-1 rounded-full border border-border/60 px-2 py-0.5">
+                                        <span className="size-1.5 rounded-full bg-primary" />
+                                        {openCount} open
+                                      </span>
+                                    ) : null}
+                                    {hasNotes ? (
+                                      <span className="inline-flex items-center gap-1">
+                                        <FileText className="size-3" />
+                                        Notes
+                                      </span>
+                                    ) : null}
+                                  </span>
                                 ) : null}
-                                <Button
-                                  type="button"
-                                  size="icon-xs"
-                                  variant="ghost"
-                                  aria-label="Edit interaction"
-                                  onClick={() => openEdit(i)}
-                                >
-                                  <Pencil className="size-3.5" />
-                                </Button>
-                              </div>
-                            </div>
+                              </span>
+                            </button>
                           </li>
                         );
                       })}
@@ -420,95 +381,25 @@ export function ContactTimeline({
         )}
       </CardContent>
 
-      <Sheet open={Boolean(notesOpen)} onOpenChange={(o) => !o && setNotesOpen(null)}>
-        <SheetContent className="sm:max-w-md">
-          <SheetHeader>
-            <SheetTitle>Notes</SheetTitle>
-          </SheetHeader>
-          <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-ink">
-            {notesOpen?.rawNotes?.trim() || "No notes."}
-          </p>
-        </SheetContent>
-      </Sheet>
+      <InteractionDetailSheet
+        interactionId={selectedId}
+        canReorder={{
+          up: selectedSiblings.index > 0,
+          down:
+            selectedSiblings.index >= 0 &&
+            selectedSiblings.index < selectedSiblings.list.length - 1,
+        }}
+        onReorder={(direction) => selectedId && move(selectedId, direction)}
+        onOpenChange={(open) => !open && setSelectedId(null)}
+      />
 
-      <Sheet open={editorOpen} onOpenChange={setEditorOpen}>
-        <SheetContent className="overflow-y-auto sm:max-w-md">
-          <SheetHeader>
-            <SheetTitle>
-              {editing ? "Edit interaction" : "Add interaction"}
-            </SheetTitle>
-          </SheetHeader>
-          <div className="mt-6 space-y-4">
-            <div className="space-y-2">
-              <Label>Type</Label>
-              <Select
-                value={formType}
-                onValueChange={(v) => setFormType(v || "note")}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {TYPES.map((t) => (
-                    <SelectItem key={t.value} value={t.value}>
-                      {t.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="interaction-date">Date</Label>
-              <Input
-                id="interaction-date"
-                type="date"
-                value={formDate}
-                onChange={(e) => setFormDate(e.target.value)}
-              />
-              <p className="text-[11px] text-muted-foreground">
-                If the notes mention a date, we&apos;ll use that when you leave
-                this blank on create.
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="interaction-summary">One-line summary</Label>
-              <Input
-                id="interaction-summary"
-                value={formSummary}
-                onChange={(e) => setFormSummary(e.target.value)}
-                placeholder="What happened"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="interaction-notes">Notes</Label>
-              <Textarea
-                id="interaction-notes"
-                rows={5}
-                value={formNotes}
-                onChange={(e) => setFormNotes(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="interaction-actions">
-                Action items (one per line)
-              </Label>
-              <Textarea
-                id="interaction-actions"
-                rows={3}
-                value={formActions}
-                onChange={(e) => setFormActions(e.target.value)}
-              />
-            </div>
-            <Button
-              type="button"
-              disabled={pending || (!formSummary.trim() && !formNotes.trim())}
-              onClick={save}
-            >
-              {pending ? "Saving…" : "Save"}
-            </Button>
-          </div>
-        </SheetContent>
-      </Sheet>
+      <LogInteractionSheet
+        contactId={contactId}
+        contactName={contactName}
+        hasApiKey={hasApiKey}
+        open={logOpen}
+        onOpenChange={setLogOpen}
+      />
     </Card>
   );
 }
