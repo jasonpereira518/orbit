@@ -1480,12 +1480,15 @@ function GraphCanvasInner({
                     type="button"
                     disabled={loadingAll}
                     onClick={onShowAll}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm text-white/70 hover:text-white disabled:opacity-60"
+                    aria-busy={loadingAll}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm text-white/70 hover:text-white disabled:opacity-70"
                   >
                     {loadingAll && (
                       <Loader2 className="size-3 animate-spin" aria-hidden />
                     )}
-                    Show all {data.summary.total.toLocaleString()}
+                    {loadingAll
+                      ? "Loading…"
+                      : `Show all ${data.summary.total.toLocaleString()}`}
                   </button>
                 </div>
               </>
@@ -2119,12 +2122,17 @@ export function NetworkGraph({
                     type="button"
                     disabled={loadingAll}
                     onClick={() => setScope(true)}
-                    className="inline-flex items-center gap-1 text-white/90 underline underline-offset-2 hover:text-white disabled:opacity-60"
+                    aria-busy={loadingAll}
+                    className="inline-flex items-center gap-1 text-white/90 underline underline-offset-2 hover:text-white disabled:no-underline disabled:opacity-70"
                   >
                     {loadingAll && (
                       <Loader2 className="size-3 animate-spin" aria-hidden />
                     )}
-                    Show all connections
+                    {/* Names the size of what it is loading, because on a large network this
+                        is a genuinely slow fetch and a bare spinner reads as a hang. */}
+                    {loadingAll
+                      ? `Loading all ${data.summary.total.toLocaleString()}…`
+                      : "Show all connections"}
                   </button>
                 </>
               )}
