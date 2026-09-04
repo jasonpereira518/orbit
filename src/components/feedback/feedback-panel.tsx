@@ -157,14 +157,8 @@ export function FeedbackPanel({
     width: number;
     height: number;
   } | null>(null);
-  const raf = useRef<number | null>(null);
-  const pending = useRef<{ x: number; y: number } | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (raf.current !== null) cancelAnimationFrame(raf.current);
-    };
-  }, []);
+  /** The live offset during a drag, which React does not see until the pointer is released. */
+  const liveOffset = useRef(offset);
 
   function startDrag(e: React.PointerEvent) {
     if (e.button !== 0) return;
@@ -183,6 +177,7 @@ export function FeedbackPanel({
     } catch {
       // Ignored on purpose — see above.
     }
+    liveOffset.current = offset;
     dragFrom.current = {
       px: e.clientX,
       py: e.clientY,
@@ -196,37 +191,40 @@ export function FeedbackPanel({
     setDragging(true);
   }
 
+  /**
+   * Move the window by writing the transform straight to the node.
+   *
+   * Deliberately NOT React state. The panel holds a textarea, a select and the screenshot
+   * thumbnails, and re-rendering all of it on every pointermove is what made the drag feel
+   * heavy. Setting `translate` touches no layout — the compositor takes it — so this stays
+   * smooth however fast the pointer moves, and the state is reconciled once on release.
+   *
+   * It also drops the rAF this used to coalesce through: the browser already delivers
+   * pointermove at most once per frame, and a style write is far cheaper than the render
+   * the coalescing existed to avoid.
+   */
   function moveDrag(e: React.PointerEvent) {
-    const from = dragFrom.current;
-    if (!from) return;
-    pending.current = { x: e.clientX, y: e.clientY };
-    // One state write per frame: pointermove fires far faster than the screen paints.
-    if (raf.current !== null) return;
-    raf.current = requestAnimationFrame(() => {
-      raf.current = null;
-      const point = pending.current;
-      const start = dragFrom.current;
-      if (!point || !start) return;
+    const start = dragFrom.current;
+    const node = panelRef.current;
+    if (!start || !node) return;
 
-      onOffsetChange(
-        clampPanelOffset({
-          start: { left: start.left, top: start.top, width: start.width, height: start.height },
-          startOffset: { x: start.ox, y: start.oy },
-          delta: { x: point.x - start.px, y: point.y - start.py },
-          viewport: { width: window.innerWidth, height: window.innerHeight },
-        })
-      );
+    const next = clampPanelOffset({
+      start: { left: start.left, top: start.top, width: start.width, height: start.height },
+      startOffset: { x: start.ox, y: start.oy },
+      delta: { x: e.clientX - start.px, y: e.clientY - start.py },
+      viewport: { width: window.innerWidth, height: window.innerHeight },
     });
+    liveOffset.current = next;
+    node.style.translate = `${next.x}px ${next.y}px`;
   }
 
   function endDrag() {
     if (!dragFrom.current) return;
     dragFrom.current = null;
-    if (raf.current !== null) {
-      cancelAnimationFrame(raf.current);
-      raf.current = null;
-    }
     setDragging(false);
+    // Hand the final position to React so the style prop and the DOM agree. Re-rendering
+    // writes the same `translate` that is already on the node, so nothing moves.
+    onOffsetChange(liveOffset.current);
   }
 
   async function send() {
@@ -296,7 +294,7 @@ export function FeedbackPanel({
         // an ease-OUT arriving and an ease-IN leaving. One curve in both directions is what
         // made closing feel like it stopped dead rather than being drawn back into the
         // button. `.liquid-glass` on its own would not match those selectors.
-        className="liquid-glass liquid-glass-panel gap-5 overflow-y-auto p-6"
+        className="liquid-glass liquid-glass-panel gap-6 overflow-y-auto p-6"
         // Lighter than the shared default, exactly as the notifications window does it: the
         // page behind stays legible instead of being dimmed to a modal.
         overlayClassName="bg-black/5 supports-backdrop-filter:backdrop-blur-[1.5px]"
@@ -399,7 +397,12 @@ export function FeedbackPanel({
           )}
         </div>
 
-        <div className="grid gap-2">
+        {/* `mt-1` on top of the panel gap. A flat rhythm measured evenly but did not read
+            evenly: the message box and this one are both large bordered surfaces, and the
+            same 20px that looks generous under a text label looks pinched between two
+            heavy boxes. This is a separate step from writing the message, and now looks
+            like one. */}
+        <div className="mt-1 grid gap-2">
           {/* The primary way to attach one: full width, its own label, and an explanation of
               what the gesture is. It was a 72px dashed tile next to the thumbnails and read
               as an afterthought — which is backwards, since a screenshot is the most useful
@@ -480,7 +483,7 @@ export function FeedbackPanel({
           )}
         </div>
 
-        <div className="mt-auto flex justify-end gap-2 pt-2">
+        <div className="mt-auto flex justify-end gap-2 pt-1">
           <Button
             type="button"
             variant="ghost"
