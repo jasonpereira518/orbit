@@ -26,6 +26,8 @@ import type {
 
 /** Hard ceiling on a request body, checked before and after reading. */
 export const MAX_BODY_BYTES = 64_000;
+/** Profile captures carry every section's text; the general cap is for small payloads. */
+export const MAX_PROFILE_BODY_BYTES = 300_000;
 /** Page text is truncated to this before it ever reaches a prompt. */
 export const MAX_RAW_TEXT_CHARS = 8_000;
 
@@ -71,8 +73,57 @@ const pageIdentitySchema = z.object({
   photoUrl: extractedField,
 });
 
+export const pageExperienceSchema = z.object({
+  kind: z.enum(["role", "education"]),
+  organization: z.string().min(1).max(200),
+  title: z.string().max(200).nullable(),
+  fieldOfStudy: z.string().max(200).nullable(),
+  location: z.string().max(200).nullable(),
+  description: z.string().max(2000).nullable(),
+  startYear: z.number().int().min(1900).max(2100).nullable(),
+  startMonth: z.number().int().min(1).max(12).nullable(),
+  endYear: z.number().int().min(1900).max(2100).nullable(),
+  endMonth: z.number().int().min(1).max(12).nullable(),
+  isCurrent: z.boolean(),
+});
+
+export const pageProfileSchema = z.object({
+  headline: z.string().max(400).nullable(),
+  about: z.string().max(8000).nullable(),
+  skills: z.array(z.object({ name: z.string().min(1).max(120) })).max(60),
+  certifications: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(200),
+        issuer: z.string().max(200).nullable(),
+        year: z.number().int().min(1900).max(2100).nullable(),
+      })
+    )
+    .max(40),
+  volunteering: z
+    .array(
+      z.object({
+        organization: z.string().min(1).max(200),
+        role: z.string().max(200).nullable(),
+        years: z.string().max(60).nullable(),
+      })
+    )
+    .max(30),
+  publications: z
+    .array(
+      z.object({
+        title: z.string().min(1).max(300),
+        publisher: z.string().max(200).nullable(),
+        year: z.number().int().min(1900).max(2100).nullable(),
+      })
+    )
+    .max(30),
+  experiences: z.array(pageExperienceSchema).max(60),
+  parseIncomplete: z.boolean(),
+});
+
 export const pageContextSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.union([z.literal(1), z.literal(2)]),
   site: z.enum(["linkedin", "x", "gmail", "generic"]),
   adapterVersion: z.string().max(32),
   kind: z.enum(["person", "thread", "list", "company", "post", "unknown"]),
@@ -103,6 +154,7 @@ export const pageContextSchema = z.object({
     fromSelection: z.boolean(),
   }),
   warnings: z.array(z.string().max(64)).max(20),
+  profile: pageProfileSchema.optional(),
 });
 
 export const resolveRequestSchema = z.object({
@@ -191,6 +243,13 @@ export const followUpRequestSchema = z.intersection(
 export const contactSearchRequestSchema = z.object({
   q: z.string().trim().min(1).max(200),
   limit: z.coerce.number().int().min(1).max(10).default(10),
+});
+
+export const profileCaptureRequestSchema = z.object({
+  contactId: z.string().uuid(),
+  page: pageContextSchema,
+  /** The user answered "save anyway" to a slug mismatch. */
+  confirmMismatch: z.boolean().optional(),
 });
 
 /* Drift guards. If a schema and its contract type diverge, these stop compiling. */

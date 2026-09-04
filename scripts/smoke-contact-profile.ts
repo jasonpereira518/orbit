@@ -21,6 +21,9 @@ import {
 import { hybridSearchContacts } from "../src/lib/hybrid-search";
 import { buildContactEmbeddingContent } from "../src/lib/search";
 import { apolloEmploymentToExperiences } from "../src/lib/apollo";
+import { captureContactProfile } from "../src/lib/extension/profile-capture";
+import { pageContextSchema } from "../src/lib/extension/contract.schema";
+import type { PageContext } from "../src/lib/extension/contract";
 
 const USER = "smoke-contact-profile-user";
 
@@ -482,6 +485,105 @@ async function main() {
       converted.find((e) => e.organization === "Stanford")?.isCurrent === false
   );
   check("nameless rows are dropped", converted.every((e) => e.organization.trim().length > 0));
+
+  // --- extension capture ---------------------------------------------------------
+  const v1Page = {
+    schemaVersion: 1,
+    site: "linkedin",
+    adapterVersion: "linkedin-1",
+    kind: "person",
+    url: "https://www.linkedin.com/in/ada",
+    sourceUrl: "https://www.linkedin.com/in/ada",
+    capturedAt: new Date().toISOString(),
+    identity: {
+      name: { value: "Ada", source: "h1", confidence: "high" },
+      headline: null, title: null, company: null, location: null, school: null,
+      email: null, handle: null, profileUrl: null, photoUrl: null,
+    },
+    text: { blob: "", truncated: false, charCount: 0, fromSelection: false },
+    warnings: [],
+  };
+  check(
+    "a v1 payload from an un-updated extension still validates",
+    pageContextSchema.safeParse(v1Page).success
+  );
+  check(
+    "a v2 payload validates",
+    pageContextSchema.safeParse({ ...v1Page, schemaVersion: 2, adapterVersion: "linkedin-2" })
+      .success
+  );
+
+  const capturePage = {
+    ...v1Page,
+    schemaVersion: 2 as const,
+    adapterVersion: "linkedin-2",
+    url: "https://www.linkedin.com/in/grace",
+    sourceUrl: "https://www.linkedin.com/in/grace",
+    profile: {
+      headline: "Rear Admiral",
+      about: "It is easier to ask forgiveness.",
+      skills: [{ name: "COBOL" }],
+      certifications: [],
+      volunteering: [],
+      publications: [],
+      parseIncomplete: false,
+      experiences: [
+        { kind: "role", organization: "US Navy", title: "Rear Admiral", startYear: 1944,
+          startMonth: null, endYear: 1986, endMonth: null, isCurrent: false,
+          location: null, description: null, fieldOfStudy: null },
+      ],
+    },
+  };
+
+  // Cast because the literal above widens `site`/`kind` to `string`; the zod schema is
+  // what actually validates this shape at runtime, and it was checked two lines up.
+  const page = capturePage as unknown as PageContext;
+
+  const captured = await captureContactProfile(USER, {
+    contactId: exGoogleId,
+    page,
+  });
+  check("a matching slug saves", captured.saved && captured.conflict === null);
+  const graceAfter = await getContactProfile(USER, exGoogleId);
+  check("the capture replaced the earlier profile", graceAfter?.about === "It is easier to ask forgiveness.");
+
+  // The failure that matters: writing one person's career onto another.
+  const mismatch = await captureContactProfile(USER, {
+    contactId: bobId,
+    page,
+  });
+  check("a slug mismatch refuses to write", !mismatch.saved);
+  check(
+    "and says who the page was actually about",
+    mismatch.conflict?.pageSlug === "grace" && mismatch.conflict?.contactSlug === "bobross",
+    JSON.stringify(mismatch.conflict)
+  );
+  const bobUntouched = await getContactProfile(USER, bobId);
+  check("the wrong contact was not written", bobUntouched?.about === "There are no mistakes.");
+
+  const confirmed = await captureContactProfile(USER, {
+    contactId: bobId,
+    page,
+    confirmMismatch: true,
+  });
+  check("an explicit confirmation overrides the guard", confirmed.saved);
+
+  // A contact with no LinkedIn URL is not a mismatch — it is a gap to fill.
+  const urllessId = await makeContact("No Url", null);
+  const filled = await captureContactProfile(USER, {
+    contactId: urllessId,
+    page,
+  });
+  check("a contact with no URL on file accepts the capture", filled.saved);
+  const [urlless] = await db
+    .select({ linkedinUrl: contacts.linkedinUrl })
+    .from(contacts)
+    .where(eq(contacts.id, urllessId));
+  check(
+    "and gets the URL written as part of accepting it",
+    urlless.linkedinUrl === "https://www.linkedin.com/in/grace",
+    urlless.linkedinUrl ?? "null"
+  );
 
   console.log("\ncontact profile storage: OK");
 }
