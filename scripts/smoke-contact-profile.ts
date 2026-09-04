@@ -454,6 +454,8 @@ async function main() {
         end_date: "2023-03-01", current: false },
       { organization_name: "MIT", degree: "BS", major: "EECS", kind: "education",
         start_date: "2015-09-01", end_date: "2019-06-01", current: false },
+      { organization_name: "Stanford", degree: "PhD", major: "CS", kind: "education",
+        start_date: "2023-09-01", end_date: null, current: true },
       { organization_name: "  ", title: "Ghost", current: false },
     ],
   });
@@ -474,6 +476,11 @@ async function main() {
       converted.find((e) => e.organization === "Stripe")?.endYear === 2023
   );
   check("the current flag survives", converted.find((e) => e.organization === "Ramp")?.isCurrent === true);
+  check(
+    "an in-progress degree is never a current role",
+    converted.find((e) => e.organization === "Stanford")?.kind === "education" &&
+      converted.find((e) => e.organization === "Stanford")?.isCurrent === false
+  );
   check("nameless rows are dropped", converted.every((e) => e.organization.trim().length > 0));
 
   console.log("\ncontact profile storage: OK");
