@@ -7,6 +7,7 @@ import { DataSettings } from "@/components/settings/data-settings";
 import { GoalsSettings } from "@/components/settings/goals-settings";
 import { HelpSettings } from "@/components/settings/help-settings";
 import { KnowledgeSettings } from "@/components/settings/knowledge-settings";
+import { ApiSettings } from "@/components/settings/api-settings";
 import { NotificationSettings } from "@/components/settings/notification-settings";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
 import { OutreachSettings } from "@/components/settings/outreach-settings";
@@ -104,6 +105,9 @@ export default async function SettingsPage() {
       </Section>
       <Section id="settings-knowledge" hidden={hidden}>
         <KnowledgeSettings />
+      </Section>
+      <Section id="settings-api" hidden={hidden}>
+        <ApiSettings />
       </Section>
       <Section id="settings-help" hidden={hidden}>
         <HelpSettings />

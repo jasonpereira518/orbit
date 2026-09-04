@@ -18,6 +18,8 @@ import {
   looksLikeApiKey,
 } from "../src/lib/api/keys";
 import { ApiAuthError, requireApiCaller, touchApiKeyLastUsed } from "../src/lib/api/auth";
+import { isPaywallError, requireEntitlement } from "../src/lib/entitlements";
+import { ensureUserSettings } from "../src/lib/user-settings";
 
 const USER = "api-key-smoke-user";
 
@@ -57,6 +59,25 @@ async function reason(token: string | null, scope: "read" | "write" = "read"): P
     return "allowed";
   } catch (err) {
     return err instanceof ApiAuthError ? err.reason : `unexpected:${String(err)}`;
+  }
+}
+
+/**
+ * The entitlement half of `createApiKey`, exercised without a request context.
+ *
+ * The action itself calls `requireUserId()` and `revalidatePath()`, neither of which exists in
+ * a `tsx` script, so this reproduces the branch that matters: refuse-with-data rather than
+ * throw. If the action's guard changes shape, this is what should be updated alongside it.
+ */
+async function createApiKeyFor(userId: string) {
+  try {
+    await requireEntitlement(userId, "api");
+    return { ok: true as const };
+  } catch (err) {
+    if (isPaywallError(err)) {
+      return { ok: false as const, reason: "payment_required", message: err.message };
+    }
+    throw err;
   }
 }
 
@@ -161,6 +182,36 @@ run(async () => {
     String(first) === String(second),
     `${first} vs ${second}`
   );
+
+  // --- The paywall is REPORTED, not thrown, across the server-action boundary ---------------
+  // Next redacts a thrown action error's message before it reaches the browser, so a paywall
+  // that throws reaches the UI as an opaque digest and can only be rendered as "something went
+  // wrong" — the least useful thing to say to someone who just needs to upgrade. The refusal
+  // is therefore returned as data. The demand signal survives either way, because
+  // `requireEntitlement` writes the gate_events row before it throws.
+  const free = "api-key-smoke-free";
+  await db.execute(sql`DELETE FROM user_settings WHERE user_id = ${free}`);
+  await db.execute(sql`DELETE FROM gate_events WHERE user_id = ${free}`);
+  await ensureUserSettings(free);
+  const refusal = await createApiKeyFor(free);
+  check("a free plan gets a structured refusal, not a throw", refusal.ok === false, JSON.stringify(refusal));
+  check(
+    "the refusal carries a message the UI can show",
+    refusal.ok === false && refusal.message.toLowerCase().includes("orbit pro"),
+    refusal.ok === false ? refusal.message : ""
+  );
+  const gateRows = rowsOf<{ n: number }>(
+    await db.execute(sql`
+      SELECT count(*)::int AS n FROM gate_events WHERE user_id = ${free} AND feature = 'api'
+    `)
+  )[0];
+  check(
+    "the refusal still records the demand signal in gate_events",
+    Number(gateRows.n) === 1,
+    String(gateRows.n)
+  );
+  await db.execute(sql`DELETE FROM gate_events WHERE user_id = ${free}`);
+  await db.execute(sql`DELETE FROM user_settings WHERE user_id = ${free}`);
 
   await db.execute(sql`DELETE FROM api_keys WHERE user_id LIKE 'api-key-smoke%'`);
   if (failures > 0) {

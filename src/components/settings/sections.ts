@@ -16,6 +16,7 @@ export const SETTINGS_SECTIONS = [
   { id: "settings-calendar", label: "Calendar feed" },
   { id: "settings-outreach", label: "Outreach" },
   { id: "settings-knowledge", label: "Knowledge" },
+  { id: "settings-api", label: "API and connectors" },
   { id: "settings-help", label: "Help" },
   { id: "settings-data", label: "Data and privacy" },
 ] as const satisfies ReadonlyArray<{ id: string; label: string }>;
