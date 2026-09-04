@@ -13,6 +13,8 @@
  *     in the browser across arbitrary chunk boundaries.
  */
 
+import type { ChatDiagnostics } from "@/lib/chat-diagnostics";
+
 export const RECOMMENDATIONS_MARKER = "---RECOMMENDATIONS---";
 
 export type RawRecommendation = {
@@ -122,6 +124,12 @@ export type ChatStreamEvent =
         title: string | null;
         relevance: number;
       }>;
+      /**
+       * The retrieval trace, present only for a testing account. Absent — not empty — for
+       * everyone else, so a non-beta response carries no trace at all rather than a
+       * hollowed-out one a client could still learn the shape of.
+       */
+      diagnostics?: ChatDiagnostics;
     }
   | { type: "error"; message: string };
 

@@ -51,6 +51,8 @@ import {
 import { cn } from "@/lib/utils";
 import type { ChatRecommendation } from "@/db/schema";
 import { streamChat } from "@/lib/chat-stream-client";
+import type { ChatDiagnostics } from "@/lib/chat-diagnostics";
+import { RetrievalDiagnostics } from "@/components/chat/retrieval-diagnostics";
 
 type ChatResult = Extract<
   Awaited<ReturnType<typeof askNetwork>>,
@@ -77,6 +79,12 @@ type AssistantMessage = {
   recommendations: ChatRecommendation[];
   /** True while the answer is still arriving from `/api/chat`. */
   streaming?: boolean;
+  /**
+   * The retrieval trace, present only on a testing account — the server omits the field
+   * entirely for everyone else. Lives on the message rather than the panel so scrolling
+   * back explains the answer it belongs to, not the most recent one.
+   */
+  diagnostics?: ChatDiagnostics;
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
@@ -313,7 +321,12 @@ export function ChatPanel() {
             },
             onDone: (info) => {
               ensurePlaceholder();
-              patch((m) => ({ ...m, id: info.messageId || assistantId, streaming: false }));
+              patch((m) => ({
+                ...m,
+                id: info.messageId || assistantId,
+                streaming: false,
+                diagnostics: info.diagnostics,
+              }));
               if (info.title) setThreadTitle(info.title);
               setThreads((prev) => {
                 const next = prev.filter((t) => t.id !== activeId);
@@ -524,6 +537,9 @@ export function ChatPanel() {
                                 />
                               ))}
                             </div>
+                          )}
+                          {msg.diagnostics && (
+                            <RetrievalDiagnostics data={msg.diagnostics} />
                           )}
                         </div>
                       </div>

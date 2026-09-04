@@ -9,6 +9,8 @@ import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
 import { isPaywallError } from "@/lib/entitlements";
 import { requireUserForSurface } from "@/lib/plan-guards";
+import { isBetaUser } from "@/lib/beta";
+import { buildChatDiagnostics } from "@/lib/chat-diagnostics";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -95,6 +97,9 @@ export async function POST(request: Request) {
           answer: result.answer,
           recommendations,
         });
+        // Resolved here rather than before the stream opens so a slow flag read can never
+        // delay the first token. `isBetaUser` is cache()d and the row is already loaded.
+        const beta = await isBetaUser(userId).catch(() => false);
         send({
           type: "done",
           messageId: saved.messageId,
@@ -107,6 +112,7 @@ export async function POST(request: Request) {
             title: c.title,
             relevance: c.relevance,
           })),
+          ...(beta ? { diagnostics: buildChatDiagnostics(ctx) } : {}),
         });
       } catch (err) {
         send({ type: "error", message: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message });

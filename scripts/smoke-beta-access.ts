@@ -30,6 +30,8 @@ import { BETA_SURFACE_KEYS, SURFACES, getSurface } from "../src/lib/surfaces";
 import { setBetaAccess } from "../src/lib/admin-operations";
 import { purgeUserData } from "../src/lib/user-data";
 import { SHOWCASE_PEOPLE, seedShowcase } from "../src/lib/fixtures/showcase";
+import { buildChatDiagnostics } from "../src/lib/chat-diagnostics";
+import type { ChatContext } from "../src/lib/chat-context";
 import { contacts, interactions, reminders, tags } from "../src/db/schema";
 
 const ADMIN = "smoke-beta-admin";
@@ -351,6 +353,65 @@ async function reseedChecks() {
   check("the account is still beta after a reseed", (await readBeta(PURGED)) === true);
 }
 
+/**
+ * The chat trace is built from whole `RankedContact` rows — which carry notes, AI summaries
+ * and key facts — and is serialized straight into an SSE frame. `buildChatDiagnostics`
+ * therefore names every field it emits rather than spreading the row, and this asserts it:
+ * a field added to `RankedContact` later must not ride along into a chat response.
+ */
+function diagnosticsChecks() {
+  console.log("\nchat diagnostics");
+
+  const secret = "PRIVATE-NOTE-THAT-MUST-NOT-LEAK";
+  const ctx = {
+    trace: {
+      stages: [{ name: "hybrid search", ms: 12 }],
+      embedded: true,
+      parsed: { semanticQuery: "who works at acme", filters: { company: ["Acme"] }, expansionTerms: ["acme"] },
+      candidateCount: 60,
+      rerank: { ran: true, outcome: "kept" as const, scores: [{ id: "c1", relevance: 9 }] },
+      finalCount: 1,
+      constants: { candidatePool: 60, finalContactCount: 12 },
+    },
+    retrieved: [
+      {
+        id: "c1",
+        fullName: "Ada Lovelace",
+        company: "Acme",
+        notes: secret,
+        aiSummary: secret,
+        keyFacts: [secret],
+        email: "ada@example.test",
+        matchedArms: ["fts", "semantic"],
+        rrfScore: 0.0312,
+        relevance: 8.5,
+        filterMatched: true,
+      },
+    ],
+  } as unknown as ChatContext;
+
+  const diag = buildChatDiagnostics(ctx);
+  const serialized = JSON.stringify(diag);
+
+  check("no note or summary text reaches the wire", !serialized.includes(secret));
+  check("no email reaches the wire", !serialized.includes("ada@example.test"));
+
+  const keys = Object.keys(diag.contacts[0]).sort();
+  check(
+    "the contact row is exactly the declared whitelist",
+    keys.join(",") ===
+      "company,fullName,filterMatched,id,matchedArms,relevance,rerankScore,rrfScore"
+        .split(",")
+        .sort()
+        .join(","),
+    keys.join(",")
+  );
+
+  check("the rerank score is joined back on", diag.contacts[0].rerankScore === 9);
+  check("filters are flattened for display", diag.parsed.filters[0]?.value === "Acme");
+  check("stage times are totalled", diag.totalMs === 12);
+}
+
 async function cleanup() {
   const db = await getDb();
   for (const id of ALL_IDS) {
@@ -367,6 +428,7 @@ run(async () => {
   console.log("beta access");
   registryChecks();
   planChecks();
+  diagnosticsChecks();
 
   await seedAccount(TESTER, true);
   await seedAccount(NORMAL, false);

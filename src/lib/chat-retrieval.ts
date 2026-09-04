@@ -143,16 +143,40 @@ function candidateCard(c: RankedContact): string {
 }
 
 /**
+ * What the reranker did, for the testing console's chat diagnostics.
+ *
+ * The model's 0-10 scores are used for ordering and thresholding and then dropped, which
+ * makes "why did it pick those twelve?" unanswerable after the fact. Filling this is opt-in
+ * and costs nothing when the caller passes no collector.
+ */
+export type RerankTrace = {
+  /** False when the pool was already small enough to skip the model entirely. */
+  ran: boolean;
+  outcome: "skipped" | "kept" | "starved" | "fallback";
+  scores: Array<{ id: string; relevance: number }>;
+};
+
+/**
  * Accuracy-only stage: scores candidates with a flash-tier model and keeps the
  * best FINAL_CONTACT_COUNT. On any failure it falls back to RRF order. Never throws.
+ *
+ * `trace`, when passed, is filled in place — an out-parameter rather than a widened return
+ * type, so every existing caller and the eval harness are untouched.
  */
 export async function rerankCandidates(
   userId: string,
   question: string,
   candidates: RankedContact[],
-  completeFn: typeof completeJson = completeJson
+  completeFn: typeof completeJson = completeJson,
+  trace?: RerankTrace
 ): Promise<RankedContact[]> {
-  if (candidates.length <= FINAL_CONTACT_COUNT) return candidates;
+  if (candidates.length <= FINAL_CONTACT_COUNT) {
+    if (trace) {
+      trace.ran = false;
+      trace.outcome = "skipped";
+    }
+    return candidates;
+  }
   try {
     const content = await withTimeout(
       completeFn(userId, {
@@ -173,17 +197,29 @@ export async function rerankCandidates(
           typeof s.id === "string" && byId.has(s.id) && typeof s.relevance === "number"
       )
       .sort((a, b) => b.relevance - a.relevance);
+    if (trace) {
+      trace.ran = true;
+      trace.scores = scored;
+    }
 
     const kept = scored
       .filter((s) => s.relevance >= RERANK_MIN_RELEVANCE)
       .slice(0, FINAL_CONTACT_COUNT)
       .map((s) => byId.get(s.id)!);
-    if (kept.length >= RERANK_MIN_SURVIVORS) return kept;
+    if (kept.length >= RERANK_MIN_SURVIVORS) {
+      if (trace) trace.outcome = "kept";
+      return kept;
+    }
 
     // Threshold starved the set — trust the model's ordering for a smaller page.
+    if (trace) trace.outcome = "starved";
     const ordered = scored.slice(0, 5).map((s) => byId.get(s.id)!);
     return ordered.length > 0 ? ordered : candidates.slice(0, FINAL_CONTACT_COUNT);
   } catch {
+    if (trace) {
+      trace.ran = true;
+      trace.outcome = "fallback";
+    }
     return candidates.slice(0, FINAL_CONTACT_COUNT);
   }
 }

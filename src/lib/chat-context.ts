@@ -12,6 +12,8 @@ import { getAttentionBrief, isAttentionQuestion, type AttentionBrief } from "@/l
 import {
   budgetContactsContext,
   CANDIDATE_POOL,
+  FINAL_CONTACT_COUNT,
+  type RerankTrace,
   rerankCandidates,
   understandQuery,
 } from "@/lib/chat-retrieval";
@@ -45,6 +47,8 @@ type BudgetedContact = ReturnType<typeof budgetContactsContext>[number];
 
 export type ChatContext = {
   q: string;
+  /** What retrieval did. Always populated; only ever serialized for a testing account. */
+  trace: RetrievalTrace;
   thread: { id: string; title: string | null } | null;
   priorTurns: ChatTurn[];
   retrieved: RankedContact[];
@@ -123,16 +127,60 @@ async function loadActiveGoalTexts(userId: string): Promise<string[]> {
   return rows.map((g) => g.text);
 }
 
+/**
+ * What retrieval actually did, stage by stage.
+ *
+ * Every field here is computed by the pipeline anyway and then thrown away — the parsed
+ * query is consumed inside `retrieveRankedContacts`, the rerank scores inside
+ * `rerankCandidates`, and nothing has ever timed the stages. Collecting them costs a few
+ * `Date.now()` calls, so it is unconditional; whether any of it reaches a browser is
+ * decided by the caller, which serializes it only for a testing account.
+ */
+export type RetrievalTrace = {
+  stages: Array<{ name: string; ms: number }>;
+  /** False when the query embedding failed — the semantic arm is then dark. */
+  embedded: boolean;
+  parsed: {
+    semanticQuery: string;
+    filters: Record<string, unknown>;
+    expansionTerms: string[];
+  };
+  candidateCount: number;
+  rerank: RerankTrace;
+  finalCount: number;
+  /** The thresholds the numbers above have to be read against. */
+  constants: { candidatePool: number; finalContactCount: number };
+};
+
+function emptyTrace(): RetrievalTrace {
+  return {
+    stages: [],
+    embedded: false,
+    parsed: { semanticQuery: "", filters: {}, expansionTerms: [] },
+    candidateCount: 0,
+    rerank: { ran: false, outcome: "skipped", scores: [] },
+    finalCount: 0,
+    constants: {
+      candidatePool: CANDIDATE_POOL,
+      finalContactCount: FINAL_CONTACT_COUNT,
+    },
+  };
+}
+
 /** Stage 0-3: query embedding + parse (parallel), wide hybrid retrieval, flash rerank. */
 async function retrieveRankedContacts(
   userId: string,
-  q: string
+  q: string,
+  trace: RetrievalTrace
 ): Promise<RankedContact[]> {
+  const t0 = Date.now();
   const activeGoals = await loadActiveGoalTexts(userId);
+  const t1 = Date.now();
   const [queryEmbedding, parsedQuery] = await Promise.all([
     getQueryEmbedding(userId, q).catch(() => null),
     understandQuery(userId, q, activeGoals),
   ]);
+  const t2 = Date.now();
   const candidates = await hybridSearchContacts(userId, {
     query: q,
     embedding: queryEmbedding,
@@ -140,7 +188,25 @@ async function retrieveRankedContacts(
     expansionTerms: parsedQuery.expansionTerms,
     limit: CANDIDATE_POOL,
   });
-  return rerankCandidates(userId, q, candidates);
+  const t3 = Date.now();
+  const ranked = await rerankCandidates(userId, q, candidates, undefined, trace.rerank);
+  const t4 = Date.now();
+
+  trace.embedded = queryEmbedding != null;
+  trace.parsed = {
+    semanticQuery: parsedQuery.semanticQuery,
+    filters: parsedQuery.filters as Record<string, unknown>,
+    expansionTerms: parsedQuery.expansionTerms,
+  };
+  trace.candidateCount = candidates.length;
+  trace.finalCount = ranked.length;
+  trace.stages = [
+    { name: "goals", ms: t1 - t0 },
+    { name: "embed + parse", ms: t2 - t1 },
+    { name: "hybrid search", ms: t3 - t2 },
+    { name: "rerank", ms: t4 - t3 },
+  ];
+  return ranked;
 }
 
 export async function prepareChatContext(
@@ -153,6 +219,7 @@ export async function prepareChatContext(
   if (!q) throw new Error("Question is required");
   const threadId = options.threadId ?? null;
   const focusContactId = options.focusContactId?.trim() || null;
+  const trace = emptyTrace();
 
   // Everything that depends only on the question and the user, at once. Retrieval is its
   // own multi-stage pipeline (see retrieveRankedContacts) that runs as one unit here.
@@ -172,7 +239,7 @@ export async function prepareChatContext(
             columns: { role: true, content: true },
           })
         : Promise.resolve([]),
-      retrieveRankedContacts(userId, q),
+      retrieveRankedContacts(userId, q, trace),
       // Exhaustive membership for any organisation the question names — the one thing a
       // relevance-ranked top-K cannot supply. Never fatal.
       findOrgRosters(userId, q).catch(() => [] as OrgRoster[]),
@@ -273,6 +340,7 @@ export async function prepareChatContext(
 
   return {
     q,
+    trace,
     thread: thread ?? null,
     priorTurns,
     retrieved,
