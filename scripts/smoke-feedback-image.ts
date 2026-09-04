@@ -21,6 +21,7 @@ import {
   decodeScreenshot,
   sanitizePath,
 } from "../src/lib/feedback-submission";
+import { clampPanelOffset } from "../src/lib/feedback-report";
 import { coverGeometry, selectionToCrop } from "../src/lib/screenshot-capture";
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -205,6 +206,41 @@ function main() {
       outside.w === tabFrame.width &&
       outside.h === tabFrame.height
   );
+
+  console.log("");
+
+  // Dragging the panel around. The header is the only handle, so the clamp is what stops a
+  // window being dragged somewhere it can never be dragged back from.
+  const vp = { width: 1280, height: 860 };
+  const box = { left: 880, top: 128, width: 384, height: 716 };
+  const at = (dx: number, dy: number) =>
+    clampPanelOffset({ start: box, startOffset: { x: 0, y: 0 }, delta: { x: dx, y: dy }, viewport: vp });
+
+  const free = at(-300, 150);
+  check("a drag well inside the window moves one-for-one", free.x === -300 && free.y === 150);
+
+  check("dragging up stops at the top edge", at(0, -500).y === -box.top, String(at(0, -500).y));
+  check(
+    "...so the header can never leave the screen",
+    box.top + at(0, -500).y === 0
+  );
+
+  const down = at(0, 5000);
+  check("dragging down leaves a strip on screen", box.top + down.y === vp.height - 48);
+
+  const far = at(-5000, 0);
+  check("dragging left leaves a strip on screen", box.left + far.x === 48 - box.width);
+  const right = at(5000, 0);
+  check("dragging right leaves a strip on screen", box.left + right.x === vp.width - 48);
+
+  // A second drag continues from where the first one left off rather than snapping back.
+  const resumed = clampPanelOffset({
+    start: { ...box, left: box.left - 300, top: box.top + 150 },
+    startOffset: { x: -300, y: 150 },
+    delta: { x: -100, y: -50 },
+    viewport: vp,
+  });
+  check("a second drag accumulates onto the first", resumed.x === -400 && resumed.y === 100);
 
   console.log("\nAll feedback image checks passed.");
 }

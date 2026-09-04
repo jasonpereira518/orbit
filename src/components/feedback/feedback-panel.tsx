@@ -3,7 +3,7 @@
 import { Camera, Loader2, X } from "lucide-react";
 import { useTheme } from "next-themes";
 import { usePathname } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { submitFeedback } from "@/actions/feedback";
 import type { DraftShot } from "@/components/feedback/feedback-widget";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,7 @@ import {
   FEEDBACK_CATEGORIES,
   MAX_FEEDBACK_TEXT,
   MAX_SCREENSHOTS,
+  clampPanelOffset,
   featureAreaForPath,
   readClientContext,
   type FeedbackArea,
@@ -45,6 +46,8 @@ const CATEGORY_LABELS: Record<FeedbackCategory, string> = {
 
 export function FeedbackPanel({
   anchor,
+  offset,
+  onOffsetChange,
   message,
   onMessageChange,
   shots,
@@ -57,6 +60,13 @@ export function FeedbackPanel({
 }: {
   /** Where the window sits and what it grows out of — see `anchorFromButton`. */
   anchor: { origin: string; top: number };
+  /**
+   * How far the person has dragged the window from that anchor. Owned by the widget rather
+   * than by this component, so it survives the panel unmounting for a screenshot — and is
+   * cleared when the panel actually closes, which is what puts it back where it started.
+   */
+  offset: { x: number; y: number };
+  onOffsetChange: (next: { x: number; y: number }) => void;
   message: string;
   onMessageChange: (value: string) => void;
   shots: DraftShot[];
@@ -77,6 +87,97 @@ export function FeedbackPanel({
   const canSend = message.trim().length > 0 && !sending;
 
   const usedShots = useMemo(() => shots.length, [shots]);
+
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState(false);
+  /**
+   * The pointer and panel positions at the moment the drag began.
+   *
+   * Measured once, so a move is arithmetic on numbers already in hand rather than a
+   * `getBoundingClientRect()` per pointermove — that call forces layout, and it would run
+   * far more often than the screen refreshes.
+   */
+  const dragFrom = useRef<{
+    px: number;
+    py: number;
+    ox: number;
+    oy: number;
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const raf = useRef<number | null>(null);
+  const pending = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (raf.current !== null) cancelAnimationFrame(raf.current);
+    };
+  }, []);
+
+  function startDrag(e: React.PointerEvent) {
+    if (e.button !== 0) return;
+    // The close button lives in this header, and the title is selectable text. Neither
+    // should be a drag handle.
+    if ((e.target as HTMLElement).closest("button, a, input, textarea, select")) return;
+    const rect = panelRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    e.preventDefault();
+    try {
+      // Keeps the drag alive when the pointer outruns the header, which it will — the
+      // handle is a strip and the window follows the cursor anywhere. Wrapped because it
+      // throws for a pointer id the browser is not currently tracking, and losing capture
+      // is a degraded drag rather than a reason not to start one.
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Ignored on purpose — see above.
+    }
+    dragFrom.current = {
+      px: e.clientX,
+      py: e.clientY,
+      ox: offset.x,
+      oy: offset.y,
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height,
+    };
+    setDragging(true);
+  }
+
+  function moveDrag(e: React.PointerEvent) {
+    const from = dragFrom.current;
+    if (!from) return;
+    pending.current = { x: e.clientX, y: e.clientY };
+    // One state write per frame: pointermove fires far faster than the screen paints.
+    if (raf.current !== null) return;
+    raf.current = requestAnimationFrame(() => {
+      raf.current = null;
+      const point = pending.current;
+      const start = dragFrom.current;
+      if (!point || !start) return;
+
+      onOffsetChange(
+        clampPanelOffset({
+          start: { left: start.left, top: start.top, width: start.width, height: start.height },
+          startOffset: { x: start.ox, y: start.oy },
+          delta: { x: point.x - start.px, y: point.y - start.py },
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+        })
+      );
+    });
+  }
+
+  function endDrag() {
+    if (!dragFrom.current) return;
+    dragFrom.current = null;
+    if (raf.current !== null) {
+      cancelAnimationFrame(raf.current);
+      raf.current = null;
+    }
+    setDragging(false);
+  }
 
   async function send() {
     if (!canSend) return;
@@ -146,10 +247,32 @@ export function FeedbackPanel({
         // button rail, leaving the notifications bell visible instead of swallowing it.
         // `transformOrigin` aims the panel's 0.28 scale at the button rather than at its
         // own centre, so it still reads as the button unfolding.
-        style={{ transformOrigin: anchor.origin, top: anchor.top }}
+        // `translate` rather than `top`/`left`: the panel is positioned against the right
+        // edge, so moving it by its inset would fight that anchoring. It also composites
+        // without relayout, which is what keeps a drag smooth.
+        //
+        // The transition is suppressed WHILE dragging: `.liquid-glass-panel` transitions
+        // `translate` over 0.32s, so without this the window would ease toward the cursor
+        // a third of a second behind it.
+        style={{
+          transformOrigin: anchor.origin,
+          top: anchor.top,
+          translate: `${offset.x}px ${offset.y}px`,
+          ...(dragging ? { transition: "none" } : {}),
+        }}
+        ref={panelRef}
         showCloseButton
       >
-        <SheetHeader className="p-0">
+        {/* The header is the handle. Not the whole panel: a drag that starts anywhere
+            would fight text selection in the message field and the screenshot thumbnails. */}
+        <SheetHeader
+          className="p-0 select-none"
+          style={{ cursor: dragging ? "grabbing" : "grab", touchAction: "none" }}
+          onPointerDown={startDrag}
+          onPointerMove={moveDrag}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+        >
           <SheetTitle className="font-[family-name:var(--font-display)] text-lg">
             Tell us what happened
           </SheetTitle>

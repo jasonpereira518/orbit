@@ -142,3 +142,40 @@ export function readClientContext(theme: string | undefined): ClientFeedbackCont
     })(),
   };
 }
+
+export type PanelBox = { left: number; top: number; width: number; height: number };
+
+/**
+ * Keep a dragged window within reach of the pointer.
+ *
+ * The header is the only handle, so a window dragged entirely off screen could never be
+ * dragged back — the clamp exists to make that unreachable rather than merely unlikely.
+ * `edge` is how much of the window must stay on screen in each direction.
+ *
+ * Takes the box measured at drag START plus the pointer delta, rather than the box now:
+ * re-measuring on every pointermove forces layout, and the arithmetic is identical.
+ */
+export function clampPanelOffset(input: {
+  start: PanelBox;
+  startOffset: { x: number; y: number };
+  delta: { x: number; y: number };
+  viewport: { width: number; height: number };
+  edge?: number;
+}): { x: number; y: number } {
+  const edge = input.edge ?? 48;
+  const { start, startOffset, delta, viewport } = input;
+
+  const wantLeft = start.left + delta.x;
+  const wantTop = start.top + delta.y;
+
+  // Horizontally the window may hang off either side, so long as `edge` of it remains.
+  const left = Math.min(Math.max(wantLeft, edge - start.width), viewport.width - edge);
+  // Vertically the TOP is what must stay reachable: the handle is the header, so a window
+  // whose top edge is above the viewport has put its own handle out of reach.
+  const top = Math.min(Math.max(wantTop, 0), viewport.height - edge);
+
+  return {
+    x: startOffset.x + (left - start.left),
+    y: startOffset.y + (top - start.top),
+  };
+}

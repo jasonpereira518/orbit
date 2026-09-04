@@ -123,6 +123,14 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
    * view-as-user banner appears, and this resolves to wherever it actually was.
    */
   const [anchor, setAnchor] = useState<PanelAnchor>({ origin: "top right", top: PANEL_INSET_PX });
+  /**
+   * How far the window has been dragged from its anchor.
+   *
+   * Lives here rather than in the panel so it survives the panel unmounting to take a
+   * screenshot — coming back somewhere else after attaching one would be baffling. Cleared
+   * on close, which is what makes the window reopen where it belongs.
+   */
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
   // Lazy initialiser rather than an effect: this component is only ever mounted client-side
   // (`ssr: false`), so `window` is there on the first render and there is no flash of a
   // wrongly-hidden button.
@@ -156,6 +164,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     for (const shot of shots) URL.revokeObjectURL(shot.previewUrl);
     setShots([]);
     setMessage("");
+    setOffset({ x: 0, y: 0 });
     setPhase("closed");
   }, [shots]);
 
@@ -349,6 +358,8 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
       {phase === "composing" && (
         <FeedbackPanel
           anchor={anchor}
+          offset={offset}
+          onOffsetChange={setOffset}
           message={message}
           onMessageChange={setMessage}
           shots={shots}
@@ -359,7 +370,10 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
             setEditingShotId(id);
             setPhase("annotating");
           }}
-          onClose={() => setPhase("closed")}
+          onClose={() => {
+            setOffset({ x: 0, y: 0 });
+            setPhase("closed");
+          }}
           onSent={reset}
         />
       )}
