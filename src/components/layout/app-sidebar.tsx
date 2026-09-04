@@ -24,6 +24,7 @@ function SidebarNavLink({
   item,
   pathname,
   hiddenFromUsers = false,
+  beta = false,
 }: {
   item: AppNavItem;
   pathname: string;
@@ -33,13 +34,25 @@ function SidebarNavLink({
    * is the one person who cannot see its effect, so the nav has to tell them.
    */
   hiddenFromUsers?: boolean;
+  /**
+   * A testing surface this viewer can reach. Takes priority over `hiddenFromUsers`, which
+   * is also true here — every beta surface is hidden from ordinary users by definition, and
+   * "Hidden" would tell a tester the opposite of what they need to know about it.
+   */
+  beta?: boolean;
 }) {
   const active = isNavActive(pathname, item.href);
   const Icon = item.icon;
   return (
     <Link
       href={item.href}
-      title={hiddenFromUsers ? `${item.label} — hidden from users` : item.label}
+      title={
+        beta
+          ? `${item.label} — beta, testing accounts only`
+          : hiddenFromUsers
+            ? `${item.label} — hidden from users`
+            : item.label
+      }
       className={cn(
         "relative flex items-center justify-center gap-2.5 rounded-xl px-2 py-2.5 text-sm transition-colors lg:justify-start lg:px-3 lg:py-2",
         active
@@ -59,10 +72,16 @@ function SidebarNavLink({
       )}
       <Icon className="relative z-10 h-4 w-4 shrink-0" />
       <span className="relative z-10 hidden lg:inline">{item.label}</span>
-      {hiddenFromUsers && (
-        <span className="relative z-10 ml-auto hidden rounded-full border border-border/70 px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground lg:inline">
-          Hidden
+      {beta ? (
+        <span className="relative z-10 ml-auto hidden rounded-full border border-accent/50 bg-accent/10 px-1.5 py-px text-[10px] uppercase tracking-wide text-accent-foreground lg:inline">
+          Beta
         </span>
+      ) : (
+        hiddenFromUsers && (
+          <span className="relative z-10 ml-auto hidden rounded-full border border-border/70 px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground lg:inline">
+            Hidden
+          </span>
+        )
       )}
     </Link>
   );
@@ -75,6 +94,7 @@ export function AppSidebar({
   plan,
   hidden,
   hiddenForUsers,
+  betaKeys,
 }: {
   pathname: string;
   clerkOn: boolean;
@@ -84,6 +104,8 @@ export function AppSidebar({
   hidden: ReadonlySet<string>;
   /** Surfaces hidden from ordinary users, whether or not this viewer is exempt. */
   hiddenForUsers: ReadonlySet<string>;
+  /** Testing surfaces this viewer may reach, for the Beta tag. */
+  betaKeys: ReadonlySet<string>;
 }) {
   const core = APP_NAV_CORE.filter((item) => !isHrefHidden(item.href, hidden));
   const extras = APP_NAV_EXTRAS.filter((item) => !isHrefHidden(item.href, hidden));
@@ -91,6 +113,10 @@ export function AppSidebar({
   const tagged = (item: AppNavItem) => {
     const key = surfaceKeyForHref(item.href);
     return key !== null && hiddenForUsers.has(key);
+  };
+  const isBeta = (item: AppNavItem) => {
+    const key = surfaceKeyForHref(item.href);
+    return key !== null && betaKeys.has(key);
   };
 
   return (
@@ -142,6 +168,7 @@ export function AppSidebar({
             item={item}
             pathname={pathname}
             hiddenFromUsers={tagged(item)}
+            beta={isBeta(item)}
           />
         ))}
 
@@ -162,6 +189,7 @@ export function AppSidebar({
             item={item}
             pathname={pathname}
             hiddenFromUsers={tagged(item)}
+            beta={isBeta(item)}
           />
         ))}
 

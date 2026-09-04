@@ -21,6 +21,7 @@ const STATES = [
   { value: "past-due", label: "Past due" },
   { value: "failing-ai", label: "AI failing" },
   { value: "inactive", label: "No contacts" },
+  { value: "beta", label: "Beta" },
   { value: "suspended", label: "Suspended" },
 ];
 

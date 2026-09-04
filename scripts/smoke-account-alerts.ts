@@ -455,13 +455,19 @@ async function main() {
   }
 
   // --- 19. query budget ---------------------------------------------------------------
+  // The ceiling is 5 rather than 4 because `resolveSurfaceVisibility` resolves the testing
+  // flag through `isBetaUser`, and `loadAccountHealthInput` has already read the same row.
+  // Both go through `ensureUserSettings`, which is `cache()`d — so in a real request those
+  // are ONE query and the production cost is unchanged. This script has no request scope,
+  // where `cache()` is a pass-through, so the counter sees both. Anything above 5 is a
+  // genuine new statement and should be treated as one.
   await reset();
   startQueryCount();
   await getAccountAlerts(USER);
   const paidStatements = stopQueryCount();
   check(
     `19 paid account costs few statements (${paidStatements})`,
-    paidStatements <= 4,
+    paidStatements <= 5,
     String(paidStatements)
   );
 

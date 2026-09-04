@@ -17,6 +17,7 @@ import { SignInLinkButton } from "@/components/admin/sign-in-link-dialog";
 import { CopyId } from "@/components/admin/copy-id";
 import { ContactsFilterBar } from "@/components/admin/contacts-filter-bar";
 import { AccountDangerZone } from "@/components/admin/account-actions";
+import { BetaAccessPanel } from "@/components/admin/beta-access-panel";
 import { Pager } from "@/components/admin/pager";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getAuditTrail } from "@/actions/admin";
@@ -30,13 +31,25 @@ import {
 } from "@/lib/admin-user-detail";
 import { loadAdminTimeline } from "@/lib/admin-timeline";
 import { formatCostMicros } from "@/lib/ai-pricing";
+import { BETA_SURFACE_KEYS, getSurface } from "@/lib/surfaces";
 import { cn } from "@/lib/utils";
+
+/**
+ * Resolved on the server so the panel never imports the surface registry — that module
+ * reaches `@/components/settings/sections`, and a client component pulling it in is the
+ * shape of build failure that names neither file.
+ */
+const betaSurfaceLabels = [...BETA_SURFACE_KEYS]
+  .map((key) => getSurface(key)?.label)
+  .filter((label): label is string => Boolean(label))
+  .sort();
 
 export const metadata = { title: "Admin · Account" };
 
 const SECTIONS = [
   { id: "identity", label: "Identity" },
   { id: "plan", label: "Plan & billing" },
+  { id: "beta", label: "Beta testing" },
   { id: "health", label: "Health" },
   { id: "footprint", label: "Footprint" },
   { id: "usage", label: "AI usage" },
@@ -264,6 +277,11 @@ export default async function AdminUserDetailPage({
                     comp overrides everything below
                   </span>
                 )}
+                {billing.source === "beta" && (
+                  <span className="text-xs text-muted-foreground">
+                    testing account — overrides everything below, including any comp
+                  </span>
+                )}
               </div>
 
               <dl>
@@ -366,6 +384,17 @@ export default async function AdminUserDetailPage({
                   </p>
                 )}
               </div>
+            </AdminPanel>
+          </section>
+
+          <section id="beta" className="scroll-mt-20">
+            <AdminPanel title="Beta testing">
+              <BetaAccessPanel
+                targetUserId={identity.userId}
+                email={identity.email}
+                enabled={billing.betaAccess}
+                surfaces={betaSurfaceLabels}
+              />
             </AdminPanel>
           </section>
 

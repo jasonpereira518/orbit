@@ -11,6 +11,7 @@ import {
   MoreHorizontal,
   Bell,
   BookOpen,
+  FlaskConical,
 } from "lucide-react";
 
 export type AppNavItem = {
@@ -65,6 +66,16 @@ const KNOWLEDGE: AppNavItem = {
   icon: BookOpen,
 };
 
+/**
+ * Testing tools. A beta surface, so `resolveSurfaceVisibility` filters it out of the nav
+ * for everyone but testing accounts and operators — this list carries no gate of its own.
+ */
+const TESTING: AppNavItem = {
+  href: "/testing",
+  label: "Testing",
+  icon: FlaskConical,
+};
+
 /** Primary sidebar destinations (above the Extras divider) */
 export const APP_NAV_CORE: AppNavItem[] = [
   DASHBOARD,
@@ -77,7 +88,7 @@ export const APP_NAV_CORE: AppNavItem[] = [
 ];
 
 /** Items under the Extras divider (Settings is rendered separately) */
-export const APP_NAV_EXTRAS: AppNavItem[] = [OUTREACH, KNOWLEDGE];
+export const APP_NAV_EXTRAS: AppNavItem[] = [OUTREACH, KNOWLEDGE, TESTING];
 
 export const APP_NAV_SETTINGS: AppNavItem = {
   href: "/settings",
@@ -107,6 +118,7 @@ export const MOBILE_MORE_NAV = [
   CONSTELLATION,
   OUTREACH,
   KNOWLEDGE,
+  TESTING,
 ];
 
 export function isNavActive(pathname: string, href: string) {

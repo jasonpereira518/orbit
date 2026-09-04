@@ -42,6 +42,7 @@ export function AppShell({
   plan,
   hidden,
   hiddenForUsers,
+  betaKeys,
   viewingAsUser,
 }: {
   children: React.ReactNode;
@@ -53,12 +54,15 @@ export function AppShell({
   hidden: string[];
   /** Surface keys hidden from ordinary users, for the operator's "Hidden" tags. */
   hiddenForUsers: string[];
+  /** Testing surfaces this viewer may reach, for the nav's "Beta" tags. */
+  betaKeys: string[];
   viewingAsUser: boolean;
 }) {
   const pathname = usePathname();
   // Arrays cross the server boundary; the nav does membership tests, so build the sets
   // once here rather than in each consumer on every render.
   const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
+  const betaKeysSet = useMemo(() => new Set(betaKeys), [betaKeys]);
   const hiddenForUsersSet = useMemo(
     () => new Set(hiddenForUsers),
     [hiddenForUsers]
@@ -124,6 +128,7 @@ export function AppShell({
               plan={plan}
               hidden={hiddenSet}
               hiddenForUsers={hiddenForUsersSet}
+              betaKeys={betaKeysSet}
             />
           </div>
           <main

@@ -103,6 +103,7 @@ export default async function AppLayout({
       plan={plan}
       hidden={[...visibility.hidden]}
       hiddenForUsers={[...visibility.hiddenForUsers]}
+      betaKeys={[...visibility.betaKeys]}
       viewingAsUser={visibility.viewingAsUser}
     >
       {/* Renders nothing; keeps `last_active_at` fresh enough for the admin roster to

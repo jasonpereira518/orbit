@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CircleAlert, Ban, Download } from "lucide-react";
+import { CircleAlert, Ban, Download, FlaskConical } from "lucide-react";
 import {
   AdminPageHeader,
   AdminPanel,
@@ -195,6 +195,12 @@ export default async function AdminUsersPage({
                               </span>
                             )}
                           </span>
+                          {row.betaAccess && (
+                            <FlaskConical
+                              className="size-3.5 shrink-0 text-accent-foreground"
+                              aria-label="Testing account"
+                            />
+                          )}
                           {row.suspendedAt && (
                             <Ban
                               className="size-3.5 shrink-0 text-destructive"

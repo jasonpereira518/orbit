@@ -29,6 +29,8 @@ import {
 import { BETA_SURFACE_KEYS, SURFACES, getSurface } from "../src/lib/surfaces";
 import { setBetaAccess } from "../src/lib/admin-operations";
 import { purgeUserData } from "../src/lib/user-data";
+import { SHOWCASE_PEOPLE, seedShowcase } from "../src/lib/fixtures/showcase";
+import { contacts, interactions, reminders, tags } from "../src/db/schema";
 
 const ADMIN = "smoke-beta-admin";
 const TESTER = "smoke-beta-tester";
@@ -304,9 +306,58 @@ async function purgeChecks() {
   check("a hard delete still removes the row", (await readBeta(PURGED)) === undefined);
 }
 
+/**
+ * The reseed the testing console offers. Worth covering here because the fixture was moved
+ * out of `scripts/seed-showcase.ts` so the console could share it, and nothing else would
+ * notice if the extraction had dropped rows or broken the day-offset arithmetic.
+ */
+async function reseedChecks() {
+  console.log("\nshowcase reseed");
+
+  const result = await seedShowcase(PURGED, { now: new Date() });
+  check(
+    "seeds every person in the fixture",
+    result.contacts === SHOWCASE_PEOPLE.length,
+    `${result.contacts} of ${SHOWCASE_PEOPLE.length}`
+  );
+  check("the fixture is not empty", result.contacts > 20, String(result.contacts));
+  check("interactions came with it", result.interactions > 0);
+  check("reminders came with it", result.reminders > 0);
+  check("tags came with it", result.tags > 0 && result.tagLinks > 0);
+  check("companies repeat, so clusters form", result.companies < result.contacts);
+  check("there are overdue follow-ups", result.overdueFollowUps > 0);
+  check("there are upcoming follow-ups", result.upcomingFollowUps > 0);
+
+  const db = await getDb();
+  const rows = await db
+    .select({ id: contacts.id })
+    .from(contacts)
+    .where(eq(contacts.userId, PURGED));
+  check("the contacts are really there", rows.length === result.contacts);
+
+  // Reseeding replaces rather than appends — the console's reset button would otherwise
+  // double the network every time it was pressed.
+  const again = await seedShowcase(PURGED, { now: new Date() });
+  const after = await db
+    .select({ id: contacts.id })
+    .from(contacts)
+    .where(eq(contacts.userId, PURGED));
+  check(
+    "reseeding replaces rather than appends",
+    after.length === again.contacts,
+    `${after.length}`
+  );
+
+  check("the account is still beta after a reseed", (await readBeta(PURGED)) === true);
+}
+
 async function cleanup() {
   const db = await getDb();
   for (const id of ALL_IDS) {
+    await db.delete(reminders).where(eq(reminders.userId, id));
+    await db.delete(interactions).where(eq(interactions.userId, id));
+    await db.delete(contacts).where(eq(contacts.userId, id));
+    await db.delete(tags).where(eq(tags.userId, id));
     await db.delete(adminAuditLog).where(eq(adminAuditLog.targetUserId, id));
     await db.delete(userSettings).where(eq(userSettings.userId, id));
   }
@@ -326,6 +377,7 @@ run(async () => {
     await visibilityChecks();
     await hidingOutranksBeta();
     await writePathChecks();
+    await reseedChecks();
     await purgeChecks();
   } finally {
     await cleanup();

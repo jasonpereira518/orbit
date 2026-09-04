@@ -19,6 +19,7 @@ import {
 } from "@/components/settings/sections";
 import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
+import { BetaSettings } from "@/components/settings/beta-settings";
 import { surfaceKeyForSettingsId } from "@/lib/surfaces";
 
 /**
@@ -104,6 +105,9 @@ export default async function SettingsPage() {
       </Section>
       <Section id="settings-knowledge" hidden={hidden}>
         <KnowledgeSettings />
+      </Section>
+      <Section id="settings-beta" hidden={hidden}>
+        <BetaSettings />
       </Section>
       <Section id="settings-help" hidden={hidden}>
         <HelpSettings />

@@ -82,6 +82,12 @@ export type AdminBilling = {
   plan: Plan;
   source: PlanSource;
   entitlements: Entitlements;
+  /**
+   * The raw testing-account flag. Kept beside `source` because beta outranks every billing
+   * signal in `resolvePlan`, so `source === "beta"` tells you which grant won, not whether
+   * the operator toggle is on — and the toggle needs its own state, not a derived one.
+   */
+  betaAccess: boolean;
   compedPlan: "orbit" | "lifetime" | null;
   compedNote: string | null;
   compedAt: Date | null;
@@ -623,6 +629,7 @@ export async function getAdminUserDetail(
       plan,
       source,
       entitlements: entitlementsForPlan(plan, source, { hostedEnrichment }),
+      betaAccess: settings.betaAccess,
       compedPlan: settings.compedPlan ?? null,
       compedNote: settings.compedNote,
       compedAt: settings.compedAt,
