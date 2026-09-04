@@ -1393,10 +1393,19 @@ function GraphCanvasInner({
         minZoom={0.05}
         maxZoom={2.4}
         // Driven off `onMove` rather than onMoveStart/onMoveEnd: it fires throughout the
-        // gesture, so the overlay hides on the first frame and un-hides on a timer after the
-        // last one. A start/end pair would leave the chip stuck hidden any time an end event
-        // is missed — a gesture interrupted by a blur, or a wheel-zoom that never "ends".
-        onMove={onViewportActivity}
+        // gesture, so the overlay retreats on the first frame and returns on a timer after the
+        // last one. A start/end pair would leave it stuck away any time an end event is missed
+        // — a gesture interrupted by a blur, or a wheel-zoom that never "ends".
+        //
+        // The null check is what makes this mean "the user is moving the map" rather than the
+        // much broader "the viewport changed". React Flow hands over the underlying d3-zoom
+        // `sourceEvent`, which is null when the camera moved itself — and this canvas moves
+        // itself constantly: the initial fit, cluster focus, search zoom, the home button.
+        // Without the guard the chip ducked away on first paint and every time the view flew
+        // somewhere on its own, which is what made it look like it hid at random.
+        onMove={(event) => {
+          if (event) onViewportActivity();
+        }}
         onlyRenderVisibleElements
         style={{
           width: "100%",
@@ -2150,17 +2159,35 @@ export function NetworkGraph({
           // bottom band is empty between the Key button and the view controls.
           <div
             className={cn(
-              "pointer-events-none absolute bottom-3 left-1/2 z-20 max-w-[calc(100%-2rem)] -translate-x-1/2",
-              // Steps aside while the map is being moved — this sits exactly where stars land
-              // when you drag the view downward.
+              "pointer-events-none absolute bottom-3 left-1/2 z-20 max-w-[calc(100%-2rem)]",
+              "transition-transform duration-300 ease-out motion-reduce:transition-none",
+              // Slides down out of the frame while the map is being moved — it sits exactly
+              // where stars land when you drag the view downward, and something that slides
+              // away reads as making room, where something that blinks out reads as broken.
+              // The stage is `overflow-hidden`, so off the bottom is genuinely gone.
               //
-              // Toggled, not faded. An opacity transition here is a state that can be caught
-              // half-finished: a backgrounded tab freezes transitions where they stand, and
-              // this one was repeatedly observed stuck at 0.085 with the element otherwise
-              // "visible". It resolves itself when the tab comes back, but a resting state
-              // that depends on an animation having run is not worth 200ms of polish on an
-              // overlay whose entire job is to be out of the way.
-              viewportBusy && "invisible"
+              // `-translate-x-1/2` is repeated in both branches rather than sitting in the base
+              // string: it and the Y offset are the same CSS property, so a base-string version
+              // would be overwritten by the busy branch and the chip would lurch right on its
+              // way down. The offset has to clear the `bottom-3` inset for it to leave the
+              // frame at all.
+              //
+              // Both ends stated, so the resting position never depends on an animation having
+              // run — a backgrounded tab freezes transitions where they stand, which left the
+              // opacity version that preceded this stuck at 0.085 while still reporting
+              // itself visible. Parked mid-slide is at least legible, and the next interaction
+              // resolves it.
+              viewportBusy
+                // Its own height plus the inset, NOT a fixed distance. The chip wraps to two
+                // or three lines on a narrow canvas — measured at 93px against 27px when
+                // wide — so a fixed offset that looks generous at full width leaves a sliver
+                // of it poking above the edge when it is tall. `100%` tracks whatever height
+                // it currently is, and the 1.5rem covers the `bottom-3` inset.
+                //
+                // Underscores because Tailwind turns `_` into a space, and `calc()` requires
+                // whitespace around its `+`.
+                ? "-translate-x-1/2 translate-y-[calc(100%_+_1.5rem)]"
+                : "-translate-x-1/2 translate-y-0"
             )}
             aria-hidden={viewportBusy}
           >
