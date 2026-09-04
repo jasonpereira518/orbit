@@ -1243,22 +1243,28 @@ git commit -m "feat: saveContactProfile with source precedence"
 
 ## Task 4: Past employers reach search
 
-`search_tsv` is a generated column and may only read its own row, so past employers cannot
-go in it without dropping and rebuilding the column and its GIN index. `hybrid-search.ts`
-already solves exactly this for tags with an `exists` subquery (line 107); companies and
-schools get the same treatment.
+**A filter narrows a candidate set; it does not create one.** `hybridSearchContacts` gets
+its candidates from three arms — FTS over `search_tsv`, trigram over name/company, and the
+semantic arm — and `filterCondition` is a WHERE applied *inside* those arms. A contact who
+left Google in 2019 has no "google" in her tsv and none in her name or company, so she
+never enters the candidate set and no filter can rescue her.
+
+So past employers need to be a **source** of candidates: a fourth arm, fused by RRF like
+the others. The `exists` clause in `filterCondition` is still added — it is correct when a
+filter is set and a candidate came from another arm — but the arm is what makes
+"who has ever worked at Google" actually work.
 
 **Files:**
-- Modify: `src/lib/hybrid-search.ts:92-105`
+- Modify: `src/lib/hybrid-search.ts:92-105` (filter), `:148-324` (new arm + `runArms`)
 - Modify: `scripts/smoke-contact-profile.ts`
 
 **Interfaces:**
 - Consumes: `contact_experiences` (Task 1), `saveContactProfile` (Task 3).
-- Produces: no new exports — `filterCondition` behavior changes only.
+- Produces: no new exports — `filterCondition` and `runArms` behavior changes only.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `scripts/smoke-contact-profile.ts` before the final `console.log`, and add the import:
+Append to `scripts/smoke-contact-profile.ts` before the final `console.log`, with the import:
 
 ```ts
 import { hybridSearchContacts } from "../src/lib/hybrid-search";
@@ -1301,46 +1307,157 @@ import { hybridSearchContacts } from "../src/lib/hybrid-search";
     .where(eq(contacts.id, exGoogleId));
   check("the contact row itself says nothing about Google", graceRow.company === null);
 
-  const googleHits = await hybridSearchContacts(USER, {
+  // The load-bearing assertion. No filters at all — nothing about this query matches
+  // Grace's name, company, or search_tsv, so ONLY an experience arm can surface her.
+  // If this passes with the arm removed, the test is not testing anything.
+  const bareHits = await hybridSearchContacts(USER, { query: "google", limit: 10 });
+  check(
+    "a bare query surfaces a past employer — the arm produces candidates",
+    bareHits.some((h) => h.id === exGoogleId),
+    bareHits.map((h) => h.fullName).join(", ") || "no hits"
+  );
+
+  const schoolHits = await hybridSearchContacts(USER, { query: "yale", limit: 10 });
+  check(
+    "a past school is surfaced too",
+    schoolHits.some((h) => h.id === exGoogleId),
+    schoolHits.map((h) => h.fullName).join(", ") || "no hits"
+  );
+
+  // And the filter narrows correctly once a candidate exists.
+  const filtered = await hybridSearchContacts(USER, {
     query: "google",
     filters: { companies: ["Google"] },
     limit: 10,
   });
   check(
-    "a past employer is found by the companies filter",
-    googleHits[0]?.id === exGoogleId,
-    googleHits.map((h) => h.fullName).join(", ") || "no hits"
+    "the companies filter keeps a past-employer match",
+    filtered.some((h) => h.id === exGoogleId),
+    filtered.map((h) => h.fullName).join(", ") || "no hits"
   );
 
-  const schoolHits = await hybridSearchContacts(USER, {
-    query: "yale",
-    filters: { schools: ["Yale"] },
-    limit: 10,
-  });
-  check(
-    "a school from the experiences table is found too",
-    schoolHits[0]?.id === exGoogleId,
-    schoolHits.map((h) => h.fullName).join(", ") || "no hits"
-  );
+  // A term that matches nobody's history must not drag everyone in.
+  const noise = await hybridSearchContacts(USER, { query: "zzzznotacompany", limit: 10 });
+  check("an unmatched term surfaces nobody through the arm", noise.every((h) => h.id !== exGoogleId));
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npx tsx scripts/smoke-contact-profile.ts`
-Expected: FAIL at "a past employer is found by the companies filter" — the filter only reads `contacts.company`, so Grace is not in the filtered segment.
+Expected: FAIL at "a bare query surfaces a past employer" — nothing in the current three
+arms can produce this contact.
 
-- [ ] **Step 3: Add the exists clauses**
+- [ ] **Step 3: Add the experience arm**
 
-In `src/lib/hybrid-search.ts`, add this helper directly above `filterCondition`:
+In `src/lib/hybrid-search.ts`, add after `trigramArm` (~line 240):
 
 ```ts
 /**
- * Match a stored LinkedIn experience, so "who worked at Google" finds the person who left
- * in 2019 and has nothing about Google on their contact row.
+ * Candidates whose stored LinkedIn history names the query.
  *
- * An `exists` subquery rather than an extra term in `search_tsv`: that column is
- * GENERATED, and a generated column may only read its own row. This mirrors the tag
- * subquery below, and is served by `contact_experiences_org_idx`.
+ * This is an ARM, not a filter, and the distinction is the whole point. `filterCondition`
+ * narrows what the other arms already found; a contact who left Google in 2019 has no
+ * "google" in `search_tsv`, in her name, or in `contacts.company`, so no filter can reach
+ * her. Only a query that reads `contact_experiences` can put her in the candidate set.
+ *
+ * Terms are matched against `organization_normalized` (see `normalizeCompanyKey`), which is
+ * lowercased and stripped of punctuation — so "Google, LLC" is stored as `google llc` and
+ * the term `google` reaches it by prefix. Ranked exact > prefix > substring so that
+ * "Meta" prefers the employer over "Metabase", and RRF bounds how much a loose substring
+ * match can distort the fused order.
+ *
+ * Served by `contact_experiences_org_idx`.
+ */
+async function experienceArm(
+  userId: string,
+  query: string,
+  expansionTerms: string[],
+  filter: SQL | null,
+  armLimit: number
+): Promise<string[]> {
+  // Single-word queries are used whole; longer ones contribute their content tokens, the
+  // same widening `ftsArm` does and for the same reason — "who did I meet from Google"
+  // must reach `google`.
+  const raw = query.trim().toLowerCase();
+  const tokens = raw.split(/\s+/).filter(Boolean);
+  const terms = [
+    ...(raw ? [raw] : []),
+    ...(tokens.length >= 2 ? contentTokens(query).map((t) => t.toLowerCase()) : []),
+    ...expansionTerms.slice(0, 4).map((t) => t.trim().toLowerCase()),
+  ]
+    // Two-character terms match half the table as substrings and carry no signal.
+    .filter((t) => t.length >= 3);
+  const unique = [...new Set(terms)].slice(0, 6);
+  if (!unique.length) return [];
+
+  const db = await getDb();
+  const matches = sql.join(
+    unique.map((t) => sql`ce.organization_normalized like ${`%${escapeLikeValue(t)}%`}`),
+    sql` or `
+  );
+  const score = sql.join(
+    unique.map(
+      (t) => sql`case
+        when ce.organization_normalized = ${t} then 3
+        when ce.organization_normalized like ${`${escapeLikeValue(t)}%`} then 2
+        else 1 end`
+    ),
+    sql` + `
+  );
+
+  const result = await db.execute(sql`
+    select contacts.id, max(${score}) as match_score
+    from contacts
+    join contact_experiences ce
+      on ce.contact_id = contacts.id and ce.user_id = contacts.user_id
+    where contacts.user_id = ${userId}
+      and (${matches})
+      ${filter ? sql`and ${filter}` : sql``}
+    group by contacts.id
+    order by match_score desc, contacts.id
+    limit ${armLimit}
+  `);
+  return result.rows.map((r) => String(r.id));
+}
+```
+
+Then add it to `runArms` (line 306) as a fourth parallel query — it is independent of the
+other three, so it must not serialize behind them:
+
+```ts
+  const [fts, trgm, vec, exp] = await Promise.all([
+    ftsArm(userId, options.query, options.expansionTerms ?? [], filter, armLimit),
+    trigramArm(userId, options.query, filter, armLimit),
+    options.embedding?.length
+      ? semanticArm(userId, options.embedding, armLimit)
+      : Promise.resolve([]),
+    experienceArm(userId, options.query, options.expansionTerms ?? [], filter, armLimit),
+  ]);
+  return [
+    { arm: "fts" as const, ids: fts },
+    { arm: "trigram" as const, ids: trgm },
+    { arm: "semantic" as const, ids: vec },
+    { arm: "experience" as const, ids: exp },
+  ];
+```
+
+Add `"experience"` to the `ArmResult` arm union wherever it is declared, and give it a
+weight in `fuse` alongside the existing arms. Read `fuse` and the arm-weight table before
+editing: if the existing arms carry unequal weights, the experience arm belongs at the same
+weight as `fts` — a stored employer is an exact recorded fact, not a fuzzy guess.
+
+- [ ] **Step 4: Add the filter clause**
+
+Still worth having: once a candidate exists, a `companies` filter must not discard it for
+lacking a *current* Google job. Add this helper above `filterCondition`:
+
+```ts
+/**
+ * Match a stored LinkedIn experience. Companion to `experienceArm` — the arm finds these
+ * contacts, this keeps a filter from throwing them away again.
+ *
+ * An `exists` subquery rather than a term in `search_tsv`: that column is GENERATED, and a
+ * generated column may only read its own row. Mirrors the tag subquery below.
  */
 function experienceExists(values: string[], kinds: readonly string[]): SQL {
   return sql`exists (
@@ -1359,7 +1476,7 @@ function experienceExists(values: string[], kinds: readonly string[]): SQL {
 }
 ```
 
-Then replace the `companies` and `schools` blocks (lines 99-104):
+and replace the `companies` and `schools` blocks (lines 99-104):
 
 ```ts
   const companies = clean(filters.companies);
@@ -1384,26 +1501,27 @@ Then replace the `companies` and `schools` blocks (lines 99-104):
   }
 ```
 
-Note the values passed to `experienceExists` are raw user terms, matched against
-`organization_normalized`. `normalizeCompanyKey` lowercases and strips punctuation, so
-`"Google, LLC"` stored normalizes to `google llc` and the term `google` matches it as a
-substring — which is why this is `like`, not `=`.
+Note `experienceArm` also applies `filter`, which now contains `experienceExists` — that is
+a self-consistent narrowing, not a circularity: the arm finds rows matching the query text,
+and the filter independently requires a match on the filter's own terms.
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npx tsx scripts/smoke-contact-profile.ts`
-Expected: PASS, including both new search checks.
+Expected: PASS, including the bare-query assertion and the noise-term assertion.
 
-- [ ] **Step 5: Confirm no regression in existing search behavior**
+- [ ] **Step 6: Confirm no regression in existing search behavior**
 
-Run: `npx tsx scripts/smoke-hybrid-search.ts`
-Expected: PASS unchanged. The filter is now a disjunction, so it can only widen results, never narrow them — but the recall guard's segment ordering is sensitive to filter shape, so this must be run.
+Run: `npx tsx scripts/smoke-hybrid-search.ts && npx tsx scripts/smoke-chat-retrieval.ts && npx tsx scripts/smoke-dashboard-search.ts`
+Expected: all PASS. A fourth arm changes RRF fusion for every query, so these are not
+optional — if ranking assertions in them shift, that is a real regression to explain, not a
+test to update.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/lib/hybrid-search.ts scripts/smoke-contact-profile.ts
-git commit -m "feat(search): match past employers and schools from experiences"
+git commit -m "feat(search): add an experience arm so past employers are findable"
 ```
 
 ---
@@ -2686,14 +2804,33 @@ import {
 } from "../extension/src/inject/adapters/linkedin-profile";
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [ ] **Step 3: Make the extension module reachable from a root script**
+
+`@contract` is an **extension-only** path alias (`extension/tsconfig.json`); the root
+tsconfig does not define it, so a root-level tsx script importing an extension file that
+imports `@contract` fails to resolve. Add the same alias to the root `tsconfig.json`,
+pointing at the same real file:
+
+```json
+    "paths": {
+      "@/*": ["./src/*"],
+      // Also declared in extension/tsconfig.json, pointing at this same file. Declared
+      // here so root-level scripts (the profile-format smoke test) can import the
+      // extension's pure section readers, which take their types from the wire contract.
+      "@contract": ["./src/lib/extension/contract.ts"]
+    }
+```
+
+This is a type-only import that erases at build, so nothing from the extension enters the
+Next bundle and nothing from the app enters the extension bundle.
+
+- [ ] **Step 4: Run test to verify it fails**
 
 Run: `npm i -D linkedom && npx tsx scripts/smoke-contact-profile-format.ts`
-Expected: FAIL — cannot find the `linkedin-profile` module.
+Expected: FAIL — cannot find the `linkedin-profile` module (a resolution error naming
+`@contract` instead means the tsconfig edit above did not take).
 
-`linkedom` is a devDependency only; nothing in `src/` or `extension/src/` may import it.
-
-- [ ] **Step 4: Write the section readers**
+- [ ] **Step 5: Write the section readers**
 
 Create `extension/src/inject/adapters/linkedin-profile.ts`:
 
@@ -2874,15 +3011,15 @@ Selector names in `sectionFor`, `entryNodes` and `readEntry` are the churn-prone
 adjust them until the fixture assertions in Step 2 pass. The assertions, not these
 selectors, are the specification.
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [ ] **Step 6: Run the test to verify it passes**
 
 Run: `npx tsx scripts/smoke-contact-profile-format.ts`
 Expected: PASS — every fixture and date-range assertion.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add extension/src/inject/adapters/linkedin-profile.ts scripts/fixtures/ scripts/smoke-contact-profile-format.ts package.json package-lock.json
+git add extension/src/inject/adapters/linkedin-profile.ts scripts/fixtures/ scripts/smoke-contact-profile-format.ts tsconfig.json package.json package-lock.json
 git commit -m "feat(extension): pure LinkedIn profile section readers with fixtures"
 ```
 
