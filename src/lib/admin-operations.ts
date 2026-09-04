@@ -463,6 +463,48 @@ export async function setAccountSuspended(adminUserId: string, input: {
 }
 
 /**
+ * Make an account a testing account, or stop being one.
+ *
+ * Grants two things at once, resolved in two different modules from the one column: full
+ * paid entitlements (`resolvePlan` ranks `beta` above every billing signal) and the
+ * surfaces marked `beta` in `src/lib/surfaces.ts`. Nothing about real billing is touched —
+ * revoking beta from an account that also holds a comp or a subscription leaves both
+ * exactly as they were, which is why beta is its own column rather than a third value in
+ * `comped_plan`.
+ *
+ * A reason is required, as with comping and unlike the surface toggles: this hands over
+ * every paid feature with no expiry and no webhook that will ever correct it, so
+ * `admin_audit_log` is the only record of who opened it and why.
+ *
+ * No `assertNotOperator`, deliberately, and again as with comping: that guard exists to
+ * stop an operator locking themselves out of the console, and nothing here can do that.
+ * Admins already reach every beta surface through the exemption; the flag would only
+ * change what they see under "view as a general user".
+ */
+export async function setBetaAccess(
+  adminUserId: string,
+  input: { targetUserId: string; enabled: boolean; reason: string }
+): Promise<{ betaAccess: boolean }> {
+  const reason = requireReason(input.reason);
+  await requireAccount(input.targetUserId);
+
+  await recordAdminAction({
+    adminUserId,
+    action: input.enabled ? "account.beta.grant" : "account.beta.revoke",
+    targetUserId: input.targetUserId,
+    reason,
+  });
+
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({ betaAccess: input.enabled, updatedAt: new Date() })
+    .where(eq(userSettings.userId, input.targetUserId));
+
+  return { betaAccess: input.enabled };
+}
+
+/**
  * Delete every trace of an account's Orbit data.
  *
  * `confirmEmail` must match the account's own email verbatim. That is not ceremony: the

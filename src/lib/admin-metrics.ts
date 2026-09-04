@@ -38,6 +38,20 @@ export type AdminUserRow = {
   imageUrl: string | null;
   plan: Plan;
   planSource: PlanSource;
+  /**
+   * The raw `user_settings.beta_access` flag, kept beside the resolved plan rather than
+   * inferred from `planSource === "beta"`. Beta outranks comp in `resolvePlan`, so an
+   * account that is both would report only the beta source and the comp would vanish from
+   * the roster — the operator toggle needs the flag itself, not the winner of a precedence.
+   */
+  betaAccess: boolean;
+  /**
+   * The raw `comped_plan` grant, for the same reason `betaAccess` is here: beta outranks
+   * comp in `resolvePlan`, so a beta account that is also comped reports `planSource:
+   * "beta"` and its comp would otherwise be invisible. The roster's "comped" filter asks
+   * whether a comp EXISTS (`comped_plan IS NOT NULL` in SQL), not which grant won.
+   */
+  compedPlan: "orbit" | "lifetime" | null;
   compedNote: string | null;
   compedAt: Date | null;
   subscriptionStatus: "active" | "past_due" | "canceled" | null;
@@ -195,6 +209,7 @@ export async function loadAdminUserRows(): Promise<AdminUserRow[]> {
           hasOpenai: sql<boolean>`${userSettings.openaiApiKeyEncrypted} is not null`,
           hasAnthropic: sql<boolean>`${userSettings.anthropicApiKeyEncrypted} is not null`,
           suspendedAt: userSettings.suspendedAt,
+          betaAccess: userSettings.betaAccess,
           compedPlan: userSettings.compedPlan,
           compedNote: userSettings.compedNote,
           compedAt: userSettings.compedAt,
@@ -305,6 +320,8 @@ export async function loadAdminUserRows(): Promise<AdminUserRow[]> {
       imageUrl: row.imageUrl,
       plan,
       planSource: source,
+      betaAccess: row.betaAccess,
+      compedPlan: row.compedPlan,
       compedNote: row.compedNote,
       compedAt: row.compedAt,
       subscriptionStatus: row.subscriptionStatus,
@@ -380,26 +397,38 @@ export function buildFunnel(rows: AdminUserRow[]): FunnelStage[] {
 
 export type PlanBreakdown = {
   free: number;
+  beta: number;
   comped: number;
   lifetime: number;
   subscribed: number;
   paidTotal: number;
+  /** Accounts on a paid plan because someone actually paid: lifetime + subscribed. */
+  payingTotal: number;
 };
 
 /**
- * Comped, lifetime and subscribed are kept apart on purpose. Comps are currently the only
- * thing that writes a paid plan — a merged "paying customers" number would flatter itself.
+ * Beta, comped, lifetime and subscribed are kept apart on purpose. Grants — comps and
+ * testing accounts — are currently the only thing that writes a paid plan, so a merged
+ * "paying customers" number would flatter itself. `paidTotal` counts everyone ON a paid
+ * plan; `payingTotal` counts only the ones who paid for it. Reach for the second whenever
+ * the number is about money.
+ *
+ * `free` is counted by plan rather than by source, so the five buckets partition the roster:
+ * every non-free row has exactly one of the four paid sources.
  */
 export function buildPlanBreakdown(rows: AdminUserRow[]): PlanBreakdown {
+  const beta = rows.filter((r) => r.planSource === "beta").length;
   const comped = rows.filter((r) => r.planSource === "comp").length;
   const lifetime = rows.filter((r) => r.planSource === "lifetime").length;
   const subscribed = rows.filter((r) => r.planSource === "subscription").length;
   return {
     free: rows.filter((r) => r.plan === "free").length,
+    beta,
     comped,
     lifetime,
     subscribed,
-    paidTotal: comped + lifetime + subscribed,
+    paidTotal: beta + comped + lifetime + subscribed,
+    payingTotal: lifetime + subscribed,
   };
 }
 

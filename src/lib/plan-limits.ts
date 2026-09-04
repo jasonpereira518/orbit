@@ -19,9 +19,25 @@ export type Plan = "free" | "orbit" | "lifetime";
  *
  * Lives here rather than in `entitlements.ts` for the same reason `Plan` does: pure
  * modules that need it (`account-alerts.ts`) must not reach a server-only module to get a
- * four-member union. `entitlements.ts` re-exports it, so server code is unaffected.
+ * five-member union. `entitlements.ts` re-exports it, so server code is unaffected.
+ *
+ * `beta` is a testing account (`user_settings.beta_access`), not a billing state. It ranks
+ * above every real signal so a tester is never paywalled mid-test, and — like `comp` — it
+ * must be excluded everywhere paying accounts are counted. See `isPayingSource`.
  */
-export type PlanSource = "comp" | "lifetime" | "subscription" | "free";
+export type PlanSource = "beta" | "comp" | "lifetime" | "subscription" | "free";
+
+/**
+ * Whether a plan source represents money. The two grant sources (`beta`, `comp`) resolve to
+ * a paid *plan* while paying nothing, so any count of paying accounts that tests the plan
+ * instead of the source silently books testers and comped friends as revenue.
+ *
+ * Pure and exported so the admin metrics, the Money screens and the YC economics all ask
+ * the same question in the same place rather than each re-listing the exclusions.
+ */
+export function isPayingSource(source: PlanSource): boolean {
+  return source === "lifetime" || source === "subscription";
+}
 
 export const FREE_CONTACT_LIMIT = 500;
 

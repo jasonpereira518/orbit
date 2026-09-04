@@ -7,6 +7,7 @@ import type { Plan } from "@/lib/plan-limits";
 import type { Entitlements, PlanSource } from "@/lib/entitlements";
 
 const SOURCE_NOTE: Record<PlanSource, string | null> = {
+  beta: "Unlocked while your account is in beta testing — no billing attached.",
   comp: "Granted to you directly — no billing attached.",
   lifetime: "One-time purchase. Yours permanently.",
   subscription: null,

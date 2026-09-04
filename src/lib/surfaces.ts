@@ -36,6 +36,20 @@ export type Surface = {
    */
   alwaysVisible?: true;
   reason?: string;
+  /**
+   * A testing surface: hidden from everyone EXCEPT accounts with `user_settings.beta_access`
+   * (and admins, who are exempt from all hiding). The inverse of the flag above — a normal
+   * surface is visible unless hidden, a beta one is hidden unless you are a tester.
+   *
+   * NOT a way to stage an unreleased product feature. Marking an existing surface `beta`
+   * REMOVES it from every ordinary user, which is a regression, not a beta; ship new
+   * features dark through `app_surface_flags` and the `/admin/product` toggles instead.
+   * These are tools that exist *for* testing and that ordinary users must never reach.
+   *
+   * Hiding still wins: a beta surface with a row in `app_surface_flags` is dark for testers
+   * too, so the kill switch has no hole in it. See `resolveSurfaceVisibility`.
+   */
+  beta?: true;
 };
 
 const PAGES: Surface[] = [
@@ -114,6 +128,15 @@ const PAGES: Surface[] = [
     href: "/recruiters",
   },
   {
+    key: "page.testing",
+    kind: "page",
+    label: "Testing",
+    description:
+      "Reset and reseed your own data, force-run background jobs, inspect retrieval. Beta accounts only.",
+    href: "/testing",
+    beta: true,
+  },
+  {
     key: "page.settings",
     kind: "page",
     label: "Settings",
@@ -179,6 +202,12 @@ const SETTINGS_LOCKED: Record<string, string> = {
   "settings-data": "Nobody may be locked out of exporting or deleting their data.",
 };
 
+/**
+ * Settings sections that are themselves testing surfaces. The card announcing beta is beta,
+ * so the mechanism gates its own announcement and nobody who is not a tester ever sees it.
+ */
+const SETTINGS_BETA = new Set<string>(["settings-beta"]);
+
 const SETTINGS: Surface[] = SETTINGS_SECTIONS.map((section) => {
   const reason = SETTINGS_LOCKED[section.id];
   return {
@@ -188,6 +217,7 @@ const SETTINGS: Surface[] = SETTINGS_SECTIONS.map((section) => {
     description: `The ${section.label} card on the settings page.`,
     settingsId: section.id,
     ...(reason ? { alwaysVisible: true as const, reason } : {}),
+    ...(SETTINGS_BETA.has(section.id) ? { beta: true as const } : {}),
   };
 });
 
@@ -205,6 +235,23 @@ export function surfacesOfKind(kind: SurfaceKind): Surface[] {
 
 export function isAlwaysVisible(key: string): boolean {
   return BY_KEY.get(key)?.alwaysVisible === true;
+}
+
+/**
+ * Every testing surface, as a static set.
+ *
+ * Deliberately derived from this registry rather than stored in the database, unlike
+ * `app_surface_flags`. It means marking a feature beta is a one-line code change with no
+ * migration — and, more importantly, that the "which surfaces are beta" half of the check
+ * cannot fail: there is nothing to read, so nothing to fail open on. See `isBetaUser`,
+ * which carries the other half and fails closed.
+ */
+export const BETA_SURFACE_KEYS: ReadonlySet<string> = new Set(
+  SURFACES.filter((s) => s.beta).map((s) => s.key)
+);
+
+export function isBetaSurface(key: string): boolean {
+  return BY_KEY.get(key)?.beta === true;
 }
 
 const BY_HREF = new Map(

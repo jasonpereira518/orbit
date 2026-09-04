@@ -265,6 +265,7 @@ export function TrendBars({
 /* ---------------------------------------------------------------- plan badge -------- */
 
 const SOURCE_LABEL: Record<PlanSource, string> = {
+  beta: "testing",
   comp: "comped",
   lifetime: "purchased",
   subscription: "subscribed",
@@ -272,10 +273,12 @@ const SOURCE_LABEL: Record<PlanSource, string> = {
 };
 
 /**
- * Plan and its source together — the source is what makes the number honest, since comps
- * are currently the only thing writing a paid plan.
+ * Plan and its source together — the source is what makes the number honest, since grants
+ * (comps and beta testing accounts) are currently the only thing writing a paid plan.
  *
- * Gold marks anything Jason did by hand, consistently throughout the console.
+ * Gold marks anything Jason did by hand, consistently throughout the console — which is
+ * why `beta` wears it too: a testing account is a paid plan nobody paid for, and reading
+ * one as revenue at a glance is exactly the mistake the colour exists to prevent.
  */
 export function PlanBadge({
   plan,
@@ -286,15 +289,15 @@ export function PlanBadge({
   source: PlanSource;
   title?: string;
 }) {
-  const comped = source === "comp";
+  const granted = source === "comp" || source === "beta";
   return (
     <Badge
       variant={plan === "free" ? "secondary" : "outline"}
       title={title}
       className={cn(
         "gap-1 font-normal tabular-nums",
-        comped && "border-accent/50 bg-accent/10 text-accent-foreground",
-        !comped && plan !== "free" && "border-primary/40 text-primary"
+        granted && "border-accent/50 bg-accent/10 text-accent-foreground",
+        !granted && plan !== "free" && "border-primary/40 text-primary"
       )}
     >
       {PLAN_LABELS[plan]}

@@ -246,6 +246,22 @@ export const userSettings = pgTable("user_settings", {
    */
   recruiterSharing: integer("recruiter_sharing").default(0).notNull(),
   /**
+   * Marks this account a testing account. Two grants hang off it: full paid entitlements
+   * (`resolvePlan` ranks `beta` above every billing signal, so nothing is paywalled during
+   * a test) and the surfaces marked `beta` in `src/lib/surfaces.ts`.
+   *
+   * Deliberately NOT an early-access tier. Beta opens the testing tools; unreleased product
+   * features still ship through the global switch on `/admin/product`. Marking an existing
+   * surface `beta` would REMOVE it from everyone else, which is a regression, not a beta.
+   *
+   * A boolean rather than a timestamp, unlike `suspendedAt`: "when did this start" is not
+   * the first question asked about a tester, and `admin_audit_log` carries the grant anyway.
+   *
+   * Preserved across `purgeUserData` — see the column list there. A tester who resets their
+   * own data must not lose the flag that gave them the reset button.
+   */
+  betaAccess: boolean("beta_access").default(false).notNull(),
+  /**
    * Operator suspension. Enforced in `requireUserId()` (`src/lib/auth.ts`) rather than in a
    * layout: actions are reachable by direct POST, so the gate has to sit at the one function
    * every page *and* every server action already calls.

@@ -213,6 +213,26 @@ export async function setAccountSuspendedAction(input: {
   return { ok: true, suspendedAt: result.suspendedAt?.toISOString() ?? null };
 }
 
+/**
+ * Grant or revoke testing-account status.
+ *
+ * Revalidates the whole app layout on top of the admin paths, the same way the surface
+ * toggles do and for the same reason: beta changes which surfaces exist for that user, and
+ * the app shell resolves those once per request to build the nav. Without it a tester who
+ * was granted access mid-session keeps a nav that has never heard of the testing console.
+ */
+export async function setBetaAccessAction(input: {
+  targetUserId: string;
+  enabled: boolean;
+  reason: string;
+}): Promise<{ ok: true; betaAccess: boolean }> {
+  const adminUserId = await requireAdminUserId();
+  const result = await ops.setBetaAccess(adminUserId, input);
+  revalidateAdmin(input.targetUserId);
+  revalidatePath("/", "layout");
+  return { ok: true, betaAccess: result.betaAccess };
+}
+
 export async function deleteAccountAction(input: {
   targetUserId: string;
   confirmEmail: string;

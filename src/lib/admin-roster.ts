@@ -44,6 +44,7 @@ export type RosterStateFilter =
   | "past-due"
   | "inactive"
   | "failing-ai"
+  | "beta"
   | "suspended";
 
 export type RosterQuery = {
@@ -103,14 +104,19 @@ export function isRosterSort(value: unknown): value is RosterSort {
 }
 
 /**
- * Mirrors `resolvePlan` precedence: comp > lifetime > subscription > free.
+ * Mirrors `resolvePlan` precedence: beta > comp > lifetime > subscription > free.
  *
- * Only the resolved *plan* is expressed in SQL, not the source. The one filter that needs
- * the source — "comped" — is `comped_plan IS NOT NULL`, which is the source rule stated
- * directly, so a second CASE would be a second thing to keep in sync for no gain.
+ * Only the resolved *plan* is expressed in SQL, not the source. The filters that need the
+ * source — "comped" and "beta" — are `comped_plan IS NOT NULL` and `beta_access`, which are
+ * the source rules stated directly, so a second CASE would be a second thing to keep in
+ * sync for no gain.
+ *
+ * `scripts/smoke-admin-roster.ts` asserts this agrees with `resolvePlan` row by row for
+ * every filter, which is the only thing keeping the duplication honest.
  */
 const PLAN_SQL = `
   CASE
+    WHEN s.beta_access THEN 'orbit'
     WHEN s.comped_plan = 'lifetime' THEN 'lifetime'
     WHEN s.comped_plan = 'orbit' THEN 'orbit'
     WHEN s.lifetime_purchased_at IS NOT NULL THEN 'lifetime'
@@ -141,6 +147,7 @@ type RosterRecord = {
   ai_provider: string | null;
   ai_model: string | null;
   has_provider_key: boolean;
+  beta_access: boolean;
   comped_plan: "orbit" | "lifetime" | null;
   comped_note: string | null;
   comped_at: string | Date | null;
@@ -195,6 +202,7 @@ function toRow(record: RosterRecord): AdminUserRow {
   // expression exists only to filter; what the UI renders stays on the one implementation
   // every gate in the app already uses.
   const { plan, source } = resolvePlan({
+    betaAccess: record.beta_access,
     compedPlan: record.comped_plan,
     lifetimePurchasedAt: toDate(record.lifetime_purchased_at),
     subscriptionPlan: record.subscription_plan,
@@ -212,6 +220,8 @@ function toRow(record: RosterRecord): AdminUserRow {
     imageUrl: record.profile_image_url,
     plan,
     planSource: source,
+    betaAccess: record.beta_access,
+    compedPlan: record.comped_plan,
     compedNote: record.comped_note,
     compedAt: toDate(record.comped_at),
     subscriptionStatus: record.subscription_status,
@@ -296,6 +306,9 @@ function buildPredicates(query: RosterQuery) {
             AND coalesce(agg.ai_failures, 0) * 4 >= coalesce(agg.ai_calls, 0)`
       );
       break;
+    case "beta":
+      parts.push(sql`s.beta_access`);
+      break;
     case "suspended":
       parts.push(sql`s.suspended_at IS NOT NULL`);
       break;
@@ -361,7 +374,7 @@ function rosterSql(query: RosterQuery, limit: number, offset: number) {
       s.onboarding_completed_at, s.wizard_completed_at,
       s.ai_provider, s.ai_model,
       (${sql.raw(HAS_PROVIDER_KEY_SQL)}) AS has_provider_key,
-      s.comped_plan, s.comped_note, s.comped_at,
+      s.beta_access, s.comped_plan, s.comped_note, s.comped_at,
       s.lifetime_purchased_at, s.subscription_plan, s.subscription_status,
       s.subscription_period_end, s.stripe_customer_id, s.suspended_at,
       coalesce(agg.contacts, 0)      AS contacts,

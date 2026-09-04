@@ -76,6 +76,9 @@ import { recomputeRecruiterRating } from "@/lib/recruiters";
  *     from Stripe or reverse a comp with no record of why
  *   - `suspendedAt`/`suspendedReason`/`suspendedBy` — an operator-set flag; a user's own
  *     "delete data" action must not be a backdoor out of a suspension
+ *   - `betaAccess` — likewise operator-set, and load-bearing in the other direction: the
+ *     reset button a tester just pressed IS a beta surface, so dropping the flag here would
+ *     make every reset revoke the tester's own access to the tool that performed it
  *   - signup attribution (`signupReferrer`, `signupUtmSource/Medium/Campaign`,
  *     `signupLandingPath`, `signupAttributedAt`) and `lastActiveAt` — operational/analytics
  *     metadata about the account, not user-entered content
@@ -243,6 +246,7 @@ export async function purgeUserData(
           compedNote: true,
           compedAt: true,
           compedBy: true,
+          betaAccess: true,
           suspendedAt: true,
           suspendedReason: true,
           suspendedBy: true,

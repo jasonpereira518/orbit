@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   comped_by text,
   last_active_at timestamptz,
   recruiter_sharing integer NOT NULL DEFAULT 0,
+  beta_access boolean NOT NULL DEFAULT false,
   suspended_at timestamptz,
   suspended_reason text,
   suspended_by text,
@@ -798,8 +799,12 @@ CREATE TABLE IF NOT EXISTS non_dilutive_funding (
  * v24 = ops_alert_state (the production-readiness ops sweep's alert ledger).
  * v25 = imports.stall_resumes (the process-stalled cron's give-up counter).
  * v26 = rate_limit_buckets (DB-backed rate limiting for chat, capture, and avatar resolve).
+ * v27 = reserved: taken by the constellation filter branch, which is still unmerged. Skipped
+ * here rather than reused, so the two can merge without one silently overwriting the other's
+ * stamp and leaving a database that reports migrated while missing half the change.
+ * v28 = user_settings.beta_access (testing accounts).
  */
-export const SCHEMA_VERSION = 26;
+export const SCHEMA_VERSION = 28;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1754,6 +1759,7 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS recruiter_messages_user_idx ON recruiter_messages(user_id, status)`,
   `CREATE INDEX IF NOT EXISTS recruiter_messages_recruiter_idx ON recruiter_messages(recruiter_id)`,
   `CREATE INDEX IF NOT EXISTS recruiter_messages_sent_idx ON recruiter_messages(user_id, sent_at)`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS beta_access boolean NOT NULL DEFAULT false`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_reason text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_by text`,

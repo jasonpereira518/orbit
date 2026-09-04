@@ -4,13 +4,20 @@ import { ensureUserSettings } from "@/lib/user-settings";
 import {
   FREE_CONTACT_LIMIT,
   PLAN_LABELS,
+  isPayingSource,
   type Plan,
   type PlanSource,
 } from "@/lib/plan-limits";
 
 // Re-exported so server code keeps importing plan identity from this module, while
 // client components can reach `plan-limits` directly without pulling in the database.
-export { FREE_CONTACT_LIMIT, PLAN_LABELS, type Plan, type PlanSource };
+export {
+  FREE_CONTACT_LIMIT,
+  PLAN_LABELS,
+  isPayingSource,
+  type Plan,
+  type PlanSource,
+};
 
 export type Entitlements = {
   plan: Plan;
@@ -74,6 +81,7 @@ export function isPaywallError(err: unknown): err is PaywallError {
 }
 
 type BillingColumns = {
+  betaAccess?: boolean | null;
   compedPlan?: "orbit" | "lifetime" | null;
   lifetimePurchasedAt?: Date | null;
   subscriptionPlan?: "orbit" | null;
@@ -94,18 +102,29 @@ function subscriptionIsLive(row: BillingColumns, now: Date) {
 }
 
 /**
- * Precedence: comp > lifetime > subscription > free.
+ * Precedence: beta > comp > lifetime > subscription > free.
  *
- * Comp wins outright so a manually granted account is never downgraded by stale billing
+ * Beta wins outright because it is not a billing state at all — it marks a testing account,
+ * and a tester blocked by a paywall cannot test the thing behind it. It resolves to `orbit`
+ * rather than `lifetime` deliberately: `canUseHostedEnrichment` is the single entitlement
+ * Lifetime does not carry, so `orbit` is the only plan that reaches every gated path.
+ *
+ * Comp wins next so a manually granted account is never downgraded by stale billing
  * state. Lifetime outranks subscription so that someone who bought Lifetime and later also
  * subscribed does not silently lose the Lifetime grant if the subscription lapses — the two
  * are additive in practice (see `getEntitlements`, which unions hosted enrichment back in).
+ *
+ * Beta sits above comp rather than beside it so the two never have to be reasoned about
+ * together: revoking beta from a comped account leaves the comp intact, and vice versa.
+ * `src/lib/admin-roster.ts` re-implements this order in SQL — change both together, which
+ * `scripts/smoke-admin-roster.ts` enforces row by row.
  */
 export function resolvePlan(
   row: BillingColumns | null | undefined,
   now = new Date()
 ): { plan: Plan; source: PlanSource } {
   if (!row) return { plan: "free", source: "free" };
+  if (row.betaAccess) return { plan: "orbit", source: "beta" };
   if (row.compedPlan === "lifetime") return { plan: "lifetime", source: "comp" };
   if (row.compedPlan === "orbit") return { plan: "orbit", source: "comp" };
   if (row.lifetimePurchasedAt) return { plan: "lifetime", source: "lifetime" };

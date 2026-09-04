@@ -5,7 +5,13 @@ import { getDb } from "@/db";
 import { appSurfaceFlags } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
 import { recordAdminAction } from "@/lib/admin-operations";
-import { getSurface, isAlwaysVisible, type Surface } from "@/lib/surfaces";
+import {
+  BETA_SURFACE_KEYS,
+  getSurface,
+  isAlwaysVisible,
+  type Surface,
+} from "@/lib/surfaces";
+import { isBetaUser } from "@/lib/beta";
 
 /**
  * The server half of surface visibility: which surfaces are hidden, and for whom.
@@ -88,6 +94,14 @@ export type SurfaceVisibility = {
   /** True when the viewer is an admin currently exempt from hiding. */
   exempt: boolean;
   viewingAsUser: boolean;
+  /**
+   * The testing surfaces this viewer can actually reach — empty for everyone but testers
+   * and exempt admins. The nav uses it to tag those entries "Beta"; it is a labelling aid,
+   * never the gate. What is reachable is decided by `hidden` alone.
+   */
+  betaKeys: Set<string>;
+  /** True when this viewer reaches beta surfaces because their account is a tester. */
+  beta: boolean;
 };
 
 /**
@@ -97,20 +111,56 @@ export type SurfaceVisibility = {
  * which is exactly why "view as a general user" exists, and why `hiddenForUsers` is
  * returned alongside: an exempt admin still needs to be shown WHICH surfaces their users
  * cannot see, or a forgotten toggle is invisible to the only person who can undo it.
+ *
+ * Two kinds of invisibility are resolved here, and they run in opposite directions. An
+ * ordinary surface is visible unless a row in `app_surface_flags` hides it. A surface marked
+ * `beta` in the registry is hidden unless the viewer is a testing account. Both end up in
+ * the one `hidden` set so that every existing call site — the nav filter, the route guard,
+ * `requireVisibleSurface` — enforces both without knowing the second one exists.
+ *
+ * Ordering matters where they overlap: an explicitly hidden beta surface stays hidden from
+ * testers too. `/admin/product` is the kill switch, and a switch with an exception for the
+ * people most likely to be using the broken thing is not a kill switch.
  */
 export async function resolveSurfaceVisibility(
   userId: string
 ): Promise<SurfaceVisibility> {
-  const hiddenForUsers = await getHiddenSurfaceKeys();
+  const hiddenFlags = await getHiddenSurfaceKeys();
   const admin = isAdminUser(userId);
   const viewingAsUser = admin && (await isViewingAsUser(userId));
   const exempt = admin && !viewingAsUser;
-  return {
-    hidden: exempt ? new Set<string>() : hiddenForUsers,
-    hiddenForUsers,
-    exempt,
-    viewingAsUser,
-  };
+  // An exempt admin already reaches everything, so skip the read entirely. Under
+  // "view as a general user" it has to run: the whole point of that mode is to see what a
+  // user sees, and an operator who is themselves a tester would otherwise keep the
+  // testing surfaces in the one mode meant to take them away.
+  const beta = exempt ? false : await isBetaUser(userId);
+
+  // What an ordinary, non-testing user cannot see: the explicit flags plus every testing
+  // surface. This is the yardstick the admin nav's "Hidden" tag is measured against, so it
+  // must describe the general user, not this viewer.
+  const hiddenForUsers = new Set<string>(hiddenFlags);
+  for (const key of BETA_SURFACE_KEYS) hiddenForUsers.add(key);
+
+  if (exempt) {
+    return {
+      hidden: new Set<string>(),
+      hiddenForUsers,
+      exempt,
+      viewingAsUser,
+      betaKeys: new Set(BETA_SURFACE_KEYS),
+      beta: false,
+    };
+  }
+
+  const hidden = new Set<string>(hiddenFlags);
+  const betaKeys = new Set<string>();
+  for (const key of BETA_SURFACE_KEYS) {
+    // Hiding outranks the beta grant, so a killed surface never reappears for a tester.
+    if (beta && !hiddenFlags.has(key)) betaKeys.add(key);
+    else hidden.add(key);
+  }
+
+  return { hidden, hiddenForUsers, exempt, viewingAsUser, betaKeys, beta };
 }
 
 export async function isSurfaceVisible(

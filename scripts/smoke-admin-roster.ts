@@ -38,6 +38,8 @@ import { ensureUserSettings } from "../src/lib/user-settings";
 
 const PREFIX = "smoke-roster-";
 const U = {
+  beta: `${PREFIX}beta`,
+  betaComped: `${PREFIX}betacomped`,
   comped: `${PREFIX}comped`,
   compedLifetime: `${PREFIX}compedlifetime`,
   lifetime: `${PREFIX}lifetime`,
@@ -83,6 +85,15 @@ async function seed() {
 
   // One account per branch of resolvePlan, including the two that are easy to get wrong:
   // a canceled subscription still inside its paid period (live), and one past it (free).
+  // A testing account, and one that is ALSO comped — beta outranks comp in `resolvePlan`,
+  // so the second is the row that catches a PLAN_SQL branch inserted in the wrong order.
+  await set(U.beta, { betaAccess: true, email: "beta@a.test" });
+  await set(U.betaComped, {
+    betaAccess: true,
+    compedPlan: "lifetime",
+    compedAt: ago(3),
+    email: "betacomped@a.test",
+  });
   await set(U.comped, { compedPlan: "orbit", compedAt: ago(10), email: "comped@a.test" });
   await set(U.compedLifetime, { compedPlan: "lifetime", email: "compedlife@a.test" });
   await set(U.lifetime, { lifetimePurchasedAt: ago(30), email: "lifetime@a.test" });
@@ -182,7 +193,10 @@ function jsFilter(
     rows
       .filter((r) => {
         if (plan === "comped") {
-          if (r.planSource !== "comp") return false;
+          // "Carries a comp", not "resolved as comp": beta outranks comp in `resolvePlan`,
+          // so a comped account that is also a tester reports source `beta` while its comp
+          // is still very much there. The SQL side has always asked the first question.
+          if (r.compedPlan === null) return false;
         } else if (plan !== "all" && r.plan !== plan) {
           return false;
         }
@@ -198,6 +212,8 @@ function jsFilter(
               r.counts.aiFailures >= 3 &&
               r.counts.aiFailures * 4 >= r.counts.aiCalls
             );
+          case "beta":
+            return r.betaAccess;
           case "suspended":
             return r.suspendedAt != null;
           default:
@@ -215,6 +231,7 @@ const STATES: RosterStateFilter[] = [
   "past-due",
   "inactive",
   "failing-ai",
+  "beta",
   "suspended",
 ];
 const SORTS: RosterSort[] = [
@@ -237,6 +254,13 @@ async function main() {
   /* ------------------------------------------------ plan precedence agrees with SQL */
 
   const byId = new Map(all.map((r) => [r.userId, r]));
+  check("beta resolves to orbit/beta", byId.get(U.beta)!.planSource === "beta");
+  check("beta outranks a lifetime comp", byId.get(U.betaComped)!.plan === "orbit");
+  check(
+    "the comp underneath beta is still readable",
+    byId.get(U.betaComped)!.compedNote !== undefined &&
+      byId.get(U.betaComped)!.betaAccess === true
+  );
   check("comped orbit resolves to orbit/comp", byId.get(U.comped)!.plan === "orbit");
   check(
     "comped lifetime outranks everything",
