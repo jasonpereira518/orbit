@@ -11,6 +11,7 @@ import {
   type OutreachSearchSource,
 } from "@/lib/outreach-types";
 import { getEntitlements } from "@/lib/entitlements";
+import type { IncomingExperience } from "@/lib/contact-profile";
 
 const APOLLO_SEARCH_URL = "https://api.apollo.io/api/v1/mixed_people/search";
 const APOLLO_MATCH_URL = "https://api.apollo.io/api/v1/people/match";
@@ -113,6 +114,8 @@ export type LinkedInProfileEnrichment = {
   school: string | null;
   profileImageUrl: string | null;
   linkedinUrl: string | null;
+  /** Empty when Apollo returned no history — never null, so callers need no guard. */
+  experiences: IncomingExperience[];
 };
 
 export async function getApolloApiKey(userId: string): Promise<string | null> {
@@ -170,6 +173,62 @@ function extractSchool(person: ApolloPerson): string | null {
   return null;
 }
 
+/**
+ * Apollo dates are ISO-ish strings ("2019-01-01"), often with a placeholder day and
+ * sometimes only a year. Split into parts rather than parsed into a `Date`: the day is
+ * fabricated, and storing it would claim a precision the source does not have.
+ */
+function splitApolloDate(raw: string | null | undefined): {
+  year: number | null;
+  month: number | null;
+} {
+  const value = raw?.trim();
+  if (!value) return { year: null, month: null };
+  const match = value.match(/^(\d{4})(?:-(\d{2}))?/);
+  if (!match) return { year: null, month: null };
+  const year = Number(match[1]);
+  const month = match[2] ? Number(match[2]) : null;
+  return {
+    year: Number.isFinite(year) ? year : null,
+    month: month !== null && month >= 1 && month <= 12 ? month : null,
+  };
+}
+
+/**
+ * Apollo folds schooling into `employment_history` and marks it with a degree, a major, or
+ * `kind: "education"` — the same test `extractSchool` above already relies on.
+ */
+export function apolloEmploymentToExperiences(person: {
+  employment_history?: ApolloEmployment[] | null;
+}): IncomingExperience[] {
+  const history = person.employment_history ?? [];
+  return history
+    .map((job): IncomingExperience | null => {
+      const organization = job.organization_name?.trim();
+      if (!organization) return null;
+      const isEducation =
+        Boolean(job.degree?.trim()) ||
+        Boolean(job.major?.trim()) ||
+        job.kind?.toLowerCase() === "education";
+      const start = splitApolloDate(job.start_date);
+      const end = splitApolloDate(job.end_date);
+      return {
+        kind: isEducation ? "education" : "role",
+        organization,
+        title: (isEducation ? job.degree?.trim() : job.title?.trim()) || null,
+        fieldOfStudy: isEducation ? job.major?.trim() || null : null,
+        location: null,
+        description: null,
+        startYear: start.year,
+        startMonth: start.month,
+        endYear: end.year,
+        endMonth: end.month,
+        isCurrent: Boolean(job.current) && !isEducation,
+      };
+    })
+    .filter((e): e is IncomingExperience => e !== null);
+}
+
 function normalizeLinkedInProfile(
   person: ApolloPerson
 ): LinkedInProfileEnrichment {
@@ -187,6 +246,7 @@ function normalizeLinkedInProfile(
     school: extractSchool(person),
     profileImageUrl: photo,
     linkedinUrl: person.linkedin_url?.trim() || null,
+    experiences: apolloEmploymentToExperiences(person),
   };
 }
 

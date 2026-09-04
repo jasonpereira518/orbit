@@ -36,6 +36,7 @@ import {
   getApolloApiKey,
   type LinkedInProfileEnrichment,
 } from "@/lib/apollo";
+import { saveContactProfile } from "@/lib/contact-profile";
 import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import {
@@ -1191,6 +1192,26 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
         },
         { skipRevalidate: true }
       );
+
+      // Apollo fills a gap; it never overwrites an extension capture. `saveContactProfile`
+      // enforces that, so this call is unconditional and cheap when it is outranked.
+      if (profile.experiences.length) {
+        await saveContactProfile(userId, contact.id, {
+          source: "apollo",
+          sourceUrl: profile.linkedinUrl,
+          adapterVersion: null,
+          capturedAt: new Date(),
+          warnings: [],
+          headline: null,
+          about: null,
+          skills: [],
+          certifications: [],
+          volunteering: [],
+          publications: [],
+          experiences: profile.experiences,
+        }).catch(() => null); // never fail a refresh over the profile half
+      }
+
       refreshed += 1;
     } catch {
       failed += 1;
