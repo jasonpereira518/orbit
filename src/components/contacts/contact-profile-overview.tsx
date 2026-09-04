@@ -180,7 +180,7 @@ export function ContactProfileOverview({
                       <p className="mt-0.5 text-sm text-muted-foreground">
                         {lastTouchAt
                           ? `In your network ${recencyLabel}`
-                          : "Add a note to start the history"}
+                          : "Log an interaction to start the history"}
                       </p>
                     </>
                   )}
