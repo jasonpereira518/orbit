@@ -24,7 +24,7 @@ export function ContactMentionsSection({
   return (
     <Card className="border-border/70 shadow-none">
       <CardHeader>
-        <CardTitle>Mentioned in</CardTitle>
+        <CardTitle as="h2">Mentioned in</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {mentionedIn.length > 0 && (

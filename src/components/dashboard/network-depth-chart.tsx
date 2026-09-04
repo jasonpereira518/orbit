@@ -79,7 +79,7 @@ export function NetworkDepthChart({
   return (
     <Card className="border-border/70 shadow-none">
       <CardHeader className="pb-4">
-        <CardTitle className="text-base">Network depth</CardTitle>
+        <CardTitle as="h2" className="text-base">Network depth</CardTitle>
         <p className="text-sm text-muted-foreground">
           How close your network feels and how people connect to each other
         </p>

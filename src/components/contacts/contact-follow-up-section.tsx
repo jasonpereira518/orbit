@@ -408,7 +408,7 @@ export function ContactFollowUpSection({
   return (
     <Card id="follow-up" className="scroll-mt-24 border-border/70 shadow-none">
       <CardHeader>
-        <CardTitle>Follow up</CardTitle>
+        <CardTitle as="h2">Follow up</CardTitle>
         <p className="text-sm text-muted-foreground">
           Schedule a reminder, or pick a channel to draft a message from your
           history.
