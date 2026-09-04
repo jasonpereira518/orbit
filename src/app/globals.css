@@ -27,6 +27,10 @@
   --color-import-connections: var(--import-connections);
   --color-import-messages: var(--import-messages);
   --color-import-calendar: var(--import-calendar);
+  --color-interaction-together: var(--interaction-together);
+  --color-interaction-live: var(--interaction-live);
+  --color-interaction-written: var(--interaction-written);
+  --color-interaction-yours: var(--interaction-yours);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -107,6 +111,23 @@
   --import-connections: #5b5fc7;
   --import-messages: #c2694a;
   --import-calendar: #b8873a;
+  /* Timeline interaction families. Four groups over the ten interaction types, ordered by
+     how much of the person was actually present: together (met them) -> live (spoke to them)
+     -> written (exchanged text) -> yours (your own record, nothing confirmed). See
+     `src/lib/interaction-types.ts`.
+
+     Not `--primary` (an accent that flips hue between themes), `--ink` (strong text),
+     `--chart-*` (data series, also hue-flipping) or `--import-*` (already claimed): a category
+     token that means two things is the mistake `--tier-lifetime` below exists to avoid.
+
+     Lightness is staggered monotonically with presence -- L* 36.0 / 41.0 / 45.1 / 50.1 here,
+     84.2 / 75.7 / 69.6 / 64.3 in dark. That stagger is what keeps `together` (gold ~75deg) and
+     `live` (rose ~350deg) apart under deuteranopia, where the two hues converge. Every value
+     clears 4.5:1 on its card, so these can carry text as well as icons. */
+  --interaction-together: #6d5009;
+  --interaction-live: #a8375f;
+  --interaction-written: #4a63c9;
+  --interaction-yours: #6f7885;
   /* Orbit Pro reads as `--primary` (the product's own color, per the pricing
      tiers). Orbit Lifetime gets this dedicated gold so paywalled surfaces can
      name which tier(s) unlock a feature without borrowing a hue that already
@@ -207,6 +228,11 @@
   --import-connections: #9b9ff5;
   --import-messages: #f0956f;
   --import-calendar: #e2b45f;
+  /* Same ladder inverted: brighter means more present on a dark card. */
+  --interaction-together: #f5cd7a;
+  --interaction-live: #f5a3c0;
+  --interaction-written: #8aa9f2;
+  --interaction-yours: #8f9db2;
   /* Brighter on a dark card so it keeps 4.5:1 text contrast (#8a6423 would
      read as near-black here). */
   --tier-lifetime: #f2c14e;
