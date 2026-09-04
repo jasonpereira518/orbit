@@ -205,6 +205,12 @@ export function ContactTimeline({
     ? sameDaySiblings(selectedId)
     : { list: [], index: -1 };
 
+  // Position in the whole timeline (newest first), so the detail panel can step through it
+  // without closing. -1 is newer, 1 is older — the direction the eye moves on the spine.
+  const selectedIndex = selectedId
+    ? sorted.findIndex((x) => x.id === selectedId)
+    : -1;
+
   let rowIndex = 0;
 
   return (
@@ -390,6 +396,14 @@ export function ContactTimeline({
             selectedSiblings.index < selectedSiblings.list.length - 1,
         }}
         onReorder={(direction) => selectedId && move(selectedId, direction)}
+        canStep={{
+          newer: selectedIndex > 0,
+          older: selectedIndex >= 0 && selectedIndex < sorted.length - 1,
+        }}
+        onStep={(direction) => {
+          const next = sorted[selectedIndex + direction];
+          if (next) setSelectedId(next.id);
+        }}
         onOpenChange={(open) => !open && setSelectedId(null)}
       />
 

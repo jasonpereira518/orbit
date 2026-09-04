@@ -3,10 +3,13 @@
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { format } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
 import {
   ArrowDown,
   ArrowUp,
+  ChevronDown,
+  ChevronUp,
+  MoreHorizontal,
   Pencil,
   Sparkles,
   Trash2,
@@ -23,6 +26,21 @@ import { setActionItemStatus } from "@/actions/action-items";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,6 +48,8 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
+  SheetFooter,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
@@ -50,28 +70,39 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * The detail behind one timeline node: what was learned, what was promised, who else came up,
- * and the notes it all came from — plus the edit/re-summarize/delete controls that used to be
- * scattered across icon buttons on the timeline row itself.
+ * The detail behind one timeline node.
  *
- * Content loads when the sheet opens rather than with the profile, so a contact with hundreds
- * of interactions does not pay for detail nobody asked to see.
+ * Laid out as a document — fixed header, scrolling body, pinned footer — rather than a stack
+ * that ends wherever the content happens to stop. A thin interaction (a line of notes and
+ * nothing else) is common, and the previous layout left its action bar floating in the middle
+ * of an empty panel, which read as broken rather than merely empty. The footer being welded to
+ * the bottom edge is what makes "not much here" look deliberate.
+ *
+ * Contact identity is deliberately absent: this only opens from that contact's own profile, so
+ * a name and avatar would restate the page behind it.
  */
 export function InteractionDetailSheet({
   interactionId,
   canReorder,
   onReorder,
+  canStep,
+  onStep,
   onOpenChange,
 }: {
   interactionId: string | null;
   canReorder: { up: boolean; down: boolean };
   onReorder: (direction: -1 | 1) => void;
+  /** Whether a newer/older interaction exists to step to. */
+  canStep: { newer: boolean; older: boolean };
+  /** -1 steps to the newer interaction, 1 to the older — matching the timeline's order. */
+  onStep: (direction: -1 | 1) => void;
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [detail, setDetail] = useState<InteractionDetail | null>(null);
   const [editing, setEditing] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [checked, setChecked] = useState<Set<string>>(new Set());
 
   const [formType, setFormType] = useState("note");
@@ -106,6 +137,7 @@ export function InteractionDetailSheet({
   function close() {
     setDetail(null);
     setEditing(false);
+    setConfirmOpen(false);
     setChecked(new Set());
     onOpenChange(false);
   }
@@ -157,13 +189,7 @@ export function InteractionDetailSheet({
 
   function remove() {
     if (!detail) return;
-    if (
-      !window.confirm(
-        "Delete this interaction? Its notes and action items go with it. Reminders it created are kept."
-      )
-    ) {
-      return;
-    }
+    setConfirmOpen(false);
     start(async () => {
       try {
         await deleteInteraction(detail.id);
@@ -198,32 +224,74 @@ export function InteractionDetailSheet({
   // Read off the spec at the point of use: binding a lookup's result to a capitalized
   // local reads as constructing a component during render.
   const typeSpec = interactionTypeSpec(detail?.interactionType ?? null);
+  const hasNotes = Boolean(detail?.rawNotes?.trim());
+  const canMove = canReorder.up || canReorder.down;
 
   return (
     <Sheet
       open={Boolean(interactionId)}
       onOpenChange={(next) => !next && close()}
     >
-      <SheetContent className="overflow-y-auto sm:max-w-lg">
-        <SheetHeader>
-          <SheetTitle className="flex items-center gap-2">
-            <span className="flex size-7 items-center justify-center rounded-full border border-border/70 bg-primary/10">
-              <typeSpec.icon className="size-3.5 text-primary" />
+      {/* The popup itself must NOT scroll — SheetFooter pins with `mt-auto`, which only
+          works when the body is the scroller. */}
+      <SheetContent className="overflow-hidden sm:max-w-lg">
+        <SheetHeader className="border-b border-border/50 pb-4 pr-12">
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border border-border/70 bg-primary/10">
+              <typeSpec.icon className="size-4 text-primary" />
             </span>
-            {detail
-              ? interactionTypeLabel(detail.interactionType)
-              : "Interaction"}
-          </SheetTitle>
+            <div className="min-w-0 flex-1">
+              <SheetTitle>
+                {detail
+                  ? interactionTypeLabel(detail.interactionType)
+                  : "Interaction"}
+              </SheetTitle>
+              {/* Not truncated: at the panel's desktop width the compact date fits on one
+                  line, and on a narrow viewport wrapping to two reads better than clipping
+                  the year off the end. */}
+              <SheetDescription>
+                {detail
+                  ? `${format(new Date(detail.interactionDate), "EEE, MMM d, yyyy")} · ${formatDistanceToNow(new Date(detail.interactionDate), { addSuffix: true })}`
+                  : "Loading…"}
+              </SheetDescription>
+            </div>
+            {canStep.newer || canStep.older ? (
+              <div className="flex shrink-0 items-center gap-0.5">
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  disabled={pending || !canStep.newer}
+                  aria-label="Newer interaction"
+                  onClick={() => onStep(-1)}
+                >
+                  <ChevronUp className="size-4" />
+                </Button>
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  disabled={pending || !canStep.older}
+                  aria-label="Older interaction"
+                  onClick={() => onStep(1)}
+                >
+                  <ChevronDown className="size-4" />
+                </Button>
+              </div>
+            ) : null}
+          </div>
         </SheetHeader>
 
         {loading ? (
-          <div className="mt-6 space-y-3">
+          <div className="flex-1 space-y-3 overflow-y-auto px-4">
             <Skeleton className="h-4 w-32 rounded" />
             <Skeleton className="h-20 w-full rounded-xl" />
             <Skeleton className="h-16 w-full rounded-xl" />
           </div>
-        ) : !detail ? null : editing ? (
-          <div className="mt-6 space-y-4">
+        ) : !detail ? (
+          <div className="flex-1" />
+        ) : editing ? (
+          <div className="flex-1 space-y-4 overflow-y-auto px-4 pb-2">
             <div className="space-y-2">
               <Label>Type</Label>
               <div className="grid grid-cols-3 gap-1.5">
@@ -271,26 +339,9 @@ export function InteractionDetailSheet({
                 onChange={(e) => setFormNotes(e.target.value)}
               />
             </div>
-            <div className="flex gap-2">
-              <Button type="button" disabled={pending} onClick={saveEdit}>
-                {pending ? "Saving…" : "Save"}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={pending}
-                onClick={() => setEditing(false)}
-              >
-                Cancel
-              </Button>
-            </div>
           </div>
         ) : (
-          <div className="mt-6 space-y-6">
-            <p className="text-sm text-muted-foreground">
-              {format(new Date(detail.interactionDate), "EEEE, MMMM d, yyyy")}
-            </p>
-
+          <div className="flex-1 space-y-5 overflow-y-auto px-4 pb-2">
             <div>
               <SectionLabel>What you learned</SectionLabel>
               {detail.aiSummary?.trim() ? (
@@ -299,10 +350,9 @@ export function InteractionDetailSheet({
                 </p>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  No summary yet.{" "}
-                  {detail.rawNotes?.trim()
-                    ? "Summarize pulls one out of the notes below."
-                    : "Add notes and this fills itself in."}
+                  {hasNotes
+                    ? "No summary yet — Summarize pulls one out of the notes."
+                    : "No summary yet. Add notes and this fills itself in."}
                 </p>
               )}
             </div>
@@ -326,7 +376,7 @@ export function InteractionDetailSheet({
                     return (
                       <label
                         key={item.id}
-                        className="flex items-start gap-3 rounded-xl border border-border/60 p-3"
+                        className="flex items-start gap-3 rounded-xl border border-border/50 p-3"
                       >
                         <Checkbox
                           className="mt-0.5"
@@ -334,9 +384,7 @@ export function InteractionDetailSheet({
                           disabled={
                             pending || done || !detail.actionItemsCheckable
                           }
-                          onCheckedChange={() =>
-                            !done && toggleItem(item.id)
-                          }
+                          onCheckedChange={() => !done && toggleItem(item.id)}
                           aria-label={`Mark "${item.text}" done`}
                         />
                         <div className="min-w-0 flex-1">
@@ -385,9 +433,9 @@ export function InteractionDetailSheet({
 
             <div>
               <SectionLabel>Notes</SectionLabel>
-              {detail.rawNotes?.trim() ? (
-                <p className="whitespace-pre-wrap rounded-xl border border-border/60 p-3 text-sm leading-relaxed text-ink">
-                  {detail.rawNotes.trim()}
+              {hasNotes ? (
+                <p className="whitespace-pre-wrap rounded-xl border border-border/50 bg-muted/30 p-3 text-sm leading-relaxed text-ink">
+                  {detail.rawNotes!.trim()}
                 </p>
               ) : (
                 <p className="text-sm text-muted-foreground">
@@ -395,71 +443,120 @@ export function InteractionDetailSheet({
                 </p>
               )}
             </div>
+          </div>
+        )}
 
-            <div className="flex flex-wrap items-center gap-2 border-t border-border/50 pt-4">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="gap-1.5"
-                disabled={pending}
-                onClick={beginEdit}
-              >
-                <Pencil className="size-3.5" />
-                Edit
-              </Button>
-              {detail.rawNotes?.trim() ? (
+        {detail ? (
+          <SheetFooter className="flex-row items-center gap-2 border-t border-border/50">
+            {editing ? (
+              <>
+                <Button type="button" size="sm" disabled={pending} onClick={saveEdit}>
+                  {pending ? "Saving…" : "Save"}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={pending}
+                  onClick={() => setEditing(false)}
+                >
+                  Cancel
+                </Button>
+              </>
+            ) : (
+              <>
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
                   className="gap-1.5"
                   disabled={pending}
-                  onClick={resummarize}
+                  onClick={beginEdit}
                 >
-                  <Sparkles className="size-3.5" />
-                  {pending ? "Working…" : "Summarize"}
+                  <Pencil className="size-3.5" />
+                  Edit
                 </Button>
-              ) : null}
-              {canReorder.up || canReorder.down ? (
-                <div className="flex items-center gap-0.5">
+                {hasNotes ? (
                   <Button
                     type="button"
-                    size="icon-sm"
-                    variant="ghost"
-                    disabled={pending || !canReorder.up}
-                    aria-label="Move earlier in day"
-                    onClick={() => onReorder(-1)}
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    disabled={pending}
+                    onClick={resummarize}
                   >
-                    <ArrowUp className="size-3.5" />
+                    <Sparkles className="size-3.5" />
+                    {pending ? "Working…" : "Summarize"}
                   </Button>
-                  <Button
+                ) : null}
+                <DropdownMenu>
+                  <DropdownMenuTrigger
                     type="button"
-                    size="icon-sm"
-                    variant="ghost"
-                    disabled={pending || !canReorder.down}
-                    aria-label="Move later in day"
-                    onClick={() => onReorder(1)}
+                    aria-label="More actions"
+                    className="ml-auto inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
                   >
-                    <ArrowDown className="size-3.5" />
-                  </Button>
-                </div>
-              ) : null}
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="ml-auto gap-1.5 text-destructive hover:text-destructive"
-                disabled={pending}
-                onClick={remove}
-              >
-                <Trash2 className="size-3.5" />
-                Delete
-              </Button>
-            </div>
-          </div>
-        )}
+                    <MoreHorizontal className="size-4" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-[9rem]">
+                    {canMove ? (
+                      <>
+                        <DropdownMenuItem
+                          disabled={pending || !canReorder.up}
+                          onClick={() => onReorder(-1)}
+                        >
+                          <ArrowUp />
+                          Move earlier
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={pending || !canReorder.down}
+                          onClick={() => onReorder(1)}
+                        >
+                          <ArrowDown />
+                          Move later
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                      </>
+                    ) : null}
+                    <DropdownMenuItem
+                      variant="destructive"
+                      disabled={pending}
+                      onClick={() => setConfirmOpen(true)}
+                    >
+                      <Trash2 />
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </>
+            )}
+          </SheetFooter>
+        ) : null}
       </SheetContent>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent showCloseButton={false} className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete this interaction?</DialogTitle>
+            <DialogDescription>
+              Its notes and action items go with it. Reminders it created are
+              kept. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="outline"
+              disabled={pending}
+              onClick={() => setConfirmOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button variant="destructive" disabled={pending} onClick={remove}>
+              <Trash2 className="size-3.5" />
+              Delete interaction
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Sheet>
   );
 }
