@@ -1,5 +1,5 @@
-import { FormPageSkeleton } from "@/components/loading/page-skeletons";
+import { CapturePageSkeleton } from "@/components/loading/page-skeletons";
 
 export default function CaptureLoading() {
-  return <FormPageSkeleton />;
+  return <CapturePageSkeleton />;
 }
