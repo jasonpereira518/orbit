@@ -323,6 +323,71 @@ async function main() {
   const noise = await hybridSearchContacts(USER, { query: "zzzznotacompany", limit: 10 });
   check("an unmatched term surfaces nobody through the arm", noise.every((h) => h.id !== exGoogleId));
 
+  // --- the arm must be selective, not just precise --------------------------------
+  //
+  // A bare legal suffix is a word every "... Inc" in the table shares. The word-boundary
+  // tier matches it exactly and correctly, which is the problem: precision is not
+  // selectivity. LEGAL_SUFFIXES drops such a term before it ever reaches SQL.
+  const suffixOnlyId = await makeContact("Wendy Widgets", null);
+  await saveContactProfile(USER, suffixOnlyId, {
+    source: "extension", sourceUrl: null, adapterVersion: "linkedin-2",
+    capturedAt: new Date(), warnings: [], headline: null, about: null,
+    skills: [], certifications: [], volunteering: [], publications: [],
+    experiences: [
+      { kind: "role", organization: "Widgets Inc", title: "Founder", startYear: 2010,
+        startMonth: null, endYear: null, endMonth: null, isCurrent: true, location: null,
+        description: null, fieldOfStudy: null },
+    ],
+  });
+  const suffixHits = await hybridSearchContacts(USER, { query: "inc", limit: 10 });
+  check(
+    "a bare legal suffix surfaces nobody through the arm",
+    suffixHits.every((h) => h.id !== suffixOnlyId),
+    suffixHits.map((h) => h.fullName).join(", ") || "no hits"
+  );
+  // ...but the company name itself is still reachable, so the stoplist is per-term.
+  const widgetHits = await hybridSearchContacts(USER, { query: "widgets inc", limit: 10 });
+  check(
+    "the same query minus the suffix still reaches the employer",
+    widgetHits.some((h) => h.id === suffixOnlyId),
+    widgetHits.map((h) => h.fullName).join(", ") || "no hits"
+  );
+
+  // --- the recency tiebreak is real logic, so pin the order it produces ------------
+  //
+  // Both contacts match "zynthia" at the same tier, so match_score ties and ONLY the
+  // is_current / end_year tiebreak can separate them. Neither name contains the term,
+  // so neither can arrive through fts or trigram — this is the experience arm alone.
+  const stillThereId = await makeContact("Pat Ongoing", null);
+  const departedId = await makeContact("Sam Departed", null);
+  const zynthia = (isCurrent: boolean, endYear: number | null) => ({
+    source: "extension" as const, sourceUrl: null, adapterVersion: "linkedin-2",
+    capturedAt: new Date(), warnings: [], headline: null, about: null,
+    skills: [], certifications: [], volunteering: [], publications: [],
+    experiences: [
+      { kind: "role" as const, organization: "Zynthia Labs", title: "Engineer",
+        startYear: 2012, startMonth: null, endYear, endMonth: null, isCurrent,
+        location: null, description: null, fieldOfStudy: null },
+    ],
+  });
+  // Seed the departed contact FIRST, so passing by insertion order alone is not possible.
+  await saveContactProfile(USER, departedId, zynthia(false, 2015));
+  await saveContactProfile(USER, stillThereId, zynthia(true, null));
+
+  const tieHits = await hybridSearchContacts(USER, { query: "zynthia", limit: 10 });
+  const currentRank = tieHits.findIndex((h) => h.id === stillThereId);
+  const pastRank = tieHits.findIndex((h) => h.id === departedId);
+  check(
+    "both same-employer contacts come back through the arm",
+    currentRank >= 0 && pastRank >= 0,
+    tieHits.map((h) => `${h.fullName}[${h.matchedArms.join("+")}]`).join(", ") || "no hits"
+  );
+  check(
+    "a current role outranks an ended one at the same match score",
+    currentRank < pastRank,
+    tieHits.map((h) => h.fullName).join(" > ")
+  );
+
   console.log("\ncontact profile storage: OK");
 }
 

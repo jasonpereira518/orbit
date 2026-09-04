@@ -99,11 +99,26 @@ function anyLike(column: SQL, values: string[]): SQL {
  *
  * An `exists` subquery rather than a term in `search_tsv`: that column is GENERATED, and a
  * generated column may only read its own row. Mirrors the tag subquery below.
+ *
+ * `userId` is passed in as a BOUND LITERAL and is not decoration — it is the only thing
+ * keeping this subquery tenant-scoped. Correlating on `ce.user_id = contacts.user_id`
+ * alone reads as scoped but is not: once the table is ANALYZEd, Postgres rewrites the
+ * correlated EXISTS into a hashed SubPlan and evaluates it ONCE with no user predicate at
+ * all, seq-scanning every tenant's rows and applying the correlation afterwards against
+ * the hash. Measured at 60k rows across 120 tenants: 60,000 rows scanned without the
+ * literal, 500 with it (and the plan flips to a bitmap index scan on
+ * `contact_experiences_org_idx`). The cost otherwise scales with total system-wide rows
+ * rather than the querying user's — and because the rewrite only appears after ANALYZE, a
+ * small local database never shows it and production always does.
+ *
+ * The correlation is kept alongside the literal: belt and braces, and it stays correct if
+ * a caller ever passes a userId that disagrees with the row.
  */
-function experienceExists(values: string[], kinds: readonly string[]): SQL {
+function experienceExists(userId: string, values: string[], kinds: readonly string[]): SQL {
   return sql`exists (
     select 1 from contact_experiences ce
     where ce.contact_id = contacts.id
+      and ce.user_id = ${userId}
       and ce.user_id = contacts.user_id
       and ce.kind in (${sql.join(kinds.map((k) => sql`${k}`), sql`, `)})
       and (${sql.join(
@@ -116,8 +131,17 @@ function experienceExists(values: string[], kinds: readonly string[]): SQL {
   )`;
 }
 
-/** WHERE fragment over the contacts table; null when no filters are set. */
-function filterCondition(filters: SearchFilters | null | undefined): SQL | null {
+/**
+ * WHERE fragment over the contacts table; null when no filters are set.
+ *
+ * Takes `userId` solely so `experienceExists` can bind it as a literal — see the note
+ * there. Every arm already constrains `contacts.user_id`, so this adds no new scoping to
+ * the outer query.
+ */
+function filterCondition(
+  userId: string,
+  filters: SearchFilters | null | undefined
+): SQL | null {
   if (!filters) return null;
   const parts: SQL[] = [];
   const clean = (xs?: string[]) =>
@@ -127,6 +151,7 @@ function filterCondition(filters: SearchFilters | null | undefined): SQL | null 
   if (companies.length) {
     parts.push(
       sql`(${anyLike(sql`lower(coalesce(contacts.company, ''))`, companies)} or ${experienceExists(
+        userId,
         companies,
         ["role"]
       )})`
@@ -138,6 +163,7 @@ function filterCondition(filters: SearchFilters | null | undefined): SQL | null 
   if (schools.length) {
     parts.push(
       sql`(${anyLike(sql`lower(coalesce(contacts.school, ''))`, schools)} or ${experienceExists(
+        userId,
         schools,
         ["education"]
       )})`
@@ -312,6 +338,24 @@ async function trigramArm(
  * bounded and fine at present sizes; `gin_trgm_ops` on `organization_normalized` is the
  * fix if it ever stops being.
  */
+/**
+ * Legal-entity suffixes, which every company ending in one shares. As a whole search term
+ * such a word carries no signal — "inc" matched every "… Inc" in the table through the
+ * arm's word-boundary tier, which is precise but not selective.
+ *
+ * Applied per TERM, not per query: "Acme Inc" still searches `acme`, and only the bare
+ * `inc` component is dropped. A query that is nothing BUT a legal suffix therefore yields
+ * no terms and no candidates, which is the correct answer.
+ *
+ * Deliberately NOT folded into `normalizeCompanyKey`: `organization_normalized` is already
+ * written for every stored row by `saveContactProfile`, so changing normalization would
+ * require re-normalizing the table. This is a query-time concern only.
+ */
+const LEGAL_SUFFIXES = new Set([
+  "inc", "llc", "ltd", "limited", "corp", "corporation", "co", "gmbh", "plc",
+  "sa", "ag", "bv", "nv", "pty", "llp",
+]);
+
 async function experienceArm(
   userId: string,
   query: string,
@@ -333,7 +377,8 @@ async function experienceArm(
     // only match the whole value, a whole first word, or a whole interior word, never
     // the "ge" inside "Regeneron". A single character is still too little to mean
     // anything, and "3M"/"GE"/"HP"/"BP" are real employers.
-    .filter((t) => t.length >= 2);
+    .filter((t) => t.length >= 2)
+    .filter((t) => !LEGAL_SUFFIXES.has(t));
   const unique = [...new Set(terms)].slice(0, 6);
   if (!unique.length) return [];
 
@@ -503,7 +548,7 @@ export async function hybridSearchContacts(
 ): Promise<RankedContact[]> {
   const limit = Math.min(Math.max(options.limit ?? 12, 1), 80);
   const armLimit = Math.max(limit * 2, 40);
-  const filter = filterCondition(options.filters);
+  const filter = filterCondition(userId, options.filters);
 
   const fused = fuse(await runArms(userId, options, filter, armLimit));
   // The semantic arm is unfiltered (ANN can't see contact columns), so the
