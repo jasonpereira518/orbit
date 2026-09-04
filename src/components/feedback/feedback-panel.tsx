@@ -43,6 +43,7 @@ export function FeedbackPanel({
   canCapture,
   onAddScreenshot,
   onRemoveShot,
+  onEditShot,
   onClose,
   onSent,
 }: {
@@ -52,6 +53,7 @@ export function FeedbackPanel({
   canCapture: boolean;
   onAddScreenshot: () => void;
   onRemoveShot: (id: string) => void;
+  onEditShot: (id: string) => void;
   onClose: () => void;
   onSent: () => void;
 }) {
@@ -118,7 +120,13 @@ export function FeedbackPanel({
         onClose();
       }}
     >
-      <SheetContent side="floating" className="gap-5 overflow-y-auto p-6">
+      <SheetContent
+        side="floating"
+        // `SheetContent` carries no radius of its own — the edge-anchored sides are meant
+        // to sit flush. The floating side is inset on all four edges, so it needs one; the
+        // notifications window gets the same shape from `.liquid-glass-panel`.
+        className="gap-5 overflow-y-auto rounded-2xl p-6"
+      >
         <SheetHeader className="p-0">
           <SheetTitle className="font-[family-name:var(--font-display)] text-lg">
             Tell us what happened
@@ -178,16 +186,48 @@ export function FeedbackPanel({
         </div>
 
         <div className="grid gap-2">
+          {/* The primary way to attach one: full width, its own label, and an explanation of
+              what the gesture is. It was a 72px dashed tile next to the thumbnails and read
+              as an afterthought — which is backwards, since a screenshot is the most useful
+              thing in the whole submission. */}
+          {canCapture && usedShots < MAX_SCREENSHOTS && (
+            <Button
+              type="button"
+              variant="outline"
+              // `whitespace-normal` undoes `buttonVariants`' nowrap, which would otherwise
+              // clip the second line against the sheet's 24rem max width.
+              className="h-auto w-full justify-start gap-3 whitespace-normal border-dashed px-4 py-3 text-left"
+              onClick={onAddScreenshot}
+            >
+              <Camera className="size-5 shrink-0" />
+              <span className="grid gap-0.5">
+                <span className="text-sm font-medium">Add a screenshot</span>
+                <span className="text-xs font-normal leading-snug text-muted-foreground">
+                  Drag a box around the problem. It attaches when you let go.
+                </span>
+              </span>
+            </Button>
+          )}
+
           <div className="flex flex-wrap items-center gap-2">
             {shots.map((shot, index) => (
               <div key={shot.id} className="group relative">
-                {/* eslint-disable-next-line @next/next/no-img-element -- a local blob: of
-                    the user's own screen, never a remote origin. */}
-                <img
-                  src={shot.previewUrl}
-                  alt={shot.note || `Screenshot ${index + 1}`}
-                  className="h-12 w-[4.5rem] rounded-md border border-border object-cover"
-                />
+                {/* The annotator moved behind this: shots attach on release now, so adding a
+                    note is an optional second step rather than a gate on the way in. */}
+                <button
+                  type="button"
+                  onClick={() => onEditShot(shot.id)}
+                  aria-label={`Add a note to screenshot ${index + 1}`}
+                  className="block rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element -- a local blob: of
+                      the user's own screen, never a remote origin. */}
+                  <img
+                    src={shot.previewUrl}
+                    alt={shot.note || `Screenshot ${index + 1}`}
+                    className="h-16 w-24 rounded-md border border-border object-cover"
+                  />
+                </button>
                 <Button
                   type="button"
                   variant="ghost"
@@ -200,20 +240,13 @@ export function FeedbackPanel({
                 >
                   <X className="size-3" />
                 </Button>
+                {shot.note && (
+                  <span className="mt-1 block max-w-24 truncate text-[0.65rem] text-muted-foreground">
+                    {shot.note}
+                  </span>
+                )}
               </div>
             ))}
-
-            {canCapture && usedShots < MAX_SCREENSHOTS && (
-              <Button
-                type="button"
-                variant="outline"
-                className="h-12 w-[4.5rem] flex-col gap-0.5 border-dashed text-[0.65rem]"
-                onClick={onAddScreenshot}
-              >
-                <Camera className="size-3.5" />
-                Screenshot
-              </Button>
-            )}
           </div>
 
           {!canCapture ? (
@@ -224,9 +257,10 @@ export function FeedbackPanel({
               we&apos;ll find it.
             </p>
           ) : (
-            usedShots >= MAX_SCREENSHOTS && (
+            usedShots > 0 && (
               <p className="text-xs text-muted-foreground">
-                {MAX_SCREENSHOTS} of {MAX_SCREENSHOTS} attached.
+                {usedShots} of {MAX_SCREENSHOTS} attached
+                {usedShots < MAX_SCREENSHOTS ? " — tap one to add a note." : "."}
               </p>
             )
           )}

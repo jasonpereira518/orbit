@@ -66,7 +66,11 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
   const [message, setMessage] = useState("");
   const [shots, setShots] = useState<DraftShot[]>([]);
   const [frame, setFrame] = useState<CapturedFrame | null>(null);
-  const [pendingShot, setPendingShot] = useState<DraftShot | null>(null);
+  /**
+   * The already-attached shot whose note is open for editing, if any. Screenshots attach on
+   * release now, so the annotator is a second look rather than a gate on the way in.
+   */
+  const [editingShotId, setEditingShotId] = useState<string | null>(null);
   // Lazy initialiser rather than an effect: this component is only ever mounted client-side
   // (`ssr: false`), so `window` is there on the first render and there is no flash of a
   // wrongly-hidden button.
@@ -139,6 +143,13 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     }
   }, [shots.length]);
 
+  /**
+   * Encode the crop and attach it, straight away.
+   *
+   * Releasing the drag is the decision — there is no confirm step and no annotate step on
+   * the way in. A note is still worth having, so the thumbnail opens the annotator
+   * afterwards for anyone who wants to add one.
+   */
   const onCropChosen = useCallback(
     async (crop: CropRect) => {
       if (!frame) return;
@@ -150,17 +161,20 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
           setPhase("composing");
           return;
         }
-        setPendingShot({
-          id: crypto.randomUUID(),
-          blob: encoded.blob,
-          previewUrl: URL.createObjectURL(encoded.blob),
-          width: encoded.width,
-          height: encoded.height,
-          bytes: encoded.bytes,
-          note: "",
-          redactions: [],
-        });
-        setPhase("annotating");
+        setShots((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            blob: encoded.blob,
+            previewUrl: URL.createObjectURL(encoded.blob),
+            width: encoded.width,
+            height: encoded.height,
+            bytes: encoded.bytes,
+            note: "",
+            redactions: [],
+          },
+        ]);
+        setPhase("composing");
       } catch {
         toast.error("That screenshot was too large to attach. Try selecting a smaller area.");
         setPhase("composing");
@@ -172,53 +186,58 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     [frame, shots]
   );
 
-  /**
-   * Re-encode with the redactions painted in, so the bytes that leave the browser have
-   * never contained what was hidden. Painting them only on the preview would ship the
-   * original underneath.
-   */
-  const attachPendingShot = useCallback(async () => {
-    if (!pendingShot) return;
-    let final = pendingShot;
-    if (pendingShot.redactions.length > 0) {
-      try {
-        const bitmap = await createImageBitmap(pendingShot.blob);
-        const redacted = await cropDownscaleEncode(
-          { source: bitmap, width: bitmap.width, height: bitmap.height, previewUrl: "" },
-          { x: 0, y: 0, w: bitmap.width, h: bitmap.height },
-          pendingShot.redactions,
-          MAX_SCREENSHOT_BYTES
-        );
-        bitmap.close();
-        URL.revokeObjectURL(pendingShot.previewUrl);
-        final = {
-          ...pendingShot,
-          blob: redacted.blob,
-          previewUrl: URL.createObjectURL(redacted.blob),
-          bytes: redacted.bytes,
-          width: redacted.width,
-          height: redacted.height,
-        };
-      } catch {
-        // Never attach a shot whose redactions could not be burned in — that would send
-        // exactly the pixels the person asked to hide.
-        toast.error("Couldn't apply the hidden areas, so that screenshot wasn't attached.");
-        URL.revokeObjectURL(pendingShot.previewUrl);
-        setPendingShot(null);
-        setPhase("composing");
-        return;
-      }
-    }
-    setShots((prev) => [...prev, final]);
-    setPendingShot(null);
-    setPhase("composing");
-  }, [pendingShot]);
+  const editingShot = shots.find((s) => s.id === editingShotId) ?? null;
 
-  const discardPendingShot = useCallback(() => {
-    if (pendingShot) URL.revokeObjectURL(pendingShot.previewUrl);
-    setPendingShot(null);
-    setPhase("composing");
-  }, [pendingShot]);
+  /**
+   * Close the annotator, re-encoding with any redactions painted in.
+   *
+   * The burn-in is the whole point: painting the boxes only on the preview would ship the
+   * original pixels underneath. If the re-encode fails, the shot is REMOVED rather than
+   * kept — keeping it would send exactly what the person asked to hide.
+   */
+  const closeAnnotator = useCallback(async () => {
+    const shot = shots.find((s) => s.id === editingShotId);
+    if (!shot || shot.redactions.length === 0) {
+      setEditingShotId(null);
+      setPhase("composing");
+      return;
+    }
+    try {
+      const bitmap = await createImageBitmap(shot.blob);
+      const redacted = await cropDownscaleEncode(
+        { source: bitmap, width: bitmap.width, height: bitmap.height, previewUrl: "" },
+        { x: 0, y: 0, w: bitmap.width, h: bitmap.height },
+        shot.redactions,
+        MAX_SCREENSHOT_BYTES
+      );
+      bitmap.close();
+      URL.revokeObjectURL(shot.previewUrl);
+      setShots((prev) =>
+        prev.map((s) =>
+          s.id === shot.id
+            ? {
+                ...s,
+                blob: redacted.blob,
+                previewUrl: URL.createObjectURL(redacted.blob),
+                bytes: redacted.bytes,
+                width: redacted.width,
+                height: redacted.height,
+                // Cleared because they are now part of the image itself; keeping them would
+                // paint them a second time on the next edit.
+                redactions: [],
+              }
+            : s
+        )
+      );
+    } catch {
+      toast.error("Couldn't apply the hidden areas, so that screenshot was removed.");
+      URL.revokeObjectURL(shot.previewUrl);
+      setShots((prev) => prev.filter((s) => s.id !== shot.id));
+    } finally {
+      setEditingShotId(null);
+      setPhase("composing");
+    }
+  }, [shots, editingShotId]);
 
   const removeShot = useCallback((id: string) => {
     setShots((prev) => {
@@ -272,6 +291,10 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
           canCapture={captureSupported}
           onAddScreenshot={addScreenshot}
           onRemoveShot={removeShot}
+          onEditShot={(id) => {
+            setEditingShotId(id);
+            setPhase("annotating");
+          }}
           onClose={() => setPhase("closed")}
           onSent={reset}
         />
@@ -289,14 +312,22 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
         />
       )}
 
-      {phase === "annotating" && pendingShot && (
+      {phase === "annotating" && editingShot && (
         <ScreenshotAnnotator
-          previewUrl={pendingShot.previewUrl}
-          note={pendingShot.note}
-          redactions={pendingShot.redactions}
-          onChange={(next) => setPendingShot((prev) => (prev ? { ...prev, ...next } : prev))}
-          onDone={attachPendingShot}
-          onCancel={discardPendingShot}
+          previewUrl={editingShot.previewUrl}
+          note={editingShot.note}
+          redactions={editingShot.redactions}
+          onChange={(next) =>
+            setShots((prev) =>
+              prev.map((s) => (s.id === editingShot.id ? { ...s, ...next } : s))
+            )
+          }
+          onDone={closeAnnotator}
+          onRemove={() => {
+            removeShot(editingShot.id);
+            setEditingShotId(null);
+            setPhase("composing");
+          }}
         />
       )}
     </>

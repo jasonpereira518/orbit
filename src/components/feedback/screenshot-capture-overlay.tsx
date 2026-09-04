@@ -78,11 +78,15 @@ export function ScreenshotCaptureOverlay({
     [display, imgBox, frame.width, frame.height]
   );
 
+  // Letting go IS the confirmation. There was a "Use selection" step here first; it read as
+  // ceremony, because by the time you release the button you have already decided what you
+  // want. The whole-screenshot button below stays as the no-drag path.
   const { rect, dragging, cancel, handlers } = useDragRect({
     minSize: MIN_SELECTION_PX,
     onCommit: (selection) => {
       const crop = toCrop(selection);
       setAnnounced(`Selected ${crop.w} by ${crop.h} pixels.`);
+      onConfirm(crop);
     },
   });
 
@@ -115,8 +119,6 @@ export function ScreenshotCaptureOverlay({
     const box = imgRef.current?.getBoundingClientRect();
     if (box) setImgBox({ left: box.left, top: box.top });
   }, [display]);
-
-  const crop = rect ? toCrop(rect) : null;
 
   return (
     <Dialog open modal onOpenChange={(open) => !open && onCancel()}>
@@ -173,14 +175,12 @@ export function ScreenshotCaptureOverlay({
 
           <div className="flex items-center gap-3 rounded-full bg-popover px-4 py-2 text-popover-foreground shadow-lg">
             <span className="text-xs text-muted-foreground">
-              {crop
-                ? `${crop.w} × ${crop.h}`
-                : "Drag to select an area — or use the whole screenshot"}
+              Drag any area to attach it
             </span>
             {/* Initial focus, and the equal-status path: nothing in the payload is out of
                 reach without a mouse. */}
             <Button type="button" size="sm" autoFocus onClick={confirm}>
-              {crop ? "Use selection" : "Use whole screenshot"}
+              Use whole screenshot
             </Button>
             <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
               Cancel

@@ -7,7 +7,7 @@ import { resetWizard } from "@/actions/onboarding-wizard";
 import { Button } from "@/components/ui/button";
 import { OPEN_FEEDBACK_EVENT } from "@/lib/feedback-events";
 
-export function HelpSettings() {
+export function HelpSettings({ feedbackEnabled }: { feedbackEnabled: boolean }) {
   const router = useRouter();
   const [tourPending, startTour] = useTransition();
   const [wizardPending, startWizard] = useTransition();
@@ -51,7 +51,9 @@ export function HelpSettings() {
           Run guided setup
         </Button>
         {/* The third door into the one mounted widget, alongside the floating button and
-            the mobile "More" sheet. */}
+            the mobile "More" sheet — and gone when the widget is, since it dispatches an
+            event at a component that would not be mounted. */}
+        {feedbackEnabled && (
         <Button
           variant="outline"
           size="sm"
@@ -59,6 +61,7 @@ export function HelpSettings() {
         >
           Send feedback
         </Button>
+        )}
       </div>
     </section>
   );

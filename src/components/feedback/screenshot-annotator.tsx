@@ -16,9 +16,10 @@ import { MAX_SHOT_NOTE } from "@/lib/feedback-report";
 import type { NormalizedRect } from "@/lib/screenshot-capture";
 
 /**
- * Say what this screenshot is about, and hide anything on it that shouldn't leave.
+ * Say what an attached screenshot is about, and hide anything on it that shouldn't leave.
  *
- * The note is the point — "drag a box, then write about it" is the whole feature. The
+ * Opened from the thumbnail, AFTER the shot is attached — releasing the drag attaches it,
+ * so this is a second look rather than a gate on the way in. The
  * redaction tool is here because of what `src/lib/feedback.ts` says about this table: it is
  * "the one free-text column an operator can read without hesitation", precisely because a
  * user is writing about Orbit rather than about a third party. A screenshot of the contacts
@@ -34,14 +35,14 @@ export function ScreenshotAnnotator({
   redactions,
   onChange,
   onDone,
-  onCancel,
+  onRemove,
 }: {
   previewUrl: string;
   note: string;
   redactions: NormalizedRect[];
   onChange: (next: { note: string; redactions: NormalizedRect[] }) => void;
   onDone: () => void;
-  onCancel: () => void;
+  onRemove: () => void;
 }) {
   const imgRef = useRef<HTMLImageElement>(null);
   /** Same reasoning as the capture overlay: measured into state, never read during render. */
@@ -82,7 +83,7 @@ export function ScreenshotAnnotator({
   };
 
   return (
-    <Dialog open modal onOpenChange={(open) => !open && onCancel()}>
+    <Dialog open modal onOpenChange={(open) => !open && onDone()}>
       <DialogContent className="sm:max-w-2xl" showCloseButton={false}>
         <DialogHeader>
           <DialogTitle>What should we look at here?</DialogTitle>
@@ -165,11 +166,14 @@ export function ScreenshotAnnotator({
         />
 
         <DialogFooter>
-          <Button type="button" variant="ghost" onClick={onCancel}>
-            Discard
+          {/* The shot is already attached by the time this opens, so the destructive action
+              is "remove it" and the neutral one is "done" — closing must not throw the
+              screenshot away. */}
+          <Button type="button" variant="ghost" onClick={onRemove}>
+            Remove screenshot
           </Button>
           <Button type="button" onClick={onDone}>
-            Attach
+            Done
           </Button>
         </DialogFooter>
       </DialogContent>

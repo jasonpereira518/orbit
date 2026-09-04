@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { FeedbackWidgetLazy } from "@/components/feedback/feedback-widget-lazy";
+import { FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { AppShell } from "@/components/layout/app-shell";
 import { SectionFlash } from "@/components/layout/section-flash";
 import { PresenceHeartbeat } from "@/components/layout/presence-heartbeat";
@@ -122,8 +123,15 @@ export default async function AppLayout({
           shell for `/onboarding`, so mounting inside it would need the widget in two
           branches that must never drift — and first-run friction is the feedback most
           worth having. Being outside `data-warp-craft` also keeps the button from flying
-          away during the upgrade warp. */}
-      <FeedbackWidgetLazy viewingAsUser={visibility.viewingAsUser} />
+          away during the upgrade warp.
+
+          Not mounted at all when an operator has hidden the surface, rather than mounted
+          and invisible: the two other doors (the mobile "More" sheet, Settings → Help)
+          dispatch an event AT this component, so leaving it mounted-but-hidden would turn
+          them into buttons that do nothing. */}
+      {!visibility.hidden.has(FEEDBACK_SURFACE_KEY) && (
+        <FeedbackWidgetLazy viewingAsUser={visibility.viewingAsUser} />
+      )}
     </>
   );
 }

@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { clerkAppearance } from "@/lib/clerk-appearance";
-import { isHrefHidden } from "@/lib/surfaces";
+import { FEEDBACK_SURFACE_KEY, isHrefHidden } from "@/lib/surfaces";
 import { SPRING_PILL, SPRING_TAP } from "@/lib/motion";
 import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
 import { OPEN_FEEDBACK_EVENT } from "@/lib/feedback-events";
@@ -377,7 +377,9 @@ export function MobileNav({
             </button>
             {/* No floating feedback button on mobile — the bottom edge already carries this
                 pill and the ask bar, and screen capture is desktop-only. Same door as the
-                ask bar uses: one mounted widget, dispatched to. */}
+                ask bar uses: one mounted widget, dispatched to — so this has to disappear
+                with the widget, or it becomes a button that dispatches into nothing. */}
+            {!hidden.has(FEEDBACK_SURFACE_KEY) && (
             <button
               type="button"
               onClick={() => {
@@ -389,6 +391,7 @@ export function MobileNav({
               <MessageSquarePlus className="h-5 w-5 shrink-0" />
               Send feedback
             </button>
+            )}
             {moreNav.map((item) => {
               const active = isNavActive(pathname, item.href);
               const Icon = item.icon;
