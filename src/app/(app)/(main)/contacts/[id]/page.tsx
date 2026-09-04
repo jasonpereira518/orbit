@@ -7,6 +7,7 @@ import {
 } from "@/actions/contacts";
 import { ContactAddNotesCard } from "@/components/contacts/contact-add-notes-card";
 import { ContactBriefCard } from "@/components/contacts/contact-brief-card";
+import { ContactExperienceSection } from "@/components/contacts/contact-experience-section";
 import { ContactFollowUpSection } from "@/components/contacts/contact-follow-up-section";
 import { ContactMentionsSection } from "@/components/contacts/contact-mentions-section";
 import { ContactProfileHero } from "@/components/contacts/contact-profile-hero";
@@ -27,6 +28,7 @@ import {
   isBriefStale,
 } from "@/lib/contact-brief";
 import { listContactMentions } from "@/lib/contact-mentions";
+import { getContactProfile } from "@/lib/contact-profile";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { getSettings } from "@/actions/settings";
 import { notFound } from "next/navigation";
@@ -45,8 +47,12 @@ export default async function ContactDetailPage({
   // failure the section simply doesn't render.
   const sendOptionsPromise = getContactFollowUpSendOptions(id).catch(() => null);
   // Guarded like the others: an unhandled getSettings() rejection would take the whole
-  // page down for a section that only decides whether the add-notes card is enabled.
-  const settingsPromise = getSettings().catch(() => ({ hasApiKey: false }));
+  // page down for a section that only decides whether the add-notes card and the
+  // experience section's "Fill from Apollo" button are enabled.
+  const settingsPromise = getSettings().catch(() => ({
+    hasApiKey: false,
+    hasApolloKey: false,
+  }));
   const relatedPromise = listRelatedContacts(id, 6).catch(() => []);
   // Started once and chained from below, rather than each `.then` re-calling
   // requireUserId(): the `after()` callback for brief regeneration needs the
@@ -68,6 +74,9 @@ export default async function ContactDetailPage({
     .catch(() => []);
   const briefPromise = userIdPromise
     .then((u) => getContactBrief(u, id))
+    .catch(() => null);
+  const profilePromise = userIdPromise
+    .then((u) => getContactProfile(u, id))
     .catch(() => null);
 
   // notFound() must fire BEFORE any Suspense boundary renders so the route
@@ -265,6 +274,17 @@ export default async function ContactDetailPage({
         />
       </div>
 
+      {/* No fallback: the section renders its own empty state, and a skeleton that
+          resolves into an empty state reads as a glitch. */}
+      <Suspense fallback={null}>
+        <StreamedExperience
+          data={profilePromise}
+          settings={settingsPromise}
+          contactId={contact.id}
+          linkedinUrl={contact.linkedinUrl}
+        />
+      </Suspense>
+
       <Suspense fallback={<Skeleton className="h-40 w-full rounded-2xl" />}>
         <StreamedFollowUp
           sendOptions={sendOptionsPromise}
@@ -356,6 +376,48 @@ async function StreamedAddNotes({
         contactId={contactId}
         contactName={contactName}
         hasApiKey={hasApiKey}
+      />
+    </div>
+  );
+}
+
+async function StreamedExperience({
+  data,
+  settings,
+  contactId,
+  linkedinUrl,
+}: {
+  data: Promise<Awaited<ReturnType<typeof getContactProfile>>>;
+  // Consumed here rather than awaited in the parent (unlike the brief's original
+  // sketch): `settingsPromise` is meant to stream — StreamedAddNotes below awaits
+  // the same promise inside its own Suspense boundary for the same reason — so
+  // awaiting it in the page body above this component's JSX would block everything
+  // that follows on the settings read finishing first.
+  settings: Promise<{ hasApolloKey: boolean }>;
+  contactId: string;
+  linkedinUrl: string | null;
+}) {
+  const [profile, { hasApolloKey }] = await Promise.all([data, settings]);
+  return (
+    <div className="reveal-mount">
+      <ContactExperienceSection
+        contactId={contactId}
+        linkedinUrl={linkedinUrl}
+        canUseApollo={hasApolloKey}
+        profile={
+          profile && {
+            source: profile.source,
+            capturedAt: profile.capturedAt.toISOString(),
+            warnings: profile.warnings,
+            headline: profile.headline,
+            about: profile.about,
+            skills: profile.skills.map((s) => s.name),
+            certifications: profile.certifications.map((c) => c.name),
+            volunteering: profile.volunteering.map((v) => v.organization),
+            publications: profile.publications.map((p) => p.title),
+            experiences: profile.experiences,
+          }
+        }
       />
     </div>
   );
