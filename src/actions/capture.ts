@@ -27,6 +27,10 @@ import {
   type CaptureMediaFile,
 } from "@/lib/capture-ingest";
 import {
+  CAPTURE_MAX_UPLOAD_BYTES,
+  formatUploadSize,
+} from "@/lib/capture-limits";
+import {
   buildDuplicateIndex,
   findDuplicateCandidatesIndexed,
 } from "@/lib/duplicates";
@@ -146,6 +150,21 @@ export async function ingestCaptureMedia(input: {
     const hasFiles = Boolean(input.files?.length);
     if (!hasText && !hasFiles) {
       return { ok: false as const, error: "Add notes or upload a file first" };
+    }
+
+    // The panel checks this before encoding, but a non-browser caller can reach the action
+    // directly — and an oversized body is truncated in transit rather than refused, so the
+    // only alternative to an explicit error is a mystery parse failure. Measured on the
+    // decoded bytes so the number matches the file the caller actually sent.
+    const uploadBytes = (input.files ?? []).reduce(
+      (sum, file) => sum + Math.floor((file.base64.length * 3) / 4),
+      0
+    );
+    if (uploadBytes > CAPTURE_MAX_UPLOAD_BYTES) {
+      return {
+        ok: false as const,
+        error: `That upload is ${formatUploadSize(uploadBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}. Try fewer or smaller files.`,
+      };
     }
 
     const normalized = await normalizeCaptureInput(userId, {
