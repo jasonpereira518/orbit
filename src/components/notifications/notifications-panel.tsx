@@ -5,7 +5,6 @@ import type { AppPulse } from "@/lib/app-pulse";
 import Link from "next/link";
 import {
   useEffect,
-  useRef,
   useState,
   useTransition,
 } from "react";
@@ -52,36 +51,10 @@ import {
   useBackgroundJobs,
   type BackgroundJob,
 } from "@/lib/background-jobs";
+import { PANEL_ORIGIN_FALLBACK, originFromTrigger } from "@/lib/floating-panel";
 
 type PanelData = AppPulse["panel"];
 type PanelItem = PanelData["items"][number];
-
-/**
- * The floating window's own geometry, mirrored from the `data-[side=floating]`
- * utilities in `src/components/ui/sheet.tsx` (`inset-y-4 right-4`, `sm:max-w-md`).
- *
- * Duplicated here because the panel is portalled and positioned by CSS, so its box does
- * not exist to measure at the moment the bell is clicked — and the transform-origin has
- * to be correct on the very first painted frame or the window visibly jumps as it opens.
- * Keep the two in step.
- */
-const PANEL_INSET_PX = 16;
-const PANEL_MAX_W_PX = 384; // sm:max-w-sm = 24rem
-
-/** Where the window should appear to grow from: the middle of the bell that was clicked. */
-function originFromButton(button: HTMLElement | null): string {
-  if (!button) return "top right";
-  const rect = button.getBoundingClientRect();
-  if (rect.width === 0) return "top right";
-  const panelWidth = Math.min(
-    window.innerWidth - PANEL_INSET_PX * 2,
-    PANEL_MAX_W_PX
-  );
-  const panelLeft = window.innerWidth - PANEL_INSET_PX - panelWidth;
-  return `${Math.round(rect.left + rect.width / 2 - panelLeft)}px ${Math.round(
-    rect.top + rect.height / 2 - PANEL_INSET_PX
-  )}px`;
-}
 
 /* -------------------------------------------------------------------------- */
 /* Shared panel state                                                         */
@@ -95,11 +68,10 @@ const refreshPanel = (force = false) => refreshPulse(force);
 
 export function NotificationsPanelButton() {
   const [open, setOpen] = useState(false);
-  const buttonRef = useRef<HTMLButtonElement>(null);
   // Captured on click rather than read during render: there are two bells mounted (mobile
   // header and desktop fixed, hidden from each other by CSS), and this resolves to
   // whichever one the user actually pressed.
-  const [origin, setOrigin] = useState("top right");
+  const [origin, setOrigin] = useState(PANEL_ORIGIN_FALLBACK);
   const { pulse, loading } = useAppPulse();
   const data = pulse?.panel ?? null;
   const [pending, start] = useTransition();
@@ -165,9 +137,10 @@ export function NotificationsPanelButton() {
         ]
           .filter(Boolean)
           .join(", ")}
-        ref={buttonRef}
-        onClick={() => {
-          setOrigin(originFromButton(buttonRef.current));
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={(e) => {
+          setOrigin(originFromTrigger(e.currentTarget));
           setOpen(true);
         }}
       >
