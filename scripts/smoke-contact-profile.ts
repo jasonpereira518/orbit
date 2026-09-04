@@ -403,6 +403,47 @@ async function main() {
     buildContactEmbeddingContent({ fullName: "Nobody" }) === "Nobody"
   );
 
+  // --- a long About must not truncate the career line out of the vector -----------
+  //
+  // `createEmbedding`/`createEmbeddingsBatch` blindly slice the built content to 8,000
+  // chars. `about` is capped at 8,000 chars on the way into storage (see
+  // `contact-profile.ts`'s `trimmed(incoming.about, 8000)`), so a near-limit About plus a
+  // headline and title can push the total past 8,000 before the career line is even
+  // appended. If the career line and headline were ordered AFTER `about` (as they were
+  // before this fix), a past employer sitting past the cutoff would be silently dropped
+  // from every semantic search — this asserts the field ordering, not the string length.
+  const longAbout = "A".repeat(7995);
+  const nearLimitContent = buildContactEmbeddingContent({
+    fullName: "Near Limit Person",
+    title: "Some Title",
+    profile: { headline: "Near Limit Headline", about: longAbout },
+    experiences: [
+      {
+        kind: "role",
+        organization: "Definitely A Past Employer Inc",
+        title: null,
+        fieldOfStudy: null,
+        startYear: 2010,
+        startMonth: null,
+        endYear: 2015,
+        endMonth: null,
+        isCurrent: false,
+        sortIndex: 0,
+      },
+    ],
+  });
+  const truncatedForEmbedding = nearLimitContent.slice(0, 8000);
+  check(
+    "a near-limit About does not truncate the past employer out of the embedded content",
+    truncatedForEmbedding.includes("Definitely A Past Employer Inc"),
+    `content length ${nearLimitContent.length}`
+  );
+  check(
+    "a near-limit About does not truncate the headline out of the embedded content",
+    truncatedForEmbedding.includes("Near Limit Headline"),
+    `content length ${nearLimitContent.length}`
+  );
+
   console.log("\ncontact profile storage: OK");
 }
 
