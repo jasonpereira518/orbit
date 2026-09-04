@@ -259,7 +259,7 @@ export async function RemindersAndFollowUpsSection({
       <div className="reveal-mount min-w-0" style={revealDelay(240)}>
         <Card id="due-follow-ups" className="border-border/70 shadow-none scroll-mt-8">
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-            <CardTitle className="text-base">Due follow-ups</CardTitle>
+            <CardTitle as="h2" className="text-base">Due follow-ups</CardTitle>
             {data.dueFollowUps.length > 0 && (
               <div className="flex items-center gap-1.5">
                 <GenerateFollowUpsButton limit={8} />
@@ -309,7 +309,7 @@ export async function RecentlyUpdatedSection({
     <div className="reveal-mount min-w-0" style={revealDelay(240)}>
       <Card className="border-border/70 shadow-none">
         <CardHeader>
-          <CardTitle className="text-base">Recently updated</CardTitle>
+          <CardTitle as="h2" className="text-base">Recently updated</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
           {data.recentContacts.length === 0 ? (

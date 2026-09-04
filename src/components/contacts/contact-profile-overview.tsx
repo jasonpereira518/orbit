@@ -51,7 +51,7 @@ export function ContactProfileOverview({
     <div className="grid gap-4 lg:grid-cols-2">
       <Card className="border-border/70 shadow-none lg:col-span-2">
         <CardHeader className="border-b border-border/50">
-          <CardTitle>Who they are</CardTitle>
+          <CardTitle as="h2">Who they are</CardTitle>
           <CardAction>
             <Button
               type="button"
@@ -97,7 +97,7 @@ export function ContactProfileOverview({
       {keyFacts.length > 0 ? (
         <Card className="border-border/70 shadow-none">
           <CardHeader>
-            <CardTitle>Key facts</CardTitle>
+            <CardTitle as="h2">Key facts</CardTitle>
           </CardHeader>
           <CardContent>
             <ul className="list-disc space-y-1.5 pl-5 text-sm text-ink">
@@ -112,7 +112,7 @@ export function ContactProfileOverview({
       {sharedInterests.length > 0 ? (
         <Card className="border-border/70 shadow-none">
           <CardHeader>
-            <CardTitle>Shared interests</CardTitle>
+            <CardTitle as="h2">Shared interests</CardTitle>
           </CardHeader>
           <CardContent>
             <ul className="list-disc space-y-1.5 pl-5 text-sm text-ink">
@@ -127,7 +127,7 @@ export function ContactProfileOverview({
       {industry?.trim() ? (
         <Card className="border-border/70 shadow-none">
           <CardHeader>
-            <CardTitle>Industry</CardTitle>
+            <CardTitle as="h2">Industry</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-ink">{industry}</p>
@@ -138,7 +138,7 @@ export function ContactProfileOverview({
       <div className="grid gap-4 sm:grid-cols-2 lg:col-span-2">
         <Card className="border-border/70 shadow-none">
           <CardHeader>
-            <CardTitle>Closeness</CardTitle>
+            <CardTitle as="h2">Closeness</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex items-start gap-4">
@@ -193,7 +193,7 @@ export function ContactProfileOverview({
         {howMetSummary ? (
           <Card className="border-border/70 shadow-none">
             <CardHeader>
-              <CardTitle>How you met</CardTitle>
+              <CardTitle as="h2">How you met</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-start gap-4">

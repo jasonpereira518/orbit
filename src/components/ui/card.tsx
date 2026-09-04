@@ -43,9 +43,26 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
-function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
+/**
+ * Heading levels a card title may render as. `div` is the default so an
+ * untouched call site keeps its current, non-semantic output.
+ */
+type CardTitleAs = "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+
+function CardTitle({
+  className,
+  as: Comp = "div",
+  ...props
+}: React.ComponentProps<"div"> & {
+  /**
+   * The element to render. A card title is almost always a section heading, so
+   * pass the level that fits the page's outline (no skipped levels, one `h1`
+   * per page) and screen-reader heading navigation will reach this card.
+   */
+  as?: CardTitleAs
+}) {
   return (
-    <div
+    <Comp
       data-slot="card-title"
       className={cn(
         "font-heading text-base leading-snug font-medium group-data-[size=sm]/card:text-sm",

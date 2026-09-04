@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ChevronDown, NotebookPen } from "lucide-react";
 import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 export function ContactAddNotesCard({ contactId, contactName, hasApiKey }: { contactId: string; contactName: string; hasApiKey: boolean }) {
@@ -12,19 +12,25 @@ export function ContactAddNotesCard({ contactId, contactName, hasApiKey }: { con
   return (
     <Card className="border-border/70 shadow-none">
       <CardHeader className="cursor-pointer" onClick={() => setOpen((o) => !o)}>
-        <CardTitle className="flex items-center gap-2 text-base">
+        <CardTitle as="h2" className="flex items-center gap-2 text-base">
           <NotebookPen className="size-4" /> Add notes
+        </CardTitle>
+        {/* The toggle sits in the card's action slot rather than inside the
+            title: a button nested in a heading folds its own label into the
+            heading's accessible name, so screen-reader heading navigation
+            would announce "Add notes Expand add notes". */}
+        <CardAction>
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            className="ml-auto h-7 px-2"
+            className="h-7 px-2"
             aria-expanded={open}
             aria-label={open ? "Collapse add notes" : "Expand add notes"}
           >
             <ChevronDown className={cn("size-4 transition-transform", open && "rotate-180")} />
           </Button>
-        </CardTitle>
+        </CardAction>
       </CardHeader>
       {open && (
         <CardContent>
