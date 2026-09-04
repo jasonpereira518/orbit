@@ -19,6 +19,7 @@ import type {
   FollowUpRequest,
   LogInteractionRequest,
   PageContext,
+  ProfileCaptureInput,
   ResolveRequest,
   SaveContactRequest,
   StartersRequest,
@@ -26,8 +27,19 @@ import type {
 
 /** Hard ceiling on a request body, checked before and after reading. */
 export const MAX_BODY_BYTES = 64_000;
-/** Profile captures carry every section's text; the general cap is for small payloads. */
-export const MAX_PROFILE_BODY_BYTES = 300_000;
+/**
+ * Profile captures carry every section's text; the general cap is for small payloads.
+ *
+ * Every per-field limit below maxed out at once (60 experiences at 2000-char descriptions,
+ * 40 certifications, a full 200KB raw-text blob, all ten identity fields at 2048 chars, …)
+ * JSON-encodes to ~497KB of plain ASCII. 600KB leaves real headroom above that measured
+ * worst case without inviting abuse. This is still a character-count budget, not a byte
+ * budget — a payload built entirely from multi-byte text (CJK, emoji) can encode 2-3x
+ * larger per character than ASCII and could still hit this cap even while every individual
+ * field limit is satisfied. That gap predates this route: every extension schema field is
+ * bounded by `.max(chars)`, not bytes. Fixing it globally is out of scope here.
+ */
+export const MAX_PROFILE_BODY_BYTES = 600_000;
 /** Page text is truncated to this before it ever reaches a prompt. */
 export const MAX_RAW_TEXT_CHARS = 8_000;
 
@@ -260,6 +272,10 @@ const _starters: Exact<z.infer<typeof startersRequestSchema>, StartersRequest> =
 const _save: Exact<z.infer<typeof saveContactRequestSchema>, SaveContactRequest> = true;
 const _log: Exact<z.infer<typeof logInteractionRequestSchema>, LogInteractionRequest> = true;
 const _followUp: Exact<z.infer<typeof followUpRequestSchema>, FollowUpRequest> = true;
-void [_resolve, _page, _parse, _starters, _save, _log, _followUp];
+const _profileCapture: Exact<
+  z.infer<typeof profileCaptureRequestSchema>,
+  ProfileCaptureInput
+> = true;
+void [_resolve, _page, _parse, _starters, _save, _log, _followUp, _profileCapture];
 
 export type { ContactSearchResponse };

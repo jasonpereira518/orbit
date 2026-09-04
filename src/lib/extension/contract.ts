@@ -158,6 +158,13 @@ export type PageContext = {
   profile?: PageProfile;
 };
 
+export type ProfileCaptureInput = {
+  contactId: string;
+  page: PageContext;
+  /** The user was shown a slug mismatch and said save anyway. */
+  confirmMismatch?: boolean;
+};
+
 export type ProfileCaptureResponse = {
   saved: boolean;
   /** Set when the page's slug disagrees with the contact's; the panel must confirm. */

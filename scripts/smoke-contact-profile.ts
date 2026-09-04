@@ -24,6 +24,8 @@ import { apolloEmploymentToExperiences } from "../src/lib/apollo";
 import { captureContactProfile } from "../src/lib/extension/profile-capture";
 import { pageContextSchema } from "../src/lib/extension/contract.schema";
 import type { PageContext } from "../src/lib/extension/contract";
+import { ContactNotFoundError } from "../src/lib/contact-writes";
+import { ExtensionRouteError } from "../src/lib/extension/http";
 
 const USER = "smoke-contact-profile-user";
 
@@ -560,6 +562,160 @@ async function main() {
   );
   const bobUntouched = await getContactProfile(USER, bobId);
   check("the wrong contact was not written", bobUntouched?.about === "There are no mistakes.");
+  // A partial-write regression (profile row refused but experience rows still inserted,
+  // or vice versa) would pass the check above alone — this would not.
+  check(
+    "no experience rows leaked onto the wrong contact either",
+    bobUntouched?.experiences.every((e) => e.organization !== "US Navy") === true,
+    bobUntouched?.experiences.map((e) => e.organization).join(", ")
+  );
+  const [bobRowAfterMismatch] = await db
+    .select({ linkedinUrl: contacts.linkedinUrl })
+    .from(contacts)
+    .where(eq(contacts.id, bobId));
+  check(
+    "the wrong contact's stored URL was not touched by the refused write",
+    bobRowAfterMismatch.linkedinUrl === "https://www.linkedin.com/in/bobross"
+  );
+
+  // --- the guard must fail CLOSED, not open, when the page's identity is unknown ---------
+  //
+  // A page URL with no identifiable LinkedIn slug at all (not even a malformed linkedin.com
+  // one) is not "no opinion, proceed" — it must be refused exactly like a real mismatch
+  // whenever the contact already has a known identity.
+  const knownSlugId = await makeContact("Known Slug Person", "https://www.linkedin.com/in/knownslug");
+  const noSlugPage = {
+    ...capturePage,
+    url: "https://example.com/nothing",
+    sourceUrl: "https://example.com/nothing",
+  } as unknown as PageContext;
+  const refusedNoSlug = await captureContactProfile(USER, {
+    contactId: knownSlugId,
+    page: noSlugPage,
+  });
+  check(
+    "a page with no identifiable LinkedIn slug is refused against a contact that has one",
+    !refusedNoSlug.saved
+  );
+  const knownSlugProfileAfter = await getContactProfile(USER, knownSlugId);
+  check("no profile was written for the unknown-identity refusal", knownSlugProfileAfter === null);
+  const [knownSlugRow] = await db
+    .select({ linkedinUrl: contacts.linkedinUrl })
+    .from(contacts)
+    .where(eq(contacts.id, knownSlugId));
+  check(
+    "its stored URL was not touched",
+    knownSlugRow.linkedinUrl === "https://www.linkedin.com/in/knownslug"
+  );
+
+  // --- the guard is case-insensitive: uppercase /IN/ is the SAME slug, not "unknown" -----
+  const upperCaseId = await makeContact("Upper Case Person", "https://www.linkedin.com/in/grace");
+  const upperCasePage = {
+    ...capturePage,
+    url: "https://www.linkedin.com/IN/grace",
+    sourceUrl: "https://www.linkedin.com/IN/grace",
+  } as unknown as PageContext;
+  const upperCaseCapture = await captureContactProfile(USER, {
+    contactId: upperCaseId,
+    page: upperCasePage,
+  });
+  check(
+    "an uppercase /IN/ path is recognized as the same slug, not refused as unknown",
+    upperCaseCapture.saved
+  );
+
+  // --- a malformed stored URL must not silently accept a mismatched capture, nor have its
+  // own URL replaced -----------------------------------------------------------------------
+  //
+  // A Sales Navigator URL has no `/in/` segment, so it normalizes to the full URL text
+  // rather than to null — it is a KNOWN (if unusual) identity, not a gap, and must guard the
+  // contact exactly like a normal slug would.
+  const salesNavUrl = "https://www.linkedin.com/sales/lead/ACwAAA,NAME_SEARCH";
+  const salesNavId = await makeContact("Sales Nav Person", salesNavUrl);
+  const salesNavCapture = await captureContactProfile(USER, { contactId: salesNavId, page });
+  check("a contact with an unparseable stored URL is not silently written to", !salesNavCapture.saved);
+  const salesNavProfileAfter = await getContactProfile(USER, salesNavId);
+  check("no profile was written over the sales-nav contact", salesNavProfileAfter === null);
+  const [salesNavRow] = await db
+    .select({ linkedinUrl: contacts.linkedinUrl })
+    .from(contacts)
+    .where(eq(contacts.id, salesNavId));
+  check("its sales-nav URL survived untouched", salesNavRow.linkedinUrl === salesNavUrl);
+
+  // --- a contact belonging to another user must be indistinguishable from one that does not
+  // exist at all -----------------------------------------------------------------------------
+  const otherUserId = "smoke-contact-profile-other-user";
+  const [otherUserContact] = await db
+    .insert(contacts)
+    .values({ userId: otherUserId, fullName: "Not Yours", linkedinUrl: null })
+    .returning();
+
+  async function captureThrows(contactId: string): Promise<string> {
+    try {
+      await captureContactProfile(USER, { contactId, page });
+      return "did not throw";
+    } catch (err) {
+      return err instanceof ContactNotFoundError ? "ContactNotFoundError" : `wrong error: ${String(err)}`;
+    }
+  }
+  const foreignResult = await captureThrows(otherUserContact.id);
+  const missingResult = await captureThrows("00000000-0000-0000-0000-000000000000");
+  check("a foreign contact throws ContactNotFoundError", foreignResult === "ContactNotFoundError", foreignResult);
+  check(
+    "a nonexistent contact throws the identical error",
+    missingResult === "ContactNotFoundError",
+    missingResult
+  );
+  await db.delete(contacts).where(eq(contacts.id, otherUserContact.id));
+
+  // --- only a LinkedIn person page can carry a capture --------------------------------
+  const nonProfilePageId = await makeContact("Not A Profile Target", null);
+  const nonLinkedInPage = { ...capturePage, site: "gmail", kind: "thread" } as unknown as PageContext;
+  let nonProfileRefused = false;
+  try {
+    await captureContactProfile(USER, { contactId: nonProfilePageId, page: nonLinkedInPage });
+  } catch (err) {
+    nonProfileRefused = err instanceof ExtensionRouteError && err.code === "invalid_request";
+  }
+  check(
+    "a non-LinkedIn-person page is refused before it can be stored",
+    nonProfileRefused
+  );
+  check(
+    "nothing was written for the refused non-profile page",
+    (await getContactProfile(USER, nonProfilePageId)) === null
+  );
+
+  // --- a capturedAt the extension mangled must not turn a capture into a 500 -------------
+  const badDatePage = { ...capturePage, capturedAt: "not-a-date" } as unknown as PageContext;
+  const badDateId = await makeContact("Bad Date Person", "https://www.linkedin.com/in/grace");
+  const badDateResult = await captureContactProfile(USER, { contactId: badDateId, page: badDatePage });
+  check("an unparseable capturedAt does not throw — it still saves", badDateResult.saved);
+
+  // --- only an https linkedin.com URL is ever persisted or written onto the contact ------
+  const spoofedUrlPage = {
+    ...capturePage,
+    url: "https://evil.example.com/in/attacker",
+    sourceUrl: "https://evil.example.com/in/attacker",
+  } as unknown as PageContext;
+  const spoofedUrlId = await makeContact("No Url For Spoof Test", null);
+  const spoofedResult = await captureContactProfile(USER, { contactId: spoofedUrlId, page: spoofedUrlPage });
+  check("a capture from a non-linkedin.com URL still saves the profile itself", spoofedResult.saved);
+  const [spoofedRow] = await db
+    .select({ linkedinUrl: contacts.linkedinUrl })
+    .from(contacts)
+    .where(eq(contacts.id, spoofedUrlId));
+  check(
+    "but the non-linkedin.com URL is never written onto the contact",
+    spoofedRow.linkedinUrl === null,
+    spoofedRow.linkedinUrl ?? "null"
+  );
+  const spoofedProfile = await getContactProfile(USER, spoofedUrlId);
+  check(
+    "and it is never persisted as the profile's sourceUrl either",
+    spoofedProfile?.sourceUrl === null,
+    spoofedProfile?.sourceUrl ?? "null"
+  );
 
   const confirmed = await captureContactProfile(USER, {
     contactId: bobId,

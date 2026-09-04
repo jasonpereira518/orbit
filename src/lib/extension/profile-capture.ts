@@ -6,7 +6,9 @@
  *
  * The first is the important one. Writing one person's career onto another is the worst
  * thing this feature can do and the hardest to notice afterwards, so a slug disagreement
- * stops the write and asks, rather than trusting the panel's resolution.
+ * stops the write and asks, rather than trusting the panel's resolution. The identity check
+ * is deliberately JS-to-JS (see `linkedinSlug` below) and does not read the `linkedin_slug`
+ * generated column — it does not need to, and does not depend on that column's definition.
  */
 
 import { z } from "zod";
@@ -15,30 +17,35 @@ import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { completeJson, parseAiJson, userHasAiKey } from "@/lib/ai";
 import { untrustedPageBlock } from "@/lib/conversation-starters";
+import { ContactNotFoundError } from "@/lib/contact-writes";
 import { saveContactProfile, type IncomingExperience } from "@/lib/contact-profile";
-import type { PageContext, PageProfile, ProfileCaptureResponse } from "./contract";
+import { linkedinSlug } from "@/lib/duplicates";
+import type { PageContext, PageProfile, ProfileCaptureInput, ProfileCaptureResponse } from "./contract";
 import { pageProfileSchema } from "./contract.schema";
+import { ExtensionRouteError } from "./http";
 
-export type ProfileCaptureInput = {
-  contactId: string;
-  page: PageContext;
-  confirmMismatch?: boolean;
-};
+export type { ProfileCaptureInput };
 
 /**
- * Reproduces the `linkedin_slug` generated column in `src/db/schema.ts`: everything after
- * the first `/in/` up to a `/`, `?` or `#`, lowercased. Must stay in step with it — the
- * comparison below is meaningless if the two disagree.
- *
- * Postgres's `split_part` matches the `/in/` delimiter case-sensitively, so the regex below
- * does too — only the captured slug itself is lowercased, matching the column's outer
- * `lower(...)`.
+ * A page's own `url` (or `sourceUrl`) may not even be a LinkedIn URL — a spoofed or buggy
+ * capture, or an SSRF attempt via a URL later fetched by the avatar pipeline
+ * (`fetchLinkedInPhotoUrl`) or rendered as an `href`. Only an https `linkedin.com` URL is
+ * ever persisted as `sourceUrl` or written onto `contacts.linkedinUrl`; the identity-slug
+ * comparison below is a separate, looser concern and does not use this.
  */
-function linkedinSlug(url: string | null | undefined): string | null {
-  const value = url?.trim();
-  if (!value) return null;
-  const match = value.match(/\/in\/([^/?#]+)/);
-  return match?.[1]?.toLowerCase() ?? null;
+function isLinkedInProfileUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && /(^|\.)linkedin\.com$/i.test(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** A date the extension sent that fails to parse must not turn a capture into a 500. */
+function parseCapturedAt(value: string): Date {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? new Date() : date;
 }
 
 const fallbackSchema = z.object({ profile: pageProfileSchema });
@@ -54,25 +61,36 @@ const FALLBACK_SYSTEM = [
   "Use null for anything absent; never invent an employer, a title, or a date.",
 ].join("\n");
 
-/** Ask the model only when the selectors came back empty. */
+/**
+ * Ask the model only when the selectors came back empty. Never throws: no key, empty page
+ * text, a timeout, or malformed output all mean the same thing here — keep whatever the
+ * selectors got, and let the caller degrade gracefully.
+ */
 async function fallbackParse(
   userId: string,
   page: PageContext
 ): Promise<PageProfile | null> {
-  if (!(await userHasAiKey(userId))) return null;
+  const blob = untrustedPageBlock(page);
+  if (!blob) return null;
   try {
+    // Inside the try, not before it: a settings-load failure inside userHasAiKey must not
+    // escape this function either.
+    if (!(await userHasAiKey(userId))) return null;
     const raw = await completeJson(userId, {
       system: FALLBACK_SYSTEM,
-      user: untrustedPageBlock(page),
+      user: blob,
       temperature: 0.1,
       maxOutputTokens: 4096,
       operation: "capture.profile.fallback",
     });
     const parsed = fallbackSchema.safeParse(parseAiJson(raw));
-    return parsed.success ? parsed.data.profile : null;
-  } catch {
-    // No key, a timeout, or malformed output all mean the same thing here: keep whatever
-    // the selectors got. This path never throws to the route.
+    if (!parsed.success) {
+      console.warn("[profile-capture] unparseable fallback response", raw.slice(0, 300));
+      return null;
+    }
+    return parsed.data.profile;
+  } catch (error) {
+    console.warn("[profile-capture] fallback parse failed", error);
     return null;
   }
 }
@@ -97,21 +115,38 @@ export async function captureContactProfile(
   userId: string,
   input: ProfileCaptureInput
 ): Promise<ProfileCaptureResponse> {
+  // A capture is only ever meaningful for a LinkedIn person page. Refusing anything else
+  // here — before touching the contact at all — stops a `site:"gmail"` or `kind:"thread"`
+  // page carrying a `profile` block from ever reaching the write path below.
+  if (input.page.site !== "linkedin" || input.page.kind !== "person") {
+    throw new ExtensionRouteError(
+      "invalid_request",
+      "Profile capture only accepts a LinkedIn profile page."
+    );
+  }
+
   const db = await getDb();
   const contact = await db.query.contacts.findFirst({
     where: and(eq(contacts.userId, userId), eq(contacts.id, input.contactId)),
     columns: { id: true, fullName: true, linkedinUrl: true },
   });
-  if (!contact) {
-    return { saved: false, conflict: null, usedFallback: false, degraded: false, experienceCount: 0 };
-  }
+  // A contact belonging to another user must read identically to a contact that does not
+  // exist at all — never leak which one it was.
+  if (!contact) throw new ContactNotFoundError();
 
-  const pageSlug = linkedinSlug(input.page.url) ?? linkedinSlug(input.page.sourceUrl);
+  // `linkedinSlug` (from `@/lib/duplicates`, the same rule `resolve.ts` uses to find the
+  // contact in the first place) never returns null: "" means "no identifiable LinkedIn
+  // identity at all," which is itself a value that must be treated as disagreeing with a
+  // contact that DOES have one — not as "no opinion, proceed." That is the fail-closed
+  // half of this guard: an unset flag defaults to refuse, not to accept.
+  const pageSlug = linkedinSlug(input.page.url) || linkedinSlug(input.page.sourceUrl);
   const contactSlug = linkedinSlug(contact.linkedinUrl);
 
-  // A contact with no URL on file is a gap, not a disagreement — accepting the capture
-  // fills it. Only two *known and different* identities are a conflict.
-  if (pageSlug && contactSlug && pageSlug !== contactSlug && !input.confirmMismatch) {
+  // A contact with literally no URL on file is a gap, not a disagreement — accepting the
+  // capture fills it. Once the contact has ANY slug (including a non-`/in/` URL, which
+  // `linkedinSlug` normalizes rather than drops), anything other than an exact match —
+  // including the page having no identifiable slug at all — is a conflict.
+  if (contactSlug && pageSlug !== contactSlug && !input.confirmMismatch) {
     return {
       saved: false,
       conflict: { pageSlug, contactSlug, contactName: contact.fullName },
@@ -138,11 +173,16 @@ export async function captureContactProfile(
   const warnings = [...input.page.warnings];
   if (profile.parseIncomplete && !usedFallback) warnings.push("parse-incomplete");
 
+  // Only ever persist (or later dereference, or write onto the contact) a URL that is
+  // actually an https linkedin.com URL — `site`/`kind` describe what the client CLAIMS the
+  // page is, this checks the URL string itself.
+  const validPageUrl = isLinkedInProfileUrl(input.page.url) ? input.page.url : null;
+
   await saveContactProfile(userId, input.contactId, {
     source: "extension",
-    sourceUrl: input.page.url,
+    sourceUrl: validPageUrl,
     adapterVersion: input.page.adapterVersion,
-    capturedAt: new Date(input.page.capturedAt),
+    capturedAt: parseCapturedAt(input.page.capturedAt),
     warnings,
     headline: profile.headline,
     about: profile.about,
@@ -153,11 +193,14 @@ export async function captureContactProfile(
     experiences: toIncoming(profile),
   });
 
-  // Accepting a capture for a contact we had no URL for is how that URL gets on file.
-  if (!contactSlug && input.page.url) {
+  // Accepting a capture for a contact we had NO URL for at all is how that URL gets on
+  // file. Keyed on the actual stored column, not on `contactSlug` — a contact whose stored
+  // URL simply doesn't parse to a slug (a Sales Navigator link, an uppercase `/IN/` path)
+  // already has a URL and must not have it silently replaced by this capture's page.
+  if (!contact.linkedinUrl?.trim() && validPageUrl) {
     await db
       .update(contacts)
-      .set({ linkedinUrl: input.page.url })
+      .set({ linkedinUrl: validPageUrl })
       .where(and(eq(contacts.userId, userId), eq(contacts.id, input.contactId)));
   }
 

@@ -1,10 +1,10 @@
-import type { ProfileCaptureResponse } from "@/lib/extension/contract";
+import type { ProfileCaptureInput, ProfileCaptureResponse } from "@/lib/extension/contract";
 import {
   MAX_PROFILE_BODY_BYTES,
   profileCaptureRequestSchema,
 } from "@/lib/extension/contract.schema";
 import { extensionRoute, preflight } from "@/lib/extension/http";
-import { captureContactProfile, type ProfileCaptureInput } from "@/lib/extension/profile-capture";
+import { captureContactProfile } from "@/lib/extension/profile-capture";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
