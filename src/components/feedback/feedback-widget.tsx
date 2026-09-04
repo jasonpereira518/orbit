@@ -1,13 +1,16 @@
 "use client";
 
-import { MessageSquarePlus } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { OPEN_FEEDBACK_EVENT } from "@/lib/feedback-events";
+import {
+  setFeedbackPanelState,
+  subscribeFeedbackOpen,
+  takeFeedbackOpenRequest,
+} from "@/lib/feedback-events";
+import { PANEL_ORIGIN_FALLBACK } from "@/lib/floating-panel";
+import { FeedbackTrigger } from "@/components/feedback/feedback-trigger";
 import { MAX_SCREENSHOTS, MAX_SCREENSHOT_BYTES, MAX_SUBMISSION_BYTES } from "@/lib/feedback-report";
 import { toast } from "@/lib/toast";
 import {
@@ -65,52 +68,6 @@ export type DraftShot = {
 type Phase = "closed" | "composing" | "closing" | "capturing" | "selecting" | "annotating";
 
 /**
- * The floating window's geometry, mirrored from the `data-[side=floating]` utilities in
- * `src/components/ui/sheet.tsx` (`inset-y-4 right-4`, `sm:max-w-sm`).
- *
- * Duplicated rather than measured because the panel is portalled and positioned by CSS, so
- * its box does not exist at the moment the button is clicked — and the transform-origin has
- * to be right on the first painted frame or the window visibly jumps as it opens. Same
- * reasoning, and the same numbers, as `notifications-panel.tsx`. Keep them in step.
- */
-const PANEL_INSET_PX = 16;
-const PANEL_MAX_W_PX = 384; // sm:max-w-sm = 24rem
-
-/** Clearance between the button rail and the top of the window. */
-const PANEL_GAP_PX = 12;
-
-export type PanelAnchor = { origin: string; top: number };
-
-/**
- * Where the window sits, and where it should appear to grow from.
- *
- * `top` starts BELOW the button that opened it, rather than at the sheet's own `inset-y-4`.
- * The notifications window is full height and deliberately covers its own bell — it is
- * pretending to BE that bell. This one shares the rail with the bell, and a panel that
- * swallowed a control belonging to something else would just read as the bell vanishing.
- *
- * `origin` is relative to the panel's own box, so with the panel below the button the y
- * comes out negative — which is exactly right: it scales out of a point above itself.
- */
-function anchorFromButton(button: HTMLElement | null): PanelAnchor {
-  const fallbackTop = PANEL_INSET_PX;
-  if (!button) return { origin: "top right", top: fallbackTop };
-  const rect = button.getBoundingClientRect();
-  if (rect.width === 0) return { origin: "top right", top: fallbackTop };
-
-  const panelWidth = Math.min(window.innerWidth - PANEL_INSET_PX * 2, PANEL_MAX_W_PX);
-  const panelLeft = window.innerWidth - PANEL_INSET_PX - panelWidth;
-  const top = Math.round(rect.bottom + PANEL_GAP_PX);
-
-  return {
-    origin: `${Math.round(rect.left + rect.width / 2 - panelLeft)}px ${Math.round(
-      rect.top + rect.height / 2 - top
-    )}px`,
-    top,
-  };
-}
-
-/**
  * The feedback button, and every piece of state behind it.
  *
  * ALL draft state lives here rather than in `FeedbackPanel`, because the panel has to
@@ -128,12 +85,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
    * release now, so the annotator is a second look rather than a gate on the way in.
    */
   const [editingShotId, setEditingShotId] = useState<string | null>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  /**
-   * Captured on click rather than read during render — the button moves when the
-   * view-as-user banner appears, and this resolves to wherever it actually was.
-   */
-  const [anchor, setAnchor] = useState<PanelAnchor>({ origin: "top right", top: PANEL_INSET_PX });
+  const [origin, setOrigin] = useState(PANEL_ORIGIN_FALLBACK);
   /**
    * How far the window has been dragged from its anchor.
    *
@@ -147,18 +99,45 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
   // wrongly-hidden button.
   const [captureSupported, setCaptureSupported] = useState(canCaptureScreen);
 
-  // The mobile "More" sheet and Settings → Help open the same panel rather than mounting
-  // their own — mirrors OPEN_ASK_BAR_EVENT.
+  /**
+   * Drain open requests from the four doors.
+   *
+   * Runs once on mount as well as on every notification, because the widget is lazily
+   * loaded — a press in the frames before its chunk lands queues a request that would
+   * otherwise be dispatched into nothing.
+   */
   useEffect(() => {
-    const open = () => {
-      setAnchor(anchorFromButton(buttonRef.current));
+    const consume = () => {
+      const requested = takeFeedbackOpenRequest();
+      if (requested === null) return;
+      setOrigin(requested);
       // From `closing` too: catching the window on its way out should bring it back rather
       // than doing nothing.
       setPhase((p) => (p === "closed" || p === "closing" ? "composing" : p));
     };
-    window.addEventListener(OPEN_FEEDBACK_EVENT, open);
-    return () => window.removeEventListener(OPEN_FEEDBACK_EVENT, open);
+    consume();
+    return subscribeFeedbackOpen(consume);
   }, []);
+
+  /**
+   * Publish what the triggers render against.
+   *
+   * `closing` reports closed so the button starts fading back at the close REQUEST, which
+   * is when the bell starts too. `capturing`/`selecting` report `capturing`, which removes
+   * the triggers from the tree entirely rather than fading them — a faded button is still
+   * in the photograph.
+   */
+  useEffect(() => {
+    setFeedbackPanelState(
+      phase === "composing"
+        ? "open"
+        : phase === "capturing" || phase === "selecting"
+          ? "capturing"
+          : "closed"
+    );
+  }, [phase]);
+
+  useEffect(() => () => setFeedbackPanelState("closed"), []);
 
   // Object URLs outlive their component unless revoked, and a screenshot is not small.
   // Read through a ref so the cleanup sees the final list without re-running on every
@@ -347,52 +326,26 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
 
   return (
     <>
-      {/* Hidden entirely while capturing or selecting: it would otherwise be in the
-          photograph, and there is no way to exclude it afterwards. */}
-      {phase !== "capturing" && phase !== "selecting" && (
-        <div
-          className={cn(
-            // Directly under the notifications bell, matching its conditional offset in
-            // `app-shell.tsx`. No mobile button: capture is desktop-only, and the bottom
-            // edge already carries the nav pill and the ask bar.
-            "fixed right-5 z-30 hidden md:right-8 md:block",
-            viewingAsUser ? "top-[5.5rem]" : "top-[4.25rem] md:top-[4.75rem]"
-          )}
-        >
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  ref={buttonRef}
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  aria-label="Send feedback"
-                  aria-haspopup="dialog"
-                  aria-expanded={phase !== "closed"}
-                  // Stays put while the panel is open. The bell ducks out because the
-                  // notifications window lands on top of it and is pretending to be it;
-                  // this panel opens below its button instead, so there is nothing to hide
-                  // behind and a fade would just read as the button disappearing.
-                  className="size-10 rounded-full border-border/70 bg-background/90 shadow-md backdrop-blur-md hover:bg-background"
-                  onClick={() => {
-                    setAnchor(anchorFromButton(buttonRef.current));
-                    setPhase("composing");
-                  }}
-                >
-                  <MessageSquarePlus className="h-4 w-4" />
-                </Button>
-              }
-            />
-            <TooltipContent side="left">Send feedback</TooltipContent>
-          </Tooltip>
-        </div>
-      )}
+      {/* The desktop rail copy. `FeedbackTrigger` handles being absent during a capture
+          and fading while the panel is open; this wrapper only owns where it sits.
+
+          Directly under the notifications bell, matching its conditional offset in
+          `app-shell.tsx`. The mobile copy cannot live here — this widget is a sibling of
+          `AppShell` and cannot render into its header — so it is mounted there instead and
+          talks to this one through `src/lib/feedback-events.ts`. */}
+      <div
+        className={cn(
+          "fixed right-5 z-30 hidden md:right-8 md:block",
+          viewingAsUser ? "top-[5.5rem]" : "top-[4.25rem] md:top-[4.75rem]"
+        )}
+      >
+        <FeedbackTrigger tooltip />
+      </div>
 
       {(phase === "composing" || phase === "closing") && (
         <FeedbackPanel
           open={phase === "composing"}
-          anchor={anchor}
+          origin={origin}
           offset={offset}
           onOffsetChange={setOffset}
           message={message}

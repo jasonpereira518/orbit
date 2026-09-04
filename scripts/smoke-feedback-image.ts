@@ -22,6 +22,7 @@ import {
   sanitizePath,
 } from "../src/lib/feedback-submission";
 import { clampPanelOffset } from "../src/lib/feedback-report";
+import { panelOriginFor } from "../src/lib/floating-panel";
 import { coverGeometry, selectionToCrop } from "../src/lib/screenshot-capture";
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -209,10 +210,51 @@ function main() {
 
   console.log("");
 
+  // Where a floating window grows from. Shared by the notifications and feedback panels,
+  // so a mistake here moves both.
+  const rail = { left: 1224, top: 20, width: 40, height: 40 };
+  check(
+    "a right-rail trigger maps just inside the panel's own left edge",
+    // panelLeft = 1280 - 16 - 384 = 880, so 1244 - 880 = 364.
+    panelOriginFor(rail, 1280) === "364px 24px",
+    panelOriginFor(rail, 1280)
+  );
+  check(
+    "a narrow viewport is viewport-bound, not 384-bound",
+    // panelLeft = 16 once the window is under 416px, so the origin shifts with it.
+    panelOriginFor({ left: 300, top: 20, width: 40, height: 40 }, 400) === "304px 24px",
+    panelOriginFor({ left: 300, top: 20, width: 40, height: 40 }, 400)
+  );
+  // Below the `sm` breakpoint the window is `calc(100% - 2rem)` and NOT capped at 24rem,
+  // so the cap must not be applied there either — it was, and at 639px that put the origin
+  // 223px out.
+  check(
+    "just under the sm breakpoint the window is flush, not capped",
+    // panelLeft is 16 whatever the width, so a centred trigger maps to its own centre - 16.
+    panelOriginFor({ left: 299, top: 20, width: 40, height: 40 }, 639) === "303px 24px",
+    panelOriginFor({ left: 299, top: 20, width: 40, height: 40 }, 639)
+  );
+  check(
+    "at the sm breakpoint the 24rem cap takes over",
+    // panelLeft = 640 - 16 - 384 = 240.
+    panelOriginFor({ left: 300, top: 20, width: 40, height: 40 }, 640) === "80px 24px",
+    panelOriginFor({ left: 300, top: 20, width: 40, height: 40 }, 640)
+  );
+
+  check(
+    "a trigger above the panel's inset yields a negative y",
+    // It scales out of a point above itself, which is what the notifications bell does:
+    // the bell sits at y=20 and the panel starts at y=16.
+    panelOriginFor({ left: 1224, top: 0, width: 40, height: 8 }, 1280).endsWith("-12px")
+  );
+
+  console.log("");
+
   // Dragging the panel around. The header is the only handle, so the clamp is what stops a
   // window being dragged somewhere it can never be dragged back from.
   const vp = { width: 1280, height: 860 };
-  const box = { left: 880, top: 128, width: 384, height: 716 };
+  // The floating side's own geometry: inset 16px on every edge, capped at 24rem wide.
+  const box = { left: 880, top: 16, width: 384, height: 828 };
   const at = (dx: number, dy: number) =>
     clampPanelOffset({ start: box, startOffset: { x: 0, y: 0 }, delta: { x: dx, y: dy }, viewport: vp });
 

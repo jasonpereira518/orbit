@@ -22,6 +22,14 @@ export const PANEL_INSET_PX = 16;
 export const PANEL_MAX_W_PX = 384; // sm:max-w-sm = 24rem
 
 /**
+ * Where `sm:max-w-sm` starts applying. Below it the window is `w-[calc(100%-2rem)]` and
+ * uncapped, so capping the width here regardless — which this did until the feedback panel
+ * gained a mobile trigger and made it visible — puts the origin up to 223px off at a 639px
+ * viewport, and the window flies in from beside itself.
+ */
+const SM_BREAKPOINT_PX = 640;
+
+/**
  * Used when there is no trigger on screen to grow out of: the Settings and "More" doors,
  * or a trigger that is CSS-hidden at this breakpoint.
  */
@@ -46,7 +54,9 @@ export type TriggerRect = {
  * DOM — see `scripts/smoke-feedback-image.ts`.
  */
 export function panelOriginFor(rect: TriggerRect, viewportWidth: number): string {
-  const panelWidth = Math.min(viewportWidth - PANEL_INSET_PX * 2, PANEL_MAX_W_PX);
+  const flush = viewportWidth - PANEL_INSET_PX * 2;
+  const panelWidth =
+    viewportWidth >= SM_BREAKPOINT_PX ? Math.min(flush, PANEL_MAX_W_PX) : flush;
   const panelLeft = viewportWidth - PANEL_INSET_PX - panelWidth;
   return `${Math.round(rect.left + rect.width / 2 - panelLeft)}px ${Math.round(
     rect.top + rect.height / 2 - PANEL_INSET_PX

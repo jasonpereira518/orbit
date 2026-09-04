@@ -25,7 +25,8 @@ import { clerkAppearance } from "@/lib/clerk-appearance";
 import { FEEDBACK_SURFACE_KEY, isHrefHidden } from "@/lib/surfaces";
 import { SPRING_PILL, SPRING_TAP } from "@/lib/motion";
 import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
-import { OPEN_FEEDBACK_EVENT } from "@/lib/feedback-events";
+import { requestFeedbackOpen } from "@/lib/feedback-events";
+import { PANEL_ORIGIN_FALLBACK } from "@/lib/floating-panel";
 
 // A finger-drag across the row must move at least this far before it counts
 // as a slide rather than a tap — filters out ordinary tap jitter.
@@ -375,16 +376,16 @@ export function MobileNav({
               <Sparkles className="h-5 w-5 shrink-0" />
               Ask your network
             </button>
-            {/* No floating feedback button on mobile — the bottom edge already carries this
-                pill and the ask bar, and screen capture is desktop-only. Same door as the
-                ask bar uses: one mounted widget, dispatched to — so this has to disappear
-                with the widget, or it becomes a button that dispatches into nothing. */}
+            {/* A labelled row in the list of destinations, alongside the fast path in the
+                header. Still gated with the widget, or it becomes a button that asks a
+                component that is not mounted to open. */}
             {!hidden.has(FEEDBACK_SURFACE_KEY) && (
             <button
               type="button"
               onClick={() => {
                 setMoreOpen(false);
-                window.dispatchEvent(new Event(OPEN_FEEDBACK_EVENT));
+                // No origin worth growing from: this sheet is itself closing.
+                requestFeedbackOpen(PANEL_ORIGIN_FALLBACK);
               }}
               className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
             >

@@ -46,7 +46,7 @@ const CATEGORY_LABELS: Record<FeedbackCategory, string> = {
 
 export function FeedbackPanel({
   open,
-  anchor,
+  origin,
   offset,
   onOffsetChange,
   message,
@@ -65,8 +65,8 @@ export function FeedbackPanel({
    * or there is no exit transition — see `onClosed`.
    */
   open: boolean;
-  /** Where the window sits and what it grows out of — see `anchorFromButton`. */
-  anchor: { origin: string; top: number };
+  /** CSS transform-origin — see `originFromTrigger` in `src/lib/floating-panel.ts`. */
+  origin: string;
   /**
    * How far the person has dragged the window from that anchor. Owned by the widget rather
    * than by this component, so it survives the panel unmounting for a screenshot — and is
@@ -298,10 +298,13 @@ export function FeedbackPanel({
         // Lighter than the shared default, exactly as the notifications window does it: the
         // page behind stays legible instead of being dimmed to a modal.
         overlayClassName="bg-black/5 supports-backdrop-filter:backdrop-blur-[1.5px]"
-        // `top` overrides the floating side's `inset-y-4` so the window opens BELOW the
-        // button rail, leaving the notifications bell visible instead of swallowing it.
-        // `transformOrigin` aims the panel's 0.28 scale at the button rather than at its
-        // own centre, so it still reads as the button unfolding.
+        // Full height, from the floating side's own `inset-y-4` — no `top` override. It
+        // covers its own trigger on purpose, exactly as the notifications window covers
+        // the bell: the window is pretending to BE the button, which is why the button
+        // ducks out as it opens.
+        //
+        // `transformOrigin` aims the panel's 0.28 scale at that button rather than at its
+        // own centre, so it reads as the button unfolding.
         // `translate` rather than `top`/`left`: the panel is positioned against the right
         // edge, so moving it by its inset would fight that anchoring. It also composites
         // without relayout, which is what keeps a drag smooth.
@@ -310,8 +313,7 @@ export function FeedbackPanel({
         // `translate` over 0.32s, so without this the window would ease toward the cursor
         // a third of a second behind it.
         style={{
-          transformOrigin: anchor.origin,
-          top: anchor.top,
+          transformOrigin: origin,
           translate: `${offset.x}px ${offset.y}px`,
           ...(dragging ? { transition: "none" } : {}),
         }}

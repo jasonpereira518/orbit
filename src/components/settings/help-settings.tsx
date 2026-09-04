@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { resetOnboarding } from "@/actions/onboarding";
 import { resetWizard } from "@/actions/onboarding-wizard";
 import { Button } from "@/components/ui/button";
-import { OPEN_FEEDBACK_EVENT } from "@/lib/feedback-events";
+import { requestFeedbackOpen } from "@/lib/feedback-events";
+import { PANEL_ORIGIN_FALLBACK } from "@/lib/floating-panel";
 
 export function HelpSettings({ feedbackEnabled }: { feedbackEnabled: boolean }) {
   const router = useRouter();
@@ -57,7 +58,9 @@ export function HelpSettings({ feedbackEnabled }: { feedbackEnabled: boolean }) 
         <Button
           variant="outline"
           size="sm"
-          onClick={() => window.dispatchEvent(new Event(OPEN_FEEDBACK_EVENT))}
+          // Mid-page, so anchoring the window to this button would fly it in from
+          // wherever the page happens to be scrolled.
+          onClick={() => requestFeedbackOpen(PANEL_ORIGIN_FALLBACK)}
         >
           Send feedback
         </Button>

@@ -673,12 +673,24 @@
  * enter/exit collapses to the opacity fade the primitive already provides. */
 @media (prefers-reduced-motion: reduce) {
   [data-slot="sheet-content"][data-side="floating"] {
-    /* `scale`/`translate`, not `transform`: Tailwind v4 sets the discrete properties, so
-     * cancelling `transform` here would leave the starting-style scale fully applied and
-     * the window would open stuck at its collapsed size. */
+    transition-property: opacity;
+  }
+
+  /* Scoped to the two animating states rather than the element at rest.
+   *
+   * The reset exists to cancel the ENTER and EXIT scale, and `!important` is what makes it
+   * outrank the utilities that set them. Applied unconditionally it also outranks the
+   * feedback panel's inline `style.translate`, which is how that window is dragged — so
+   * with reduced motion on, the pointer moved and the window did not. Naming the states
+   * cancels the animation and leaves a resting window free to be moved.
+   *
+   * `scale`/`translate`, not `transform`: Tailwind v4 sets the discrete properties, so
+   * cancelling `transform` here would leave the starting-style scale fully applied and the
+   * window would open stuck at its collapsed size. */
+  [data-slot="sheet-content"][data-side="floating"][data-starting-style],
+  [data-slot="sheet-content"][data-side="floating"][data-ending-style] {
     scale: none !important;
     translate: none !important;
-    transition-property: opacity;
   }
 }
 

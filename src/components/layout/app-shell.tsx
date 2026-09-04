@@ -20,7 +20,9 @@ import { PlanCelebrationWatcher } from "@/components/celebration/plan-celebratio
 import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
 import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar";
 import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
+import { FeedbackTrigger } from "@/components/feedback/feedback-trigger";
 import { ThemeSync } from "@/components/theme-sync";
+import { FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { cn } from "@/lib/utils";
 import { useMemo } from "react";
 import type { Plan } from "@/lib/plan-limits";
@@ -150,7 +152,17 @@ export function AppShell({
                   Orbit
                 </span>
               </Link>
-              <NotificationsPanelButton />
+              {/* The feedback widget is a sibling of this shell and cannot render into
+                  this header, so its mobile copy is mounted here and talks to the widget
+                  through `src/lib/feedback-events.ts`. Gated on the same surface key the
+                  widget itself is, or it asks a component that is not mounted to open.
+
+                  Left of the bell: the bell is the more-used control and keeps the outer
+                  corner, matching the desktop rail where feedback sits below it. */}
+              <div className="flex items-center gap-2">
+                {!hiddenSet.has(FEEDBACK_SURFACE_KEY) && <FeedbackTrigger />}
+                <NotificationsPanelButton />
+              </div>
             </header>
 
             <div
