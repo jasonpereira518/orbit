@@ -1011,7 +1011,20 @@ export const SCALE_DDL: string[] = [
      ON contact_profiles(user_id, contact_id)`,
   `CREATE INDEX IF NOT EXISTS contact_experiences_contact_idx
      ON contact_experiences(user_id, contact_id, sort_index)`,
-  // "Who has ever worked at X" — the exists-subquery in hybrid-search reads this.
+  // "Who has ever worked at X". Read by experienceArm in src/lib/hybrid-search.ts -- but
+  // for its LEADING COLUMN ONLY: EXPLAIN over 60k rows across 120 tenants shows a bitmap
+  // index scan whose Index Cond is user_id alone, scoping the scan to one tenant, after
+  // which the organization patterns are applied as a post-index filter. The arm ORs
+  // word-boundary patterns (leading wildcard, unindexable) with its exact/prefix tiers,
+  // and that disjunction is what stops the second column from being used.
+  //
+  // It is NOT read by experienceExists in filterCondition, despite an earlier comment here
+  // saying so: Postgres hashes that correlated subquery into a SubPlan and seq-scans
+  // contact_experiences across every tenant (60000 rows removed by filter), losing even
+  // the user_id scoping. Worth revisiting if the filter path ever gets hot.
+  //
+  // Keep prose in this array free of backticks: the schema-ddl guard's fingerprint treats
+  // every backtick pair between these brackets as a DDL statement.
   `CREATE INDEX IF NOT EXISTS contact_experiences_org_idx
      ON contact_experiences(user_id, organization_normalized)`,
 ];

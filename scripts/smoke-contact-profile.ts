@@ -304,10 +304,19 @@ async function main() {
     filters: { companies: ["Google"] },
     limit: 10,
   });
+  // `.some(...)` is NOT enough here and the distinction is the entire point of Step 4:
+  // when the filter discards Grace, the recall guard re-runs the search unfiltered and
+  // hands her back anyway as a BACKFILL row. She is present either way. Only
+  // `filterMatched` separates "the filter kept her" from "the filter dropped her and the
+  // recall guard papered over it" — with `.some`, deleting `experienceExists` from the
+  // companies block leaves this assertion still passing.
+  const filteredGrace = filtered.find((h) => h.id === exGoogleId);
   check(
-    "the companies filter keeps a past-employer match",
-    filtered.some((h) => h.id === exGoogleId),
-    filtered.map((h) => h.fullName).join(", ") || "no hits"
+    "the companies filter keeps a past-employer match as a real filtered hit",
+    filteredGrace?.filterMatched === true,
+    filteredGrace
+      ? `found but filterMatched=${filteredGrace.filterMatched} (recall-guard backfill)`
+      : "not found at all"
   );
 
   // A term that matches nobody's history must not drag everyone in.

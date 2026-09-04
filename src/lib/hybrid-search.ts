@@ -283,12 +283,34 @@ async function trigramArm(
  * her. Only a query that reads `contact_experiences` can put her in the candidate set.
  *
  * Terms are matched against `organization_normalized` (see `normalizeCompanyKey`), which is
- * lowercased and stripped of punctuation — so "Google, LLC" is stored as `google llc` and
- * the term `google` reaches it by prefix. Ranked exact > prefix > substring so that
- * "Meta" prefers the employer over "Metabase", and RRF bounds how much a loose substring
- * match can distort the fused order.
+ * lowercased and stripped of punctuation to single spaces — so "Google, LLC" is stored as
+ * `google llc` and the term `google` reaches it by prefix.
  *
- * Served by `contact_experiences_org_idx`.
+ * Matching is word-anchored in four tiers (whole value / first word / interior word / last
+ * word), scored exact 3 > prefix 2 > word-boundary 1. There is deliberately no `%term%`
+ * tier: an unanchored substring made the term "art" match "startup ventures", and eight
+ * unrelated contacts flooded positions 2-9 of every "art" search, displacing real lexical
+ * hits. Note the prefix tier is a prefix of the *value*, not of a word, so "meta" still
+ * reaches "metabase" at the same tier as "meta platforms inc"; only a value stored exactly
+ * as "meta" outranks it.
+ *
+ * Indexing, measured with EXPLAIN against 60k experience rows across 120 tenants rather
+ * than assumed — `contact_experiences_org_idx` is `(user_id, organization_normalized)`:
+ *   - This query uses it for its LEADING COLUMN ONLY. The plan is a bitmap index scan with
+ *     `Index Cond: (user_id = ...)`, which scopes 60k rows down to the tenant's 500, and
+ *     all four patterns are then applied as a post-index `Filter`.
+ *   - Each of the exact and prefix tiers *is* independently index-servable (in isolation
+ *     the planner emits a BitmapOr of two index scans on the second column). OR-ing them
+ *     with the two word-boundary patterns, which have leading wildcards and cannot be
+ *     indexed, is what collapses the whole disjunction to a filter.
+ *   - The prefix tier's range rewrite (`>= 'google' AND < 'googlf'`) additionally requires
+ *     a C-collation database. Verified both ways on one table: a C-collation column uses
+ *     the index for `like 'google%'`, an `en_US.utf8` column seq-scans it. Local PGlite is
+ *     C; a managed Postgres usually is not, so on Neon even the isolated prefix tier would
+ *     need a `text_pattern_ops` index. Equality is collation-independent either way.
+ * Tenant scoping is therefore the only indexing this arm can currently rely on. That is
+ * bounded and fine at present sizes; `gin_trgm_ops` on `organization_normalized` is the
+ * fix if it ever stops being.
  */
 async function experienceArm(
   userId: string,
@@ -307,28 +329,57 @@ async function experienceArm(
     ...(tokens.length >= 2 ? contentTokens(query).map((t) => t.toLowerCase()) : []),
     ...expansionTerms.slice(0, 4).map((t) => t.trim().toLowerCase()),
   ]
-    // Two-character terms match half the table as substrings and carry no signal.
-    .filter((t) => t.length >= 3);
+    // Two characters is the floor because the tiers below are word-anchored: "ge" can
+    // only match the whole value, a whole first word, or a whole interior word, never
+    // the "ge" inside "Regeneron". A single character is still too little to mean
+    // anything, and "3M"/"GE"/"HP"/"BP" are real employers.
+    .filter((t) => t.length >= 2);
   const unique = [...new Set(terms)].slice(0, 6);
   if (!unique.length) return [];
 
   const db = await getDb();
+  // Word-anchored tiers, never a bare `%term%`. An unanchored substring made "art"
+  // match "startup ventures" and flood the fused ranking with unrelated contacts,
+  // displacing real lexical hits — the tiers below can only match whole words.
+  //
+  // `organization_normalized` is punctuation-stripped to single spaces, so word
+  // boundaries are exactly spaces and these four patterns are total: the value itself,
+  // its first word, an interior word, its last word.
+  const tiers = (t: string) => {
+    const e = escapeLikeValue(t);
+    return {
+      // Not escaped: `=` is not a pattern match, so `%` and `_` are already literal.
+      exact: sql`ce.organization_normalized = ${t}`,
+      prefix: sql`ce.organization_normalized like ${`${e}%`}`,
+      interior: sql`ce.organization_normalized like ${`% ${e} %`}`,
+      suffix: sql`ce.organization_normalized like ${`% ${e}`}`,
+    };
+  };
   const matches = sql.join(
-    unique.map((t) => sql`ce.organization_normalized like ${`%${escapeLikeValue(t)}%`}`),
+    unique.map((t) => {
+      const { exact, prefix, interior, suffix } = tiers(t);
+      return sql`(${exact} or ${prefix} or ${interior} or ${suffix})`;
+    }),
     sql` or `
   );
   const score = sql.join(
-    unique.map(
-      (t) => sql`case
-        when ce.organization_normalized = ${t} then 3
-        when ce.organization_normalized like ${`${escapeLikeValue(t)}%`} then 2
-        else 1 end`
-    ),
+    unique.map((t) => {
+      const { exact, prefix, interior, suffix } = tiers(t);
+      return sql`case
+        when ${exact} then 3
+        when ${prefix} then 2
+        when ${interior} or ${suffix} then 1
+        else 0 end`;
+    }),
     sql` + `
   );
 
   const result = await db.execute(sql`
-    select contacts.id, max(${score}) as match_score
+    select
+      contacts.id,
+      max(${score}) as match_score,
+      bool_or(ce.is_current) as any_current,
+      max(ce.end_year) as latest_end
     from contacts
     join contact_experiences ce
       on ce.contact_id = contacts.id and ce.user_id = contacts.user_id
@@ -336,7 +387,11 @@ async function experienceArm(
       and (${matches})
       ${filter ? sql`and ${filter}` : sql``}
     group by contacts.id
-    order by match_score desc, contacts.id
+    -- RRF reads only the ordinal, so this ordering IS the arm's ranking contribution.
+    -- After match quality, prefer the person who still works there, then the most
+    -- recent departure (a null end_year is ongoing or unknown, so it sorts first).
+    -- contacts.id is the final tiebreak only, for a stable page — never a signal.
+    order by match_score desc, any_current desc, latest_end desc nulls first, contacts.id
     limit ${armLimit}
   `);
   return rowsOf<{ id: string }>(result).map((r) => String(r.id));
