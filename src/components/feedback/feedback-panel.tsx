@@ -294,7 +294,7 @@ export function FeedbackPanel({
         // an ease-OUT arriving and an ease-IN leaving. One curve in both directions is what
         // made closing feel like it stopped dead rather than being drawn back into the
         // button. `.liquid-glass` on its own would not match those selectors.
-        className="liquid-glass liquid-glass-panel gap-6 overflow-y-auto p-6"
+        className="liquid-glass liquid-glass-panel gap-5 overflow-y-auto p-6"
         // Lighter than the shared default, exactly as the notifications window does it: the
         // page behind stays legible instead of being dimmed to a modal.
         overlayClassName="bg-black/5 supports-backdrop-filter:backdrop-blur-[1.5px]"
@@ -397,15 +397,7 @@ export function FeedbackPanel({
           )}
         </div>
 
-        {/* Deliberately well clear of the message box, not merely a notch more than the
-            panel gap.
-            
-            The message field is `flex-1`, so it swallows whatever height the window has
-            left — it is routinely 300-600px tall. A gap measured against the panel's rhythm
-            disappears next to a box that size, which is why 20px and then 28px both still
-            read as touching. 40px is set against the NEIGHBOUR rather than the rhythm, and
-            holds up as the field grows. */}
-        <div className="mt-4 grid gap-2">
+        <div className="grid gap-2">
           {/* The primary way to attach one: full width, its own label, and an explanation of
               what the gesture is. It was a 72px dashed tile next to the thumbnails and read
               as an afterthought — which is backwards, since a screenshot is the most useful
@@ -486,7 +478,7 @@ export function FeedbackPanel({
           )}
         </div>
 
-        <div className="mt-auto flex justify-end gap-2 pt-1">
+        <div className="mt-auto flex justify-end gap-2 pt-2">
           <Button
             type="button"
             variant="ghost"
