@@ -98,6 +98,46 @@ export function FeedbackPanel({
 
   const usedShots = useMemo(() => shots.length, [shots]);
 
+  /**
+   * Mount closed, then open on the next frame.
+   *
+   * Base UI plays the enter transition on a false -> true change of `open`. This panel is
+   * mounted at the moment it is wanted, so passing `open` straight through meant the sheet
+   * came into existence ALREADY open — nothing to transition from, no `data-starting-style`,
+   * and the `scale-[0.28]` in sheet.tsx never ran. The notifications window does not have
+   * this problem because it is mounted for the life of the page and only toggles.
+   *
+   * `requestAnimationFrame` and not a 0ms timeout: the closed state has to be painted
+   * before the open state is applied, or the browser coalesces the two and there is still
+   * nothing to animate. The timer is a backstop for a frame that never arrives.
+   */
+  const [entered, setEntered] = useState(false);
+  useEffect(() => {
+    if (!open || entered) return;
+    const frame = requestAnimationFrame(() => setEntered(true));
+    const backstop = setTimeout(() => setEntered(true), 120);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(backstop);
+    };
+  }, [open, entered]);
+
+  // Derived rather than a second piece of state that has to be reset: `entered` only ever
+  // goes true, and the close is driven by `open` going false. A fresh mount starts the
+  // sequence over, which is exactly what reopening should do.
+  const sheetOpen = open && entered;
+
+  /**
+   * Whether the window has ever actually been open.
+   *
+   * Guards `onOpenChangeComplete`: the deliberate closed first frame above would otherwise
+   * report a completed close the instant the panel mounted, and unmount it again.
+   */
+  const hasEntered = useRef(false);
+  useEffect(() => {
+    if (sheetOpen) hasEntered.current = true;
+  }, [sheetOpen]);
+
   const panelRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   /**
@@ -234,7 +274,7 @@ export function FeedbackPanel({
 
   return (
     <Sheet
-      open={open}
+      open={sheetOpen}
       onOpenChange={(next) => {
         if (next) return;
         if (message.trim().length > 0 && !window.confirm("Discard your feedback?")) return;
@@ -245,7 +285,7 @@ export function FeedbackPanel({
       // tree mid-frame, so it vanished rather than collapsing: Base UI never got to apply
       // `data-ending-style`, and the scale-back-to-0.28 never ran.
       onOpenChangeComplete={(nowOpen) => {
-        if (!nowOpen) onClosed();
+        if (!nowOpen && hasEntered.current) onClosed();
       }}
     >
       <SheetContent
