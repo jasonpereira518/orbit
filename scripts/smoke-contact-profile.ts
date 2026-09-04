@@ -8,7 +8,7 @@ import "./smoke/_env";
 process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke-contact-profile";
 process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-contact-profile";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { run } from "./smoke/_env";
 import { getDb } from "../src/db";
 import { contactExperiences, contactProfiles, contacts } from "../src/db/schema";
@@ -177,6 +177,14 @@ async function main() {
     stored?.experiences.map((e) => e.organization).join(" > ")
   );
 
+  // --- embedding invalidation ---------------------------------------------------
+  // Clear the flag directly first, so the refused save's effect on it is provable rather
+  // than riding on the stamp left behind by an earlier successful save.
+  await db
+    .update(contacts)
+    .set({ embeddingStaleAt: null })
+    .where(and(eq(contacts.userId, USER), eq(contacts.id, bobId)));
+
   const blocked = await saveContactProfile(USER, bobId, {
     ...apolloProfile,
     capturedAt: new Date("2026-09-04T00:00:00Z"),
@@ -188,7 +196,40 @@ async function main() {
   const afterBlocked = await getContactProfile(USER, bobId);
   check("the extension profile survived", afterBlocked?.about === "There are no mistakes.");
 
-  // --- embedding invalidation ---------------------------------------------------
+  const [afterBlockedRow] = await db
+    .select({ staleAt: contacts.embeddingStaleAt })
+    .from(contacts)
+    .where(eq(contacts.id, bobId));
+  check(
+    "a refused write leaves the embedding flag untouched",
+    afterBlockedRow.staleAt === null
+  );
+
+  const acceptedAgain = await saveContactProfile(USER, bobId, {
+    source: "extension",
+    sourceUrl: "https://www.linkedin.com/in/bobross",
+    adapterVersion: "linkedin-2",
+    capturedAt: new Date("2026-09-05T00:00:00Z"),
+    warnings: [],
+    headline: "Happy little trees",
+    about: "There are no mistakes.",
+    skills: [{ name: "Oil painting" }],
+    certifications: [],
+    volunteering: [],
+    publications: [],
+    experiences: [
+      { kind: "role", organization: "PBS", title: "Host", startYear: 1983, startMonth: 1,
+        endYear: 1994, endMonth: 5, isCurrent: false, location: null, description: null,
+        fieldOfStudy: null },
+      { kind: "role", organization: "Ramp", title: "Advisor", startYear: 2020,
+        startMonth: null, endYear: null, endMonth: null, isCurrent: true, location: null,
+        description: null, fieldOfStudy: null },
+      { kind: "education", organization: "Art School", title: "BFA", startYear: null,
+        startMonth: null, endYear: null, endMonth: null, isCurrent: false, location: null,
+        description: null, fieldOfStudy: "Painting" },
+    ],
+  });
+  check("accepted save reports written", acceptedAgain.written);
   const [bobRow] = await db
     .select({ staleAt: contacts.embeddingStaleAt })
     .from(contacts)
