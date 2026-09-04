@@ -54,6 +54,30 @@ export type DraftShot = {
 type Phase = "closed" | "composing" | "capturing" | "selecting" | "annotating";
 
 /**
+ * The floating window's geometry, mirrored from the `data-[side=floating]` utilities in
+ * `src/components/ui/sheet.tsx` (`inset-y-4 right-4`, `sm:max-w-sm`).
+ *
+ * Duplicated rather than measured because the panel is portalled and positioned by CSS, so
+ * its box does not exist at the moment the button is clicked — and the transform-origin has
+ * to be right on the first painted frame or the window visibly jumps as it opens. Same
+ * reasoning, and the same numbers, as `notifications-panel.tsx`. Keep them in step.
+ */
+const PANEL_INSET_PX = 16;
+const PANEL_MAX_W_PX = 384; // sm:max-w-sm = 24rem
+
+/** Where the window should appear to grow from: the middle of the button that opened it. */
+function originFromButton(button: HTMLElement | null): string {
+  if (!button) return "top right";
+  const rect = button.getBoundingClientRect();
+  if (rect.width === 0) return "top right";
+  const panelWidth = Math.min(window.innerWidth - PANEL_INSET_PX * 2, PANEL_MAX_W_PX);
+  const panelLeft = window.innerWidth - PANEL_INSET_PX - panelWidth;
+  return `${Math.round(rect.left + rect.width / 2 - panelLeft)}px ${Math.round(
+    rect.top + rect.height / 2 - PANEL_INSET_PX
+  )}px`;
+}
+
+/**
  * The feedback button, and every piece of state behind it.
  *
  * ALL draft state lives here rather than in `FeedbackPanel`, because the panel has to
@@ -71,6 +95,12 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
    * release now, so the annotator is a second look rather than a gate on the way in.
    */
   const [editingShotId, setEditingShotId] = useState<string | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  /**
+   * Captured on click rather than read during render — the button moves when the
+   * view-as-user banner appears, and this resolves to wherever it actually was.
+   */
+  const [origin, setOrigin] = useState("top right");
   // Lazy initialiser rather than an effect: this component is only ever mounted client-side
   // (`ssr: false`), so `window` is there on the first render and there is no flash of a
   // wrongly-hidden button.
@@ -79,7 +109,10 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
   // The mobile "More" sheet and Settings → Help open the same panel rather than mounting
   // their own — mirrors OPEN_ASK_BAR_EVENT.
   useEffect(() => {
-    const open = () => setPhase((p) => (p === "closed" ? "composing" : p));
+    const open = () => {
+      setOrigin(originFromButton(buttonRef.current));
+      setPhase((p) => (p === "closed" ? "composing" : p));
+    };
     window.addEventListener(OPEN_FEEDBACK_EVENT, open);
     return () => window.removeEventListener(OPEN_FEEDBACK_EVENT, open);
   }, []);
@@ -265,14 +298,27 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
             <TooltipTrigger
               render={
                 <Button
+                  ref={buttonRef}
                   type="button"
                   variant="outline"
                   size="icon"
                   aria-label="Send feedback"
                   aria-haspopup="dialog"
                   aria-expanded={phase !== "closed"}
-                  className="size-10 rounded-full border-border/70 bg-background/90 shadow-md backdrop-blur-md hover:bg-background"
-                  onClick={() => setPhase("composing")}
+                  className={cn(
+                    "size-10 rounded-full border-border/70 bg-background/90 shadow-md backdrop-blur-md transition-opacity hover:bg-background",
+                    // The window covers this exact spot and grows out of it, so the button
+                    // ducking out sells the illusion that it BECAME the panel. Opacity
+                    // rather than `hidden`, so it stays focusable for the focus Base UI
+                    // returns here on close. Straight from `notifications-panel.tsx`.
+                    phase === "closed"
+                      ? "opacity-100 delay-100 duration-base"
+                      : "pointer-events-none opacity-0 duration-fast"
+                  )}
+                  onClick={() => {
+                    setOrigin(originFromButton(buttonRef.current));
+                    setPhase("composing");
+                  }}
                 >
                   <MessageSquarePlus className="h-4 w-4" />
                 </Button>
@@ -285,6 +331,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
 
       {phase === "composing" && (
         <FeedbackPanel
+          origin={origin}
           message={message}
           onMessageChange={setMessage}
           shots={shots}

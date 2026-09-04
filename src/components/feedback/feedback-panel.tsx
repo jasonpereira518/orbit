@@ -37,6 +37,7 @@ const CATEGORY_LABELS: Record<FeedbackCategory, string> = {
 };
 
 export function FeedbackPanel({
+  origin,
   message,
   onMessageChange,
   shots,
@@ -47,6 +48,8 @@ export function FeedbackPanel({
   onClose,
   onSent,
 }: {
+  /** CSS transform-origin, so the window grows out of the button that opened it. */
+  origin: string;
   message: string;
   onMessageChange: (value: string) => void;
   shots: DraftShot[];
@@ -126,6 +129,10 @@ export function FeedbackPanel({
         // to sit flush. The floating side is inset on all four edges, so it needs one; the
         // notifications window gets the same shape from `.liquid-glass-panel`.
         className="gap-5 overflow-y-auto rounded-2xl p-6"
+        // The floating side already scales from 0.28 on open and back on close; this is
+        // what aims that scale at the button instead of the window's own centre, so it
+        // reads as the button unfolding rather than a panel appearing over it.
+        style={{ transformOrigin: origin }}
       >
         <SheetHeader className="p-0">
           <SheetTitle className="font-[family-name:var(--font-display)] text-lg">
@@ -171,10 +178,13 @@ export function FeedbackPanel({
           </select>
         </div>
 
-        <div className="grid gap-1.5">
+        <div className="grid min-h-0 flex-1 gap-1.5">
           <Textarea
             autoFocus
-            rows={5}
+            // Grows into whatever the sheet has left rather than sitting at a fixed five
+            // rows above a column of dead space. `field-sizing-content` on the primitive
+            // still expands it as you type; the floor is what changed.
+            className="min-h-40 flex-1 resize-none"
             value={message}
             maxLength={MAX_FEEDBACK_TEXT}
             placeholder="What were you trying to do, and what happened instead?"
