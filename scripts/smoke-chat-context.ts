@@ -16,6 +16,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, interactions } from "../src/db/schema";
 import { prepareChatContext } from "../src/lib/chat-context";
+import { saveContactProfile } from "../src/lib/contact-profile";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const USER = "smoke-chat-context-user";
@@ -27,6 +28,12 @@ function check(label: string, ok: boolean, detail?: string) {
     failures++;
     console.error(`  FAIL ${label}${detail ? `\n       ${detail}` : ""}`);
   }
+}
+
+async function makeContact(fullName: string): Promise<string> {
+  const db = await getDb();
+  const [row] = await db.insert(contacts).values({ userId: USER, fullName }).returning();
+  return row.id;
 }
 
 async function main() {
@@ -72,6 +79,50 @@ async function main() {
     { contact_id: "not-a-real-id", recruiter_id: null, name: "Ghost", reason: "r", suggested_action: "a", draft_message: null },
   ]);
   check("recommendations are filtered to people the user actually has", filtered.length === 1 && filtered[0].contact_id === ada);
+
+  // --- profiles in chat ----------------------------------------------------------
+  const profiledId = await makeContact("Katherine Johnson");
+  await saveContactProfile(USER, profiledId, {
+    source: "extension",
+    sourceUrl: "https://www.linkedin.com/in/katherine",
+    adapterVersion: "linkedin-2",
+    capturedAt: new Date(),
+    warnings: [],
+    headline: "Trajectories",
+    about: "Computed orbital mechanics by hand.",
+    skills: [{ name: "Orbital mechanics" }],
+    certifications: [],
+    volunteering: [],
+    publications: [],
+    experiences: [
+      { kind: "role", organization: "NASA", title: "Mathematician", startYear: 1953,
+        startMonth: null, endYear: 1986, endMonth: null, isCurrent: false, location: null,
+        description: null, fieldOfStudy: null },
+    ],
+  });
+
+  const focusedProfile = await prepareChatContext(USER, "what did she work on?", {
+    focusContactId: profiledId,
+  });
+  check(
+    "a focused question carries the whole profile",
+    focusedProfile.focusProfile?.includes("Computed orbital mechanics by hand.") === true,
+    focusedProfile.focusProfile ?? "null"
+  );
+  check(
+    "the focused profile includes dated roles",
+    focusedProfile.focusProfile?.includes("NASA") === true &&
+      focusedProfile.focusProfile?.includes("1953 – 1986") === true,
+    focusedProfile.focusProfile ?? "null"
+  );
+
+  const network = await prepareChatContext(USER, "who has worked at NASA?", {});
+  const katherine = network.modelContacts.find((c) => c.id === profiledId);
+  check("a retrieved contact carries a career line", katherine?.career === "ex-NASA", katherine?.career ?? "null");
+  check(
+    "a retrieved contact does not carry the whole profile",
+    !JSON.stringify(katherine ?? {}).includes("Computed orbital mechanics by hand.")
+  );
 
   await db.delete(contacts).where(eq(contacts.userId, USER));
   if (failures > 0) {

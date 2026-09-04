@@ -17,6 +17,8 @@ import {
 } from "@/lib/chat-retrieval";
 import { findOrgRosters, type OrgRoster } from "@/lib/chat-roster";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
+import { getCareerLines, getContactProfile } from "@/lib/contact-profile";
+import { formatExperienceDates } from "@/lib/contact-profile-format";
 import { getQueryEmbedding } from "@/lib/embedding-cache";
 import { hybridSearchContacts, type RankedContact } from "@/lib/hybrid-search";
 import { isRecruiterIntent } from "@/lib/recruiters";
@@ -74,6 +76,14 @@ export type ChatContext = {
   }>;
   /** Drop recommendations pointing at people the user does not actually have. */
   filterRecommendations: (raw: ChatRecommendation[]) => ChatRecommendation[];
+  /**
+   * The focused contact's whole LinkedIn profile, already rendered as text.
+   *
+   * Deliberately outside `budgetContactsContext`: it is one contact, asked about directly
+   * on their own page, and the tiered trimming exists to ration space across many
+   * retrieved people. Rationing the subject of the question is the wrong trade.
+   */
+  focusProfile: string | null;
 };
 
 async function loadKnowledgeSnippets(
@@ -143,6 +153,64 @@ async function retrieveRankedContacts(
   return rerankCandidates(userId, q, candidates);
 }
 
+/** The focused contact's profile as plain text — one section per heading, no JSON. */
+function renderFocusProfile(profile: Awaited<ReturnType<typeof getContactProfile>>): string | null {
+  if (!profile) return null;
+  const lines: string[] = [];
+  if (profile.headline) lines.push(profile.headline);
+  if (profile.about) lines.push(`About: ${profile.about}`);
+
+  const roles = profile.experiences.filter((e) => e.kind === "role");
+  if (roles.length) {
+    lines.push("Experience:");
+    for (const role of roles) {
+      const dates = formatExperienceDates(role);
+      const head = [role.title, role.organization].filter(Boolean).join(" at ");
+      lines.push(`- ${head}${dates ? ` (${dates})` : ""}`);
+      if (role.description) lines.push(`  ${role.description}`);
+    }
+  }
+
+  const schools = profile.experiences.filter((e) => e.kind === "education");
+  if (schools.length) {
+    lines.push("Education:");
+    for (const school of schools) {
+      const detail = [school.title, school.fieldOfStudy].filter(Boolean).join(", ");
+      const dates = formatExperienceDates(school);
+      lines.push(`- ${school.organization}${detail ? ` — ${detail}` : ""}${dates ? ` (${dates})` : ""}`);
+    }
+  }
+
+  if (profile.skills.length) {
+    lines.push(`Skills: ${profile.skills.map((s) => s.name).join(", ")}`);
+  }
+  if (profile.certifications.length) {
+    lines.push(
+      `Certifications: ${profile.certifications
+        .map((c) => [c.name, c.issuer].filter(Boolean).join(" — "))
+        .join("; ")}`
+    );
+  }
+  if (profile.volunteering.length) {
+    lines.push(
+      `Volunteering: ${profile.volunteering
+        .map((v) => [v.role, v.organization].filter(Boolean).join(" at "))
+        .join("; ")}`
+    );
+  }
+  if (profile.publications.length) {
+    lines.push(`Publications: ${profile.publications.map((p) => p.title).join("; ")}`);
+  }
+
+  // Provenance, so the model does not present an Apollo guess as the person's own words.
+  lines.push(
+    profile.source === "extension"
+      ? "(Captured from their LinkedIn profile page.)"
+      : "(From a third-party data provider, not their LinkedIn page directly.)"
+  );
+  return lines.join("\n");
+}
+
 export async function prepareChatContext(
   userId: string,
   question: string,
@@ -193,6 +261,7 @@ export async function prepareChatContext(
     .reverse()
     .map((m) => ({ role: m.role as ChatTurn["role"], content: m.content }));
 
+  let focusProfile: string | null = null;
   if (focusContactId) {
     const focused = await db.query.contacts.findFirst({
       where: and(eq(contacts.id, focusContactId), eq(contacts.userId, userId)),
@@ -223,13 +292,20 @@ export async function prepareChatContext(
       };
       const without = retrieved.filter((c) => c.id !== focusContactId);
       retrieved.splice(0, retrieved.length, focusEntry, ...without.slice(0, 11));
+
+      focusProfile = renderFocusProfile(
+        await getContactProfile(userId, focusContactId).catch(() => null)
+      );
     }
   }
 
   // Depends on the retrieval above, so it runs after — with the pinned contact's own
-  // interactions alongside, since those are independent of the search.
-  const [snippets, focusMsgs] = await Promise.all([
-    loadKnowledgeSnippets(userId, retrieved.map((c) => c.id)),
+  // interactions and the retrieved page's career lines alongside, since those are
+  // independent of each other and of the search.
+  const retrievedIds = retrieved.map((c) => c.id);
+  const [snippets, careerLines, focusMsgs] = await Promise.all([
+    loadKnowledgeSnippets(userId, retrievedIds),
+    getCareerLines(userId, retrievedIds).catch(() => new Map<string, string>()),
     focusContactId
       ? db.query.interactions.findMany({
           where: and(eq(interactions.userId, userId), eq(interactions.contactId, focusContactId)),
@@ -255,7 +331,7 @@ export async function prepareChatContext(
   // Sized by rank under a total char budget — a later, cheaper contact must not be
   // appended out of rank order once the budget runs dry, so this can be a strict prefix
   // of `retrieved`.
-  const modelContacts = budgetContactsContext(retrieved, snippets);
+  const modelContacts = budgetContactsContext(retrieved, snippets, careerLines);
 
   // Roster and attention contacts are as legitimate a recommendation as retrieved ones —
   // they came from the same user's own rows — so they must not be filtered out for being
@@ -284,6 +360,7 @@ export async function prepareChatContext(
     allowedContacts,
     allowedRecruiters,
     modelContacts,
+    focusProfile,
     modelRecruiters: recruitersForChat.map((r) => ({
       id: r.id,
       fullName: r.fullName,
