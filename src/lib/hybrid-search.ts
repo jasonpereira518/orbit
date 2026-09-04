@@ -6,6 +6,7 @@ import {
   rowsOf,
 } from "@/db";
 import { contacts, contactEmbeddings } from "@/db/schema";
+import { normalizeCompanyKey } from "@/lib/company-name";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import { cosineSimilarity } from "@/lib/ai";
 
@@ -310,7 +311,11 @@ async function trigramArm(
  *
  * Terms are matched against `organization_normalized` (see `normalizeCompanyKey`), which is
  * lowercased and stripped of punctuation to single spaces — so "Google, LLC" is stored as
- * `google llc` and the term `google` reaches it by prefix.
+ * `google llc` and the term `google` reaches it by prefix. Query terms go through the SAME
+ * function before they are compared, which is why it was hoisted into `@/lib/company-name`
+ * in the first place: lowercasing alone left `AT&T` looking for `at&t` in a column that
+ * stores `at t`, so the punctuated employers this arm exists to find — AT&T, L'Oréal,
+ * Ernst & Young, Procter & Gamble — were reachable only by typing the mangled form.
  *
  * Matching is word-anchored in four tiers (whole value / first word / interior word / last
  * word), scored exact 3 > prefix 2 > word-boundary 1. There is deliberately no `%term%`
@@ -373,6 +378,11 @@ async function experienceArm(
     ...(tokens.length >= 2 ? contentTokens(query).map((t) => t.toLowerCase()) : []),
     ...expansionTerms.slice(0, 4).map((t) => t.trim().toLowerCase()),
   ]
+    // Normalize BEFORE the filters below, not after: `normalizeCompanyKey` is what turns
+    // "AT&T" into the stored `at t`, and both the length floor and the stoplist have to
+    // judge the string that will actually be compared. (It can also empty a term out
+    // entirely — "&" normalizes to "" — which the length floor then drops.)
+    .map((t) => normalizeCompanyKey(t))
     // Two characters is the floor because the tiers below are word-anchored: "ge" can
     // only match the whole value, a whole first word, or a whole interior word, never
     // the "ge" inside "Regeneron". A single character is still too little to mean

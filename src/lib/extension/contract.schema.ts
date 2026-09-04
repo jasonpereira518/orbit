@@ -85,13 +85,22 @@ const pageIdentitySchema = z.object({
   photoUrl: extractedField,
 });
 
+/**
+ * Every free-text field here is `.trim()`ed BEFORE its length checks, and that ordering is
+ * load-bearing, not cosmetic. `organization` was `z.string().min(1)`, so `"   "` was a
+ * valid wire value: it counted as an experience to the callers' "did this capture read any
+ * roles?" guards, but trimmed to nothing in `saveContactProfile` — a capture of nothing but
+ * whitespace organizations passed every guard and then erased a stored career. The write
+ * path now refuses on its own row count as well (see `@/lib/contact-profile`); this stops
+ * the meaningless value at the door.
+ */
 export const pageExperienceSchema = z.object({
   kind: z.enum(["role", "education"]),
-  organization: z.string().min(1).max(200),
-  title: z.string().max(200).nullable(),
-  fieldOfStudy: z.string().max(200).nullable(),
-  location: z.string().max(200).nullable(),
-  description: z.string().max(2000).nullable(),
+  organization: z.string().trim().min(1).max(200),
+  title: z.string().trim().max(200).nullable(),
+  fieldOfStudy: z.string().trim().max(200).nullable(),
+  location: z.string().trim().max(200).nullable(),
+  description: z.string().trim().max(2000).nullable(),
   startYear: z.number().int().min(1900).max(2100).nullable(),
   startMonth: z.number().int().min(1).max(12).nullable(),
   endYear: z.number().int().min(1900).max(2100).nullable(),
@@ -100,14 +109,14 @@ export const pageExperienceSchema = z.object({
 });
 
 export const pageProfileSchema = z.object({
-  headline: z.string().max(400).nullable(),
-  about: z.string().max(8000).nullable(),
-  skills: z.array(z.object({ name: z.string().min(1).max(120) })).max(60),
+  headline: z.string().trim().max(400).nullable(),
+  about: z.string().trim().max(8000).nullable(),
+  skills: z.array(z.object({ name: z.string().trim().min(1).max(120) })).max(60),
   certifications: z
     .array(
       z.object({
-        name: z.string().min(1).max(200),
-        issuer: z.string().max(200).nullable(),
+        name: z.string().trim().min(1).max(200),
+        issuer: z.string().trim().max(200).nullable(),
         year: z.number().int().min(1900).max(2100).nullable(),
       })
     )
@@ -115,17 +124,17 @@ export const pageProfileSchema = z.object({
   volunteering: z
     .array(
       z.object({
-        organization: z.string().min(1).max(200),
-        role: z.string().max(200).nullable(),
-        years: z.string().max(60).nullable(),
+        organization: z.string().trim().min(1).max(200),
+        role: z.string().trim().max(200).nullable(),
+        years: z.string().trim().max(60).nullable(),
       })
     )
     .max(30),
   publications: z
     .array(
       z.object({
-        title: z.string().min(1).max(300),
-        publisher: z.string().max(200).nullable(),
+        title: z.string().trim().min(1).max(300),
+        publisher: z.string().trim().max(200).nullable(),
         year: z.number().int().min(1900).max(2100).nullable(),
       })
     )

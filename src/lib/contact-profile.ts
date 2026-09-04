@@ -16,10 +16,18 @@
  * A merge would strand roles that the newest capture no longer shows — LinkedIn's own page
  * is the complete statement of someone's history, so anything absent from it has been
  * removed, and no later capture could ever clear a row a merge preserved.
+ *
+ * ## The empty-capture invariant
+ *
+ * Because replacement is wholesale, a capture that yields zero usable rows would delete a
+ * stored career and put nothing back. `saveContactProfile` refuses that itself
+ * (`reason: "empty"`), measured on the rows it is about to write rather than on whatever
+ * the caller counted. Callers keep their own earlier checks as defence in depth, but they
+ * are no longer what makes this safe.
  */
 
 import { and, eq, inArray } from "drizzle-orm";
-import { getDb } from "@/db";
+import { getDb, runAtomicWrite, type AtomicStatement } from "@/db";
 import {
   contactExperiences,
   contactProfiles,
@@ -111,11 +119,16 @@ function outranks(
   return existing === "apollo";
 }
 
+export type SaveProfileResult = {
+  written: boolean;
+  reason: "saved" | "outranked" | "empty";
+};
+
 export async function saveContactProfile(
   userId: string,
   contactId: string,
   incoming: IncomingProfile
-): Promise<{ written: boolean; reason: "saved" | "outranked" }> {
+): Promise<SaveProfileResult> {
   const db = await getDb();
 
   const existing = await db.query.contactProfiles.findFirst({
@@ -161,6 +174,30 @@ export async function saveContactProfile(
     })
     .filter((row): row is NonNullable<typeof row> => row !== null);
 
+  // The "never wipe a career with an empty capture" invariant lives HERE, in the single
+  // write path, not only in the three callers that also check it.
+  //
+  // `rows` is computed before this check on purpose: the callers can only count what came
+  // off the wire, and the wire and the rows disagree. An entry whose organization is
+  // whitespace — `"   "` passed a `z.string().min(1)` before that schema learned to trim —
+  // is one experience to a caller and zero rows here, so a capture of nothing but
+  // whitespace organizations cleared the delete-and-reinsert below and erased everything.
+  // Refusing on the row count is the only version of the guard that cannot be fooled by
+  // values that survive the schema but not `trimmed()`.
+  //
+  // Only a wipe is refused. Writing a first, experience-less profile (prose and skills but
+  // no roles) is still allowed — there is no career to lose.
+  if (rows.length === 0) {
+    const storedExperience = await db.query.contactExperiences.findFirst({
+      where: and(
+        eq(contactExperiences.userId, userId),
+        eq(contactExperiences.contactId, contactId)
+      ),
+      columns: { id: true },
+    });
+    if (storedExperience) return { written: false, reason: "empty" };
+  }
+
   const profileValues = {
     userId,
     contactId,
@@ -178,32 +215,40 @@ export async function saveContactProfile(
     updatedAt: new Date(),
   };
 
-  await db.transaction(async (tx) => {
-    await tx
-      .insert(contactProfiles)
-      .values(profileValues)
-      .onConflictDoUpdate({
-        target: [contactProfiles.userId, contactProfiles.contactId],
-        set: profileValues,
-      });
-
-    // Not filtered by source: see the header. The newest capture is the whole truth.
-    await tx
-      .delete(contactExperiences)
-      .where(
-        and(
-          eq(contactExperiences.userId, userId),
-          eq(contactExperiences.contactId, contactId)
-        )
-      );
-    if (rows.length) await tx.insert(contactExperiences).values(rows);
-
+  // `runAtomicWrite`, never `db.transaction`: in production `getDb()` is the neon-http
+  // instance, whose `transaction()` throws unconditionally — this whole write path was
+  // dead there while every smoke script passed on PGlite. See `@/db` for the driver split.
+  // Do not unroll this into sequential awaits either: the delete below would then be able
+  // to land without its insert, which is the exact career wipe the guard above prevents.
+  await runAtomicWrite(db, (tx) => {
+    const statements: AtomicStatement[] = [
+      tx
+        .insert(contactProfiles)
+        .values(profileValues)
+        .onConflictDoUpdate({
+          target: [contactProfiles.userId, contactProfiles.contactId],
+          set: profileValues,
+        }),
+      // Not filtered by source: see the header. The newest capture is the whole truth.
+      tx
+        .delete(contactExperiences)
+        .where(
+          and(
+            eq(contactExperiences.userId, userId),
+            eq(contactExperiences.contactId, contactId)
+          )
+        ),
+    ];
+    if (rows.length) statements.push(tx.insert(contactExperiences).values(rows));
     // The profile feeds `buildContactEmbeddingContent`, so its stored vector is now
     // behind. The existing backfill claims anything flagged here.
-    await tx
-      .update(contacts)
-      .set({ embeddingStaleAt: new Date() })
-      .where(and(eq(contacts.userId, userId), eq(contacts.id, contactId)));
+    statements.push(
+      tx
+        .update(contacts)
+        .set({ embeddingStaleAt: new Date() })
+        .where(and(eq(contacts.userId, userId), eq(contacts.id, contactId)))
+    );
+    return statements;
   });
 
   return { written: true, reason: "saved" };

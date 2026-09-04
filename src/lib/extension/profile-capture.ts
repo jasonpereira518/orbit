@@ -7,8 +7,9 @@
  * The first is the important one. Writing one person's career onto another is the worst
  * thing this feature can do and the hardest to notice afterwards, so a slug disagreement
  * stops the write and asks, rather than trusting the panel's resolution. The identity check
- * is deliberately JS-to-JS (see `linkedinSlug` below) and does not read the `linkedin_slug`
- * generated column — it does not need to, and does not depend on that column's definition.
+ * is deliberately JS-to-JS (see `pageLinkedInSlug` below) and does not read the
+ * `linkedin_slug` generated column — it does not need to, and does not depend on that
+ * column's definition.
  */
 
 import { z } from "zod";
@@ -30,8 +31,9 @@ export type { ProfileCaptureInput };
  * A page's own `url` (or `sourceUrl`) may not even be a LinkedIn URL — a spoofed or buggy
  * capture, or an SSRF attempt via a URL later fetched by the avatar pipeline
  * (`fetchLinkedInPhotoUrl`) or rendered as an `href`. Only an https `linkedin.com` URL is
- * ever persisted as `sourceUrl` or written onto `contacts.linkedinUrl`; the identity-slug
- * comparison below is a separate, looser concern and does not use this.
+ * ever persisted as `sourceUrl` or written onto `contacts.linkedinUrl`, and — since the
+ * identity guard was found to be trusting an unanchored pattern — only such a URL is read
+ * for an identity slug either, via `pageLinkedInSlug` below.
  */
 function isLinkedInProfileUrl(url: string): boolean {
   try {
@@ -40,6 +42,27 @@ function isLinkedInProfileUrl(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * The page's slug, for identity comparison only — "" when the URL is not actually a
+ * LinkedIn URL.
+ *
+ * `linkedinSlug` itself is NOT host-anchored: its pattern is `/linkedin\.com\/in\/(...)/`
+ * with no anchor, so `https://evil.example/?ref=linkedin.com/in/grace-hopper` yields
+ * `grace-hopper`, and anything that fails the pattern falls back to a normalization of the
+ * whole string rather than to "". That is the right behaviour for duplicate detection,
+ * which is where the function lives and which is matching two of the user's OWN records
+ * against each other — so the host check goes here, on the one caller whose input is a
+ * page, rather than into a function shared with a caller that wants the loose rule.
+ *
+ * The contact's own stored URL is deliberately NOT put through this: it is the user's own
+ * data, and a bare handle or a Sales Navigator link on file must still count as "this
+ * contact has a LinkedIn identity" for the fail-closed half of the guard below.
+ */
+function pageLinkedInSlug(url: string | null | undefined): string {
+  if (!url || !isLinkedInProfileUrl(url)) return "";
+  return linkedinSlug(url);
 }
 
 /** A date the extension sent that fails to parse must not turn a capture into a 500. */
@@ -134,12 +157,17 @@ export async function captureContactProfile(
   // exist at all — never leak which one it was.
   if (!contact) throw new ContactNotFoundError();
 
+  // Both sides reduce to a slug string; "" means "no identifiable LinkedIn identity at
+  // all," which is itself a value that must be treated as disagreeing with a contact that
+  // DOES have one — not as "no opinion, proceed." That is the fail-closed half of this
+  // guard: an unset flag defaults to refuse, not to accept.
+  //
+  // The page side goes through `pageLinkedInSlug`, which requires an https linkedin.com
+  // host before it will read a slug out of the URL at all. The contact side uses the raw
   // `linkedinSlug` (from `@/lib/duplicates`, the same rule `resolve.ts` uses to find the
-  // contact in the first place) never returns null: "" means "no identifiable LinkedIn
-  // identity at all," which is itself a value that must be treated as disagreeing with a
-  // contact that DOES have one — not as "no opinion, proceed." That is the fail-closed
-  // half of this guard: an unset flag defaults to refuse, not to accept.
-  const pageSlug = linkedinSlug(input.page.url) || linkedinSlug(input.page.sourceUrl);
+  // contact in the first place) — see the note on `pageLinkedInSlug` for why the two sides
+  // differ.
+  const pageSlug = pageLinkedInSlug(input.page.url) || pageLinkedInSlug(input.page.sourceUrl);
   const contactSlug = linkedinSlug(contact.linkedinUrl);
 
   // A contact with literally no URL on file is a gap, not a disagreement — accepting the
@@ -176,8 +204,10 @@ export async function captureContactProfile(
     return { saved: false, conflict: null, usedFallback, degraded: true, experienceCount: 0 };
   }
 
-  const warnings = [...input.page.warnings];
-  if (profile.parseIncomplete && !usedFallback) warnings.push("parse-incomplete");
+  // Deduped: the adapter raises "parse-incomplete" for the same condition, so a capture
+  // the selectors could not fully read would otherwise store the name twice.
+  const warnings = new Set(input.page.warnings);
+  if (profile.parseIncomplete && !usedFallback) warnings.add("parse-incomplete");
 
   // Only ever persist (or later dereference, or write onto the contact) a URL that is
   // actually an https linkedin.com URL — `site`/`kind` describe what the client CLAIMS the
@@ -189,7 +219,7 @@ export async function captureContactProfile(
     sourceUrl: validPageUrl,
     adapterVersion: input.page.adapterVersion,
     capturedAt: parseCapturedAt(input.page.capturedAt),
-    warnings,
+    warnings: [...warnings],
     headline: profile.headline,
     about: profile.about,
     skills: profile.skills,
@@ -200,9 +230,11 @@ export async function captureContactProfile(
   });
 
   // Accepting a capture for a contact we had NO URL for at all is how that URL gets on
-  // file. Keyed on the actual stored column, not on `contactSlug` — a contact whose stored
-  // URL simply doesn't parse to a slug (a Sales Navigator link, an uppercase `/IN/` path)
-  // already has a URL and must not have it silently replaced by this capture's page.
+  // file. Keyed on the actual stored column, not on `contactSlug` — `linkedinSlug` never
+  // returns "" for a non-empty string (it falls back to normalizing the whole value), so
+  // `contactSlug` cannot distinguish "no URL on file" from "a URL we could not read a
+  // slug out of", and a contact that already has any URL must not have it silently
+  // replaced by this capture's page.
   if (!contact.linkedinUrl?.trim() && validPageUrl) {
     await db
       .update(contacts)

@@ -17,7 +17,10 @@ import { saveContactProfile } from "@/lib/contact-profile";
 
 export async function fillContactProfileFromApollo(
   contactId: string
-): Promise<{ filled: boolean; reason: "saved" | "outranked" | "no_url" | "no_match" }> {
+): Promise<{
+  filled: boolean;
+  reason: "saved" | "outranked" | "empty" | "no_url" | "no_match";
+}> {
   const userId = await requireUserId();
   const db = await getDb();
   const contact = await db.query.contacts.findFirst({

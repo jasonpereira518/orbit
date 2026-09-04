@@ -54,9 +54,11 @@ function ChipRow({ label, items }: { label: string; items: string[] }) {
         {label}
       </p>
       <div className="flex flex-wrap gap-1.5">
-        {items.map((item) => (
+        {/* Keyed by index, not by value: LinkedIn happily lists the same skill twice, and
+            a duplicated name would collide as a key. Nothing here reorders or animates. */}
+        {items.map((item, index) => (
           <span
-            key={item}
+            key={`${index}-${item}`}
             className="rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground"
           >
             {item}
@@ -190,6 +192,12 @@ export function ContactExperienceSection({
         <CardTitle>Experience</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* The headline is the one line the person wrote to describe themselves, and it is
+            often the only prose an Apollo-sourced profile has. It was captured, stored and
+            passed down here but never rendered. */}
+        {profile.headline && (
+          <p className="text-sm font-medium leading-snug text-ink">{profile.headline}</p>
+        )}
         {profile.about && <ExpandableText text={profile.about} lines={4} />}
 
         {roles.length > 0 && (

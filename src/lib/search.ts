@@ -226,6 +226,13 @@ type ContactEmbeddingSource = {
  *    has NO equivalent split (see the recommendation left in the Task 5 fix report); the
  *    field ordering below is what protects the career line and headline from it, by placing
  *    them ahead of `about` so a truncation eats prose rather than an employer name.
+ * 3. That `notes` split is NOT universal, which is why the career line now sits ahead of
+ *    `notes` as well. `runEmbeddingBackfill` — the path bulk imports and the daily cron
+ *    take — calls this function directly, with no `splitProfileEmbeddingContent`, so for
+ *    those contacts `notes` is folded in inline and a contact with more than 8,000
+ *    characters of notes lost the career line, the headline, and About off the tail
+ *    entirely. Short, high-signal and irreplaceable beats long and open-ended, so every
+ *    profile-derived field is ordered ahead of the free text that can crowd it out.
  */
 export function buildContactEmbeddingContent(
   contact: ContactEmbeddingSource,
@@ -243,19 +250,21 @@ export function buildContactEmbeddingContent(
     contact.linkedinUrl,
     contact.website,
     contact.aiSummary,
+    // Ahead of `notes`, not only ahead of `about` — see note 3 in the audit above: on the
+    // backfill path `notes` is inline and unsplit, and can be long enough on its own to
+    // push everything after it past the 8,000-char truncation.
+    careerLine(contact.experiences ?? []),
+    contact.profile?.headline,
     includeNotes ? contact.notes : null,
     metContextLabel(contact.metContext),
     contact.dateMet
       ? new Date(contact.dateMet).toLocaleDateString()
       : null,
     contact.howMet,
-    // Short and high-signal, ordered ahead of `about` on purpose: `about` is long,
-    // open-ended prose with no overflow split of its own (unlike `notes`), so if the
-    // combined content is going to lose its tail to the 8,000-char embedding truncation,
-    // it must be `about`'s tail that goes, not the headline or the career line — the
-    // entire reason this task exists.
-    careerLine(contact.experiences ?? []),
-    contact.profile?.headline,
+    // `about` stays down here: it is long, open-ended prose with no overflow split of its
+    // own (unlike `notes`), so if the combined content is going to lose its tail to the
+    // 8,000-char embedding truncation, it must be `about`'s tail that goes — never the
+    // headline or the career line, which are now above `notes`.
     contact.profile?.about,
     ...(contact.keyFacts || []),
     ...(contact.opportunities || []),

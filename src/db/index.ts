@@ -1,4 +1,6 @@
 import { drizzle as drizzleNeon } from "drizzle-orm/neon-http";
+import type { BatchItem } from "drizzle-orm/batch";
+import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { neon } from "@neondatabase/serverless";
 import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import { PGlite } from "@electric-sql/pglite";
@@ -2085,6 +2087,59 @@ export async function getDb(): Promise<Db> {
       : drizzlePglite(globalForDb.orbitPglite!, { schema, logger: countingLogger });
   }
   return globalForDb.orbitDrizzle;
+}
+
+/**
+ * A statement builder that both a live `Db` and a PGlite transaction satisfy. Both drizzle
+ * instances are `PgDatabase`s and `PgTransaction extends PgDatabase`, so one type covers
+ * the writer `runAtomicWrite` hands to its callback on either driver.
+ */
+export type AtomicWriter = PgDatabase<PgQueryResultHKT, typeof schema>;
+/** One statement in an atomic group: any drizzle insert/update/delete/select builder. */
+export type AtomicStatement = BatchItem<"pg">;
+
+/**
+ * Runs a group of statements atomically on whichever driver is live.
+ *
+ * `db.transaction()` is NOT an option: `getDb()` returns the `drizzle-orm/neon-http`
+ * instance whenever `DATABASE_URL` is set — i.e. always in production — and that driver's
+ * session throws `No transactions support in neon-http driver` unconditionally
+ * (`node_modules/drizzle-orm/neon-http/session.cjs`). Neon's HTTP endpoint has no
+ * cross-request session to hold a transaction open in.
+ *
+ * What it does have is `db.batch()`, which drizzle maps to `client.transaction(queries)` —
+ * one HTTP request carrying every statement, committed or rolled back together. PGlite's
+ * drizzle driver has no `batch` at all (only the batch-capable drivers — neon-http,
+ * libsql, d1, planetscale — declare one), so the local path uses a real transaction
+ * instead. Hence the callback shape rather than a plain array: the PGlite branch has to
+ * build its statements against the transaction handle, or they would execute outside it.
+ *
+ * Callers must therefore never reach for `db.transaction` or `db.batch` directly — this is
+ * the one place that knows which driver is underneath.
+ */
+export async function runAtomicWrite(
+  db: Db,
+  build: (writer: AtomicWriter) => AtomicStatement[]
+): Promise<void> {
+  const batchable = db as unknown as {
+    batch?: (statements: AtomicStatement[]) => Promise<unknown>;
+  };
+
+  if (typeof batchable.batch === "function") {
+    const statements = build(db as unknown as AtomicWriter);
+    if (!statements.length) return;
+    await batchable.batch(statements);
+    return;
+  }
+
+  const local = db as ReturnType<typeof drizzlePglite<typeof schema>>;
+  await local.transaction(async (tx) => {
+    // Awaited one at a time on purpose: these are ordered writes (delete-then-insert),
+    // and a `Promise.all` would let the driver interleave them.
+    for (const statement of build(tx as unknown as AtomicWriter)) {
+      await (statement as unknown as Promise<unknown>);
+    }
+  });
 }
 
 export { schema };

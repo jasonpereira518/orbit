@@ -358,7 +358,10 @@ export const linkedinAdapter: SiteAdapter = {
         const profile = readProfileSections(document);
         if (expansion.timedOut) warnings.push("expand-timeout");
         if (expansion.capped) warnings.push("expand-capped");
-        if (profile.parseIncomplete) warnings.push("profile-empty");
+        // "parse-incomplete", not "profile-empty": the server raises the same condition
+        // under that name (`src/lib/extension/profile-capture.ts`), and two names for one
+        // thing made the stored `warnings` array unreadable.
+        if (profile.parseIncomplete) warnings.push("parse-incomplete");
         // AFTER expansion — see `computeText`'s comment.
         return buildContext(2, computeText(), profile);
       })();

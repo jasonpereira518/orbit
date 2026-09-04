@@ -343,11 +343,14 @@ async function main() {
       "",
     ].join("\n");
     console.log(banner);
-    // Machine-readable marker for scripts/run-smoke.ts: it greps captured stdout for a
+    // Machine-readable marker for scripts/run-smoke.ts: it greps captured STDERR for a
     // leading "PENDING:" line and surfaces it in the summary row (and the run-level
     // count), so a green run of the whole suite can't read as "fully verified" when a
     // script degraded instead of actually asserting something. Keep this on one line.
-    console.log(
+    //
+    // stderr rather than stdout on purpose: the runner leaves child stdout inherited so
+    // every script prints live, and pipes only the stream it has to scan.
+    console.error(
       "PENDING: LinkedIn profile fixtures missing — role extraction, current-role " +
         "detection, education classification, About extraction, and the " +
         "details-subpage path are unverified"

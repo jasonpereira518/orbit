@@ -193,28 +193,30 @@ function main() {
     const started = Date.now();
     const timeout = TIMEOUT_MS[name] ?? DEFAULT_TIMEOUT_MS;
     process.stdout.write(`\n━━━ ${name} (${MANIFEST[name]}) ━━━\n`);
-    // stdout is piped (not inherited) so we can scan it for the PENDING marker below;
-    // it is replayed to our own stdout immediately after the child exits, so nothing a
-    // human watches live is lost — spawnSync blocks until the child finishes anyway.
-    // stderr stays inherited: failure stack traces still surface immediately.
+    // stdout stays INHERITED so a long or hanging script prints as it goes — piping it
+    // meant nothing appeared until the child exited, which for a hang is not until the
+    // timeout fires. Only stderr is piped, and only because the PENDING marker is written
+    // there (see below); it is replayed the instant the child exits, so a failing script's
+    // stack trace is still shown, just after its stdout rather than interleaved with it.
     const r = spawnSync(tsx, [join("scripts", `${name}.ts`)], {
       env,
-      stdio: ["inherit", "pipe", "inherit"],
+      stdio: ["inherit", "inherit", "pipe"],
       timeout,
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
     });
-    if (r.stdout) process.stdout.write(r.stdout);
+    if (r.stderr) process.stderr.write(r.stderr);
     const ms = Date.now() - started;
     const timedOut = r.error && (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT";
     const ok = !timedOut && r.status === 0;
 
     // A script that degraded rather than fully verified something signals it with a
-    // "PENDING: <reason>" line on stdout (see scripts/smoke-contact-profile-format.ts for
+    // "PENDING: <reason>" line on STDERR — stderr, not stdout, precisely so that stdout can
+    // stay inherited and live (see scripts/smoke-contact-profile-format.ts for
     // the first user of this). This is a general runner capability, not special-cased to
     // one script: any smoke script with an environment-dependent gap can use it, and a
     // green exit code alone can no longer read as "fully verified" for that row.
-    const pendingReasons = [...(r.stdout ?? "").matchAll(/^PENDING:\s*(.+)$/gm)].map((m) => m[1].trim());
+    const pendingReasons = [...(r.stderr ?? "").matchAll(/^PENDING:\s*(.+)$/gm)].map((m) => m[1].trim());
     const pending = ok && pendingReasons.length > 0;
 
     results.push({

@@ -8,9 +8,12 @@ import "./smoke/_env";
 process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke-contact-profile";
 process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-contact-profile";
 
+import { readFileSync } from "node:fs";
 import { and, eq } from "drizzle-orm";
+import { drizzle as drizzleNeon } from "drizzle-orm/neon-http";
+import { neon } from "@neondatabase/serverless";
 import { run } from "./smoke/_env";
-import { getDb } from "../src/db";
+import { getDb, runAtomicWrite, schema } from "../src/db";
 import { contactExperiences, contactProfiles, contacts } from "../src/db/schema";
 import {
   getCareerLines,
@@ -22,7 +25,7 @@ import { hybridSearchContacts } from "../src/lib/hybrid-search";
 import { buildContactEmbeddingContent } from "../src/lib/search";
 import { apolloEmploymentToExperiences } from "../src/lib/apollo";
 import { captureContactProfile } from "../src/lib/extension/profile-capture";
-import { pageContextSchema } from "../src/lib/extension/contract.schema";
+import { pageContextSchema, pageExperienceSchema } from "../src/lib/extension/contract.schema";
 import type { PageContext } from "../src/lib/extension/contract";
 import { ContactNotFoundError } from "../src/lib/contact-writes";
 import { ExtensionRouteError } from "../src/lib/extension/http";
@@ -358,6 +361,42 @@ async function main() {
     "the same query minus the suffix still reaches the employer",
     widgetHits.some((h) => h.id === suffixOnlyId),
     widgetHits.map((h) => h.fullName).join(", ") || "no hits"
+  );
+
+  // --- punctuated employers are reachable by the name people actually type ---------
+  //
+  // `organization_normalized` is written through `normalizeCompanyKey`, which strips
+  // punctuation to single spaces: "AT&T" is stored as `at t`. Query terms were only
+  // lowercased, so the literal string `at t` was the ONLY way to reach this row — "AT&T"
+  // itself, the form every user types, matched nothing. The fix runs query terms through
+  // the same function, which is why it was hoisted into `@/lib/company-name` at all.
+  const punctuatedId = await makeContact("Perry Punctuation", null);
+  await saveContactProfile(USER, punctuatedId, {
+    source: "extension", sourceUrl: null, adapterVersion: "linkedin-2",
+    capturedAt: new Date(), warnings: [], headline: null, about: null,
+    skills: [], certifications: [], volunteering: [], publications: [],
+    experiences: [
+      { kind: "role", organization: "AT&T", title: "Engineer", startYear: 2011,
+        startMonth: null, endYear: 2016, endMonth: null, isCurrent: false, location: null,
+        description: null, fieldOfStudy: null },
+      { kind: "role", organization: "L'Oréal", title: "Analyst", startYear: 2017,
+        startMonth: null, endYear: null, endMonth: null, isCurrent: true, location: null,
+        description: null, fieldOfStudy: null },
+    ],
+  });
+  for (const typed of ["AT&T", "at&t"]) {
+    const hits = await hybridSearchContacts(USER, { query: typed, limit: 10 });
+    check(
+      `a punctuated past employer is reachable as "${typed}"`,
+      hits.some((h) => h.id === punctuatedId),
+      hits.map((h) => h.fullName).join(", ") || "no hits"
+    );
+  }
+  const accentHits = await hybridSearchContacts(USER, { query: "L'Oréal", limit: 10 });
+  check(
+    "an accented, apostrophised employer is reachable as written",
+    accentHits.some((h) => h.id === punctuatedId),
+    accentHits.map((h) => h.fullName).join(", ") || "no hits"
   );
 
   // --- the recency tiebreak is real logic, so pin the order it produces ------------
@@ -822,6 +861,128 @@ async function main() {
     "the stored profile prose survives too, not just the experience rows",
     afterZeroRoleGuard?.about === "This must not be erased by a broken capture.",
     afterZeroRoleGuard?.about ?? "null"
+  );
+
+  // --- an all-whitespace organization must not wipe a stored career ----------------
+  //
+  // Regression for the hole the Task 10 caller-side guard could not see. The guard counts
+  // what came off the wire; `saveContactProfile` counts the rows it is about to write, and
+  // `"   "` is one experience to the first and zero rows to the second. Before the fix
+  // this sequence reported `{written:true}` and left the contact with no experience rows
+  // at all.
+  const whitespaceId = await makeContact("Whit Space", "https://www.linkedin.com/in/whit");
+  const realCareer: IncomingProfile = {
+    source: "extension",
+    sourceUrl: "https://www.linkedin.com/in/whit",
+    adapterVersion: "linkedin-2",
+    capturedAt: new Date("2026-08-01T00:00:00Z"),
+    warnings: [],
+    headline: "Someone with a career",
+    about: "This must survive a whitespace capture.",
+    skills: [], certifications: [], volunteering: [], publications: [],
+    experiences: [
+      { kind: "role", organization: "Real Employer", title: "Engineer", startYear: 2015,
+        startMonth: null, endYear: null, endMonth: null, isCurrent: true, location: null,
+        description: null, fieldOfStudy: null },
+    ],
+  };
+  await saveContactProfile(USER, whitespaceId, realCareer);
+  check(
+    "the career is stored before the whitespace capture",
+    (await getContactProfile(USER, whitespaceId))?.experiences.length === 1
+  );
+
+  const whitespaceResult = await saveContactProfile(USER, whitespaceId, {
+    ...realCareer,
+    capturedAt: new Date("2026-08-02T00:00:00Z"),
+    experiences: [
+      { kind: "role", organization: "   ", title: "Engineer", startYear: 2020,
+        startMonth: null, endYear: null, endMonth: null, isCurrent: true, location: null,
+        description: null, fieldOfStudy: null },
+    ],
+  });
+  check(
+    "a capture whose only organization is whitespace is refused as empty",
+    whitespaceResult.written === false && whitespaceResult.reason === "empty",
+    JSON.stringify(whitespaceResult)
+  );
+  const afterWhitespace = await getContactProfile(USER, whitespaceId);
+  check(
+    "the stored career survives an all-whitespace capture",
+    afterWhitespace?.experiences.length === 1 &&
+      afterWhitespace.experiences[0].organization === "Real Employer",
+    JSON.stringify(afterWhitespace?.experiences.map((e) => e.organization))
+  );
+
+  // The same value must also be rejected one layer earlier, at the wire schema, so it
+  // never gets counted as an experience by any caller in the first place.
+  check(
+    "the wire schema rejects a whitespace-only organization",
+    pageExperienceSchema.safeParse({
+      kind: "role", organization: "   ", title: null, fieldOfStudy: null, location: null,
+      description: null, startYear: null, startMonth: null, endYear: null, endMonth: null,
+      isCurrent: false,
+    }).success === false
+  );
+  check(
+    "the wire schema trims a padded organization rather than storing the padding",
+    pageExperienceSchema.safeParse({
+      kind: "role", organization: "  Acme  ", title: null, fieldOfStudy: null,
+      location: null, description: null, startYear: null, startMonth: null, endYear: null,
+      endMonth: null, isCurrent: false,
+    }).data?.organization === "Acme"
+  );
+
+  // --- the write path must use an API the PRODUCTION driver actually has -------------
+  //
+  // `getDb()` returns the drizzle neon-http instance whenever DATABASE_URL is set, i.e.
+  // always in production, and that driver's `transaction()` throws unconditionally. The
+  // smoke suite deletes DATABASE_URL, so every script here runs on PGlite, where a
+  // transaction works — which is exactly how a 100%-dead-in-production write path passed
+  // the whole suite. These two checks are the pin, and neither needs a live connection.
+  const source = readFileSync("src/lib/contact-profile.ts", "utf8");
+  check(
+    "saveContactProfile's write path does not call .transaction() — neon-http has none",
+    !/\.transaction\s*\(/.test(source),
+    "src/lib/contact-profile.ts calls .transaction(); use runAtomicWrite from @/db"
+  );
+  check(
+    "saveContactProfile writes through runAtomicWrite",
+    /runAtomicWrite\s*\(/.test(source)
+  );
+
+  // Driver-level, no network: constructing the neon-http instance against a URL that is
+  // never dialled is enough to inspect what the driver offers.
+  const fakeNeon = drizzleNeon(neon("postgres://u:p@example.invalid/db"), { schema });
+  check(
+    "the neon-http driver exposes batch()",
+    typeof (fakeNeon as unknown as { batch?: unknown }).batch === "function"
+  );
+  let transactionError = "";
+  try {
+    await (fakeNeon as unknown as { transaction: (f: () => Promise<void>) => Promise<void> })
+      .transaction(async () => {});
+  } catch (error) {
+    transactionError = error instanceof Error ? error.message : String(error);
+  }
+  check(
+    "the neon-http driver's transaction() throws before it ever reaches the network",
+    transactionError === "No transactions support in neon-http driver",
+    transactionError || "it did not throw"
+  );
+  // An empty statement list returns early on the batch branch and opens a transaction on
+  // the PGlite branch — so this resolving against a neon-http instance proves the
+  // dispatch, again with no connection attempted.
+  let dispatchError = "";
+  try {
+    await runAtomicWrite(fakeNeon as unknown as Awaited<ReturnType<typeof getDb>>, () => []);
+  } catch (error) {
+    dispatchError = error instanceof Error ? error.message : String(error);
+  }
+  check(
+    "runAtomicWrite dispatches a neon-http instance to batch, not to transaction",
+    dispatchError === "",
+    dispatchError
   );
 
   console.log("\ncontact profile storage: OK");
