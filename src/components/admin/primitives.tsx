@@ -63,11 +63,13 @@ export function AdminPanel({
         className
       )}
     >
-      {title && (
+      {(title || action) && (
         <header className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-2.5">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            {title}
-          </h2>
+          {title && (
+            <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              {title}
+            </h2>
+          )}
           {action}
         </header>
       )}
