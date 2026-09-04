@@ -12,7 +12,11 @@
 import { NextResponse } from "next/server";
 import { finishCronRun, startCronRun } from "@/lib/cron-runs";
 import { isInternalRequest } from "@/lib/internal-auth";
-import { drainDueDeliveries, purgeExpiredIdempotencyKeys } from "@/lib/webhooks/dispatch";
+import {
+  drainDueDeliveries,
+  emitDueFollowupEvents,
+  purgeExpiredIdempotencyKeys,
+} from "@/lib/webhooks/dispatch";
 
 export const maxDuration = 60;
 
@@ -27,16 +31,21 @@ export async function POST(request: Request) {
 
   const handle = await startCronRun("webhooks.drain");
   try {
-    // 45s of a 60s budget, leaving room for the ledger write and the purge below.
-    const stats = await drainDueDeliveries({ budgetMs: 45_000, max: 200 });
+    // Queue "this relationship has gone cold" events BEFORE draining, so anything queued here
+    // goes out in the same run. Deduplicated per contact per day by its deterministic event
+    // id, so a ten-minute sweep does not become 144 identical webhooks.
+    const emitted = await emitDueFollowupEvents().catch(() => ({ users: 0, events: 0 }));
+
+    // 40s of a 60s budget, leaving room for the emit above, the ledger write and the purge.
+    const stats = await drainDueDeliveries({ budgetMs: 40_000, max: 200 });
     await purgeExpiredIdempotencyKeys(new Date(Date.now() - IDEMPOTENCY_RETENTION_MS)).catch(
       () => null
     );
     await finishCronRun(handle, {
       status: stats.failed > 0 ? "partial" : "ok",
-      stats: { ...stats },
+      stats: { ...stats, followupUsers: emitted.users, followupEvents: emitted.events },
     });
-    return NextResponse.json({ ok: true, ...stats });
+    return NextResponse.json({ ok: true, ...stats, ...emitted });
   } catch (err) {
     await finishCronRun(handle, { status: "failed", error: err });
     return NextResponse.json({ error: "drain failed" }, { status: 500 });

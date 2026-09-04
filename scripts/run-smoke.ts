@@ -65,6 +65,7 @@ const MANIFEST: Record<string, Tier> = {
   // pglite ----------------------------------------------------------------------------
   "smoke-account-alerts": "pglite",
   "smoke-api-keys": "pglite",
+  "smoke-api-routes": "pglite",
   "smoke-action-items": "pglite",
   "smoke-admin": "pglite",
   "smoke-app-pulse": "pglite",

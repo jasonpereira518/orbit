@@ -57,7 +57,17 @@ export const eventInput = z.object({
     .max(200)
     .describe("Stable unique id for this event in your system. Re-sending updates, never duplicates."),
   type: z.enum(["meeting", "email", "message", "call"]).default("message"),
-  occurredAt: z.coerce.date().describe("ISO-8601 timestamp of when it happened."),
+  /**
+   * Deliberately a string, not `z.coerce.date()`.
+   *
+   * The wire format IS a string, so saying so is the honest description — and `coerce.date()`
+   * cannot be represented in JSON Schema at all, which breaks the generated OpenAPI document
+   * that integration authors read. The route converts.
+   */
+  occurredAt: z
+    .string()
+    .datetime({ offset: true })
+    .describe("ISO-8601 timestamp of when it happened, e.g. 2026-09-04T15:00:00Z"),
   participants: z.array(participant).min(1).max(50),
   summary: z.string().trim().max(500).optional(),
   notes: z.string().trim().max(5000).optional(),

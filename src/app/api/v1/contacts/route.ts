@@ -6,11 +6,10 @@
  * the polled sample when someone builds a Zap, and a mismatch means the fields they map at
  * design time are not the fields they receive at run time.
  */
-import { after } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
-import { apiError, apiHandler, apiOk, readJson } from "@/lib/api/http";
+import { apiError, apiHandler, apiOk, readJson, deferTelemetry } from "@/lib/api/http";
 import { contactCreateBody, contactsQuery, parseQuery } from "@/lib/api/schemas";
 import { hybridSearchContacts } from "@/lib/hybrid-search";
 import { createContactForUser } from "@/lib/contact-writes";
@@ -136,6 +135,6 @@ export const POST = apiHandler({ scope: "write", bucket: "apiWrite" }, async (re
   });
 
   const shaped = publicContact(created);
-  after(() => enqueueWebhookEvent(caller.userId, "contact.created", shaped));
+  deferTelemetry(() => enqueueWebhookEvent(caller.userId, "contact.created", shaped));
   return apiOk({ created: true, matched: false, contact: shaped }, { status: 201 });
 });

@@ -152,7 +152,7 @@ export async function readJson<T>(
  * handler is invoked directly, as the smoke tests do. Telemetry must never be the reason a
  * request fails, so the throw is caught rather than allowed to escape a working handler.
  */
-export function deferTelemetry(fn: () => void | Promise<void>): void {
+export function deferTelemetry(fn: () => unknown): void {
   try {
     after(fn);
   } catch {

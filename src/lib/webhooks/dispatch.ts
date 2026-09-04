@@ -143,7 +143,16 @@ export async function assertDeliverable(url: string): Promise<void> {
 export async function enqueueWebhookEvent(
   userId: string,
   type: WebhookEventType,
-  object: unknown
+  object: unknown,
+  /**
+   * A caller-chosen event id, for events a sweep may notice repeatedly.
+   *
+   * The unique index on `(endpoint_id, event_id)` then does the deduplication: a
+   * `followup.due` keyed on `${contactId}:${date}` fires once for that person that day, no
+   * matter how many times the ten-minute drain sees them still due. Omit it for events caused
+   * by a single user action, where every occurrence is genuinely new.
+   */
+  opts: { eventId?: string } = {}
 ): Promise<string[]> {
   try {
     const db = await getDb();
@@ -154,7 +163,9 @@ export async function enqueueWebhookEvent(
     const subscribed = endpoints.filter((e) => (e.eventTypes ?? []).includes(type));
     if (subscribed.length === 0) return [];
 
-    const eventId = `evt_${randomUUID().replace(/-/g, "")}`;
+    const eventId = opts.eventId
+      ? `evt_${opts.eventId}`
+      : `evt_${randomUUID().replace(/-/g, "")}`;
     const envelope = buildEnvelope({ id: eventId, type, createdAt: new Date(), object });
 
     await db
@@ -291,6 +302,124 @@ export async function attemptDelivery(row: DueRow, now: Date = new Date()): Prom
     }
   }
   return false;
+}
+
+/**
+ * Prove an endpoint exists and is willing to receive before it is switched on.
+ *
+ * A new endpoint starts `pending`, and only a 2xx to this signed `endpoint.verified` delivery
+ * moves it to `active`. Without the handshake a typo'd URL would sit there collecting nothing
+ * and the user would have no way to tell that from "nothing has happened yet" — which is the
+ * single most common way a webhook integration is quietly broken for weeks.
+ *
+ * It also proves the receiver can validate the signature, because that is the same request
+ * shape every real delivery will have.
+ */
+export async function verifyEndpoint(
+  endpointId: string,
+  now: Date = new Date()
+): Promise<{ ok: boolean; error?: string }> {
+  const db = await getDb();
+  const endpoint = await db.query.webhookEndpoints.findFirst({
+    where: eq(webhookEndpoints.id, endpointId),
+    columns: { id: true, url: true, secretEncrypted: true },
+  });
+  if (!endpoint) return { ok: false, error: "No such endpoint" };
+
+  const envelope = buildEnvelope({
+    id: `evt_verify_${randomUUID().replace(/-/g, "")}`,
+    type: "endpoint.verified",
+    createdAt: now,
+    object: { endpointId },
+  });
+  const body = JSON.stringify(envelope);
+
+  try {
+    await assertDeliverable(endpoint.url);
+    const secret = decryptOrNull(endpoint.secretEncrypted);
+    if (!secret) throw new Error("Endpoint secret could not be read");
+
+    const res = await fetch(endpoint.url, {
+      method: "POST",
+      redirect: "manual",
+      signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "Orbit-Webhooks/1",
+        "Orbit-Signature": signPayload(secret, body, Math.floor(now.getTime() / 1000)),
+        "Orbit-Event-Id": envelope.id,
+        "Orbit-Delivery-Attempt": "1",
+      },
+      body,
+    });
+    if (res.status < 200 || res.status >= 300) {
+      return { ok: false, error: `Endpoint answered HTTP ${res.status}` };
+    }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message.slice(0, 200) : "Unreachable" };
+  }
+
+  await db
+    .update(webhookEndpoints)
+    .set({ status: "active", consecutiveFailures: 0, disabledAt: null, disabledReason: null, updatedAt: now })
+    .where(eq(webhookEndpoints.id, endpointId));
+  return { ok: true };
+}
+
+/**
+ * Emit `followup.due` for anyone with a subscribed endpoint.
+ *
+ * Driven from the drain sweep rather than a per-user trigger, because "this relationship has
+ * gone cold" is a state rather than an event — nothing happens at the moment it becomes true.
+ * Scoped to users who actually have a subscribed endpoint, which is normally none, so the
+ * usual cost of this function is a single query returning zero rows.
+ *
+ * The event id is `followup:<contactId>:<date>`, so the unique index collapses the ten-minute
+ * sweep into at most one delivery per person per day. Without that, subscribing to this event
+ * would mean 144 identical webhooks a day for every cold contact.
+ */
+export async function emitDueFollowupEvents(
+  limitUsers = 20,
+  now: Date = new Date()
+): Promise<{ users: number; events: number }> {
+  const db = await getDb();
+  const users = rowsOf<{ user_id: string }>(
+    await db.execute(sql`
+      SELECT DISTINCT user_id FROM webhook_endpoints
+       WHERE status = 'active' AND event_types ? 'followup.due'
+       LIMIT ${limitUsers}
+    `)
+  );
+  if (users.length === 0) return { users: 0, events: 0 };
+
+  const day = now.toISOString().slice(0, 10);
+  const { getDashboardData } = await import("@/lib/reminders");
+  let events = 0;
+  for (const { user_id: userId } of users) {
+    try {
+      const data = await getDashboardData(userId);
+      for (const contact of data.dueFollowUps.slice(0, 25)) {
+        const queued = await enqueueWebhookEvent(
+          userId,
+          "followup.due",
+          {
+            contactId: contact.id,
+            name: contact.fullName,
+            company: contact.company ?? null,
+            email: contact.email ?? null,
+            dueAt: contact.nextFollowUpAt
+              ? new Date(contact.nextFollowUpAt).toISOString()
+              : null,
+          },
+          { eventId: `followup:${contact.id}:${day}` }
+        );
+        if (queued.length > 0) events++;
+      }
+    } catch {
+      // One user's dashboard failing must not stop the others.
+    }
+  }
+  return { users: users.length, events };
 }
 
 export type DrainStats = { attempted: number; delivered: number; failed: number };
