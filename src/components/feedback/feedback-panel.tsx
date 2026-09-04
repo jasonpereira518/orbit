@@ -397,12 +397,15 @@ export function FeedbackPanel({
           )}
         </div>
 
-        {/* `mt-1` on top of the panel gap. A flat rhythm measured evenly but did not read
-            evenly: the message box and this one are both large bordered surfaces, and the
-            same 20px that looks generous under a text label looks pinched between two
-            heavy boxes. This is a separate step from writing the message, and now looks
-            like one. */}
-        <div className="mt-1 grid gap-2">
+        {/* Deliberately well clear of the message box, not merely a notch more than the
+            panel gap.
+            
+            The message field is `flex-1`, so it swallows whatever height the window has
+            left — it is routinely 300-600px tall. A gap measured against the panel's rhythm
+            disappears next to a box that size, which is why 20px and then 28px both still
+            read as touching. 40px is set against the NEIGHBOUR rather than the rhythm, and
+            holds up as the field grows. */}
+        <div className="mt-4 grid gap-2">
           {/* The primary way to attach one: full width, its own label, and an explanation of
               what the gesture is. It was a 72px dashed tile next to the thumbnails and read
               as an afterthought — which is backwards, since a screenshot is the most useful
