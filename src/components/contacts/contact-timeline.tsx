@@ -35,9 +35,9 @@ export type TimelineInteraction = {
   interactionType: string;
   interactionDate: Date | string;
   sameDayOrder?: number | null;
-  rawNotes: string | null;
+  /** `raw_notes` truncated in SQL — enough for the clamped preview and for "has notes". */
+  notesPreview: string | null;
   aiSummary: string | null;
-  actionItems: string[] | null;
 };
 
 /** How many rows get a staggered entrance before the cascade is capped. */
@@ -53,7 +53,7 @@ function dayKey(d: Date | string) {
  * so this only guards against handing the browser a whole pasted note to lay out.
  */
 function preview(i: TimelineInteraction) {
-  const text = (i.aiSummary || i.rawNotes || "").replace(/\s+/g, " ").trim();
+  const text = (i.aiSummary || i.notesPreview || "").replace(/\s+/g, " ").trim();
   if (!text) return "Interaction logged";
   return text.length > 240 ? `${text.slice(0, 237)}…` : text;
 }
@@ -284,7 +284,7 @@ export function ContactTimeline({
                         const Icon = interactionTypeIcon(i.interactionType);
                         const family = interactionFamilySpec(i.interactionType);
                         const openCount = openByInteraction.get(i.id) ?? 0;
-                        const hasNotes = Boolean(i.rawNotes?.trim());
+                        const hasNotes = Boolean(i.notesPreview?.trim());
                         const selected = selectedId === i.id;
                         const delay =
                           rowIndex < STAGGER_LIMIT

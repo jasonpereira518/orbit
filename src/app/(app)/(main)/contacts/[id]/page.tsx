@@ -291,9 +291,8 @@ export default async function ContactDetailPage({
             interactionType: i.interactionType,
             interactionDate: i.interactionDate,
             sameDayOrder: i.sameDayOrder,
-            rawNotes: i.rawNotes,
+            notesPreview: i.notesPreview,
             aiSummary: i.aiSummary,
-            actionItems: i.actionItems,
           }))}
           openActionItems={nextSteps.map((item) => ({
             id: item.id,
