@@ -3,6 +3,7 @@ import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { decryptOrNull } from "@/lib/crypto";
+import { normalizeCompanyKey } from "@/lib/company-name";
 import {
   LINKEDIN_REFRESH_BATCH_SIZE,
   type AudienceFilters,
@@ -214,14 +215,7 @@ function normalizePerson(person: ApolloPerson): NormalizedProspect | null {
   };
 }
 
-/** Normalize company names for fuzzy match (lowercase, strip punctuation/extra spaces). */
-export function normalizeCompanyKey(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+export { normalizeCompanyKey };
 
 export function companyMatchesOrganizations(
   company: string | null | undefined,
