@@ -40,6 +40,12 @@ export const RATE_LIMITS = {
   capture: { limit: 30, windowSec: 60 },
   /** On-demand LinkedIn photo resolution in `/api/avatars/[contactId]` (Microlink quota). */
   avatarResolve: { limit: 30, windowSec: 60 },
+  /**
+   * `submitFeedback`: a form post carrying up to three screenshots. Generous per
+   * submission, tight per window — this is the largest row a user can create directly,
+   * and nobody has anything to say five times in five minutes.
+   */
+  feedback: { limit: 5, windowSec: 300 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**

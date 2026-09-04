@@ -621,11 +621,35 @@ CREATE TABLE IF NOT EXISTS feedback (
   kind text NOT NULL,
   score integer,
   text text,
+  area text,
+  category text,
+  status text NOT NULL DEFAULT 'new',
+  status_changed_at timestamptz,
+  status_changed_by text,
+  resolution_note text,
   context jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS feedback_screenshots (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  feedback_id uuid NOT NULL REFERENCES feedback(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  position integer NOT NULL DEFAULT 0,
+  note text,
+  storage text NOT NULL,
+  blob_url text,
+  inline_data text,
+  content_type text NOT NULL,
+  byte_size integer NOT NULL,
+  width integer,
+  height integer,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS feedback_kind_created_idx ON feedback(kind, created_at);
 CREATE INDEX IF NOT EXISTS feedback_user_created_idx ON feedback(user_id, created_at);
+CREATE INDEX IF NOT EXISTS feedback_status_created_idx ON feedback(status, created_at);
+CREATE INDEX IF NOT EXISTS feedback_screenshots_feedback_idx ON feedback_screenshots(feedback_id, position);
+CREATE INDEX IF NOT EXISTS feedback_screenshots_user_idx ON feedback_screenshots(user_id);
 CREATE TABLE IF NOT EXISTS interest_list_signups (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   email text NOT NULL,
@@ -798,8 +822,10 @@ CREATE TABLE IF NOT EXISTS non_dilutive_funding (
  * v24 = ops_alert_state (the production-readiness ops sweep's alert ledger).
  * v25 = imports.stall_resumes (the process-stalled cron's give-up counter).
  * v26 = rate_limit_buckets (DB-backed rate limiting for chat, capture, and avatar resolve).
+ * v27 = feedback triage columns (area, category, status, status_changed_at/by,
+ * resolution_note) plus the feedback_screenshots child table.
  */
-export const SCHEMA_VERSION = 26;
+export const SCHEMA_VERSION = 27;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1463,6 +1489,15 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "interest_list_signups", "welcome_planet", "text");
   await ensureColumn(client, "interest_list_signups", "follow_up_sent_at", "timestamptz");
 
+  // And the same for the feedback triage columns: a local database built before the
+  // feedback console existed has the table but none of them.
+  await ensureColumn(client, "feedback", "area", "text");
+  await ensureColumn(client, "feedback", "category", "text");
+  await ensureColumn(client, "feedback", "status", "text NOT NULL DEFAULT 'new'");
+  await ensureColumn(client, "feedback", "status_changed_at", "timestamptz");
+  await ensureColumn(client, "feedback", "status_changed_by", "text");
+  await ensureColumn(client, "feedback", "resolution_note", "text");
+
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
   // list above via `applySchema` — not here. `ADMIN_V2_STATEMENTS` is spread into that
@@ -1740,6 +1775,16 @@ const alters = [
   // CREATE TABLE IF NOT EXISTS will never go back and add a column to it.
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS welcome_planet text`,
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS follow_up_sent_at timestamptz`,
+
+  // Feedback triage. The table shipped long before anything wrote to it, so every existing
+  // database has it without these columns — and `CREATE TABLE IF NOT EXISTS` will never go
+  // back and add one. Same reason the two `interest_list_signups` lines above exist.
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS area text`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS category text`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'new'`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS status_changed_at timestamptz`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS status_changed_by text`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS resolution_note text`,
   `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,

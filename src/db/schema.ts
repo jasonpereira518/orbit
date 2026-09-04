@@ -1638,6 +1638,36 @@ export const feedback = pgTable(
     /** PMF only: 3 very disappointed, 2 somewhat, 1 not. Null for the other kinds. */
     score: integer("score"),
     text: text("text"),
+    /**
+     * Which part of Orbit this is about, prefilled from the route and confirmable by the
+     * person writing. A column rather than a `context` key because the two are different
+     * things: `context` is what the SERVER observed, this is what the PERSON asserted, and
+     * only this one is a filter facet and a GROUP BY in the console.
+     *
+     * Plain text with no CHECK, like `kind` — the closed list the form offers and the
+     * server validates against is `FEEDBACK_AREAS` in `src/lib/feedback-submission.ts`,
+     * so adding an area needs no DDL and no `SCHEMA_VERSION` bump.
+     */
+    area: text("area"),
+    /**
+     * What kind of remark it is: `bug` | `idea` | `confusing` | `praise`. Orthogonal to
+     * `area` — one says what happened, the other says where — and both are filters.
+     */
+    category: text("category"),
+    /**
+     * Triage state. `new` on arrival for every kind, including the fire-and-forget PMF and
+     * churn rows: they should surface in the console exactly like everything else.
+     */
+    status: text("status").$type<"new" | "triaged" | "resolved">().notNull().default("new"),
+    /**
+     * When the status last moved. One timestamp rather than a `triaged_at`/`resolved_at`
+     * pair, which would start disagreeing the first time something is reopened.
+     */
+    statusChangedAt: timestamp("status_changed_at", { withTimezone: true }),
+    /** Operator id. Never a display name — the audit log resolves that. */
+    statusChangedBy: text("status_changed_by"),
+    /** What was done about it. Operator prose, not the user's. */
+    resolutionNote: text("resolution_note"),
     /** Where they were when they said it — route, plan, contact count. */
     context: jsonb("context").$type<Record<string, unknown>>().default({}).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -1645,6 +1675,68 @@ export const feedback = pgTable(
   (t) => [
     index("feedback_kind_created_idx").on(t.kind, t.createdAt),
     index("feedback_user_created_idx").on(t.userId, t.createdAt),
+    // Drives both the console's default filter and the nav's unresolved badge, and the
+    // badge runs on every admin page render.
+    index("feedback_status_created_idx").on(t.status, t.createdAt),
+  ]
+);
+
+/**
+ * Annotated screenshots attached to one feedback entry.
+ *
+ * A child table rather than a key in `feedback.context` because these are the largest
+ * values a user can put in this schema: `recentFeedback` and the console's list query both
+ * `select()` the parent bare, so an inline payload in the jsonb bag would ride along into
+ * every list read and out into the RSC payload. Same discipline as
+ * `src/lib/contact-avatar-url.ts` — the bytes stay server-side and are served through
+ * `/api/feedback/screenshots/[shotId]`.
+ *
+ * `storage` is a real discriminator rather than a prefix to sniff off `blob_url`. Blob when
+ * a store is configured, inline base64 otherwise — the same fork `persistAvatar` takes,
+ * made explicit here because the two cases are cleaned up differently: a blob object has to
+ * be deleted out of band, an inline row goes with its parent.
+ */
+export const feedbackScreenshots = pgTable(
+  "feedback_screenshots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    feedbackId: uuid("feedback_id")
+      .notNull()
+      .references(() => feedback.id, { onDelete: "cascade" }),
+    /**
+     * Denormalised from the parent. Two reasons, both load-bearing: the serving route's
+     * owner check becomes one indexed read instead of a join, and `scripts/smoke-purge.ts`
+     * only discovers tables that carry `user_id` — a cascade alone would leave this table
+     * permanently outside the leak sweep.
+     */
+    userId: text("user_id").notNull(),
+    /** 0-based, the order they were attached in. The gallery renders in this order. */
+    position: integer("position").notNull().default(0),
+    /** What the user wrote about THIS shot. The whole point of annotating them. */
+    note: text("note"),
+    storage: text("storage").$type<"blob" | "inline">().notNull(),
+    /**
+     * Vercel Blob URL when `storage = 'blob'`. Written with a random suffix, unlike
+     * avatars: their deterministic path makes the public URL guessable from an id that
+     * appears in the DOM, and a screenshot of somebody's contact list must not be.
+     */
+    blobUrl: text("blob_url"),
+    /**
+     * Raw base64 when `storage = 'inline'`, with NO `data:` prefix. The prefix would be
+     * pure overhead and an invitation to hand this column to a client component.
+     */
+    inlineData: text("inline_data"),
+    /** Sniffed from the bytes on the server. The client's declared mime is discarded. */
+    contentType: text("content_type").notNull(),
+    /** Decoded size, recorded so cost and retention questions need not decode anything. */
+    byteSize: integer("byte_size").notNull(),
+    width: integer("width"),
+    height: integer("height"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("feedback_screenshots_feedback_idx").on(t.feedbackId, t.position),
+    index("feedback_screenshots_user_idx").on(t.userId),
   ]
 );
 
@@ -2233,6 +2325,7 @@ export type CronRun = typeof cronRuns.$inferSelect;
 export type WebhookDelivery = typeof webhookDeliveries.$inferSelect;
 export type ErrorEvent = typeof errorEvents.$inferSelect;
 export type FeedbackEntry = typeof feedback.$inferSelect;
+export type FeedbackScreenshot = typeof feedbackScreenshots.$inferSelect;
 export type InterestListSignup = typeof interestListSignups.$inferSelect;
 export type BillingEvent = typeof billingEvents.$inferSelect;
 export type NewBillingEvent = typeof billingEvents.$inferInsert;

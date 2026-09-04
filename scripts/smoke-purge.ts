@@ -81,10 +81,24 @@ async function seed() {
 
   await db.insert(schema.userGoals).values({ userId: USER, text: "meet more people" });
 
-  await db.insert(schema.feedback).values({
+  const [feedbackRow] = await db
+    .insert(schema.feedback)
+    .values({
+      userId: USER,
+      kind: "churn_reason",
+      text: "their own words about Orbit",
+    })
+    .returning();
+
+  // Carries `user_id` of its own rather than relying on the cascade from `feedback` —
+  // which is exactly why `userScopedTables()` finds it, and why it needs a row here.
+  await db.insert(schema.feedbackScreenshots).values({
+    feedbackId: feedbackRow.id,
     userId: USER,
-    kind: "churn_reason",
-    text: "their own words about Orbit",
+    storage: "inline",
+    inlineData: "aGVsbG8=",
+    contentType: "image/webp",
+    byteSize: 5,
   });
 
   await db.insert(schema.gateEvents).values({
