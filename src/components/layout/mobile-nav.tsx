@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { Sparkles } from "lucide-react";
+import { MessageSquarePlus, Sparkles } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import {
   APP_NAV,
@@ -25,6 +25,7 @@ import { clerkAppearance } from "@/lib/clerk-appearance";
 import { isHrefHidden } from "@/lib/surfaces";
 import { SPRING_PILL, SPRING_TAP } from "@/lib/motion";
 import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
+import { OPEN_FEEDBACK_EVENT } from "@/lib/feedback-events";
 
 // A finger-drag across the row must move at least this far before it counts
 // as a slide rather than a tap — filters out ordinary tap jitter.
@@ -373,6 +374,20 @@ export function MobileNav({
             >
               <Sparkles className="h-5 w-5 shrink-0" />
               Ask your network
+            </button>
+            {/* No floating feedback button on mobile — the bottom edge already carries this
+                pill and the ask bar, and screen capture is desktop-only. Same door as the
+                ask bar uses: one mounted widget, dispatched to. */}
+            <button
+              type="button"
+              onClick={() => {
+                setMoreOpen(false);
+                window.dispatchEvent(new Event(OPEN_FEEDBACK_EVENT));
+              }}
+              className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+            >
+              <MessageSquarePlus className="h-5 w-5 shrink-0" />
+              Send feedback
             </button>
             {moreNav.map((item) => {
               const active = isNavActive(pathname, item.href);

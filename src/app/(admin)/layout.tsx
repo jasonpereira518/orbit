@@ -2,6 +2,7 @@ import { AdminShell } from "@/components/admin/admin-shell";
 import { requireAdminPage } from "@/lib/admin";
 import { getCurrentUserProfile } from "@/lib/auth";
 import { getHiddenSurfaceKeys } from "@/lib/surface-visibility";
+import { unresolvedFeedbackCount } from "@/lib/admin-feedback";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -25,16 +26,18 @@ export default async function AdminLayout({
 }) {
   const adminUserId = await requireAdminPage();
   const db = await getDb();
-  const [profile, hidden, settings] = await Promise.all([
+  const [profile, hidden, settings, unresolvedFeedback] = await Promise.all([
     getCurrentUserProfile(),
     getHiddenSurfaceKeys(),
     db.query.userSettings.findFirst({ where: eq(userSettings.userId, adminUserId) }),
+    unresolvedFeedbackCount(),
   ]);
 
   return (
     <AdminShell
       adminEmail={profile?.email}
       hiddenSurfaceCount={hidden.size}
+      unresolvedFeedbackCount={unresolvedFeedback}
       ycMode={settings?.ycModeEnabled ?? false}
     >
       {children}

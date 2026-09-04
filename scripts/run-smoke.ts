@@ -96,6 +96,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-page-budgets": "pglite",
   "smoke-pgvector-local": "pglite",
   "smoke-presence": "pglite",
+  "smoke-feedback-admin": "pglite",
   "smoke-feedback-submit": "pglite",
   "smoke-purge": "pglite",
   "smoke-rate-limit": "pglite",
