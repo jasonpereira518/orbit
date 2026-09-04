@@ -623,7 +623,7 @@ export async function getContact(id: string) {
         extras: {
           notesPreview: sql<
             string | null
-          >`left(${interactions.rawNotes}, 280)`.as("notes_preview"),
+          >`left(${interactions.rawNotes}, 600)`.as("notes_preview"),
         },
         orderBy: [
           desc(interactions.interactionDate),

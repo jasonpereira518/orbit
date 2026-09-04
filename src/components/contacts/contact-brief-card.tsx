@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ContactNextSteps, type OpenActionItem } from "@/components/contacts/contact-next-steps";
 import { flashSection } from "@/components/layout/section-flash";
+import { requestInteractionReveal } from "@/components/contacts/reveal-interaction";
 import type { RecentDiscussion } from "@/lib/contact-brief";
 
 /**
@@ -18,8 +19,13 @@ import type { RecentDiscussion } from "@/lib/contact-brief";
  * This used to be a bare `#interaction-<id>` anchor, which did nothing useful: the row lives
  * inside the timeline's own scroll container, and a same-page fragment click changes neither
  * the pathname nor fires `hashchange` under Next's router, so the global flash never armed.
+ *
+ * The reveal request goes first, because the timeline can now hide the target behind a family
+ * filter or outside its "show older" window — it clears both and scrolls once the row exists.
+ * The direct scroll stays as the cheap path for the common case where the row is already there.
  */
 function revealInteraction(interactionId: string) {
+  requestInteractionReveal(interactionId);
   const el = document.getElementById(`interaction-${interactionId}`);
   el?.scrollIntoView({ behavior: "smooth", block: "center" });
   flashSection(`interaction-${interactionId}`);
