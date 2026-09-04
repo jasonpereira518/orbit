@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { eq, and, inArray, sql } from "drizzle-orm";
 import { getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import { contactEmbeddings, contacts } from "@/db/schema";
+import { careerLine, type ExperienceEntry } from "@/lib/contact-profile-format";
 import { metContextLabel } from "@/lib/met-context";
 import { createEmbedding, createEmbeddingsBatch } from "@/lib/ai";
 import { formatVectorLiteral } from "@/lib/pgvector";
@@ -194,6 +195,13 @@ type ContactEmbeddingSource = {
   keyFacts?: string[] | null;
   opportunities?: string[] | null;
   contactTags?: { tag: { name: string } }[];
+  /**
+   * A captured LinkedIn profile, when the contact has one. Its `about` and the career
+   * line are what make "who came out of a hardware company" work semantically, rather
+   * than only through the keyword arm's exists-subquery.
+   */
+  profile?: { about?: string | null; headline?: string | null } | null;
+  experiences?: ExperienceEntry[];
 };
 
 /**
@@ -233,6 +241,9 @@ export function buildContactEmbeddingContent(
       ? new Date(contact.dateMet).toLocaleDateString()
       : null,
     contact.howMet,
+    contact.profile?.headline,
+    contact.profile?.about,
+    careerLine(contact.experiences ?? []),
     ...(contact.keyFacts || []),
     ...(contact.opportunities || []),
     ...(contact.contactTags?.map((ct) => ct.tag.name) || []),

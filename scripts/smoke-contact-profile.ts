@@ -19,6 +19,7 @@ import {
   type IncomingProfile,
 } from "../src/lib/contact-profile";
 import { hybridSearchContacts } from "../src/lib/hybrid-search";
+import { buildContactEmbeddingContent } from "../src/lib/search";
 
 const USER = "smoke-contact-profile-user";
 
@@ -386,6 +387,20 @@ async function main() {
     "a current role outranks an ended one at the same match score",
     currentRank < pastRank,
     tieHits.map((h) => h.fullName).join(" > ")
+  );
+
+  // --- embedding content --------------------------------------------------------
+  const graceProfile = await getContactProfile(USER, exGoogleId);
+  const content = buildContactEmbeddingContent({
+    fullName: "Grace Hopper",
+    profile: graceProfile,
+    experiences: graceProfile?.experiences ?? [],
+  });
+  check("embedding content names the past employer", content.includes("Google LLC"), content);
+  check("embedding content names the school", content.includes("Yale"), content);
+  check(
+    "embedding content is unchanged for a contact with no profile",
+    buildContactEmbeddingContent({ fullName: "Nobody" }) === "Nobody"
   );
 
   console.log("\ncontact profile storage: OK");
