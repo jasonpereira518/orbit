@@ -17,6 +17,7 @@ import {
   parseDateRange,
   readProfileSections,
 } from "../extension/src/inject/adapters/linkedin-profile";
+import { expandProfileSections, isExpandControl } from "../extension/src/inject/dom/expand";
 
 const FIXTURE_EXPANDED = "scripts/fixtures/linkedin-profile-expanded.html";
 const FIXTURE_DETAILS = "scripts/fixtures/linkedin-profile-details-experience.html";
@@ -41,7 +42,7 @@ function role(over: Partial<ExperienceEntry> & { organization: string }): Experi
   };
 }
 
-function main() {
+async function main() {
   // --- ordering -----------------------------------------------------------------
   const ordered = orderExperiences([
     role({ organization: "Old Co", startYear: 2010, endYear: 2014, sortIndex: 3 }),
@@ -143,6 +144,59 @@ function main() {
   const empty = parseHTML("<main></main>").document;
   check("an empty page asks for the fallback", readProfileSections(empty).parseIncomplete === true);
 
+  // --- expand-control matching (pure, no fixture and no browser needed) ----------
+  //
+  // `isExpandControl` and `expandProfileSections`'s section-scoping are the only two
+  // places in the extension that decide what gets clicked — see
+  // extension/src/inject/dom/expand.ts's header for why that exception exists and how
+  // tightly it is bounded. This is the one part of that module that needs no live page.
+  for (const label of ["See more", "…see more", "Show all 12 experiences", "Show 3 more"]) {
+    const { document: doc } = parseHTML(`<button>${label}</button>`);
+    check(
+      `isExpandControl recognizes "${label}"`,
+      isExpandControl(doc.querySelector("button")!)
+    );
+  }
+  {
+    const { document: doc } = parseHTML("<button>Connect</button>");
+    check(
+      "isExpandControl rejects an unrecognized label",
+      isExpandControl(doc.querySelector("button")!) === false
+    );
+  }
+  {
+    // A "Show all N" rendered as a navigating link is not an in-place expansion —
+    // following it is the fallback's job, not this module's.
+    const { document: doc } = parseHTML(
+      '<a href="/in/someone/details/experience/">Show all 12 experiences</a>'
+    );
+    check(
+      "isExpandControl rejects an <a href> even with a matching label",
+      isExpandControl(doc.querySelector("a")!) === false
+    );
+  }
+
+  // A control outside any `main section` must never be clicked — that scoping (not
+  // isExpandControl, which is deliberately location-agnostic) is what keeps this module
+  // from ever touching global chrome or navigation.
+  const { document: outside } = parseHTML(
+    "<main><button>Show all 5 experiences</button></main>"
+  );
+  const outsideResult = await expandProfileSections(outside);
+  check(
+    "a control outside any section is left alone",
+    outsideResult.clicked === 0 && outsideResult.timedOut === false
+  );
+
+  const { document: inside } = parseHTML(
+    "<main><section><button>Show 3 more</button></section></main>"
+  );
+  const insideResult = await expandProfileSections(inside);
+  check(
+    "a recognized control inside a section gets clicked exactly once",
+    insideResult.clicked === 1 && insideResult.timedOut === false
+  );
+
   // --- adapter section readers over saved markup ---------------------------------
   //
   // These fixtures are real rendered LinkedIn pages, saved from a signed-in browser by a
@@ -222,5 +276,9 @@ function main() {
   console.log("\ncontact profile formatting: OK");
 }
 
-main();
-process.exit(0);
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });

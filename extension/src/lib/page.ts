@@ -105,6 +105,71 @@ export async function readActivePage(): Promise<PageReadResult> {
   }
 }
 
+/**
+ * Same preflight as `readActivePage`, but the injection asks the LinkedIn adapter to
+ * expand collapsed sections and read the full profile before returning — the one capture
+ * path that can click something on the page. Only the panel's explicit "Capture
+ * experience" button may call this; see `inject/dom/expand.ts`'s header for the bounds
+ * that keep that safe, and `inject/extract.ts`'s header for how the two-injection scheme
+ * carries the async result back without polling.
+ */
+export async function captureActiveProfile(): Promise<PageReadResult> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) {
+    return { ok: false, reason: "no-tab", message: "No active tab." };
+  }
+
+  if (!tab.url) {
+    return {
+      ok: false,
+      reason: "no-permission",
+      message: "Orbit needs your go-ahead to read this site.",
+    };
+  }
+
+  const restricted = restrictedReason(tab.url);
+  if (restricted) {
+    return { ok: false, reason: "restricted", message: restricted };
+  }
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["inject/extract.js"],
+    });
+
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () =>
+        (
+          window as unknown as {
+            __orbitExtract?: { captureProfile?: () => Promise<unknown> };
+          }
+        ).__orbitExtract?.captureProfile?.(),
+    });
+
+    const value = result?.result as PageContext | { error: string } | undefined;
+    if (!value) {
+      return {
+        ok: false,
+        reason: "injection-failed",
+        message: "Click the Orbit icon again to read this page.",
+      };
+    }
+    if ("error" in value) {
+      return { ok: false, reason: "injection-failed", message: value.error };
+    }
+    return { ok: true, page: value };
+  } catch {
+    return {
+      ok: false,
+      reason: "no-permission",
+      message: "Orbit needs your go-ahead to read this site.",
+      origin: originOf(tab.url),
+    };
+  }
+}
+
 /** Best display name for whoever the page is about. */
 export function pageDisplayName(page: PageContext): string | null {
   return page.identity.name?.value ?? null;

@@ -8,13 +8,26 @@ import type {
 
 export type { PageContext, PageIdentity, PageKind };
 
+/**
+ * `withProfile` is the one flag in this file that can turn a read into an interaction. It
+ * must only ever be set by the panel's explicit "Capture experience" button — see
+ * `extension/src/inject/dom/expand.ts`'s header for why, and its bounds. Every other caller
+ * of `extract` omits it, and every adapter but LinkedIn's ignores it entirely.
+ */
+export type ExtractOptions = { withProfile?: boolean };
+
 export interface SiteAdapter {
   id: string;
   /** Bump on any selector change. Logged server-side so DOM churn is visible
    *  in telemetry rather than arriving as a support email. */
   adapterVersion: string;
   matches(url: URL): boolean;
-  extract(url: URL): PageContext;
+  /**
+   * Synchronous for every adapter and every ordinary call. Only the LinkedIn adapter, and
+   * only when `options.withProfile` is set on a person page, returns a Promise — because
+   * that is the one path that waits on `expandProfileSections` before reading the page.
+   */
+  extract(url: URL, options?: ExtractOptions): PageContext | Promise<PageContext>;
 }
 
 export function field(

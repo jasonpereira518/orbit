@@ -11,7 +11,7 @@
  * Cards are reserved for the two things that are actionable and dismissible as
  * a unit: the diff and the starters.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   ArrowUpRight,
   CalendarClock,
@@ -21,11 +21,12 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
-import type { ContactSnapshot, PageContext } from "@contract";
+import type { ContactSnapshot, PageContext, ProfileCaptureResponse } from "@contract";
 import type { OrbitApi } from "@/lib/api";
 import { APP_URL } from "@/lib/env";
 import { cn } from "@/lib/cn";
-import { relativeTime } from "@/lib/format";
+import { relativeTime, truncateLabel } from "@/lib/format";
+import { captureActiveProfile } from "@/lib/page";
 import { StarterList } from "../components/StarterList";
 import { Button, Chip, Meta, MicroLabel, Section } from "../components/ui";
 import type { PanelState } from "../state/usePanel";
@@ -215,6 +216,18 @@ export function KnownContactView({
             </div>
           </Section>
         ) : null}
+
+        {/* Keyed on the page + contact so a fresh page (or a re-resolved contact) never
+            inherits a stale "Saved N roles" / conflict state from whatever was captured
+            before it. */}
+        <ExperienceCaptureBand
+          key={`${page.url}:${contact.id}`}
+          page={page}
+          contact={contact}
+          api={api}
+          toast={toast}
+          onChanged={onChanged}
+        />
 
         <Section title="Open loops">
           {contact.openActionItems.length > 0
@@ -459,5 +472,178 @@ function QuickAction({
       {icon}
       {label}
     </button>
+  );
+}
+
+type CaptureStatus = "idle" | "expanding" | "saving" | "conflict" | "degraded" | "success";
+
+/**
+ * The one band that can turn a read into an interaction — see `inject/dom/expand.ts`'s
+ * header for the full argument. Everything here only ever fires from the button below;
+ * nothing in this component runs on mount or on page change.
+ *
+ * Deliberately scoped to LinkedIn person pages: `page.kind === "person"` can also come
+ * from the X and generic adapters (a corroborated personal site, a profile-shaped tweet
+ * page), and there is nothing there for `expandProfileSections` to expand or
+ * `readProfileSections` to read, so the band renders nothing at all off LinkedIn.
+ */
+function ExperienceCaptureBand({
+  page,
+  contact,
+  api,
+  toast,
+  onChanged,
+}: {
+  page: PageContext;
+  contact: ContactSnapshot;
+  api: OrbitApi;
+  toast: (message: string) => void;
+  onChanged: () => void;
+}) {
+  const [status, setStatus] = useState<CaptureStatus>("idle");
+  const [conflict, setConflict] = useState<ProfileCaptureResponse["conflict"]>(null);
+  const [savedCount, setSavedCount] = useState<number | null>(null);
+  const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
+  // The captured page is held here, not in state, so the "Save anyway" confirmation
+  // re-sends the exact same read rather than triggering a second (clicking) capture pass.
+  const pendingPageRef = useRef<PageContext | null>(null);
+
+  if (page.site !== "linkedin") return null;
+
+  const isLoginWall = page.warnings.includes("login-wall");
+  const isPersonProfile = page.kind === "person";
+
+  const submit = async (capturedPage: PageContext, confirmMismatch: boolean) => {
+    setStatus("saving");
+    try {
+      const result = await api.captureProfile({
+        contactId: contact.id,
+        page: capturedPage,
+        confirmMismatch,
+      });
+      if (result.conflict) {
+        pendingPageRef.current = capturedPage;
+        setConflict(result.conflict);
+        setStatus("conflict");
+        return;
+      }
+      if (result.degraded) {
+        const base = capturedPage.identity.profileUrl?.value ?? capturedPage.url;
+        setFallbackUrl(`${base.replace(/\/$/, "")}/details/experience`);
+        setStatus("degraded");
+        return;
+      }
+      setSavedCount(result.experienceCount);
+      setStatus("success");
+      onChanged();
+    } catch {
+      setStatus("idle");
+      toast("Couldn't save that");
+    }
+  };
+
+  const startCapture = async () => {
+    setConflict(null);
+    setStatus("expanding");
+    const read = await captureActiveProfile();
+    if (!read.ok) {
+      setStatus("idle");
+      toast(read.message);
+      return;
+    }
+    await submit(read.page, false);
+  };
+
+  if (isLoginWall) {
+    return (
+      <Section title="Experience">
+        <Meta>Sign in to LinkedIn to capture this profile.</Meta>
+      </Section>
+    );
+  }
+
+  if (!isPersonProfile) {
+    return (
+      <Section title="Experience">
+        <Meta>Open someone&apos;s profile to capture their experience.</Meta>
+      </Section>
+    );
+  }
+
+  return (
+    <Section title="Experience">
+      {status === "conflict" && conflict ? (
+        <div className="space-y-2">
+          <Meta>
+            This page is {truncateLabel(conflict.pageSlug)}, but this contact is{" "}
+            {truncateLabel(conflict.contactSlug)}. Save anyway?
+          </Meta>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={() => {
+                const capturedPage = pendingPageRef.current;
+                if (capturedPage) void submit(capturedPage, true);
+              }}
+            >
+              Save anyway
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                pendingPageRef.current = null;
+                setConflict(null);
+                setStatus("idle");
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : status === "degraded" ? (
+        <div className="space-y-2">
+          <Meta>
+            Couldn&apos;t read this profile. Open the full experience page and try again.
+          </Meta>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                if (fallbackUrl) chrome.tabs.create({ url: fallbackUrl });
+              }}
+            >
+              Open experience page
+              <ArrowUpRight size={12} />
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setStatus("idle")}>
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {status === "success" && savedCount !== null ? (
+            <Meta className="flex items-center gap-1 !text-[var(--primary)]">
+              <Check size={11} />
+              Saved {savedCount} {savedCount === 1 ? "role" : "roles"}
+            </Meta>
+          ) : null}
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={status === "expanding" || status === "saving"}
+            onClick={() => void startCapture()}
+          >
+            {status === "expanding"
+              ? "Expanding sections…"
+              : status === "saving"
+                ? "Saving…"
+                : "Capture experience"}
+          </Button>
+        </div>
+      )}
+    </Section>
   );
 }

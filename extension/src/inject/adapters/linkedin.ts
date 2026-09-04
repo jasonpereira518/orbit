@@ -8,8 +8,15 @@
  * and each one is independently fallible.
  *
  * Nothing here navigates, clicks, expands "see more", scrolls to load more, or
- * paginates. It reads what the user's own browser has already rendered, once,
- * because they clicked the toolbar icon.
+ * paginates on an ordinary read. It reads what the user's own browser has already
+ * rendered, once, because they clicked the toolbar icon.
+ *
+ * The one deliberate exception: when `extract` is called with `options.withProfile` on a
+ * `person` page — which only happens from an explicit "Capture experience" press in the
+ * panel — it runs `expandProfileSections` (see that file's header for the full argument
+ * and its bounds) before reading the profile sections, and returns `schemaVersion: 2` with
+ * a `profile`. Every other call, including every ordinary panel open, never sets that flag
+ * and gets exactly the old `schemaVersion: 1` behavior back, synchronously.
  */
 
 import { cleanText, selectionText } from "@/inject/dom/text";
@@ -26,17 +33,21 @@ import {
   linkedinSlug,
   stripTracking,
 } from "@/inject/dom/url";
+import { expandProfileSections } from "@/inject/dom/expand";
+import { readProfileSections } from "./linkedin-profile";
+import type { PageProfile } from "@contract";
 import {
   attempt,
   emptyIdentity,
   field,
   preferField,
+  type ExtractOptions,
   type PageContext,
   type PageKind,
   type SiteAdapter,
 } from "./types";
 
-const ADAPTER_VERSION = "linkedin-1";
+const ADAPTER_VERSION = "linkedin-2";
 const PROFILE_BLOB_CHARS = 10_000;
 const THREAD_BLOB_CHARS = 6_000;
 const POST_BLOB_CHARS = 4_000;
@@ -253,7 +264,7 @@ export const linkedinAdapter: SiteAdapter = {
   adapterVersion: ADAPTER_VERSION,
   matches: (url) => /(^|\.)linkedin\.com$/i.test(url.hostname),
 
-  extract(url) {
+  extract(url: URL, options?: ExtractOptions) {
     const warnings: string[] = [];
     const kind = pageKind(url);
 
@@ -301,21 +312,38 @@ export const linkedinAdapter: SiteAdapter = {
         ? cleanText(blobRoot, blobLimit)
         : { blob: "", truncated: false, charCount: 0 });
 
-    return {
-      schemaVersion: 1,
+    const contextUrl =
+      identity.profileUrl?.value ?? canonicalUrl() ?? stripTracking(url.href);
+
+    const buildContext = (schemaVersion: 1 | 2, profile?: PageProfile): PageContext => ({
+      schemaVersion,
       site: "linkedin",
       adapterVersion: ADAPTER_VERSION,
       kind,
-      url:
-        identity.profileUrl?.value ??
-        canonicalUrl() ??
-        stripTracking(url.href),
+      url: contextUrl,
       sourceUrl: url.href,
       capturedAt: new Date().toISOString(),
       identity,
       candidates,
       text: { ...text, fromSelection: Boolean(selection) },
       warnings,
-    };
+      ...(profile ? { profile } : {}),
+    });
+
+    // The one interaction this adapter ever performs, and only from an explicit
+    // "Capture experience" press (see `options.withProfile`'s doc in ./types and
+    // `inject/dom/expand.ts`'s header for the bounds). Every other call —
+    // including every ordinary panel open — never reaches this branch.
+    if (kind === "person" && options?.withProfile) {
+      return (async () => {
+        const expansion = await expandProfileSections();
+        const profile = readProfileSections(document);
+        if (expansion.timedOut) warnings.push("expand-timeout");
+        if (profile.parseIncomplete) warnings.push("profile-empty");
+        return buildContext(2, profile);
+      })();
+    }
+
+    return buildContext(1);
   },
 };
