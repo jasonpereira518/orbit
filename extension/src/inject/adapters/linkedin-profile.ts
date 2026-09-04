@@ -20,6 +20,10 @@
  */
 
 import type { PageExperience, PageProfile } from "@contract";
+// Relative, not the `@/` alias: this file is also imported directly by
+// `scripts/smoke-contact-profile-format.ts` from repo root, which resolves under the ROOT
+// tsconfig where `@/*` points at the app's `src/`, not this extension's.
+import { visibleText } from "../dom/text";
 
 const MONTHS: Record<string, number> = {
   jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
@@ -65,21 +69,6 @@ export function parseDateRange(text: string): ParsedDateRange {
     endMonth: isCurrent ? null : end?.month ?? null,
     isCurrent,
   };
-}
-
-function textOf(node: Element | null | undefined): string {
-  return (node?.textContent ?? "").replace(/\s+/g, " ").trim();
-}
-
-/**
- * LinkedIn renders each entry's visible text twice — once for sighted users and once in a
- * `.visually-hidden` span for screen readers. Taking the whole `textContent` therefore
- * doubles every string. Prefer the aria-hidden copy, which is the visible one.
- */
-function visibleText(node: Element | null | undefined): string {
-  if (!node) return "";
-  const preferred = node.querySelector('[aria-hidden="true"]');
-  return textOf(preferred ?? node);
 }
 
 function sectionFor(root: ParentNode, anchorId: string): Element | null {

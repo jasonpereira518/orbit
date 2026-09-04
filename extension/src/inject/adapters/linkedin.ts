@@ -19,21 +19,26 @@
  * and gets exactly the old `schemaVersion: 1` behavior back, synchronously.
  */
 
-import { cleanText, selectionText } from "@/inject/dom/text";
+// Relative, not the `@/` alias: these two files are also imported directly by
+// `scripts/smoke-contact-profile-format.ts` from repo root (see that file's header), which
+// resolves under the ROOT tsconfig — where `@/*` points at the app's `src/`, not this
+// extension's. Keeping every import this adapter needs alias-free is what lets that script
+// exercise the real `linkedinAdapter`, not a stand-in.
+import { cleanText, selectionText } from "../dom/text";
 import {
   canonicalUrl,
   jsonLdPerson,
   metaContent,
   parseTitle,
-} from "@/inject/dom/meta";
-import { isLikelyPersonName } from "@/inject/dom/names";
+} from "../dom/meta";
+import { isLikelyPersonName } from "../dom/names";
 import {
   canonicalLinkedInUrl,
   isOpaqueSlug,
   linkedinSlug,
   stripTracking,
-} from "@/inject/dom/url";
-import { expandProfileSections } from "@/inject/dom/expand";
+} from "../dom/url";
+import { expandProfileSections } from "../dom/expand";
 import { readProfileSections } from "./linkedin-profile";
 import type { PageProfile } from "@contract";
 import {
@@ -305,17 +310,30 @@ export const linkedinAdapter: SiteAdapter = {
       blobRoot = null;
     }
 
-    const selection = selectionText(blobLimit);
-    const text =
-      selection ??
-      (blobRoot
-        ? cleanText(blobRoot, blobLimit)
-        : { blob: "", truncated: false, charCount: 0 });
+    // Reads the CURRENT state of `blobRoot`, so calling this after `expandProfileSections`
+    // has run picks up the now-expanded sections. That distinction matters: the server's
+    // AI fallback (`fallbackParse`) reads exactly this blob, and it only ever fires when
+    // the selectors came back empty — precisely the case where the page needs to already
+    // be expanded for the fallback to see anything the selectors missed. Computing this
+    // once, eagerly, before expansion would silently feed the fallback the collapsed page.
+    const computeText = () => {
+      const selection = selectionText(blobLimit);
+      const text =
+        selection ??
+        (blobRoot
+          ? cleanText(blobRoot, blobLimit)
+          : { blob: "", truncated: false, charCount: 0 });
+      return { ...text, fromSelection: Boolean(selection) };
+    };
 
     const contextUrl =
       identity.profileUrl?.value ?? canonicalUrl() ?? stripTracking(url.href);
 
-    const buildContext = (schemaVersion: 1 | 2, profile?: PageProfile): PageContext => ({
+    const buildContext = (
+      schemaVersion: 1 | 2,
+      text: ReturnType<typeof computeText>,
+      profile?: PageProfile
+    ): PageContext => ({
       schemaVersion,
       site: "linkedin",
       adapterVersion: ADAPTER_VERSION,
@@ -325,7 +343,7 @@ export const linkedinAdapter: SiteAdapter = {
       capturedAt: new Date().toISOString(),
       identity,
       candidates,
-      text: { ...text, fromSelection: Boolean(selection) },
+      text,
       warnings,
       ...(profile ? { profile } : {}),
     });
@@ -339,11 +357,13 @@ export const linkedinAdapter: SiteAdapter = {
         const expansion = await expandProfileSections();
         const profile = readProfileSections(document);
         if (expansion.timedOut) warnings.push("expand-timeout");
+        if (expansion.capped) warnings.push("expand-capped");
         if (profile.parseIncomplete) warnings.push("profile-empty");
-        return buildContext(2, profile);
+        // AFTER expansion — see `computeText`'s comment.
+        return buildContext(2, computeText(), profile);
       })();
     }
 
-    return buildContext(1);
+    return buildContext(1, computeText());
   },
 };

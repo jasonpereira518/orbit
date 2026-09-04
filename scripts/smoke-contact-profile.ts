@@ -741,6 +741,89 @@ async function main() {
     urlless.linkedinUrl ?? "null"
   );
 
+  // --- CRITICAL: a capture that reads zero roles must never erase a stored career --------
+  //
+  // `readProfileSections` never returns null — a page whose selectors broke (or an
+  // unrecovered AI-fallback attempt) yields a TRUTHY `{ parseIncomplete: true,
+  // experiences: [] }`. Before the fix, `captureContactProfile`'s `if (!profile)` gate was
+  // false for that shape, so execution fell through into `saveContactProfile`, whose
+  // transaction unconditionally deletes every stored `contactExperiences` row for the
+  // contact and inserts none — reporting `{ saved: true, degraded: false,
+  // experienceCount: 0 }` the whole way. This is the regression test: it fails against the
+  // old `if (!profile)` condition and passes once the guard also checks
+  // `profile.experiences.length === 0`.
+  const zeroRoleGuardId = await makeContact(
+    "Zero Role Guard",
+    "https://www.linkedin.com/in/zeroroleguard"
+  );
+  await saveContactProfile(USER, zeroRoleGuardId, {
+    source: "extension",
+    sourceUrl: "https://www.linkedin.com/in/zeroroleguard",
+    adapterVersion: "linkedin-2",
+    capturedAt: new Date("2026-08-01T00:00:00Z"),
+    warnings: [],
+    headline: "A career that must survive",
+    about: "This must not be erased by a broken capture.",
+    skills: [],
+    certifications: [],
+    volunteering: [],
+    publications: [],
+    experiences: [
+      { kind: "role", organization: "Existing Corp", title: "Engineer", startYear: 2015,
+        startMonth: null, endYear: null, endMonth: null, isCurrent: true, location: null,
+        description: null, fieldOfStudy: null },
+    ],
+  });
+  const beforeZeroRoleGuard = await getContactProfile(USER, zeroRoleGuardId);
+  check(
+    "the career is stored before the broken capture",
+    beforeZeroRoleGuard?.experiences.length === 1
+  );
+
+  const zeroRolePage = {
+    ...capturePage,
+    url: "https://www.linkedin.com/in/zeroroleguard",
+    sourceUrl: "https://www.linkedin.com/in/zeroroleguard",
+    // Empty blob: `fallbackParse` bails out before ever asking whether the user has an AI
+    // key, so this stays a pure database test with no network involved.
+    text: { blob: "", truncated: false, charCount: 0, fromSelection: false },
+    profile: {
+      headline: null,
+      about: null,
+      skills: [],
+      certifications: [],
+      volunteering: [],
+      publications: [],
+      parseIncomplete: true,
+      experiences: [],
+    },
+  } as unknown as PageContext;
+
+  const zeroRoleResult = await captureContactProfile(USER, {
+    contactId: zeroRoleGuardId,
+    page: zeroRolePage,
+  });
+  check(
+    "a capture that reads zero roles degrades instead of silently saving an empty profile",
+    zeroRoleResult.saved === false &&
+      zeroRoleResult.degraded === true &&
+      zeroRoleResult.experienceCount === 0,
+    JSON.stringify(zeroRoleResult)
+  );
+
+  const afterZeroRoleGuard = await getContactProfile(USER, zeroRoleGuardId);
+  check(
+    "the stored career survives a capture that read zero roles",
+    afterZeroRoleGuard?.experiences.length === 1 &&
+      afterZeroRoleGuard.experiences[0].organization === "Existing Corp",
+    JSON.stringify(afterZeroRoleGuard?.experiences.map((e) => e.organization))
+  );
+  check(
+    "the stored profile prose survives too, not just the experience rows",
+    afterZeroRoleGuard?.about === "This must not be erased by a broken capture.",
+    afterZeroRoleGuard?.about ?? "null"
+  );
+
   console.log("\ncontact profile storage: OK");
 }
 

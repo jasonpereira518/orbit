@@ -22,6 +22,29 @@ function restrictedReason(url: string): string | null {
   return null;
 }
 
+/**
+ * Dev-only visibility into the one property the whole capture feature rests on: an
+ * ordinary panel-open read must always come back `schemaVersion: 1` with no `profile`, and
+ * only an explicit "Capture experience" press may ever produce `schemaVersion: 2`. Gated
+ * behind a `chrome.storage.local` flag rather than a source edit, so verifying it by hand
+ * doesn't require touching code — from the panel's own DevTools console, run:
+ *   `chrome.storage.local.set({ "orbit:debugCapture": true })`
+ * and every subsequent read logs its schema version until the flag is cleared again.
+ */
+async function debugLogSchemaVersion(page: PageContext): Promise<void> {
+  try {
+    const flag = await chrome.storage.local.get("orbit:debugCapture");
+    if (!flag["orbit:debugCapture"]) return;
+    console.debug("[orbit] page read", {
+      schemaVersion: page.schemaVersion,
+      hasProfile: "profile" in page,
+      url: page.url,
+    });
+  } catch {
+    // Best-effort diagnostics only — must never affect the real read.
+  }
+}
+
 function originOf(url: string): string | undefined {
   try {
     const { protocol, hostname } = new URL(url);
@@ -92,6 +115,7 @@ export async function readActivePage(): Promise<PageReadResult> {
     if ("error" in value) {
       return { ok: false, reason: "injection-failed", message: value.error };
     }
+    await debugLogSchemaVersion(value);
     return { ok: true, page: value };
   } catch {
     // We could see the URL but not run on it — a host permission was revoked,
@@ -159,6 +183,7 @@ export async function captureActiveProfile(): Promise<PageReadResult> {
     if ("error" in value) {
       return { ok: false, reason: "injection-failed", message: value.error };
     }
+    await debugLogSchemaVersion(value);
     return { ok: true, page: value };
   } catch {
     return {

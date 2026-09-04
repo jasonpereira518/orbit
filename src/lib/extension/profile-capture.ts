@@ -166,7 +166,13 @@ export async function captureContactProfile(
     }
   }
 
-  if (!profile) {
+  // A profile that came back with zero experiences (selectors broke, or the fallback
+  // couldn't recover anything either) must degrade WITHOUT writing — `readProfileSections`
+  // never returns null, so `!profile` alone is never true for that case, and falling
+  // through would have `saveContactProfile` unconditionally delete every stored
+  // `contactExperiences` row for this contact and insert none. A capture that reads zero
+  // roles must never be able to erase a career that a previous, working capture stored.
+  if (!profile || profile.experiences.length === 0) {
     return { saved: false, conflict: null, usedFallback, degraded: true, experienceCount: 0 };
   }
 

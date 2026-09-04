@@ -527,7 +527,11 @@ function ExperienceCaptureBand({
         setStatus("conflict");
         return;
       }
-      if (result.degraded) {
+      // `result.experienceCount === 0` is treated as degraded here too, not just
+      // `result.degraded` — belt and braces against the server ever regressing the
+      // zero-experiences guard (see `profile-capture.ts`): this panel must never be able
+      // to render a green "Saved 0 roles" over a contact's previously stored career.
+      if (result.degraded || result.experienceCount === 0) {
         const base = capturedPage.identity.profileUrl?.value ?? capturedPage.url;
         setFallbackUrl(`${base.replace(/\/$/, "")}/details/experience`);
         setStatus("degraded");
@@ -574,7 +578,7 @@ function ExperienceCaptureBand({
     <Section title="Experience">
       {status === "conflict" && conflict ? (
         <div className="space-y-2">
-          <Meta>
+          <Meta className="break-words">
             This page is {truncateLabel(conflict.pageSlug)}, but this contact is{" "}
             {truncateLabel(conflict.contactSlug)}. Save anyway?
           </Meta>

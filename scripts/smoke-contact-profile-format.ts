@@ -17,7 +17,12 @@ import {
   parseDateRange,
   readProfileSections,
 } from "../extension/src/inject/adapters/linkedin-profile";
-import { expandProfileSections, isExpandControl } from "../extension/src/inject/dom/expand";
+import {
+  expandProfileSections,
+  isExpandControl,
+  MAX_CLICKS,
+} from "../extension/src/inject/dom/expand";
+import { linkedinAdapter } from "../extension/src/inject/adapters/linkedin";
 
 const FIXTURE_EXPANDED = "scripts/fixtures/linkedin-profile-expanded.html";
 const FIXTURE_DETAILS = "scripts/fixtures/linkedin-profile-details-experience.html";
@@ -194,8 +199,116 @@ async function main() {
   const insideResult = await expandProfileSections(inside);
   check(
     "a recognized control inside a section gets clicked exactly once",
-    insideResult.clicked === 1 && insideResult.timedOut === false
+    insideResult.clicked === 1 && insideResult.timedOut === false && insideResult.capped === false
   );
+
+  // LinkedIn's real accessible-button markup duplicates the label — one copy marked
+  // `aria-hidden="true"` for sighted users, one `.visually-hidden` for screen readers.
+  // Raw `textContent` on that button is `"…see more…see more"`, which none of the
+  // anchored `^…$` regexes match. `isExpandControl` must recognize the real shape, not
+  // just a synthetic single-label button.
+  {
+    const { document: doc } = parseHTML(
+      '<button><span aria-hidden="true">…see more</span>' +
+        '<span class="visually-hidden">…see more</span></button>'
+    );
+    check(
+      "isExpandControl recognizes LinkedIn's real duplicated-label markup",
+      isExpandControl(doc.querySelector("button")!)
+    );
+  }
+  const { document: duplicatedLabel } = parseHTML(
+    "<main><section><button>" +
+      '<span aria-hidden="true">Show 3 more</span>' +
+      '<span class="visually-hidden">Show 3 more</span>' +
+      "</button></section></main>"
+  );
+  const duplicatedLabelResult = await expandProfileSections(duplicatedLabel);
+  check(
+    "expandProfileSections clicks a real duplicated-label button end to end",
+    duplicatedLabelResult.clicked === 1
+  );
+
+  // Verified failure mode from the review: `<main><nav><section><button>` — a control
+  // nested under `nav` (inside `main`) must never be clicked, even though `main section
+  // button` alone would match it. This is the containment property the whole exception
+  // was granted on: never global navigation.
+  const { document: navNested } = parseHTML(
+    "<main><nav><section><button>See more</button></section></nav></main>"
+  );
+  const navNestedResult = await expandProfileSections(navNested);
+  check(
+    "a control inside <nav>, even nested under a <section>, is never clicked",
+    navNestedResult.clicked === 0,
+    JSON.stringify(navNestedResult)
+  );
+
+  // A "not the subject" section — "People also viewed" and friends — reuses the same
+  // denylist the READ path (`cleanText`) uses, so it must be excluded from the click path
+  // too, even without a <nav>/<aside> wrapper.
+  const { document: promoted } = parseHTML(
+    "<main><section><h2>People also viewed</h2><ul><li>" +
+      "<button>Show 3 more</button></li></ul></section></main>"
+  );
+  const promotedResult = await expandProfileSections(promoted);
+  check(
+    "a control inside a denylisted section (e.g. People also viewed) is never clicked",
+    promotedResult.clicked === 0,
+    JSON.stringify(promotedResult)
+  );
+
+  // The click cap must actually bite before the page runs out of controls — otherwise a
+  // long enough profile could click indefinitely. ~3s runtime (MAX_CLICKS * 250ms settle).
+  const manyControls = Array.from(
+    { length: MAX_CLICKS + 5 },
+    (_, i) => `<button>Show ${i + 1} more</button>`
+  ).join("");
+  const { document: manyControlsDoc } = parseHTML(`<main><section>${manyControls}</section></main>`);
+  const cappedResult = await expandProfileSections(manyControlsDoc);
+  check(
+    "the click cap bites before the page runs out of recognized controls",
+    cappedResult.clicked === MAX_CLICKS &&
+      cappedResult.capped === true &&
+      cappedResult.timedOut === false,
+    JSON.stringify(cappedResult)
+  );
+
+  // --- the ordinary read path must never click anything ---------------------------
+  //
+  // The single most important property in this task: opening the panel on a LinkedIn
+  // profile — `linkedinAdapter.extract(url)` with no `options` — must click nothing and
+  // must synchronously emit `schemaVersion: 1` with no `profile`. Only an explicit
+  // `options.withProfile` (the "Capture experience" press) may ever reach
+  // `expandProfileSections`. This is the one property that was previously asserted only
+  // by code inspection, never exercised.
+  {
+    const url = new URL("https://www.linkedin.com/in/ada");
+    const { document: doc, window: win } = parseHTML(
+      "<html><body><main><h1>Ada Lovelace</h1><section>" +
+        "<button>See more</button></section></main></body></html>"
+    );
+    (win as unknown as { location: URL }).location = url;
+    let clicked = false;
+    doc.querySelector("button")!.addEventListener("click", () => {
+      clicked = true;
+    });
+    (globalThis as unknown as { document: Document }).document = doc as unknown as Document;
+    (globalThis as unknown as { window: Window }).window = win as unknown as Window;
+    try {
+      const result = linkedinAdapter.extract(url);
+      check(
+        "extract() with no options is synchronous, not a Promise",
+        !(result instanceof Promise)
+      );
+      if (result instanceof Promise) throw new Error("unreachable — just asserted above");
+      check("an ordinary read reports schemaVersion 1", result.schemaVersion === 1);
+      check("an ordinary read carries no profile", !("profile" in result));
+      check("an ordinary read clicks nothing on the page", clicked === false);
+    } finally {
+      delete (globalThis as { document?: unknown }).document;
+      delete (globalThis as { window?: unknown }).window;
+    }
+  }
 
   // --- adapter section readers over saved markup ---------------------------------
   //
