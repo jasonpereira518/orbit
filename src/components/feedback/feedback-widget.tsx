@@ -51,7 +51,18 @@ export type DraftShot = {
   redactions: NormalizedRect[];
 };
 
-type Phase = "closed" | "composing" | "capturing" | "selecting" | "annotating";
+/**
+ * `closing` exists so the window can play its own collapse.
+ *
+ * The panel used to be unmounted the moment close was requested, which tore it out of the
+ * tree before Base UI could apply `data-ending-style` — so it vanished instead of scaling
+ * back into the button. In `closing` it is still mounted with `open={false}`, and
+ * `onOpenChangeComplete` moves it to `closed`.
+ *
+ * `capturing` deliberately has no such courtesy: the panel must be gone from the composited
+ * frame BEFORE the screen is photographed, so that transition is instant by design.
+ */
+type Phase = "closed" | "composing" | "closing" | "capturing" | "selecting" | "annotating";
 
 /**
  * The floating window's geometry, mirrored from the `data-[side=floating]` utilities in
@@ -141,7 +152,9 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
   useEffect(() => {
     const open = () => {
       setAnchor(anchorFromButton(buttonRef.current));
-      setPhase((p) => (p === "closed" ? "composing" : p));
+      // From `closing` too: catching the window on its way out should bring it back rather
+      // than doing nothing.
+      setPhase((p) => (p === "closed" || p === "closing" ? "composing" : p));
     };
     window.addEventListener(OPEN_FEEDBACK_EVENT, open);
     return () => window.removeEventListener(OPEN_FEEDBACK_EVENT, open);
@@ -160,13 +173,34 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     };
   }, []);
 
-  const reset = useCallback(() => {
-    for (const shot of shots) URL.revokeObjectURL(shot.previewUrl);
+  /** After a successful send: let the window collapse, then clear the draft behind it. */
+  const finish = useCallback(() => {
+    setPhase("closing");
+  }, []);
+
+  /** The collapse has finished. Nothing is on screen, so this is where state is dropped. */
+  const clearDraft = useCallback(() => {
+    for (const shot of shotsRef.current) URL.revokeObjectURL(shot.previewUrl);
     setShots([]);
     setMessage("");
     setOffset({ x: 0, y: 0 });
     setPhase("closed");
-  }, [shots]);
+  }, []);
+
+  /**
+   * Backstop for the collapse.
+   *
+   * `onOpenChangeComplete` fires off `transitionend`, and a transition that never ends
+   * never fires it — a tab backgrounded mid-close freezes it exactly there. Without this
+   * the window would sit mounted at `open={false}`: invisible, but with the draft never
+   * cleared and the trigger still believing it is open. Comfortably longer than the 0.32s
+   * collapse, so in the normal case `onClosed` has already won and this only clears itself.
+   */
+  useEffect(() => {
+    if (phase !== "closing") return;
+    const timer = setTimeout(clearDraft, 900);
+    return () => clearTimeout(timer);
+  }, [phase, clearDraft]);
 
   const addScreenshot = useCallback(async () => {
     if (shots.length >= MAX_SCREENSHOTS) return;
@@ -355,8 +389,9 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
         </div>
       )}
 
-      {phase === "composing" && (
+      {(phase === "composing" || phase === "closing") && (
         <FeedbackPanel
+          open={phase === "composing"}
           anchor={anchor}
           offset={offset}
           onOffsetChange={setOffset}
@@ -370,11 +405,9 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
             setEditingShotId(id);
             setPhase("annotating");
           }}
-          onClose={() => {
-            setOffset({ x: 0, y: 0 });
-            setPhase("closed");
-          }}
-          onSent={reset}
+          onClose={() => setPhase("closing")}
+          onClosed={clearDraft}
+          onSent={finish}
         />
       )}
 

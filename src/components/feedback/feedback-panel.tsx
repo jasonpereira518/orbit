@@ -45,6 +45,7 @@ const CATEGORY_LABELS: Record<FeedbackCategory, string> = {
 };
 
 export function FeedbackPanel({
+  open,
   anchor,
   offset,
   onOffsetChange,
@@ -56,8 +57,14 @@ export function FeedbackPanel({
   onRemoveShot,
   onEditShot,
   onClose,
+  onClosed,
   onSent,
 }: {
+  /**
+   * Driven, not hardcoded. The window has to stay mounted through its own exit transition
+   * or there is no exit transition — see `onClosed`.
+   */
+  open: boolean;
   /** Where the window sits and what it grows out of — see `anchorFromButton`. */
   anchor: { origin: string; top: number };
   /**
@@ -74,7 +81,10 @@ export function FeedbackPanel({
   onAddScreenshot: () => void;
   onRemoveShot: (id: string) => void;
   onEditShot: (id: string) => void;
+  /** Asked to close. The window then plays its collapse; it is still mounted. */
   onClose: () => void;
+  /** The collapse has finished and nothing is on screen — safe to unmount and reset. */
+  onClosed: () => void;
   onSent: () => void;
 }) {
   const pathname = usePathname();
@@ -224,11 +234,18 @@ export function FeedbackPanel({
 
   return (
     <Sheet
-      open
-      onOpenChange={(open) => {
-        if (open) return;
+      open={open}
+      onOpenChange={(next) => {
+        if (next) return;
         if (message.trim().length > 0 && !window.confirm("Discard your feedback?")) return;
         onClose();
+      }}
+      // Fires when the open/close transition has actually finished. Unmounting on the
+      // close REQUEST instead — which is what happened before — tore the window out of the
+      // tree mid-frame, so it vanished rather than collapsing: Base UI never got to apply
+      // `data-ending-style`, and the scale-back-to-0.28 never ran.
+      onOpenChangeComplete={(nowOpen) => {
+        if (!nowOpen) onClosed();
       }}
     >
       <SheetContent
