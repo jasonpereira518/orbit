@@ -110,13 +110,18 @@ function readEntry(node: Element, kind: PageExperience["kind"]): PageExperience 
   const organization = (kind === "role" ? second : first)?.split(" · ")[0]?.trim() ?? "";
   if (!organization) return null;
 
+  // Pulled out of the remainder before it becomes the description, so a location line
+  // sitting at index >= 2 isn't also concatenated into the description text.
+  const location = nonDate.find((l) => /,\s*[A-Z]{2}\b|Remote/.test(l)) ?? null;
+  const rest = nonDate.slice(2).filter((l) => l !== location);
+
   return {
     kind,
     organization,
     title: (kind === "role" ? first : second)?.trim() || null,
     fieldOfStudy: null,
-    location: nonDate.find((l) => /,\s*[A-Z]{2}\b|Remote/.test(l)) ?? null,
-    description: nonDate.slice(2).join(" ").slice(0, 2000) || null,
+    location,
+    description: rest.join(" ").slice(0, 2000) || null,
     ...range,
   };
 }

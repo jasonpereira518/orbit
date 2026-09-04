@@ -176,6 +176,15 @@ function main() {
       "",
     ].join("\n");
     console.log(banner);
+    // Machine-readable marker for scripts/run-smoke.ts: it greps captured stdout for a
+    // leading "PENDING:" line and surfaces it in the summary row (and the run-level
+    // count), so a green run of the whole suite can't read as "fully verified" when a
+    // script degraded instead of actually asserting something. Keep this on one line.
+    console.log(
+      "PENDING: LinkedIn profile fixtures missing — role extraction, current-role " +
+        "detection, education classification, About extraction, and the " +
+        "details-subpage path are unverified"
+    );
     if (requireFixtures) {
       throw new Error(
         "ORBIT_REQUIRE_FIXTURES=1 and the LinkedIn profile fixtures are missing — see banner above"
