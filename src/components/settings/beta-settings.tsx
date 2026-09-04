@@ -11,9 +11,13 @@ import { BETA_SURFACE_KEYS, getSurface } from "@/lib/surfaces";
  * off is an operator action, so there is no self-serve switch to offer.
  */
 export function BetaSettings() {
+  // Pages only. Every beta surface is technically "something the grant opens", but this
+  // card IS one of them — listing it would have the card describe itself back to the
+  // reader, which is noise rather than information. The admin panel keeps the full list,
+  // because an operator does want to know exactly what a grant touches.
   const surfaces = [...BETA_SURFACE_KEYS]
     .map((key) => getSurface(key))
-    .filter((s): s is NonNullable<typeof s> => Boolean(s))
+    .filter((s): s is NonNullable<typeof s> => Boolean(s) && s!.kind === "page")
     .sort((a, b) => a.label.localeCompare(b.label));
 
   return (

@@ -167,7 +167,18 @@ async function visibilityChecks() {
 
   check("isBetaUser is true for a tester", await isBetaUser(TESTER));
   check("isBetaUser is false for a normal account", !(await isBetaUser(NORMAL)));
-  check("isBetaUser is false for the demo session", !(await isBetaUser("demo-user")));
+  // The shared demo session is refused outside demo mode: a production deploy that lost
+  // its Clerk keys would put every visitor on that one account, and the testing tools
+  // include one that wipes it. `isDemoMode` needs NODE_ENV === "development" AND no Clerk
+  // keys; the smoke harness sets neither, so this asserts the production behaviour.
+  const env = process.env as Record<string, string | undefined>;
+  const priorNodeEnv = env.NODE_ENV;
+  try {
+    env.NODE_ENV = "production";
+    check("isBetaUser refuses the demo session in production", !(await isBetaUser("demo-user")));
+  } finally {
+    env.NODE_ENV = priorNodeEnv;
+  }
   check("isBetaUser is false for an empty id", !(await isBetaUser("")));
 
   const normal = await resolveSurfaceVisibility(NORMAL);

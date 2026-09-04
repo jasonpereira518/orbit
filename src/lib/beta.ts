@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { isDemoMode } from "@/lib/auth";
 import { ensureUserSettings } from "@/lib/user-settings";
 
 /**
@@ -16,7 +17,18 @@ import { ensureUserSettings } from "@/lib/user-settings";
  * authenticated request, so this is a second read of a row that is in memory anyway.
  */
 export const isBetaUser = cache(async (userId: string): Promise<boolean> => {
-  if (!userId || userId === "demo-user") return false;
+  if (!userId) return false;
+  // `demo-user` is the shared fallback session id when Clerk is unconfigured. If a
+  // production deploy ever lost its Clerk keys, every visitor would land on that one
+  // account — and handing an anonymous visitor a button that wipes and reseeds it makes an
+  // already-bad failure materially worse. `isAdminUser` refuses the same id for the same
+  // reason, and more bluntly.
+  //
+  // It is allowed in demo mode, which `isDemoMode` defines as "no Clerk keys AND
+  // NODE_ENV === development" — a production build cannot satisfy the second half, so the
+  // guarantee above holds while the testing surfaces stay exercisable locally. Same shape
+  // as the `EXTENSION_DEV_SECRET` backdoor in `src/lib/extension/auth.ts`.
+  if (userId === "demo-user" && !isDemoMode()) return false;
   try {
     const row = await ensureUserSettings(userId);
     return row?.betaAccess === true;
