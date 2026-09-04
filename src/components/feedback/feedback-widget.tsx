@@ -65,16 +65,38 @@ type Phase = "closed" | "composing" | "capturing" | "selecting" | "annotating";
 const PANEL_INSET_PX = 16;
 const PANEL_MAX_W_PX = 384; // sm:max-w-sm = 24rem
 
-/** Where the window should appear to grow from: the middle of the button that opened it. */
-function originFromButton(button: HTMLElement | null): string {
-  if (!button) return "top right";
+/** Clearance between the button rail and the top of the window. */
+const PANEL_GAP_PX = 12;
+
+export type PanelAnchor = { origin: string; top: number };
+
+/**
+ * Where the window sits, and where it should appear to grow from.
+ *
+ * `top` starts BELOW the button that opened it, rather than at the sheet's own `inset-y-4`.
+ * The notifications window is full height and deliberately covers its own bell — it is
+ * pretending to BE that bell. This one shares the rail with the bell, and a panel that
+ * swallowed a control belonging to something else would just read as the bell vanishing.
+ *
+ * `origin` is relative to the panel's own box, so with the panel below the button the y
+ * comes out negative — which is exactly right: it scales out of a point above itself.
+ */
+function anchorFromButton(button: HTMLElement | null): PanelAnchor {
+  const fallbackTop = PANEL_INSET_PX;
+  if (!button) return { origin: "top right", top: fallbackTop };
   const rect = button.getBoundingClientRect();
-  if (rect.width === 0) return "top right";
+  if (rect.width === 0) return { origin: "top right", top: fallbackTop };
+
   const panelWidth = Math.min(window.innerWidth - PANEL_INSET_PX * 2, PANEL_MAX_W_PX);
   const panelLeft = window.innerWidth - PANEL_INSET_PX - panelWidth;
-  return `${Math.round(rect.left + rect.width / 2 - panelLeft)}px ${Math.round(
-    rect.top + rect.height / 2 - PANEL_INSET_PX
-  )}px`;
+  const top = Math.round(rect.bottom + PANEL_GAP_PX);
+
+  return {
+    origin: `${Math.round(rect.left + rect.width / 2 - panelLeft)}px ${Math.round(
+      rect.top + rect.height / 2 - top
+    )}px`,
+    top,
+  };
 }
 
 /**
@@ -100,7 +122,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
    * Captured on click rather than read during render — the button moves when the
    * view-as-user banner appears, and this resolves to wherever it actually was.
    */
-  const [origin, setOrigin] = useState("top right");
+  const [anchor, setAnchor] = useState<PanelAnchor>({ origin: "top right", top: PANEL_INSET_PX });
   // Lazy initialiser rather than an effect: this component is only ever mounted client-side
   // (`ssr: false`), so `window` is there on the first render and there is no flash of a
   // wrongly-hidden button.
@@ -110,7 +132,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
   // their own — mirrors OPEN_ASK_BAR_EVENT.
   useEffect(() => {
     const open = () => {
-      setOrigin(originFromButton(buttonRef.current));
+      setAnchor(anchorFromButton(buttonRef.current));
       setPhase((p) => (p === "closed" ? "composing" : p));
     };
     window.addEventListener(OPEN_FEEDBACK_EVENT, open);
@@ -305,18 +327,13 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
                   aria-label="Send feedback"
                   aria-haspopup="dialog"
                   aria-expanded={phase !== "closed"}
-                  className={cn(
-                    "size-10 rounded-full border-border/70 bg-background/90 shadow-md backdrop-blur-md transition-opacity hover:bg-background",
-                    // The window covers this exact spot and grows out of it, so the button
-                    // ducking out sells the illusion that it BECAME the panel. Opacity
-                    // rather than `hidden`, so it stays focusable for the focus Base UI
-                    // returns here on close. Straight from `notifications-panel.tsx`.
-                    phase === "closed"
-                      ? "opacity-100 delay-100 duration-base"
-                      : "pointer-events-none opacity-0 duration-fast"
-                  )}
+                  // Stays put while the panel is open. The bell ducks out because the
+                  // notifications window lands on top of it and is pretending to be it;
+                  // this panel opens below its button instead, so there is nothing to hide
+                  // behind and a fade would just read as the button disappearing.
+                  className="size-10 rounded-full border-border/70 bg-background/90 shadow-md backdrop-blur-md hover:bg-background"
                   onClick={() => {
-                    setOrigin(originFromButton(buttonRef.current));
+                    setAnchor(anchorFromButton(buttonRef.current));
                     setPhase("composing");
                   }}
                 >
@@ -331,7 +348,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
 
       {phase === "composing" && (
         <FeedbackPanel
-          origin={origin}
+          anchor={anchor}
           message={message}
           onMessageChange={setMessage}
           shots={shots}

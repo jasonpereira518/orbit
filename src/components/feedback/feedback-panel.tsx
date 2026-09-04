@@ -44,7 +44,7 @@ const CATEGORY_LABELS: Record<FeedbackCategory, string> = {
 };
 
 export function FeedbackPanel({
-  origin,
+  anchor,
   message,
   onMessageChange,
   shots,
@@ -55,8 +55,8 @@ export function FeedbackPanel({
   onClose,
   onSent,
 }: {
-  /** CSS transform-origin, so the window grows out of the button that opened it. */
-  origin: string;
+  /** Where the window sits and what it grows out of — see `anchorFromButton`. */
+  anchor: { origin: string; top: number };
   message: string;
   onMessageChange: (value: string) => void;
   shots: DraftShot[];
@@ -142,9 +142,11 @@ export function FeedbackPanel({
         // Lighter than the shared default, exactly as the notifications window does it: the
         // page behind stays legible instead of being dimmed to a modal.
         overlayClassName="bg-black/5 supports-backdrop-filter:backdrop-blur-[1.5px]"
-        // What aims the panel's 0.28 scale at the button rather than at the window's own
-        // centre, so it reads as the button unfolding.
-        style={{ transformOrigin: origin }}
+        // `top` overrides the floating side's `inset-y-4` so the window opens BELOW the
+        // button rail, leaving the notifications bell visible instead of swallowing it.
+        // `transformOrigin` aims the panel's 0.28 scale at the button rather than at its
+        // own centre, so it still reads as the button unfolding.
+        style={{ transformOrigin: anchor.origin, top: anchor.top }}
         showCloseButton
       >
         <SheetHeader className="p-0">
