@@ -37,6 +37,16 @@ export const ERROR_SOURCES = {
   graphRebuildEmbeddings: "graph.rebuild_embeddings",
   avatarMicrolink: "avatar.microlink",
   apolloSearch: "apollo.search",
+  /**
+   * A public event page could not be read (`src/lib/events/fetch-page.ts`). Recorded only
+   * when the retry ladder was actually exhausted, not on a refused address — a blocked host
+   * is the guard doing its job, and logging it would turn the SSRF defence into noise.
+   */
+  eventPageFetch: "event.page_fetch",
+  oauthEventbriteCallback: "oauth.eventbrite.callback",
+  /** A Luma or Eventbrite sync that exhausted its retries. Auth failures are NOT logged here
+   *  — those flag the connection `needs_reauth`, which the user can see and act on. */
+  eventProviderSync: "event.provider_sync",
   /** A call that outran `SLOW_CALL_THRESHOLD_MS` — see `src/lib/perf-trace.ts`. */
   perfSlow: "perf.slow",
   /**

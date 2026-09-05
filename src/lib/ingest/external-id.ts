@@ -44,3 +44,22 @@ export function interactionExternalId(base: string, contactId: string): string {
 export function calendarExternalIdBase(eventUid: string): string {
   return `cal:${eventUid}`;
 }
+
+/**
+ * The event half of an "I met them at this conference" interaction.
+ *
+ * Keyed on Orbit's own event id rather than the provider's, deliberately, and unlike
+ * `calendarExternalIdBase` above. A calendar event has a provider-stable `iCalUID` that two
+ * different import paths can both arrive at, so keying on it is what deduplicates them. An
+ * event here has no such shared identity: the same conference can be created by hand, pasted
+ * from a URL, and synced from Luma, and those are three genuinely different rows the user can
+ * see and merge. Keying on the row is what makes "connect these people again" idempotent,
+ * which is the property that actually matters — re-running a connect must not double every
+ * attendee's interaction.
+ *
+ * `evt:` sits alongside `cal:` and `api:` in the same namespace because it names the same kind
+ * of thing: the event half of an interaction id. Ingest appends `:${contactId}`.
+ */
+export function eventExternalIdBase(eventId: string): string {
+  return `evt:${eventId}`;
+}

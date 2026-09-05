@@ -40,6 +40,7 @@ import {
 } from "@/lib/calendar-sync";
 import { ReauthRequiredError } from "@/lib/errors";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
+import { runEventSyncPass } from "@/lib/events/sync";
 
 /** Matches the import engine's budget, and leaves headroom under the 300s function ceiling. */
 export const SYNC_TIME_BUDGET_MS = 4.5 * 60 * 1000;
@@ -90,6 +91,11 @@ export type SyncRunStats = {
   eventsIngested: number;
   contactsCreated: number;
   interactionsLogged: number;
+  /** Luma/Eventbrite. Named apart from the calendar counters so one pass reports both. */
+  eventConnectionsClaimed: number;
+  eventConnectionsSynced: number;
+  eventConnectionsFailed: number;
+  eventRostersFetched: number;
   budgetExhausted: boolean;
 };
 
@@ -105,6 +111,10 @@ function emptyRunStats(): SyncRunStats {
     eventsIngested: 0,
     contactsCreated: 0,
     interactionsLogged: 0,
+    eventConnectionsClaimed: 0,
+    eventConnectionsSynced: 0,
+    eventConnectionsFailed: 0,
+    eventRostersFetched: 0,
     budgetExhausted: false,
   };
 }
@@ -276,6 +286,25 @@ export async function runSyncPass(
         stats.icsFailed++;
       }
     }
+  }
+
+  // Luma / Eventbrite, last: the calendar work above is what actually creates contacts, so
+  // it gets first call on the budget. This pass only fills rosters — nothing here becomes a
+  // contact without a human saying so — and is safe to cut short and resume next run.
+  if (!deadlineReached(deadline)) {
+    try {
+      const eventStats = await runEventSyncPass(now);
+      stats.eventConnectionsClaimed = eventStats.claimed;
+      stats.eventConnectionsSynced = eventStats.synced;
+      stats.eventConnectionsFailed = eventStats.failed;
+      stats.eventRostersFetched = eventStats.attendeesUpserted;
+    } catch {
+      // Never rethrown, for the same reason as everything else in this function: a failure in
+      // one provider must not lose the run's ledger row for the others.
+      stats.eventConnectionsFailed++;
+    }
+  } else {
+    stats.budgetExhausted = true;
   }
 
   return stats;
