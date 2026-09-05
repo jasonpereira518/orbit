@@ -325,7 +325,7 @@ export function FeedbackPanel({
         {/* The header is the handle. Not the whole panel: a drag that starts anywhere
             would fight text selection in the message field and the screenshot thumbnails. */}
         <SheetHeader
-          className="p-0 select-none"
+          className="shrink-0 p-0 select-none"
           style={{ cursor: dragging ? "grabbing" : "grab", touchAction: "none" }}
           onPointerDown={startDrag}
           onPointerMove={moveDrag}
@@ -342,7 +342,9 @@ export function FeedbackPanel({
 
         {/* A segmented row rather than a Select: four options, and a popup inside a
             floating sheet is a stacking-context fight nobody wins. */}
-        <div className="flex flex-wrap gap-2" role="group" aria-label="Kind of feedback">
+        {/* `shrink-0`, like every other block here: the sheet scrolls when it runs out of
+            room, it does not compress its contents. See the note on the message block. */}
+        <div className="flex shrink-0 flex-wrap gap-2" role="group" aria-label="Kind of feedback">
           {FEEDBACK_CATEGORIES.map((value) => (
             <Button
               key={value}
@@ -357,7 +359,7 @@ export function FeedbackPanel({
           ))}
         </div>
 
-        <div className="grid gap-1.5">
+        <div className="grid shrink-0 gap-1.5">
           <span id="feedback-area-label" className="text-xs font-medium text-muted-foreground">
             Which part of Orbit?
           </span>
@@ -393,13 +395,33 @@ export function FeedbackPanel({
           </Select>
         </div>
 
-        <div className="grid min-h-0 flex-1 gap-1.5">
+        {/* `grow` WITHOUT shrink, and no `min-h-0`.
+ *
+ * This was `min-h-0 flex-1`, which is `flex: 1 1 0%` — grow AND shrink — with the
+ * min-content floor removed. In a short window flexbox duly shrank this block to whatever
+ * was left, but the textarea inside it has a hard `min-h-40` and will not shrink with it,
+ * so the textarea spilled out of its own parent and the screenshot button below rendered
+ * INSIDE it. At the panel's real anchor (`top: 72`, below the trigger rail) on a 700px
+ * window the block collapsed to 68px around a 160px textarea: a 60px overlap.
+ *
+ * This is why every attempt to fix it with margin failed. The sibling's position is
+ * measured from the shrunken block, so `mt-3` / `mt-5` moved a box that was already deep
+ * inside the textarea — the gap looked correct in the numbers while overlapping on screen.
+ *
+ * Growing but never shrinking means a short window overflows the sheet, which already has
+ * `overflow-y-auto` and scrolls. Scrolling is the right answer here: the alternative is a
+ * message box that silently shrinks below a usable size on a laptop screen. */}
+        <div className="grid shrink-0 grow gap-1.5">
           <Textarea
             autoFocus
             // Grows into whatever the sheet has left rather than sitting at a fixed five
-            // rows above a column of dead space. `field-sizing-content` on the primitive
+            // rows above a column of dead space: the block above is a grid whose auto row
+            // stretches, so the field fills it. `field-sizing-content` on the primitive
             // still expands it as you type; the floor is what changed.
-            className="min-h-40 flex-1 resize-none"
+            //
+            // No `flex-1` here — the parent is a grid, so flex-grow on this would be inert,
+            // and it read as though it were doing the growing.
+            className="min-h-40 resize-none"
             value={message}
             maxLength={MAX_FEEDBACK_TEXT}
             placeholder="What were you trying to do, and what happened instead?"
@@ -413,7 +435,7 @@ export function FeedbackPanel({
         {/* A little clear of the message box above it. Both are large bordered surfaces, so
             the panel's own 20px rhythm reads tighter between them than it does under a
             text label. */}
-        <div className="mt-3 grid gap-2">
+        <div className="mt-3 grid shrink-0 gap-2">
           {/* The primary way to attach one: full width, its own label, and an explanation of
               what the gesture is. It was a 72px dashed tile next to the thumbnails and read
               as an afterthought — which is backwards, since a screenshot is the most useful
@@ -494,7 +516,7 @@ export function FeedbackPanel({
           )}
         </div>
 
-        <div className="mt-auto flex justify-end gap-2 pt-5">
+        <div className="mt-auto flex shrink-0 justify-end gap-2 pt-5">
           <Button
             type="button"
             variant="ghost"
