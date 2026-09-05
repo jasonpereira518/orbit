@@ -23,7 +23,12 @@ import {
 } from "../src/lib/feedback-submission";
 import { clampPanelOffset } from "../src/lib/feedback-report";
 import { panelOriginFor } from "../src/lib/floating-panel";
-import { fitGeometry, selectionToCrop } from "../src/lib/screenshot-capture";
+import {
+  CAPTURE_INSET_PX,
+  CAPTURE_TOOLBAR_PX,
+  fitGeometry,
+  selectionToCrop,
+} from "../src/lib/screenshot-capture";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -124,42 +129,88 @@ function main() {
 
   console.log("");
 
-  // The crop overlay's geometry. Two bugs have lived here: the still was once fitted with
-  // padding so it was drawn smaller than the screen and the pointer never sat on the pixel
-  // it appeared to be selecting, and it was later made to COVER the window, which cropped
-  // the edges off a shared monitor with no way to reach them.
+  // The crop overlay's geometry. Three bugs have lived here: the still was once padded
+  // WITHOUT the selection mapping accounting for it, so the pointer never sat on the pixel
+  // it appeared to be selecting; it was later made to COVER the window, which cropped the
+  // edges off a shared monitor with no way to reach them; and it then ran edge to edge
+  // under the toolbar, which hid whatever was behind the bar.
   const viewport = { width: 1280, height: 860 };
   const tabFrame = { width: 2560, height: 1720 }; // a shared tab: viewport x dpr 2
 
   const tab = fitGeometry(tabFrame, viewport);
-  check("a shared tab is placed at the window's origin", tab.left === 0 && tab.top === 0);
-  check("...at exactly 1/dpr", tab.scale === 0.5, String(tab.scale));
+  const still = {
+    left: tab.left,
+    top: tab.top,
+    width: tabFrame.width * tab.scale,
+    height: tabFrame.height * tab.scale,
+  };
+
   check(
-    "...so the still fills the viewport exactly, with no letterbox",
-    tabFrame.width * tab.scale === viewport.width &&
-      tabFrame.height * tab.scale === viewport.height
+    "the still keeps its margin from the top and left",
+    still.left >= CAPTURE_INSET_PX - 0.001 && still.top >= CAPTURE_INSET_PX - 0.001,
+    `${still.left},${still.top}`
+  );
+  check(
+    "...and from the right edge",
+    still.left + still.width <= viewport.width - CAPTURE_INSET_PX + 0.001
+  );
+  check(
+    "...and clears the toolbar band along the bottom",
+    still.top + still.height <=
+      viewport.height - CAPTURE_INSET_PX - CAPTURE_TOOLBAR_PX + 0.001,
+    `${still.top + still.height} vs ${viewport.height - CAPTURE_INSET_PX - CAPTURE_TOOLBAR_PX}`
+  );
+  check(
+    "...and is centred in what is left",
+    // Both gaps measured from the SAME boundary — the inner edge of the margin, not the
+    // window's edge. Comparing one of each is off by exactly the inset.
+    Math.abs(
+      still.left -
+        CAPTURE_INSET_PX -
+        (viewport.width - CAPTURE_INSET_PX - (still.left + still.width))
+    ) < 0.001,
+    `${still.left - CAPTURE_INSET_PX} vs ${viewport.width - CAPTURE_INSET_PX - (still.left + still.width)}`
   );
 
   // The property the whole overlay rests on: a point on screen maps to the frame pixel
-  // that is actually under it.
-  const origin = selectionToCrop({ left: 0, top: 0, width: 10, height: 10 }, tab, tabFrame);
-  check("the window's top-left maps to the frame's top-left", origin.x === 0 && origin.y === 0);
-
-  const mid = selectionToCrop({ left: 640, top: 430, width: 100, height: 50 }, tab, tabFrame);
-  check(
-    "a point at the window's centre maps to the frame's centre",
-    mid.x === 1280 && mid.y === 860,
-    `${mid.x},${mid.y}`
+  // that is actually under it. These are anchored to the STILL's own box, not the window's,
+  // which is exactly the distinction the first version of this got wrong.
+  const origin = selectionToCrop(
+    { left: still.left, top: still.top, width: 10, height: 10 },
+    tab,
+    tabFrame
   );
-  check("a selection scales by the same factor", mid.w === 200 && mid.h === 100);
+  check("the still's top-left maps to the frame's top-left", origin.x === 0 && origin.y === 0);
 
-  const corner = selectionToCrop(
-    { left: viewport.width - 20, top: viewport.height - 20, width: 20, height: 20 },
+  const mid = selectionToCrop(
+    {
+      left: still.left + still.width / 2,
+      top: still.top + still.height / 2,
+      width: 100 * tab.scale,
+      height: 50 * tab.scale,
+    },
     tab,
     tabFrame
   );
   check(
-    "a selection against the far edge reaches the frame's far edge",
+    "a point at the still's centre maps to the frame's centre",
+    Math.abs(mid.x - tabFrame.width / 2) <= 1 && Math.abs(mid.y - tabFrame.height / 2) <= 1,
+    `${mid.x},${mid.y}`
+  );
+  check("a selection scales by the same factor", mid.w === 100 && mid.h === 50);
+
+  const corner = selectionToCrop(
+    {
+      left: still.left + still.width - 20,
+      top: still.top + still.height - 20,
+      width: 20,
+      height: 20,
+    },
+    tab,
+    tabFrame
+  );
+  check(
+    "a selection against the still's far corner reaches the frame's far corner",
     corner.x + corner.w === tabFrame.width && corner.y + corner.h === tabFrame.height,
     `${corner.x + corner.w} x ${corner.y + corner.h}`
   );
@@ -172,16 +223,17 @@ function main() {
     { width: 400, height: 1200 },
   ]) {
     const g = fitGeometry(tabFrame, vp);
-    // Contained: never larger than the window on either axis, and touching it on one.
-    const within =
-      tabFrame.width * g.scale <= vp.width + 0.001 &&
-      tabFrame.height * g.scale <= vp.height + 0.001;
-    const touches =
-      Math.abs(tabFrame.width * g.scale - vp.width) < 0.001 ||
-      Math.abs(tabFrame.height * g.scale - vp.height) < 0.001;
-    check(`the still fits inside a ${vp.width}x${vp.height} window`, within && touches);
+    const w = tabFrame.width * g.scale;
+    const h = tabFrame.height * g.scale;
+    // Inside the box the still is allowed, and meeting it on one axis — so it is as large
+    // as the margins permit rather than arbitrarily small.
+    const availW = Math.max(1, vp.width - CAPTURE_INSET_PX * 2);
+    const availH = Math.max(1, vp.height - CAPTURE_INSET_PX * 2 - CAPTURE_TOOLBAR_PX);
+    const within = w <= availW + 0.001 && h <= availH + 0.001;
+    const touches = Math.abs(w - availW) < 0.001 || Math.abs(h - availH) < 0.001;
+    check(`the still fits its box in a ${vp.width}x${vp.height} window`, within && touches);
     const centre = selectionToCrop(
-      { left: vp.width / 2, top: vp.height / 2, width: 4, height: 4 },
+      { left: g.left + w / 2, top: g.top + h / 2, width: 4, height: 4 },
       g,
       tabFrame
     );
@@ -199,12 +251,17 @@ function main() {
   const desktop = fitGeometry(desktopFrame, viewport);
   check(
     "a desktop share is fully on screen, not cropped",
-    desktop.left >= -0.001 &&
-      desktop.top >= -0.001 &&
-      desktopFrame.width * desktop.scale <= viewport.width + 0.001 &&
-      desktopFrame.height * desktop.scale <= viewport.height + 0.001
+    desktop.left >= CAPTURE_INSET_PX - 0.001 &&
+      desktop.top >= CAPTURE_INSET_PX - 0.001 &&
+      desktop.left + desktopFrame.width * desktop.scale <=
+        viewport.width - CAPTURE_INSET_PX + 0.001 &&
+      desktop.top + desktopFrame.height * desktop.scale <=
+        viewport.height - CAPTURE_INSET_PX - CAPTURE_TOOLBAR_PX + 0.001
   );
-  check("...letterboxed on the short axis, not distorted", desktop.top > 1 && desktop.left < 0.001);
+  check(
+    "...letterboxed on the short axis, not distorted",
+    desktop.top > CAPTURE_INSET_PX + 1 && Math.abs(desktop.left - CAPTURE_INSET_PX) < 0.001
+  );
   // The far corner is the pixel that used to be unreachable.
   const desktopCorner = selectionToCrop(
     {

@@ -108,21 +108,25 @@ export function ScreenshotCaptureOverlay({
             {announced}
           </div>
 
-          {/* The drag surface is the whole viewport, so a selection can start and end
-              anywhere — including hard against an edge, which a padded, centred box made
-              impossible to reach. */}
+          {/* The drag surface is the whole viewport, not just the still. The still is inset
+              from the edges, and a drag that starts or ends in that margin is clamped into
+              the frame by `selectionToCrop` — so the outermost pixels stay reachable
+              without having to land the pointer exactly on the picture's edge. */}
           <div
             className="absolute inset-0 select-none"
             style={{ cursor: "crosshair", touchAction: "none" }}
             {...handlers}
           >
+            {/* The ring and shadow are what make the margin read as deliberate: without an
+                edge, a screenshot of this app sitting on top of this app is indistinguishable
+                from the app itself, and the inset just looks like the window is misaligned. */}
             {/* eslint-disable-next-line @next/next/no-img-element -- a blob: frame of the
                 user's own screen, with no remote origin for next/image to optimise. */}
             <img
               src={frame.previewUrl}
               alt="Screenshot to crop"
               draggable={false}
-              className="pointer-events-none absolute max-w-none"
+              className="pointer-events-none absolute max-w-none rounded-lg shadow-2xl ring-1 ring-white/15"
               style={{
                 left: geometry.left,
                 top: geometry.top,
@@ -149,8 +153,12 @@ export function ScreenshotCaptureOverlay({
             )}
           </div>
 
-          {/* Floats over the still rather than taking layout from it, which is what lets
-              the picture occupy the entire window. */}
+          {/* Floats over the backdrop rather than taking layout from the still — but the
+              still is no longer underneath it: `fitGeometry` keeps a `CAPTURE_TOOLBAR_PX`
+              band clear along the bottom for exactly this bar, which used to sit on the
+              picture and hide whatever was behind it. That constant mirrors this markup —
+              the `bottom-6` offset and the pill's own height — so changing either means
+              changing both. */}
           <div className="pointer-events-none absolute inset-x-0 bottom-6 flex justify-center">
             <div className="pointer-events-auto flex items-center gap-3 rounded-full bg-popover px-4 py-2 text-popover-foreground shadow-lg">
               <span className="text-xs tabular-nums text-muted-foreground">

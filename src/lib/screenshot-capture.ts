@@ -224,27 +224,53 @@ export type Viewport = { width: number; height: number };
 export type FitGeometry = { scale: number; left: number; top: number };
 
 /**
- * Place a captured frame so the whole of it is on screen, centred.
+ * Breathing room between the still and the window edge, on every side.
  *
- * A shared tab is captured at exactly the viewport's aspect ratio (viewport x
- * devicePixelRatio), so `scale` comes out as 1/dpr, `left` and `top` come out zero, and
- * the still lands pixel-for-pixel on top of the page it is a picture of — dragging feels
- * like dragging on the live page. That case is the common one and is unaffected by
- * anything below.
+ * The still used to run edge to edge, which made it hard to tell where the photograph
+ * stopped and the app underneath began — they are the same picture, so without a margin
+ * there is no seam to see.
+ */
+export const CAPTURE_INSET_PX = 24;
+
+/**
+ * Room kept clear along the bottom for the toolbar that floats there.
+ *
+ * The bar used to sit ON the still, covering whatever was behind it — including, often,
+ * the thing being reported. Mirrors the markup in `screenshot-capture-overlay.tsx`: its
+ * `bottom-6` offset (24px), the pill's own height (~44px at `size="sm"` with `py-2`), and
+ * a gap so the two do not touch. Keep in step with that component.
+ */
+export const CAPTURE_TOOLBAR_PX = 84;
+
+/**
+ * Place a captured frame so the whole of it is on screen, centred, clear of the chrome.
+ *
+ * The still is inset from every edge and kept above the toolbar band, so it reads as a
+ * photograph laid on the window rather than as the window itself, and the bar never covers
+ * the part of the picture you are trying to point at. It is therefore drawn slightly
+ * smaller than the screen it came from — deliberately, and see the note on the ancestor of
+ * this decision below.
  *
  * A shared MONITOR is the case this exists for. Its aspect ratio does not match the
  * window, so there is a real choice: cover the window and crop the still's edges away, or
  * contain it and letterbox. It covered, which read as being zoomed into the middle of your
  * own screenshot with the edges unreachable. It contains now — see the note in the body.
  *
- * An even earlier version contained it but ALSO padded it and refused to upscale, which
- * shrank the still to a miniature the pointer could not agree with. Containing is not that:
- * one axis still meets the window exactly, and the scale is honest at every window size.
+ * An even earlier version padded it too, and that one WAS a mistake — but the mistake was
+ * that its selection mapping did not account for the padding, so the pointer never sat on
+ * the pixel it appeared to be selecting. `selectionToCrop` takes `left`, `top` and `scale`
+ * straight from here, so any inset is handled by construction; the crop is also still taken
+ * from the original frame pixels, so drawing smaller costs no resolution.
  *
  * Pure, and takes the viewport explicitly rather than reading `window`, so the mapping is
  * checkable without a browser — see `scripts/smoke-feedback-image.ts`.
  */
 export function fitGeometry(frame: Viewport, viewport: Viewport): FitGeometry {
+  // The box the still is allowed to occupy: the window, less a margin on every side, less
+  // the band the toolbar sits in. `max(1, …)` keeps the scale finite on a window too small
+  // to hold the chrome at all, rather than producing a negative or zero divisor.
+  const availWidth = Math.max(1, viewport.width - CAPTURE_INSET_PX * 2);
+  const availHeight = Math.max(1, viewport.height - CAPTURE_INSET_PX * 2 - CAPTURE_TOOLBAR_PX);
   // `min` contains rather than covers: the WHOLE still has to be on screen, because you
   // cannot drag a box around a part of it you cannot see. This used to be `max`, which
   // aligned a shared-tab capture pixel-for-pixel with the live page — but a shared monitor
@@ -257,11 +283,11 @@ export function fitGeometry(frame: Viewport, viewport: Viewport): FitGeometry {
   //
   // The crop is always taken from the original frame pixels, whatever size it is shown at,
   // so containing costs no resolution.
-  const scale = Math.min(viewport.width / frame.width, viewport.height / frame.height);
+  const scale = Math.min(availWidth / frame.width, availHeight / frame.height);
   return {
     scale,
-    left: (viewport.width - frame.width * scale) / 2,
-    top: (viewport.height - frame.height * scale) / 2,
+    left: CAPTURE_INSET_PX + (availWidth - frame.width * scale) / 2,
+    top: CAPTURE_INSET_PX + (availHeight - frame.height * scale) / 2,
   };
 }
 
