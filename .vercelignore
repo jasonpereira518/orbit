@@ -2,4 +2,19 @@
 # Anchored to the repo root: an unanchored "extension/" also matches
 # src/lib/extension/, which pruned the extension API's shared library from the
 # deployment and failed the production build.
-/extension/
+#
+# `/extension/*` rather than `/extension/`, so the negation below can take: an
+# ignored *directory* is never descended into, and a `!` rule on something
+# inside it has no effect.
+/extension/*
+
+# ...except its TypeScript source, which has to exist for the production build
+# to typecheck. `next build` typechecks everything in the root tsconfig program,
+# which includes `scripts/**`, and `scripts/smoke-contact-profile-format.ts`
+# imports the extension's pure DOM readers to exercise them headlessly. Without
+# these files the build fails with "Cannot find module
+# '../extension/src/inject/adapters/linkedin-profile'" — a failure that appears
+# ONLY on Vercel, because a local checkout and CI both have the whole tree.
+#
+# Nothing in the app imports these, so they are typechecked and never bundled.
+!/extension/src/
