@@ -7,10 +7,10 @@ import { Dialog, DialogPortal } from "@/components/ui/dialog";
 import { useDragRect, type DragRect } from "@/components/feedback/use-drag-rect";
 import {
   MIN_SELECTION_PX,
-  coverGeometry,
+  fitGeometry,
   selectionToCrop,
   type CapturedFrame,
-  type CoverGeometry,
+  type FitGeometry,
   type CropRect,
 } from "@/lib/screenshot-capture";
 
@@ -21,8 +21,8 @@ import {
  * That ordering is what keeps the mapping to one scale and one offset: the pointer reports
  * viewport coordinates, the still is placed at a known position in those same coordinates,
  * so `devicePixelRatio` and scroll offset never enter it. Sharing a whole desktop instead
- * of this tab still works — the aspect ratios differ, so the still overflows the window and
- * is centred, and everything visible remains selectable at true scale.
+ * of this tab still works — the aspect ratios differ, so the still is letterboxed rather
+ * than cropped, and every part of it can be reached by the pointer.
  */
 export function ScreenshotCaptureOverlay({
   frame,
@@ -36,14 +36,14 @@ export function ScreenshotCaptureOverlay({
   // Lazy initialiser rather than an effect: this overlay only ever mounts client-side
   // (`ssr: false`), and computing on the first render means the still is placed before the
   // first paint instead of flashing an empty backdrop for a frame.
-  const [geometry, setGeometry] = useState<CoverGeometry>(() =>
-    coverGeometry(frame, { width: window.innerWidth, height: window.innerHeight })
+  const [geometry, setGeometry] = useState<FitGeometry>(() =>
+    fitGeometry(frame, { width: window.innerWidth, height: window.innerHeight })
   );
   const [announced, setAnnounced] = useState("");
 
   useEffect(() => {
     const measure = () =>
-      setGeometry(coverGeometry(frame, { width: window.innerWidth, height: window.innerHeight }));
+      setGeometry(fitGeometry(frame, { width: window.innerWidth, height: window.innerHeight }));
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
   }, [frame]);

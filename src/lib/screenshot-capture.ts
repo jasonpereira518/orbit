@@ -221,28 +221,43 @@ export type CropRect = { x: number; y: number; w: number; h: number };
 
 export type Viewport = { width: number; height: number };
 /** Where the frozen still is painted, in viewport CSS pixels. */
-export type CoverGeometry = { scale: number; left: number; top: number };
+export type FitGeometry = { scale: number; left: number; top: number };
 
 /**
- * Place a captured frame so it COVERS the window, centred.
+ * Place a captured frame so the whole of it is on screen, centred.
  *
- * This is what makes the crop overlay track the pointer. A shared tab is captured at
- * exactly the viewport's aspect ratio (viewport x devicePixelRatio), so `scale` comes out
- * as 1/dpr, `left` and `top` come out zero, and the still lands pixel-for-pixel on top of
- * the page it is a picture of — dragging feels like dragging on the live page.
+ * A shared tab is captured at exactly the viewport's aspect ratio (viewport x
+ * devicePixelRatio), so `scale` comes out as 1/dpr, `left` and `top` come out zero, and
+ * the still lands pixel-for-pixel on top of the page it is a picture of — dragging feels
+ * like dragging on the live page. That case is the common one and is unaffected by
+ * anything below.
  *
- * The first version fitted the frame INSIDE the window with padding and a toolbar
- * allowance and refused to upscale, which shrank the still: you were then dragging across
- * a miniature, and the selection could not agree with the pointer at any window size.
+ * A shared MONITOR is the case this exists for. Its aspect ratio does not match the
+ * window, so there is a real choice: cover the window and crop the still's edges away, or
+ * contain it and letterbox. It covered, which read as being zoomed into the middle of your
+ * own screenshot with the edges unreachable. It contains now — see the note in the body.
+ *
+ * An even earlier version contained it but ALSO padded it and refused to upscale, which
+ * shrank the still to a miniature the pointer could not agree with. Containing is not that:
+ * one axis still meets the window exactly, and the scale is honest at every window size.
  *
  * Pure, and takes the viewport explicitly rather than reading `window`, so the mapping is
  * checkable without a browser — see `scripts/smoke-feedback-image.ts`.
  */
-export function coverGeometry(frame: Viewport, viewport: Viewport): CoverGeometry {
-  // `max` is what covers rather than contains. Upscaling is wanted here: the goal is
-  // alignment with the screen, and the crop is always taken from the original frame pixels
-  // whatever size it is displayed at.
-  const scale = Math.max(viewport.width / frame.width, viewport.height / frame.height);
+export function fitGeometry(frame: Viewport, viewport: Viewport): FitGeometry {
+  // `min` contains rather than covers: the WHOLE still has to be on screen, because you
+  // cannot drag a box around a part of it you cannot see. This used to be `max`, which
+  // aligned a shared-tab capture pixel-for-pixel with the live page — but a shared monitor
+  // has a different aspect ratio, and covering then cropped its edges off the window with
+  // no way to reach them. Alignment is worth less than reach: by the time this overlay is
+  // up, the still is a photograph, not the page.
+  //
+  // When the aspect ratios DO match — sharing this tab, the common case — `min` and `max`
+  // are the same number, so that path is unchanged and still lands at true scale.
+  //
+  // The crop is always taken from the original frame pixels, whatever size it is shown at,
+  // so containing costs no resolution.
+  const scale = Math.min(viewport.width / frame.width, viewport.height / frame.height);
   return {
     scale,
     left: (viewport.width - frame.width * scale) / 2,
@@ -262,7 +277,7 @@ function clamp(value: number, min: number, max: number) {
  */
 export function selectionToCrop(
   selection: { left: number; top: number; width: number; height: number },
-  geometry: CoverGeometry,
+  geometry: FitGeometry,
   frame: Viewport
 ): CropRect {
   const { scale, left, top } = geometry;

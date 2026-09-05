@@ -129,6 +129,13 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
    * with the state machine the way a second source of truth normally would.
    */
   const [sentBeat, setSentBeat] = useState(false);
+  /**
+   * The same flag, for `clearDraft` to read.
+   *
+   * `clearDraft` is a `useCallback([])` and would close over `sentBeat` as it was on mount.
+   * Same stale-closure reason as `shotsRef` and `phaseRef`.
+   */
+  const sentBeatRef = useRef(false);
   // Lazy initialiser rather than an effect: this component is only ever mounted client-side
   // (`ssr: false`), so `window` is there on the first render and there is no flash of a
   // wrongly-hidden button.
@@ -160,6 +167,15 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
 
   /** The collapse has finished. Nothing is on screen, so this is where state is dropped. */
   const clearDraft = useCallback(() => {
+    // The thank-you lands here rather than at the moment the server answers, so it appears
+    // as the window finishes leaving instead of underneath a window that is still on
+    // screen. The button's check is the acknowledgement while the panel is still up; this
+    // is what remains once it has gone, and it is also how the success reaches a screen
+    // reader, through sonner's live region.
+    if (sentBeatRef.current) {
+      sentBeatRef.current = false;
+      toast.success("Thanks — that's on its way.");
+    }
     for (const shot of shotsRef.current) URL.revokeObjectURL(shot.previewUrl);
     setSentBeat(false);
     setShots([]);
@@ -227,6 +243,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
    */
   const finish = useCallback(() => {
     if (phaseRef.current !== "composing") return;
+    sentBeatRef.current = true;
     setSentBeat(true);
     setPhase("sent");
   }, []);

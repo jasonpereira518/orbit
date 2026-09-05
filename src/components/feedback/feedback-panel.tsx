@@ -277,7 +277,8 @@ export function FeedbackPanel({
         toast.error(result.message);
         return;
       }
-      toast.success("Thanks — that's on its way.");
+      // No toast here. The thank-you is raised by the widget once the window has finished
+      // collapsing, so the two do not talk over each other — see `clearDraft`.
       onSent();
     } catch {
       toast.error("Couldn't send that. Try again in a moment.");

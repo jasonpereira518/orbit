@@ -23,7 +23,7 @@ import {
 } from "../src/lib/feedback-submission";
 import { clampPanelOffset } from "../src/lib/feedback-report";
 import { panelOriginFor } from "../src/lib/floating-panel";
-import { coverGeometry, selectionToCrop } from "../src/lib/screenshot-capture";
+import { fitGeometry, selectionToCrop } from "../src/lib/screenshot-capture";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -124,17 +124,18 @@ function main() {
 
   console.log("");
 
-  // The crop overlay's geometry. This is where the alignment bug lived: the still used to
-  // be fitted INSIDE the window with padding, so it was drawn smaller than the screen and
-  // the pointer never sat on the pixel it appeared to be selecting.
+  // The crop overlay's geometry. Two bugs have lived here: the still was once fitted with
+  // padding so it was drawn smaller than the screen and the pointer never sat on the pixel
+  // it appeared to be selecting, and it was later made to COVER the window, which cropped
+  // the edges off a shared monitor with no way to reach them.
   const viewport = { width: 1280, height: 860 };
   const tabFrame = { width: 2560, height: 1720 }; // a shared tab: viewport x dpr 2
 
-  const tab = coverGeometry(tabFrame, viewport);
+  const tab = fitGeometry(tabFrame, viewport);
   check("a shared tab is placed at the window's origin", tab.left === 0 && tab.top === 0);
   check("...at exactly 1/dpr", tab.scale === 0.5, String(tab.scale));
   check(
-    "...so the still covers the viewport exactly",
+    "...so the still fills the viewport exactly, with no letterbox",
     tabFrame.width * tab.scale === viewport.width &&
       tabFrame.height * tab.scale === viewport.height
   );
@@ -170,11 +171,15 @@ function main() {
     { width: 3000, height: 900 },
     { width: 400, height: 1200 },
   ]) {
-    const g = coverGeometry(tabFrame, vp);
-    const covers =
-      tabFrame.width * g.scale >= vp.width - 0.001 &&
-      tabFrame.height * g.scale >= vp.height - 0.001;
-    check(`the still covers a ${vp.width}x${vp.height} window`, covers);
+    const g = fitGeometry(tabFrame, vp);
+    // Contained: never larger than the window on either axis, and touching it on one.
+    const within =
+      tabFrame.width * g.scale <= vp.width + 0.001 &&
+      tabFrame.height * g.scale <= vp.height + 0.001;
+    const touches =
+      Math.abs(tabFrame.width * g.scale - vp.width) < 0.001 ||
+      Math.abs(tabFrame.height * g.scale - vp.height) < 0.001;
+    check(`the still fits inside a ${vp.width}x${vp.height} window`, within && touches);
     const centre = selectionToCrop(
       { left: vp.width / 2, top: vp.height / 2, width: 4, height: 4 },
       g,
@@ -188,11 +193,35 @@ function main() {
     );
   }
 
-  // A whole-desktop share has a different aspect ratio: it overflows on one axis and is
-  // centred, rather than being squashed to fit.
-  const desktop = coverGeometry({ width: 3840, height: 2160 }, viewport);
-  check("a desktop share overflows horizontally", desktop.left < 0);
-  check("...and is centred, not distorted", Math.abs(desktop.top) < 0.001);
+  // A whole-desktop share has a different aspect ratio, and this is the case the whole
+  // cover-vs-contain choice is about: every pixel of it has to be reachable by the pointer.
+  const desktopFrame = { width: 3840, height: 2160 };
+  const desktop = fitGeometry(desktopFrame, viewport);
+  check(
+    "a desktop share is fully on screen, not cropped",
+    desktop.left >= -0.001 &&
+      desktop.top >= -0.001 &&
+      desktopFrame.width * desktop.scale <= viewport.width + 0.001 &&
+      desktopFrame.height * desktop.scale <= viewport.height + 0.001
+  );
+  check("...letterboxed on the short axis, not distorted", desktop.top > 1 && desktop.left < 0.001);
+  // The far corner is the pixel that used to be unreachable.
+  const desktopCorner = selectionToCrop(
+    {
+      left: desktop.left + desktopFrame.width * desktop.scale - 4,
+      top: desktop.top + desktopFrame.height * desktop.scale - 4,
+      width: 4,
+      height: 4,
+    },
+    desktop,
+    desktopFrame
+  );
+  check(
+    "...and its bottom-right corner is selectable",
+    desktopCorner.x + desktopCorner.w === desktopFrame.width &&
+      desktopCorner.y + desktopCorner.h === desktopFrame.height,
+    `${desktopCorner.x + desktopCorner.w}x${desktopCorner.y + desktopCorner.h}`
+  );
 
   // Pointer capture lets a drag leave the window entirely.
   const outside = selectionToCrop(
