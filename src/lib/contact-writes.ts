@@ -129,6 +129,13 @@ export type LogInteractionInput = {
   parseDateFromNotes?: boolean;
   externalId?: string;
   noteBatchId?: string;
+  /**
+   * Who sent it, for `linkedin_message` rows. Orbit only ever logs a message the user just
+   * sent, so this is `"out"` in practice — but it has to be set explicitly, because a NULL
+   * here reads as "imported before direction existed" and drags the contact onto the legacy
+   * volume fallback in `src/lib/constellation-eligibility.ts`.
+   */
+  direction?: "in" | "out" | null;
 };
 
 /** Thrown when a write targets a contact the user does not own (or that no longer exists). */
@@ -832,6 +839,7 @@ export async function logInteractionForUser(
       sameDayOrder: 0,
       externalId: input.externalId,
       noteBatchId: input.noteBatchId,
+      direction: input.direction ?? null,
     })
     .returning();
 

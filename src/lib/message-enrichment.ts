@@ -103,12 +103,22 @@ export async function enrichContactsFromMessages(
     }
 
     const chronological = [...msgs].reverse();
+    // Speaker labels matter more than they look: unlabelled, the model cannot tell "I asked
+    // you for coffee" from "you asked me", which is the difference between an open loop the
+    // user owes and one they are owed. Rows imported before `interactions.direction` existed
+    // have no sender, and are left unlabelled rather than guessed at.
     const transcript = chronological
       .map((m) => {
         const when = m.interactionDate
           ? new Date(m.interactionDate).toISOString().slice(0, 10)
           : "?";
-        return `[${when}] ${m.rawNotes || m.aiSummary || ""}`;
+        const who =
+          m.direction === "out"
+            ? "You: "
+            : m.direction === "in"
+              ? `${contact.fullName}: `
+              : "";
+        return `[${when}] ${who}${m.rawNotes || m.aiSummary || ""}`;
       })
       .join("\n")
       .slice(0, 24_000);

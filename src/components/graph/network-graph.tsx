@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
 } from "react";
 import {
@@ -26,9 +27,11 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
+  getFullGraphData,
   getGraphData,
   refreshConstellationBatch,
 } from "@/actions/graph";
+import { toast } from "sonner";
 import { searchDashboardContacts } from "@/actions/search";
 import {
   Select,
@@ -62,6 +65,25 @@ import {
   type GraphNodeData,
   type NebulaData,
 } from "@/lib/graph-layout";
+import {
+  mergePositionsForStorage,
+  prunePositionsForRender,
+} from "@/lib/graph-positions";
+import {
+  getIntroRun,
+  markGraphChunkLoaded,
+  markGraphViewportReady,
+  subscribe as subscribeIntro,
+} from "@/lib/graph/intro-signal";
+import {
+  STAGE_CHART_LAYER,
+  STAGE_GROUND,
+} from "@/lib/graph/stage-layers";
+import {
+  publishGraphScope,
+  registerGraphScopeController,
+} from "@/lib/graph/scope-signal";
+import { CONSTELLATION_STAR_PX } from "@/lib/graph/starfield-scale";
 import { clusterBrandColor } from "@/lib/school-color";
 import { CAMERA_MS } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
@@ -86,7 +108,16 @@ import {
 } from "lucide-react";
 
 type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
-type PositionMap = Record<string, { x: number; y: number }>;
+/**
+ * Module scope, deliberately — not an effect.
+ *
+ * This file is a lazily-imported chunk, and whether it has EVALUATED is the only honest answer
+ * to "did this document already pay for the graph bundle". The intro asks that question before
+ * the chunk request can even start, to decide whether the coming wait is worth covering.
+ */
+markGraphChunkLoaded();
+
+type PositionMap = import("@/lib/graph-positions").PositionMap;
 
 /**
  * Half-extents from the sun at (0, 0). Zoom is derived from how far
@@ -576,7 +607,14 @@ function Starfield() {
         id: i,
         left: `${(((i * 47 + 13) * 7) % 1000) / 10}%`,
         top: `${(((i * 83 + 29) * 11) % 1000) / 10}%`,
-        size: i % 17 === 0 ? 2.2 : i % 5 === 0 ? 1.4 : 0.8,
+        // Named rather than inline: the warp intro sizes its own field off these, and the two
+        // are drawn over the same box during the hand-off. See `starfield-scale.ts`.
+        size:
+          i % 17 === 0
+            ? CONSTELLATION_STAR_PX.brightest
+            : i % 5 === 0
+              ? CONSTELLATION_STAR_PX.bright
+              : CONSTELLATION_STAR_PX.common,
         delay: `${(i % 11) * 0.35}s`,
         dur: `${2.8 + (i % 6) * 0.7}s`,
         opacity: 0.25 + (i % 8) * 0.08,
@@ -665,6 +703,10 @@ function GraphCanvas(props: {
   onFocusCluster: (clusterId: string) => void;
   resetToken: number;
   compact?: boolean;
+  /** Whether this payload is the engaged-only scope (vs. the full network). */
+  constellationFilterOn: boolean;
+  onShowAll: () => void;
+  loadingAll: boolean;
 }) {
   // Keyword is the one filter driven by continuous typing — debounce it so
   // the (potentially expensive) filter/layout rebuild below doesn't run on
@@ -678,6 +720,9 @@ function GraphCanvas(props: {
   const filteredContacts = useMemo(() => {
     const kw = debouncedKeyword.trim().toLowerCase();
     return props.data.contacts.filter((c) => {
+      // No `substantive` check here: the server already shipped only what this scope draws,
+      // so filtering again would be redundant — and would silently hide pinned-in contacts
+      // in the "show all" view.
       if (props.company !== "all" && c.company !== props.company) return false;
       if (props.school !== "all" && (c.school || "") !== props.school) {
         return false;
@@ -754,6 +799,9 @@ function GraphCanvasInner({
   layout,
   compact,
   data,
+  constellationFilterOn,
+  onShowAll,
+  loadingAll,
 }: {
   company: string;
   school: string;
@@ -777,6 +825,9 @@ function GraphCanvasInner({
   layout: ReturnType<typeof buildHybridGraphLayout>;
   compact?: boolean;
   data: GraphPayload;
+  constellationFilterOn: boolean;
+  onShowAll: () => void;
+  loadingAll: boolean;
 }) {
   const router = useRouter();
   const { fitView, getNodes, getViewport, setViewport } = useReactFlow();
@@ -810,6 +861,18 @@ function GraphCanvasInner({
     const t = window.setTimeout(() => setViewportReady(true), 1500);
     return () => window.clearTimeout(t);
   }, []);
+
+  /**
+   * Tell the intro the chart is genuinely visible, so it can begin its collapse.
+   *
+   * One effect covers both sources of `viewportReady` — the fitter settling and the 1500ms
+   * safety timer — since neither does anything but set this flag. It re-fires on every remount
+   * of this component, which is harmless: a ready signal can only END an intro run, never start
+   * one, so the per-batch remounts of a refresh cannot replay the animation.
+   */
+  useEffect(() => {
+    if (viewportReady) markGraphViewportReady();
+  }, [viewportReady]);
 
   const focusCompany = useMemo(() => {
     if (focusCluster) {
@@ -1259,27 +1322,19 @@ function GraphCanvasInner({
       }
       if (node.id === "me" || node.type === "user") {
         const d = node.data as GraphNodeData;
-        const scoreCounts: Record<number, number> = {
-          1: 0,
-          2: 0,
-          3: 0,
-          4: 0,
-          5: 0,
-        };
-        for (const c of data.contacts) {
-          const s = Math.min(
-            5,
-            Math.max(1, c.orbitScore ?? c.relationshipScore ?? 2)
-          );
-          scoreCounts[s] = (scoreCounts[s] || 0) + 1;
-        }
         onSelect({
           type: "user",
           data: d,
           summary: {
             total: data.summary.total,
             companyCount: data.summary.companyCount,
-            scoreCounts,
+            // The server's counts, computed over the whole network — not a client recompute
+            // over `data.contacts`. That recompute sat directly beneath `total`, which has
+            // always been the full network, so the two disagreed whenever the payload was a
+            // subset: the dashboard preview caps at 150, and the constellation filter narrows
+            // it further. A ring histogram summing to 150 under a headline of 1,240 reads as
+            // a bug in the numbers rather than as two different questions.
+            scoreCounts: data.summary.scoreCounts,
             strongTies: data.summary.strongTies,
             dormantCount: data.summary.dormantCount,
             overdueCount: data.summary.overdueCount,
@@ -1425,21 +1480,73 @@ function GraphCanvasInner({
         />
       </ReactFlow>
 
+      {/*
+        Three different empty skies, which used to be one. "Add contacts" is right only when
+        there genuinely are none — said to someone whose 800 contacts were filtered out it is
+        both wrong and unactionable, and it points at the one button that will not help.
+      */}
       {isEmpty && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="pointer-events-auto max-w-sm rounded-2xl border border-white/10 bg-[#080b12]/90 px-6 py-5 text-center shadow-xl backdrop-blur-md">
-            <p className="font-[family-name:var(--font-display)] text-lg text-white">
-              Your sky is empty
-            </p>
-            <p className="mt-1 text-sm text-white/55">
-              Add contacts and they will appear as stars in your constellation.
-            </p>
-            <Link
-              href="/contacts/new"
-              className="mt-4 inline-flex h-8 items-center rounded-lg bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/15"
-            >
-              Add a contact
-            </Link>
+            {data.summary.total === 0 ? (
+              <>
+                <p className="font-[family-name:var(--font-display)] text-lg text-white">
+                  Your sky is empty
+                </p>
+                <p className="mt-1 text-sm text-white/55">
+                  Add contacts and they will appear as stars in your constellation.
+                </p>
+                <Link
+                  href="/contacts/new"
+                  className="mt-4 inline-flex h-8 items-center rounded-lg bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/15"
+                >
+                  Add a contact
+                </Link>
+              </>
+            ) : constellationFilterOn && data.contacts.length === 0 ? (
+              <>
+                <p className="font-[family-name:var(--font-display)] text-lg text-white">
+                  Nobody here yet
+                </p>
+                <p className="mt-1 text-sm text-white/55">
+                  Your chart shows the people you have notes on, met, or really talked with.
+                  Write a note about someone and they take their place in the sky.
+                </p>
+                <div className="mt-4 flex items-center justify-center gap-2">
+                  <Link
+                    href="/capture"
+                    className="inline-flex h-8 items-center rounded-lg bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/15"
+                  >
+                    Add notes
+                  </Link>
+                  <button
+                    type="button"
+                    disabled={loadingAll}
+                    onClick={onShowAll}
+                    aria-busy={loadingAll}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm text-white/70 hover:text-white disabled:opacity-70"
+                  >
+                    {loadingAll && (
+                      <Loader2 className="size-3 animate-spin" aria-hidden />
+                    )}
+                    {loadingAll
+                      ? "Loading…"
+                      : `Show all ${data.summary.total.toLocaleString()}`}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="font-[family-name:var(--font-display)] text-lg text-white">
+                  No stars match
+                </p>
+                <p className="mt-1 text-sm text-white/55">
+                  {constellationFilterOn
+                    ? "Nobody fits these filters and the people you know. Widen the filters, or show everyone."
+                    : "Nobody fits these filters. Try widening them."}
+                </p>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -1447,30 +1554,46 @@ function GraphCanvasInner({
   );
 }
 
+/**
+ * Is a warp intro on screen right now?
+ *
+ * Module scope so the snapshot function's identity is stable — `useSyncExternalStore` re-reads
+ * on every render, and a fresh closure each time would subscribe and unsubscribe forever. It
+ * returns a primitive, so an intro state change that does not cross this boundary (the collapse
+ * beginning, say) re-renders nothing.
+ */
+function introInFlight() {
+  const status = getIntroRun().status;
+  return status === "running" || status === "arriving";
+}
+
 const GRAPH_REFETCH_MIN_MS = 60_000;
 
+/**
+ * No write-back here, deliberately.
+ *
+ * This used to persist the pruned map whenever its size differed from what was stored, to
+ * garbage-collect positions for deleted contacts. But a payload is narrower than the network
+ * for several reasons that have nothing to do with deletion — the dashboard preview caps at
+ * `GRAPH_PREVIEW_CONTACT_CAP`, and the constellation filter narrows it further — and this
+ * runs on every refetch, which fires on window focus. So the cleanup quietly deleted the
+ * saved position of every contact the current view left out. A few hundred stale `{x,y}`
+ * entries cost nothing; a user's lost layout is not recoverable.
+ */
 function applyGraphPayload(
   payload: GraphPayload,
   setData: (payload: GraphPayload) => void,
   setPositionOverrides: (next: PositionMap) => void
 ) {
   setData(payload);
-  const cleaned = positionsFromPayload(payload);
-  setPositionOverrides(cleaned);
-  const loaded = loadPositions(payload.userId);
-  if (Object.keys(cleaned).length !== Object.keys(loaded).length) {
-    savePositions(payload.userId, cleaned);
-  }
+  setPositionOverrides(positionsFromPayload(payload));
 }
 
 function positionsFromPayload(payload: GraphPayload): PositionMap {
-  const ids = new Set(payload.contacts.map((c) => c.id));
-  const loaded = loadPositions(payload.userId);
-  const cleaned: PositionMap = {};
-  for (const [id, pos] of Object.entries(loaded)) {
-    if (ids.has(id)) cleaned[id] = pos;
-  }
-  return cleaned;
+  return prunePositionsForRender(
+    loadPositions(payload.userId),
+    payload.contacts.map((c) => c.id)
+  );
 }
 
 export function NetworkGraph({
@@ -1486,6 +1609,33 @@ export function NetworkGraph({
   const [keyword, setKeyword] = useState("");
   const [minScore, setMinScore] = useState("1");
   const [search, setSearch] = useState("");
+  /**
+   * The viewer's own override of the constellation filter, for this session.
+   *
+   * A chart that removes most of somebody's network without saying so is indistinguishable
+   * from data loss, so the control that announces it also has to be able to undo it.
+   * Deliberately not persisted: engaged-only is the product's default and every visit starts
+   * there.
+   *
+   * The wider set is FETCHED, not merely unhidden — the default payload does not carry the
+   * people it isn't drawing — and it is DROPPED again the moment the view leaves it, so the
+   * engaged-only default costs engaged-only memory. See `setScope`.
+   */
+  const [showAllStars, setShowAllStars] = useState(false);
+  const [loadingAll, setLoadingAll] = useState(false);
+  // `loadData` is memoised with no deps and must not resubscribe on every toggle, so it reads
+  // the current scope through a ref rather than closing over the state.
+  const showAllStarsRef = useRef(false);
+  /**
+   * The payload for each scope. `engaged` is kept — it is the default view, and the one a
+   * refresh writes back into. `all` is only ever populated while it is the view on screen;
+   * `setScope` nulls it on the way out so the full network is not something this component
+   * carries around between visits to it.
+   */
+  const scopeCache = useRef<{
+    engaged: GraphPayload | null;
+    all: GraphPayload | null;
+  }>({ engaged: initialData, all: null });
   const [searchHitIds, setSearchHitIds] = useState<Set<string>>(new Set());
   const [focusCluster, setFocusCluster] = useState<string | null>(null);
   const [zoomToken, setZoomToken] = useState(0);
@@ -1510,6 +1660,21 @@ export function NetworkGraph({
   });
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [cssFullscreen, setCssFullscreen] = useState(false);
+  /**
+   * Whether the warp intro is on screen behind this chart.
+   *
+   * A boolean off the same module-scope bus the intro runs on, so this re-renders exactly
+   * twice a visit — once when a run starts and once when it ends — and never at all on the
+   * fast path, where no run is ever started. `useSyncExternalStore` rather than an effect
+   * because the answer is already known at first render: an intro begun before the chunk
+   * landed is in flight by the time this mounts, and a frame of opaque ground over it would
+   * be the flash this whole arrangement exists to avoid.
+   */
+  const introBehind = useSyncExternalStore(
+    subscribeIntro,
+    introInFlight,
+    introInFlight
+  );
   // Set from an effect rather than during render: `Date.now()` in the render body is an
   // impurity the compiler-era lint (rightly) flags, and "when did we last fetch" is a fact
   // about the commit, not the render.
@@ -1525,6 +1690,7 @@ export function NetworkGraph({
   const refreshJobIdRef = useRef<string | null>(null);
 
   const fullscreenActive = isFullscreen || cssFullscreen;
+  const showIntroBehind = introBehind && !compact && !fullscreenActive;
 
   // ⌘/Ctrl+F → constellation search (instead of browser find)
   useEffect(() => {
@@ -1595,10 +1761,93 @@ export function NetworkGraph({
     getGraphData()
       .then((payload) => {
         lastFetchAt.current = Date.now();
-        applyGraphPayload(payload, setData, setPositionOverrides);
+        scopeCache.current.engaged = payload;
+        // The wider set is now stale too, but re-fetching it here would defeat the point of
+        // not loading it — drop it and let the next "show all" pay for a fresh one.
+        scopeCache.current.all = null;
+        if (!showAllStarsRef.current) {
+          applyGraphPayload(payload, setData, setPositionOverrides);
+        }
       })
       .catch(console.error);
   }, []);
+
+  /**
+   * Switch between the people you know and everyone.
+   *
+   * The wider payload is fetched on demand and cached for the session; going back is free.
+   * A failure leaves the toggle where it was rather than showing a half-empty chart.
+   */
+  const setScope = useCallback((wantAll: boolean) => {
+    if (!wantAll) {
+      // Drop the full network on the way out, rather than keeping it for a cheap trip back.
+      //
+      // That trip back was the point of caching it, and it is being given up deliberately: the
+      // whole feature exists so a chart of everyone is not something the app is carrying around,
+      // and a cache that outlives the view is exactly that — the payload is the largest thing
+      // this component ever holds, and holding it means every render, refresh and layout pass
+      // is working beside a copy of a network nobody is looking at. Nulling it here is what
+      // makes the engaged-only default cost engaged-only memory. Going back to everyone is a
+      // fresh fetch, which is the price and a fair one at the rate anybody toggles this.
+      scopeCache.current.all = null;
+      const engaged = scopeCache.current.engaged;
+      if (!engaged) return;
+      showAllStarsRef.current = false;
+      setShowAllStars(false);
+      applyGraphPayload(engaged, setData, setPositionOverrides);
+      return;
+    }
+    // Only non-null when this is already the view — asking for the scope you are on is a no-op
+    // rather than a second fetch.
+    const cached = scopeCache.current.all;
+    if (cached) {
+      showAllStarsRef.current = true;
+      setShowAllStars(true);
+      applyGraphPayload(cached, setData, setPositionOverrides);
+      return;
+    }
+    setLoadingAll(true);
+    getFullGraphData()
+      .then((payload) => {
+        scopeCache.current.all = payload;
+        showAllStarsRef.current = true;
+        setShowAllStars(true);
+        applyGraphPayload(payload, setData, setPositionOverrides);
+      })
+      .catch((err) => {
+        console.error(err);
+        toast.error("Could not load the rest of your network.");
+      })
+      .finally(() => setLoadingAll(false));
+  }, []);
+
+  /**
+   * Hand the scope control to the header toggle, which lives outside this tree.
+   *
+   * `NetworkGraph` stays the only thing that fetches or caches — the button just asks. The
+   * compact dashboard preview deliberately opts out: it renders this same component with no
+   * header above it, and letting it drive the bus would point the toggle at the wrong chart.
+   */
+  useEffect(() => {
+    if (compact) return;
+    return registerGraphScopeController((next) => setScope(next === "all"));
+  }, [compact, setScope]);
+
+  useEffect(() => {
+    if (compact) return;
+    const filter = data?.summary.constellationFilter;
+    publishGraphScope({
+      // Keyed on `enabled`, not `active`: in the "show all" view `active` is false by
+      // definition, and dropping the control there would strand the viewer with no way back.
+      available: Boolean(filter?.enabled),
+      scope: showAllStars ? "all" : "engaged",
+      loading: loadingAll,
+      // `engaged`, not `shown` — `shown` means "what this payload draws", which in the wider
+      // scope is everyone. The toggle needs the count it would go back to.
+      shown: filter?.engaged ?? 0,
+      total: data?.summary.total ?? 0,
+    });
+  }, [compact, data, showAllStars, loadingAll]);
 
   useEffect(() => {
     if (initialData && !positionsHydrated.current) {
@@ -1759,7 +2008,12 @@ export function NetworkGraph({
   const handlePositionOverridesChange = useCallback(
     (next: PositionMap) => {
       setPositionOverrides(next);
-      if (userId && !compact) savePositions(userId, next);
+      // Merge, don't replace: `next` is the render map, so it only mentions contacts this
+      // view can draw. Writing it straight would drop the saved position of everyone the
+      // current payload left out — one drag would flatten the rest of the network's layout.
+      if (userId && !compact) {
+        savePositions(userId, mergePositionsForStorage(loadPositions(userId), next));
+      }
     },
     [userId, compact]
   );
@@ -1909,6 +2163,11 @@ export function NetworkGraph({
       });
   }, [data]);
 
+  const constellationFilter = data?.summary.constellationFilter;
+  // The payload already contains only what should be drawn, so the client no longer filters
+  // by `substantive` — this stays only so the empty state can explain WHY a sky is empty.
+  const constellationFilterOn = Boolean(constellationFilter?.active);
+
   if (!data) {
     return (
       <div
@@ -1934,7 +2193,13 @@ export function NetworkGraph({
       <div
         ref={stageRef}
         className={cn(
-          "relative overflow-hidden border border-white/10 bg-[#03050a] shadow-[inset_0_0_120px_rgba(0,0,0,0.65)]",
+          "relative overflow-hidden border border-white/10 shadow-[inset_0_0_120px_rgba(0,0,0,0.65)]",
+          // Transparent only while the intro is behind it, and never in the dashboard's
+          // preview or in fullscreen — both are cases where there is nothing behind to show
+          // and a see-through stage would just be the page bleeding into the sky.
+          // `STAGE_CHART_LAYER` also gives the stage a stacking context, so its own toolbars
+          // ride above the intro with it instead of competing against it one by one.
+          showIntroBehind ? `bg-transparent ${STAGE_CHART_LAYER}` : STAGE_GROUND,
           compact
             ? "h-[300px] rounded-2xl"
             : // 19.5rem, not 15rem: below md the app's floating bottom nav is a fixed pill
@@ -2389,6 +2654,9 @@ export function NetworkGraph({
         <ReactFlowProvider>
           <GraphCanvas
             data={data}
+            constellationFilterOn={constellationFilterOn}
+            onShowAll={() => setScope(true)}
+            loadingAll={loadingAll}
             company={company}
             school={school}
             keyword={keyword}

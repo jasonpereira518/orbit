@@ -1,4 +1,7 @@
-import { ConstellationLoading } from "@/components/graph/constellation-loading";
+import {
+  ConstellationLoading,
+  CONSTELLATION_STAGE_HEIGHT,
+} from "@/components/graph/constellation-loading";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -324,7 +327,7 @@ export function GraphPageSkeleton() {
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-4 w-80 max-w-full" />
       </div>
-      <ConstellationLoading className="h-[calc(100dvh-15rem)] md:h-[calc(100dvh-10.5rem)]" />
+      <ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />
     </div>
   );
 }

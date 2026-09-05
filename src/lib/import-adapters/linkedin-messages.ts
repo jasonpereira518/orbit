@@ -142,6 +142,11 @@ export const linkedinMessagesAdapter: ImportAdapter<LinkedInMessageThreadRowPayl
           rawNotes: m.body,
           aiSummary: m.body.slice(0, 240),
           topics: [],
+          // `?? null`, never a fallback value: a job queued before `direction` existed
+          // resumes here with the key absent (payloads are persisted JSONB), and writing a
+          // guess would permanently mislabel those rows at a deploy boundary. Null reads as
+          // "unknown", which is what it is.
+          direction: m.direction ?? null,
         };
       });
   },

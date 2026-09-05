@@ -672,6 +672,10 @@ export async function completeFollowUpWithTouch(
     contactId,
     interactionType: channel,
     source: "follow_up",
+    // Orbit only ever logs a follow-up the user sent, so this is always outbound. Set
+    // explicitly rather than left NULL: NULL means "sender unknown" and would push the
+    // contact onto the legacy volume fallback in constellation eligibility.
+    direction: channel === "linkedin_message" ? "out" : undefined,
     rawNotes: options?.notes,
     aiSummary:
       channel === "email"

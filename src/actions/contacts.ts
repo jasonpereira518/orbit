@@ -779,6 +779,41 @@ export async function deleteContact(id: string) {
   revalidatePath("/graph");
 }
 
+/**
+ * Force a contact onto the constellation, off it, or back to the automatic rule.
+ *
+ * A direct update rather than `updateContactForUser`, which is the shared write path for
+ * everything else on a contact. That path sets `embeddingStaleAt` unconditionally and calls
+ * `scoreAfterWrite`, both correct for content changes and both wrong here: a pin is not part
+ * of the embedded text (see `buildContactEmbeddingContent`), so routing through it would
+ * enqueue a paid re-embed and dirty the closeness cohort for a value neither one reads.
+ *
+ * `updatedAt` is deliberately left alone for the same reason. The dashboard's contact scan
+ * orders by `desc(updated_at)`, so bumping it would shove whoever you pinned to the top of
+ * "recently updated" — a visible, confusing consequence of an invisible setting.
+ *
+ * Ownership lives in the WHERE clause, the house pattern: a row belonging to someone else
+ * simply matches nothing.
+ */
+export async function setConstellationPin(
+  contactId: string,
+  pin: "in" | "out" | null
+) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  await db
+    .update(contacts)
+    .set({ constellationPin: pin })
+    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+
+  revalidatePath("/");
+  revalidatePath("/contacts");
+  revalidatePath(`/contacts/${contactId}`);
+  revalidatePath("/graph");
+  revalidatePath("/dashboard");
+  return { pin };
+}
+
 export async function logInteraction(input: LogInteractionInput) {
   return logInteractionForUser(await requireUserId(), input);
 }
