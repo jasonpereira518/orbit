@@ -83,6 +83,10 @@ export default async function AdminProductPage() {
           />
         </AdminPanel>
 
+        <AdminPanel title="Widgets">
+          <SurfaceToggles surfaces={surfacesOfKind("widget")} hidden={hiddenKeys} />
+        </AdminPanel>
+
         <AdminPanel title="Settings sections">
           <SurfaceToggles
             surfaces={surfacesOfKind("settings")}

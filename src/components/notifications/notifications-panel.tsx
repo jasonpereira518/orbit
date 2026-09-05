@@ -5,7 +5,6 @@ import type { AppPulse } from "@/lib/app-pulse";
 import Link from "next/link";
 import {
   useEffect,
-  useRef,
   useState,
   useTransition,
 } from "react";
@@ -35,6 +34,7 @@ import {
   discardSuggestedReminder,
 } from "@/actions/suggested-reminders";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ExpandableText } from "@/components/ui/expandable-text";
 import {
   Sheet,
@@ -52,36 +52,10 @@ import {
   useBackgroundJobs,
   type BackgroundJob,
 } from "@/lib/background-jobs";
+import { PANEL_ORIGIN_FALLBACK, originFromTrigger } from "@/lib/floating-panel";
 
 type PanelData = AppPulse["panel"];
 type PanelItem = PanelData["items"][number];
-
-/**
- * The floating window's own geometry, mirrored from the `data-[side=floating]`
- * utilities in `src/components/ui/sheet.tsx` (`inset-y-4 right-4`, `sm:max-w-md`).
- *
- * Duplicated here because the panel is portalled and positioned by CSS, so its box does
- * not exist to measure at the moment the bell is clicked — and the transform-origin has
- * to be correct on the very first painted frame or the window visibly jumps as it opens.
- * Keep the two in step.
- */
-const PANEL_INSET_PX = 16;
-const PANEL_MAX_W_PX = 384; // sm:max-w-sm = 24rem
-
-/** Where the window should appear to grow from: the middle of the bell that was clicked. */
-function originFromButton(button: HTMLElement | null): string {
-  if (!button) return "top right";
-  const rect = button.getBoundingClientRect();
-  if (rect.width === 0) return "top right";
-  const panelWidth = Math.min(
-    window.innerWidth - PANEL_INSET_PX * 2,
-    PANEL_MAX_W_PX
-  );
-  const panelLeft = window.innerWidth - PANEL_INSET_PX - panelWidth;
-  return `${Math.round(rect.left + rect.width / 2 - panelLeft)}px ${Math.round(
-    rect.top + rect.height / 2 - PANEL_INSET_PX
-  )}px`;
-}
 
 /* -------------------------------------------------------------------------- */
 /* Shared panel state                                                         */
@@ -93,13 +67,21 @@ function originFromButton(button: HTMLElement | null): string {
 // (`force` after a mutation) so the action handlers below read the same.
 const refreshPanel = (force = false) => refreshPulse(force);
 
-export function NotificationsPanelButton() {
+export function NotificationsPanelButton({
+  tooltip = false,
+}: {
+  /**
+   * Desktop rail only, mirroring `FeedbackTrigger`. Touch has no hover, so a tooltip on
+   * the mobile header copy would be dead weight — the `aria-label` is the accessible name
+   * either way.
+   */
+  tooltip?: boolean;
+} = {}) {
   const [open, setOpen] = useState(false);
-  const buttonRef = useRef<HTMLButtonElement>(null);
   // Captured on click rather than read during render: there are two bells mounted (mobile
   // header and desktop fixed, hidden from each other by CSS), and this resolves to
   // whichever one the user actually pressed.
-  const [origin, setOrigin] = useState("top right");
+  const [origin, setOrigin] = useState(PANEL_ORIGIN_FALLBACK);
   const { pulse, loading } = useAppPulse();
   const data = pulse?.panel ?? null;
   const [pending, start] = useTransition();
@@ -139,10 +121,9 @@ export function NotificationsPanelButton() {
     });
   }
 
-  return (
-    <>
-      <Button
-        type="button"
+  const button = (
+    <Button
+      type="button"
         variant="outline"
         size="icon"
         className={cn(
@@ -165,9 +146,10 @@ export function NotificationsPanelButton() {
         ]
           .filter(Boolean)
           .join(", ")}
-        ref={buttonRef}
-        onClick={() => {
-          setOrigin(originFromButton(buttonRef.current));
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={(e) => {
+          setOrigin(originFromTrigger(e.currentTarget));
           setOpen(true);
         }}
       >
@@ -185,7 +167,19 @@ export function NotificationsPanelButton() {
             className="absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full bg-destructive ring-2 ring-background"
           />
         )}
-      </Button>
+    </Button>
+  );
+
+  return (
+    <>
+      {tooltip ? (
+        <Tooltip>
+          <TooltipTrigger render={button} />
+          <TooltipContent side="left">Notifications</TooltipContent>
+        </Tooltip>
+      ) : (
+        button
+      )}
 
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent
@@ -203,7 +197,7 @@ export function NotificationsPanelButton() {
             </SheetDescription>
           </SheetHeader>
 
-          <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
             {data && <ExtensionPromo canUseExtension={data.canUseExtension} />}
 
             {loading && !data ? (
@@ -332,13 +326,27 @@ export function NotificationsPanelButton() {
               </div>
             )}
 
-            {/* Outside the ternary above, so an account whose only news is an alert still
-                sees it — that branch renders the "nothing due" empty state instead of the
-                section list. */}
-            <AccountAlerts alerts={alerts} onNavigate={() => setOpen(false)} />
           </div>
 
-          <div className="flex items-center justify-between gap-3 border-t border-border/60 p-4">
+          {/* Pinned to the foot of the window rather than sitting in the list above it.
+              An alert is a standing statement about the account — an expired card, a failed
+              import — and scrolling one out of sight is exactly how you stop acting on it.
+              The list keeps its own scrollbar; `min-h-0` on it is what lets it give up the
+              room this needs instead of overflowing the window.
+
+              The cap is a backstop for the expanded state only: collapsed, this is at most
+              `ALERTS_COLLAPSED_VISIBLE` rows and nowhere near 45% of the window, so the
+              nested scroller the alerts docblock warns about never actually appears.
+
+              It renders nothing when there are no live alerts, so the border comes from the
+              component rather than from a wrapper that would otherwise draw a stray line. */}
+          <AccountAlerts
+            alerts={alerts}
+            onNavigate={() => setOpen(false)}
+            className="max-h-[45%] shrink-0 overflow-y-auto border-t border-border/60 px-4 py-3"
+          />
+
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border/60 p-4">
             <Link
               href="/dashboard"
               onClick={() => setOpen(false)}

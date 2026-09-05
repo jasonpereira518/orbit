@@ -50,6 +50,12 @@ export const ERROR_SOURCES = {
    * (directive, blocked URI) so one noisy extension is one row an hour, not one a view.
    */
   cspReport: "csp.report",
+  /**
+   * A feedback submission that could not be stored — a Blob upload the configured store
+   * rejected, or a failed insert. Worth a row of its own: the person is told to try again,
+   * and without this there is no trace that someone tried to say something and could not.
+   */
+  feedbackSubmit: "feedback.submit",
 } as const;
 
 export type ErrorEventInput = {

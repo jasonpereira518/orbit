@@ -1,3 +1,4 @@
+import { del } from "@vercel/blob";
 import { eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
@@ -13,6 +14,7 @@ import {
   errorEvents,
   extensionUsage,
   feedback,
+  feedbackScreenshots,
   gateEvents,
   gmailConnections,
   imports,
@@ -177,6 +179,26 @@ export async function purgeUserData(
   // most valuable feedback Orbit gets and they are exactly the ones that leave with the
   // account. That trade is the right way round; keeping them would mean a user who asked
   // to be deleted still has their opinion on file.
+  //
+  // Screenshots go first, and by hand rather than through the `ON DELETE CASCADE`, because
+  // the blob objects behind them have no foreign key and nothing else in Orbit will ever
+  // come back for them. Best-effort on the blob side: a Blob outage must not be able to
+  // block an erasure request, and the row going is the part that is the contract.
+  const shots = await db
+    .select({ blobUrl: feedbackScreenshots.blobUrl })
+    .from(feedbackScreenshots)
+    .where(eq(feedbackScreenshots.userId, userId));
+  await db.delete(feedbackScreenshots).where(eq(feedbackScreenshots.userId, userId));
+  for (const shot of shots) {
+    if (!shot.blobUrl) continue;
+    try {
+      await del(shot.blobUrl);
+    } catch {
+      // See above. The row is gone either way; an orphaned object is a cost problem, not a
+      // privacy one, and it is not worth failing a deletion request over.
+    }
+  }
+
   await db.delete(feedback).where(eq(feedback.userId, userId));
   await db.delete(gateEvents).where(eq(gateEvents.userId, userId));
 
