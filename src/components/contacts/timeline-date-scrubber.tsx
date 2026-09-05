@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
 import { CalendarRange } from "lucide-react";
 import {
@@ -20,21 +20,45 @@ export type TimelineScrubPoint = {
 };
 
 /**
- * Past this many months the rail stops trying to draw one dot per month and buckets by year.
- * The rail is 448px at most and a dot plus its label needs roughly 30px, so a five-year history
- * would otherwise overlap itself into an unreadable smear.
+ * Vertical room one node needs: a 10px dot, a 10px label, the gap between them, and enough
+ * space left over that two nodes read as two things rather than one smear.
+ *
+ * The rail used to bucket by year past a hard-coded fourteen months, which was a guess about a
+ * rail 448px tall. Rails are not all 448px tall — this one renders at 176px next to a short
+ * list, where the nodes are already touching at six months. Capacity is now measured.
  */
-const YEAR_BUCKET_THRESHOLD = 14;
+const MIN_LABELLED_SPACING = 34;
 
-function bucket(points: TimelineScrubPoint[]): {
+/** A bare dot needs only itself and a hairline of air. */
+const MIN_DOT_SPACING = 14;
+
+function bucket(
+  points: TimelineScrubPoint[],
+  railHeight: number
+): {
   items: TimelineScrubPoint[];
   byYear: boolean;
+  showLabels: boolean;
 } {
   const months = new Map<string, TimelineScrubPoint>();
   for (const p of points) if (!months.has(p.monthKey)) months.set(p.monthKey, p);
   const unique = [...months.values()];
-  if (unique.length <= YEAR_BUCKET_THRESHOLD) {
-    return { items: unique, byYear: false };
+
+  // Before the first measurement, show everything; the observer corrects on the next pass.
+  if (railHeight <= 0) return { items: unique, byYear: false, showLabels: true };
+
+  const labelled = Math.max(2, Math.floor(railHeight / MIN_LABELLED_SPACING));
+  if (unique.length <= labelled) {
+    return { items: unique, byYear: false, showLabels: true };
+  }
+
+  // The labels are what collide, not the dots — so they go first. Every month stays
+  // reachable, and the footer under the rail already names whichever one is active, so
+  // nothing is actually lost. Bucketing straight to years here would have collapsed a
+  // six-month history to a single "2026" node: an overlap fixed by deleting the control.
+  const dots = Math.max(2, Math.floor(railHeight / MIN_DOT_SPACING));
+  if (unique.length <= dots) {
+    return { items: unique, byYear: false, showLabels: false };
   }
 
   // One entry per year, pointing at that year's first month in list order (the newest, since
@@ -46,11 +70,31 @@ function bucket(points: TimelineScrubPoint[]): {
       years.set(year, { ...p, label: year, shortLabel: year });
     }
   }
-  return { items: [...years.values()], byYear: true };
+  const yearItems = [...years.values()];
+  return {
+    items: yearItems,
+    byYear: true,
+    showLabels: yearItems.length <= labelled,
+  };
 }
 
-function useScrubItems(points: TimelineScrubPoint[]) {
-  return useMemo(() => bucket(points), [points]);
+function useScrubItems(points: TimelineScrubPoint[], railHeight: number) {
+  return useMemo(() => bucket(points, railHeight), [points, railHeight]);
+}
+
+/** The rail's own height, watched — it changes with the list beside it. */
+function useRailHeight(ref: React.RefObject<HTMLElement | null>) {
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      setHeight(entry.contentRect.height);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [ref]);
+  return height;
 }
 
 /**
@@ -69,8 +113,9 @@ export function TimelineDateScrubber({
   onSelectMonth: (monthKey: string, opts?: { instant?: boolean }) => void;
   className?: string;
 }) {
-  const { items, byYear } = useScrubItems(points);
   const navRef = useRef<HTMLElement>(null);
+  const railHeight = useRailHeight(navRef);
+  const { items, byYear, showLabels } = useScrubItems(points, railHeight);
   // Two representations on purpose: the ref is the gesture's source of truth, because a
   // `pointermove` can arrive in the same tick as the `pointerdown` that started it and would
   // read stale state; the state exists only to restyle the active node while dragging.
@@ -223,16 +268,18 @@ export function TimelineDateScrubber({
                     : "border-muted-foreground/50 bg-card group-hover:border-primary group-hover:bg-primary/20"
                 )}
               />
-              <span
-                className={cn(
-                  "text-[10px] leading-none transition-colors",
-                  isActive
-                    ? "font-semibold text-primary"
-                    : "text-muted-foreground group-hover:text-foreground"
-                )}
-              >
-                {p.shortLabel}
-              </span>
+              {showLabels ? (
+                <span
+                  className={cn(
+                    "text-[10px] leading-none transition-colors",
+                    isActive
+                      ? "font-semibold text-primary"
+                      : "text-muted-foreground group-hover:text-foreground"
+                  )}
+                >
+                  {p.shortLabel}
+                </span>
+              ) : null}
             </button>
           );
         })}
@@ -262,7 +309,8 @@ export function TimelineJumpMenu({
   onSelectMonth: (monthKey: string) => void;
   className?: string;
 }) {
-  const { items, byYear } = useScrubItems(points);
+  // The menu scrolls, so it is never short of room and never needs to bucket.
+  const { items, byYear } = useScrubItems(points, 0);
 
   if (items.length < 2) return null;
 
