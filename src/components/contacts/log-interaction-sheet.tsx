@@ -19,7 +19,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import {
-  INTERACTION_TYPES,
+  SELECTABLE_INTERACTION_TYPES,
   type InteractionTypeValue,
 } from "@/lib/interaction-types";
 import { pickLockedParticipant, withLockedSeedPerson } from "@/lib/note-batches";
@@ -246,7 +246,7 @@ export function LogInteractionSheet({
           <div className="space-y-2">
             <Label>What happened</Label>
             <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
-              {INTERACTION_TYPES.map((t) => {
+              {SELECTABLE_INTERACTION_TYPES.map((t) => {
                 const Icon = t.icon;
                 const selected = t.value === type;
                 return (
