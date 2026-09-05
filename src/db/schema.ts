@@ -713,7 +713,17 @@ export const contactBriefs = pgTable("contact_briefs", {
 
 /** One entry on a LinkedIn profile: a job, or a school. */
 export type ContactExperienceKind = "role" | "education";
-/** Where a stored profile came from. Drives precedence in `saveContactProfile`. */
+/**
+ * Where a stored profile came from. Drives precedence in `saveContactProfile`: an
+ * extension capture is a page the user actually looked at and always outranks Apollo,
+ * which is a third-party inference.
+ *
+ * `"extension"` currently has NO producer — the browser capture path was removed before
+ * merge because its DOM readers had never run against a real LinkedIn page. The value and
+ * its precedence rule are kept deliberately, and are covered by
+ * `scripts/smoke-contact-profile.ts`, so restoring that path is additive rather than
+ * another change to the stored shape.
+ */
 export type ContactProfileSource = "extension" | "apollo";
 
 export type ProfileSkill = { name: string };

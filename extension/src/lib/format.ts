@@ -21,16 +21,6 @@ export function relativeTime(iso: string | null): string | null {
   return "over a year ago";
 }
 
-/**
- * A `pageSlug`/`contactSlug` from `/api/extension/profile`'s conflict payload isn't always
- * a short handle — for a URL that doesn't parse as `/in/<slug>` it can be a full URL up to
- * 2048 characters (see the profile-capture note in task-8). Treat it as an opaque label and
- * truncate for display rather than assuming it fits on one line.
- */
-export function truncateLabel(value: string, max = 40): string {
-  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
-}
-
 export function initials(name: string | null | undefined): string {
   const parts = (name ?? "").trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "?";

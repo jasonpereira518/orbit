@@ -102,44 +102,8 @@ export type PageText = {
   fromSelection: boolean;
 };
 
-/** One role or school as the adapter read it off the page. */
-export type PageExperience = {
-  kind: "role" | "education";
-  organization: string;
-  title: string | null;
-  fieldOfStudy: string | null;
-  location: string | null;
-  description: string | null;
-  startYear: number | null;
-  startMonth: number | null;
-  endYear: number | null;
-  endMonth: number | null;
-  isCurrent: boolean;
-};
-
-/**
- * The profile sections, when the adapter was asked to read them. Absent on every capture
- * that is not a deliberate "Capture experience" press, so the ordinary panel open costs
- * nothing extra.
- */
-export type PageProfile = {
-  headline: string | null;
-  about: string | null;
-  skills: Array<{ name: string }>;
-  certifications: Array<{ name: string; issuer: string | null; year: number | null }>;
-  volunteering: Array<{ organization: string; role: string | null; years: string | null }>;
-  publications: Array<{ title: string; publisher: string | null; year: number | null }>;
-  experiences: PageExperience[];
-  /** A section rendered but yielded nothing usable — the server's cue to try the model. */
-  parseIncomplete: boolean;
-};
-
 export type PageContext = {
-  /**
-   * 1 = pre-profile adapters. Still sent by every extension a user has not updated, and
-   * therefore still valid forever — Chrome decides when they update, not us.
-   */
-  schemaVersion: 1 | 2;
+  schemaVersion: 1;
   site: PageSite;
   /** Bumped by the adapter on selector changes; logged so DOM churn is visible. */
   adapterVersion: string;
@@ -154,26 +118,6 @@ export type PageContext = {
   text: PageText;
   /** Extractor diagnostics: "login-wall", "opaque-slug", "no-main", … */
   warnings: string[];
-  /** Only ever present on schemaVersion 2 captures the user explicitly asked for. */
-  profile?: PageProfile;
-};
-
-export type ProfileCaptureInput = {
-  contactId: string;
-  page: PageContext;
-  /** The user was shown a slug mismatch and said save anyway. */
-  confirmMismatch?: boolean;
-};
-
-export type ProfileCaptureResponse = {
-  saved: boolean;
-  /** Set when the page's slug disagrees with the contact's; the panel must confirm. */
-  conflict: { pageSlug: string; contactSlug: string; contactName: string } | null;
-  /** True when the model was used because the selectors came back empty. */
-  usedFallback: boolean;
-  /** True when neither selectors nor the model produced anything. */
-  degraded: boolean;
-  experienceCount: number;
 };
 
 /* -------------------------------------------------------------------------- */

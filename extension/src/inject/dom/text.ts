@@ -67,7 +67,7 @@ export function collapseRepeatedLines(text: string): string {
  * than a selector — LinkedIn renames classes constantly but "People also
  * viewed" has read the same for years.
  */
-function denylistedSections(root: ParentNode): Element[] {
+function denylistedSections(root: HTMLElement): Element[] {
   const out: Element[] = [];
   const headings = root.querySelectorAll("h1, h2, h3, h4, [role='heading']");
   for (const heading of Array.from(headings)) {
@@ -78,53 +78,6 @@ function denylistedSections(root: ParentNode): Element[] {
     out.push(
       heading.closest("section, article, [data-view-name], li") ?? heading
     );
-  }
-  return out;
-}
-
-/** Trimmed, whitespace-collapsed textContent of a node. */
-function textOf(node: Element | null | undefined): string {
-  return (node?.textContent ?? "").replace(/\s+/g, " ").trim();
-}
-
-/**
- * LinkedIn renders nearly every field twice — once for sighted users (oddly marked
- * `aria-hidden="true"`) and once in a `.visually-hidden` span for screen readers. Taking
- * the whole `textContent` therefore doubles every string: `"…see more…see more"` instead
- * of `"…see more"`, which breaks an anchored `^…$` match. Prefer the aria-hidden copy,
- * which is the one a sighted user actually sees.
- *
- * Shared by the profile-section readers (`adapters/linkedin-profile.ts`) and the click
- * path's control matcher (`dom/expand.ts`'s `isExpandControl`) so there is exactly one
- * definition of "what does this element's visible label actually say."
- */
-export function visibleText(node: Element | null | undefined): string {
-  if (!node) return "";
-  const preferred = node.querySelector('[aria-hidden="true"]');
-  return textOf(preferred ?? node);
-}
-
-/**
- * Elements (and their subtrees) that must never be treated as the profile's own content:
- * global chrome/navigation, plus sections introduced by a denylisted heading ("People also
- * viewed" and friends — see `HEADING_DENYLIST`).
- *
- * Shared by the READ path (`cleanText`, to keep them out of the text blob) and the CLICK
- * path (`dom/expand.ts`'s `expandProfileSections`, to keep them out of its scope) so there
- * is exactly one definition of "not the subject's own profile content." A second, looser
- * list for the click path would be exactly the kind of drift that lets a "People also
- * viewed" carousel or a nav flyout get clicked.
- */
-export function excludedRegions(root: ParentNode): Element[] {
-  const out: Element[] = [];
-  try {
-    for (const node of Array.from(root.querySelectorAll(STRIP_SELECTORS.join(",")))) {
-      out.push(node);
-    }
-    out.push(...denylistedSections(root));
-  } catch {
-    // A hostile or exotic DOM shouldn't cost us the whole extraction/expansion — worst
-    // case here is under-excluding, not throwing.
   }
   return out;
 }
@@ -160,8 +113,15 @@ export function cleanText(
   // and read innerText from the surviving subtrees. Nothing on the user's page
   // is ever mutated.
   const skip = new Set<Element>();
-  for (const region of excludedRegions(root)) {
-    if (region !== root) skip.add(region);
+  try {
+    for (const node of Array.from(root.querySelectorAll(STRIP_SELECTORS.join(",")))) {
+      skip.add(node);
+    }
+    for (const section of denylistedSections(root)) {
+      if (section !== root) skip.add(section);
+    }
+  } catch {
+    // A hostile or exotic DOM shouldn't cost us the whole extraction.
   }
 
   const parts: string[] = [];

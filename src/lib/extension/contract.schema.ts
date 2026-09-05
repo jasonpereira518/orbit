@@ -19,7 +19,6 @@ import type {
   FollowUpRequest,
   LogInteractionRequest,
   PageContext,
-  ProfileCaptureInput,
   ResolveRequest,
   SaveContactRequest,
   StartersRequest,
@@ -27,19 +26,6 @@ import type {
 
 /** Hard ceiling on a request body, checked before and after reading. */
 export const MAX_BODY_BYTES = 64_000;
-/**
- * Profile captures carry every section's text; the general cap is for small payloads.
- *
- * Every per-field limit below maxed out at once (60 experiences at 2000-char descriptions,
- * 40 certifications, a full 200KB raw-text blob, all ten identity fields at 2048 chars, …)
- * JSON-encodes to ~497KB of plain ASCII. 600KB leaves real headroom above that measured
- * worst case without inviting abuse. This is still a character-count budget, not a byte
- * budget — a payload built entirely from multi-byte text (CJK, emoji) can encode 2-3x
- * larger per character than ASCII and could still hit this cap even while every individual
- * field limit is satisfied. That gap predates this route: every extension schema field is
- * bounded by `.max(chars)`, not bytes. Fixing it globally is out of scope here.
- */
-export const MAX_PROFILE_BODY_BYTES = 600_000;
 /** Page text is truncated to this before it ever reaches a prompt. */
 export const MAX_RAW_TEXT_CHARS = 8_000;
 
@@ -85,66 +71,8 @@ const pageIdentitySchema = z.object({
   photoUrl: extractedField,
 });
 
-/**
- * Every free-text field here is `.trim()`ed BEFORE its length checks, and that ordering is
- * load-bearing, not cosmetic. `organization` was `z.string().min(1)`, so `"   "` was a
- * valid wire value: it counted as an experience to the callers' "did this capture read any
- * roles?" guards, but trimmed to nothing in `saveContactProfile` — a capture of nothing but
- * whitespace organizations passed every guard and then erased a stored career. The write
- * path now refuses on its own row count as well (see `@/lib/contact-profile`); this stops
- * the meaningless value at the door.
- */
-export const pageExperienceSchema = z.object({
-  kind: z.enum(["role", "education"]),
-  organization: z.string().trim().min(1).max(200),
-  title: z.string().trim().max(200).nullable(),
-  fieldOfStudy: z.string().trim().max(200).nullable(),
-  location: z.string().trim().max(200).nullable(),
-  description: z.string().trim().max(2000).nullable(),
-  startYear: z.number().int().min(1900).max(2100).nullable(),
-  startMonth: z.number().int().min(1).max(12).nullable(),
-  endYear: z.number().int().min(1900).max(2100).nullable(),
-  endMonth: z.number().int().min(1).max(12).nullable(),
-  isCurrent: z.boolean(),
-});
-
-export const pageProfileSchema = z.object({
-  headline: z.string().trim().max(400).nullable(),
-  about: z.string().trim().max(8000).nullable(),
-  skills: z.array(z.object({ name: z.string().trim().min(1).max(120) })).max(60),
-  certifications: z
-    .array(
-      z.object({
-        name: z.string().trim().min(1).max(200),
-        issuer: z.string().trim().max(200).nullable(),
-        year: z.number().int().min(1900).max(2100).nullable(),
-      })
-    )
-    .max(40),
-  volunteering: z
-    .array(
-      z.object({
-        organization: z.string().trim().min(1).max(200),
-        role: z.string().trim().max(200).nullable(),
-        years: z.string().trim().max(60).nullable(),
-      })
-    )
-    .max(30),
-  publications: z
-    .array(
-      z.object({
-        title: z.string().trim().min(1).max(300),
-        publisher: z.string().trim().max(200).nullable(),
-        year: z.number().int().min(1900).max(2100).nullable(),
-      })
-    )
-    .max(30),
-  experiences: z.array(pageExperienceSchema).max(60),
-  parseIncomplete: z.boolean(),
-});
-
 export const pageContextSchema = z.object({
-  schemaVersion: z.union([z.literal(1), z.literal(2)]),
+  schemaVersion: z.literal(1),
   site: z.enum(["linkedin", "x", "gmail", "generic"]),
   adapterVersion: z.string().max(32),
   kind: z.enum(["person", "thread", "list", "company", "post", "unknown"]),
@@ -175,7 +103,6 @@ export const pageContextSchema = z.object({
     fromSelection: z.boolean(),
   }),
   warnings: z.array(z.string().max(64)).max(20),
-  profile: pageProfileSchema.optional(),
 });
 
 export const resolveRequestSchema = z.object({
@@ -266,13 +193,6 @@ export const contactSearchRequestSchema = z.object({
   limit: z.coerce.number().int().min(1).max(10).default(10),
 });
 
-export const profileCaptureRequestSchema = z.object({
-  contactId: z.string().uuid(),
-  page: pageContextSchema,
-  /** The user answered "save anyway" to a slug mismatch. */
-  confirmMismatch: z.boolean().optional(),
-});
-
 /* Drift guards. If a schema and its contract type diverge, these stop compiling. */
 const _resolve: Exact<z.infer<typeof resolveRequestSchema>, ResolveRequest> = true;
 const _page: Exact<z.infer<typeof pageContextSchema>, PageContext> = true;
@@ -281,10 +201,6 @@ const _starters: Exact<z.infer<typeof startersRequestSchema>, StartersRequest> =
 const _save: Exact<z.infer<typeof saveContactRequestSchema>, SaveContactRequest> = true;
 const _log: Exact<z.infer<typeof logInteractionRequestSchema>, LogInteractionRequest> = true;
 const _followUp: Exact<z.infer<typeof followUpRequestSchema>, FollowUpRequest> = true;
-const _profileCapture: Exact<
-  z.infer<typeof profileCaptureRequestSchema>,
-  ProfileCaptureInput
-> = true;
-void [_resolve, _page, _parse, _starters, _save, _log, _followUp, _profileCapture];
+void [_resolve, _page, _parse, _starters, _save, _log, _followUp];
 
 export type { ContactSearchResponse };

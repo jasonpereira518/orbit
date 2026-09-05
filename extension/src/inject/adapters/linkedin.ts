@@ -8,51 +8,35 @@
  * and each one is independently fallible.
  *
  * Nothing here navigates, clicks, expands "see more", scrolls to load more, or
- * paginates on an ordinary read. It reads what the user's own browser has already
- * rendered, once, because they clicked the toolbar icon.
- *
- * The one deliberate exception: when `extract` is called with `options.withProfile` on a
- * `person` page — which only happens from an explicit "Capture experience" press in the
- * panel — it runs `expandProfileSections` (see that file's header for the full argument
- * and its bounds) before reading the profile sections, and returns `schemaVersion: 2` with
- * a `profile`. Every other call, including every ordinary panel open, never sets that flag
- * and gets exactly the old `schemaVersion: 1` behavior back, synchronously.
+ * paginates. It reads what the user's own browser has already rendered, once,
+ * because they clicked the toolbar icon.
  */
 
-// Relative, not the `@/` alias: these two files are also imported directly by
-// `scripts/smoke-contact-profile-format.ts` from repo root (see that file's header), which
-// resolves under the ROOT tsconfig — where `@/*` points at the app's `src/`, not this
-// extension's. Keeping every import this adapter needs alias-free is what lets that script
-// exercise the real `linkedinAdapter`, not a stand-in.
-import { cleanText, selectionText } from "../dom/text";
+import { cleanText, selectionText } from "@/inject/dom/text";
 import {
   canonicalUrl,
   jsonLdPerson,
   metaContent,
   parseTitle,
-} from "../dom/meta";
-import { isLikelyPersonName } from "../dom/names";
+} from "@/inject/dom/meta";
+import { isLikelyPersonName } from "@/inject/dom/names";
 import {
   canonicalLinkedInUrl,
   isOpaqueSlug,
   linkedinSlug,
   stripTracking,
-} from "../dom/url";
-import { expandProfileSections } from "../dom/expand";
-import { readProfileSections } from "./linkedin-profile";
-import type { PageProfile } from "@contract";
+} from "@/inject/dom/url";
 import {
   attempt,
   emptyIdentity,
   field,
   preferField,
-  type ExtractOptions,
   type PageContext,
   type PageKind,
   type SiteAdapter,
 } from "./types";
 
-const ADAPTER_VERSION = "linkedin-2";
+const ADAPTER_VERSION = "linkedin-1";
 const PROFILE_BLOB_CHARS = 10_000;
 const THREAD_BLOB_CHARS = 6_000;
 const POST_BLOB_CHARS = 4_000;
@@ -269,7 +253,7 @@ export const linkedinAdapter: SiteAdapter = {
   adapterVersion: ADAPTER_VERSION,
   matches: (url) => /(^|\.)linkedin\.com$/i.test(url.hostname),
 
-  extract(url: URL, options?: ExtractOptions) {
+  extract(url) {
     const warnings: string[] = [];
     const kind = pageKind(url);
 
@@ -310,63 +294,28 @@ export const linkedinAdapter: SiteAdapter = {
       blobRoot = null;
     }
 
-    // Reads the CURRENT state of `blobRoot`, so calling this after `expandProfileSections`
-    // has run picks up the now-expanded sections. That distinction matters: the server's
-    // AI fallback (`fallbackParse`) reads exactly this blob, and it only ever fires when
-    // the selectors came back empty — precisely the case where the page needs to already
-    // be expanded for the fallback to see anything the selectors missed. Computing this
-    // once, eagerly, before expansion would silently feed the fallback the collapsed page.
-    const computeText = () => {
-      const selection = selectionText(blobLimit);
-      const text =
-        selection ??
-        (blobRoot
-          ? cleanText(blobRoot, blobLimit)
-          : { blob: "", truncated: false, charCount: 0 });
-      return { ...text, fromSelection: Boolean(selection) };
-    };
+    const selection = selectionText(blobLimit);
+    const text =
+      selection ??
+      (blobRoot
+        ? cleanText(blobRoot, blobLimit)
+        : { blob: "", truncated: false, charCount: 0 });
 
-    const contextUrl =
-      identity.profileUrl?.value ?? canonicalUrl() ?? stripTracking(url.href);
-
-    const buildContext = (
-      schemaVersion: 1 | 2,
-      text: ReturnType<typeof computeText>,
-      profile?: PageProfile
-    ): PageContext => ({
-      schemaVersion,
+    return {
+      schemaVersion: 1,
       site: "linkedin",
       adapterVersion: ADAPTER_VERSION,
       kind,
-      url: contextUrl,
+      url:
+        identity.profileUrl?.value ??
+        canonicalUrl() ??
+        stripTracking(url.href),
       sourceUrl: url.href,
       capturedAt: new Date().toISOString(),
       identity,
       candidates,
-      text,
+      text: { ...text, fromSelection: Boolean(selection) },
       warnings,
-      ...(profile ? { profile } : {}),
-    });
-
-    // The one interaction this adapter ever performs, and only from an explicit
-    // "Capture experience" press (see `options.withProfile`'s doc in ./types and
-    // `inject/dom/expand.ts`'s header for the bounds). Every other call —
-    // including every ordinary panel open — never reaches this branch.
-    if (kind === "person" && options?.withProfile) {
-      return (async () => {
-        const expansion = await expandProfileSections();
-        const profile = readProfileSections(document);
-        if (expansion.timedOut) warnings.push("expand-timeout");
-        if (expansion.capped) warnings.push("expand-capped");
-        // "parse-incomplete", not "profile-empty": the server raises the same condition
-        // under that name (`src/lib/extension/profile-capture.ts`), and two names for one
-        // thing made the stored `warnings` array unreadable.
-        if (profile.parseIncomplete) warnings.push("parse-incomplete");
-        // AFTER expansion — see `computeText`'s comment.
-        return buildContext(2, computeText(), profile);
-      })();
-    }
-
-    return buildContext(1, computeText());
+    };
   },
 };

@@ -163,18 +163,14 @@ async function consumeBudget(userId: string, cost: RouteCost) {
  * reject cheaply, then the decoded length is re-checked because the header can
  * be absent under chunked encoding, or simply wrong.
  */
-async function readJsonBody<T>(
-  req: Request,
-  schema: z.ZodType<T>,
-  maxBytes: number = MAX_BODY_BYTES
-): Promise<T> {
+async function readJsonBody<T>(req: Request, schema: z.ZodType<T>): Promise<T> {
   const declared = Number(req.headers.get("content-length") || 0);
-  if (declared > maxBytes) {
+  if (declared > MAX_BODY_BYTES) {
     throw new PayloadTooLargeError("Request body is too large.");
   }
 
   const raw = await req.text();
-  if (raw.length > maxBytes) {
+  if (raw.length > MAX_BODY_BYTES) {
     throw new PayloadTooLargeError("Request body is too large.");
   }
 
@@ -251,8 +247,6 @@ function toErrorResponse(error: unknown) {
 export function extensionRoute<TIn, TOut>(config: {
   schema?: z.ZodType<TIn>;
   cost?: RouteCost;
-  /** Defaults to MAX_BODY_BYTES. Raised only by routes that carry whole page sections. */
-  maxBodyBytes?: number;
   handler: (ctx: RouteContext<TIn>) => Promise<TOut>;
 }) {
   return async function handle(req: Request) {
@@ -261,7 +255,7 @@ export function extensionRoute<TIn, TOut>(config: {
       await consumeBudget(userId, config.cost ?? "request");
 
       const input = config.schema
-        ? await readJsonBody(req, config.schema, config.maxBodyBytes)
+        ? await readJsonBody(req, config.schema)
         : (undefined as TIn);
 
       const data = await config.handler({ userId, input, req });

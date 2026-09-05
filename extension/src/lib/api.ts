@@ -7,8 +7,6 @@ import type {
   MeResponse,
   PageContext,
   ParseResponse,
-  ProfileCaptureInput,
-  ProfileCaptureResponse,
   ResolveResponse,
   SaveContactRequest,
   SaveContactResponse,
@@ -90,9 +88,6 @@ export function createApi(getToken: TokenGetter) {
 
     parseProfile: (page: PageContext, signal?: AbortSignal) =>
       post<ParseResponse>("/parse", { page }, signal),
-
-    captureProfile: (body: ProfileCaptureInput, signal?: AbortSignal) =>
-      post<ProfileCaptureResponse>("/profile", body, signal),
 
     starters: (body: StartersRequest, signal?: AbortSignal) =>
       post<StartersResponse>("/starters", body, signal),

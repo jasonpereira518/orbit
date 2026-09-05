@@ -22,33 +22,6 @@ function restrictedReason(url: string): string | null {
   return null;
 }
 
-/**
- * Dev-only visibility into the one property the whole capture feature rests on: an
- * ordinary panel-open read must always come back `schemaVersion: 1` with no `profile`, and
- * only an explicit "Capture experience" press may ever produce `schemaVersion: 2`. Gated
- * behind a `chrome.storage.local` flag rather than a source edit, so verifying it by hand
- * doesn't require touching code — from the panel's own DevTools console, run:
- *   `chrome.storage.local.set({ "orbit:debugCapture": true })`
- * and every subsequent read logs its schema version until the flag is cleared again.
- */
-async function debugLogSchemaVersion(page: PageContext): Promise<void> {
-  try {
-    const flag = await chrome.storage.local.get("orbit:debugCapture");
-    if (!flag["orbit:debugCapture"]) return;
-    // console.info, not console.debug: Chrome DevTools hides Debug-level messages unless
-    // the console's level filter is set to Verbose, which is not the default. A
-    // verification step that silently produces nothing under default DevTools settings is
-    // worse than no step at all.
-    console.info("[orbit] page read", {
-      schemaVersion: page.schemaVersion,
-      hasProfile: "profile" in page,
-      url: page.url,
-    });
-  } catch {
-    // Best-effort diagnostics only — must never affect the real read.
-  }
-}
-
 function originOf(url: string): string | undefined {
   try {
     const { protocol, hostname } = new URL(url);
@@ -119,77 +92,10 @@ export async function readActivePage(): Promise<PageReadResult> {
     if ("error" in value) {
       return { ok: false, reason: "injection-failed", message: value.error };
     }
-    await debugLogSchemaVersion(value);
     return { ok: true, page: value };
   } catch {
     // We could see the URL but not run on it — a host permission was revoked,
     // or this is a page Chrome protects. Offer the grant for its origin.
-    return {
-      ok: false,
-      reason: "no-permission",
-      message: "Orbit needs your go-ahead to read this site.",
-      origin: originOf(tab.url),
-    };
-  }
-}
-
-/**
- * Same preflight as `readActivePage`, but the injection asks the LinkedIn adapter to
- * expand collapsed sections and read the full profile before returning — the one capture
- * path that can click something on the page. Only the panel's explicit "Capture
- * experience" button may call this; see `inject/dom/expand.ts`'s header for the bounds
- * that keep that safe, and `inject/extract.ts`'s header for how the two-injection scheme
- * carries the async result back without polling.
- */
-export async function captureActiveProfile(): Promise<PageReadResult> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) {
-    return { ok: false, reason: "no-tab", message: "No active tab." };
-  }
-
-  if (!tab.url) {
-    return {
-      ok: false,
-      reason: "no-permission",
-      message: "Orbit needs your go-ahead to read this site.",
-    };
-  }
-
-  const restricted = restrictedReason(tab.url);
-  if (restricted) {
-    return { ok: false, reason: "restricted", message: restricted };
-  }
-
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ["inject/extract.js"],
-    });
-
-    const [result] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: () =>
-        (
-          window as unknown as {
-            __orbitExtract?: { captureProfile?: () => Promise<unknown> };
-          }
-        ).__orbitExtract?.captureProfile?.(),
-    });
-
-    const value = result?.result as PageContext | { error: string } | undefined;
-    if (!value) {
-      return {
-        ok: false,
-        reason: "injection-failed",
-        message: "Click the Orbit icon again to read this page.",
-      };
-    }
-    if ("error" in value) {
-      return { ok: false, reason: "injection-failed", message: value.error };
-    }
-    await debugLogSchemaVersion(value);
-    return { ok: true, page: value };
-  } catch {
     return {
       ok: false,
       reason: "no-permission",

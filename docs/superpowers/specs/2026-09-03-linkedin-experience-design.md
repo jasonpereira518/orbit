@@ -1,7 +1,28 @@
 # LinkedIn Experience Extraction
 
 **Date:** 2026-09-03
-**Status:** Design approved, not yet implemented
+**Status:** Implemented, except the extension capture path.
+
+> **The Chrome-extension source described below was built and then removed before merge.**
+> Its DOM readers were written without any real rendered LinkedIn markup to verify them
+> against, and the fixtures needed to close that gap require a signed-in human in a
+> browser. Rather than ship selectors nobody had ever run against a real page, the whole
+> client-side capture path — the expansion module, the section readers, the panel button,
+> the `/api/extension/profile` endpoint, and the `schemaVersion: 2` wire contract — was
+> taken back out. Everything below about the extension therefore describes intended
+> design, not shipped behaviour.
+>
+> What did ship: the two tables, the single write path and its precedence rules, the Apollo
+> source, the search arm, the embedding and chat surfaces, and the contact-page section.
+> The `"extension"` value of `ContactProfileSource` and its precedence rule were kept on
+> purpose (see `src/db/schema.ts`), so restoring the capture path is additive rather than
+> another change to the stored shape.
+>
+> The review that preceded the removal predicted two concrete defects to expect when this
+> is picked up again: `readEntry`'s positional title/employer split is probably wrong
+> (the outermost container's text is the whole entry), and `sectionFor` needs a second
+> strategy because the `/details/experience` subpage does not render the `#experience`
+> anchor. Both are recorded here so the next attempt does not rediscover them.
 
 ## Problem
 

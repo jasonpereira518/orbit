@@ -110,22 +110,9 @@ export function ContactExperienceSection({
             Their roles, schools, and About — so you can ask about any of it
             in chat.
           </p>
-          {linkedinUrl ? (
+          {!linkedinUrl && (
             <p className="text-sm text-muted-foreground">
-              Open{" "}
-              <a
-                href={linkedinUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="font-medium text-ink underline-offset-2 hover:underline"
-              >
-                their LinkedIn profile
-              </a>{" "}
-              and press &quot;Capture experience&quot; in the Orbit extension.
-            </p>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Add a LinkedIn URL to this contact to capture their profile.
+              Add a LinkedIn URL to this contact to fill their profile.
             </p>
           )}
           {linkedinUrl && canUseApollo && (
@@ -143,11 +130,11 @@ export function ContactExperienceSection({
                       // "no_match" conflates two cases the action cannot tell apart:
                       // Apollo found nobody, or found them but has no employment
                       // history on file. Naming a specific cause here would claim
-                      // certainty the action doesn't have, so this stays honest
-                      // about the ambiguity and points at the reliable path instead.
+                      // certainty the action doesn't have, so the copy stays true
+                      // of both.
                       setFillError(
                         result.reason === "no_match"
-                          ? "Apollo didn't return a usable profile for them — try capturing from their LinkedIn page instead."
+                          ? "Apollo has no usable employment history for them."
                           : result.reason === "no_url"
                             ? "Add a LinkedIn URL to this contact first."
                             : "Couldn't fill this profile."
@@ -172,7 +159,7 @@ export function ContactExperienceSection({
               >
                 Settings
               </a>{" "}
-              to fill this in from Apollo instead.
+              to fill this in from Apollo.
             </p>
           )}
           {fillError && (
