@@ -70,6 +70,17 @@ function main() {
     "/api/embeddings/backfill",
     "/api/linkedin/timeline-events/backfill",
     "/api/ops/sweep",
+    "/api/sync/run",
+    "/api/webhooks/outbound/drain",
+    // The public API and MCP server authenticate with a per-user API key, which Clerk cannot
+    // see. They are listed here so an unauthenticated call gets a JSON 401 rather than a 302
+    // to a sign-in page — and asserted here because dropping them would silently break every
+    // third-party integration with no test failing, exactly the way the job routes broke and
+    // stayed broken until Sept 2026.
+    "/api/v1/me",
+    "/api/v1/events",
+    "/api/v1/contacts",
+    "/api/mcp",
     // The uptime monitor has no session either.
     "/api/health",
     // Browsers report CSP violations without one.

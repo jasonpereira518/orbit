@@ -46,6 +46,20 @@ export const RATE_LIMITS = {
    * and nobody has anything to say five times in five minutes.
    */
   feedback: { limit: 5, windowSec: 300 },
+  /**
+   * Public API reads. Generous — a read is one or two indexed queries — but bounded, because
+   * these endpoints are reachable by anyone holding a key and a polling integration with a
+   * misconfigured interval is the normal failure mode, not an attack.
+   */
+  apiRead: { limit: 120, windowSec: 60 },
+  /** Public API writes. */
+  apiWrite: { limit: 60, windowSec: 60 },
+  /** Event ingestion. Fewer, because each request carries a batch of up to 500 events. */
+  apiIngest: { limit: 30, windowSec: 60 },
+  /** MCP tool calls. An agent can loop far faster than a person can click. */
+  mcp: { limit: 60, windowSec: 60 },
+  /** One provider sync run per connection per window — see `sync-scheduler.ts`. */
+  providerSync: { limit: 4, windowSec: 3600 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**

@@ -44,6 +44,12 @@ export type ClosenessCohortSnapshot = {
   maxSchool: number;
   userDomain: string | null;
   mailConnected: boolean;
+  /**
+   * Optional, deliberately. `snapshot` is jsonb and every row written before this key existed
+   * would read a required field as `undefined`, so consumers use `?? false` until the row is
+   * recalibrated. Making it required would break every stored cohort at once.
+   */
+  calendarConnected?: boolean;
 };
 
 /**
@@ -1420,6 +1426,67 @@ export const recruiterMessages = pgTable(
   ]
 );
 
+/**
+ * Where a provider's incremental sync left off. Opaque and provider-shaped, keyed by
+ * resource so one column serves every resource a provider exposes — Google Calendar's
+ * `syncToken`/`pageToken` today, Gmail's `historyId` and Graph's `deltaLink` later,
+ * without another migration.
+ *
+ * `pageToken` is stored alongside `syncToken` on purpose: Google only returns
+ * `nextSyncToken` on the FINAL page of a run, so a run stopped mid-chain by the time
+ * budget must resume from the page it reached or it would lose every event before it.
+ */
+export type CalendarSyncCursor = {
+  syncToken?: string | null;
+  pageToken?: string | null;
+  windowStart?: string | null;
+  windowEnd?: string | null;
+};
+
+export type ProviderSyncCursor = {
+  /** Explicitly nullable, not merely optional: "no cursor yet" and "cursor deliberately
+   *  cleared after a 410" are the same state, and callers pass it around as `| null`. */
+  calendar?: CalendarSyncCursor | null;
+};
+
+/**
+ * Continuous-sync bookkeeping, shared byte-for-byte by every provider connection table.
+ *
+ * A function rather than a shared object because each `pgTable` needs its own column
+ * builder instances — reusing one object across two tables aliases them.
+ *
+ * Deliberately NOT folded into the existing `status` column. That one is about *consent*
+ * and has exactly two values on purpose (see its comment below); `admin-system.ts` counts
+ * `status <> 'active'` as "needs reauth", so a transient `'syncing'` there would report
+ * every actively-syncing connection as broken. `syncStatus` is about a *run*. The two are
+ * orthogonal and must stay separate.
+ */
+function syncStateColumns() {
+  return {
+    /** Provider-shaped incremental cursor. Null until the first successful sync. */
+    syncCursor: jsonb("sync_cursor").$type<ProviderSyncCursor>(),
+    /**
+     * When this connection next becomes eligible for a sync run, or NULL for "not
+     * scheduled" — never connected, disarmed after repeated failure, or awaiting reauth.
+     * A floor, never a promise: the scheduler is driven by GitHub Actions, whose cron
+     * routinely lags 5-30 minutes.
+     */
+    nextSyncAt: timestamp("next_sync_at", { withTimezone: true }),
+    syncStatus: text("sync_status").$type<"idle" | "syncing" | "error">(),
+    /**
+     * Lease timestamp, set when a run claims this row. Load-bearing: without it
+     * `syncStatus = 'syncing'` latches forever the first time an invocation is killed
+     * mid-run, and the connection is never swept again. The claim predicate treats a
+     * lease older than its term as reclaimable.
+     */
+    syncStartedAt: timestamp("sync_started_at", { withTimezone: true }),
+    /** Last failure, truncated on write like every other error column here. */
+    syncError: text("sync_error"),
+    /** Consecutive failures: the backoff exponent and the give-up counter. */
+    syncFailures: integer("sync_failures").notNull().default(0),
+  };
+}
+
 export const gmailConnections = pgTable(
   "gmail_connections",
   {
@@ -1442,10 +1509,16 @@ export const gmailConnections = pgTable(
     status: text("status").$type<"active" | "needs_reauth">().default("active").notNull(),
     /** Last time this connection produced a usable access token. */
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    ...syncStateColumns(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [index("gmail_connections_user_idx").on(t.userId)]
+  (t) => [
+    index("gmail_connections_user_idx").on(t.userId),
+    index("gmail_connections_due_idx")
+      .on(t.nextSyncAt)
+      .where(sql`next_sync_at is not null`),
+  ]
 );
 
 export const outlookConnections = pgTable(
@@ -1470,10 +1543,16 @@ export const outlookConnections = pgTable(
     status: text("status").$type<"active" | "needs_reauth">().default("active").notNull(),
     /** Last time this connection produced a usable access token. */
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    ...syncStateColumns(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [index("outlook_connections_user_idx").on(t.userId)]
+  (t) => [
+    index("outlook_connections_user_idx").on(t.userId),
+    index("outlook_connections_due_idx")
+      .on(t.nextSyncAt)
+      .where(sql`next_sync_at is not null`),
+  ]
 );
 
 export type ChatRecommendation = {
@@ -1622,6 +1701,149 @@ export const adminAuditLog = pgTable(
  * A crashed run therefore leaves `status='running'` forever; that is resolved on read by
  * `deriveCronRunState`, not by a second cron watching the first.
  */
+/**
+ * Keys a user issues to let a third party act as them over the public API and MCP server.
+ *
+ * Stored as a SHA-256 hash, NOT with `src/lib/crypto.ts`, and the difference is deliberate.
+ * The BYOK keys in `user_settings` must be reversible because Orbit presents them to Gemini
+ * and OpenAI; a key Orbit issues is only ever *compared*, so keeping it recoverable buys
+ * nothing and costs everything — `ENCRYPTION_SECRET` sits in the same environment as
+ * `DATABASE_URL`, so one dump would yield live credentials for every user. Hashing also makes
+ * the value indexable: `encrypt()` uses a random IV, so its ciphertext differs every call and
+ * verification would degrade into a table scan.
+ *
+ * Plain SHA-256 rather than bcrypt or argon2 because the secret is 32 bytes of CSPRNG output,
+ * not a human-chosen password. There is no dictionary to slow an attacker down, and a KDF
+ * would add real latency to every single API request.
+ */
+export const apiKeys = pgTable(
+  "api_keys",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** What the user called it, so they can tell two keys apart when revoking one. */
+    name: text("name").notNull(),
+    /**
+     * `api` for a bearer credential; `mcp_url` for one embedded in an MCP endpoint path,
+     * because claude.ai's connector UI accepts a URL and OAuth but has no header field.
+     */
+    kind: text("kind").$type<"api" | "mcp_url">().default("api").notNull(),
+    /** Leading public segment, kept in clear so Settings can show `orb_live_7f3a9c2b…`. */
+    prefix: text("prefix").notNull(),
+    keyHash: text("key_hash").notNull(),
+    scopes: jsonb("scopes").$type<Array<"read" | "write">>().default(["read"]).notNull(),
+    /** Written at most once a minute — see `touchApiKeyLastUsed`. */
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedReason: text("revoked_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    // The entire verification path is this one lookup, so it must be a unique index rather
+    // than a scan: it runs on every API and MCP request.
+    uniqueIndex("api_keys_hash_uidx").on(t.keyHash),
+    index("api_keys_user_idx").on(t.userId),
+  ]
+);
+
+/**
+ * Replay protection for non-idempotent writes.
+ *
+ * `POST /v1/events` needs none — `ingestEvents` keys on `interactions.external_id`, so the
+ * event id IS the idempotency key. `POST /v1/contacts` has no natural key, so it honours an
+ * `Idempotency-Key` header: the same key with the same body replays the stored response, and
+ * the same key with a DIFFERENT body is a client bug and answers 409.
+ */
+export const apiIdempotencyKeys = pgTable(
+  "api_idempotency_keys",
+  {
+    userId: text("user_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestHash: text("request_hash").notNull(),
+    statusCode: integer("status_code").notNull(),
+    responseBody: jsonb("response_body"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("api_idempotency_uidx").on(t.userId, t.idempotencyKey)]
+);
+
+/**
+ * Where a user wants Orbit to POST when something happens — the "trigger" half of a Zapier,
+ * Make or n8n integration.
+ *
+ * `secretEncrypted` uses `src/lib/crypto.ts`, the deliberate opposite of `api_keys` above:
+ * Orbit must re-read this value to sign every delivery, and show it once more if the user
+ * loses it, so it has to be recoverable.
+ */
+export const webhookEndpoints = pgTable(
+  "webhook_endpoints",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    url: text("url").notNull(),
+    secretEncrypted: text("secret_encrypted").notNull(),
+    eventTypes: jsonb("event_types").$type<string[]>().default([]).notNull(),
+    description: text("description"),
+    /**
+     * `pending` until a verification POST is acknowledged, so a typo'd URL never silently
+     * collects nothing. `disabled` after repeated failure — see `consecutiveFailures`.
+     */
+    status: text("status").$type<"pending" | "active" | "disabled">().default("pending").notNull(),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    disabledAt: timestamp("disabled_at", { withTimezone: true }),
+    disabledReason: text("disabled_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("webhook_endpoints_user_idx").on(t.userId)]
+);
+
+/**
+ * One queued delivery. Durability lives here, not in the attempt.
+ *
+ * The row is written synchronously inside the request that caused the event; the immediate
+ * attempt is a best-effort optimisation on top. That ordering is what makes a delivery
+ * survive the invocation being killed mid-flight.
+ *
+ * Deliberately NOT the existing `webhook_deliveries` table, which records INBOUND deliveries
+ * from Clerk, Stripe and Resend and is bucketed by a closed source union that feeds the
+ * `webhook.invalid_streak` alert. Putting customer-endpoint failures there would page Orbit
+ * at 3am because someone's Zapier URL went down.
+ */
+export const outboundWebhookDeliveries = pgTable(
+  "outbound_webhook_deliveries",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    endpointId: uuid("endpoint_id")
+      .notNull()
+      .references(() => webhookEndpoints.id, { onDelete: "cascade" }),
+    /** Stable across retries; receivers dedupe on it, and so does the unique index below. */
+    eventId: text("event_id").notNull(),
+    eventType: text("event_type").notNull(),
+    payload: jsonb("payload").notNull(),
+    status: text("status")
+      .$type<"pending" | "delivered" | "failed" | "dead">()
+      .default("pending")
+      .notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    lastStatusCode: integer("last_status_code"),
+    /** First 200 characters only. The response body is an exfiltration channel. */
+    lastError: text("last_error"),
+    lastAttemptedAt: timestamp("last_attempted_at", { withTimezone: true }),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    // Makes enqueue idempotent: a retried write cannot double-deliver the same event.
+    uniqueIndex("outbound_deliveries_endpoint_event_uidx").on(t.endpointId, t.eventId),
+    // The drain's only scan.
+    index("outbound_deliveries_due_idx").on(t.status, t.nextAttemptAt),
+    index("outbound_deliveries_user_created_idx").on(t.userId, t.createdAt),
+  ]
+);
+
 export const cronRuns = pgTable(
   "cron_runs",
   {

@@ -1,29 +1,16 @@
-import { and, eq } from "drizzle-orm";
-import { getDb } from "@/db";
-import {
-  calendarSubscriptions,
-  contacts,
-  interactions,
-  reminders,
-  type Contact,
-} from "@/db/schema";
+import { and, eq, sql } from "drizzle-orm";
+import { getDb, rowsOf } from "@/db";
+import { calendarSubscriptions } from "@/db/schema";
 import { parseIcsEvents, type ParsedCalendarEvent } from "@/lib/calendar-import";
+import { classifyCalendarEvent, counterpartsOf } from "@/lib/calendar-classify";
+import { calendarExternalIdBase } from "@/lib/ingest/external-id";
 import {
-  classifyCalendarEvent,
-  counterpartsOf,
-  nameFromNetworkingTitle,
-  peopleFromDescription,
-} from "@/lib/calendar-classify";
-import {
-  addToDuplicateIndex,
-  buildDuplicateIndex,
-  daysAgo,
-  findDuplicateCandidatesIndexed,
-  type DuplicateIndex,
-} from "@/lib/duplicates";
-import { upsertContactEmbedding } from "@/lib/search";
-import { refreshOutreachSuggestions } from "@/lib/reminders";
-import { contactHeadroomForUser } from "@/lib/contact-writes";
+  finalizeIngest,
+  ingestEvents,
+  openIngestContext,
+  type NetworkEvent,
+} from "@/lib/ingest/events";
+import type { ReminderInsert } from "@/lib/import-engine";
 
 const SYNC_WINDOW_PAST_MS = 90 * 86400000;
 const SYNC_WINDOW_FUTURE_MS = 60 * 86400000;
@@ -46,10 +33,6 @@ function meetingNote(event: ParsedCalendarEvent) {
   ]
     .filter(Boolean)
     .join("\n");
-}
-
-function externalIdFor(eventUid: string, contactId: string) {
-  return `cal:${eventUid}:${contactId}`;
 }
 
 async function fetchIcs(url: string) {
@@ -90,72 +73,31 @@ function icsFetchErrorMessage(url: string, status: number) {
   return `Calendar feed returned ${status}`;
 }
 
+
 /**
- * Returns `contact: null` when the plan's contact cap leaves no headroom for a new person.
+ * Turn parsed calendar events into `NetworkEvent`s and write them through the shared ingest
+ * path.
  *
- * Sync is a paid feature and paid plans are uncapped, so in practice this never binds —
- * it exists so this path (the one contact insert that does not go through
- * `createContactForUser`) can never silently become a way around the cap.
+ * This replaced a per-(event, person) writer that cost roughly six statements each — a
+ * `findFirst` on interactions, an insert-or-update, a contacts update, an inline
+ * `upsertContactEmbedding` (an AI round trip, per row), and a reminders `findFirst`. That is
+ * precisely the shape the import engine exists to eliminate, and it is now three statements
+ * per batch regardless of size.
+ *
+ * Two behaviours the old writer had are preserved deliberately, because dropping either would
+ * be a silent regression:
+ *
+ *   - It CREATES contacts (`createsContacts: true`). A meeting is evidence you know someone.
+ *     This is the opposite of the one-shot file import, which is annotate-only so that
+ *     uploading a calendar cannot push a free user over their contact limit.
+ *   - It creates post-meeting follow-ups, now through ingest's `reminders` hook so they are
+ *     deduped in bulk instead of one existence check per person.
+ *
+ * The embedding it used to write inline is now the batch backfill's job: `ingestEvents` flags
+ * `embedding_stale_at`, and `PENDING_MEETINGS` in `embedding-backfill.ts` claims
+ * `calendar_sync` rows. Those two facts are load-bearing together — see that predicate's
+ * comment, which records what happened the last time one calendar source was left out of it.
  */
-async function resolveOrCreateContact(
-  userId: string,
-  duplicateIndex: DuplicateIndex,
-  person: { name: string; email: string },
-  titleHint: string | null
-): Promise<{ contact: Contact | null; created: boolean }> {
-  const db = await getDb();
-  const fullName = person.name || titleHint || person.email.split("@")[0] || "Calendar contact";
-
-  const dups = findDuplicateCandidatesIndexed(duplicateIndex, {
-    fullName: person.name || titleHint || undefined,
-    email: person.email || undefined,
-  });
-
-  if (dups[0] && dups[0].confidence >= 0.6) {
-    const matchId = dups[0].contact.id;
-    if (person.email && !dups[0].contact.email) {
-      const [updated] = await db
-        .update(contacts)
-        .set({ email: person.email, updatedAt: new Date() })
-        .where(and(eq(contacts.id, matchId), eq(contacts.userId, userId)))
-        .returning();
-      return { contact: updated, created: false };
-    }
-    // The index only carries the narrow dedup-matching columns (see DuplicateSubject
-    // in duplicates.ts) — the caller needs the full row.
-    const contact = await db.query.contacts.findFirst({
-      where: and(eq(contacts.id, matchId), eq(contacts.userId, userId)),
-    });
-    return { contact: contact ?? null, created: false };
-  }
-
-  const headroom = await contactHeadroomForUser(userId);
-  if (headroom !== null && headroom < 1) {
-    return { contact: null, created: false };
-  }
-
-  const parts = fullName.trim().split(/\s+/);
-  const [created] = await db
-    .insert(contacts)
-    .values({
-      userId,
-      fullName,
-      firstName: parts[0],
-      lastName: parts.length > 1 ? parts.slice(1).join(" ") : undefined,
-      email: person.email || undefined,
-      source: "calendar_sync",
-      relationshipScore: 2,
-      metContext: "event",
-      howMet: "Calendar meeting",
-      firstInteractionAt: new Date(),
-      lastInteractionAt: new Date(),
-    })
-    .returning();
-
-  addToDuplicateIndex(duplicateIndex, created);
-  return { contact: created, created: true };
-}
-
 export async function applyNetworkingEvents(
   userId: string,
   events: ParsedCalendarEvent[],
@@ -165,7 +107,6 @@ export async function applyNetworkingEvents(
     source?: string;
   }
 ): Promise<CalendarSyncStats> {
-  const db = await getDb();
   const selfEmails = options?.selfEmails || [];
   const createFollowUps = options?.createFollowUps !== false;
   const source = options?.source || "calendar_sync";
@@ -177,185 +118,79 @@ export async function applyNetworkingEvents(
     return t >= now - SYNC_WINDOW_PAST_MS && t <= now + SYNC_WINDOW_FUTURE_MS;
   });
 
-  // Narrow columns, matching the pattern the other import/sync entry points use: dedup
-  // matching only reads these six fields, so there's no reason to pull notes/aiSummary/
-  // keyFacts/etc. across the wire for every contact on every sync cycle.
-  const existing = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    columns: {
-      id: true,
-      fullName: true,
-      email: true,
-      linkedinUrl: true,
-      xHandle: true,
-      company: true,
-      title: true,
-    },
-  });
-  const duplicateIndex = buildDuplicateIndex(existing);
-
-  const stats: CalendarSyncStats = {
-    scanned: windowed.length,
-    matched: 0,
-    created: 0,
-    updated: 0,
-    contactsCreated: 0,
-    skipped: 0,
-  };
-
+  const networkEvents: NetworkEvent[] = [];
   for (const event of windowed) {
+    if (!event.start) continue;
     const classification = classifyCalendarEvent(event, selfEmails);
-    if (!classification.keep) {
-      stats.skipped++;
-      continue;
-    }
-
-    stats.matched++;
-    let counterparts = counterpartsOf(event, selfEmails);
-
-    if (counterparts.length === 0) {
-      counterparts = peopleFromDescription(event.description || "").filter(
-        (p) => {
-          const email = p.email.toLowerCase();
-          return !email || !selfEmails.some((s) => s.toLowerCase() === email);
-        }
-      );
-    }
-
-    if (counterparts.length === 0) {
-      const inferred = nameFromNetworkingTitle(event.summary || "");
-      if (inferred) {
-        counterparts = [{ name: inferred, email: "" }];
-      } else {
-        stats.skipped++;
-        stats.matched--;
-        continue;
-      }
-    }
-
-    // Cap at 3 people for networking events
-    counterparts = counterparts.slice(0, 3);
-
-    const eventDate = event.start || new Date();
-    const isPast = eventDate.getTime() <= now;
-    const note = meetingNote(event);
-    const titleHint = nameFromNetworkingTitle(event.summary || "");
-
-    for (const person of counterparts) {
-      const resolved = await resolveOrCreateContact(
-        userId,
-        duplicateIndex,
-        person,
-        titleHint
-      );
-      if (resolved.created) stats.contactsCreated++;
-
-      const contact = resolved.contact;
-      if (!contact) continue;
-      const externalId = externalIdFor(event.uid, contact.id);
-
-      const prior = await db.query.interactions.findFirst({
-        where: and(
-          eq(interactions.userId, userId),
-          eq(interactions.externalId, externalId)
-        ),
-      });
-
-      if (prior) {
-        await db
-          .update(interactions)
-          .set({
-            interactionDate: eventDate,
-            rawNotes: note,
-            aiSummary: event.summary || "Calendar meeting",
-            topics: event.summary ? [event.summary] : [],
-            source,
-          })
-          .where(eq(interactions.id, prior.id));
-        stats.updated++;
-      } else {
-        await db.insert(interactions).values({
-          userId,
-          contactId: contact.id,
-          interactionType: "meeting",
-          interactionDate: eventDate,
-          source,
-          externalId,
-          rawNotes: note,
-          aiSummary: event.summary || "Calendar meeting",
-          topics: event.summary ? [event.summary] : [],
-        });
-        stats.created++;
-      }
-
-      await db
-        .update(contacts)
-        .set({
-          lastInteractionAt:
-            !contact.lastInteractionAt || eventDate > contact.lastInteractionAt
-              ? eventDate
-              : contact.lastInteractionAt,
-          firstInteractionAt:
-            !contact.firstInteractionAt ||
-            eventDate < contact.firstInteractionAt
-              ? eventDate
-              : contact.firstInteractionAt,
-          nextFollowUpAt:
-            !isPast && !contact.nextFollowUpAt
-              ? eventDate
-              : contact.nextFollowUpAt,
-          email: contact.email || person.email || undefined,
-          updatedAt: new Date(),
-        })
-        .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
-
-      await upsertContactEmbedding(
-        userId,
-        contact.id,
-        "meeting",
-        `${contact.fullName}\n${note}`,
-        externalId
-      );
-
-      if (createFollowUps && isPast && daysAgo(eventDate) <= 21) {
-        const existingReminder = await db.query.reminders.findFirst({
-          where: and(
-            eq(reminders.userId, userId),
-            eq(reminders.contactId, contact.id),
-            eq(reminders.reminderType, "post_meeting")
-          ),
-        });
-        const alreadyForEvent =
-          existingReminder &&
-          (existingReminder.description || "").includes(event.uid);
-
-        if (!alreadyForEvent) {
-          const due = new Date(eventDate);
-          due.setDate(due.getDate() + 2);
-          if (due.getTime() < now) due.setTime(now + 2 * 86400000);
-          await db.insert(reminders).values({
-            userId,
-            contactId: contact.id,
-            title: `Follow up after ${event.summary || "meeting"}`,
-            description: `You met with ${contact.fullName}. Event ${event.uid}`,
-            dueDate: due,
-            status: "pending",
-            reminderType: "post_meeting",
-            actionKind: "follow_up",
-            createdBy: "calendar_sync",
-          });
-        }
-      }
-    }
+    if (!classification.keep) continue;
+    const people = counterpartsOf(event, selfEmails);
+    if (people.length === 0) continue;
+    networkEvents.push({
+      externalIdBase: calendarExternalIdBase(event.uid),
+      type: "meeting",
+      timestamp: event.start,
+      participants: people.map((p) => ({ name: p.name || null, email: p.email || null })),
+      summary: event.summary || null,
+      notes: meetingNote(event),
+    });
   }
 
-  try {
-    await refreshOutreachSuggestions(userId);
-  } catch {
-    // non-fatal
-  }
+  const ctx = await openIngestContext(userId, {
+    source,
+    createsContacts: true,
+    // `calendarAdapter`'s figure: an attendee list makes a name-only match strong evidence.
+    matchConfidence: 0.6,
+    reminders: createFollowUps ? postMeetingReminder : undefined,
+  });
+  const ingested = await ingestEvents(ctx, networkEvents);
+  await finalizeIngest(ctx);
 
-  return stats;
+  return {
+    scanned: windowed.length,
+    matched: ingested.contactsMatched,
+    created: ingested.interactionsLogged,
+    updated: 0,
+    contactsCreated: ingested.contactsCreated,
+    skipped: windowed.length - networkEvents.length,
+  };
+}
+
+/**
+ * A nudge two days after a meeting that has already happened.
+ *
+ * The description embeds the event uid on purpose: ingest dedupes reminders on
+ * `(contactId, description)`, so this is what makes a re-sync of the same calendar reproduce
+ * a byte-identical candidate that gets filtered out rather than inserted again.
+ */
+function postMeetingReminder(
+  event: NetworkEvent,
+  contactId: string,
+  userId: string
+): ReminderInsert[] {
+  const now = Date.now();
+  const eventAt = event.timestamp.getTime();
+  // Only for meetings that have happened, and only recently enough to still be worth a nudge.
+  if (eventAt > now) return [];
+  if ((now - eventAt) / 86400000 > 21) return [];
+
+  const due = new Date(eventAt + 2 * 86400000);
+  if (due.getTime() < now) due.setTime(now + 2 * 86400000);
+
+  // `externalIdBase` is `cal:<uid>`; the uid is what the old writer put in the description.
+  const uid = event.externalIdBase.replace(/^cal:/, "");
+  return [
+    {
+      userId,
+      contactId,
+      title: `Follow up after ${event.summary || "meeting"}`,
+      description: `You met with them. Event ${uid}`,
+      dueDate: due,
+      status: "pending",
+      reminderType: "post_meeting",
+      actionKind: "follow_up",
+      createdBy: "calendar_sync",
+    },
+  ];
 }
 
 export async function syncCalendarSubscription(
@@ -406,6 +241,50 @@ export async function syncCalendarSubscription(
       .where(eq(calendarSubscriptions.id, sub.id));
     throw err;
   }
+}
+
+/**
+ * Claim ICS subscriptions that are due, across ALL users, for the scheduler.
+ *
+ * This is what makes an ICS subscription actually ongoing. Until now the only thing that
+ * synced one was `syncDueCalendarSubscriptions` firing from `after()` on the `/imports` and
+ * `/reminders` page renders — so a user who subscribed a calendar and then never opened
+ * either page never synced again, and the feature quietly did nothing for exactly the people
+ * who had finished setting it up.
+ *
+ * The claim rides on `last_synced_at` rather than a lease column: setting it in the same
+ * statement that selects makes the row not-due for the next `CALENDAR_SYNC_STALE_MS`, which
+ * is both the claim and the schedule. A single statement takes its row locks atomically, so
+ * two concurrent runs cannot both take the same subscription — the same argument the import
+ * engine's row claim makes.
+ *
+ * The tradeoff, stated plainly: a subscription whose sync then fails has already had its
+ * timestamp moved, so it waits out the stale window before retrying instead of retrying
+ * immediately. For a polled ICS URL that is the behaviour you want anyway — a dead URL should
+ * not be re-fetched every fifteen minutes.
+ */
+export async function claimDueCalendarSubscriptions(
+  limit: number,
+  now: Date = new Date()
+): Promise<Array<{ id: string; userId: string }>> {
+  const db = await getDb();
+  const staleBefore = new Date(now.getTime() - CALENDAR_SYNC_STALE_MS);
+  const claimed = await db.execute(sql`
+    UPDATE calendar_subscriptions
+       SET last_synced_at = ${now}, updated_at = ${now}
+     WHERE id IN (
+       SELECT id FROM calendar_subscriptions
+        WHERE enabled = 1
+          AND (last_synced_at IS NULL OR last_synced_at < ${staleBefore})
+        ORDER BY last_synced_at NULLS FIRST
+        LIMIT ${limit}
+     )
+    RETURNING id, user_id
+  `);
+  return rowsOf<{ id: string; user_id: string }>(claimed).map((r) => ({
+    id: r.id,
+    userId: r.user_id,
+  }));
 }
 
 export async function syncDueCalendarSubscriptions(userId: string) {

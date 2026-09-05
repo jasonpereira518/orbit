@@ -203,6 +203,11 @@ export async function upsertOutlookConnection(
         tokenExpiresAt: expiresAt,
         scopes: tokens.scope || MICROSOFT_SCOPES,
         status: "active",
+        // Re-arm: this is the only path from needs_reauth back to active, so it is also
+        // the only place a disarmed connection can rejoin the sync schedule.
+        nextSyncAt: new Date(),
+        syncFailures: 0,
+        syncError: null,
         updatedAt: new Date(),
       })
       .where(eq(outlookConnections.id, existing.id))
@@ -220,6 +225,7 @@ export async function upsertOutlookConnection(
       tokenExpiresAt: expiresAt,
       scopes: tokens.scope || MICROSOFT_SCOPES,
       status: "active",
+      nextSyncAt: new Date(),
     })
     .returning();
   return created;
@@ -234,7 +240,11 @@ async function markNeedsReauth(userId: string) {
     const db = await getDb();
     await db
       .update(outlookConnections)
-      .set({ status: "needs_reauth", updatedAt: new Date() })
+      // `nextSyncAt: null` is not incidental. A connection whose grant is dead can never
+      // produce a token, so leaving it armed makes the scheduler claim, refresh, fail and
+      // reschedule it every run, forever. NULL means "not scheduled"; re-running OAuth is
+      // the only way back, and `upsert...Connection` re-arms it there.
+      .set({ status: "needs_reauth", nextSyncAt: null, updatedAt: new Date() })
       .where(eq(outlookConnections.userId, userId));
   } catch {
     // ignore

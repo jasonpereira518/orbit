@@ -548,6 +548,12 @@ CREATE TABLE IF NOT EXISTS gmail_connections (
   scopes text,
   status text NOT NULL DEFAULT 'active',
   last_synced_at timestamptz,
+  sync_cursor jsonb,
+  next_sync_at timestamptz,
+  sync_status text,
+  sync_started_at timestamptz,
+  sync_error text,
+  sync_failures integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -562,6 +568,12 @@ CREATE TABLE IF NOT EXISTS outlook_connections (
   scopes text,
   status text NOT NULL DEFAULT 'active',
   last_synced_at timestamptz,
+  sync_cursor jsonb,
+  next_sync_at timestamptz,
+  sync_status text,
+  sync_started_at timestamptz,
+  sync_error text,
+  sync_failures integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -599,6 +611,64 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
 );
 CREATE INDEX IF NOT EXISTS admin_audit_log_created_idx ON admin_audit_log(created_at);
 CREATE INDEX IF NOT EXISTS admin_audit_log_target_idx ON admin_audit_log(target_user_id);
+CREATE TABLE IF NOT EXISTS api_keys (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  name text NOT NULL,
+  kind text NOT NULL DEFAULT 'api',
+  prefix text NOT NULL,
+  key_hash text NOT NULL,
+  scopes jsonb NOT NULL DEFAULT '["read"]',
+  last_used_at timestamptz,
+  revoked_at timestamptz,
+  revoked_reason text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS api_keys_hash_uidx ON api_keys(key_hash);
+CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys(user_id);
+CREATE TABLE IF NOT EXISTS api_idempotency_keys (
+  user_id text NOT NULL,
+  idempotency_key text NOT NULL,
+  request_hash text NOT NULL,
+  status_code integer NOT NULL,
+  response_body jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS api_idempotency_uidx ON api_idempotency_keys(user_id, idempotency_key);
+CREATE TABLE IF NOT EXISTS webhook_endpoints (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  url text NOT NULL,
+  secret_encrypted text NOT NULL,
+  event_types jsonb NOT NULL DEFAULT '[]',
+  description text,
+  status text NOT NULL DEFAULT 'pending',
+  consecutive_failures integer NOT NULL DEFAULT 0,
+  disabled_at timestamptz,
+  disabled_reason text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS webhook_endpoints_user_idx ON webhook_endpoints(user_id);
+CREATE TABLE IF NOT EXISTS outbound_webhook_deliveries (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  endpoint_id uuid NOT NULL REFERENCES webhook_endpoints(id) ON DELETE CASCADE,
+  event_id text NOT NULL,
+  event_type text NOT NULL,
+  payload jsonb NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  attempts integer NOT NULL DEFAULT 0,
+  next_attempt_at timestamptz,
+  last_status_code integer,
+  last_error text,
+  last_attempted_at timestamptz,
+  delivered_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outbound_deliveries_endpoint_event_uidx ON outbound_webhook_deliveries(endpoint_id, event_id);
+CREATE INDEX IF NOT EXISTS outbound_deliveries_due_idx ON outbound_webhook_deliveries(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS outbound_deliveries_user_created_idx ON outbound_webhook_deliveries(user_id, created_at);
 CREATE TABLE IF NOT EXISTS cron_runs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   job text NOT NULL,
@@ -886,8 +956,16 @@ CREATE TABLE IF NOT EXISTS non_dilutive_funding (
  * rule is the one v21 records — a database stamped N by the branch that merged first has
  * none of the second branch's DDL, so re-using N would skip the sweep on every instance
  * that had already migrated, and the columns would simply never appear.)
+ *
+ * v30 = continuous provider sync: sync_cursor/next_sync_at/sync_status/sync_started_at/
+ * sync_error/sync_failures on both connection tables, plus their partial due indexes.
+ * v31 = the connector platform: api_keys, api_idempotency_keys, webhook_endpoints,
+ * outbound_webhook_deliveries.
+ *
+ * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
+ * LinkedIn, constellation and feedback branches each landed first.)
  */
-export const SCHEMA_VERSION = 29;
+export const SCHEMA_VERSION = 31;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1929,6 +2007,54 @@ const alters = [
   `DROP INDEX IF EXISTS embeddings_user_contact_source_uidx`,
   `CREATE UNIQUE INDEX IF NOT EXISTS embeddings_user_contact_source_id_uidx
    ON contact_embeddings(user_id, contact_id, source_type, source_id)`,
+  // Schema v30: continuous provider sync. The same six columns on both connection tables —
+  // they are byte-identical by design, and `syncStateColumns()` in schema.ts is the one
+  // place their shape is written down.
+  //
+  // Deliberately no backfill of `next_sync_at`: NULL means "not scheduled", so nothing is
+  // claimable until a connector exists to serve it. Arming existing connections is its own
+  // statement, added once the Google Calendar connector lands.
+  //
+  // `sync_failures` is the only NOT NULL column here, and it carries a DEFAULT, so the
+  // ALTER is safe on a populated table.
+  ...["gmail_connections", "outlook_connections"].flatMap((table) => [
+    `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS sync_cursor jsonb`,
+    `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS next_sync_at timestamptz`,
+    `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS sync_status text`,
+    `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS sync_started_at timestamptz`,
+    `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS sync_error text`,
+    `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS sync_failures integer NOT NULL DEFAULT 0`,
+    // The scheduler's claim orders by next_sync_at over the due rows only; the partial
+    // predicate keeps the index to the handful of armed connections rather than every row.
+    `CREATE INDEX IF NOT EXISTS ${table}_due_idx ON ${table}(next_sync_at) WHERE next_sync_at IS NOT NULL`,
+  ]),
+  // Arm the connections that already exist.
+  //
+  // `sync_status IS NULL` is the load-bearing half of this predicate, not decoration.
+  // `next_sync_at IS NULL` alone means BOTH "never scheduled" and "deliberately disarmed
+  // after repeated failure" — so on its own this statement would resurrect every known-dead
+  // connection on every deploy, and the scheduler would claim, fail and disarm them again,
+  // forever. Only a row the scheduler has never touched still has a NULL `sync_status`;
+  // `disarmSync` always writes 'error'.
+  //
+  // Scoped to Google, because Google Calendar is the only connector that exists — arming an
+  // Outlook row would have the scheduler claim it every run to find nothing to do. Outlook
+  // joins when its calendar/mail scopes ship.
+  //
+  // Not scoped to `hasCalendarScope`, deliberately: a connection made before the scope shipped
+  // needs to be claimed exactly once so the scheduler can disarm it with a message telling the
+  // user to reconnect. Filtering it out here would leave it silently doing nothing instead.
+  `UPDATE gmail_connections SET next_sync_at = now()
+    WHERE status = 'active' AND next_sync_at IS NULL AND sync_status IS NULL`,
+  // Schema v31: the connector platform. The CREATE TABLEs above land on a fresh database;
+  // these repair an existing one, which is why every index appears in both places.
+  `CREATE UNIQUE INDEX IF NOT EXISTS api_keys_hash_uidx ON api_keys(key_hash)`,
+  `CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys(user_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS api_idempotency_uidx ON api_idempotency_keys(user_id, idempotency_key)`,
+  `CREATE INDEX IF NOT EXISTS webhook_endpoints_user_idx ON webhook_endpoints(user_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS outbound_deliveries_endpoint_event_uidx ON outbound_webhook_deliveries(endpoint_id, event_id)`,
+  `CREATE INDEX IF NOT EXISTS outbound_deliveries_due_idx ON outbound_webhook_deliveries(status, next_attempt_at)`,
+  `CREATE INDEX IF NOT EXISTS outbound_deliveries_user_created_idx ON outbound_webhook_deliveries(user_id, created_at)`,
 ];
 
 /**
