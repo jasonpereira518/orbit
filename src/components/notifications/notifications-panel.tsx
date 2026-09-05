@@ -201,7 +201,7 @@ export function NotificationsPanelButton({
             </SheetDescription>
           </SheetHeader>
 
-          <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
             {data && <ExtensionPromo canUseExtension={data.canUseExtension} />}
 
             {loading && !data ? (
@@ -330,13 +330,27 @@ export function NotificationsPanelButton({
               </div>
             )}
 
-            {/* Outside the ternary above, so an account whose only news is an alert still
-                sees it — that branch renders the "nothing due" empty state instead of the
-                section list. */}
-            <AccountAlerts alerts={alerts} onNavigate={() => setOpen(false)} />
           </div>
 
-          <div className="flex items-center justify-between gap-3 border-t border-border/60 p-4">
+          {/* Pinned to the foot of the window rather than sitting in the list above it.
+              An alert is a standing statement about the account — an expired card, a failed
+              import — and scrolling one out of sight is exactly how you stop acting on it.
+              The list keeps its own scrollbar; `min-h-0` on it is what lets it give up the
+              room this needs instead of overflowing the window.
+
+              The cap is a backstop for the expanded state only: collapsed, this is at most
+              `ALERTS_COLLAPSED_VISIBLE` rows and nowhere near 45% of the window, so the
+              nested scroller the alerts docblock warns about never actually appears.
+
+              It renders nothing when there are no live alerts, so the border comes from the
+              component rather than from a wrapper that would otherwise draw a stray line. */}
+          <AccountAlerts
+            alerts={alerts}
+            onNavigate={() => setOpen(false)}
+            className="max-h-[45%] shrink-0 overflow-y-auto border-t border-border/60 px-4 py-3"
+          />
+
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border/60 p-4">
             <Link
               href="/dashboard"
               onClick={() => setOpen(false)}

@@ -410,10 +410,11 @@ export function FeedbackPanel({
           )}
         </div>
 
-        {/* A little clear of the message box above it. Both are large bordered surfaces, so
-            the panel's own 20px rhythm reads tighter between them than it does under a
-            text label. */}
-        <div className="mt-3 grid gap-2">
+        {/* Well clear of the message box above it. Both are large bordered surfaces, so the
+            panel's own 20px rhythm reads tighter between them than it does under a text
+            label — and the message box grows as you type, which makes a small gap close up
+            further. `mt-5` puts a visible band of glass between the two. */}
+        <div className="mt-5 grid gap-2">
           {/* The primary way to attach one: full width, its own label, and an explanation of
               what the gesture is. It was a 72px dashed tile next to the thumbnails and read
               as an afterthought — which is backwards, since a screenshot is the most useful
