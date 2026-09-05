@@ -54,7 +54,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import {
-  INTERACTION_TYPES,
+  SELECTABLE_INTERACTION_TYPES,
   interactionFamilySpec,
   interactionTypeLabel,
   interactionTypeSpec,
@@ -302,7 +302,7 @@ export function InteractionDetailSheet({
             <div className="space-y-2">
               <Label>Type</Label>
               <div className="grid grid-cols-3 gap-1.5">
-                {INTERACTION_TYPES.map((t) => {
+                {SELECTABLE_INTERACTION_TYPES.map((t) => {
                   const fam = interactionFamilySpec(t.value);
                   const on = t.value === formType;
                   return (

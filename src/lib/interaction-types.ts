@@ -25,23 +25,49 @@ import {
  * which drew the same line as `family === "together"` but in a second place that could drift.
  */
 export const INTERACTION_TYPES = [
-  { value: "meeting", label: "Meeting", hint: "A scheduled conversation", icon: Users, family: "together" },
+  { value: "meeting", label: "1:1 Meeting", hint: "A scheduled one-to-one", icon: Users, family: "together" },
   { value: "in_person", label: "In person", hint: "Coffee, lunch, dropped by", icon: Coffee, family: "together" },
   { value: "event", label: "Event", hint: "Met them at a conference, talk or mixer", icon: PartyPopper, family: "together" },
   { value: "intro", label: "Introduction", hint: "They recommended someone, or you were introduced", icon: Handshake, family: "together" },
   { value: "call", label: "Call", hint: "Phone or video", icon: Phone, family: "live" },
   { value: "email", label: "Email", hint: "An email exchange", icon: Mail, family: "written" },
-  { value: "message", label: "Message", hint: "Text, DM or chat", icon: MessageSquare, family: "written" },
   { value: "linkedin_message", label: "LinkedIn", hint: "A LinkedIn message", icon: MessagesSquare, family: "written" },
-  { value: "reach_out", label: "Reach out", hint: "You reached out to them", icon: Send, family: "yours" },
+  { value: "reach_out", label: "Cold intro", hint: "You introduced yourself, with no warm introduction", icon: Send, family: "yours" },
   { value: "note", label: "Note", hint: "Something you wrote down", icon: NotebookPen, family: "yours" },
+  {
+    value: "message",
+    label: "Message",
+    hint: "Text, DM or chat",
+    icon: MessageSquare,
+    family: "written",
+    retired: true,
+  },
 ] as const satisfies readonly {
   value: string;
   label: string;
   hint: string;
   icon: LucideIcon;
   family: InteractionFamilyValue;
+  /**
+   * Kept so stored rows still read correctly, but no longer offered when logging.
+   *
+   * The column is free text and rows written before a type was retired are left alone, as
+   * everything else here is. Aliasing "message" onto another type instead would have been a
+   * silent rewrite of history — a text exchange is not a note and is not a LinkedIn message,
+   * and there is no honest target for it. So it stays readable and stops being writable.
+   */
+  retired?: true;
 }[];
+
+/**
+ * The types offered when logging an interaction, in the order they are shown.
+ *
+ * Every picker reads this; `INTERACTION_TYPES` stays the full vocabulary for anything that has
+ * to render a value already in the database.
+ */
+export const SELECTABLE_INTERACTION_TYPES = INTERACTION_TYPES.filter(
+  (t) => !("retired" in t && t.retired)
+);
 
 export type InteractionTypeValue = (typeof INTERACTION_TYPES)[number]["value"];
 export type InteractionTypeSpec = (typeof INTERACTION_TYPES)[number];

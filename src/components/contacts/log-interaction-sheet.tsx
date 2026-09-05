@@ -19,7 +19,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import {
-  INTERACTION_TYPES,
+  SELECTABLE_INTERACTION_TYPES,
   interactionFamilySpec,
   type InteractionTypeValue,
 } from "@/lib/interaction-types";
@@ -247,10 +247,10 @@ export function LogInteractionSheet({
           <div className="space-y-2">
             <Label>What happened</Label>
             <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
-              {/* `INTERACTION_TYPES` is already ordered by family, so tinting each icon
-                  gives the ten options a grouping the eye can use without four extra
-                  headings in an already tall sheet. */}
-              {INTERACTION_TYPES.map((t) => {
+              {/* The list is already ordered by family, so tinting each icon gives the
+                  options a grouping the eye can use without extra headings in an
+                  already tall sheet. */}
+              {SELECTABLE_INTERACTION_TYPES.map((t) => {
                 const Icon = t.icon;
                 const fam = interactionFamilySpec(t.value);
                 const selected = t.value === type;
