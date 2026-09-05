@@ -72,6 +72,10 @@ import {
   markGraphChunkLoaded,
   markGraphViewportReady,
 } from "@/lib/graph/intro-signal";
+import {
+  publishGraphScope,
+  registerGraphScopeController,
+} from "@/lib/graph/scope-signal";
 import { clusterBrandColor } from "@/lib/school-color";
 import { CAMERA_MS } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
@@ -93,7 +97,6 @@ import {
   RefreshCw,
   Search,
   Sparkles,
-  Stars,
 } from "lucide-react";
 
 type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
@@ -689,8 +692,6 @@ function GraphCanvas(props: {
   constellationFilterOn: boolean;
   onShowAll: () => void;
   loadingAll: boolean;
-  /** Called on every pan, zoom or star drag, so overlays can get out of the way. */
-  onViewportActivity: () => void;
 }) {
   // Keyword is the one filter driven by continuous typing — debounce it so
   // the (potentially expensive) filter/layout rebuild below doesn't run on
@@ -786,7 +787,6 @@ function GraphCanvasInner({
   constellationFilterOn,
   onShowAll,
   loadingAll,
-  onViewportActivity,
 }: {
   company: string;
   school: string;
@@ -813,7 +813,6 @@ function GraphCanvasInner({
   constellationFilterOn: boolean;
   onShowAll: () => void;
   loadingAll: boolean;
-  onViewportActivity: () => void;
 }) {
   const router = useRouter();
   const { fitView, getNodes, getViewport, setViewport } = useReactFlow();
@@ -1365,13 +1364,9 @@ function GraphCanvasInner({
     setOrbitNodes((nds) => applyNodeChanges(changes, nds));
   }, []);
 
-  const onNodeDragStart: OnNodeDrag = useCallback(
-    (_, node) => {
-      onViewportActivity();
-      if (node.type === "contact") draggingId.current = node.id;
-    },
-    [onViewportActivity]
-  );
+  const onNodeDragStart: OnNodeDrag = useCallback((_, node) => {
+    if (node.type === "contact") draggingId.current = node.id;
+  }, []);
 
   const onNodeDragStop: OnNodeDrag = useCallback(
     (_, node) => {
@@ -1417,20 +1412,6 @@ function GraphCanvasInner({
         nodeOrigin={[0.5, 0.5]}
         minZoom={0.05}
         maxZoom={2.4}
-        // Driven off `onMove` rather than onMoveStart/onMoveEnd: it fires throughout the
-        // gesture, so the overlay retreats on the first frame and returns on a timer after the
-        // last one. A start/end pair would leave it stuck away any time an end event is missed
-        // — a gesture interrupted by a blur, or a wheel-zoom that never "ends".
-        //
-        // The null check is what makes this mean "the user is moving the map" rather than the
-        // much broader "the viewport changed". React Flow hands over the underlying d3-zoom
-        // `sourceEvent`, which is null when the camera moved itself — and this canvas moves
-        // itself constantly: the initial fit, cluster focus, search zoom, the home button.
-        // Without the guard the chip ducked away on first paint and every time the view flew
-        // somewhere on its own, which is what made it look like it hid at random.
-        onMove={(event) => {
-          if (event) onViewportActivity();
-        }}
         onlyRenderVisibleElements
         style={{
           width: "100%",
@@ -1561,15 +1542,6 @@ function GraphCanvasInner({
 const GRAPH_REFETCH_MIN_MS = 60_000;
 
 /**
- * How long after the last pan/zoom/drag before canvas overlays come back.
- *
- * Long enough to span the gaps between frames of one continuous gesture — including the
- * pauses in a trackpad pinch — so the chip does not flicker back mid-movement, and short
- * enough that it feels like it returns as soon as you let go.
- */
-const VIEWPORT_IDLE_MS = 650;
-
-/**
  * No write-back here, deliberately.
  *
  * This used to persist the pruned map whenever its size differed from what was stored, to
@@ -1622,17 +1594,6 @@ export function NetworkGraph({
    */
   const [showAllStars, setShowAllStars] = useState(false);
   const [loadingAll, setLoadingAll] = useState(false);
-  /**
-   * True while the user is panning, zooming or dragging a star.
-   *
-   * The scope chip sits over the bottom of the canvas, which is exactly where stars end up
-   * when you drag the map down — so it steps aside while the view is being moved and comes
-   * back once it settles. A ref mirrors it so the (very frequent) move callback can skip the
-   * state write on every frame of a gesture.
-   */
-  const [viewportBusy, setViewportBusy] = useState(false);
-  const viewportBusyRef = useRef(false);
-  const viewportIdleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // `loadData` is memoised with no deps and must not resubscribe on every toggle, so it reads
   // the current scope through a ref rather than closing over the state.
   const showAllStarsRef = useRef(false);
@@ -1770,25 +1731,6 @@ export function NetworkGraph({
    * The wider payload is fetched on demand and cached for the session; going back is free.
    * A failure leaves the toggle where it was rather than showing a half-empty chart.
    */
-  const handleViewportActivity = useCallback(() => {
-    if (!viewportBusyRef.current) {
-      viewportBusyRef.current = true;
-      setViewportBusy(true);
-    }
-    if (viewportIdleTimer.current) clearTimeout(viewportIdleTimer.current);
-    viewportIdleTimer.current = setTimeout(() => {
-      viewportBusyRef.current = false;
-      setViewportBusy(false);
-    }, VIEWPORT_IDLE_MS);
-  }, []);
-
-  useEffect(
-    () => () => {
-      if (viewportIdleTimer.current) clearTimeout(viewportIdleTimer.current);
-    },
-    []
-  );
-
   const setScope = useCallback((wantAll: boolean) => {
     const cached = wantAll ? scopeCache.current.all : scopeCache.current.engaged;
     if (cached) {
@@ -1812,6 +1754,34 @@ export function NetworkGraph({
       })
       .finally(() => setLoadingAll(false));
   }, []);
+
+  /**
+   * Hand the scope control to the header toggle, which lives outside this tree.
+   *
+   * `NetworkGraph` stays the only thing that fetches or caches — the button just asks. The
+   * compact dashboard preview deliberately opts out: it renders this same component with no
+   * header above it, and letting it drive the bus would point the toggle at the wrong chart.
+   */
+  useEffect(() => {
+    if (compact) return;
+    return registerGraphScopeController((next) => setScope(next === "all"));
+  }, [compact, setScope]);
+
+  useEffect(() => {
+    if (compact) return;
+    const filter = data?.summary.constellationFilter;
+    publishGraphScope({
+      // Keyed on `enabled`, not `active`: in the "show all" view `active` is false by
+      // definition, and dropping the control there would strand the viewer with no way back.
+      available: Boolean(filter?.enabled),
+      scope: showAllStars ? "all" : "engaged",
+      loading: loadingAll,
+      // `engaged`, not `shown` — `shown` means "what this payload draws", which in the wider
+      // scope is everyone. The toggle needs the count it would go back to.
+      shown: filter?.engaged ?? 0,
+      total: data?.summary.total ?? 0,
+    });
+  }, [compact, data, showAllStars, loadingAll]);
 
   useEffect(() => {
     if (initialData && !positionsHydrated.current) {
@@ -2170,102 +2140,6 @@ export function NetworkGraph({
         )}
       >
         <Starfield />
-
-        {/*
-          Say it out loud. The filter can remove most of a network, and a chart that quietly
-          drops two thirds of someone's contacts is indistinguishable from data loss — so it
-          announces itself, with the undo right next to the claim.
-        */}
-        {/* Keyed on `enabled`, not `active`: in the "show all" view `active` is false by
-            definition, and hiding the chip there would strand the viewer with no way back. */}
-        {!compact && constellationFilter?.enabled && (
-          // Bottom centre, not top: the canvas toolbar (clusters, search, re-engage, refresh)
-          // owns the top strip, and a chip there renders underneath the search field. The
-          // bottom band is empty between the Key button and the view controls.
-          <div
-            className={cn(
-              "pointer-events-none absolute bottom-3 left-1/2 z-20 max-w-[calc(100%-2rem)]",
-              "transition-transform duration-300 ease-out motion-reduce:transition-none",
-              // Slides down out of the frame while the map is being moved — it sits exactly
-              // where stars land when you drag the view downward, and something that slides
-              // away reads as making room, where something that blinks out reads as broken.
-              // The stage is `overflow-hidden`, so off the bottom is genuinely gone.
-              //
-              // `-translate-x-1/2` is repeated in both branches rather than sitting in the base
-              // string: it and the Y offset are the same CSS property, so a base-string version
-              // would be overwritten by the busy branch and the chip would lurch right on its
-              // way down. The offset has to clear the `bottom-3` inset for it to leave the
-              // frame at all.
-              //
-              // Both ends stated, so the resting position never depends on an animation having
-              // run — a backgrounded tab freezes transitions where they stand, which left the
-              // opacity version that preceded this stuck at 0.085 while still reporting
-              // itself visible. Parked mid-slide is at least legible, and the next interaction
-              // resolves it.
-              viewportBusy
-                // Its own height plus the inset, NOT a fixed distance. The chip wraps to two
-                // or three lines on a narrow canvas — measured at 93px against 27px when
-                // wide — so a fixed offset that looks generous at full width leaves a sliver
-                // of it poking above the edge when it is tall. `100%` tracks whatever height
-                // it currently is, and the 1.5rem covers the `bottom-3` inset.
-                //
-                // Underscores because Tailwind turns `_` into a space, and `calc()` requires
-                // whitespace around its `+`.
-                ? "-translate-x-1/2 translate-y-[calc(100%_+_1.5rem)]"
-                : "-translate-x-1/2 translate-y-0"
-            )}
-            aria-hidden={viewportBusy}
-          >
-            <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/10 bg-[#080b12]/85 px-3 py-1 text-[11px] text-white/70 backdrop-blur-md">
-              <Stars className="size-3 text-white/50" aria-hidden />
-              {showAllStars ? (
-                <>
-                  <span>
-                    <span className="tabular-nums">
-                      {`All ${data.summary.total.toLocaleString()}`}
-                    </span>
-                    {" connections"}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setScope(false)}
-                    className="text-white/90 underline underline-offset-2 hover:text-white"
-                  >
-                    Just people you know
-                  </button>
-                </>
-              ) : (
-                <>
-                  {/* Built as one string rather than interleaved expressions and text: JSX
-                      drops whitespace that falls next to a line break, which is how the space
-                      before "you've" went missing when this wrapped. */}
-                  <span>
-                    <span className="tabular-nums">
-                      {`${constellationFilter.shown.toLocaleString()} of ${data.summary.total.toLocaleString()}`}
-                    </span>
-                    {" you\u2019ve engaged with"}
-                  </span>
-                  <button
-                    type="button"
-                    disabled={loadingAll}
-                    onClick={() => setScope(true)}
-                    aria-busy={loadingAll}
-                    className="inline-flex items-center gap-1 text-white/90 underline underline-offset-2 hover:text-white disabled:no-underline disabled:opacity-70"
-                  >
-                    {loadingAll && (
-                      <Loader2 className="size-3 animate-spin" aria-hidden />
-                    )}
-                    {/* Names the size of what it is loading, because on a large network this
-                        is a genuinely slow fetch and a bare spinner reads as a hang. */}
-                    {loadingAll
-                      ? `Loading all ${data.summary.total.toLocaleString()}…`
-                      : "Show all connections"}
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        )}
 
         {!compact && (
           <>
@@ -2711,7 +2585,6 @@ export function NetworkGraph({
             constellationFilterOn={constellationFilterOn}
             onShowAll={() => setScope(true)}
             loadingAll={loadingAll}
-            onViewportActivity={handleViewportActivity}
             company={company}
             school={school}
             keyword={keyword}

@@ -47,6 +47,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-graph-intro": "pure",
   "smoke-graph-layout": "pure",
   "smoke-graph-positions": "pure",
+  "smoke-graph-scope": "pure",
   "smoke-ics-feed": "pure",
   "smoke-import-progress-card": "pure",
   "smoke-lifetime-pricing": "pure",

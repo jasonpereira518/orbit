@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { getGraphData } from "@/actions/graph";
 import { ConstellationIntro } from "@/components/graph/constellation-intro";
+import { ConstellationScopeToggle } from "@/components/graph/constellation-scope-toggle";
 import {
   ConstellationLoading,
   CONSTELLATION_STAGE_HEIGHT,
@@ -15,17 +16,30 @@ import { NetworkGraphLazy } from "@/components/graph/network-graph-lazy";
 export default function GraphPage() {
   return (
     <div className="-mx-1 space-y-3 overflow-hidden md:-mx-2">
-      <div className="shrink-0 px-1">
-        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-primary">
-          Star chart
-        </p>
-        <h1 className="mt-0.5 font-[family-name:var(--font-display)] text-2xl text-ink md:text-3xl">
-          Constellation
-        </h1>
-        <p className="mt-0.5 max-w-xl text-sm text-muted-foreground">
-          You are the sun. Companies and schools form constellations around
-          you — each figure traced by its own people.
-        </p>
+      {/*
+        The scope toggle is here, in the header, rather than over the canvas: the canvas is
+        where the stars are, so anything sitting on it is either covering the network or
+        getting out of the way of it.
+
+        `items-end` sits it at the FOOT of the header, immediately above the chart's top-right
+        corner. Aligned to the top instead it landed level with the app's notification bell —
+        near enough to read as a third piece of app chrome, when it is a control for this one
+        chart and belongs next to it.
+      */}
+      <div className="flex shrink-0 items-end justify-between gap-3 px-1">
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-primary">
+            Star chart
+          </p>
+          <h1 className="mt-0.5 font-[family-name:var(--font-display)] text-2xl text-ink md:text-3xl">
+            Constellation
+          </h1>
+          <p className="mt-0.5 max-w-xl text-sm text-muted-foreground">
+            You are the sun. Companies and schools form constellations around
+            you — each figure traced by its own people.
+          </p>
+        </div>
+        <ConstellationScopeToggle className="mb-0.5 shrink-0" />
       </div>
       {/*
         The intro sits OUTSIDE the boundary so it outlives every phase swap beneath it — the
