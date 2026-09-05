@@ -42,6 +42,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-contact-profile-format": "pure",
   "smoke-dashboard-search": "pure",
   "smoke-date-commitments": "pure",
+  "smoke-dictation": "pure",
   "smoke-duplicate-index": "pure",
   "smoke-embedding-cache": "pure",
   "smoke-env": "pure",

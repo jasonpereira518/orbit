@@ -3,9 +3,11 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useTransition,
+  type ChangeEvent,
   type KeyboardEvent,
 } from "react";
 import Link from "next/link";
@@ -29,6 +31,8 @@ import {
 } from "@/actions/chat";
 import { createReminder } from "@/actions/reminders";
 import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";
+import { ComposerMirror, useCoarsePointer } from "@/components/chat/composer-mirror";
+import { DictationButton } from "@/components/chat/dictation-button";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -51,6 +55,8 @@ import {
 import { cn } from "@/lib/utils";
 import type { ChatRecommendation } from "@/db/schema";
 import { streamChat } from "@/lib/chat-stream-client";
+import { ANCHOR_INTERFERENCE, shiftAnchor, spliceSpan } from "@/lib/dictation";
+import { useDictation } from "@/lib/use-dictation";
 
 type ChatResult = Extract<
   Awaited<ReturnType<typeof askNetwork>>,
@@ -120,6 +126,145 @@ export function ChatPanel() {
   const threadEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const stickToBottomRef = useRef(true);
+
+  // ── Dictation ───────────────────────────────────────────────────────────────────────
+  // Dictated words occupy a span anchored at wherever the caret was when you started, so
+  // they land mid-sentence if that is where you were, and the user's own typing around
+  // them is never clobbered.
+  const [dictationNote, setDictationNote] = useState("");
+  const [hasInterim, setHasInterim] = useState(false);
+  /** Where the un-committed tail sits inside the field, for the ghost overlay. */
+  const [interimRange, setInterimRange] = useState<[number, number] | null>(null);
+  // The mirror is only safe while none of its failure modes are reachable: a selection
+  // would render as an empty highlight, IME preedit never reaches `.value`, and coarse
+  // pointers bring predictive text and text-size-adjust.
+  const [selectionCollapsed, setSelectionCollapsed] = useState(true);
+  const [composing, setComposing] = useState(false);
+  const coarsePointer = useCoarsePointer();
+  /** Where the dictated span begins, or null when no session owns any text. */
+  const anchorRef = useRef<number | null>(null);
+  /** What currently occupies that span, so the next result can replace exactly it. */
+  const spanRef = useRef("");
+  /** The value as of the last change, to tell the user's edits from our own. */
+  const lastValueRef = useRef("");
+  const pendingCaretRef = useRef<number | null>(null);
+  /**
+   * Breaks the declaration cycle: `resetQuestion` must be able to cancel dictation, but
+   * the hook's callbacks need `resetQuestion`'s siblings.
+   */
+  const cancelDictationRef = useRef<() => void>(() => {});
+
+  /**
+   * Every PROGRAMMATIC change to the composer goes through here.
+   *
+   * `rec.stop()` flushes a final result asynchronously, so a plain `setQuestion("")` on
+   * send races it and the dictated text reappears in a just-cleared box. Cancelling first
+   * invalidates the session, and the hook's own session guard drops the straggler.
+   * The user's own typing stays on plain `setQuestion` via `onComposerChange`.
+   */
+  const resetQuestion = useCallback((value: string) => {
+    cancelDictationRef.current();
+    anchorRef.current = null;
+    spanRef.current = "";
+    lastValueRef.current = value;
+    setQuestion(value);
+  }, []);
+
+  const dictation = useDictation({
+    onSessionStart: () => {
+      const el = textareaRef.current;
+      const value = el?.value ?? "";
+      const caret = el?.selectionStart ?? value.length;
+      // A dictated clause needs separating from whatever it follows.
+      const needsSpace = caret > 0 && !/\s$/.test(value.slice(0, caret));
+      const nextValue = needsSpace
+        ? value.slice(0, caret) + " " + value.slice(caret)
+        : value;
+      anchorRef.current = caret + (needsSpace ? 1 : 0);
+      spanRef.current = "";
+      lastValueRef.current = nextValue;
+      if (needsSpace) {
+        setQuestion(nextValue);
+        // Re-rendering the field with a new value parks the caret at the end; put it back
+        // at the anchor so the first dictated words appear under it.
+        pendingCaretRef.current = anchorRef.current;
+      }
+      setDictationNote("Listening");
+    },
+    onTranscript: (span, { hasInterim: interim, interimStart }) => {
+      const el = textareaRef.current;
+      const anchor = anchorRef.current;
+      if (!el || anchor === null) return;
+
+      // Read the DOM, not `question`: results arrive outside React's batching at up to
+      // five a second, and the state in this closure can be a render stale.
+      const value = el.value;
+      const result = spliceSpan(value, anchor, spanRef.current, span);
+      if (!result) {
+        // The anchor no longer describes the span — stop rather than corrupt the text.
+        anchorRef.current = null;
+        cancelDictationRef.current();
+        return;
+      }
+
+      const spanEnd = anchor + spanRef.current.length;
+      const caretRidesTail =
+        el.selectionStart === el.selectionEnd && el.selectionStart === spanEnd;
+
+      spanRef.current = span;
+      lastValueRef.current = result.value;
+      setHasInterim(interim);
+      setInterimRange(
+        interim ? [anchor + interimStart, anchor + span.length] : null,
+      );
+      setQuestion(result.value);
+      if (caretRidesTail) pendingCaretRef.current = result.spanEnd;
+    },
+    onSessionEnd: (reason) => {
+      anchorRef.current = null;
+      spanRef.current = "";
+      setHasInterim(false);
+      setInterimRange(null);
+      setDictationNote(
+        reason === "error" ? "Dictation unavailable" : "Dictation stopped",
+      );
+    },
+    onEffect: (effect) => {
+      // A stable id per reason: clicking a denied mic repeatedly should re-surface the
+      // same message, not stack identical copies.
+      if (effect === "toast-denied") {
+        toast.error(
+          "Orbit needs microphone access to dictate. Enable it in your browser's site settings.",
+          { id: "dictation-denied" },
+        );
+      } else if (effect === "toast-no-microphone") {
+        toast.error("No microphone found.", { id: "dictation-no-mic" });
+      } else if (effect === "toast-network") {
+        toast.error("Dictation needs a connection right now.", {
+          id: "dictation-network",
+        });
+      }
+    },
+  });
+  useEffect(() => {
+    cancelDictationRef.current = dictation.cancel;
+  }, [dictation.cancel]);
+
+  /**
+   * Caret restoration, before paint. The rAF idiom used elsewhere in this file visibly
+   * lags when results land five times a second.
+   */
+  useLayoutEffect(() => {
+    const caret = pendingCaretRef.current;
+    if (caret === null) return;
+    pendingCaretRef.current = null;
+    textareaRef.current?.setSelectionRange(caret, caret);
+  });
+
+  /** Backstop for any future clear that forgets to go through `resetQuestion`. */
+  useEffect(() => {
+    if (busy || loadingThread) dictation.cancel();
+  }, [busy, loadingThread, dictation]);
 
   const refreshThreads = useCallback(async () => {
     try {
@@ -201,14 +346,14 @@ export function ChatPanel() {
       );
       const lastUser = [...rows].reverse().find((row) => row.role === "user");
       setLastUserQuery(lastUser?.content ?? "");
-      setQuestion("");
+      resetQuestion("");
       requestAnimationFrame(() => scrollToBottom(false));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to load chat");
     } finally {
       setLoadingThread(false);
     }
-  }, [scrollToBottom]);
+  }, [resetQuestion, scrollToBottom]);
 
   const startNewChat = useCallback(() => {
     start(async () => {
@@ -217,7 +362,7 @@ export function ChatPanel() {
         setThreadId(created.id);
         setThreadTitle(created.title);
         setMessages([]);
-        setQuestion("");
+        resetQuestion("");
         setLastUserQuery("");
         setThreads((prev) => [
           {
@@ -233,7 +378,7 @@ export function ChatPanel() {
         toast.error(err instanceof Error ? err.message : "Could not start chat");
       }
     });
-  }, []);
+  }, [resetQuestion]);
 
   const removeThread = useCallback(
     (id: string) => {
@@ -245,7 +390,7 @@ export function ChatPanel() {
             setThreadId(null);
             setThreadTitle(null);
             setMessages([]);
-            setQuestion("");
+            resetQuestion("");
           }
           toast.success("Chat deleted");
         } catch (err) {
@@ -253,7 +398,7 @@ export function ChatPanel() {
         }
       });
     },
-    [threadId]
+    [resetQuestion, threadId]
   );
 
   const sendQuestion = useCallback(
@@ -269,7 +414,7 @@ export function ChatPanel() {
       };
       stickToBottomRef.current = true;
       setMessages((prev) => [...prev, userMsg]);
-      setQuestion("");
+      resetQuestion("");
       requestAnimationFrame(() => scrollToBottom(true));
 
       const assistantId = newId();
@@ -281,7 +426,7 @@ export function ChatPanel() {
         } catch (err) {
           toast.error(toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message);
           setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
-          setQuestion(q);
+          resetQuestion(q);
           setStreaming(false);
           return;
         }
@@ -331,14 +476,14 @@ export function ChatPanel() {
             onError: (message) => {
               toast.error(message);
               setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
-              setQuestion(q);
+              resetQuestion(q);
             },
           }
         );
         setStreaming(false);
       })();
     },
-    [busy, loadingThread, ensureThread, scrollToBottom]
+    [busy, loadingThread, ensureThread, resetQuestion, scrollToBottom]
   );
 
   function fillMostRecentUserMessage() {
@@ -347,7 +492,7 @@ export function ChatPanel() {
       .find((m): m is UserMessage => m.role === "user");
     const content = fromThread?.content || lastUserQuery;
     if (!content) return false;
-    setQuestion(content);
+    resetQuestion(content);
     requestAnimationFrame(() => {
       const el = textareaRef.current;
       if (!el) return;
@@ -358,7 +503,49 @@ export function ChatPanel() {
     return true;
   }
 
+  /**
+   * The user's own typing. An edit before the dictated span slides the anchor along; an
+   * edit after it changes nothing; an edit through it ends the session, because carrying
+   * on would overwrite what they just wrote.
+   */
+  function onComposerChange(e: ChangeEvent<HTMLTextAreaElement>) {
+    const next = e.target.value;
+    if (anchorRef.current !== null) {
+      const shifted = shiftAnchor(
+        lastValueRef.current,
+        next,
+        anchorRef.current,
+        spanRef.current.length,
+      );
+      if (shifted === ANCHOR_INTERFERENCE) {
+        anchorRef.current = null;
+        dictation.cancel();
+      } else {
+        anchorRef.current = shifted;
+      }
+    }
+    lastValueRef.current = next;
+    setQuestion(next);
+  }
+
+  /**
+   * Every condition the mirror needs, checked together. The moment one fails it unmounts
+   * and the plain field shows — the two layers look identical, so nothing jumps.
+   */
+  const showMirror =
+    dictation.state === "listening" &&
+    hasInterim &&
+    interimRange !== null &&
+    selectionCollapsed &&
+    !composing &&
+    !coarsePointer;
+
   function onComposerKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Escape" && dictation.listening) {
+      e.preventDefault();
+      dictation.stop();
+      return;
+    }
     if (e.key === "ArrowUp" && !e.shiftKey && !question.trim()) {
       if (fillMostRecentUserMessage()) {
         e.preventDefault();
@@ -547,15 +734,55 @@ export function ChatPanel() {
           <div className="shrink-0 border-t border-border/60 bg-card p-3 sm:p-4">
             <div className="mx-auto max-w-3xl space-y-2.5">
               <div className="flex gap-2">
-                <Textarea
-                  ref={textareaRef}
-                  rows={2}
-                  placeholder="Ask about your network…"
-                  value={question}
-                  onChange={(e) => setQuestion(e.target.value)}
-                  onKeyDown={onComposerKeyDown}
-                  className="min-h-[44px] flex-1 resize-none"
+                <div className="relative flex-1">
+                  <Textarea
+                    ref={textareaRef}
+                    rows={2}
+                    placeholder="Ask about your network…"
+                    value={question}
+                    onChange={onComposerChange}
+                    onKeyDown={onComposerKeyDown}
+                    onSelect={(e) => {
+                      const el = e.currentTarget;
+                      setSelectionCollapsed(el.selectionStart === el.selectionEnd);
+                    }}
+                    onCompositionStart={() => setComposing(true)}
+                    onCompositionEnd={() => setComposing(false)}
+                    data-dictating={dictation.listening || undefined}
+                    className={cn(
+                      // `field-sizing-content` has no ceiling of its own, and this sits in
+                      // a fixed-height card: a long dictation would squeeze the thread away.
+                      "min-h-[44px] max-h-40 w-full resize-none overflow-y-auto",
+                      dictation.listening &&
+                        "border-primary/40 bg-primary/[0.035] dark:bg-primary/[0.06]",
+                      // The mirror paints the glyphs while it is up. The caret is left
+                      // visible so the field still reads as focused and editable.
+                      showMirror && "text-transparent caret-ink selection:text-foreground",
+                    )}
+                    style={
+                      dictation.listening ? { scrollbarGutter: "stable" } : undefined
+                    }
+                    disabled={busy || loadingThread}
+                  />
+                  {showMirror && interimRange && (
+                    <ComposerMirror
+                      value={question}
+                      interimStart={interimRange[0]}
+                      interimEnd={interimRange[1]}
+                      textareaRef={textareaRef}
+                    />
+                  )}
+                </div>
+                <DictationButton
+                  state={dictation.state}
+                  level={dictation.level}
                   disabled={busy || loadingThread}
+                  onToggle={(source) => {
+                    dictation.toggle();
+                    // Pointer users want to carry straight on into the field; keyboard
+                    // users would lose the control they just pressed.
+                    if (source === "pointer") textareaRef.current?.focus();
+                  }}
                 />
                 <Button
                   type="button"
@@ -581,6 +808,11 @@ export function ChatPanel() {
                     <ArrowUp className="size-4" />
                   )}
                 </Button>
+              </div>
+              {/* State only — never the transcript, which would re-announce every
+                  150ms as the recogniser revises it. */}
+              <div className="sr-only" aria-live="polite">
+                {dictationNote}
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {SUGGESTION_CHIPS.map((chip) => (
