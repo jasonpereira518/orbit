@@ -29,7 +29,21 @@ function check(label: string, ok: boolean, detail?: string) {
 
 async function reset() {
   const db = await getDb();
-  await db.delete(cronRuns).where(inArray(cronRuns.job, ["imports.process-stalled", "ops.sweep"]));
+  await db
+    .delete(cronRuns)
+    .where(inArray(cronRuns.job, ["imports.process-stalled", "ops.sweep", "sync.run"]));
+  // A healthy connector-sync run, so `sync.schedule_missed` stays quiet.
+  //
+  // This scenario is about the alert STATE MACHINE — open, remind, recover — and asserts an
+  // exact delivery count to pin it. Leaving `sync.run` absent would fire a second, unrelated
+  // condition and turn every count here into a running tally of the catalogue's size.
+  await db.insert(cronRuns).values({
+    job: "sync.run",
+    status: "ok",
+    trigger: "manual",
+    startedAt: new Date(Date.now() - 5 * 60_000),
+    finishedAt: new Date(Date.now() - 5 * 60_000),
+  });
   // The whole table: it is local PGlite (DATABASE_URL deleted above) and every row is a
   // memory of what a previous sweep said, which is exactly what this scenario controls.
   await db.delete(opsAlertState);

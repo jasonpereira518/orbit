@@ -38,6 +38,17 @@ export type Entitlements = {
   canUseRecruiters: boolean;
   canUseSync: boolean;
   canUseExtension: boolean;
+  /**
+   * The public API, outbound webhooks and the MCP server.
+   *
+   * A key of its own rather than folding into `canUseSync`, for two reasons. The denial copy
+   * for sync says "Mailbox and calendar sync are available on…", which is simply wrong on an
+   * API 402. More importantly `gate_events` is the only place demand for a gated feature is
+   * observable, and the pricing question depends entirely on it — conflating "someone wanted
+   * to connect Zapier" with "someone wanted mailbox sync" destroys exactly the signal that
+   * table exists to collect.
+   */
+  canUseApi: boolean;
 };
 
 /** Feature keys that `requireEntitlement` can gate on. */
@@ -47,7 +58,8 @@ export type FeatureKey =
   | "hostedEnrichment"
   | "recruiters"
   | "sync"
-  | "extension";
+  | "extension"
+  | "api";
 
 /**
  * Thrown when a user's plan does not cover an action. Carries enough structure for the
@@ -131,6 +143,7 @@ export function entitlementsForPlan(
     canUseRecruiters: paid,
     canUseSync: paid,
     canUseExtension: paid,
+    canUseApi: paid,
   };
 }
 
@@ -165,6 +178,7 @@ const FEATURE_DENIAL: Record<FeatureKey, string> = {
   hostedEnrichment:
     "Contact enrichment on Orbit's credits requires Orbit Pro. On any other plan, add your own Apollo key in Settings.",
   recruiters: "Recruiter tracking is available on Orbit Pro and Orbit Lifetime.",
+  api: "The Orbit API, webhooks and MCP server are available on Orbit Pro and Orbit Lifetime.",
   sync: "Mailbox and calendar sync are available on Orbit Pro and Orbit Lifetime.",
   extension: "The Orbit extension is available on Orbit Pro and Orbit Lifetime.",
 };
@@ -176,6 +190,7 @@ const FEATURE_FLAG: Record<FeatureKey, keyof Entitlements> = {
   recruiters: "canUseRecruiters",
   sync: "canUseSync",
   extension: "canUseExtension",
+  api: "canUseApi",
 };
 
 /**

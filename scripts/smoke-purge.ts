@@ -325,6 +325,40 @@ async function seed() {
   // fresh database instead of one that happened to hold a leftover row).
   await db.insert(schema.extensionUsage).values({ userId: USER, requestCount: 3, aiCount: 1 });
 
+  // The connector platform. `api_keys` is the one that would matter most if it survived a
+  // deletion: a credential with no owning account still works.
+  await db.insert(schema.apiKeys).values({
+    userId: USER,
+    name: "purge fixture",
+    prefix: "orb_live_deadbeef",
+    keyHash: "0".repeat(64),
+    scopes: ["read"],
+  });
+  await db.insert(schema.apiIdempotencyKeys).values({
+    userId: USER,
+    idempotencyKey: "purge-fixture",
+    requestHash: "abc",
+    statusCode: 200,
+    responseBody: {},
+  });
+  const [endpoint] = await db
+    .insert(schema.webhookEndpoints)
+    .values({
+      userId: USER,
+      url: "https://example.com/hook",
+      secretEncrypted: "enc",
+      eventTypes: ["contact.created"],
+      status: "active",
+    })
+    .returning();
+  await db.insert(schema.outboundWebhookDeliveries).values({
+    userId: USER,
+    endpointId: endpoint.id,
+    eventId: "evt_purge_fixture",
+    eventType: "contact.created",
+    payload: {},
+  });
+
   return { recruiterId: recruiter.id };
 }
 

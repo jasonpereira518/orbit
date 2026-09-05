@@ -12,6 +12,8 @@ import {
   contacts,
   contactTags,
   errorEvents,
+  apiIdempotencyKeys,
+  apiKeys,
   extensionUsage,
   feedback,
   feedbackScreenshots,
@@ -20,6 +22,7 @@ import {
   imports,
   interactions,
   noteBatches,
+  outboundWebhookDeliveries,
   outlookConnections,
   outreachCampaigns,
   recruiterMessages,
@@ -28,6 +31,7 @@ import {
   suggestedReminders,
   tags,
   usageEvents,
+  webhookEndpoints,
   userGoals,
   userRecruiterLinks,
   userSettings,
@@ -161,6 +165,19 @@ export async function purgeUserData(
   }
   await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
   await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
+  // The connector platform's four tables.
+  //
+  // `api_keys` matters most: a key that outlives the account it belongs to is a live
+  // credential with no owner, and the whole point of deleting an account is that nothing
+  // keeps working afterwards. The deliveries go before the endpoints they reference, because
+  // the FK cascades and doing it in the other order would rewrite rows on the way to
+  // deleting them. `api_idempotency_keys` is a replay guard rather than content, but the
+  // rule here admits no exceptions that are not written down — and this is the fifth
+  // user-scoped table family to be caught by `scripts/smoke-purge.ts` rather than by review.
+  await db.delete(apiKeys).where(eq(apiKeys.userId, userId));
+  await db.delete(apiIdempotencyKeys).where(eq(apiIdempotencyKeys.userId, userId));
+  await db.delete(outboundWebhookDeliveries).where(eq(outboundWebhookDeliveries.userId, userId));
+  await db.delete(webhookEndpoints).where(eq(webhookEndpoints.userId, userId));
   await db.delete(usageEvents).where(eq(usageEvents.userId, userId));
   // Extension rate-limit counters, keyed by `user_id` as the primary key with no parent
   // to cascade from. Not content, but it is a per-user row and the rule above admits no

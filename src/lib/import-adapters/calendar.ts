@@ -2,6 +2,7 @@ import type { CalendarEventRowPayload } from "@/db/schema";
 import type { ContactInput } from "@/lib/contact-writes";
 import { daysAgo } from "@/lib/duplicates";
 import type { ImportAdapter, InteractionInsert, ReminderInsert } from "@/lib/import-engine";
+import { calendarExternalIdBase, interactionExternalId } from "@/lib/ingest/external-id";
 
 /**
  * The two `imports.import_type` values a calendar upload can carry, depending on the file
@@ -30,7 +31,7 @@ export const CALENDAR_CSV_IMPORT_TYPE = "calendar_csv";
  * pair is unique per attendee, so neither happens.
  */
 export function calendarMeetingExternalId(eventUid: string, contactId: string) {
-  return `cal:${eventUid}:${contactId}`;
+  return interactionExternalId(calendarExternalIdBase(eventUid), contactId);
 }
 
 function eventDateOf(payload: CalendarEventRowPayload): Date {

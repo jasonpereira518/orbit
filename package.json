@@ -34,6 +34,7 @@
     "@clerk/ui": "^1.25.5",
     "@electric-sql/pglite": "^0.5.4",
     "@google/genai": "^2.12.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@neondatabase/serverless": "^1.1.0",
     "@sentry/nextjs": "^10.73.0",
     "@vercel/analytics": "^2.0.1",

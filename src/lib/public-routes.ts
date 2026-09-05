@@ -37,6 +37,15 @@ export const PUBLIC_ROUTES = [
   "/api/embeddings/backfill",
   "/api/linkedin/timeline-events/backfill",
   "/api/ops/sweep",
+  "/api/sync/run",
+  "/api/webhooks/outbound/drain",
+  // Not public either: the API and MCP surfaces authenticate with a per-user API key
+  // (`src/lib/api/auth.ts`), which Clerk knows nothing about. Exempted from
+  // auth.protect() only so an unauthenticated call gets a JSON 401 a client can act on
+  // rather than a 302 to an HTML sign-in page — the same reason /api/extension is here.
+  // The key check is fail-closed and rejects a malformed bearer before any database work.
+  "/api/v1(.*)",
+  "/api/mcp(.*)",
   // Genuinely public: browsers POST Content-Security-Policy violation reports here with
   // no session. The handler stores nothing but a directive and a URI, throttled.
   "/api/csp-report",

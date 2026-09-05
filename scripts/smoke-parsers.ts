@@ -1,6 +1,8 @@
 import { parseLinkedInMessagesCsv, resolveConversations } from "../src/lib/linkedin-messages";
 import { parseIcsEvents, peopleFromEvent } from "../src/lib/calendar-import";
 import type { Contact } from "../src/db/schema";
+import { calendarMeetingExternalId } from "../src/lib/import-adapters/calendar";
+import { calendarExternalIdBase, interactionExternalId } from "../src/lib/ingest/external-id";
 
 const csv = `CONVERSATION ID,CONVERSATION TITLE,FROM,SENDER PROFILE URL,TO,DATE,SUBJECT,CONTENT
 c1,Jane Doe,Jane Doe,https://www.linkedin.com/in/jane-doe,Me,2024-06-01 12:00:00 UTC,,Hey about the internship
@@ -103,6 +105,36 @@ if (sameEmailTwice.length !== 1) {
   throw new Error(
     `expected 1 deduped person for two entries sharing an email, got ${sameEmailTwice.length}`
   );
+}
+
+// The interaction external-id format is a stored data contract, not an implementation
+// detail: `interactions_user_external_uidx` dedupes re-imports and re-syncs on it, so every
+// id already written to a database was produced by the literal below. Extracting the formula
+// into `src/lib/ingest/external-id.ts` must therefore be byte-identical, and every producer
+// must route through it — otherwise re-syncing an already-imported calendar silently doubles
+// every meeting instead of updating it. Frozen here against the literal, deliberately, so
+// this fails if anyone "tidies" the format.
+const FROZEN_UID = "abc-123@google.com";
+const FROZEN_CONTACT = "5c1f0e2a-0000-4000-8000-000000000001";
+const FROZEN_EXPECTED = `cal:${FROZEN_UID}:${FROZEN_CONTACT}`;
+
+const viaHelper = interactionExternalId(calendarExternalIdBase(FROZEN_UID), FROZEN_CONTACT);
+if (viaHelper !== FROZEN_EXPECTED) {
+  throw new Error(`external-id helper drifted: expected ${FROZEN_EXPECTED}, got ${viaHelper}`);
+}
+
+// The adapter's exported function is what the import engine actually calls; it must still
+// agree after being made to delegate.
+const viaAdapter = calendarMeetingExternalId(FROZEN_UID, FROZEN_CONTACT);
+if (viaAdapter !== FROZEN_EXPECTED) {
+  throw new Error(`calendarMeetingExternalId drifted: expected ${FROZEN_EXPECTED}, got ${viaAdapter}`);
+}
+
+// Two attendees of one event must not collide — the reason the contact is in the key at all.
+const attendeeA = interactionExternalId(calendarExternalIdBase(FROZEN_UID), "contact-a");
+const attendeeB = interactionExternalId(calendarExternalIdBase(FROZEN_UID), "contact-b");
+if (attendeeA === attendeeB) {
+  throw new Error("two attendees of one event produced the same external id");
 }
 
 console.log("parser smoke tests passed");

@@ -40,6 +40,15 @@ import {
  */
 const WEDGED_IMPORT_MS = 10 * 60 * 1000;
 
+/**
+ * How long a sync lease may be held before the connection counts as wedged.
+ *
+ * Longer than `SYNC_LEASE_MS` (10 minutes), which is when the scheduler itself reclaims the
+ * row — so this only fires for a lease that outlived even the reclaim, meaning nothing is
+ * running the schedule at all.
+ */
+const WEDGED_SYNC_MS = 15 * 60 * 1000;
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export type OutreachQueueHealth = {
@@ -402,13 +411,25 @@ export type SystemIssues = {
   overdue: number;
   calendarErrors: number;
   needsReauth: number;
+  /** Connections holding a sync lease longer than any run should take. */
+  syncWedged: number;
+  /** Connections disarmed after repeated sync failures; they will not retry on their own. */
+  syncFailing: number;
 };
 
-/** The four counts behind the Overview badge, individually — the ops sweep reads them. */
+/** The counts behind the Overview badge, individually — the ops sweep reads them. */
 export async function getSystemIssues(now = new Date()): Promise<SystemIssues> {
   const db = await getDb();
   const wedgedBefore = new Date(now.getTime() - WEDGED_IMPORT_MS).toISOString();
-  const empty = { wedged: 0, overdue: 0, calendarErrors: 0, needsReauth: 0 };
+  const syncWedgedBefore = new Date(now.getTime() - WEDGED_SYNC_MS).toISOString();
+  const empty = {
+    wedged: 0,
+    overdue: 0,
+    calendarErrors: 0,
+    needsReauth: 0,
+    syncWedged: 0,
+    syncFailing: 0,
+  };
 
   try {
     const res = await db.execute(sql`
@@ -423,13 +444,29 @@ export async function getSystemIssues(now = new Date()): Promise<SystemIssues> {
           WHERE last_sync_status = 'error')::int AS calendar_errors,
         (SELECT count(*) FROM gmail_connections WHERE status <> 'active')::int
           + (SELECT count(*) FROM outlook_connections WHERE status <> 'active')::int
-          AS needs_reauth
+          AS needs_reauth,
+        -- A sync lease held far longer than any run's budget. Distinct from a failure: the
+        -- invocation was killed, so nothing raised an error anywhere and the connection just
+        -- stopped updating. Only the lease age can see it.
+        (SELECT count(*) FROM gmail_connections
+          WHERE sync_status = 'syncing' AND sync_started_at < ${syncWedgedBefore})::int
+          + (SELECT count(*) FROM outlook_connections
+              WHERE sync_status = 'syncing' AND sync_started_at < ${syncWedgedBefore})::int
+          AS sync_wedged,
+        -- Disarmed after repeated failure: it will never retry on its own.
+        (SELECT count(*) FROM gmail_connections
+          WHERE sync_status = 'error' AND next_sync_at IS NULL)::int
+          + (SELECT count(*) FROM outlook_connections
+              WHERE sync_status = 'error' AND next_sync_at IS NULL)::int
+          AS sync_failing
     `);
     const row = rowsOf<{
       wedged: number;
       overdue: number;
       calendar_errors: number;
       needs_reauth: number;
+      sync_wedged: number;
+      sync_failing: number;
     }>(res)[0];
     if (!row) return empty;
     return {
@@ -437,6 +474,8 @@ export async function getSystemIssues(now = new Date()): Promise<SystemIssues> {
       overdue: num(row.overdue),
       calendarErrors: num(row.calendar_errors),
       needsReauth: num(row.needs_reauth),
+      syncWedged: num(row.sync_wedged),
+      syncFailing: num(row.sync_failing),
     };
   } catch {
     // The Overview must render even if this one extra query fails.
@@ -446,7 +485,9 @@ export async function getSystemIssues(now = new Date()): Promise<SystemIssues> {
 
 export async function getSystemIssueCount(now = new Date()): Promise<number> {
   const i = await getSystemIssues(now);
-  return i.wedged + i.overdue + i.calendarErrors + i.needsReauth;
+  return (
+    i.wedged + i.overdue + i.calendarErrors + i.needsReauth + i.syncWedged + i.syncFailing
+  );
 }
 
 export type WebhookSource = "clerk" | "stripe" | "resend";

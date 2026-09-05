@@ -43,12 +43,26 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
   const hourAgo = new Date(now.getTime() - HOUR_MS);
   const dayAgo = new Date(now.getTime() - DAY_MS);
 
-  const [lastNightly, webhooks, issues, outreach, aiGroups, errorsLastHour, failedImports] =
-    await Promise.all([
+  const [
+    lastNightly,
+    lastSyncRun,
+    webhooks,
+    issues,
+    outreach,
+    aiGroups,
+    errorsLastHour,
+    failedImports,
+  ] = await Promise.all([
       db
         .select()
         .from(cronRuns)
         .where(eq(cronRuns.job, "imports.process-stalled"))
+        .orderBy(desc(cronRuns.startedAt))
+        .limit(1),
+      db
+        .select()
+        .from(cronRuns)
+        .where(eq(cronRuns.job, "sync.run"))
         .orderBy(desc(cronRuns.startedAt))
         .limit(1),
       recentWebhookOutcomes(5, now),
@@ -84,11 +98,16 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
   }
 
   const nightly = lastNightly[0];
+  const syncRun = lastSyncRun[0];
   return {
     cron: {
       processStalled: {
         lastStartedAt: nightly?.startedAt ?? null,
         lastState: nightly ? deriveCronRunState(nightly, now) : null,
+      },
+      syncRun: {
+        lastStartedAt: syncRun?.startedAt ?? null,
+        lastState: syncRun ? deriveCronRunState(syncRun, now) : null,
       },
     },
     webhooks,
@@ -104,6 +123,8 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
       ? { prodSha: process.env.VERCEL_GIT_COMMIT_SHA ?? null, ...deploy }
       : null,
     reauthNeeded: issues.needsReauth,
+    wedgedSyncs: issues.syncWedged,
+    failingSyncs: issues.syncFailing,
   };
 }
 

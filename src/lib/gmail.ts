@@ -17,11 +17,23 @@ const GOOGLE_CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts.readonly
  */
 const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 
+/**
+ * Read-only access to the user's calendar, for continuous meeting sync.
+ *
+ * Unlike `gmail.send` and `gmail.readonly` above, this is a Google *sensitive* scope, not a
+ * restricted one: it needs consent-screen verification but no CASA security assessment and no
+ * annual reassessment. Adding it therefore costs materially less than widening the Gmail
+ * scopes would — but, exactly like the send scope, it does not retroactively apply to consents
+ * already granted, which is why `hasCalendarScope` exists.
+ */
+const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+
 const GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   GMAIL_SEND_SCOPE,
   "https://www.googleapis.com/auth/userinfo.email",
   GOOGLE_CONTACTS_SCOPE,
+  GOOGLE_CALENDAR_SCOPE,
   "openid",
 ].join(" ");
 
@@ -34,6 +46,19 @@ export function hasContactsScope(scopes: string | null | undefined) {
  *  send scope shipped return false and must reconnect before they can send. */
 export function hasSendScope(scopes: string | null | undefined) {
   return Boolean(scopes?.includes(GMAIL_SEND_SCOPE));
+}
+
+/**
+ * True once a connection has re-consented to calendar access.
+ *
+ * The scheduler must check this before claiming a Google connection for calendar sync: a
+ * token minted before this scope shipped is still perfectly valid for Gmail and Contacts, and
+ * will keep working — but every Calendar API call it makes returns 403. Without the probe
+ * that surfaces as a stream of failures on healthy connections, walking them up the backoff
+ * ladder for a problem only the user can fix by reconnecting.
+ */
+export function hasCalendarScope(scopes: string | null | undefined) {
+  return Boolean(scopes?.includes(GOOGLE_CALENDAR_SCOPE));
 }
 
 /** Canonical Gmail OAuth callback path — must match Google Cloud authorized redirect URIs. */
@@ -216,6 +241,11 @@ export async function upsertGmailConnection(
         tokenExpiresAt: expiresAt,
         scopes: tokens.scope || GMAIL_SCOPES,
         status: "active",
+        // Re-arm: this is the only path from needs_reauth back to active, so it is also
+        // the only place a disarmed connection can rejoin the sync schedule.
+        nextSyncAt: new Date(),
+        syncFailures: 0,
+        syncError: null,
         updatedAt: new Date(),
       })
       .where(eq(gmailConnections.id, existing.id))
@@ -233,6 +263,7 @@ export async function upsertGmailConnection(
       tokenExpiresAt: expiresAt,
       scopes: tokens.scope || GMAIL_SCOPES,
       status: "active",
+      nextSyncAt: new Date(),
     })
     .returning();
   return created;
@@ -247,7 +278,11 @@ async function markNeedsReauth(userId: string) {
     const db = await getDb();
     await db
       .update(gmailConnections)
-      .set({ status: "needs_reauth", updatedAt: new Date() })
+      // `nextSyncAt: null` is not incidental. A connection whose grant is dead can never
+      // produce a token, so leaving it armed makes the scheduler claim, refresh, fail and
+      // reschedule it every run, forever. NULL means "not scheduled"; re-running OAuth is
+      // the only way back, and `upsert...Connection` re-arms it there.
+      .set({ status: "needs_reauth", nextSyncAt: null, updatedAt: new Date() })
       .where(eq(gmailConnections.userId, userId));
   } catch {
     // ignore
