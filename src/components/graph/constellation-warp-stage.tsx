@@ -3,21 +3,20 @@
 import { useEffect, useRef } from "react";
 import {
   INTRO_RESERVE_FRACTION,
+  INTRO_WARP_SPEED,
   introCoverage,
   introFrame,
+  introThrottle,
 } from "@/lib/graph/intro-choreography";
 import type { IntroRun } from "@/lib/graph/intro-signal";
 import {
-  burstForRadiusRank,
-  CHRONO_OUTBOUND_MS,
   IGNITION_FRACTIONS,
-  POLE,
   type ChronoFrame,
   type ChronoPhase,
 } from "@/lib/warp/chrono";
 
 /**
- * The constellation's long-exposure intro, scoped to the canvas box.
+ * The constellation's intro: a jump to lightspeed, scoped to the canvas box.
  *
  * A deliberate sibling of `src/components/warp/chrono-stage.tsx` rather than a variant of it.
  * That one drives the `/upgrade` transition and is dense with concerns this has none of —
@@ -27,6 +26,20 @@ import {
  * properly, through `introFrame`, which is `chronoFrame` with a faster collapse and a longer
  * hold.
  *
+ * The motion is NOT that file's. `/upgrade` turns its field about a fixed pole, which reads as
+ * hours passing; this one flies straight into the frame, which reads as going somewhere. That
+ * is the right metaphor here: the chart is not ageing while you wait, it is arriving. Stars
+ * stream out of a vanishing point at the centre and past the camera, so the payoff is a
+ * deceleration out of lightspeed with the constellation already sitting where the vanishing
+ * point was.
+ *
+ * The shared envelope survives the change intact. `chronoFrame`'s speed term is `omega` because
+ * it was written for a rotation, but its shape — standstill, eased acceleration, hold at peak,
+ * decelerating return to rest — is precisely a hyperspace jump, so `introThrottle` reads it as
+ * a normalised throttle and this file applies it along the line of travel. The shutter needs no
+ * reinterpretation at all: a long exposure of stars flying at the camera is streaks radiating
+ * from the vanishing point, and closing it on arrival collapses them back into points.
+ *
  * It paints NO sky of its own. `paintSpace()`'s gradient and nebulae are a different sky from
  * the graph's `.constellation-milky-way`, so cross-fading one into the other would be a
  * luminance step at the exact moment of the payoff. Instead the canvas is transparent except
@@ -35,27 +48,94 @@ import {
  */
 
 type Star = {
-  radius: number;
-  angle: number;
+  /**
+   * Offset from the vanishing point in px AT THE FAR PLANE; the projection divides it by depth.
+   *
+   * Held in pixels, and scaled to the frame's own half-width and half-height rather than to one
+   * isotropic focal length. The canvas box is wide and short — roughly 2.7:1 — so a round
+   * far plane sized to fit it vertically wastes the width, and one sized to the diagonal puts
+   * every star off the top or bottom within a third of its run. Matching the box means a star
+   * stays in view for most of its approach whichever way it is heading.
+   */
+  dx: number;
+  dy: number;
+  /** Depth: 1 at the far plane, 0 at the camera. */
+  z: number;
+  /** Base radius in px, before the near-field swell. */
   r: number;
   gold: boolean;
-  /** Which ignition burst lights this star; -1 for one that was always there. */
-  burst: number;
-  flash: number;
-  ignited: boolean;
-  born: number;
+  /**
+   * Which cruise wave brought this star into the field; -1 for the base field.
+   *
+   * The reserve is what stops a long hold reading as a loop. Hyperspace is a steady state by
+   * nature, so left alone a nine-second wait would show the same density for nine seconds —
+   * instead each wave thickens the field, and the sky keeps arriving for as long as the load
+   * does.
+   */
+  wave: number;
+  /** Last frame's projection, so the streak is a segment and not a dotted line. */
+  sx: number;
+  sy: number;
+  /** False for one frame after a respawn, when there is no previous point to join. */
+  drawn: boolean;
 };
 
-const STAR_AREA = 2400;
-const STAR_CAP = 1100;
-const SEED_FRACTION = 0.12;
-/** Keeps the innermost radii empty so the pole never reads as a bullseye. */
-const CORE = 0.07;
-/** A backgrounded tab returns with an enormous delta; without this the field snaps a whole
- *  revolution in one frame. Belt and braces alongside the visibility pause below. */
+/**
+ * One star per this many square px, capped.
+ *
+ * Far sparser than the rotating field this replaced, and the first pass got it badly wrong by
+ * carrying that density over: every star draws a segment every frame, so at speed a dense field
+ * fills the frame with overlapping rays and reads as a sunburst — a static graphic — rather
+ * than as travel. Hyperspace is mostly black with distinct streaks in it; the gaps are what
+ * make the streaks read as objects going past.
+ */
+const STAR_AREA = 3600;
+const STAR_CAP = 520;
+
+/**
+ * The shortest the exposure is allowed to get, whatever the shared envelope says.
+ *
+ * `ALPHA_FAST` is 0.045 — about a 22-frame tail — which is right for a rotation, where a star
+ * crosses a few px per frame and the tail is a graceful arc. Here a star can cross hundreds,
+ * so the same tail stretches from the vanishing point clean off the frame and every streak
+ * merges into its neighbours. The floor only bites at speed: at rest the envelope's own 0.55
+ * is already shorter, and on arrival it closes to 1 and collapses the streaks to points.
+ */
+const SHUTTER_FLOOR = 0.15;
+/**
+ * Nearest approach before a star is recycled to the far plane.
+ *
+ * Not zero: the projection divides by `z`, so a star allowed to reach the camera would swing
+ * through an unbounded jump and paint a line across the whole frame on its last frame.
+ */
+const Z_NEAR = 0.045;
+/**
+ * Keeps a clear disc around the vanishing point.
+ *
+ * Two reasons, and both matter. Stars sampled near dead centre barely move however fast the
+ * field travels, so they sit as a static clot in the middle of a shot whose whole subject is
+ * motion. And the centre is where the sun lands when the chart arrives — leaving it open means
+ * the constellation emerges from the vanishing point rather than out of a bright knot.
+ */
+const CORE = 0.06;
+/** A backgrounded tab returns with an enormous delta; without this the whole field would jump
+ *  the depth in one frame. Belt and braces alongside the visibility pause below. */
 const MAX_DT = 0.05;
-const FLASH_DECAY = 3.2;
-const RESERVE_BORN = 0.99;
+/** How much a star swells as it comes at you, on top of its base radius. */
+const NEAR_SWELL = 2.2;
+/** Depth over which a new star fades up, so nothing pops in at the far plane. */
+const FADE_IN_Z = 0.28;
+
+/**
+ * How much of the frame the field spans at the far plane.
+ *
+ * Well inside it, NOT filling it. The projection divides by depth, so a star's distance from
+ * the centre grows as it approaches: a field that already fills the frame at the far plane is
+ * off-screen within a fraction of its run, and almost every star spends its life flying through
+ * territory nobody can see. At 0.4 a star stays in view for roughly the first 60% of its
+ * approach, which is what puts streaks on screen at a density worth looking at.
+ */
+const FAR_PLANE_FILL = 0.4;
 
 const STAR_WHITE = "255,255,255";
 const STAR_GOLD = "255,214,140";
@@ -88,9 +168,8 @@ export function ConstellationWarpStage({ run }: { run: IntroRun }) {
     let width = 0;
     let height = 0;
     let dpr = 1;
-    let poleX = 0;
-    let poleY = 0;
-    let maxR = 0;
+    let cx = 0;
+    let cy = 0;
     let stars: Star[] = [];
     let trail: HTMLCanvasElement | null = null;
     let trailCtx: CanvasRenderingContext2D | null = null;
@@ -105,59 +184,76 @@ export function ConstellationWarpStage({ run }: { run: IntroRun }) {
     }
 
     /**
-     * Whether a star is alight in this frame.
+     * Whether a star's wave has arrived in this frame.
      *
-     * Shared by the draw loop and the field builder deliberately: a field built mid-run has to
-     * agree with the very next frame about what is already lit, or every one of those stars
-     * takes the ignition branch at once and the whole sky flares gold.
+     * `bursts` is the shared frame's name for the counter — it lights stars in place on
+     * `/upgrade`, where the sky is growing rather than travelling. The count is the same; here
+     * it releases a wave into the field instead.
      */
-    function isLit(f: ChronoFrame, burst: number, born: number) {
-      return burst >= 0 && f.bursts > burst && born < f.alive;
+    function isActive(f: ChronoFrame, wave: number) {
+      return wave < 0 || f.bursts > wave;
     }
 
-    function newStar(burst: number, born: number, f: ChronoFrame): Star {
-      return {
-        // sqrt keeps areal density even; CORE holds the knot at the pole open.
-        radius: maxR * (CORE + (1 - CORE) * Math.sqrt(Math.random())),
-        angle: Math.random() * Math.PI * 2,
-        r: Math.random() * 1.15 + 0.35,
-        gold: Math.random() < 0.05,
-        burst,
-        flash: 0,
-        ignited: isLit(f, burst, born),
-        born,
+    function project(s: Star) {
+      return [cx + s.dx / s.z, cy + s.dy / s.z] as const;
+    }
+
+    /**
+     * Place a star somewhere in the volume ahead.
+     *
+     * `sqrt` on the radius keeps areal density even across the frame rather than crowding the
+     * centre, and `CORE` holds the vanishing point open. `z` is random rather than 1 so the
+     * initial field is spread through the depth instead of arriving as one wall.
+     */
+    function spawn(s: Star, z: number) {
+      const angle = Math.random() * Math.PI * 2;
+      const radius = (CORE + (1 - CORE) * Math.sqrt(Math.random())) * FAR_PLANE_FILL;
+      s.dx = Math.cos(angle) * radius * cx;
+      s.dy = Math.sin(angle) * radius * cy;
+      s.z = z;
+      // Squared, so most stars are small and a few are notably bigger. A uniform draw gives an
+      // evenly-sized field, which at speed is a wall of identical strokes.
+      s.r = 0.3 + Math.random() ** 2 * 1.5;
+      s.gold = Math.random() < 0.06;
+      s.drawn = false;
+    }
+
+    function newStar(wave: number, z: number): Star {
+      const s: Star = {
+        dx: 0,
+        dy: 0,
+        z: 1,
+        r: 1,
+        gold: false,
+        wave,
+        sx: 0,
+        sy: 0,
+        drawn: false,
       };
+      spawn(s, z);
+      return s;
     }
 
-    function buildField(now: number) {
+    function buildField() {
       const count = Math.min(Math.floor((width * height) / STAR_AREA), STAR_CAP);
-      const seeds = Math.floor(count * SEED_FRACTION);
-      const f = frameNow(now);
+      // Spread through the depth so the first frame is a field, not an empty tunnel.
+      stars = Array.from({ length: count }, () =>
+        newStar(-1, Z_NEAR + Math.random() * (1 - Z_NEAR))
+      );
 
-      // Sorted by radius so growth spreads OUTWARD from the pole: the innermost `seeds` are
-      // always present, and everything beyond ignites in a burst keyed to how far out it sits.
-      const field = Array.from({ length: count }, () => newStar(-1, 0, f));
-      field.sort((a, b) => a.radius - b.radius);
-      stars = field.map((s, i) => {
-        const grown = i >= seeds;
-        const rank = grown ? (i - seeds) / Math.max(1, count - seeds) : 0;
-        const burst = grown ? burstForRadiusRank(rank) : -1;
-        return { ...s, burst, born: rank, ignited: isLit(f, burst, rank) };
-      });
-
-      // The reserve: stars only a hold can reach, so a long wait keeps filling the sky instead
-      // of becoming a visible loop. Their burst indices start where the scripted seven end.
+      // The reserve: stars only a hold can reach. Their wave indices start where the scripted
+      // seven end, so they arrive one wave at a time for as long as the wait runs.
       const reserve = Math.floor(count * INTRO_RESERVE_FRACTION);
-      const levels = Math.max(1, reserve);
       for (let i = 0; i < reserve; i += 1) {
-        const burst = IGNITION_FRACTIONS.length + Math.floor((i / levels) * reserve);
-        stars.push(newStar(burst, RESERVE_BORN, f));
+        const wave = IGNITION_FRACTIONS.length + Math.floor(i / 2);
+        stars.push(newStar(wave, Z_NEAR + Math.random() * (1 - Z_NEAR)));
       }
     }
 
-    function resize(now: number) {
+    function resize() {
       const prevTrail = trail;
-      const prevMaxR = maxR;
+      const prevCx = cx;
+      const prevCy = cy;
 
       dpr = Math.min(window.devicePixelRatio || 1, 2);
       // The container, not the window — this sits inside the canvas box, not over the page.
@@ -172,15 +268,10 @@ export function ConstellationWarpStage({ run }: { run: IntroRun }) {
       canvas!.style.height = `${height}px`;
       ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      poleX = width * POLE.x;
-      poleY = height * POLE.y;
-      maxR = Math.max(
-        Math.hypot(poleX, poleY),
-        Math.hypot(width - poleX, poleY),
-        Math.hypot(poleX, height - poleY),
-        Math.hypot(width - poleX, height - poleY)
-      );
-
+      // Dead centre. A hyperspace field is symmetric about the point it is travelling toward,
+      // and that point is where the sun lands when the chart arrives underneath.
+      cx = width / 2;
+      cy = height / 2;
       // The trail layer is never cleared — that accumulation IS the exposure — so it is its own
       // canvas, composited over the ground each frame.
       const t = document.createElement("canvas");
@@ -189,6 +280,7 @@ export function ConstellationWarpStage({ run }: { run: IntroRun }) {
       const tctx = t.getContext("2d");
       if (!tctx) return;
       tctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      tctx.lineCap = "round";
       // Carry the exposure across a resize rather than starting blank. This matters more here
       // than on a route transition: the graph pane genuinely can be resized mid-run, by the
       // fullscreen toggle.
@@ -197,13 +289,19 @@ export function ConstellationWarpStage({ run }: { run: IntroRun }) {
       trailCtx = tctx;
 
       if (stars.length > 0) {
-        // Keep the field across a resize; rebuilding re-randomises every position mid-arc,
-        // which reads as the sky being swapped out. Scaling radii holds the composition.
-        const k = prevMaxR > 0 ? maxR / prevMaxR : 1;
-        for (const s of stars) s.radius *= k;
+        // Keep the field across a resize; rebuilding re-randomises every position mid-flight,
+        // which reads as the sky being swapped out. Offsets are in px, so they scale with the
+        // box — and the cached projection is stale, which is one frame of streak.
+        const kx = prevCx > 0 ? cx / prevCx : 1;
+        const ky = prevCy > 0 ? cy / prevCy : 1;
+        for (const s of stars) {
+          s.dx *= kx;
+          s.dy *= ky;
+          s.drawn = false;
+        }
         return;
       }
-      buildField(now);
+      buildField();
     }
 
     function draw(now: number) {
@@ -217,45 +315,70 @@ export function ConstellationWarpStage({ run }: { run: IntroRun }) {
       ctx!.clearRect(0, 0, width, height);
 
       // The shutter. Erasing a fraction of the layer leaves the rest as trail: a low alpha
-      // leaves long arcs, 1 leaves bare points.
+      // leaves long streaks, 1 leaves bare points. Floored — see SHUTTER_FLOOR.
+      //
+      // Compounded over real time rather than applied once per frame, which is not a detail.
+      // Erasing a fixed fraction per frame makes the trail a fixed number of FRAMES long, while
+      // the distance a star covers in one frame scales with the frame time — so at 20fps each
+      // streak is three times longer than at 60 and the whole field collapses into the
+      // sunburst this animation is specifically not meant to be. Caught by watching a throttled
+      // tab paint exactly that. Raising it to `dt * 60` makes the tail a fixed length in
+      // SECONDS, so a slow machine sees the same picture as a fast one, just fewer times.
       trailCtx.globalCompositeOperation = "destination-out";
-      trailCtx.fillStyle = `rgba(0,0,0,${f.alpha})`;
+      const shutter =
+        1 - (1 - Math.max(f.alpha, SHUTTER_FLOOR)) ** Math.max(dt * 60, 0);
+      trailCtx.fillStyle = `rgba(0,0,0,${shutter})`;
       trailCtx.fillRect(0, 0, width, height);
       trailCtx.globalCompositeOperation = "source-over";
 
-      const step = f.omega * dt;
+      const step = introThrottle(f) * INTRO_WARP_SPEED * dt;
       for (const s of stars) {
-        s.angle += step;
+        if (!isActive(f, s.wave)) continue;
 
-        if (s.burst >= 0) {
-          if (!isLit(f, s.burst, s.born)) {
-            s.ignited = false;
-            s.flash = 0;
-            continue;
-          }
-          // Flare once, on the frame it comes alight — `flash` decays to 0, so a decayed flare
-          // is indistinguishable from one that never fired without this flag.
-          if (!s.ignited) {
-            s.ignited = true;
-            s.flash = 1;
-          }
+        s.z -= step;
+        if (s.z <= Z_NEAR) {
+          // Past the camera. Recycled to the far plane rather than removed, so the field is a
+          // fixed cost however long the wait runs.
+          spawn(s, 1);
         }
 
-        // Decay before the off-screen cull: `flash` does not depend on position, and a star
-        // that ignites off-screen must still decay in real time or it freezes at full flare
-        // and swims into view later, unrelated to any burst boundary.
-        const flare = s.flash;
-        if (flare > 0) s.flash = Math.max(0, flare - dt * FLASH_DECAY);
+        const [x, y] = project(s);
 
-        const x = poleX + Math.cos(s.angle) * s.radius;
-        const y = poleY + Math.sin(s.angle) * s.radius;
-        if (x < -8 || x > width + 8 || y < -8 || y > height + 8) continue;
+        // Off the frame entirely — remember where it went so the streak stays continuous if it
+        // comes back, but draw nothing.
+        const out = x < -64 || x > width + 64 || y < -64 || y > height + 64;
+        if (out) {
+          s.sx = x;
+          s.sy = y;
+          s.drawn = false;
+          continue;
+        }
 
-        const rgb = s.gold || flare > 0.15 ? STAR_GOLD : STAR_WHITE;
-        trailCtx.fillStyle = `rgba(${rgb},${0.55 + flare * 0.45})`;
-        trailCtx.beginPath();
-        trailCtx.arc(x, y, s.r * (1 + flare * 2.2), 0, Math.PI * 2);
-        trailCtx.fill();
+        const near = 1 - s.z;
+        const alpha = Math.min(1, near / FADE_IN_Z);
+        const radius = s.r * (1 + near * NEAR_SWELL);
+        const rgb = s.gold ? STAR_GOLD : STAR_WHITE;
+        trailCtx.fillStyle = `rgba(${rgb},${0.8 * alpha})`;
+        trailCtx.strokeStyle = `rgba(${rgb},${0.85 * alpha})`;
+
+        if (s.drawn) {
+          // A segment from where it was to where it is. At speed a star crosses hundreds of
+          // pixels between frames, so plotting points alone would leave a dotted line; joining
+          // them is what makes the streak — and its length is the speed, which is the shot.
+          trailCtx.lineWidth = radius * 2;
+          trailCtx.beginPath();
+          trailCtx.moveTo(s.sx, s.sy);
+          trailCtx.lineTo(x, y);
+          trailCtx.stroke();
+        } else {
+          trailCtx.beginPath();
+          trailCtx.arc(x, y, radius, 0, Math.PI * 2);
+          trailCtx.fill();
+        }
+
+        s.sx = x;
+        s.sy = y;
+        s.drawn = true;
       }
 
       // `lighter` so trails add light over the ground rather than punching a hole in it.
@@ -281,14 +404,17 @@ export function ConstellationWarpStage({ run }: { run: IntroRun }) {
       raf = 0;
       if (document.hidden) return;
       last = 0;
+      // Every cached projection is now from before the pause; joining to it would draw one
+      // streak across the whole frame.
+      for (const s of stars) s.drawn = false;
       raf = requestAnimationFrame(draw);
     }
 
-    const ro = new ResizeObserver(() => resize(performance.now()));
+    const ro = new ResizeObserver(() => resize());
     ro.observe(parent);
     document.addEventListener("visibilitychange", onVisibility);
 
-    resize(performance.now());
+    resize();
     raf = requestAnimationFrame(draw);
 
     return () => {
@@ -307,8 +433,3 @@ export function ConstellationWarpStage({ run }: { run: IntroRun }) {
     />
   );
 }
-
-/** Exported for the smoke script's reserve-sizing assertion. */
-export const INTRO_STAR_AREA = STAR_AREA;
-export const INTRO_SEED_FRACTION = SEED_FRACTION;
-export const INTRO_OUTBOUND_MS = CHRONO_OUTBOUND_MS;

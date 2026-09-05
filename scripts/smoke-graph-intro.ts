@@ -23,6 +23,7 @@ import {
   INTRO_RESERVE_FRACTION,
   introCoverage,
   introFrame,
+  introThrottle,
   predictSlowIntro,
 } from "../src/lib/graph/intro-choreography";
 import {
@@ -33,7 +34,7 @@ import {
   registerIntroHost,
   suppressIntro,
 } from "../src/lib/graph/intro-signal";
-import { IGNITION_FRACTIONS } from "../src/lib/warp/chrono";
+import { CHRONO_OUTBOUND_MS, IGNITION_FRACTIONS } from "../src/lib/warp/chrono";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -124,6 +125,50 @@ check(
   })()
 );
 
+// ---------------------------------------------------------------------------------------
+// The jump to lightspeed
+// ---------------------------------------------------------------------------------------
+
+// The intro flies INTO the frame rather than turning about a pole, so the one number that
+// makes it read as "speeding up" is the throttle. `chronoFrame` still calls it `omega`
+// because it was written for a rotation; these pin the shape the stage actually depends on.
+console.log("\nThe throttle…");
+const throttleAt = (ms: number) => introThrottle(introFrame("outbound", ms, 0));
+check(
+  "the field is at a standstill when the intro opens",
+  throttleAt(0) === 0,
+  "starting mid-flight loses the acceleration, which is the whole shot"
+);
+check(
+  "it only ever accelerates on the way out",
+  (() => {
+    let prev = -1;
+    for (let t = 0; t <= CHRONO_OUTBOUND_MS; t += 20) {
+      const v = throttleAt(t);
+      if (v < prev - 1e-9) return false;
+      prev = v;
+    }
+    return true;
+  })(),
+  "any dip reads as the engine stumbling"
+);
+check("and reaches full throttle by the hold", introThrottle(introFrame("cruise", 5000, 0)) === 1);
+check(
+  "the collapse brings it back to a dead stop",
+  introThrottle(introFrame("arriving", 5000, INTRO_ARRIVING_MS)) === 0,
+  "the chart is handed over from rest, not mid-streak"
+);
+check(
+  "and never runs backwards",
+  (() => {
+    for (let t = 0; t <= INTRO_ARRIVING_MS; t += 10) {
+      if (introThrottle(introFrame("arriving", 5000, t)) < 0) return false;
+    }
+    return true;
+  })(),
+  "`omega` goes negative in the rewind phase the intro never enters; a stray negative must stop the field, not reverse it"
+);
+
 console.log("\nA hold longer than a route transition…");
 check(
   "the sky keeps growing well past the warp's own 4s cap",
@@ -136,12 +181,14 @@ check(
     IGNITION_FRACTIONS.length + INTRO_CRUISE_BURSTS
 );
 check(
-  "and the reserve is big enough to actually light those levels on a small canvas",
-  Math.floor(360 * INTRO_RESERVE_FRACTION) >= INTRO_CRUISE_BURSTS,
-  `${Math.floor(360 * INTRO_RESERVE_FRACTION)} reserve stars for ${INTRO_CRUISE_BURSTS} levels`
+  "and the reserve is big enough to actually fill those waves on a small canvas",
+  // Two stars per wave in the stage's reserve loop; a wave with nothing in it is a tick of a
+  // counter that puts no new stars on screen, which is the loop the reserve exists to prevent.
+  Math.floor(360 * INTRO_RESERVE_FRACTION) >= 2 * INTRO_CRUISE_BURSTS,
+  `${Math.floor(360 * INTRO_RESERVE_FRACTION)} reserve stars for ${INTRO_CRUISE_BURSTS} waves`
 );
 check(
-  "bursts reached during a hold carry into the landing, so the sky does not empty",
+  "waves reached during a hold carry into the landing, so the sky does not empty",
   introFrame("arriving", 8000, 0).bursts === introFrame("cruise", 8000, 0).bursts
 );
 

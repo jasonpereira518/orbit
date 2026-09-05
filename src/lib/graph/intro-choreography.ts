@@ -17,6 +17,7 @@ import {
   CHRONO_OUTBOUND_MS,
   CRUISE_BURST_MS,
   CRUISE_RESERVE_FRACTION,
+  OMEGA_PEAK,
   chronoFrame,
   type ChronoFrame,
   type ChronoPhase,
@@ -163,6 +164,34 @@ export function introFrame(
     sinceArriving * INTRO_ARRIVING_SCALE,
     INTRO_CRUISE_BURSTS
   );
+}
+
+/**
+ * How far the field travels at full throttle, in depth units per second.
+ *
+ * A star spans the whole depth from the far plane to the camera in `1 / this` seconds, so at
+ * 1.8 a full traverse is roughly 0.55s: fast enough that the frame is all streaks, slow enough
+ * that individual stars are still legible as they go by rather than being one flat blur.
+ */
+export const INTRO_WARP_SPEED = 1.8;
+
+/**
+ * The throttle, 0 (stopped) to 1 (full), from a frame of the shared chrono envelope.
+ *
+ * `chronoFrame` was written for a field rotating about a pole, so its speed term is named
+ * `omega` and carries radians per second. The envelope it describes — a standstill, an eased
+ * acceleration, a hold at peak, then a decelerating return to rest — is exactly the profile of
+ * a jump to lightspeed and back, so the constellation intro reads it as a normalised throttle
+ * and applies it along the line of travel instead of around a pole. Reinterpreting the number
+ * rather than forking the curve means every property `smoke-warp-chrono.ts` pins about it —
+ * monotonic through the ramp, back to rest on arrival — still describes what is on screen.
+ *
+ * Clamped at zero because `omega` goes negative in `"inbound"`, the rewind phase. The intro
+ * never enters it; travelling backwards out of the chart you are waiting for would be a
+ * different animation, and a stray negative should stop the field rather than reverse it.
+ */
+export function introThrottle(frame: ChronoFrame): number {
+  return Math.max(0, Math.min(1, frame.omega / OMEGA_PEAK));
 }
 
 /**
