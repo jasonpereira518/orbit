@@ -694,6 +694,17 @@
   position: absolute;
 }
 
+/* Same exemption, and for the same reason: the discard confirmation is a layer over the
+ * whole window, so it has to escape the `position: relative` that `.liquid-glass > *`
+ * forces on every direct child — an unlayered rule that beats Tailwind's `absolute`
+ * utility, so it cannot be done from the JSX. `z-index: 2` puts it above its siblings,
+ * which that same rule pins at 1, including the close button: while the question is on
+ * screen the X behind it must not be clickable. */
+.liquid-glass.liquid-glass-panel > [data-slot="feedback-discard"] {
+  position: absolute;
+  z-index: 2;
+}
+
 /* The window still appears and disappears, it just stops travelling to do it.
  * `transform: none` also cancels the starting/ending scale, so the whole
  * enter/exit collapses to the opacity fade the primitive already provides. */

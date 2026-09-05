@@ -153,6 +153,15 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
    */
   const [area, setArea] = useState<FeedbackArea | null>(null);
   /**
+   * Where the caret sat in the message box when the panel last went away.
+   *
+   * Part of the draft: reopening to find the cursor jumped to the far end of a paragraph
+   * you were editing in the middle of is a small thing that undoes the point of keeping
+   * the draft at all. The panel hands this up on every route that unmounts it — closing,
+   * and attaching a screenshot — and reads it back once on mount.
+   */
+  const [caret, setCaret] = useState<{ start: number; end: number } | null>(null);
+  /**
    * Whether the close under way should take the draft with it.
    *
    * Set only by Cancel and by a successful send. Dismissing the window — Escape, the
@@ -231,6 +240,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     setMessage("");
     setCategory(DEFAULT_CATEGORY);
     setArea(null);
+    setCaret(null);
   }, []);
 
   /**
@@ -512,6 +522,8 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
           onAreaChange={setArea}
           // `discard` separates "I am done with this" from "get this out of my way". Only
           // the former takes the draft with it; see `endSession`.
+          initialCaret={caret}
+          onCaretChange={setCaret}
           onClose={(discard) => {
             discardRef.current = discard;
             setPhase("closing");

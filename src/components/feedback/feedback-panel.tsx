@@ -3,7 +3,7 @@
 import { Camera, X } from "lucide-react";
 import { useTheme } from "next-themes";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { submitFeedback } from "@/actions/feedback";
 import type { DraftShot } from "@/components/feedback/feedback-widget";
 import { SendButton } from "@/components/feedback/send-button";
@@ -63,6 +63,8 @@ export function FeedbackPanel({
   onRemoveShot,
   onEditShot,
   onClose,
+  initialCaret,
+  onCaretChange,
   onClosed,
   onSent,
 }: {
@@ -108,6 +110,9 @@ export function FeedbackPanel({
    * dismissal, and the draft is kept for the next time it opens.
    */
   onClose: (discard: boolean) => void;
+  /** Where the caret was when the window last closed, so it can be put back. */
+  initialCaret: { start: number; end: number } | null;
+  onCaretChange: (caret: { start: number; end: number }) => void;
   /** The collapse has finished and nothing is on screen — safe to unmount and reset. */
   onClosed: () => void;
   onSent: () => void;
@@ -121,6 +126,69 @@ export function FeedbackPanel({
    */
   const effectiveArea = area ?? featureAreaForPath(pathname ?? "/");
   const [sending, setSending] = useState(false);
+  /**
+   * The discard question, asked inside the window rather than by the browser.
+   *
+   * `window.confirm` was doing this, and it was the wrong instrument twice over: it is a
+   * different visual world dropped on top of a glass panel, and it blocks the main thread,
+   * which froze the Send button's gesture mid-draw when it fired during the success beat.
+   */
+  const [confirming, setConfirming] = useState(false);
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  /** Something worth asking about before it is thrown away. */
+  const hasDraft = message.trim().length > 0 || shots.length > 0;
+
+  /** Whether this opening has already had its caret put back. Once per open, at most. */
+  const caretRestored = useRef(false);
+
+  /**
+   * Put the caret back where it was — from the ref callback, not an effect.
+   *
+   * No effect is early enough. This component deliberately mounts CLOSED for one frame so
+   * Base UI has a false->true to animate (see `entered` below), and Base UI does not render
+   * the popup's contents until after the commit that opens it — so even an effect keyed on
+   * `sheetOpen` runs while this ref is still null, restores nothing, and never fires again.
+   * A ref callback runs exactly when the node exists, which is the moment we need.
+   *
+   * Focusing here rather than leaving it to `autoFocus` also settles the ordering: by the
+   * time React applies `autoFocus` the field is already focused, so that call cannot move
+   * the caret back to the start.
+   */
+  const attachTextarea = useCallback(
+    (node: HTMLTextAreaElement | null) => {
+      textareaRef.current = node;
+      if (!node || caretRestored.current || !initialCaret) return;
+      caretRestored.current = true;
+      node.focus();
+      const end = Math.min(initialCaret.end, node.value.length);
+      node.setSelectionRange(Math.min(initialCaret.start, end), end);
+    },
+    [initialCaret]
+  );
+
+  /**
+   * Hand the caret up before this component stops existing.
+   *
+   * Called on the way out of every route that unmounts the panel, including attaching a
+   * screenshot — which tears the window down mid-sentence and would otherwise lose the
+   * position exactly when someone is most likely to be mid-thought.
+   */
+  const rememberCaret = useCallback(() => {
+    const field = textareaRef.current;
+    if (!field) return;
+    onCaretChange({ start: field.selectionStart, end: field.selectionEnd });
+  }, [onCaretChange]);
+
+  /** Every exit runs through here, so the caret is never lost on one of them. */
+  const requestClose = useCallback(
+    (discard: boolean) => {
+      rememberCaret();
+      onClose(discard);
+    },
+    [rememberCaret, onClose]
+  );
 
   const remaining = MAX_FEEDBACK_TEXT - message.length;
   /** Something to send. Kept apart from `canSend` so the button can stay lit while busy. */
@@ -159,6 +227,7 @@ export function FeedbackPanel({
   // goes true, and the close is driven by `open` going false. A fresh mount starts the
   // sequence over, which is exactly what reopening should do.
   const sheetOpen = open && entered;
+
 
   /**
    * Whether the window has ever actually been open.
@@ -315,7 +384,14 @@ export function FeedbackPanel({
       // obstacle between someone and the thing they were trying to look at.
       onOpenChange={(next) => {
         if (next) return;
-        onClose(false);
+        // While the question is up, Escape and a press outside answer IT rather than
+        // closing the window behind it. Anything else would leave you unable to say "no"
+        // with the key you reach for first.
+        if (confirming) {
+          setConfirming(false);
+          return;
+        }
+        requestClose(false);
       }}
       // Fires when the open/close transition has actually finished. Unmounting on the
       // close REQUEST instead — which is what happened before — tore the window out of the
@@ -463,6 +539,7 @@ export function FeedbackPanel({
  * unreachable, but it is not the normal path. */}
         <div className="grid min-h-12 flex-1 gap-1.5">
           <Textarea
+            ref={attachTextarea}
             autoFocus
             // Fills whatever the block has, large or small: the parent is a grid whose auto
             // row stretches. `field-sizing-content` on the primitive still expands it as you
@@ -504,7 +581,10 @@ export function FeedbackPanel({
               // `whitespace-normal` undoes `buttonVariants`' nowrap, which would otherwise
               // clip the second line against the sheet's 24rem max width.
               className="h-auto w-full justify-start gap-3 whitespace-normal border-dashed px-4 py-3 text-left"
-              onClick={onAddScreenshot}
+              onClick={() => {
+                rememberCaret();
+                onAddScreenshot();
+              }}
             >
               <Camera className="size-5 shrink-0" />
               <span className="grid gap-0.5">
@@ -568,7 +648,10 @@ export function FeedbackPanel({
             {canCapture && usedShots > 0 && usedShots < MAX_SCREENSHOTS && (
               <button
                 type="button"
-                onClick={onAddScreenshot}
+                onClick={() => {
+                  rememberCaret();
+                  onAddScreenshot();
+                }}
                 aria-label="Add another screenshot"
                 // Matches a thumbnail's box exactly, so the row stays on one line and the
                 // tile reads as the empty slot next to the ones already filled.
@@ -601,12 +684,15 @@ export function FeedbackPanel({
             type="button"
             variant="ghost"
             // The one exit that does throw the draft away, so the one that still asks —
-            // and only when there is something to lose.
+            // and only when there is something to lose. `hasDraft` counts screenshots as
+            // well as words: a shot is a deliberate act and takes longer to make than a
+            // sentence, so losing one silently is worse, not better.
             onClick={() => {
-              if (!sent && message.trim().length > 0 && !window.confirm("Discard your feedback?")) {
+              if (!sent && hasDraft) {
+                setConfirming(true);
                 return;
               }
-              onClose(true);
+              requestClose(true);
             }}
           >
             Cancel
@@ -621,7 +707,66 @@ export function FeedbackPanel({
             onClick={send}
           />
         </div>
+        {confirming && (
+          <div
+            // See the matching rule in globals.css: `.liquid-glass > *` pins every direct
+            // child to `position: relative`, and it is unlayered, so `absolute` here would
+            // be ignored. `inset-0` with an inherited radius covers the window exactly,
+            // corners included.
+            data-slot="feedback-discard"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="feedback-discard-title"
+            className="inset-0 flex items-center justify-center rounded-[inherit] bg-popover/85 p-6 supports-backdrop-filter:backdrop-blur-[2px]"
+          >
+            <div className="w-full max-w-[17rem] rounded-2xl border border-border/70 bg-popover p-4 text-center shadow-lg">
+              <p
+                id="feedback-discard-title"
+                className="font-[family-name:var(--font-display)] text-base text-ink"
+              >
+                Discard your feedback?
+              </p>
+              <p className="mt-1 text-xs leading-snug text-muted-foreground">
+                {describeDraft(message, shots.length)}{" "}
+                This can&apos;t be undone.
+              </p>
+              <div className="mt-4 flex justify-center gap-2">
+                {/* The safe answer takes the focus, so Enter keeps the draft rather than
+                    destroying it. */}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  autoFocus
+                  onClick={() => setConfirming(false)}
+                >
+                  Keep editing
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => {
+                    setConfirming(false);
+                    requestClose(true);
+                  }}
+                >
+                  Discard
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </SheetContent>
     </Sheet>
   );
+}
+
+/** Names what is actually about to be lost, rather than asking in the abstract. */
+function describeDraft(message: string, shots: number): string {
+  const hasText = message.trim().length > 0;
+  const pictures = `${shots} screenshot${shots === 1 ? "" : "s"}`;
+  if (hasText && shots > 0) return `Your message and ${pictures} will be deleted.`;
+  if (shots > 0) return `Your ${pictures} will be deleted.`;
+  return "Your message will be deleted.";
 }
