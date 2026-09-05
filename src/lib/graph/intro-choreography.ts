@@ -14,6 +14,7 @@
 import {
   CHRONO_ARRIVING_MS,
   CHRONO_OPAQUE_MS,
+  CHRONO_OUT,
   CHRONO_OUTBOUND_MS,
   CRUISE_BURST_MS,
   CRUISE_RESERVE_FRACTION,
@@ -24,17 +25,66 @@ import {
 } from "@/lib/warp/chrono";
 import { easeFade, span } from "@/lib/warp/choreography";
 import type { IntroStatus } from "@/lib/graph/intro-signal";
-import { DUR_MS } from "@/lib/motion";
+
+/**
+ * How much earlier the intro's ramp begins than the route transition's.
+ *
+ * `/upgrade` spends its first 420ms darkening the room before anything moves, which is a beat
+ * this has no room for: a load that resolves near the floor would otherwise show a still
+ * field, a moment of drift, and then the collapse. Running the ramp clock ahead gives the
+ * field something to do from the first frame without touching the shared curve.
+ *
+ * Exactly `CHRONO_OUT.spin[0]` would start the run mid-acceleration; a shade under it means
+ * the field is at a true standstill on frame one and leaves the gate immediately after.
+ */
+export const INTRO_SPIN_LEAD_MS = 320;
+
+/**
+ * How long the whole outbound run takes HERE, against the 1950ms it takes on `/upgrade`.
+ *
+ * The intro's problem is the opposite of the route transition's. `/upgrade` owns the screen
+ * for a fixed journey and can spend most of two seconds winding up, because the wind-up is the
+ * content. This is covering a wait the user did not ask for, and the same curve stretched over
+ * the same two seconds spends nearly all of a short load below a twentieth of full throttle —
+ * a field that is technically moving and visibly parked. Measured on a reload: 5.9% of peak at
+ * the end of the old 700ms floor. That is what "stuck in the warp" actually looked like; the
+ * fix is not a shorter animation so much as one that reaches speed inside the wait it covers.
+ *
+ * Compressing the clock rather than reshaping the curve is what keeps the shared envelope
+ * shared. Scaling a monotone input is monotone, so every property `smoke-warp-chrono.ts` pins
+ * about `chronoFrame` — and the "slow, then quick" shape `smoke-graph-intro.ts` pins about the
+ * ramp — describes the same picture, played at a speed that fits a page load.
+ */
+export const INTRO_OUTBOUND_MS = 560;
+export const INTRO_OUTBOUND_SCALE =
+  (CHRONO_OUTBOUND_MS - INTRO_SPIN_LEAD_MS) / INTRO_OUTBOUND_MS;
+
+/**
+ * What cruise has to add to the intro's clock to land on the shared one.
+ *
+ * `cruiseBurstsBy` counts reserve waves from `CHRONO_OUTBOUND_MS`, so a compressed ramp that
+ * reaches cruise at 560ms would spend its first 1.4s of hold below that mark and light nothing
+ * — the exact stall the reserve exists to prevent, reintroduced by the speed-up. Shifting
+ * instead of scaling here is deliberate: waves are counted in real elapsed milliseconds
+ * against a real ceiling, so the hold must keep real time even though the ramp does not.
+ */
+export const INTRO_CRUISE_SHIFT_MS = CHRONO_OUTBOUND_MS - INTRO_OUTBOUND_MS;
 
 /**
  * Once the warp has started it plays for at least this long.
  *
  * A floor on a run that has ALREADY begun — never a gate on beginning one. Without it a load
  * that resolves just after the trigger shows a few frames of animation and snaps away, which
- * reads as a glitch rather than as an intro. `DUR_MS.celestial` rather than a fresh literal:
- * this is the app's slowest motion token and the intro is its slowest motion.
+ * reads as a glitch rather than as an intro.
+ *
+ * Derived rather than picked: this is exactly how long the field takes to reach full throttle.
+ * Anything shorter cuts away mid-acceleration, which is the glitch the floor exists to stop;
+ * anything longer is padding on a page someone is waiting for. It replaces a flat
+ * `DUR_MS.celestial`, which was a coherent number for a wind-up that took 1.4s to finish and
+ * pure dead time now that the wind-up finishes here.
  */
-export const INTRO_MIN_BEAT_MS = DUR_MS.celestial;
+export const INTRO_MIN_BEAT_MS =
+  (CHRONO_OUT.spin[1] - INTRO_SPIN_LEAD_MS) / INTRO_OUTBOUND_SCALE;
 
 /**
  * The collapse is quicker here than on `/upgrade`.
@@ -44,7 +94,7 @@ export const INTRO_MIN_BEAT_MS = DUR_MS.celestial;
  * Applied by scaling the arriving clock, so `chronoFrame`'s shape — and every property
  * `smoke-warp-chrono.ts` pins about it — is preserved exactly.
  */
-export const INTRO_ARRIVING_MS = 560;
+export const INTRO_ARRIVING_MS = 380;
 export const INTRO_ARRIVING_SCALE = CHRONO_ARRIVING_MS / INTRO_ARRIVING_MS;
 
 /**
@@ -68,7 +118,7 @@ export const INTRO_OPAQUE_MS = CHRONO_OPAQUE_MS / INTRO_ARRIVING_SCALE;
  */
 export const INTRO_CRUISE_CAP_MS = 9000;
 export const INTRO_CRUISE_BURSTS = Math.floor(
-  (INTRO_CRUISE_CAP_MS - CHRONO_OUTBOUND_MS) / CRUISE_BURST_MS
+  (INTRO_CRUISE_CAP_MS - INTRO_OUTBOUND_MS) / CRUISE_BURST_MS
 );
 
 /**
@@ -149,16 +199,6 @@ export function predictSlowIntro(input: {
 }
 
 /**
- * How much earlier the intro's ramp begins than the route transition's.
- *
- * `/upgrade` spends its first 420ms darkening the room before anything moves, which is a beat
- * this has no room for: the intro's own floor is 700ms, so a load that resolves near it would
- * show a still field, a moment of drift, and then the collapse. Running the ramp clock ahead
- * gives the field something to do from the first frame without touching the shared curve.
- */
-export const INTRO_SPIN_LEAD_MS = 320;
-
-/**
  * Which beat of the shared envelope the intro is on.
  *
  * `"cruise"` is the one that matters and it used to be unreachable: the stage mapped anything
@@ -168,13 +208,14 @@ export const INTRO_SPIN_LEAD_MS = 320;
  * against `introFrame("cruise", …)`, a phase nothing ever passed. Hence this lives here, where
  * the smoke can hold it to the same mapping the stage uses.
  *
- * The handover is continuous by construction: at `CHRONO_OUTBOUND_MS` the outbound ramp has
- * long since clamped to peak and all seven scripted bursts have fired, which is precisely
- * where cruise starts counting.
+ * The handover is continuous by construction: `INTRO_OUTBOUND_MS` is the elapsed time at which
+ * the compressed ramp clock lands exactly on `CHRONO_OUTBOUND_MS`, where the spin has clamped
+ * to peak and all seven scripted bursts have fired — and `INTRO_CRUISE_SHIFT_MS` puts cruise's
+ * first frame on that same mark, so it starts counting from zero waves rather than mid-hold.
  */
 export function introPhase(status: IntroStatus, elapsed: number): ChronoPhase {
   if (status === "arriving" || status === "done") return "arriving";
-  return elapsed >= CHRONO_OUTBOUND_MS ? "cruise" : "outbound";
+  return elapsed >= INTRO_OUTBOUND_MS ? "cruise" : "outbound";
 }
 
 /**
@@ -191,9 +232,13 @@ export function introFrame(
 ): ChronoFrame {
   return chronoFrame(
     phase,
-    // Only the ramp is led. Cruise counts reserve waves off real elapsed time, and leading that
-    // clock would spend the reserve early against a ceiling derived from real milliseconds.
-    phase === "outbound" ? elapsed + INTRO_SPIN_LEAD_MS : elapsed,
+    // Only the ramp is led and compressed. Cruise and the landing count reserve waves off real
+    // elapsed time — scaling that clock would spend the reserve early against a ceiling derived
+    // from real milliseconds — so they are shifted onto the shared timeline instead, which
+    // moves the counting window without changing how fast it fills.
+    phase === "outbound"
+      ? elapsed * INTRO_OUTBOUND_SCALE + INTRO_SPIN_LEAD_MS
+      : elapsed + INTRO_CRUISE_SHIFT_MS,
     sinceArriving * INTRO_ARRIVING_SCALE,
     INTRO_CRUISE_BURSTS
   );

@@ -20,6 +20,8 @@ import {
   INTRO_LOW_CORE_THRESHOLD,
   INTRO_MIN_BEAT_MS,
   INTRO_OPAQUE_MS,
+  INTRO_OUTBOUND_MS,
+  INTRO_OUTBOUND_SCALE,
   INTRO_RESERVE_FRACTION,
   INTRO_SPIN_LEAD_MS,
   introCoverage,
@@ -43,11 +45,7 @@ import {
   WARP_STAR_MIN_R,
   WARP_STAR_SCALE,
 } from "../src/lib/graph/starfield-scale";
-import {
-  CHRONO_OUT,
-  CHRONO_OUTBOUND_MS,
-  IGNITION_FRACTIONS,
-} from "../src/lib/warp/chrono";
+import { CHRONO_OUT, IGNITION_FRACTIONS } from "../src/lib/warp/chrono";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -156,7 +154,7 @@ check(
   "it only ever accelerates on the way out",
   (() => {
     let prev = -1;
-    for (let t = 0; t <= CHRONO_OUTBOUND_MS; t += 20) {
+    for (let t = 0; t <= INTRO_OUTBOUND_MS; t += 5) {
       const v = throttleAt(t);
       if (v < prev - 1e-9) return false;
       prev = v;
@@ -166,12 +164,30 @@ check(
   "any dip reads as the engine stumbling"
 );
 check("and reaches full throttle by the hold", introThrottle(introFrame("cruise", 5000, 0)) === 1);
+// The floor exists so a run cannot cut away mid-acceleration. Now that it is derived from the
+// ramp rather than picked, this is the property that derivation is FOR — and the one that broke
+// when the ramp was 1950ms long and the floor was a flat 700ms, where the shortest possible
+// intro handed the chart over at 6% of full throttle and read as a field that never moved.
+check(
+  "the shortest possible run still completes the jump",
+  throttleAt(INTRO_MIN_BEAT_MS) > 0.99,
+  `${throttleAt(INTRO_MIN_BEAT_MS).toFixed(3)} of full throttle at the end of the ${INTRO_MIN_BEAT_MS.toFixed(0)}ms floor`
+);
+check(
+  "and the floor is a floor, not the whole run — a hold still reaches cruise",
+  INTRO_MIN_BEAT_MS < INTRO_OUTBOUND_MS
+);
 
 // "Slow, then quick." The ramp runs from the lead-shifted start of the spin window to its end;
 // these pin the SHAPE of it, which is the part a reader cannot get from the constants.
 const [spinFrom, spinTo] = CHRONO_OUT.spin;
+// Chrono time -> intro time: undo the lead, then the compression. `introFrame` applies them in
+// the other order, so a literal here would drift the moment either constant moves.
 const rampAt = (frac: number) =>
-  throttleAt(spinFrom - INTRO_SPIN_LEAD_MS + frac * (spinTo - spinFrom));
+  throttleAt(
+    (spinFrom - INTRO_SPIN_LEAD_MS + frac * (spinTo - spinFrom)) /
+      INTRO_OUTBOUND_SCALE
+  );
 check(
   "the field is already drifting a twentieth of the way in, not parked",
   rampAt(0.05) > 0.001,
@@ -194,7 +210,8 @@ console.log("\nThe beat the reserve lives on…");
 // quietly stopped growing while the check below passed against a phase nothing ever passed.
 check(
   "a run that is still waiting reaches cruise",
-  introPhase("running", CHRONO_OUTBOUND_MS) === "cruise" &&
+  introPhase("running", INTRO_OUTBOUND_MS) === "cruise" &&
+    introPhase("running", INTRO_OUTBOUND_MS - 1) === "outbound" &&
     introPhase("running", 0) === "outbound"
 );
 check(
@@ -205,8 +222,11 @@ check(
 check(
   "the handover is continuous — no jolt at the seam",
   (() => {
-    const a = introFrame("outbound", CHRONO_OUTBOUND_MS, 0);
-    const b = introFrame("cruise", CHRONO_OUTBOUND_MS, 0);
+    // At `INTRO_OUTBOUND_MS`, not `CHRONO_OUTBOUND_MS`: the intro's ramp is compressed onto the
+    // shared one, so this is the elapsed time at which the two clocks agree, and the only
+    // moment continuity is actually claimed.
+    const a = introFrame("outbound", INTRO_OUTBOUND_MS, 0);
+    const b = introFrame("cruise", INTRO_OUTBOUND_MS, 0);
     // Within an epsilon, not equal: outbound reaches ALPHA_FAST by lerping onto it and lands
     // on 0.04500000000000004, while cruise names the constant. A seam nobody can see.
     return (
