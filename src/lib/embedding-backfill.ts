@@ -85,7 +85,11 @@ export async function runEmbeddingBackfill(
       where: and(eq(contacts.userId, userId), isNotNull(contacts.embeddingStaleAt)),
       orderBy: [asc(contacts.embeddingStaleAt)],
       limit: CLAIM_SIZE,
-      with: { contactTags: { with: { tag: true } } },
+      with: {
+        contactTags: { with: { tag: true } },
+        profile: true,
+        experiences: true,
+      },
     });
     if (stale.length === 0) break;
 

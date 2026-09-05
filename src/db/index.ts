@@ -1,4 +1,6 @@
 import { drizzle as drizzleNeon } from "drizzle-orm/neon-http";
+import type { BatchItem } from "drizzle-orm/batch";
+import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { neon } from "@neondatabase/serverless";
 import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import { PGlite } from "@electric-sql/pglite";
@@ -321,6 +323,44 @@ CREATE TABLE IF NOT EXISTS contact_embeddings (
   source_id text,
   embedding jsonb NOT NULL,
   content text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS contact_profiles (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  headline text,
+  about text,
+  skills jsonb NOT NULL DEFAULT '[]',
+  certifications jsonb NOT NULL DEFAULT '[]',
+  volunteering jsonb NOT NULL DEFAULT '[]',
+  publications jsonb NOT NULL DEFAULT '[]',
+  source text NOT NULL,
+  source_url text,
+  adapter_version text,
+  warnings jsonb NOT NULL DEFAULT '[]',
+  captured_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS contact_experiences (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  organization text NOT NULL,
+  organization_normalized text NOT NULL,
+  title text,
+  field_of_study text,
+  location text,
+  description text,
+  start_year integer,
+  start_month integer,
+  end_year integer,
+  end_month integer,
+  is_current boolean NOT NULL DEFAULT false,
+  sort_index integer NOT NULL DEFAULT 0,
+  source text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS calendar_subscriptions (
@@ -868,12 +908,13 @@ CREATE TABLE IF NOT EXISTS non_dilutive_funding (
  * v24 = ops_alert_state (the production-readiness ops sweep's alert ledger).
  * v25 = imports.stall_resumes (the process-stalled cron's give-up counter).
  * v26 = rate_limit_buckets (DB-backed rate limiting for chat, capture, and avatar resolve).
- * v27 = continuous provider sync: sync_cursor/next_sync_at/sync_status/sync_started_at/
+ * v27 = contact_profiles + contact_experiences (LinkedIn experience extraction).
+ * v28 = continuous provider sync: sync_cursor/next_sync_at/sync_status/sync_started_at/
  * sync_error/sync_failures on both connection tables, plus their partial due indexes.
- * v28 = the connector platform: api_keys, api_idempotency_keys, webhook_endpoints,
+ * v29 = the connector platform: api_keys, api_idempotency_keys, webhook_endpoints,
  * outbound_webhook_deliveries.
  */
-export const SCHEMA_VERSION = 28;
+export const SCHEMA_VERSION = 29;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1037,6 +1078,31 @@ export const SCALE_DDL: string[] = [
    FROM interactions i, jsonb_array_elements_text(COALESCE(i.action_items, '[]'::jsonb)) WITH ORDINALITY a
    WHERE jsonb_typeof(i.action_items) = 'array' AND btrim(a.value) <> ''
    ON CONFLICT (user_id, item_hash) DO NOTHING`,
+
+  // --- LinkedIn profiles -----------------------------------------------------------
+  //
+  // The unique index is what makes a profile row per contact an invariant rather than a
+  // convention: `saveContactProfile` upserts on it.
+  `CREATE UNIQUE INDEX IF NOT EXISTS contact_profiles_contact_uidx
+     ON contact_profiles(user_id, contact_id)`,
+  `CREATE INDEX IF NOT EXISTS contact_experiences_contact_idx
+     ON contact_experiences(user_id, contact_id, sort_index)`,
+  // "Who has ever worked at X". Read by experienceArm in src/lib/hybrid-search.ts -- but
+  // for its LEADING COLUMN ONLY: EXPLAIN over 60k rows across 120 tenants shows a bitmap
+  // index scan whose Index Cond is user_id alone, scoping the scan to one tenant, after
+  // which the organization patterns are applied as a post-index filter. The arm ORs
+  // word-boundary patterns (leading wildcard, unindexable) with its exact/prefix tiers,
+  // and that disjunction is what stops the second column from being used.
+  //
+  // It is NOT read by experienceExists in filterCondition, despite an earlier comment here
+  // saying so: Postgres hashes that correlated subquery into a SubPlan and seq-scans
+  // contact_experiences across every tenant (60000 rows removed by filter), losing even
+  // the user_id scoping. Worth revisiting if the filter path ever gets hot.
+  //
+  // Keep prose in this array free of backticks: the schema-ddl guard's fingerprint treats
+  // every backtick pair between these brackets as a DDL statement.
+  `CREATE INDEX IF NOT EXISTS contact_experiences_org_idx
+     ON contact_experiences(user_id, organization_normalized)`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
@@ -1867,7 +1933,7 @@ const alters = [
   `DROP INDEX IF EXISTS embeddings_user_contact_source_uidx`,
   `CREATE UNIQUE INDEX IF NOT EXISTS embeddings_user_contact_source_id_uidx
    ON contact_embeddings(user_id, contact_id, source_type, source_id)`,
-  // Schema v27: continuous provider sync. The same six columns on both connection tables —
+  // Schema v28: continuous provider sync. The same six columns on both connection tables —
   // they are byte-identical by design, and `syncStateColumns()` in schema.ts is the one
   // place their shape is written down.
   //
@@ -1906,7 +1972,7 @@ const alters = [
   // user to reconnect. Filtering it out here would leave it silently doing nothing instead.
   `UPDATE gmail_connections SET next_sync_at = now()
     WHERE status = 'active' AND next_sync_at IS NULL AND sync_status IS NULL`,
-  // Schema v28: the connector platform. The CREATE TABLEs above land on a fresh database;
+  // Schema v29: the connector platform. The CREATE TABLEs above land on a fresh database;
   // these repair an existing one, which is why every index appears in both places.
   `CREATE UNIQUE INDEX IF NOT EXISTS api_keys_hash_uidx ON api_keys(key_hash)`,
   `CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys(user_id)`,
@@ -2143,6 +2209,59 @@ export async function getDb(): Promise<Db> {
       : drizzlePglite(globalForDb.orbitPglite!, { schema, logger: countingLogger });
   }
   return globalForDb.orbitDrizzle;
+}
+
+/**
+ * A statement builder that both a live `Db` and a PGlite transaction satisfy. Both drizzle
+ * instances are `PgDatabase`s and `PgTransaction extends PgDatabase`, so one type covers
+ * the writer `runAtomicWrite` hands to its callback on either driver.
+ */
+export type AtomicWriter = PgDatabase<PgQueryResultHKT, typeof schema>;
+/** One statement in an atomic group: any drizzle insert/update/delete/select builder. */
+export type AtomicStatement = BatchItem<"pg">;
+
+/**
+ * Runs a group of statements atomically on whichever driver is live.
+ *
+ * `db.transaction()` is NOT an option: `getDb()` returns the `drizzle-orm/neon-http`
+ * instance whenever `DATABASE_URL` is set — i.e. always in production — and that driver's
+ * session throws `No transactions support in neon-http driver` unconditionally
+ * (`node_modules/drizzle-orm/neon-http/session.cjs`). Neon's HTTP endpoint has no
+ * cross-request session to hold a transaction open in.
+ *
+ * What it does have is `db.batch()`, which drizzle maps to `client.transaction(queries)` —
+ * one HTTP request carrying every statement, committed or rolled back together. PGlite's
+ * drizzle driver has no `batch` at all (only the batch-capable drivers — neon-http,
+ * libsql, d1, planetscale — declare one), so the local path uses a real transaction
+ * instead. Hence the callback shape rather than a plain array: the PGlite branch has to
+ * build its statements against the transaction handle, or they would execute outside it.
+ *
+ * Callers must therefore never reach for `db.transaction` or `db.batch` directly — this is
+ * the one place that knows which driver is underneath.
+ */
+export async function runAtomicWrite(
+  db: Db,
+  build: (writer: AtomicWriter) => AtomicStatement[]
+): Promise<void> {
+  const batchable = db as unknown as {
+    batch?: (statements: AtomicStatement[]) => Promise<unknown>;
+  };
+
+  if (typeof batchable.batch === "function") {
+    const statements = build(db as unknown as AtomicWriter);
+    if (!statements.length) return;
+    await batchable.batch(statements);
+    return;
+  }
+
+  const local = db as ReturnType<typeof drizzlePglite<typeof schema>>;
+  await local.transaction(async (tx) => {
+    // Awaited one at a time on purpose: these are ordered writes (delete-then-insert),
+    // and a `Promise.all` would let the driver interleave them.
+    for (const statement of build(tx as unknown as AtomicWriter)) {
+      await (statement as unknown as Promise<unknown>);
+    }
+  });
 }
 
 export { schema };

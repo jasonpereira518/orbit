@@ -6,6 +6,7 @@ import {
   rowsOf,
 } from "@/db";
 import { contacts, contactEmbeddings } from "@/db/schema";
+import { normalizeCompanyKey } from "@/lib/company-name";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import { cosineSimilarity } from "@/lib/ai";
 
@@ -26,6 +27,12 @@ export type HybridSearchOptions = {
   limit?: number;
 };
 
+/**
+ * One retrieval arm. `experience` reads `contact_experiences` — the only arm that can
+ * produce a contact whose match lives in her history rather than on her contact row.
+ */
+export type ArmName = "fts" | "trigram" | "semantic" | "experience";
+
 export type RankedContact = {
   id: string;
   fullName: string;
@@ -45,7 +52,7 @@ export type RankedContact = {
   tags: string[];
   rrfScore: number;
   relevance: number;
-  matchedArms: Array<"fts" | "trigram" | "semantic">;
+  matchedArms: ArmName[];
   /**
    * True for every row produced by a run whose filters this row satisfied
    * (including all rows when no filters were given at all). False only for
@@ -66,7 +73,6 @@ const IN_MEMORY_EMBEDDING_SCAN_LIMIT = 2000;
 /** A filtered result set smaller than limit/4 triggers the unfiltered recall guard. */
 const RECALL_GUARD_DIVISOR = 4;
 
-type ArmName = "fts" | "trigram" | "semantic";
 type ArmResult = { arm: ArmName; ids: string[] };
 
 /**
@@ -88,19 +94,82 @@ function anyLike(column: SQL, values: string[]): SQL {
   )})`;
 }
 
-/** WHERE fragment over the contacts table; null when no filters are set. */
-function filterCondition(filters: SearchFilters | null | undefined): SQL | null {
+/**
+ * Match a stored LinkedIn experience. Companion to `experienceArm` — the arm finds these
+ * contacts, this keeps a filter from throwing them away again.
+ *
+ * An `exists` subquery rather than a term in `search_tsv`: that column is GENERATED, and a
+ * generated column may only read its own row. Mirrors the tag subquery below.
+ *
+ * `userId` is passed in as a BOUND LITERAL and is not decoration — it is the only thing
+ * keeping this subquery tenant-scoped. Correlating on `ce.user_id = contacts.user_id`
+ * alone reads as scoped but is not: once the table is ANALYZEd, Postgres rewrites the
+ * correlated EXISTS into a hashed SubPlan and evaluates it ONCE with no user predicate at
+ * all, seq-scanning every tenant's rows and applying the correlation afterwards against
+ * the hash. Measured at 60k rows across 120 tenants: 60,000 rows scanned without the
+ * literal, 500 with it (and the plan flips to a bitmap index scan on
+ * `contact_experiences_org_idx`). The cost otherwise scales with total system-wide rows
+ * rather than the querying user's — and because the rewrite only appears after ANALYZE, a
+ * small local database never shows it and production always does.
+ *
+ * The correlation is kept alongside the literal: belt and braces, and it stays correct if
+ * a caller ever passes a userId that disagrees with the row.
+ */
+function experienceExists(userId: string, values: string[], kinds: readonly string[]): SQL {
+  return sql`exists (
+    select 1 from contact_experiences ce
+    where ce.contact_id = contacts.id
+      and ce.user_id = ${userId}
+      and ce.user_id = contacts.user_id
+      and ce.kind in (${sql.join(kinds.map((k) => sql`${k}`), sql`, `)})
+      and (${sql.join(
+        values.map(
+          (v) =>
+            sql`ce.organization_normalized like ${`%${escapeLikeValue(v.toLowerCase())}%`}`
+        ),
+        sql` or `
+      )})
+  )`;
+}
+
+/**
+ * WHERE fragment over the contacts table; null when no filters are set.
+ *
+ * Takes `userId` solely so `experienceExists` can bind it as a literal — see the note
+ * there. Every arm already constrains `contacts.user_id`, so this adds no new scoping to
+ * the outer query.
+ */
+function filterCondition(
+  userId: string,
+  filters: SearchFilters | null | undefined
+): SQL | null {
   if (!filters) return null;
   const parts: SQL[] = [];
   const clean = (xs?: string[]) =>
     (xs ?? []).map((x) => x.trim()).filter((x) => x.length > 0).slice(0, 4);
 
   const companies = clean(filters.companies);
-  if (companies.length) parts.push(anyLike(sql`lower(coalesce(contacts.company, ''))`, companies));
+  if (companies.length) {
+    parts.push(
+      sql`(${anyLike(sql`lower(coalesce(contacts.company, ''))`, companies)} or ${experienceExists(
+        userId,
+        companies,
+        ["role"]
+      )})`
+    );
+  }
   const industries = clean(filters.industries);
   if (industries.length) parts.push(anyLike(sql`lower(coalesce(contacts.industry, ''))`, industries));
   const schools = clean(filters.schools);
-  if (schools.length) parts.push(anyLike(sql`lower(coalesce(contacts.school, ''))`, schools));
+  if (schools.length) {
+    parts.push(
+      sql`(${anyLike(sql`lower(coalesce(contacts.school, ''))`, schools)} or ${experienceExists(
+        userId,
+        schools,
+        ["education"]
+      )})`
+    );
+  }
   const locations = clean(filters.locations);
   if (locations.length) parts.push(anyLike(sql`lower(coalesce(contacts.location, ''))`, locations));
 
@@ -232,6 +301,157 @@ async function trigramArm(
   return rowsOf<{ id: string }>(result).map((r) => r.id);
 }
 
+/**
+ * Candidates whose stored LinkedIn history names the query.
+ *
+ * This is an ARM, not a filter, and the distinction is the whole point. `filterCondition`
+ * narrows what the other arms already found; a contact who left Google in 2019 has no
+ * "google" in `search_tsv`, in her name, or in `contacts.company`, so no filter can reach
+ * her. Only a query that reads `contact_experiences` can put her in the candidate set.
+ *
+ * Terms are matched against `organization_normalized` (see `normalizeCompanyKey`), which is
+ * lowercased and stripped of punctuation to single spaces — so "Google, LLC" is stored as
+ * `google llc` and the term `google` reaches it by prefix. Query terms go through the SAME
+ * function before they are compared, which is why it was hoisted into `@/lib/company-name`
+ * in the first place: lowercasing alone left `AT&T` looking for `at&t` in a column that
+ * stores `at t`, so the punctuated employers this arm exists to find — AT&T, L'Oréal,
+ * Ernst & Young, Procter & Gamble — were reachable only by typing the mangled form.
+ *
+ * Matching is word-anchored in four tiers (whole value / first word / interior word / last
+ * word), scored exact 3 > prefix 2 > word-boundary 1. There is deliberately no `%term%`
+ * tier: an unanchored substring made the term "art" match "startup ventures", and eight
+ * unrelated contacts flooded positions 2-9 of every "art" search, displacing real lexical
+ * hits. Note the prefix tier is a prefix of the *value*, not of a word, so "meta" still
+ * reaches "metabase" at the same tier as "meta platforms inc"; only a value stored exactly
+ * as "meta" outranks it.
+ *
+ * Indexing, measured with EXPLAIN against 60k experience rows across 120 tenants rather
+ * than assumed — `contact_experiences_org_idx` is `(user_id, organization_normalized)`:
+ *   - This query uses it for its LEADING COLUMN ONLY. The plan is a bitmap index scan with
+ *     `Index Cond: (user_id = ...)`, which scopes 60k rows down to the tenant's 500, and
+ *     all four patterns are then applied as a post-index `Filter`.
+ *   - Each of the exact and prefix tiers *is* independently index-servable (in isolation
+ *     the planner emits a BitmapOr of two index scans on the second column). OR-ing them
+ *     with the two word-boundary patterns, which have leading wildcards and cannot be
+ *     indexed, is what collapses the whole disjunction to a filter.
+ *   - The prefix tier's range rewrite (`>= 'google' AND < 'googlf'`) additionally requires
+ *     a C-collation database. Verified both ways on one table: a C-collation column uses
+ *     the index for `like 'google%'`, an `en_US.utf8` column seq-scans it. Local PGlite is
+ *     C; a managed Postgres usually is not, so on Neon even the isolated prefix tier would
+ *     need a `text_pattern_ops` index. Equality is collation-independent either way.
+ * Tenant scoping is therefore the only indexing this arm can currently rely on. That is
+ * bounded and fine at present sizes; `gin_trgm_ops` on `organization_normalized` is the
+ * fix if it ever stops being.
+ */
+/**
+ * Legal-entity suffixes, which every company ending in one shares. As a whole search term
+ * such a word carries no signal — "inc" matched every "… Inc" in the table through the
+ * arm's word-boundary tier, which is precise but not selective.
+ *
+ * Applied per TERM, not per query: "Acme Inc" still searches `acme`, and only the bare
+ * `inc` component is dropped. A query that is nothing BUT a legal suffix therefore yields
+ * no terms and no candidates, which is the correct answer.
+ *
+ * Deliberately NOT folded into `normalizeCompanyKey`: `organization_normalized` is already
+ * written for every stored row by `saveContactProfile`, so changing normalization would
+ * require re-normalizing the table. This is a query-time concern only.
+ */
+const LEGAL_SUFFIXES = new Set([
+  "inc", "llc", "ltd", "limited", "corp", "corporation", "co", "gmbh", "plc",
+  "sa", "ag", "bv", "nv", "pty", "llp",
+]);
+
+async function experienceArm(
+  userId: string,
+  query: string,
+  expansionTerms: string[],
+  filter: SQL | null,
+  armLimit: number
+): Promise<string[]> {
+  // Single-word queries are used whole; longer ones contribute their content tokens, the
+  // same widening `ftsArm` does and for the same reason — "who did I meet from Google"
+  // must reach `google`.
+  const raw = query.trim().toLowerCase();
+  const tokens = raw.split(/\s+/).filter(Boolean);
+  const terms = [
+    ...(raw ? [raw] : []),
+    ...(tokens.length >= 2 ? contentTokens(query).map((t) => t.toLowerCase()) : []),
+    ...expansionTerms.slice(0, 4).map((t) => t.trim().toLowerCase()),
+  ]
+    // Normalize BEFORE the filters below, not after: `normalizeCompanyKey` is what turns
+    // "AT&T" into the stored `at t`, and both the length floor and the stoplist have to
+    // judge the string that will actually be compared. (It can also empty a term out
+    // entirely — "&" normalizes to "" — which the length floor then drops.)
+    .map((t) => normalizeCompanyKey(t))
+    // Two characters is the floor because the tiers below are word-anchored: "ge" can
+    // only match the whole value, a whole first word, or a whole interior word, never
+    // the "ge" inside "Regeneron". A single character is still too little to mean
+    // anything, and "3M"/"GE"/"HP"/"BP" are real employers.
+    .filter((t) => t.length >= 2)
+    .filter((t) => !LEGAL_SUFFIXES.has(t));
+  const unique = [...new Set(terms)].slice(0, 6);
+  if (!unique.length) return [];
+
+  const db = await getDb();
+  // Word-anchored tiers, never a bare `%term%`. An unanchored substring made "art"
+  // match "startup ventures" and flood the fused ranking with unrelated contacts,
+  // displacing real lexical hits — the tiers below can only match whole words.
+  //
+  // `organization_normalized` is punctuation-stripped to single spaces, so word
+  // boundaries are exactly spaces and these four patterns are total: the value itself,
+  // its first word, an interior word, its last word.
+  const tiers = (t: string) => {
+    const e = escapeLikeValue(t);
+    return {
+      // Not escaped: `=` is not a pattern match, so `%` and `_` are already literal.
+      exact: sql`ce.organization_normalized = ${t}`,
+      prefix: sql`ce.organization_normalized like ${`${e}%`}`,
+      interior: sql`ce.organization_normalized like ${`% ${e} %`}`,
+      suffix: sql`ce.organization_normalized like ${`% ${e}`}`,
+    };
+  };
+  const matches = sql.join(
+    unique.map((t) => {
+      const { exact, prefix, interior, suffix } = tiers(t);
+      return sql`(${exact} or ${prefix} or ${interior} or ${suffix})`;
+    }),
+    sql` or `
+  );
+  const score = sql.join(
+    unique.map((t) => {
+      const { exact, prefix, interior, suffix } = tiers(t);
+      return sql`case
+        when ${exact} then 3
+        when ${prefix} then 2
+        when ${interior} or ${suffix} then 1
+        else 0 end`;
+    }),
+    sql` + `
+  );
+
+  const result = await db.execute(sql`
+    select
+      contacts.id,
+      max(${score}) as match_score,
+      bool_or(ce.is_current) as any_current,
+      max(ce.end_year) as latest_end
+    from contacts
+    join contact_experiences ce
+      on ce.contact_id = contacts.id and ce.user_id = contacts.user_id
+    where contacts.user_id = ${userId}
+      and (${matches})
+      ${filter ? sql`and ${filter}` : sql``}
+    group by contacts.id
+    -- RRF reads only the ordinal, so this ordering IS the arm's ranking contribution.
+    -- After match quality, prefer the person who still works there, then the most
+    -- recent departure (a null end_year is ongoing or unknown, so it sorts first).
+    -- contacts.id is the final tiebreak only, for a stable page — never a signal.
+    order by match_score desc, any_current desc, latest_end desc nulls first, contacts.id
+    limit ${armLimit}
+  `);
+  return rowsOf<{ id: string }>(result).map((r) => String(r.id));
+}
+
 async function semanticArm(
   userId: string,
   embedding: number[],
@@ -290,6 +510,13 @@ async function semanticArm(
     .map(([contactId]) => contactId);
 }
 
+/**
+ * Reciprocal-rank fusion. Every arm contributes at the same weight — there is no
+ * per-arm coefficient here, and `experience` deliberately does not introduce one: a
+ * stored employer is an exact recorded fact, so it belongs at `fts` parity, which in an
+ * unweighted table means simply joining it. Rank position inside each arm (its own
+ * exact > prefix > substring ordering, for `experience`) is what separates the hits.
+ */
 function fuse(results: ArmResult[]): Map<string, { score: number; arms: ArmName[] }> {
   const fused = new Map<string, { score: number; arms: ArmName[] }>();
   for (const { arm, ids } of results) {
@@ -309,17 +536,19 @@ async function runArms(
   filter: SQL | null,
   armLimit: number
 ): Promise<ArmResult[]> {
-  const [fts, trgm, vec] = await Promise.all([
+  const [fts, trgm, vec, exp] = await Promise.all([
     ftsArm(userId, options.query, options.expansionTerms ?? [], filter, armLimit),
     trigramArm(userId, options.query, filter, armLimit),
     options.embedding?.length
       ? semanticArm(userId, options.embedding, armLimit)
       : Promise.resolve([]),
+    experienceArm(userId, options.query, options.expansionTerms ?? [], filter, armLimit),
   ]);
   return [
     { arm: "fts" as const, ids: fts },
     { arm: "trigram" as const, ids: trgm },
     { arm: "semantic" as const, ids: vec },
+    { arm: "experience" as const, ids: exp },
   ];
 }
 
@@ -329,7 +558,7 @@ export async function hybridSearchContacts(
 ): Promise<RankedContact[]> {
   const limit = Math.min(Math.max(options.limit ?? 12, 1), 80);
   const armLimit = Math.max(limit * 2, 40);
-  const filter = filterCondition(options.filters);
+  const filter = filterCondition(userId, options.filters);
 
   const fused = fuse(await runArms(userId, options, filter, armLimit));
   // The semantic arm is unfiltered (ANN can't see contact columns), so the

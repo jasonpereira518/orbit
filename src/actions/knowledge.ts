@@ -8,6 +8,7 @@ import {
   interactions,
 } from "@/db/schema";
 import { requireUserForSurface } from "@/lib/plan-guards";
+import { normalizeInteractionType } from "@/lib/interaction-types";
 
 export type KnowledgeKind =
   | "message"
@@ -69,17 +70,27 @@ export async function getKnowledgeBase(): Promise<KnowledgeBasePayload> {
 
   const contactById = new Map(allContacts.map((c) => [c.id, c]));
 
+  // Bucketed through the canonical vocabulary so the legacy values still in the table
+  // (`meeting_note`, `outreach`, `coffee`) land with their modern equivalents instead of
+  // splitting the same kind of interaction across two counts.
+  const kindOf = (type: string | null, rawNotes: string | null): KnowledgeKind => {
+    if (!type && rawNotes) return "note";
+    const canonical = normalizeInteractionType(type);
+    if (canonical === "linkedin_message" || canonical === "message") return "message";
+    if (canonical === "meeting" || canonical === "in_person" || canonical === "event") {
+      return "meeting";
+    }
+    return "note";
+  };
+
   const messages = allInteractions.filter(
-    (i) => i.interactionType === "linkedin_message"
+    (i) => kindOf(i.interactionType, i.rawNotes) === "message"
   );
   const notes = allInteractions.filter(
-    (i) =>
-      i.interactionType === "note" ||
-      i.interactionType === "meeting_note" ||
-      (!i.interactionType && i.rawNotes)
+    (i) => kindOf(i.interactionType, i.rawNotes) === "note"
   );
   const meetings = allInteractions.filter(
-    (i) => i.interactionType === "meeting"
+    (i) => kindOf(i.interactionType, i.rawNotes) === "meeting"
   );
 
   const withSummary = allContacts.filter((c) => c.aiSummary?.trim()).length;
@@ -107,15 +118,7 @@ export async function getKnowledgeBase(): Promise<KnowledgeBasePayload> {
     const snippet = (i.aiSummary || i.rawNotes || "").trim();
     if (!snippet) continue;
 
-    let kind: KnowledgeKind = "note";
-    if (i.interactionType === "linkedin_message") kind = "message";
-    else if (i.interactionType === "meeting") kind = "meeting";
-    else if (
-      i.interactionType === "note" ||
-      i.interactionType === "meeting_note"
-    ) {
-      kind = "note";
-    }
+    const kind: KnowledgeKind = kindOf(i.interactionType, i.rawNotes);
 
     entries.push({
       id: `interaction:${i.id}`,

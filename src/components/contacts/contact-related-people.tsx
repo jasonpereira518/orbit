@@ -23,7 +23,7 @@ export function ContactRelatedPeople({
   return (
     <Card className="border-border/70 shadow-none">
       <CardHeader>
-        <CardTitle>Related people</CardTitle>
+        <CardTitle as="h2">Related people</CardTitle>
         <CardDescription>
           Strongest connections and useful intro paths for {subjectName}.
         </CardDescription>

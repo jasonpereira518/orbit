@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { format } from "date-fns";
 import { RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -10,7 +9,27 @@ import { regenerateContactSummary } from "@/actions/contacts";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ContactNextSteps, type OpenActionItem } from "@/components/contacts/contact-next-steps";
+import { flashSection } from "@/components/layout/section-flash";
+import { requestInteractionReveal } from "@/components/contacts/reveal-interaction";
 import type { RecentDiscussion } from "@/lib/contact-brief";
+
+/**
+ * Scrolls the timeline to the interaction a "recent discussion" line came from and glows it.
+ *
+ * This used to be a bare `#interaction-<id>` anchor, which did nothing useful: the row lives
+ * inside the timeline's own scroll container, and a same-page fragment click changes neither
+ * the pathname nor fires `hashchange` under Next's router, so the global flash never armed.
+ *
+ * The reveal request goes first, because the timeline can now hide the target behind a family
+ * filter or outside its "show older" window — it clears both and scrolls once the row exists.
+ * The direct scroll stays as the cheap path for the common case where the row is already there.
+ */
+function revealInteraction(interactionId: string) {
+  requestInteractionReveal(interactionId);
+  const el = document.getElementById(`interaction-${interactionId}`);
+  el?.scrollIntoView({ behavior: "smooth", block: "center" });
+  flashSection(`interaction-${interactionId}`);
+}
 
 export function ContactBriefCard({ contactId, standing, recentDiscussions, nextSteps, stale }: {
   contactId: string; standing: string | null; recentDiscussions: RecentDiscussion[]; nextSteps: OpenActionItem[]; stale: boolean;
@@ -20,7 +39,7 @@ export function ContactBriefCard({ contactId, standing, recentDiscussions, nextS
   return (
     <Card className="border-border/70 shadow-none">
       <CardHeader className="border-b border-border/50">
-        <CardTitle>Where things stand</CardTitle>
+        <CardTitle as="h2">Where things stand</CardTitle>
         <CardAction>
           <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 text-xs text-muted-foreground" disabled={pending}
             onClick={() => start(async () => {
@@ -34,7 +53,7 @@ export function ContactBriefCard({ contactId, standing, recentDiscussions, nextS
       <CardContent className="grid gap-5 pt-4 lg:grid-cols-[1.2fr_1fr]">
         <div className="space-y-4">
           <p className="text-sm leading-relaxed text-ink">
-            {standing ?? "Add notes from a conversation and the brief will appear here."}
+            {standing ?? "Log an interaction below and the brief will write itself from your notes."}
           </p>
           {recentDiscussions.length > 0 && (
             <div>
@@ -42,10 +61,14 @@ export function ContactBriefCard({ contactId, standing, recentDiscussions, nextS
               <ul className="space-y-1 text-sm">
                 {recentDiscussions.map((d) => (
                   <li key={d.interactionId} className="flex gap-2">
-                    <Link href={`#interaction-${d.interactionId}`} className="shrink-0 tabular-nums text-muted-foreground hover:text-primary">
+                    <button
+                      type="button"
+                      className="shrink-0 cursor-pointer tabular-nums text-muted-foreground hover:text-primary"
+                      onClick={() => revealInteraction(d.interactionId)}
+                    >
                       {/* local noon: a date-time string without a zone parses as local time */}
                       {format(new Date(`${d.dateIso}T12:00:00`), "MMM d")}
-                    </Link>
+                    </button>
                     <span className="text-ink">{d.line}</span>
                   </li>
                 ))}

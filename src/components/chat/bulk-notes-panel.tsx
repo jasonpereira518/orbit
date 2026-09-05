@@ -14,6 +14,10 @@ import {
   type SuggestedReminderPreview,
 } from "@/actions/capture";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
+import {
+  CAPTURE_MAX_UPLOAD_BYTES,
+  formatUploadSize,
+} from "@/lib/capture-limits";
 import { getSettings } from "@/actions/settings";
 import type { SaveNoteBatchOutput } from "@/lib/note-batch-save";
 import {
@@ -315,6 +319,23 @@ export function BulkNotesPanel({
   function handleFilesSelected(fileList: FileList | null) {
     if (!fileList?.length) return;
     const files = Array.from(fileList);
+
+    // REJECT BEFORE ENCODING, because the failure downstream is invisible. An oversized
+    // body is not refused by the server: Next buffers the first N bytes, warns in the
+    // server log, and hands the action a truncated payload — which surfaces to the user
+    // as a confusing parse failure long after the upload appeared to succeed. Raising the
+    // limit only moves that cliff, so the size has to be checked here, where we can still
+    // say something true about which files are too big.
+    const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+    if (totalBytes > CAPTURE_MAX_UPLOAD_BYTES) {
+      toast.error(
+        files.length === 1
+          ? `${files[0]!.name} is ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} per upload.`
+          : `Those ${files.length} files total ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} per upload. Try adding them in smaller batches.`
+      );
+      return;
+    }
+
     start(async () => {
       try {
         const payloads = await Promise.all(
