@@ -7,8 +7,15 @@ requires a signed-in human in a browser, which cannot be done from this environm
 
 Until both files exist, the smoke test prints a loud PENDING banner and skips the
 fixture-dependent assertions (exit 0). Set `ORBIT_REQUIRE_FIXTURES=1` to make that same
-condition fail the build instead — use that before merging the extraction feature so nobody
-ships on unverified selectors by accident.
+condition fail the build instead.
+
+**That gate was deliberately overridden once.** The LinkedIn experience-extraction feature
+shipped with these fixtures still missing, as a considered call by the repo owner: the
+server half was reviewed and tested thoroughly, and the extension half was merged as a
+best-effort draft rather than held back. That is a debt, not a precedent — see the warning
+at the top of `extension/MANUAL-VERIFICATION.md` for exactly which behaviors are unverified
+and which two are expected to need rewriting. Capturing these two files is the first step
+in paying it off.
 
 ## Files needed
 

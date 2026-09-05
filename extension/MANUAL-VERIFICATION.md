@@ -1,5 +1,43 @@
 # Manual verification: LinkedIn profile capture
 
+> ## ⚠️ Shipped unverified — this needs correcting
+>
+> The extension capture path was merged **before it was ever run against a real,
+> signed-in LinkedIn page.** The DOM readers in `src/inject/adapters/linkedin-profile.ts`
+> were written without any real markup to test against (see the `WRITTEN BLIND` banner in
+> that file). Everything testable without a browser was tested — the date parser, the
+> click bounds, the failure modes, the containment of the click exception — but whether
+> the selectors match LinkedIn's actual DOM is unknown.
+>
+> **Five behaviors are unverified:** role extraction, current-role detection, education
+> classification, About extraction, and the `/details/experience` subpage path.
+>
+> **Two of them are expected to fail**, per the branch review that shipped this:
+> - `readEntry` builds its candidate lines from `querySelectorAll("span, div")` in
+>   document order. The outermost container's `visibleText` is the *entire entry*, so the
+>   first/second lines are probably whole-entry blobs rather than a title/employer pair.
+>   Expect to rewrite the heuristic, not tune it.
+> - `sectionFor` has exactly one strategy (the `#experience` anchor, with a
+>   `section[data-section=…]` fallback). The `/details/experience` subpage does not render
+>   that anchor, so the documented degradation fallback is likely non-functional. Expect to
+>   add a second reader strategy.
+>
+> Also unbounded on the client: the adapter clamps only `description` (2000 chars) while
+> the server bounds every field strictly, so one over-long string 400s the **whole**
+> capture with a generic `invalid_request` — no partial save, no degrade. Consider
+> clamping in the reader, the way `text.blob` already does.
+>
+> **To close this out:**
+> 1. Capture the two fixtures described in `scripts/fixtures/README.md`.
+> 2. Run `ORBIT_REQUIRE_FIXTURES=1 npx tsx scripts/smoke-contact-profile-format.ts` — it
+>    exits non-zero until they exist, and its assertions are the specification.
+> 3. Fix what it exposes.
+> 4. Run the checklist below.
+>
+> Until then the Apollo source works and the extension source is a best-effort draft.
+> The server side of the capture — the identity guard, precedence, the atomic write — was
+> reviewed and tested thoroughly and is not what this warning is about.
+
 `src/inject/dom/expand.ts` is the one place in this extension that acts on a page instead
 of reading it — the one exception to the adapter's "never navigate, click, scroll, or
 paginate" rule (see that file's own header for the full argument and its bounds). Nothing
