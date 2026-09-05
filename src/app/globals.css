@@ -1225,6 +1225,34 @@
   animation: landing-solar-enter 0.9s var(--ease-house) 0.15s both;
 }
 
+/* ── Interest list (/interest) ──
+ * Two ambient loops. Linear, not the house curve: these are orbits, and an
+ * orbit that eases would read as a wobble. The global reduced-motion clamp at
+ * the bottom of this file freezes both. */
+@keyframes interest-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The decorative rings behind the signup card, and the dot circling the
+ * submit button while a join is in flight (`animate-[interest-orbit_…]`).
+ * `transform-box: fill-box` centres the spin on the ring group's own box —
+ * without it an SVG group rotates about the viewBox origin. */
+.interest-rings-spin {
+  animation: interest-orbit 160s linear infinite;
+  transform-origin: 50% 50%;
+  transform-box: fill-box;
+  will-change: transform;
+}
+
+.interest-rings-spin-reverse {
+  animation: interest-orbit 110s linear infinite reverse;
+  transform-origin: 50% 50%;
+  transform-box: fill-box;
+  will-change: transform;
+}
+
 /* Orbit Lifetime's badge is the one place the brand gold appears as a surface
  * rather than as text, so it gets a metal glint: one band crosses the pill and
  * then rests off-frame for most of the cycle, which reads as material catching

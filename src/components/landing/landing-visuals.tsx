@@ -27,8 +27,13 @@ const HeroSolarSystem = dynamic(
   }
 );
 
-export function LandingStarfield() {
-  return <Starfield />;
+/**
+ * `interactive` turns on the cursor gravity well and the signup pulse (see
+ * `starfield.tsx`). Off by default: the landing, pricing and docs skies are shared
+ * with the warp stages' cross-fade and must stay exactly as they are.
+ */
+export function LandingStarfield({ interactive = false }: { interactive?: boolean }) {
+  return <Starfield interactive={interactive} />;
 }
 
 export function LandingSolarSystem({

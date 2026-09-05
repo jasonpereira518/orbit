@@ -803,3 +803,109 @@ export function PricingPageSkeleton() {
     </div>
   );
 }
+
+/**
+ * Matches /interest — header, centred hero, the signup card, the 3-up "what to
+ * expect" row, the "already live" split, four FAQ rows and the closing CTA, on the
+ * same dark landing-root ground as /pricing. The page is static and synchronous,
+ * so this fallback is rarely seen; it exists so a slow client-side navigation
+ * does not flash the landing hero's very different skeleton.
+ */
+export function InterestPageSkeleton() {
+  return (
+    <div className="landing-root relative overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
+      <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-6 py-6 md:px-10">
+        <div className="flex items-center gap-4">
+          <Skeleton className="h-7 w-16 rounded-lg bg-white/5" />
+          <div className="flex items-center gap-2.5">
+            <Skeleton className="size-7 rounded-full bg-white/10" />
+            <Skeleton className="h-5 w-14 bg-white/10" />
+          </div>
+        </div>
+        <div className="flex items-center gap-2 sm:gap-3">
+          <Skeleton className="h-8 w-14 rounded-lg bg-white/5" />
+          <Skeleton className="h-9 w-24 rounded-full bg-white/10" />
+        </div>
+      </header>
+
+      <main className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-24 md:px-10">
+        <section className="flex flex-col items-center gap-4 pt-10 text-center md:pt-16">
+          <Skeleton className="h-3 w-24 bg-white/5" />
+          <Skeleton className="h-10 w-full max-w-md bg-white/10 sm:h-12" />
+          <div className="w-full max-w-md space-y-2">
+            <Skeleton className="mx-auto h-4 w-full bg-white/10" />
+            <Skeleton className="mx-auto h-4 w-4/5 bg-white/10" />
+          </div>
+        </section>
+
+        <div className="mx-auto mt-12 max-w-xl rounded-3xl border border-white/10 bg-white/[0.02] p-6 sm:p-8 md:mt-16">
+          <Skeleton className="h-3 w-24 bg-white/5" />
+          <Skeleton className="mt-3 h-5 w-56 bg-white/10" />
+          <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+            <Skeleton className="h-14 flex-1 rounded-xl bg-white/5" />
+            <Skeleton className="h-14 w-full rounded-xl bg-white/10 sm:w-32" />
+          </div>
+          <Skeleton className="mt-3 h-3 w-64 max-w-full bg-white/5" />
+        </div>
+
+        <section className="mt-20">
+          <ul className="grid gap-6 sm:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <li key={i} className="flex gap-3.5">
+                <Skeleton className="mt-0.5 size-[18px] shrink-0 rounded-full bg-white/10" />
+                <div className="flex-1 space-y-1.5">
+                  <Skeleton className="h-4 w-28 bg-white/10" />
+                  <Skeleton className="h-3.5 w-full bg-white/5" />
+                  <Skeleton className="h-3.5 w-4/5 bg-white/5" />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section className="mt-24 grid items-center gap-8 md:mt-32 lg:grid-cols-[minmax(0,1.1fr)_auto] lg:gap-14">
+          <div className="space-y-4">
+            <Skeleton className="h-8 w-full max-w-sm bg-white/10" />
+            <Skeleton className="h-4 w-full max-w-md bg-white/5" />
+            <Skeleton className="h-4 w-2/3 max-w-md bg-white/5" />
+          </div>
+          <div className="flex gap-3">
+            <Skeleton className="h-11 w-24 rounded-full bg-white/5" />
+            <Skeleton className="h-11 w-32 rounded-full bg-white/10" />
+          </div>
+        </section>
+
+        <section className="mt-24 md:mt-32">
+          <Skeleton className="mx-auto h-8 w-72 max-w-full bg-white/10" />
+          <div className="mt-10 grid gap-3 lg:grid-cols-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton
+                key={i}
+                className="h-14 w-full rounded-2xl border border-white/10 bg-white/[0.03]"
+              />
+            ))}
+          </div>
+        </section>
+
+        <section className="mt-24 text-center md:mt-32">
+          <Skeleton className="mx-auto h-8 w-full max-w-sm bg-white/10" />
+          <Skeleton className="mx-auto mt-4 h-4 w-full max-w-xs bg-white/5" />
+          <Skeleton className="mx-auto mt-8 h-11 w-32 rounded-full bg-white/10" />
+        </section>
+      </main>
+
+      <footer className="relative z-10 mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-4 px-6 py-12 md:px-10">
+        <div className="flex items-center gap-2.5">
+          <Skeleton className="size-7 rounded-full bg-white/10" />
+          <Skeleton className="h-5 w-14 bg-white/10" />
+        </div>
+        <div className="flex items-center gap-6">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-4 w-14 bg-white/5" />
+          ))}
+        </div>
+        <Skeleton className="h-4 w-24 bg-white/5" />
+      </footer>
+    </div>
+  );
+}

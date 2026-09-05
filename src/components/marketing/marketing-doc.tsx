@@ -81,6 +81,7 @@ export function MarketingDocShell({
         <div className="flex items-center gap-6">
           {[
             { href: "/pricing", label: "Pricing" },
+            { href: "/interest", label: "Interest list" },
             { href: "/privacy", label: "Privacy" },
             { href: "/contact", label: "Contact" },
           ].map((link) => (
