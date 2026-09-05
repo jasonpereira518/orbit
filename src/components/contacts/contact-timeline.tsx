@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { CircleDashed, FileText, Plus } from "lucide-react";
@@ -24,9 +25,14 @@ import {
 import { InteractionDetailSheet } from "@/components/contacts/interaction-detail-sheet";
 import { LogInteractionSheet } from "@/components/contacts/log-interaction-sheet";
 import {
+  INTERACTION_FLIGHT_EVENT,
+  type InteractionFlightDetail,
+} from "@/components/contacts/interaction-flight";
+import {
   REVEAL_INTERACTION_EVENT,
   type RevealInteractionDetail,
 } from "@/components/contacts/reveal-interaction";
+import { flashSection } from "@/components/layout/section-flash";
 import {
   INTERACTION_FAMILIES,
   interactionFamilySpec,
@@ -35,6 +41,7 @@ import {
   interactionTypeLabel,
   type InteractionFamilyValue,
 } from "@/lib/interaction-types";
+import { EASE_HOUSE } from "@/lib/motion";
 import { timelineDayLabel, timelineGapLabel } from "@/lib/timeline-date";
 import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
 import { cn } from "@/lib/utils";
@@ -107,6 +114,10 @@ export function ContactTimeline({
       tab focus, and a numeric index would silently drift onto a different interaction. */
   const [focusId, setFocusId] = useState<string | null>(null);
   const [pendingReveal, setPendingReveal] = useState<string | null>(null);
+  const [flight, setFlight] = useState<
+    (InteractionFlightDetail & { to: { top: number; left: number } }) | null
+  >(null);
+  const reducedMotion = useReducedMotion();
 
   const sorted = useMemo(() => {
     return [...interactions].sort((a, b) => {
@@ -241,6 +252,70 @@ export function ContactTimeline({
     return () => window.removeEventListener(REVEAL_INTERACTION_EVENT, onReveal);
   }, [sorted]);
 
+  /**
+   * A just-logged interaction flies from the button that saved it onto its node on the spine.
+   *
+   * The row is not on screen yet when the event fires — `router.refresh()` is still in flight —
+   * so this waits a few frames for it, and falls back to the head of the spine if it never
+   * arrives (a backdated entry outside the window, or a refresh that failed). Better a flight
+   * that lands somewhere honest than none at all.
+   */
+  useEffect(() => {
+    function onFlight(event: Event) {
+      const detail = (event as CustomEvent<InteractionFlightDetail>).detail;
+      if (!detail) return;
+
+      // Clear anything that could be hiding the new row before we go looking for it.
+      setFilter("all");
+      setExpanded(true);
+
+      let tries = 0;
+      const settle = () => {
+        tries += 1;
+        const row = detail.interactionId
+          ? rowRefs.current.get(detail.interactionId)
+          : undefined;
+        const node =
+          row?.querySelector<HTMLElement>("span") ??
+          listRef.current?.querySelector<HTMLElement>("[data-interaction-id] span");
+
+        if (!node && tries < 24) {
+          window.setTimeout(settle, 40);
+          return;
+        }
+        if (!node) return;
+
+        const r = node.getBoundingClientRect();
+        if (reducedMotion) {
+          // Keep the signal, drop the motion — the same trade the rest of the app makes.
+          if (detail.interactionId) flashSection(`interaction-${detail.interactionId}`);
+          return;
+        }
+        setFlight({ ...detail, to: { top: r.top, left: r.left } });
+      };
+      window.setTimeout(settle, 40);
+    }
+
+    window.addEventListener(INTERACTION_FLIGHT_EVENT, onFlight);
+    return () => window.removeEventListener(INTERACTION_FLIGHT_EVENT, onFlight);
+  }, [reducedMotion]);
+
+  /**
+   * The flight always ends, whether or not its animation does.
+   *
+   * `onAnimationComplete` never fires if the document stops painting mid-flight — switch tabs
+   * during the 660ms and rAF stops — and the disc would then hang over the page until the next
+   * navigation. This is the floor: land it, flash the row, and clear.
+   */
+  useEffect(() => {
+    if (!flight) return;
+    const timer = window.setTimeout(() => {
+      if (flight.interactionId) flashSection(`interaction-${flight.interactionId}`);
+      setFlight(null);
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [flight]);
+
   useEffect(() => {
     if (!pendingReveal) return;
     const el = rowRefs.current.get(pendingReveal);
@@ -254,12 +329,23 @@ export function ContactTimeline({
     setPendingReveal(null);
   }, [pendingReveal, visible]);
 
-  function scrollToMonth(monthKey: string) {
+  /**
+   * Scrolls the spine, and nothing else.
+   *
+   * `scrollIntoView` walks every scrollable ancestor, so jumping to a month also dragged the
+   * whole page under the reader — the one thing a jump-to control must not do. Setting the
+   * list's own `scrollTop` moves the only container that should move.
+   */
+  function scrollToMonth(monthKey: string, opts?: { instant?: boolean }) {
     setActiveMonth(monthKey);
-    const el = listRef.current?.querySelector<HTMLElement>(
-      `[data-month-key="${monthKey}"]`
-    );
-    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const root = listRef.current;
+    const el = root?.querySelector<HTMLElement>(`[data-month-key="${monthKey}"]`);
+    if (!root || !el) return;
+    const top =
+      root.scrollTop + (el.getBoundingClientRect().top - root.getBoundingClientRect().top);
+    // A scrub fires this on every pointer move; animating each one would queue dozens of
+    // competing smooth scrolls and arrive nowhere.
+    root.scrollTo({ top, behavior: opts?.instant ? "auto" : "smooth" });
   }
 
   /**
@@ -712,6 +798,57 @@ export function ContactTimeline({
           }
         }}
       />
+
+      {/*
+        The flight itself: the type you picked, drawn as the node it is about to become,
+        arcing from the button to its place on the spine.
+
+        `x`/`y` transforms rather than `top`/`left` so the browser can composite it, and a
+        three-stop keyframe rather than a straight line — a lift before the fall is what makes
+        it read as something being placed rather than something sliding.
+      */}
+      <AnimatePresence>
+        {flight ? (
+          <motion.span
+            key="interaction-flight"
+            aria-hidden
+            className={cn(
+              "pointer-events-none fixed z-[60] flex items-center justify-center rounded-full border shadow-lg",
+              interactionFamilySpec(flight.interactionType).nodeSelected
+            )}
+            style={{
+              top: flight.from.top,
+              left: flight.from.left,
+              width: flight.from.height,
+              height: flight.from.height,
+            }}
+            initial={{ x: 0, y: 0, scale: 1, opacity: 0 }}
+            animate={{
+              x: [0, (flight.to.left - flight.from.left) * 0.6, flight.to.left - flight.from.left],
+              y: [
+                0,
+                (flight.to.top - flight.from.top) * 0.25 - 56,
+                flight.to.top - flight.from.top,
+              ],
+              scale: [0.9, 0.72, 32 / flight.from.height],
+              opacity: [0, 1, 1],
+            }}
+            exit={{ opacity: 0, scale: 32 / flight.from.height }}
+            transition={{ duration: 0.66, ease: EASE_HOUSE, times: [0, 0.55, 1] }}
+            onAnimationComplete={() => {
+              if (flight.interactionId) {
+                flashSection(`interaction-${flight.interactionId}`);
+              }
+              setFlight(null);
+            }}
+          >
+            {(() => {
+              const Icon = interactionTypeIcon(flight.interactionType);
+              return <Icon className="size-3.5" />;
+            })()}
+          </motion.span>
+        ) : null}
+      </AnimatePresence>
 
       <LogInteractionSheet
         contactId={contactId}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { Sparkles } from "lucide-react";
@@ -23,6 +23,7 @@ import {
   interactionFamilySpec,
   type InteractionTypeValue,
 } from "@/lib/interaction-types";
+import { requestInteractionFlight } from "@/components/contacts/interaction-flight";
 import { pickLockedParticipant, withLockedSeedPerson } from "@/lib/note-batches";
 import { isMissingAiApiKeyError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
@@ -64,6 +65,15 @@ export function LogInteractionSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
+  const submitRef = useRef<HTMLButtonElement>(null);
+
+  /** The flight's origin, captured while the button still exists. */
+  function launchFrom() {
+    const r = submitRef.current?.getBoundingClientRect();
+    return r
+      ? { top: r.top, left: r.left, width: r.width, height: r.height }
+      : null;
+  }
   const [pending, start] = useTransition();
   const [stage, setStage] = useState<"idle" | "reading" | "saving">("idle");
   const [type, setType] = useState<InteractionTypeValue>("meeting");
@@ -80,7 +90,8 @@ export function LogInteractionSheet({
   /** No AI key, or extraction could not attribute the note — never lose what was typed. */
   async function savePlain(reason?: string) {
     setStage("saving");
-    await logInteraction({
+    const from = launchFrom();
+    const row = await logInteraction({
       contactId,
       interactionType: type,
       interactionDate: date || undefined,
@@ -94,6 +105,13 @@ export function LogInteractionSheet({
     onOpenChange(false);
     reset();
     router.refresh();
+    if (from) {
+      requestInteractionFlight({
+        from,
+        interactionType: type,
+        interactionId: row?.id,
+      });
+    }
   }
 
   function save() {
@@ -243,7 +261,11 @@ export function LogInteractionSheet({
           <SheetTitle>Log an interaction</SheetTitle>
         </SheetHeader>
 
-        <div className="mt-6 space-y-5">
+        {/* `px-4` matches the header's own inset — without it the fields sat flush against
+            the panel edge while the title did not. No `mt`: the sheet's `gap-4` already
+            spaces this off the header, and stacking a margin on top of it opened a 40px
+            void under the title. */}
+        <div className="space-y-5 px-4 pb-4">
           <div className="space-y-2">
             <Label>What happened</Label>
             <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
@@ -331,6 +353,7 @@ export function LogInteractionSheet({
           </div>
 
           <Button
+            ref={submitRef}
             type="button"
             className="w-full"
             disabled={pending || !notes.trim()}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
 import { CalendarRange } from "lucide-react";
 import {
@@ -65,11 +65,41 @@ export function TimelineDateScrubber({
 }: {
   points: TimelineScrubPoint[];
   activeMonthKey: string | null;
-  onSelectMonth: (monthKey: string) => void;
+  /** `instant` is set while scrubbing, where an animated scroll per pointer move arrives nowhere. */
+  onSelectMonth: (monthKey: string, opts?: { instant?: boolean }) => void;
   className?: string;
 }) {
   const { items, byYear } = useScrubItems(points);
   const navRef = useRef<HTMLElement>(null);
+  // Two representations on purpose: the ref is the gesture's source of truth, because a
+  // `pointermove` can arrive in the same tick as the `pointerdown` that started it and would
+  // read stale state; the state exists only to restyle the active node while dragging.
+  const scrubbingRef = useRef(false);
+  const [scrubbing, setScrubbing] = useState(false);
+
+  /**
+   * The index of the node nearest a given Y.
+   *
+   * Measured from the DOM rather than mapped proportionally: the nodes are laid out
+   * `justify-between`, so their spacing is a fact of the layout, and reading it back is what
+   * keeps the active month under the reader's finger rather than near it.
+   */
+  const nodeIndexAtY = useCallback((clientY: number) => {
+    const buttons = [
+      ...(navRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []),
+    ];
+    let best = -1;
+    let bestDistance = Infinity;
+    buttons.forEach((b, i) => {
+      const r = b.getBoundingClientRect();
+      const distance = Math.abs(r.top + r.height / 2 - clientY);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = i;
+      }
+    });
+    return best;
+  }, []);
 
   if (items.length === 0) return null;
 
@@ -114,7 +144,45 @@ export function TimelineDateScrubber({
       <nav
         ref={navRef}
         onKeyDown={onKeyDown}
-        className="relative flex h-full min-h-0 w-full flex-1 flex-col justify-between py-1"
+        // Drag anywhere on the rail to run through the months. `setPointerCapture` keeps the
+        // gesture alive once the pointer leaves the 56px-wide rail, which it does almost at
+        // once — without it a scrub dies the moment the hand drifts sideways.
+        onPointerDown={(event) => {
+          if (event.pointerType === "mouse" && event.button !== 0) return;
+          // Throws on a pointer the browser no longer considers active; the scrub still works
+          // without capture, it just ends early if the hand leaves the rail.
+          try {
+            event.currentTarget.setPointerCapture(event.pointerId);
+          } catch {}
+          scrubbingRef.current = true;
+          setScrubbing(true);
+          const index = nodeIndexAtY(event.clientY);
+          if (index >= 0) onSelectMonth(items[index].monthKey, { instant: true });
+        }}
+        onPointerMove={(event) => {
+          if (!scrubbingRef.current) return;
+          const index = nodeIndexAtY(event.clientY);
+          if (index >= 0 && items[index].monthKey !== activeMonthKey) {
+            onSelectMonth(items[index].monthKey, { instant: true });
+          }
+        }}
+        onPointerUp={(event) => {
+          scrubbingRef.current = false;
+          setScrubbing(false);
+          try {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          } catch {}
+        }}
+        onPointerCancel={() => {
+          scrubbingRef.current = false;
+          setScrubbing(false);
+        }}
+        // Without this a touch drag scrolls the page instead of scrubbing it.
+        style={{ touchAction: "none" }}
+        className={cn(
+          "relative flex h-full min-h-0 w-full flex-1 cursor-ns-resize flex-col justify-between py-1",
+          scrubbing && "select-none"
+        )}
         aria-label={byYear ? "Timeline years" : "Timeline months"}
       >
         <div
@@ -133,6 +201,8 @@ export function TimelineDateScrubber({
               aria-label={`Jump to ${p.label}`}
               aria-current={isActive ? "true" : undefined}
               onClick={() => onSelectMonth(p.monthKey)}
+              // The rail owns the pointer; a button starting its own drag fights the capture.
+              onPointerDown={(event) => event.preventDefault()}
               className={cn(
                 "group relative z-[1] flex w-full flex-col items-center gap-1 rounded-md py-0.5",
                 // The house ring, not this file's old ring-offset variant: an offset ring is
@@ -144,7 +214,12 @@ export function TimelineDateScrubber({
                 className={cn(
                   "size-2.5 rounded-full border-2 transition-[background-color,border-color,scale]",
                   isActive
-                    ? "scale-125 border-primary bg-primary shadow-sm"
+                    ? cn(
+                        "border-primary bg-primary shadow-sm",
+                        // Swells under the finger so the thing you are dragging is the thing
+                        // you can see.
+                        scrubbing ? "scale-150" : "scale-125"
+                      )
                     : "border-muted-foreground/50 bg-card group-hover:border-primary group-hover:bg-primary/20"
                 )}
               />
