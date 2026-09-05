@@ -438,11 +438,14 @@ export function FeedbackPanel({
  * With the floor on the block and none on the field, the field is exactly as tall as its
  * parent at every size. It cannot spill, and there is nothing to scroll.
  *
- * The floor is 64px — about three lines. Low enough that the whole form still fits on a
- * ~600px window, which is a small laptop browser; high enough that the field never
- * degenerates into a slot. The sheet keeps `overflow-y-auto` as a last resort below that,
- * so nothing is ever unreachable, but it is not the normal path. */}
-        <div className="grid min-h-16 flex-1 gap-1.5">
+ * The floor is 48px — about two lines. It was 64px, which was fine until a screenshot was
+ * attached: the thumbnail row has to come out of this box, and on a short window the extra
+ * 16px was the difference between the form fitting and the Send button being pushed off the
+ * bottom. Low enough that everything still fits with a shot attached on a ~600px window,
+ * which is a small laptop browser; high enough that the field never becomes a slot. The
+ * sheet keeps `overflow-y-auto` as a last resort below that, so nothing is ever
+ * unreachable, but it is not the normal path. */}
+        <div className="grid min-h-12 flex-1 gap-1.5">
           <Textarea
             autoFocus
             // Fills whatever the block has, large or small: the parent is a grid whose auto
@@ -466,11 +469,19 @@ export function FeedbackPanel({
             the panel's own 20px rhythm reads tighter between them than it does under a
             text label. 28px — the full 32 this had read as a gulf. */}
         <div className="mt-2 grid shrink-0 gap-2">
-          {/* The primary way to attach one: full width, its own label, and an explanation of
-              what the gesture is. It was a 72px dashed tile next to the thumbnails and read
-              as an afterthought — which is backwards, since a screenshot is the most useful
-              thing in the whole submission. */}
-          {canCapture && usedShots < MAX_SCREENSHOTS && (
+          {/* Two sizes, and the difference is what keeps the Send button on screen.
+   *
+   * Empty, this is the primary way to attach one: full width, its own label, and an
+   * explanation of the gesture, because a screenshot is the most useful thing in the whole
+   * submission and it used to be a 72px dashed tile that read as an afterthought.
+   *
+   * Once a shot is attached that explanation has done its job, and 112px of teaching copy
+   * is 112px the form no longer has. Everything in this panel is `shrink-0` except the
+   * message box, so the thumbnail row and its counter came straight out of the message
+   * box's height until it hit its floor — and then out of the footer, which is how the
+   * Send button ended up below the bottom of the window. Collapsing the button to a single
+   * row gives back more than the thumbnails cost, so the total goes DOWN. */}
+          {canCapture && usedShots === 0 && (
             <Button
               type="button"
               variant="outline"
@@ -489,6 +500,16 @@ export function FeedbackPanel({
             </Button>
           )}
 
+          {/* The add control joins this row rather than sitting above it, which is what
+              keeps the Send button on screen.
+              
+              Everything in this panel is `shrink-0` except the message box, so the
+              thumbnails come straight out of the message box's height — and once it hits
+              its floor, out of the footer. The teaching button above stayed at its full
+              112px after you had already used it, so attaching one screenshot cost ~96px
+              and pushed Send off the bottom of a laptop window. As a tile inside a row that
+              already exists it costs nothing at all: one shot now occupies exactly the same
+              height as three. */}
           <div className="flex flex-wrap items-center gap-2">
             {shots.map((shot, index) => (
               <div key={shot.id} className="group relative">
@@ -527,6 +548,19 @@ export function FeedbackPanel({
                 )}
               </div>
             ))}
+
+            {canCapture && usedShots > 0 && usedShots < MAX_SCREENSHOTS && (
+              <button
+                type="button"
+                onClick={onAddScreenshot}
+                aria-label="Add another screenshot"
+                // Matches a thumbnail's box exactly, so the row stays on one line and the
+                // tile reads as the empty slot next to the ones already filled.
+                className="flex h-16 w-24 items-center justify-center rounded-md border border-dashed border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+              >
+                <Camera className="size-4" />
+              </button>
+            )}
           </div>
 
           {!canCapture ? (
