@@ -10,6 +10,7 @@ import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/lib/toast";
+import { useDelayedLoading } from "@/lib/use-delayed-loading";
 import { cn } from "@/lib/utils";
 
 /** Shown a screen at a time so the wizard never dumps the whole shortlist on one page. */
@@ -31,6 +32,9 @@ export function WizardTriage({ onDone }: { onDone: () => void }) {
   // see submitScreenAndAdvance, which keeps whatever didn't save instead of
   // discarding it.
   const [ratings, setRatings] = useState<Record<string, number>>({});
+  // Candidates usually resolve well under this on a warm connection — showing the
+  // skeleton unconditionally made it flash for a single frame even then.
+  const showLoadingSkeleton = useDelayedLoading(loading);
 
   // No synchronous setState here — only the async .then/.catch/.finally
   // callbacks touch state, which is what keeps the mount-time effect below
@@ -140,6 +144,7 @@ export function WizardTriage({ onDone }: { onDone: () => void }) {
   };
 
   if (loading) {
+    if (!showLoadingSkeleton) return null;
     return (
       <div className="space-y-3">
         <Skeleton className="h-20 w-full rounded-2xl" />

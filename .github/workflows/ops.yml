@@ -49,8 +49,12 @@ jobs:
           APP_URL: ${{ secrets.APP_URL }}
 
       - name: Page on a down probe
-        if: steps.health.outcome == 'failure' && secrets.SLACK_OPS_CRITICAL_WEBHOOK_URL != ''
+        if: steps.health.outcome == 'failure'
         run: |
+          if [ -z "$SLACK_OPS_CRITICAL_WEBHOOK_URL" ]; then
+            echo "SLACK_OPS_CRITICAL_WEBHOOK_URL not set, skipping"
+            exit 0
+          fi
           curl -sS --max-time 10 -X POST -H 'content-type: application/json' \
             --data "{\"text\":\":rotating_light: *[critical] /api/health answered HTTP ${{ steps.health.outputs.code }}* from the scheduler. If the uptime monitor agrees, production is down.\"}" \
             "$SLACK_OPS_CRITICAL_WEBHOOK_URL"

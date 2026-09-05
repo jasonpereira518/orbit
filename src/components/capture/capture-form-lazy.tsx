@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { Skeleton } from "@/components/ui/skeleton";
+import { CaptureFormSkeleton } from "@/components/loading/page-skeletons";
 
 const CaptureForm = dynamic(
   () =>
@@ -9,7 +9,7 @@ const CaptureForm = dynamic(
       default: m.CaptureForm,
     })),
   {
-    loading: () => <Skeleton className="h-64 w-full rounded-2xl" />,
+    loading: () => <CaptureFormSkeleton />,
   }
 );
 

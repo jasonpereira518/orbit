@@ -3,7 +3,15 @@
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
-import { contactTags, contacts, interactions, reminders, tags } from "@/db/schema";
+import {
+  actionItems,
+  contactTags,
+  contacts,
+  interactionMentions,
+  interactions,
+  reminders,
+  tags,
+} from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import {
   CONTACTS_PAGE_SIZE,
@@ -19,6 +27,7 @@ import { type CompanyResolver } from "@/lib/companies";
 import {
   createContactForUser,
   createContactsBulkForUser,
+  deleteInteractionForUser,
   logInteractionForUser,
   updateContactForUser,
   type ContactInput,
@@ -36,6 +45,7 @@ import {
   getApolloApiKey,
   type LinkedInProfileEnrichment,
 } from "@/lib/apollo";
+import { saveContactProfile } from "@/lib/contact-profile";
 import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import {
@@ -1226,6 +1236,26 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
         },
         { skipRevalidate: true }
       );
+
+      // Apollo fills a gap; it never overwrites an extension capture. `saveContactProfile`
+      // enforces that, so this call is unconditional and cheap when it is outranked.
+      if (profile.experiences.length) {
+        await saveContactProfile(userId, contact.id, {
+          source: "apollo",
+          sourceUrl: profile.linkedinUrl,
+          adapterVersion: null,
+          capturedAt: new Date(),
+          warnings: [],
+          headline: null,
+          about: null,
+          skills: [],
+          certifications: [],
+          volunteering: [],
+          publications: [],
+          experiences: profile.experiences,
+        }).catch(() => null); // never fail a refresh over the profile half
+      }
+
       refreshed += 1;
     } catch {
       failed += 1;
@@ -1411,4 +1441,156 @@ export async function getAskBarContact(contactId: string): Promise<{
     profileImageUrl: contact.profileImageUrl,
     linkedinUrl: contact.linkedinUrl,
   };
+}
+
+/**
+ * Everything the interaction detail sheet shows, fetched when the sheet opens rather than
+ * loaded with the profile — the timeline can hold hundreds of interactions and only one is
+ * ever open at a time.
+ */
+export async function getInteractionDetail(interactionId: string) {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const row = await db.query.interactions.findFirst({
+    where: and(
+      eq(interactions.id, interactionId),
+      eq(interactions.userId, userId)
+    ),
+  });
+  if (!row) throw new Error("Interaction not found");
+
+  const [items, mentioned] = await Promise.all([
+    db
+      .select({
+        id: actionItems.id,
+        text: actionItems.text,
+        status: actionItems.status,
+        reminderId: actionItems.reminderId,
+      })
+      .from(actionItems)
+      .where(
+        and(
+          eq(actionItems.userId, userId),
+          eq(actionItems.interactionId, interactionId)
+        )
+      )
+      .orderBy(asc(actionItems.position)),
+    db
+      .select({
+        contactId: interactionMentions.contactId,
+        mentionText: interactionMentions.mentionText,
+        fullName: contacts.fullName,
+      })
+      .from(interactionMentions)
+      .innerJoin(contacts, eq(contacts.id, interactionMentions.contactId))
+      .where(
+        and(
+          eq(interactionMentions.userId, userId),
+          eq(interactionMentions.interactionId, interactionId)
+        )
+      ),
+  ]);
+
+  return {
+    id: row.id,
+    contactId: row.contactId,
+    interactionType: row.interactionType,
+    interactionDate: new Date(row.interactionDate).toISOString(),
+    aiSummary: row.aiSummary,
+    rawNotes: row.rawNotes,
+    topics: row.topics ?? [],
+    source: row.source,
+    // `action_items` rows are the source of truth; the jsonb column on the interaction is a
+    // write-through denorm, so it is deliberately not read here. When a row has notes but no
+    // rows (an older interaction, or one logged without AI), fall back to the denorm so the
+    // sheet still shows what was recorded.
+    actionItems: items.length
+      ? items
+      : (row.actionItems ?? []).map((text, index) => ({
+          id: `denorm-${index}`,
+          text,
+          status: "open" as const,
+          reminderId: null as string | null,
+        })),
+    /** True when the items above came from `action_items` and can therefore be checked off. */
+    actionItemsCheckable: items.length > 0,
+    mentions: mentioned,
+  };
+}
+
+export type InteractionDetail = Awaited<ReturnType<typeof getInteractionDetail>>;
+
+/**
+ * Re-extract the summary, topics and action items for one interaction from its own notes.
+ *
+ * `syncActionItems` diffs by hash, so items the user already ticked off keep their completed
+ * state instead of coming back as fresh open ones.
+ */
+export async function resummarizeInteraction(interactionId: string) {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const existing = await db.query.interactions.findFirst({
+    where: and(
+      eq(interactions.id, interactionId),
+      eq(interactions.userId, userId)
+    ),
+  });
+  if (!existing) throw new Error("Interaction not found");
+
+  const notes = (existing.rawNotes || "").trim();
+  if (!notes) throw new Error("There are no notes to summarize");
+
+  const contact = await db.query.contacts.findFirst({
+    where: and(
+      eq(contacts.id, existing.contactId),
+      eq(contacts.userId, userId)
+    ),
+  });
+
+  const { consumeBucket, RATE_LIMITS } = await import("@/lib/rate-limit");
+  await consumeBucket("capture", userId, RATE_LIMITS.capture);
+
+  const { parseMultiPersonNotesWithAI } = await import("@/lib/ai");
+  const { withLockedSeedPerson } = await import("@/lib/note-batches");
+  const parsed = await parseMultiPersonNotesWithAI(
+    userId,
+    notes,
+    contact ? withLockedSeedPerson(null, contact.fullName) : null
+  );
+
+  const person =
+    parsed.people.find((p) => p.presence !== "mentioned") ?? parsed.people[0];
+  if (!person) throw new Error("Couldn't find anything to summarize in those notes");
+
+  const { MAX_ACTION_ITEMS_PER_INTERACTION, syncActionItems } = await import(
+    "@/lib/action-items"
+  );
+  const items = (person.action_items ?? [])
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, MAX_ACTION_ITEMS_PER_INTERACTION);
+
+  const [row] = await db
+    .update(interactions)
+    .set({
+      aiSummary: person.summary?.trim() || existing.aiSummary,
+      topics: person.topics ?? [],
+      actionItems: items,
+    })
+    .where(eq(interactions.id, interactionId))
+    .returning();
+
+  await syncActionItems(userId, interactionId, existing.contactId, items);
+  await scheduleEmbeddingRebuild(userId, existing.contactId);
+  void generateAndStoreContactBrief(userId, existing.contactId).catch(() => null);
+
+  revalidatePath(`/contacts/${existing.contactId}`);
+  revalidatePath("/dashboard");
+  return row;
+}
+
+export async function deleteInteraction(interactionId: string) {
+  return deleteInteractionForUser(await requireUserId(), interactionId);
 }

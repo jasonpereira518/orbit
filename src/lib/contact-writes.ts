@@ -903,3 +903,63 @@ export async function logNoteInteractionForUser(
     throw err;
   }
 }
+
+/**
+ * Delete one interaction and put the contact back in the state it would have been in had the
+ * interaction never been logged.
+ *
+ * The row itself is the easy part — `action_items` and `interaction_mentions` cascade, and
+ * `reminders.source_interaction_id` is ON DELETE SET NULL so reminders the note produced
+ * survive on purpose (a commitment you made does not stop existing because you tidied up the
+ * note it came from).
+ *
+ * The part that needs care is `contacts.last_interaction_at`. Every other writer only ever
+ * stamps it forward, so this is the one path that has to walk it back: it is recomputed from
+ * the interactions that remain, and set to null when none do. Leaving it stale would keep a
+ * deleted touch propping up the recency half of the closeness score indefinitely.
+ */
+export async function deleteInteractionForUser(
+  userId: string,
+  interactionId: string,
+  options?: ContactWriteOptions
+) {
+  const db = await getDb();
+
+  const existing = await db.query.interactions.findFirst({
+    where: and(eq(interactions.id, interactionId), eq(interactions.userId, userId)),
+  });
+  if (!existing) throw new Error("Interaction not found");
+  const contactId = existing.contactId;
+
+  await db
+    .delete(interactions)
+    .where(and(eq(interactions.id, interactionId), eq(interactions.userId, userId)));
+
+  const [remaining] = await db
+    .select({ latest: sql<Date | null>`max(${interactions.interactionDate})` })
+    .from(interactions)
+    .where(and(eq(interactions.userId, userId), eq(interactions.contactId, contactId)));
+
+  const latest = remaining?.latest ? new Date(remaining.latest) : null;
+  await db
+    .update(contacts)
+    .set({ lastInteractionAt: latest, updatedAt: new Date() })
+    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+
+  if (!options?.skipEmbedding) {
+    await scheduleEmbeddingRebuild(userId, contactId);
+  }
+  if (!options?.skipSummary) {
+    after(() => generateAndStoreContactBrief(userId, contactId).catch(() => null));
+  }
+  await scoreAfterWrite(userId, contactId, options);
+
+  if (!options?.skipRevalidate) {
+    revalidatePath(`/contacts/${contactId}`);
+    revalidatePath("/");
+    revalidatePath("/dashboard");
+    revalidatePath("/graph");
+  }
+
+  return { contactId, lastInteractionAt: latest };
+}

@@ -69,7 +69,7 @@ export function ContactRemindersSection({
     <>
       <Card className="border-border/70 shadow-none">
         <CardHeader>
-          <CardTitle>Reminders</CardTitle>
+          <CardTitle as="h2">Reminders</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {reminders.length === 0 ? (

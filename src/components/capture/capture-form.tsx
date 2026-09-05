@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { INTERACTION_TYPES } from "@/lib/interaction-types";
 
 type CaptureMode = "messy" | "structured";
 
@@ -23,16 +24,6 @@ type ContactOption = {
   preferredName: string | null;
   company: string | null;
 };
-
-const INTERACTION_TYPES = [
-  { value: "meeting", label: "Meeting" },
-  { value: "call", label: "Call" },
-  { value: "email", label: "Email" },
-  { value: "message", label: "Message" },
-  { value: "coffee", label: "Coffee / hangout" },
-  { value: "event", label: "Event" },
-  { value: "note", label: "Note" },
-] as const;
 
 function todayInputValue() {
   const d = new Date();

@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { GenericPageSkeleton } from "@/components/loading/page-skeletons";
+import { RecruitersPageSkeleton } from "@/components/loading/page-skeletons";
 import { PEOPLE_NAV_COOKIE } from "@/lib/people-nav";
 
 export default async function RecruitersLoading() {
@@ -8,5 +8,5 @@ export default async function RecruitersLoading() {
   if (jar.get(PEOPLE_NAV_COOKIE)?.value === "1") {
     return null;
   }
-  return <GenericPageSkeleton />;
+  return <RecruitersPageSkeleton />;
 }
