@@ -1,11 +1,12 @@
 "use client";
 
-import { Camera, Loader2, X } from "lucide-react";
+import { Camera, X } from "lucide-react";
 import { useTheme } from "next-themes";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { submitFeedback } from "@/actions/feedback";
 import type { DraftShot } from "@/components/feedback/feedback-widget";
+import { SendButton } from "@/components/feedback/send-button";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -36,7 +37,6 @@ import {
 import type { PanelAnchor } from "@/lib/floating-panel";
 import { blobToDataUrl } from "@/lib/screenshot-capture";
 import { toast } from "@/lib/toast";
-import { cn } from "@/lib/utils";
 
 const CATEGORY_LABELS: Record<FeedbackCategory, string> = {
   bug: "Something's broken",
@@ -47,6 +47,7 @@ const CATEGORY_LABELS: Record<FeedbackCategory, string> = {
 
 export function FeedbackPanel({
   open,
+  sent,
   anchor,
   offset,
   onOffsetChange,
@@ -66,6 +67,14 @@ export function FeedbackPanel({
    * or there is no exit transition — see `onClosed`.
    */
   open: boolean;
+  /**
+   * The send landed and the window is being held open for the Send button's gesture.
+   *
+   * Owned by the widget's `sent` phase rather than by this component: the hold has to
+   * outlive a re-render here and, more to the point, only the widget can keep the panel
+   * mounted. This component reads it and never sets it.
+   */
+  sent: boolean;
   /** Where the window sits and what it grows out of — see `anchorBelowTrigger`. */
   anchor: PanelAnchor;
   /**
@@ -95,7 +104,11 @@ export function FeedbackPanel({
   const [sending, setSending] = useState(false);
 
   const remaining = MAX_FEEDBACK_TEXT - message.length;
-  const canSend = message.trim().length > 0 && !sending;
+  /** Something to send. Kept apart from `canSend` so the button can stay lit while busy. */
+  const hasMessage = message.trim().length > 0;
+  // `!sent` matters: `setSending(false)` runs in a `finally`, AFTER `onSent()` has already
+  // started the hold, so without it Send would re-arm for the whole gesture.
+  const canSend = hasMessage && !sending && !sent;
 
   const usedShots = useMemo(() => shots.length, [shots]);
 
@@ -163,6 +176,8 @@ export function FeedbackPanel({
 
   function startDrag(e: React.PointerEvent) {
     if (e.button !== 0) return;
+    // The window is on its way out; grabbing it now would only fight the collapse.
+    if (sent) return;
     // The close button lives in this header, and the title is selectable text. Neither
     // should be a drag handle.
     if ((e.target as HTMLElement).closest("button, a, input, textarea, select")) return;
@@ -276,7 +291,13 @@ export function FeedbackPanel({
       open={sheetOpen}
       onOpenChange={(next) => {
         if (next) return;
-        if (message.trim().length > 0 && !window.confirm("Discard your feedback?")) return;
+        // Never after a successful send. The draft is still in state until the collapse
+        // ends, so without `!sent` pressing Escape on the success beat asks whether to
+        // discard feedback that has already been sent — and `window.confirm` blocks the
+        // main thread, freezing the button's gesture mid-draw.
+        if (!sent && message.trim().length > 0 && !window.confirm("Discard your feedback?")) {
+          return;
+        }
         onClose();
       }}
       // Fires when the open/close transition has actually finished. Unmounting on the
@@ -317,7 +338,10 @@ export function FeedbackPanel({
           transformOrigin: anchor.origin,
           top: anchor.top,
           translate: `${offset.x}px ${offset.y}px`,
-          ...(dragging ? { transition: "none" } : {}),
+          // `&& !sent`: a pointer still held on the header when the send lands would
+          // otherwise leave `transition: none` in place and the collapse would jump rather
+          // than travel.
+          ...(dragging && !sent ? { transition: "none" } : {}),
         }}
         ref={panelRef}
         showCloseButton
@@ -526,16 +550,24 @@ export function FeedbackPanel({
             type="button"
             variant="ghost"
             onClick={() => {
-              if (message.trim().length > 0 && !window.confirm("Discard your feedback?")) return;
+              // Same guard as `onOpenChange` above, for the same reason.
+              if (!sent && message.trim().length > 0 && !window.confirm("Discard your feedback?")) {
+                return;
+              }
               onClose();
             }}
           >
             Cancel
           </Button>
-          <Button type="button" disabled={!canSend} onClick={send} className={cn(sending && "gap-2")}>
-            {sending && <Loader2 className="size-3.5 animate-spin" />}
-            Send
-          </Button>
+          {/* `disabled` is only ever about having something to send. While the request is
+              in flight the button stays lit and runs its sweep; `SendButton` blocks the
+              clicks, and `send()` re-checks `canSend` regardless. */}
+          <SendButton
+            sending={sending}
+            sent={sent}
+            disabled={!hasMessage}
+            onClick={send}
+          />
         </div>
       </SheetContent>
     </Sheet>

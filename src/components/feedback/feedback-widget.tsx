@@ -63,10 +63,31 @@ export type DraftShot = {
  * back into the button. In `closing` it is still mounted with `open={false}`, and
  * `onOpenChangeComplete` moves it to `closed`.
  *
+ * `sent` is the same species, at the other end: the window is held OPEN, deliberately, so
+ * the Send button can finish its gesture before anything moves. It has to be a phase and
+ * not a timer hung off the close, because `open={false}` is itself what starts the
+ * collapse — the hold can only happen while `open` is still true.
+ *
  * `capturing` deliberately has no such courtesy: the panel must be gone from the composited
  * frame BEFORE the screen is photographed, so that transition is instant by design.
  */
-type Phase = "closed" | "composing" | "closing" | "capturing" | "selecting" | "annotating";
+type Phase =
+  | "closed"
+  | "composing"
+  | "sent"
+  | "closing"
+  | "capturing"
+  | "selecting"
+  | "annotating";
+
+/**
+ * How long the window waits, after a successful send, before it starts collapsing.
+ *
+ * Covers the whole of the Send button's gesture in `send-button.tsx` — contract, draw,
+ * then a beat held still so the eye registers it. Change one, check the other. The 0.32s
+ * collapse then runs on top, so the window is gone about a second after the send lands.
+ */
+const SENT_HOLD_MS = 640;
 
 /**
  * The feedback button, and every piece of state behind it.
@@ -95,50 +116,23 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
    * on close, which is what makes the window reopen where it belongs.
    */
   const [offset, setOffset] = useState({ x: 0, y: 0 });
+  /**
+   * Whether this close is following a successful send.
+   *
+   * Not derivable from `phase`, which is the point: `closing` is reached from Cancel and
+   * from Escape as well as from a send, and the Send button has to keep showing its check
+   * for the whole collapse. Tying the button to the `sent` phase alone popped it back to a
+   * pill the instant the window started moving, blinking the check out from under the
+   * person who had just earned it.
+   *
+   * It carries no timer — the hold is the phase's job — so it cannot drift out of step
+   * with the state machine the way a second source of truth normally would.
+   */
+  const [sentBeat, setSentBeat] = useState(false);
   // Lazy initialiser rather than an effect: this component is only ever mounted client-side
   // (`ssr: false`), so `window` is there on the first render and there is no flash of a
   // wrongly-hidden button.
   const [captureSupported, setCaptureSupported] = useState(canCaptureScreen);
-
-  /**
-   * Drain open requests from the four doors.
-   *
-   * Runs once on mount as well as on every notification, because the widget is lazily
-   * loaded — a press in the frames before its chunk lands queues a request that would
-   * otherwise be dispatched into nothing.
-   */
-  useEffect(() => {
-    const consume = () => {
-      const requested = takeFeedbackOpenRequest();
-      if (requested === null) return;
-      setAnchor(requested);
-      // From `closing` too: catching the window on its way out should bring it back rather
-      // than doing nothing.
-      setPhase((p) => (p === "closed" || p === "closing" ? "composing" : p));
-    };
-    consume();
-    return subscribeFeedbackOpen(consume);
-  }, []);
-
-  /**
-   * Publish what the triggers render against.
-   *
-   * `closing` reports closed so the button starts fading back at the close REQUEST, which
-   * is when the bell starts too. `capturing`/`selecting` report `capturing`, which removes
-   * the triggers from the tree entirely rather than fading them — a faded button is still
-   * in the photograph.
-   */
-  useEffect(() => {
-    setFeedbackPanelState(
-      phase === "composing"
-        ? "open"
-        : phase === "capturing" || phase === "selecting"
-          ? "capturing"
-          : "closed"
-    );
-  }, [phase]);
-
-  useEffect(() => () => setFeedbackPanelState("closed"), []);
 
   // Object URLs outlive their component unless revoked, and a screenshot is not small.
   // Read through a ref so the cleanup sees the final list without re-running on every
@@ -153,18 +147,88 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     };
   }, []);
 
-  /** After a successful send: let the window collapse, then clear the draft behind it. */
-  const finish = useCallback(() => {
-    setPhase("closing");
-  }, []);
+  /**
+   * The live phase, for the handlers that cannot see it.
+   *
+   * The open-request effect subscribes once and would otherwise close over the phase as it
+   * was on mount. Same reason `shotsRef` exists above.
+   */
+  const phaseRef = useRef<Phase>(phase);
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
 
   /** The collapse has finished. Nothing is on screen, so this is where state is dropped. */
   const clearDraft = useCallback(() => {
     for (const shot of shotsRef.current) URL.revokeObjectURL(shot.previewUrl);
+    setSentBeat(false);
     setShots([]);
     setMessage("");
     setOffset({ x: 0, y: 0 });
     setPhase("closed");
+  }, []);
+
+  /**
+   * Drain open requests from the four doors.
+   *
+   * Runs once on mount as well as on every notification, because the widget is lazily
+   * loaded — a press in the frames before its chunk lands queues a request that would
+   * otherwise be dispatched into nothing.
+   */
+  useEffect(() => {
+    const consume = () => {
+      const requested = takeFeedbackOpenRequest();
+      if (requested === null) return;
+      setAnchor(requested);
+      // From `sent`, hand back a BLANK form. The message and screenshots are still in
+      // state — `clearDraft` only runs at the end of the collapse — so reopening without
+      // this would return a draft the person has already sent. Both setStates batch into
+      // one render, so the panel never unmounts and the entrance does not replay.
+      if (phaseRef.current === "sent") clearDraft();
+      // From `closing` too: catching the window on its way out should bring it back rather
+      // than doing nothing.
+      setPhase((p) =>
+        p === "closed" || p === "closing" || p === "sent" ? "composing" : p
+      );
+    };
+    consume();
+    return subscribeFeedbackOpen(consume);
+  }, [clearDraft]);
+
+  /**
+   * Publish what the triggers render against.
+   *
+   * `closing` reports closed so the button starts fading back at the close REQUEST, which
+   * is when the bell starts too. `sent` reports OPEN, because it is: a dialog is still on
+   * screen and `aria-expanded` would be lying if it flipped while the window is sitting
+   * there. `capturing`/`selecting` report `capturing`, which removes the triggers from the
+   * tree entirely rather than fading them — a faded button is still in the photograph.
+   */
+  useEffect(() => {
+    setFeedbackPanelState(
+      phase === "composing" || phase === "sent"
+        ? "open"
+        : phase === "capturing" || phase === "selecting"
+          ? "capturing"
+          : "closed"
+    );
+  }, [phase]);
+
+  useEffect(() => () => setFeedbackPanelState("closed"), []);
+
+  /**
+   * The send landed. Hold the window open for the button's gesture, then collapse.
+   *
+   * Conditional on `composing`, and not merely for tidiness: a submission with screenshots
+   * runs 1.5-4s, and the panel can be dismissed while it is still in flight. The promise
+   * then resolves into a widget that has already reached `closed`, and an unconditional
+   * `setPhase` would mount the panel again — a window reappearing, mid-gesture, for a form
+   * the person dismissed seconds ago.
+   */
+  const finish = useCallback(() => {
+    if (phaseRef.current !== "composing") return;
+    setSentBeat(true);
+    setPhase("sent");
   }, []);
 
   /**
@@ -181,6 +245,19 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     const timer = setTimeout(clearDraft, 900);
     return () => clearTimeout(timer);
   }, [phase, clearDraft]);
+
+  /**
+   * The hold, before the collapse.
+   *
+   * Cleanup is the cancellation: anything that leaves `sent` early — Esc, Cancel, the
+   * backdrop, or a reopen — clears this timer without a line of its own, which is the
+   * reason this is a phase rather than a timer paired with a boolean.
+   */
+  useEffect(() => {
+    if (phase !== "sent") return;
+    const timer = setTimeout(() => setPhase("closing"), SENT_HOLD_MS);
+    return () => clearTimeout(timer);
+  }, [phase]);
 
   const addScreenshot = useCallback(async () => {
     if (shots.length >= MAX_SCREENSHOTS) return;
@@ -343,9 +420,13 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
         <FeedbackTrigger tooltip />
       </div>
 
-      {(phase === "composing" || phase === "closing") && (
+      {(phase === "composing" || phase === "sent" || phase === "closing") && (
         <FeedbackPanel
-          open={phase === "composing"}
+          // Still OPEN through `sent`: `open={false}` is what makes Base UI apply
+          // `data-ending-style` and start the collapse, so the hold has to happen on this
+          // side of it.
+          open={phase === "composing" || phase === "sent"}
+          sent={sentBeat}
           anchor={anchor}
           offset={offset}
           onOffsetChange={setOffset}
