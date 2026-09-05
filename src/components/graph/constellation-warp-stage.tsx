@@ -6,14 +6,11 @@ import {
   INTRO_WARP_SPEED,
   introCoverage,
   introFrame,
+  introPhase,
   introThrottle,
 } from "@/lib/graph/intro-choreography";
 import type { IntroRun } from "@/lib/graph/intro-signal";
-import {
-  IGNITION_FRACTIONS,
-  type ChronoFrame,
-  type ChronoPhase,
-} from "@/lib/warp/chrono";
+import { IGNITION_FRACTIONS, type ChronoFrame } from "@/lib/warp/chrono";
 
 /**
  * The constellation's intro: a jump to lightspeed, scoped to the canvas box.
@@ -140,11 +137,6 @@ const FAR_PLANE_FILL = 0.4;
 const STAR_WHITE = "255,255,255";
 const STAR_GOLD = "255,214,140";
 
-function chronoPhaseOf(status: IntroRun["status"]): ChronoPhase {
-  if (status === "arriving" || status === "done") return "arriving";
-  return "outbound";
-}
-
 export function ConstellationWarpStage({ run }: { run: IntroRun }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   // The loop reads the run through a ref so a phase change never restarts it — restarting
@@ -176,9 +168,10 @@ export function ConstellationWarpStage({ run }: { run: IntroRun }) {
 
     function frameNow(now: number): ChronoFrame {
       const r = runRef.current;
+      const elapsed = now - r.startedAt;
       return introFrame(
-        chronoPhaseOf(r.status),
-        now - r.startedAt,
+        introPhase(r.status, elapsed),
+        elapsed,
         r.arrivingAt === null ? 0 : now - r.arrivingAt
       );
     }
@@ -387,10 +380,11 @@ export function ConstellationWarpStage({ run }: { run: IntroRun }) {
       ctx!.globalCompositeOperation = "source-over";
 
       const r = runRef.current;
+      const elapsed = now - r.startedAt;
       canvas!.style.opacity = String(
         introCoverage(
-          chronoPhaseOf(r.status),
-          now - r.startedAt,
+          introPhase(r.status, elapsed),
+          elapsed,
           r.arrivingAt === null ? 0 : now - r.arrivingAt
         )
       );

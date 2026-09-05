@@ -23,6 +23,7 @@ import {
   type ChronoPhase,
 } from "@/lib/warp/chrono";
 import { easeFade, span } from "@/lib/warp/choreography";
+import type { IntroStatus } from "@/lib/graph/intro-signal";
 import { DUR_MS } from "@/lib/motion";
 
 /**
@@ -147,11 +148,40 @@ export function predictSlowIntro(input: {
 }
 
 /**
- * `chronoFrame` with the intro's faster collapse and longer hold.
+ * How much earlier the intro's ramp begins than the route transition's.
  *
- * Scaling one input clock is monotone, so every property the chrono smoke pins — monotonic
- * omega and shutter across outbound, return to rest in arriving, uneven bursts, bursts carried
- * from cruise into arriving — survives unchanged.
+ * `/upgrade` spends its first 420ms darkening the room before anything moves, which is a beat
+ * this has no room for: the intro's own floor is 700ms, so a load that resolves near it would
+ * show a still field, a moment of drift, and then the collapse. Running the ramp clock ahead
+ * gives the field something to do from the first frame without touching the shared curve.
+ */
+export const INTRO_SPIN_LEAD_MS = 320;
+
+/**
+ * Which beat of the shared envelope the intro is on.
+ *
+ * `"cruise"` is the one that matters and it used to be unreachable: the stage mapped anything
+ * not arriving to `"outbound"`, where `span` clamps and `burstsBy` tops out at the scripted
+ * seven — so during a long hold the reserve waves never arrived and the field stopped growing,
+ * which is the exact loop the reserve exists to prevent. The smoke was asserting the growth
+ * against `introFrame("cruise", …)`, a phase nothing ever passed. Hence this lives here, where
+ * the smoke can hold it to the same mapping the stage uses.
+ *
+ * The handover is continuous by construction: at `CHRONO_OUTBOUND_MS` the outbound ramp has
+ * long since clamped to peak and all seven scripted bursts have fired, which is precisely
+ * where cruise starts counting.
+ */
+export function introPhase(status: IntroStatus, elapsed: number): ChronoPhase {
+  if (status === "arriving" || status === "done") return "arriving";
+  return elapsed >= CHRONO_OUTBOUND_MS ? "cruise" : "outbound";
+}
+
+/**
+ * `chronoFrame` with the intro's earlier ramp, faster collapse and longer hold.
+ *
+ * Shifting and scaling the input clocks is monotone, so every property the chrono smoke pins —
+ * monotonic omega and shutter across outbound, return to rest in arriving, uneven bursts,
+ * bursts carried from cruise into arriving — survives unchanged.
  */
 export function introFrame(
   phase: ChronoPhase,
@@ -160,7 +190,9 @@ export function introFrame(
 ): ChronoFrame {
   return chronoFrame(
     phase,
-    elapsed,
+    // Only the ramp is led. Cruise counts reserve waves off real elapsed time, and leading that
+    // clock would spend the reserve early against a ceiling derived from real milliseconds.
+    phase === "outbound" ? elapsed + INTRO_SPIN_LEAD_MS : elapsed,
     sinceArriving * INTRO_ARRIVING_SCALE,
     INTRO_CRUISE_BURSTS
   );
@@ -176,6 +208,44 @@ export function introFrame(
 export const INTRO_WARP_SPEED = 1.8;
 
 /**
+ * Extra shaping on top of the shared envelope's own acceleration, so the jump reads as a jump.
+ *
+ * `chronoFrame` already eases in on a cube, which is right for a camera gaining speed but too
+ * even for this: the field spends the ramp visibly getting faster, and never has the moment of
+ * committing. Raising it again spends most of the ramp on a slow drift — enough motion to show
+ * the field is alive, not enough to be going anywhere — and then puts nearly all of the
+ * acceleration in the last few hundred ms, which is the shape of a ship holding position and
+ * then jumping.
+ *
+ * It shapes the collapse too, in the same direction and for the same reason: dropping out of
+ * lightspeed is a hard stop, not a coast. Both ends are fixed points (0 and 1 survive any
+ * power), so the interlocks either side of it are untouched.
+ */
+export const INTRO_RAMP_POWER = 1.5;
+
+/**
+ * How much of the throttle rises linearly, underneath the shaped ramp.
+ *
+ * The power alone is too clean: raised on top of the envelope's own cube it puts the first half
+ * of the ramp at around one part in ten thousand, which is not a slow field, it is a stopped
+ * one — and a stopped field followed by a surge reads as a cut rather than as an acceleration.
+ * A few percent of steady drift underneath gives motion slow enough to still be waiting and
+ * fast enough to see, so the surge has something to accelerate away FROM.
+ */
+export const INTRO_DRIFT_SHARE = 0.06;
+
+/**
+ * The cube root, because the envelope handed us a cube.
+ *
+ * A drift term has to be linear in elapsed time or it is not a drift, it is a third accelerating
+ * curve stacked on the other two — and `omega` arrives already eased in on `t³`, so a term
+ * linear in THAT is still cubed in time. The first attempt at this shipped exactly that mistake
+ * and put the early ramp at 9 parts in a million, which the smoke caught by asserting the drift
+ * is visible rather than merely non-zero. Undoing the cube first makes the term rise evenly.
+ */
+export const INTRO_DRIFT_EXPONENT = 1 / 3;
+
+/**
  * The throttle, 0 (stopped) to 1 (full), from a frame of the shared chrono envelope.
  *
  * `chronoFrame` was written for a field rotating about a pole, so its speed term is named
@@ -189,9 +259,17 @@ export const INTRO_WARP_SPEED = 1.8;
  * Clamped at zero because `omega` goes negative in `"inbound"`, the rewind phase. The intro
  * never enters it; travelling backwards out of the chart you are waiting for would be a
  * different animation, and a stray negative should stop the field rather than reverse it.
+ *
+ * Then reshaped, so the jump reads as a jump — see `INTRO_RAMP_POWER` and `INTRO_DRIFT_SHARE`.
+ * Both terms vanish at 0 and sum to 1 at full, so the standstill the run opens on and the dead
+ * stop it hands the chart over from are exact, not nearly.
  */
 export function introThrottle(frame: ChronoFrame): number {
-  return Math.max(0, Math.min(1, frame.omega / OMEGA_PEAK));
+  const t = Math.max(0, Math.min(1, frame.omega / OMEGA_PEAK));
+  return (
+    INTRO_DRIFT_SHARE * t ** INTRO_DRIFT_EXPONENT +
+    (1 - INTRO_DRIFT_SHARE) * t ** INTRO_RAMP_POWER
+  );
 }
 
 /**

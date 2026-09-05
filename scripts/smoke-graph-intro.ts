@@ -21,8 +21,10 @@ import {
   INTRO_MIN_BEAT_MS,
   INTRO_OPAQUE_MS,
   INTRO_RESERVE_FRACTION,
+  INTRO_SPIN_LEAD_MS,
   introCoverage,
   introFrame,
+  introPhase,
   introThrottle,
   predictSlowIntro,
 } from "../src/lib/graph/intro-choreography";
@@ -34,7 +36,11 @@ import {
   registerIntroHost,
   suppressIntro,
 } from "../src/lib/graph/intro-signal";
-import { CHRONO_OUTBOUND_MS, IGNITION_FRACTIONS } from "../src/lib/warp/chrono";
+import {
+  CHRONO_OUT,
+  CHRONO_OUTBOUND_MS,
+  IGNITION_FRACTIONS,
+} from "../src/lib/warp/chrono";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -153,6 +159,56 @@ check(
   "any dip reads as the engine stumbling"
 );
 check("and reaches full throttle by the hold", introThrottle(introFrame("cruise", 5000, 0)) === 1);
+
+// "Slow, then quick." The ramp runs from the lead-shifted start of the spin window to its end;
+// these pin the SHAPE of it, which is the part a reader cannot get from the constants.
+const [spinFrom, spinTo] = CHRONO_OUT.spin;
+const rampAt = (frac: number) =>
+  throttleAt(spinFrom - INTRO_SPIN_LEAD_MS + frac * (spinTo - spinFrom));
+check(
+  "the field is already drifting a twentieth of the way in, not parked",
+  rampAt(0.05) > 0.001,
+  `${rampAt(0.05).toExponential(1)} — a dead-still field followed by a surge reads as a cut, not an acceleration`
+);
+check(
+  "and is still only drifting most of the way through",
+  rampAt(0.6) < 0.15,
+  `${rampAt(0.6).toFixed(3)} at 60% of the ramp`
+);
+check(
+  "so most of the speed arrives in the last third",
+  1 - rampAt(0.7) > rampAt(0.7),
+  `${(100 * (1 - rampAt(0.7))).toFixed(0)}% of full throttle is gained after the 70% mark`
+);
+
+console.log("\nThe beat the reserve lives on…");
+// This was unreachable until the mapping moved out of the stage: anything not arriving was
+// called "outbound", where the burst count tops out at the scripted seven, so a long hold
+// quietly stopped growing while the check below passed against a phase nothing ever passed.
+check(
+  "a run that is still waiting reaches cruise",
+  introPhase("running", CHRONO_OUTBOUND_MS) === "cruise" &&
+    introPhase("running", 0) === "outbound"
+);
+check(
+  "and an arriving or finished one never does",
+  introPhase("arriving", 60_000) === "arriving" &&
+    introPhase("done", 60_000) === "arriving"
+);
+check(
+  "the handover is continuous — no jolt at the seam",
+  (() => {
+    const a = introFrame("outbound", CHRONO_OUTBOUND_MS, 0);
+    const b = introFrame("cruise", CHRONO_OUTBOUND_MS, 0);
+    // Within an epsilon, not equal: outbound reaches ALPHA_FAST by lerping onto it and lands
+    // on 0.04500000000000004, while cruise names the constant. A seam nobody can see.
+    return (
+      a.omega === b.omega &&
+      Math.abs(a.alpha - b.alpha) < 1e-9 &&
+      a.bursts === b.bursts
+    );
+  })()
+);
 check(
   "the collapse brings it back to a dead stop",
   introThrottle(introFrame("arriving", 5000, INTRO_ARRIVING_MS)) === 0,
