@@ -113,7 +113,7 @@ export function AppSidebar({
             </p>
           </div>
         </Link>
-        <ThemeToggle className="hidden h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground lg:inline-flex" />
+        <ThemeToggle className="hidden shrink-0 lg:inline-flex" />
       </div>
 
       {/* Not part of the nav array, so filtering that list would leave this shortcut as a
