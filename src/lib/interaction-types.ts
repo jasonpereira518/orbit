@@ -89,6 +89,11 @@ export type InteractionFamilyValue = "together" | "live" | "written" | "yours";
  *
  * The class strings are written out in full because Tailwind extracts class names statically —
  * `bg-interaction-${family}/12` would compile to nothing.
+ *
+ * The node fills are `color-mix` against `--card` rather than the alpha shorthand. They read
+ * identically on a card, but an alpha fill is transparent, and the timeline's spine runs
+ * through the centre of every node — with `/12` the line was visible straight through the
+ * disc it was supposed to pass behind.
  */
 export const INTERACTION_FAMILIES = [
   {
@@ -96,8 +101,8 @@ export const INTERACTION_FAMILIES = [
     label: "Together",
     hint: "Time actually spent with them",
     /** Filled disc: the one distinction that stays legible with no hue at all. */
-    node: "border-interaction-together/35 bg-interaction-together/12 text-interaction-together",
-    nodeSelected: "border-interaction-together/70 bg-interaction-together/20 text-interaction-together",
+    node: "border-interaction-together/35 bg-[color-mix(in_oklab,var(--interaction-together)_12%,var(--card))] text-interaction-together",
+    nodeSelected: "border-interaction-together/70 bg-[color-mix(in_oklab,var(--interaction-together)_20%,var(--card))] text-interaction-together",
     chip: "border-interaction-together/45 bg-interaction-together/10 text-interaction-together",
     dot: "bg-interaction-together",
     text: "text-interaction-together",
@@ -107,7 +112,7 @@ export const INTERACTION_FAMILIES = [
     label: "Live",
     hint: "Real-time, but across a distance",
     node: "border-interaction-live/30 bg-card text-interaction-live",
-    nodeSelected: "border-interaction-live/70 bg-interaction-live/12 text-interaction-live",
+    nodeSelected: "border-interaction-live/70 bg-[color-mix(in_oklab,var(--interaction-live)_12%,var(--card))] text-interaction-live",
     chip: "border-interaction-live/45 bg-interaction-live/10 text-interaction-live",
     dot: "bg-interaction-live",
     text: "text-interaction-live",
@@ -117,7 +122,7 @@ export const INTERACTION_FAMILIES = [
     label: "Written",
     hint: "An asynchronous exchange",
     node: "border-interaction-written/30 bg-card text-interaction-written",
-    nodeSelected: "border-interaction-written/70 bg-interaction-written/12 text-interaction-written",
+    nodeSelected: "border-interaction-written/70 bg-[color-mix(in_oklab,var(--interaction-written)_12%,var(--card))] text-interaction-written",
     chip: "border-interaction-written/45 bg-interaction-written/10 text-interaction-written",
     dot: "bg-interaction-written",
     text: "text-interaction-written",
@@ -127,7 +132,7 @@ export const INTERACTION_FAMILIES = [
     label: "Yours",
     hint: "Your own record — nothing confirmed happened with them",
     node: "border-interaction-yours/30 bg-card text-interaction-yours",
-    nodeSelected: "border-interaction-yours/70 bg-interaction-yours/12 text-interaction-yours",
+    nodeSelected: "border-interaction-yours/70 bg-[color-mix(in_oklab,var(--interaction-yours)_12%,var(--card))] text-interaction-yours",
     chip: "border-interaction-yours/45 bg-interaction-yours/10 text-interaction-yours",
     dot: "bg-interaction-yours",
     text: "text-interaction-yours",

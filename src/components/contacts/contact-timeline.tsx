@@ -598,7 +598,11 @@ export function ContactTimeline({
                   ref={listRef}
                   onKeyDown={onListKeyDown}
                   aria-keyshortcuts="ArrowUp ArrowDown Home End PageUp PageDown"
-                  className="min-h-0 max-h-[28rem] flex-1 overflow-y-auto overscroll-contain pr-1"
+                  // `pl-1` is not decoration: `overflow-y-auto` makes the box clip on BOTH
+                  // axes, and a node swelling to `scale-110` on hover overflows its own edge
+                  // by ~1.6px, which the container was shearing off. It also stops the row's
+                  // rounded hover background sitting flush against the edge.
+                  className="min-h-0 max-h-[28rem] flex-1 overflow-y-auto overscroll-contain px-1"
                 >
                   <div className="space-y-6">
                     {monthGroups.map((group) => (
