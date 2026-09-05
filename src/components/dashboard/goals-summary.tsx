@@ -38,7 +38,7 @@ export function GoalsSummary({
     <Card className="border-border/70 shadow-none">
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
         <div>
-          <CardTitle className="text-base">Goals</CardTitle>
+          <CardTitle as="h2" className="text-base">Goals</CardTitle>
           <p className="mt-1 text-sm text-muted-foreground">
             Surface people aligned with what you&apos;re working toward
           </p>

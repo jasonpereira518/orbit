@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs/config";
 import { buildSecurityHeaders } from "./src/lib/security-headers";
+import { CAPTURE_BODY_SIZE_LIMIT } from "./src/lib/capture-limits";
 
 const nextConfig: NextConfig = {
   // HSTS, nosniff, referrer and frame policies, and a Content-Security-Policy that starts
@@ -45,8 +46,13 @@ const nextConfig: NextConfig = {
     ],
     // Capture media (voice/photos) is sent as base64 through server actions.
     serverActions: {
-      bodySizeLimit: "32mb",
+      bodySizeLimit: CAPTURE_BODY_SIZE_LIMIT,
     },
+    // MUST MATCH the server action limit above. `src/proxy.ts` exists and its matcher
+    // covers server action POSTs, so Next buffers every non-GET body in memory — and at
+    // the 10MB default it silently truncates anything larger and lets the request through
+    // with a partial body instead of failing. See src/lib/capture-limits.ts.
+    proxyClientMaxBodySize: CAPTURE_BODY_SIZE_LIMIT,
   },
   // Turbopack can fail to resolve @clerk/shared's wildcard `./*` package exports.
   turbopack: {

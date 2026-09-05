@@ -117,7 +117,7 @@ export function NoteBatchResultView({
       </div>
 
       <Card className="border-border/70 shadow-none">
-        <CardHeader><CardTitle>People you spoke to</CardTitle></CardHeader>
+        <CardHeader><CardTitle as="h2">People you spoke to</CardTitle></CardHeader>
         <CardContent>
           <ul className="space-y-2">
             {result.participants.map((p) => (
@@ -138,7 +138,7 @@ export function NoteBatchResultView({
 
       {(result.mentions.length > 0 || result.unresolvedMentions.length > 0) && (
         <Card className="border-border/70 shadow-none">
-          <CardHeader><CardTitle>People mentioned</CardTitle></CardHeader>
+          <CardHeader><CardTitle as="h2">People mentioned</CardTitle></CardHeader>
           <CardContent className="space-y-2 text-sm">
             {result.mentions.map((m) => (
               <p key={`${m.interactionId}-${m.contactId}`}>
@@ -158,7 +158,7 @@ export function NoteBatchResultView({
 
       {result.actionItems.length > 0 && (
         <Card className="border-border/70 shadow-none">
-          <CardHeader><CardTitle>Action items</CardTitle></CardHeader>
+          <CardHeader><CardTitle as="h2">Action items</CardTitle></CardHeader>
           <CardContent>
             <ul className="space-y-2">
               {result.actionItems.map((a) => (
@@ -178,7 +178,7 @@ export function NoteBatchResultView({
       )}
 
       <Card className="border-border/70 shadow-none">
-        <CardHeader><CardTitle>Reminders created</CardTitle></CardHeader>
+        <CardHeader><CardTitle as="h2">Reminders created</CardTitle></CardHeader>
         <CardContent>
           {result.reminders.length === 0 ? (
             <p className="text-sm text-muted-foreground">No reminders came out of these notes.</p>

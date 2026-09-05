@@ -40,7 +40,7 @@ export function SuggestedOutreachCard({
   return (
     <Card className="flex h-full flex-col border-border/70 shadow-none">
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-        <CardTitle className="text-base">Suggested outreach</CardTitle>
+        <CardTitle as="h2" className="text-base">Suggested outreach</CardTitle>
         <Link
           href="/capture"
           className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
