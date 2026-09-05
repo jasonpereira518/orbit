@@ -36,12 +36,15 @@ import { recomputeRecruiterRating } from "@/lib/recruiters";
  * Delete all Orbit data for a user (does not delete the Clerk account).
  *
  * Every table carrying a `user_id` must be handled here, either by an explicit delete or
- * by a cascade from one. The five covered by cascade, so deliberately absent below:
+ * by a cascade from one. The seven covered by cascade, so deliberately absent below:
  *   - `chat_messages`        → cascades from `chat_threads`
  *   - `import_job_rows`      → cascades from `imports`
  *   - `action_items`         → cascades from `contacts` and `interactions`
  *   - `contact_briefs`       → cascades from `contacts`
  *   - `interaction_mentions` → cascades from `contacts` and `interactions`
+ *   - `contact_profiles`     → cascades from `contacts` (verified by `scripts/smoke-purge.ts`,
+ *                              not assumed — see that script's header)
+ *   - `contact_experiences`  → cascades from `contacts` (same)
  * Nothing else may be omitted. A `user_id` column is not on its own evidence of a cascade:
  * `note_batches` and `extension_usage` both have one and neither has a foreign key to
  * anything, so both are deleted explicitly below. `suggested_reminders` looks like it would cascade but does
