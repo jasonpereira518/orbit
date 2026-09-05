@@ -1,11 +1,23 @@
+/**
+ * One contact carrying every shape the timeline has to handle: all four interaction families,
+ * a same-day pair for the reorder controls, open action items, a two-month gap and a
+ * year-long one, and enough rows to push past the render window.
+ *
+ * This repo has no component test harness, so most of the timeline can only be checked by
+ * looking at it. That is worth doing against a fixture that always contains the hard cases
+ * rather than whatever a demo database happens to hold.
+ *
+ * Run: npx tsx scripts/seed-timeline-fixture.ts   (stop the dev server first — PGlite takes
+ * one writer, and a second one corrupts the store.)
+ */
 import { config } from "dotenv";
 config({ path: ".env.local" });
 config();
 
-import { getDb } from "./src/db";
-import { actionItems, contacts, interactions } from "./src/db/schema";
+import { getDb } from "../src/db";
+import { actionItems, contacts, interactions } from "../src/db/schema";
 import { eq } from "drizzle-orm";
-import { actionItemHash } from "./src/lib/action-items";
+import { actionItemHash } from "../src/lib/action-items";
 
 const USER = "demo-user";
 const day = (n: number) => new Date(Date.now() - n * 86400000);
