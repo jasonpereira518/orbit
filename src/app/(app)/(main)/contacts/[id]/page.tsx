@@ -19,6 +19,8 @@ import { Reveal } from "@/components/motion/reveal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { computeCloseness, formatInteractionFrequency } from "@/lib/closeness";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
+import { getConstellationConfig } from "@/lib/constellation-config";
+import { constellationEligibility } from "@/lib/constellation-eligibility";
 import { requireUserId } from "@/lib/auth";
 import { listOpenActionItems } from "@/lib/action-items";
 import {
@@ -80,9 +82,10 @@ export default async function ContactDetailPage({
 
   // notFound() must fire BEFORE any Suspense boundary renders so the route
   // still returns a real 404 status.
-  const [contact, closenessCohort] = await Promise.all([
+  const [contact, closenessCohort, constellationConfig] = await Promise.all([
     getContact(id),
     cohortPromise,
+    getConstellationConfig(),
   ]);
   if (!contact) notFound();
 
@@ -240,6 +243,28 @@ export default async function ContactDetailPage({
           closeness={closeness}
           lastTouchAt={lastTouchAt}
           hasLoggedInteraction={hasLoggedInteraction}
+          constellation={
+            constellationConfig.enabled
+              ? {
+                  contactId: contact.id,
+                  pin: contact.constellationPin,
+                  // What "Automatic" resolves to for this person right now, so the pill can
+                  // answer "are they on my chart?" without opening the menu.
+                  substantive: constellationEligibility(
+                    closenessCohort.constellationSignals.get(contact.id),
+                    {
+                      pin: null,
+                      hasNotesText: Boolean(contact.notes?.trim()),
+                      statedCloseness: contact.statedCloseness,
+                      priorityLevel: contact.priorityLevel,
+                      nextFollowUpAt: contact.nextFollowUpAt,
+                      tagCount: contact.tags.length,
+                    },
+                    constellationConfig.thresholds
+                  ).eligible,
+                }
+              : undefined
+          }
         />
       </div>
 

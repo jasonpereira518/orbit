@@ -20,6 +20,10 @@ import {
   setSurfaceHidden,
   VIEW_AS_USER_COOKIE,
 } from "@/lib/surface-visibility";
+import {
+  setConstellationConfig,
+  type ConstellationConfig,
+} from "@/lib/constellation-config";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -259,6 +263,33 @@ export async function setSurfaceHiddenAction(input: {
   revalidatePath("/", "layout");
   revalidatePath("/admin/product");
   return { ok: true };
+}
+
+/**
+ * Change the constellation filter for everyone.
+ *
+ * Same shape as the surface toggle above and the same reasoning about invalidation: the
+ * filter decides what `/graph` and the dashboard preview draw, so both of those and anything
+ * that caches them have to be dropped, not just this console page.
+ *
+ * Thresholds are clamped in `setConstellationConfig` rather than validated to an error here —
+ * an operator nudging a number field into nonsense should land on the nearest sane value, not
+ * on a stack trace.
+ */
+export async function setConstellationConfigAction(input: {
+  enabled?: boolean;
+  minInbound?: number;
+  minOutbound?: number;
+}): Promise<ConstellationConfig> {
+  const adminUserId = await requireAdminUserId();
+
+  const next = await setConstellationConfig(adminUserId, input);
+
+  revalidatePath("/", "layout");
+  revalidatePath("/admin/product");
+  revalidatePath("/graph");
+  revalidatePath("/dashboard");
+  return next;
 }
 
 /**

@@ -18,6 +18,9 @@ import {
 import { computeNetworkMetrics } from "@/lib/network-metrics";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
+import { contactHasNotesSql } from "@/lib/contact-notes-sql";
+import { getConstellationConfig } from "@/lib/constellation-config";
+import { constellationEligibility } from "@/lib/constellation-eligibility";
 
 const AUTO_SUGGESTION_TYPES = [
   "dormant_high_value",
@@ -51,8 +54,19 @@ function contactDisplayName(c: {
 }
 
 /** Contacts without a scheduled follow-up are eligible for discovery suggestions. */
-function isDiscoveryEligible(c: { nextFollowUpAt: Date | string | null }) {
-  return !c.nextFollowUpAt;
+/**
+ * Whether a contact can be suggested for outreach at all.
+ *
+ * An existing follow-up already covers them — and a contact pinned off the constellation is
+ * one the user has explicitly said not to show them. Nagging "reach out to X, gone quiet"
+ * about somebody they deliberately removed from their own chart is the most annoying way
+ * this could leak, and it is the one place the pin has to reach beyond `/graph`.
+ */
+function isDiscoveryEligible(c: {
+  nextFollowUpAt: Date | string | null;
+  constellationPin: "in" | "out" | null;
+}) {
+  return !c.nextFollowUpAt && c.constellationPin !== "out";
 }
 
 /**
@@ -102,6 +116,10 @@ async function buildOutreachSuggestions(userId: string) {
       lastInteractionAt: true,
       firstInteractionAt: true,
       nextFollowUpAt: true,
+      // Read by `isDiscoveryEligible`. Required, not optional, on that predicate's parameter:
+      // an optional field here would let a caller forget the column and quietly never
+      // suppress anything, with nothing failing to say so.
+      constellationPin: true,
     },
   });
 
@@ -433,6 +451,7 @@ export async function getDashboardData(
         relationshipScore: true,
         statedCloseness: true,
         priorityLevel: true,
+        constellationPin: true,
         source: true,
         industry: true,
         metContext: true,
@@ -452,7 +471,11 @@ export async function getDashboardData(
         updatedAt: true,
         notes: false,
       },
-      extras: { avatarUrl: clientAvatarUrlSql.as("avatar_url") },
+      extras: {
+        avatarUrl: clientAvatarUrlSql.as("avatar_url"),
+        // Computed, never the column — see contact-notes-sql.ts and the budget smoke.
+        hasNotes: contactHasNotesSql.as("has_notes"),
+      },
       orderBy: (c, { desc }) => [desc(c.updatedAt)],
       with: { contactTags: { with: { tag: true } } },
     })
@@ -465,6 +488,7 @@ export async function getDashboardData(
     goals,
     goalTexts,
     closenessCohort,
+    constellationConfig,
   ] = await Promise.all([
     contactRowsPromise,
     db.query.reminders.findMany({
@@ -488,6 +512,7 @@ export async function getDashboardData(
     listActiveGoalTextsForUser(userId),
     // Donates the scan above rather than repeating it.
     getClosenessCohort(userId, contactRowsPromise),
+    getConstellationConfig(),
   ]);
 
   // `profileImageUrl` keeps its name for the cards that render these rows, but it is now
@@ -550,10 +575,33 @@ export async function getDashboardData(
       website: c.website ?? null,
       profileImageUrl: c.profileImageUrl,
       dormant,
+      // Same rule and the same shared predicate as `loadGraphData` — this payload path is a
+      // parallel implementation, so the decision has to come from one place or the two
+      // surfaces will quietly disagree about who is on the chart.
+      substantive: constellationEligibility(
+        closenessCohort.constellationSignals.get(c.id),
+        {
+          pin: c.constellationPin ?? null,
+          hasNotesText: Boolean(c.hasNotes),
+          statedCloseness: c.statedCloseness ?? null,
+          priorityLevel: c.priorityLevel ?? 0,
+          nextFollowUpAt: c.nextFollowUpAt ?? null,
+          tagCount: (c.tags ?? []).length,
+        },
+        constellationConfig.thresholds
+      ).eligible,
     };
   });
 
   const userName = (await options?.userName) || "You";
+
+  // The preview mirrors /graph: engaged-only by default. It has no "show all" of its own —
+  // the link into /graph is where that lives — so this is always the engaged scope.
+  const previewEligibleCount = graphContacts.filter((c) => c.substantive).length;
+  const previewFilterActive = constellationConfig.enabled;
+  const previewVisible = previewFilterActive
+    ? graphContacts.filter((c) => c.substantive)
+    : graphContacts;
 
   const { clusters: builtClusters } = buildConstellationClusters(graphContacts);
   const clusters = toNamedGraphClusters(builtClusters);
@@ -661,16 +709,18 @@ export async function getDashboardData(
   const strongTies =
     networkMetrics.tierCounts.inner + networkMetrics.tierCounts.mid;
 
+  // Filter FIRST, then cap. Capping first would spend the budget on contacts that are about
+  // to be hidden and render far fewer than the cap allows.
   const graphPreviewContacts =
-    graphContacts.length > GRAPH_PREVIEW_CONTACT_CAP
-      ? [...graphContacts]
+    previewVisible.length > GRAPH_PREVIEW_CONTACT_CAP
+      ? [...previewVisible]
           .sort(
             (a, b) =>
               (b.orbitScore ?? b.relationshipScore ?? 0) -
               (a.orbitScore ?? a.relationshipScore ?? 0)
           )
           .slice(0, GRAPH_PREVIEW_CONTACT_CAP)
-      : graphContacts;
+      : previewVisible;
 
   return {
     stats: {
@@ -708,6 +758,17 @@ export async function getDashboardData(
         strongTies,
         dormantCount,
         overdueCount,
+        // Computed over the WHOLE network, not the capped preview list: the cap is a
+        // rendering budget, and `active` still has to reflect the real shape of the network
+        // or a 150-contact slice would look like a filtered one.
+        constellationFilter: {
+          active: previewFilterActive,
+          enabled: constellationConfig.enabled,
+          scope: "engaged" as const,
+          shown: graphPreviewContacts.length,
+          engaged: previewEligibleCount,
+          available: graphContacts.length,
+        },
         userName,
         userImageUrl: null,
         userEmail: null,

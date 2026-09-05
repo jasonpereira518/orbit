@@ -310,6 +310,16 @@ export const contacts = pgTable(
     priorityLevel: integer("priority_level").default(0).notNull(),
     source: text("source"),
     industry: text("industry"),
+    /**
+     * The user's manual override of constellation eligibility: `'in'` forces the contact onto
+     * the star chart however little evidence there is, `'out'` keeps them off it however much
+     * there is. NULL — the default — means "decide automatically", which
+     * `relationship_score`'s non-null default could never express.
+     *
+     * Deliberately only affects what `/graph` draws. A pinned-out contact is still a full
+     * member of the network everywhere else: `/contacts`, search, chat and the timeline.
+     */
+    constellationPin: text("constellation_pin").$type<"in" | "out">(),
     metContext: text("met_context"),
     dateMet: timestamp("date_met", { withTimezone: true }),
     howMet: text("how_met"),
@@ -476,6 +486,18 @@ export const interactions = pgTable(
     topics: jsonb("topics").$type<string[]>().default([]),
     actionItems: jsonb("action_items").$type<string[]>().default([]),
     sentiment: text("sentiment"),
+    /**
+     * Who sent it: `'in'` (them) or `'out'` (the user). Only ever set for
+     * `interaction_type = 'linkedin_message'`; NULL everywhere else, and NULL on message rows
+     * imported before this column existed.
+     *
+     * NULL genuinely means "we don't know", and that is load-bearing rather than defensive:
+     * the sender was never persisted by earlier imports and cannot be recovered from the
+     * stored rows, so a re-upload of the LinkedIn export is the only backfill path. Readers
+     * must therefore treat "has messages, all directions NULL" as a distinct case from "has
+     * a real two-sided exchange" — see `src/lib/constellation-eligibility.ts`.
+     */
+    direction: text("direction").$type<"in" | "out">(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -488,6 +510,19 @@ export const interactions = pgTable(
       t.interactionType,
       t.interactionDate
     ),
+    /*
+     * Constellation eligibility counts inbound and outbound LinkedIn messages per contact, in
+     * the same `group by contact_id` the closeness cohort already runs. That aggregate is an
+     * index-only scan on `interactions_user_contact_type_date_idx` — until `direction` joins
+     * the predicate, which is not in that index and would send every row to the heap.
+     *
+     * Partial rather than a fourth column on the composite: `direction` is NULL for every
+     * interaction type except `linkedin_message`, so a full index would carry the whole table
+     * to serve one slice of it, on a table the import engine bulk-inserts into.
+     */
+    index("interactions_user_contact_direction_idx")
+      .on(t.userId, t.contactId, t.direction)
+      .where(sql`interaction_type = 'linkedin_message'`),
     // Soft unique for import dedupe; NULLs allowed (manual notes have no externalId).
     uniqueIndex("interactions_user_external_uidx").on(t.userId, t.externalId),
   ]
@@ -976,7 +1011,19 @@ export type LinkedInMessageThreadRowPayload = {
    * pull it back. `null` is excluded from the range instead, which is what "we don't know
    * when this was sent" actually means.
    */
-  messages: { id: string; body: string; sentAt: string | null }[];
+  /**
+   * `direction` is optional, not merely nullable, and that distinction is load-bearing: these
+   * payloads are persisted as JSONB in `import_job_rows`, so a job queued or stalled before
+   * this field existed resumes through the current adapter with the key absent entirely. The
+   * adapter must resolve that to null — never to a guess — so those rows read as "unknown"
+   * rather than being permanently mislabelled by a deploy boundary.
+   */
+  messages: {
+    id: string;
+    body: string;
+    sentAt: string | null;
+    direction?: "in" | "out" | null;
+  }[];
 };
 
 /**
@@ -1989,6 +2036,29 @@ export const gateEvents = pgTable(
  * anything — a key retired from the registry leaves a harmless orphan row rather than
  * blocking the deploy that retired it.
  */
+/**
+ * The global constellation filter: whether `/graph` shows only people the user has actually
+ * engaged with, and how much LinkedIn back-and-forth counts as engagement.
+ *
+ * A single row, pinned by a CHECK the way `schema_migrations` is. Not a key on
+ * `app_surface_flags`, which is a row-presence-means-hidden set with nowhere to put an
+ * integer — and whose writer validates every key against the pure `SURFACES` registry, so a
+ * non-surface key smuggled in there would surface in every nav filter and route guard.
+ *
+ * Operator-scoped on purpose: this is a product decision about what the chart means, in the
+ * same spirit as `app_surface_flags`, not a per-user preference.
+ */
+export const constellationSettings = pgTable("constellation_settings", {
+  id: integer("id").primaryKey().default(1),
+  filterEnabled: boolean("filter_enabled").notNull().default(true),
+  /** Inbound/outbound `linkedin_message` counts a contact needs to qualify on messages alone. */
+  minInboundMessages: integer("min_inbound_messages").notNull().default(3),
+  minOutboundMessages: integer("min_outbound_messages").notNull().default(3),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  /** The admin who last changed it. Kept for the audit trail's benefit, not read by the app. */
+  updatedBy: text("updated_by"),
+});
+
 export const appSurfaceFlags = pgTable("app_surface_flags", {
   surfaceKey: text("surface_key").primaryKey(),
   hiddenAt: timestamp("hidden_at", { withTimezone: true }).defaultNow().notNull(),

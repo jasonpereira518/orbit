@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { contacts, gmailConnections, interactions, outlookConnections, userGoals, userSettings } from "@/db/schema";
 import {
@@ -11,6 +11,7 @@ import {
   type ClosenessCohort,
 } from "@/lib/closeness";
 import { publicEmailDomain } from "@/lib/closeness-evidence";
+import type { ContactSignalCounts } from "@/lib/constellation-eligibility";
 import {
   buildSnapshot,
   cohortFromSnapshot,
@@ -59,6 +60,62 @@ export type ClosenessCohortInputs = {
   mailConnected: boolean;
 };
 
+/**
+ * Constellation-eligibility tallies, as extra aggregates on the per-contact interaction
+ * `GROUP BY` this module already issues.
+ *
+ * They ride along rather than running as their own query on purpose. Both the graph and the
+ * dashboard already await this cohort and already donate their contact scan to it, and
+ * `scripts/smoke-page-budgets.ts` caps the graph at 8 statements — which it already uses. A
+ * separate aggregate would be a ninth statement AND a second full scan of `interactions`, to
+ * learn something Postgres can count in the pass it is already making.
+ *
+ * Defined once and spread into both cohort paths (stored-snapshot and freshly-built) so the
+ * two cannot drift into disagreeing about who is substantive.
+ *
+ * The notes clause matches on `interaction_type` alone, never on `raw_notes` being present:
+ * the LinkedIn adapter writes each message body into `raw_notes`, so a presence test would
+ * count every imported message as a note and qualify every messaged contact.
+ */
+const constellationSignalAggregates = {
+  noteInteractions: sql<number>`count(*) filter (
+    where ${interactions.interactionType} in ('note', 'meeting_note')
+  )::int`,
+  meetingInteractions: sql<number>`count(*) filter (
+    where ${interactions.interactionType} in ('meeting', 'in_person')
+  )::int`,
+  linkedInInbound: sql<number>`count(*) filter (
+    where ${interactions.interactionType} = 'linkedin_message'
+      and ${interactions.direction} = 'in'
+  )::int`,
+  linkedInOutbound: sql<number>`count(*) filter (
+    where ${interactions.interactionType} = 'linkedin_message'
+      and ${interactions.direction} = 'out'
+  )::int`,
+  linkedInUndirected: sql<number>`count(*) filter (
+    where ${interactions.interactionType} = 'linkedin_message'
+      and ${interactions.direction} is null
+  )::int`,
+} satisfies Record<keyof ContactSignalCounts, SQL<number>>;
+
+/** One tally row as the aggregates above return it. */
+type SignalRow = { contactId: string } & Record<keyof ContactSignalCounts, number>;
+
+function signalsFromRows(rows: SignalRow[]): Map<string, ContactSignalCounts> {
+  return new Map(
+    rows.map((r) => [
+      r.contactId,
+      {
+        noteInteractions: Number(r.noteInteractions) || 0,
+        meetingInteractions: Number(r.meetingInteractions) || 0,
+        linkedInInbound: Number(r.linkedInInbound) || 0,
+        linkedInOutbound: Number(r.linkedInOutbound) || 0,
+        linkedInUndirected: Number(r.linkedInUndirected) || 0,
+      },
+    ])
+  );
+}
+
 export type ClosenessCohortResult = {
   cohort: ClosenessCohort;
   byId: Map<string, ClosenessBreakdown>;
@@ -73,6 +130,12 @@ export type ClosenessCohortResult = {
    * is stamped on every create and cannot answer that.
    */
   interactedIds: Set<string>;
+  /**
+   * Per-contact tallies for the constellation filter, from the same grouped scan as
+   * `touchCounts` — see `constellationSignalAggregates`. A contact with no interactions has
+   * no entry; readers treat that as all-zero rather than as missing data.
+   */
+  constellationSignals: Map<string, ContactSignalCounts>;
   inputs: ClosenessCohortInputs;
 };
 
@@ -168,6 +231,7 @@ async function readStoredCohortResult(
         // Same group-by, one more aggregate: "has this ever been touched at all",
         // which the recent-window count cannot answer. See `interactedIds`.
         total: sql<number>`count(*)::int`,
+        ...constellationSignalAggregates,
       })
       .from(interactions)
       .where(eq(interactions.userId, userId))
@@ -190,6 +254,7 @@ async function readStoredCohortResult(
     interactedIds: new Set(
       touchRows.filter((r) => Number(r.total) > 0).map((r) => r.contactId)
     ),
+    constellationSignals: signalsFromRows(touchRows),
     inputs: {
       maxCompany: snapshot.maxCompany ?? 1,
       maxSchool: snapshot.maxSchool ?? 1,
@@ -280,6 +345,7 @@ async function buildCohortResult(
         contactId: interactions.contactId,
         recent: sql<number>`count(*) filter (where ${interactions.interactionDate} >= ${since})::int`,
         total: sql<number>`count(*)::int`,
+        ...constellationSignalAggregates,
       })
       .from(interactions)
       .where(eq(interactions.userId, userId))
@@ -381,6 +447,7 @@ async function buildCohortResult(
     goals,
     touchCounts,
     interactedIds: everInteracted,
+    constellationSignals: signalsFromRows(touchRows),
     inputs: { maxCompany, maxSchool, userDomain, mailConnected },
   };
 }

@@ -4,6 +4,8 @@ import {
   ViewAsUserButton,
 } from "@/components/admin/surface-toggles";
 import { requireAdminPage } from "@/lib/admin";
+import { ConstellationFilterPanel } from "@/components/admin/constellation-filter-panel";
+import { getConstellationConfig } from "@/lib/constellation-config";
 import {
   getHiddenSurfaceKeys,
   isViewingAsUser,
@@ -28,9 +30,10 @@ export const metadata = { title: "Admin · Product" };
  */
 export default async function AdminProductPage() {
   const adminUserId = await requireAdminPage();
-  const [hidden, viewingAsUser] = await Promise.all([
+  const [hidden, viewingAsUser, constellation] = await Promise.all([
     getHiddenSurfaceKeys(),
     isViewingAsUser(adminUserId),
+    getConstellationConfig(),
   ]);
 
   const hiddenKeys = [...hidden];
@@ -63,6 +66,10 @@ export default async function AdminProductPage() {
               ? "You are currently browsing Orbit as a general user. Hidden surfaces are gone for you too until you stop."
               : "Opens the app with every toggle below applied to you as well, so you see exactly what a general user sees. Lasts until you stop or close the browser, and changes nothing for anyone else."}
           </p>
+        </AdminPanel>
+
+        <AdminPanel title="Constellation">
+          <ConstellationFilterPanel config={constellation} />
         </AdminPanel>
 
         <AdminPanel title="Pages">
