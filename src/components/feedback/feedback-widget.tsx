@@ -12,7 +12,13 @@ import {
 } from "@/lib/feedback-events";
 import type { PanelAnchor } from "@/lib/floating-panel";
 import { FeedbackTrigger } from "@/components/feedback/feedback-trigger";
-import { MAX_SCREENSHOTS, MAX_SCREENSHOT_BYTES, MAX_SUBMISSION_BYTES } from "@/lib/feedback-report";
+import {
+  MAX_SCREENSHOTS,
+  MAX_SCREENSHOT_BYTES,
+  MAX_SUBMISSION_BYTES,
+  type FeedbackArea,
+  type FeedbackCategory,
+} from "@/lib/feedback-report";
 import { toast } from "@/lib/toast";
 import {
   CaptureError,
@@ -89,6 +95,9 @@ type Phase =
  */
 const SENT_HOLD_MS = 640;
 
+/** What a fresh draft starts on. Matches the first chip in the panel's row. */
+const DEFAULT_CATEGORY: FeedbackCategory = "bug";
+
 /**
  * The feedback button, and every piece of state behind it.
  *
@@ -130,9 +139,31 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
    */
   const [sentBeat, setSentBeat] = useState(false);
   /**
-   * The same flag, for `clearDraft` to read.
+   * The rest of the draft, up here for the same reason the message is: the panel unmounts
+   * whenever the window closes, so anything it owns dies with it. These two used to be the
+   * panel's own state, which is why the kind and the area reset even when the words did not.
+   */
+  const [category, setCategory] = useState<FeedbackCategory>(DEFAULT_CATEGORY);
+  /**
+   * `null` means "whatever page you are on", resolved by the panel at render time.
    *
-   * `clearDraft` is a `useCallback([])` and would close over `sentBeat` as it was on mount.
+   * Storing the resolved value would freeze the area at the page the draft was started on.
+   * This way an untouched area follows you around the app, and one you actually chose is
+   * kept until the draft is dropped.
+   */
+  const [area, setArea] = useState<FeedbackArea | null>(null);
+  /**
+   * Whether the close under way should take the draft with it.
+   *
+   * Set only by Cancel and by a successful send. Dismissing the window — Escape, the
+   * backdrop, the X — leaves it false, and the words and screenshots survive to be found
+   * again on the next open.
+   */
+  const discardRef = useRef(false);
+  /**
+   * The same flag, for `endSession` to read.
+   *
+   * `endSession` is a `useCallback([])` and would close over `sentBeat` as it was on mount.
    * Same stale-closure reason as `shotsRef` and `phaseRef`.
    */
   const sentBeatRef = useRef(false);
@@ -165,23 +196,41 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     phaseRef.current = phase;
   }, [phase]);
 
-  /** The collapse has finished. Nothing is on screen, so this is where state is dropped. */
-  const clearDraft = useCallback(() => {
+  /**
+   * The collapse has finished and nothing is on screen.
+   *
+   * The draft is dropped here ONLY if it was sent or explicitly cancelled. Closing the
+   * window any other way — Escape, the backdrop, the X — keeps it: half a paragraph and
+   * two screenshots is real work, and losing it to a stray click outside a floating panel
+   * is what stops someone reporting anything a second time.
+   *
+   * The drag position resets either way. Where the window sits is not part of the draft;
+   * it should always come back where it belongs.
+   */
+  const endSession = useCallback(() => {
+    const wasSent = sentBeatRef.current;
+    const discarded = discardRef.current;
+    sentBeatRef.current = false;
+    discardRef.current = false;
+
     // The thank-you lands here rather than at the moment the server answers, so it appears
     // as the window finishes leaving instead of underneath a window that is still on
     // screen. The button's check is the acknowledgement while the panel is still up; this
     // is what remains once it has gone, and it is also how the success reaches a screen
     // reader, through sonner's live region.
-    if (sentBeatRef.current) {
-      sentBeatRef.current = false;
-      toast.success("Thanks, it's on its way!");
-    }
-    for (const shot of shotsRef.current) URL.revokeObjectURL(shot.previewUrl);
+    if (wasSent) toast.success("Thanks, it's on its way!");
+
     setSentBeat(false);
-    setShots([]);
-    setMessage("");
     setOffset({ x: 0, y: 0 });
     setPhase("closed");
+
+    if (!wasSent && !discarded) return;
+
+    for (const shot of shotsRef.current) URL.revokeObjectURL(shot.previewUrl);
+    setShots([]);
+    setMessage("");
+    setCategory(DEFAULT_CATEGORY);
+    setArea(null);
   }, []);
 
   /**
@@ -197,10 +246,10 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
       if (requested === null) return;
       setAnchor(requested);
       // From `sent`, hand back a BLANK form. The message and screenshots are still in
-      // state — `clearDraft` only runs at the end of the collapse — so reopening without
+      // state — `endSession` only runs at the end of the collapse — so reopening without
       // this would return a draft the person has already sent. Both setStates batch into
       // one render, so the panel never unmounts and the entrance does not replay.
-      if (phaseRef.current === "sent") clearDraft();
+      if (phaseRef.current === "sent") endSession();
       // From `closing` too: catching the window on its way out should bring it back rather
       // than doing nothing.
       setPhase((p) =>
@@ -209,7 +258,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     };
     consume();
     return subscribeFeedbackOpen(consume);
-  }, [clearDraft]);
+  }, [endSession]);
 
   /**
    * Publish what the triggers render against.
@@ -259,9 +308,9 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
    */
   useEffect(() => {
     if (phase !== "closing") return;
-    const timer = setTimeout(clearDraft, 900);
+    const timer = setTimeout(endSession, 900);
     return () => clearTimeout(timer);
-  }, [phase, clearDraft]);
+  }, [phase, endSession]);
 
   /**
    * The hold, before the collapse.
@@ -457,8 +506,17 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
             setEditingShotId(id);
             setPhase("annotating");
           }}
-          onClose={() => setPhase("closing")}
-          onClosed={clearDraft}
+          category={category}
+          onCategoryChange={setCategory}
+          area={area}
+          onAreaChange={setArea}
+          // `discard` separates "I am done with this" from "get this out of my way". Only
+          // the former takes the draft with it; see `endSession`.
+          onClose={(discard) => {
+            discardRef.current = discard;
+            setPhase("closing");
+          }}
+          onClosed={endSession}
           onSent={finish}
         />
       )}

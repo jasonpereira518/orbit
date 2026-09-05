@@ -53,6 +53,10 @@ export function FeedbackPanel({
   onOffsetChange,
   message,
   onMessageChange,
+  category,
+  onCategoryChange,
+  area,
+  onAreaChange,
   shots,
   canCapture,
   onAddScreenshot,
@@ -86,21 +90,36 @@ export function FeedbackPanel({
   onOffsetChange: (next: { x: number; y: number }) => void;
   message: string;
   onMessageChange: (value: string) => void;
+  category: FeedbackCategory;
+  onCategoryChange: (next: FeedbackCategory) => void;
+  /** `null` = follow the current page. Owned by the widget so it survives a dismissal. */
+  area: FeedbackArea | null;
+  onAreaChange: (next: FeedbackArea) => void;
   shots: DraftShot[];
   canCapture: boolean;
   onAddScreenshot: () => void;
   onRemoveShot: (id: string) => void;
   onEditShot: (id: string) => void;
-  /** Asked to close. The window then plays its collapse; it is still mounted. */
-  onClose: () => void;
+  /**
+   * Asked to close. The window then plays its collapse; it is still mounted.
+   *
+   * `discard` is true only when the person chose to throw the draft away — the Cancel
+   * button, or a send that has already succeeded. Every other route out of this window is a
+   * dismissal, and the draft is kept for the next time it opens.
+   */
+  onClose: (discard: boolean) => void;
   /** The collapse has finished and nothing is on screen — safe to unmount and reset. */
   onClosed: () => void;
   onSent: () => void;
 }) {
   const pathname = usePathname();
   const { resolvedTheme } = useTheme();
-  const [category, setCategory] = useState<FeedbackCategory>("bug");
-  const [area, setArea] = useState<FeedbackArea>(() => featureAreaForPath(pathname ?? "/"));
+  /**
+   * A null `area` means the draft has never had one chosen, so it follows the page you are
+   * actually on — resolved here, at render, rather than frozen into the draft when it was
+   * started. Choosing one pins it until the draft is dropped.
+   */
+  const effectiveArea = area ?? featureAreaForPath(pathname ?? "/");
   const [sending, setSending] = useState(false);
 
   const remaining = MAX_FEEDBACK_TEXT - message.length;
@@ -261,7 +280,7 @@ export function FeedbackPanel({
       const client = readClientContext(resolvedTheme);
       const result = await submitFeedback({
         text: message,
-        area,
+        area: effectiveArea,
         category,
         path: client.path,
         viewport: client.viewport,
@@ -290,16 +309,13 @@ export function FeedbackPanel({
   return (
     <Sheet
       open={sheetOpen}
+      // Escape, the backdrop and the X. None of them destroy anything any more — the draft
+      // is waiting when the window reopens — so none of them ask. The confirm that used to
+      // live here was the right question when this threw the words away, and is now just an
+      // obstacle between someone and the thing they were trying to look at.
       onOpenChange={(next) => {
         if (next) return;
-        // Never after a successful send. The draft is still in state until the collapse
-        // ends, so without `!sent` pressing Escape on the success beat asks whether to
-        // discard feedback that has already been sent — and `window.confirm` blocks the
-        // main thread, freezing the button's gesture mid-draw.
-        if (!sent && message.trim().length > 0 && !window.confirm("Discard your feedback?")) {
-          return;
-        }
-        onClose();
+        onClose(false);
       }}
       // Fires when the open/close transition has actually finished. Unmounting on the
       // close REQUEST instead — which is what happened before — tore the window out of the
@@ -377,7 +393,7 @@ export function FeedbackPanel({
               size="xs"
               variant={category === value ? "default" : "outline"}
               aria-pressed={category === value}
-              onClick={() => setCategory(value)}
+              onClick={() => onCategoryChange(value)}
             >
               {CATEGORY_LABELS[value]}
             </Button>
@@ -392,8 +408,8 @@ export function FeedbackPanel({
               OS and looks like nothing else in the app. The popup portals out at z-50 and
               mounts after the sheet, so it paints above it. */}
           <Select
-            value={area}
-            onValueChange={(v) => setArea((v || "other") as FeedbackArea)}
+            value={effectiveArea}
+            onValueChange={(v) => onAreaChange((v || "other") as FeedbackArea)}
             // Without `items`, `SelectValue` renders the raw stored value — the trigger
             // would read "dashboard" rather than "Dashboard".
             items={AREA_OPTIONS}
@@ -584,12 +600,13 @@ export function FeedbackPanel({
           <Button
             type="button"
             variant="ghost"
+            // The one exit that does throw the draft away, so the one that still asks —
+            // and only when there is something to lose.
             onClick={() => {
-              // Same guard as `onOpenChange` above, for the same reason.
               if (!sent && message.trim().length > 0 && !window.confirm("Discard your feedback?")) {
                 return;
               }
-              onClose();
+              onClose(true);
             }}
           >
             Cancel
