@@ -1,5 +1,5 @@
 /**
- * The v29 sync columns survive the path the DDL guard cannot see.
+ * The v30 sync columns survive the path the DDL guard cannot see.
  *
  * `smoke-schema-ddl.ts` regex-slices source text, so DDL that never executes still passes
  * it, and `smoke-schema-upgrade.ts` proves the `CREATE TABLE` template on a fresh database.
@@ -49,7 +49,7 @@ async function hasIndex(db: Db, table: string, index: string): Promise<boolean> 
 run(async () => {
   const db = await getDb();
 
-  // Rewind to a pre-v29 database: the columns and their indexes simply do not exist.
+  // Rewind to a pre-v30 database: the columns and their indexes simply do not exist.
   for (const table of CONNECTION_TABLES) {
     for (const column of SYNC_COLUMNS) {
       await db.execute(sql.raw(`ALTER TABLE ${table} DROP COLUMN IF EXISTS ${column}`));
@@ -59,7 +59,7 @@ run(async () => {
   for (const table of CONNECTION_TABLES) {
     const present = await columnsOf(db, table);
     check(
-      `fixture: ${table} has none of the v29 columns`,
+      `fixture: ${table} has none of the v30 columns`,
       SYNC_COLUMNS.every((c) => !present.includes(c))
     );
   }
@@ -73,7 +73,7 @@ run(async () => {
   for (const table of CONNECTION_TABLES) {
     const present = await columnsOf(db, table);
     const missing = SYNC_COLUMNS.filter((c) => !present.includes(c));
-    check(`${table}: all six v29 columns restored`, missing.length === 0, missing.join(", "));
+    check(`${table}: all six v30 columns restored`, missing.length === 0, missing.join(", "));
     check(`${table}: partial due index restored`, await hasIndex(db, table, `${table}_due_idx`));
   }
 
@@ -128,5 +128,5 @@ run(async () => {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);
   }
-  console.log("\nAll v29 sync-column checks passed.");
+  console.log("\nAll v30 sync-column checks passed.");
 });

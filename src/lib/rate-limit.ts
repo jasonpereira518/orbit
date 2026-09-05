@@ -41,6 +41,12 @@ export const RATE_LIMITS = {
   /** On-demand LinkedIn photo resolution in `/api/avatars/[contactId]` (Microlink quota). */
   avatarResolve: { limit: 30, windowSec: 60 },
   /**
+   * `submitFeedback`: a form post carrying up to three screenshots. Generous per
+   * submission, tight per window — this is the largest row a user can create directly,
+   * and nobody has anything to say five times in five minutes.
+   */
+  feedback: { limit: 5, windowSec: 300 },
+  /**
    * Public API reads. Generous — a read is one or two indexed queries — but bounded, because
    * these endpoints are reachable by anyone holding a key and a polling integration with a
    * misconfigured interval is the normal failure mode, not an attack.

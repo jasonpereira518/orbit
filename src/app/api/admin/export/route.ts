@@ -14,6 +14,7 @@ import {
   loadInterestListAll,
   sourceLabel,
 } from "@/lib/admin-interest-list";
+import { isFeedbackFilter, loadFeedbackAll } from "@/lib/admin-feedback";
 import { loadAuditLog } from "@/lib/admin-operations";
 import { formatCostMicros } from "@/lib/ai-pricing";
 
@@ -38,7 +39,7 @@ export const runtime = "nodejs";
  * extract a spreadsheet of other people's phone numbers that outlives it.
  */
 
-const DATASETS = ["roster", "health", "audit", "interest-list"] as const;
+const DATASETS = ["roster", "health", "audit", "interest-list", "feedback"] as const;
 type Dataset = (typeof DATASETS)[number];
 
 function isDataset(value: string | null): value is Dataset {
@@ -133,6 +134,29 @@ async function buildDataset(
       utm_campaign: r.utmCampaign ?? "",
       landing_path: r.landingPath ?? "",
       welcome_planet: r.welcomePlanet ?? "",
+    }));
+    return { rows, count: rows.length };
+  }
+
+  if (dataset === "feedback") {
+    // First-party by construction: this table is a user writing about Orbit, not about a
+    // third party — the distinction the `feedback` table's doc comment turns on. The
+    // screenshots are deliberately absent; `inline_data` must never reach a CSV.
+    const entries = await loadFeedbackAll(
+      isFeedbackFilter(interestFilter) ? interestFilter : "all"
+    );
+    const rows = entries.map((r) => ({
+      id: r.id,
+      created_at: iso(r.createdAt),
+      email: r.submitterEmail ?? "",
+      kind: r.kind,
+      category: r.category ?? "",
+      area: r.area ?? "",
+      status: r.status,
+      score: r.score ?? "",
+      text: r.text ?? "",
+      screenshots: r.screenshotCount,
+      status_changed_at: iso(r.statusChangedAt),
     }));
     return { rows, count: rows.length };
   }

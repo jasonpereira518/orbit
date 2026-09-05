@@ -734,11 +734,35 @@ CREATE TABLE IF NOT EXISTS feedback (
   kind text NOT NULL,
   score integer,
   text text,
+  area text,
+  category text,
+  status text NOT NULL DEFAULT 'new',
+  status_changed_at timestamptz,
+  status_changed_by text,
+  resolution_note text,
   context jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS feedback_screenshots (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  feedback_id uuid NOT NULL REFERENCES feedback(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  position integer NOT NULL DEFAULT 0,
+  note text,
+  storage text NOT NULL,
+  blob_url text,
+  inline_data text,
+  content_type text NOT NULL,
+  byte_size integer NOT NULL,
+  width integer,
+  height integer,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS feedback_kind_created_idx ON feedback(kind, created_at);
 CREATE INDEX IF NOT EXISTS feedback_user_created_idx ON feedback(user_id, created_at);
+CREATE INDEX IF NOT EXISTS feedback_status_created_idx ON feedback(status, created_at);
+CREATE INDEX IF NOT EXISTS feedback_screenshots_feedback_idx ON feedback_screenshots(feedback_id, position);
+CREATE INDEX IF NOT EXISTS feedback_screenshots_user_idx ON feedback_screenshots(user_id);
 CREATE TABLE IF NOT EXISTS interest_list_signups (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   email text NOT NULL,
@@ -924,21 +948,24 @@ CREATE TABLE IF NOT EXISTS non_dilutive_funding (
  * v28 = the constellation filter: constellation_settings, contacts.constellation_pin,
  * interactions.direction, and the partial index that keeps the eligibility aggregate an
  * index-only scan once `direction` joins its predicate.
+ * v29 = feedback triage columns (area, category, status, status_changed_at/by,
+ * resolution_note) plus the feedback_screenshots child table.
  *
- * (This branch also called its work v27, in parallel with the LinkedIn one above; whichever
- * merged second has to move. Same reason as v21: a database stamped 27 by that branch has
- * none of the constellation DDL, so the number cannot stand for both and re-using it would
- * skip the sweep on every instance that had already migrated.)
+ * (Three branches have now collided on a number here, and each time the one that merged
+ * second had to move: the feedback work called itself 27, then 28, and lands as 29. The
+ * rule is the one v21 records — a database stamped N by the branch that merged first has
+ * none of the second branch's DDL, so re-using N would skip the sweep on every instance
+ * that had already migrated, and the columns would simply never appear.)
  *
- * v29 = continuous provider sync: sync_cursor/next_sync_at/sync_status/sync_started_at/
+ * v30 = continuous provider sync: sync_cursor/next_sync_at/sync_status/sync_started_at/
  * sync_error/sync_failures on both connection tables, plus their partial due indexes.
- * v30 = the connector platform: api_keys, api_idempotency_keys, webhook_endpoints,
+ * v31 = the connector platform: api_keys, api_idempotency_keys, webhook_endpoints,
  * outbound_webhook_deliveries.
  *
- * (Moved from 27/28 and then 28/29 as the two branches above landed first. The rule the
- * comment above states applies here identically.)
+ * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
+ * LinkedIn, constellation and feedback branches each landed first.)
  */
-export const SCHEMA_VERSION = 30;
+export const SCHEMA_VERSION = 31;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1629,6 +1656,15 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "interest_list_signups", "welcome_planet", "text");
   await ensureColumn(client, "interest_list_signups", "follow_up_sent_at", "timestamptz");
 
+  // And the same for the feedback triage columns: a local database built before the
+  // feedback console existed has the table but none of them.
+  await ensureColumn(client, "feedback", "area", "text");
+  await ensureColumn(client, "feedback", "category", "text");
+  await ensureColumn(client, "feedback", "status", "text NOT NULL DEFAULT 'new'");
+  await ensureColumn(client, "feedback", "status_changed_at", "timestamptz");
+  await ensureColumn(client, "feedback", "status_changed_by", "text");
+  await ensureColumn(client, "feedback", "resolution_note", "text");
+
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
   // list above via `applySchema` — not here. `ADMIN_V2_STATEMENTS` is spread into that
@@ -1908,6 +1944,16 @@ const alters = [
   // CREATE TABLE IF NOT EXISTS will never go back and add a column to it.
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS welcome_planet text`,
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS follow_up_sent_at timestamptz`,
+
+  // Feedback triage. The table shipped long before anything wrote to it, so every existing
+  // database has it without these columns — and `CREATE TABLE IF NOT EXISTS` will never go
+  // back and add one. Same reason the two `interest_list_signups` lines above exist.
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS area text`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS category text`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'new'`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS status_changed_at timestamptz`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS status_changed_by text`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS resolution_note text`,
   `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
@@ -1961,7 +2007,7 @@ const alters = [
   `DROP INDEX IF EXISTS embeddings_user_contact_source_uidx`,
   `CREATE UNIQUE INDEX IF NOT EXISTS embeddings_user_contact_source_id_uidx
    ON contact_embeddings(user_id, contact_id, source_type, source_id)`,
-  // Schema v29: continuous provider sync. The same six columns on both connection tables —
+  // Schema v30: continuous provider sync. The same six columns on both connection tables —
   // they are byte-identical by design, and `syncStateColumns()` in schema.ts is the one
   // place their shape is written down.
   //
@@ -2000,7 +2046,7 @@ const alters = [
   // user to reconnect. Filtering it out here would leave it silently doing nothing instead.
   `UPDATE gmail_connections SET next_sync_at = now()
     WHERE status = 'active' AND next_sync_at IS NULL AND sync_status IS NULL`,
-  // Schema v30: the connector platform. The CREATE TABLEs above land on a fresh database;
+  // Schema v31: the connector platform. The CREATE TABLEs above land on a fresh database;
   // these repair an existing one, which is why every index appears in both places.
   `CREATE UNIQUE INDEX IF NOT EXISTS api_keys_hash_uidx ON api_keys(key_hash)`,
   `CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys(user_id)`,

@@ -14,7 +14,7 @@ import { SETTINGS_SECTIONS } from "@/components/settings/sections";
  * surface goes dark, and unhiding restores it as it was.
  */
 
-export type SurfaceKind = "page" | "dashboard" | "settings";
+export type SurfaceKind = "page" | "dashboard" | "settings" | "widget";
 
 export type Surface = {
   /** Stable storage key. Never rename one — the flag rows are keyed on it. */
@@ -179,6 +179,24 @@ const SETTINGS_LOCKED: Record<string, string> = {
   "settings-data": "Nobody may be locked out of exporting or deleting their data.",
 };
 
+/**
+ * Ambient controls that belong to no single page.
+ *
+ * `widget.feedback` is the only member so far. Deliberately NOT `alwaysVisible`, unlike the
+ * billing and export escape hatches: those exist so nobody can be locked out of their own
+ * account, whereas feedback is a channel Orbit offers and may reasonably want to close —
+ * during a migration, or while nobody is reading the console.
+ */
+const WIDGETS: Surface[] = [
+  {
+    key: "widget.feedback",
+    kind: "widget",
+    label: "Feedback",
+    description:
+      "The \u201cSend feedback\u201d button, its form, and the entries it writes to /admin/feedback.",
+  },
+];
+
 const SETTINGS: Surface[] = SETTINGS_SECTIONS.map((section) => {
   const reason = SETTINGS_LOCKED[section.id];
   return {
@@ -191,7 +209,7 @@ const SETTINGS: Surface[] = SETTINGS_SECTIONS.map((section) => {
   };
 });
 
-export const SURFACES: Surface[] = [...PAGES, ...DASHBOARD_CARDS, ...SETTINGS];
+export const SURFACES: Surface[] = [...PAGES, ...DASHBOARD_CARDS, ...WIDGETS, ...SETTINGS];
 
 const BY_KEY = new Map(SURFACES.map((s) => [s.key, s]));
 
@@ -253,3 +271,6 @@ export function surfaceForPathname(pathname: string): Surface | null {
   }
   return best;
 }
+
+/** The key the feedback widget and its three entry points all gate on. */
+export const FEEDBACK_SURFACE_KEY = "widget.feedback";

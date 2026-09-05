@@ -21,7 +21,7 @@ import {
 } from "@/components/settings/sections";
 import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
-import { surfaceKeyForSettingsId } from "@/lib/surfaces";
+import { surfaceKeyForSettingsId, FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 
 /**
  * Anchor for the section rail. Ids and order live in `sections.ts`.
@@ -114,7 +114,7 @@ export default async function SettingsPage() {
         <WebhookSettings />
       </Section>
       <Section id="settings-help" hidden={hidden}>
-        <HelpSettings />
+        <HelpSettings feedbackEnabled={!hidden.has(FEEDBACK_SURFACE_KEY)} />
       </Section>
       <Section id="settings-data" hidden={hidden}>
         <DataSettings />

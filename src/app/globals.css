@@ -694,17 +694,101 @@
   position: absolute;
 }
 
+/* Same exemption, and for the same reason: the discard confirmation is a layer over the
+ * whole window, so it has to escape the `position: relative` that `.liquid-glass > *`
+ * forces on every direct child — an unlayered rule that beats Tailwind's `absolute`
+ * utility, so it cannot be done from the JSX. `z-index: 2` puts it above its siblings,
+ * which that same rule pins at 1, including the close button: while the question is on
+ * screen the X behind it must not be clickable. */
+.liquid-glass.liquid-glass-panel > [data-slot="feedback-discard"] {
+  position: absolute;
+  z-index: 2;
+}
+
 /* The window still appears and disappears, it just stops travelling to do it.
  * `transform: none` also cancels the starting/ending scale, so the whole
  * enter/exit collapses to the opacity fade the primitive already provides. */
 @media (prefers-reduced-motion: reduce) {
   [data-slot="sheet-content"][data-side="floating"] {
-    /* `scale`/`translate`, not `transform`: Tailwind v4 sets the discrete properties, so
-     * cancelling `transform` here would leave the starting-style scale fully applied and
-     * the window would open stuck at its collapsed size. */
+    transition-property: opacity;
+  }
+
+  /* Scoped to the two animating states rather than the element at rest.
+   *
+   * The reset exists to cancel the ENTER and EXIT scale, and `!important` is what makes it
+   * outrank the utilities that set them. Applied unconditionally it also outranks the
+   * feedback panel's inline `style.translate`, which is how that window is dragged — so
+   * with reduced motion on, the pointer moved and the window did not. Naming the states
+   * cancels the animation and leaves a resting window free to be moved.
+   *
+   * `scale`/`translate`, not `transform`: Tailwind v4 sets the discrete properties, so
+   * cancelling `transform` here would leave the starting-style scale fully applied and the
+   * window would open stuck at its collapsed size. */
+  [data-slot="sheet-content"][data-side="floating"][data-starting-style],
+  [data-slot="sheet-content"][data-side="floating"][data-ending-style] {
     scale: none !important;
     translate: none !important;
-    transition-property: opacity;
+  }
+}
+
+/* ── The feedback form's Send button, in flight ──
+ * A light running the button's border while the submission uploads. Not a spinner: a
+ * screenshot submission takes 1.5-4s, and the point is that the wait and the success beat
+ * that follows it (`send-button.tsx`) are one gesture — the signal travels, then it lands.
+ *
+ * An ambient loop, so it takes a bare `linear` rather than `--ease-house`, matching the
+ * `constellation-*` family. `--ease-house` is for discrete arrivals.
+ *
+ * The angle is animated through a registered custom property, which is the only way to
+ * move a `conic-gradient`'s origin — the alternative is rotating an element, and rotating
+ * a non-square box would swing the ring's shape around with it. Where `@property` is not
+ * supported the declaration below still resolves `--send-sweep` to its own `0deg` and the
+ * ring simply sits still, lit but stationary. That degrades; it does not break.
+ *
+ * Two backgrounds against the button's transparent 1px border paint the ring: an opaque
+ * fill clipped to `padding-box`, the gradient clipped to `border-box`. No mask compositing.
+ *
+ * Unlayered, so this beats the `bg-primary` utility it replaces — the same cascade
+ * behaviour `.liquid-glass` relies on, and the reason the fill has to be restated here. */
+@property --send-sweep {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes send-signal-sweep {
+  to {
+    --send-sweep: 360deg;
+  }
+}
+
+.send-signal {
+  --send-sweep: 0deg;
+  border-color: transparent;
+  background:
+    linear-gradient(var(--primary), var(--primary)) padding-box,
+    conic-gradient(
+        from var(--send-sweep),
+        transparent 0deg 250deg,
+        color-mix(in oklab, var(--primary-foreground) 85%, transparent) 330deg,
+        transparent 360deg
+      )
+      border-box;
+  animation: send-signal-sweep 1.1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The global 0.01ms clamp would freeze the sweep at whatever angle it reached — a lit
+   * arc parked on one edge, which reads as a rendering fault rather than as progress. The
+   * button goes back to being a plain button and `send-button.tsx` restores the spinner,
+   * the same way `.plan-badge-glint` leaves rather than resting mid-sweep.
+   *
+   * The fill is restated rather than dropped: the rule above sets `background` as a
+   * SHORTHAND, so `background: none` here would reset the colour too and leave a
+   * transparent button. */
+  .send-signal {
+    background: var(--primary);
+    animation: none;
   }
 }
 

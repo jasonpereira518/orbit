@@ -21,6 +21,7 @@ import {
   setSurfaceHidden,
 } from "../src/lib/surface-visibility";
 import {
+  FEEDBACK_SURFACE_KEY,
   SURFACES,
   getSurface,
   surfaceForPathname,
@@ -52,6 +53,25 @@ function registryChecks() {
 
   const keys = SURFACES.map((s) => s.key);
   check("surface keys are unique", new Set(keys).size === keys.length);
+
+  // The feedback widget belongs to no page, so it is the first `widget`-kind surface. The
+  // key is exported as a constant because three separate entry points gate on it, and a
+  // typo in any of them would silently leave a door open after the widget was hidden.
+  const widgets = surfacesOfKind("widget");
+  check("the feedback widget is registered as a hideable surface", widgets.length === 1);
+  check(
+    "...under the key its entry points gate on",
+    widgets[0]?.key === FEEDBACK_SURFACE_KEY,
+    widgets[0]?.key
+  );
+  check(
+    "...and is genuinely hideable",
+    widgets[0]?.alwaysVisible !== true
+  );
+  check(
+    "a widget surface declares no href",
+    widgets.every((s) => s.href === undefined)
+  );
 
   const pages = surfacesOfKind("page");
   check(
