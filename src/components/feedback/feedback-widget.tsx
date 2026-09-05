@@ -174,7 +174,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     // reader, through sonner's live region.
     if (sentBeatRef.current) {
       sentBeatRef.current = false;
-      toast.success("Thanks — that's on its way.");
+      toast.success("Thanks, it's on its way!");
     }
     for (const shot of shotsRef.current) URL.revokeObjectURL(shot.previewUrl);
     setSentBeat(false);
