@@ -33,9 +33,20 @@ import { cn } from "@/lib/utils";
  * a control that toggles between two identical charts would be worse than no control.
  */
 
-/** Track and knob geometry, shared so the slide distance cannot drift from the track width. */
+/**
+ * Track and knob geometry, together so they cannot drift apart.
+ *
+ * The knob is round and 28px; the track is 72px wide with 2px of padding, so the two icon
+ * slots sit at each END of it rather than filling it — 28px wide each, centred at 16 and 56
+ * from the track's left edge. The knob starts at 2 and slides 40, which puts its own centre on
+ * exactly those two points. Widening the track means widening the slide by the same amount, and
+ * getting that wrong shows up as a knob that stops just short of the icon it is sliding to.
+ */
+const TRACK = "h-8 w-[4.5rem]";
 const KNOB = "h-7 w-7";
-const SLIDE_ON = "translate-x-7";
+const SLIDE_ON = "translate-x-10";
+/** Smaller than the knob they sit in, so the knob reads as a disc under an icon, not a badge. */
+const ICON = "size-3.5";
 
 export function ConstellationScopeToggle({ className }: { className?: string }) {
   const state = useSyncExternalStore(
@@ -70,8 +81,13 @@ export function ConstellationScopeToggle({ className }: { className?: string }) 
               aria-checked={showingAll}
               aria-label={label}
               className={cn(
-                "relative inline-flex h-8 w-[3.75rem] shrink-0 items-center rounded-full border p-0.5",
-                "transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                "relative inline-flex shrink-0 items-center justify-between rounded-full border p-0.5",
+                TRACK,
+                // The focus ring is INSET. A ring drawn outside the pill is an outline around
+                // the control, which is what this is asked not to have; drawn inside it, the
+                // keyboard affordance is still there and the pill's own outer edge — border
+                // included — is exactly the same shape whether it is focused or not.
+                "transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40",
                 "disabled:pointer-events-none disabled:opacity-60",
                 showingAll
                   ? "border-primary/40 bg-primary/15"
@@ -103,7 +119,7 @@ export function ConstellationScopeToggle({ className }: { className?: string }) 
               showingAll ? "text-muted-foreground/60" : "text-foreground"
             )}
           >
-            <Stars className="size-4" />
+            <Stars className={ICON} />
           </span>
           <span
             aria-hidden
@@ -116,9 +132,9 @@ export function ConstellationScopeToggle({ className }: { className?: string }) 
             {/* The spinner replaces the side being travelled TO, so the wait is attached to
                 the thing being waited for rather than floating over the whole control. */}
             {state.loading ? (
-              <Loader2 className="size-4 animate-spin" />
+              <Loader2 className={cn(ICON, "animate-spin")} />
             ) : (
-              <Users className="size-4" />
+              <Users className={ICON} />
             )}
           </span>
         </TooltipTrigger>

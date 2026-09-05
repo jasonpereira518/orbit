@@ -1613,12 +1613,13 @@ export function NetworkGraph({
    * The viewer's own override of the constellation filter, for this session.
    *
    * A chart that removes most of somebody's network without saying so is indistinguishable
-   * from data loss, so the chip that announces it also has to be able to undo it. Deliberately
-   * not persisted: engaged-only is the product's default and every visit starts there.
+   * from data loss, so the control that announces it also has to be able to undo it.
+   * Deliberately not persisted: engaged-only is the product's default and every visit starts
+   * there.
    *
    * The wider set is FETCHED, not merely unhidden — the default payload does not carry the
-   * people it isn't drawing. `allData` caches it for the session, so the first "show all"
-   * costs one round trip and every toggle after that is instant.
+   * people it isn't drawing — and it is DROPPED again the moment the view leaves it, so the
+   * engaged-only default costs engaged-only memory. See `setScope`.
    */
   const [showAllStars, setShowAllStars] = useState(false);
   const [loadingAll, setLoadingAll] = useState(false);
@@ -1626,8 +1627,10 @@ export function NetworkGraph({
   // the current scope through a ref rather than closing over the state.
   const showAllStarsRef = useRef(false);
   /**
-   * One payload per scope, so flipping the view costs at most one fetch each way.
-   * `data` always holds whichever is on screen; these are what it swaps between.
+   * The payload for each scope. `engaged` is kept — it is the default view, and the one a
+   * refresh writes back into. `all` is only ever populated while it is the view on screen;
+   * `setScope` nulls it on the way out so the full network is not something this component
+   * carries around between visits to it.
    */
   const scopeCache = useRef<{
     engaged: GraphPayload | null;
@@ -1776,14 +1779,33 @@ export function NetworkGraph({
    * A failure leaves the toggle where it was rather than showing a half-empty chart.
    */
   const setScope = useCallback((wantAll: boolean) => {
-    const cached = wantAll ? scopeCache.current.all : scopeCache.current.engaged;
+    if (!wantAll) {
+      // Drop the full network on the way out, rather than keeping it for a cheap trip back.
+      //
+      // That trip back was the point of caching it, and it is being given up deliberately: the
+      // whole feature exists so a chart of everyone is not something the app is carrying around,
+      // and a cache that outlives the view is exactly that — the payload is the largest thing
+      // this component ever holds, and holding it means every render, refresh and layout pass
+      // is working beside a copy of a network nobody is looking at. Nulling it here is what
+      // makes the engaged-only default cost engaged-only memory. Going back to everyone is a
+      // fresh fetch, which is the price and a fair one at the rate anybody toggles this.
+      scopeCache.current.all = null;
+      const engaged = scopeCache.current.engaged;
+      if (!engaged) return;
+      showAllStarsRef.current = false;
+      setShowAllStars(false);
+      applyGraphPayload(engaged, setData, setPositionOverrides);
+      return;
+    }
+    // Only non-null when this is already the view — asking for the scope you are on is a no-op
+    // rather than a second fetch.
+    const cached = scopeCache.current.all;
     if (cached) {
-      showAllStarsRef.current = wantAll;
-      setShowAllStars(wantAll);
+      showAllStarsRef.current = true;
+      setShowAllStars(true);
       applyGraphPayload(cached, setData, setPositionOverrides);
       return;
     }
-    if (!wantAll) return;
     setLoadingAll(true);
     getFullGraphData()
       .then((payload) => {
