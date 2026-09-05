@@ -12,8 +12,36 @@ import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createRouteMatcher } from "@clerk/nextjs/server";
 import { PUBLIC_ROUTES } from "../src/lib/public-routes";
+import { config as proxyConfig } from "../src/proxy";
 
 const MARKETING_DIR = "src/app/(marketing)";
+const PUBLIC_DIR = "public";
+
+/** Every distinct file extension actually shipped in `public/`. */
+function publicAssetExtensions(dir = PUBLIC_DIR): Map<string, string> {
+  const found = new Map<string, string>();
+  const walk = (current: string, prefix: string) => {
+    for (const entry of readdirSync(current)) {
+      const full = join(current, entry);
+      if (statSync(full).isDirectory()) {
+        walk(full, `${prefix}/${entry}`);
+        continue;
+      }
+      const ext = entry.includes(".") ? entry.split(".").pop()! : "";
+      // Remember one real example path per extension so a failure names a real file.
+      if (ext && !found.has(ext)) found.set(ext, `${prefix}/${entry}`);
+    }
+  };
+  walk(dir, "");
+  return found;
+}
+
+/**
+ * The matcher entry whose negative lookahead lists the static extensions middleware skips.
+ * Next compiles these entries as regexes, so testing it the same way is faithful.
+ */
+const exclusionEntry = proxyConfig.matcher.find((m) => m.includes("_next"))!;
+const exclusionRe = new RegExp(`^${exclusionEntry}$`);
 
 /** Every route a `page.tsx` under the marketing group serves, as a URL path. */
 function marketingRoutes(dir = MARKETING_DIR, prefix = ""): string[] {
@@ -82,9 +110,32 @@ function main() {
     if (!ok) blocked.push(route);
   }
 
+  // Static assets in public/. `proxy.ts`'s matcher skips middleware for a fixed list of
+  // extensions; anything missing from that list is matched, fails isPublicRoute and gets a
+  // 307 to /sign-in instead of its bytes. Invisible in dev for the same reason as above,
+  // and for a <picture> it is unrecoverable — once a <source> matches by type the browser
+  // commits to that URL and never falls back to the <img>. That is how `avif` blanked every
+  // planet on the marketing hero while the .png and .webp siblings served fine.
+  console.log("");
+  const assets = publicAssetExtensions();
+  const gated: string[] = [];
+  for (const [ext, example] of [...assets].sort()) {
+    const ok = !exclusionRe.test(example);
+    console.log(`  ${ok ? "ok  " : "FAIL"} .${ext} bypasses middleware (${example})`);
+    if (!ok) gated.push(`.${ext} (e.g. ${example})`);
+  }
+
   const guardedOk = leaked.length === 0;
 
-  if (missing.length > 0 || !guardedOk || blocked.length > 0) {
+  if (gated.length > 0) {
+    console.error(
+      `\nFAILED: ${gated.join(", ")} in public/ is matched by the proxy matcher, so it will` +
+        ` 307 to /sign-in in production instead of serving. Add the extension to the` +
+        ` negative lookahead in src/proxy.ts.`
+    );
+  }
+
+  if (missing.length > 0 || !guardedOk || blocked.length > 0 || gated.length > 0) {
     if (missing.length > 0) {
       console.error(
         `\nFAILED: add ${missing.join(", ")} to PUBLIC_ROUTES in src/lib/public-routes.ts`
