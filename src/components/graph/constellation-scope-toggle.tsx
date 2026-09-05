@@ -34,17 +34,25 @@ import { cn } from "@/lib/utils";
  */
 
 /**
- * Track and knob geometry, together so they cannot drift apart.
+ * Track and knob geometry, together because the travel is derived from the rest of it.
  *
- * The knob is round and 28px; the track is 72px wide with 2px of padding, so the two icon
- * slots sit at each END of it rather than filling it — 28px wide each, centred at 16 and 56
- * from the track's left edge. The knob starts at 2 and slides 40, which puts its own centre on
- * exactly those two points. Widening the track means widening the slide by the same amount, and
- * getting that wrong shows up as a knob that stops just short of the icon it is sliding to.
+ * The icon slots are exactly the knob's width and sit at each END of the track, so the knob
+ * lands centred on one or the other — that is what makes this read as a knob sliding TO an
+ * icon rather than past it. Both are laid out in the track's content box, so the travel is
+ * that box's width minus the knob:
+ *
+ *     travel = track - 2*border - 2*padding - knob
+ *            = 64    - 2*1      - 2*2       - 28    = 30
+ *
+ * The border is the term that is easy to forget, and forgetting it is not a rounding error you
+ * can shrug at: `box-sizing: border-box` means the border comes out of the declared width, so
+ * a travel measured off the full 64 overshoots by exactly 2px and the knob stops off-centre on
+ * the icon it is sliding to. That is the bug this comment exists to stop happening again —
+ * change any number here and re-run the sum.
  */
-const TRACK = "h-8 w-[4.5rem]";
+const TRACK = "h-8 w-16";
 const KNOB = "h-7 w-7";
-const SLIDE_ON = "translate-x-10";
+const SLIDE_ON = "translate-x-[30px]";
 /** Smaller than the knob they sit in, so the knob reads as a disc under an icon, not a badge. */
 const ICON = "size-3.5";
 
