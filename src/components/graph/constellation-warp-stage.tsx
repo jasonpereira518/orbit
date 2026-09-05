@@ -44,8 +44,15 @@ import { IGNITION_FRACTIONS, type ChronoFrame } from "@/lib/warp/chrono";
  * It paints NO sky of its own. `paintSpace()`'s gradient and nebulae are a different sky from
  * the graph's `.constellation-milky-way`, so cross-fading one into the other would be a
  * luminance step at the exact moment of the payoff. Instead the canvas is transparent except
- * for the trail layer, and the ground showing through is the graph's own — so the hand-off is
- * invisible by construction rather than by matching two palettes by hand.
+ * for the trail layer, and the ground behind it belongs to the box both this and the chart
+ * live in — so the hand-off is invisible by construction rather than by matching two palettes
+ * by hand.
+ *
+ * And it flies BEHIND the chart, not over it. The stage goes transparent while this is on
+ * screen (see `stage-layers.ts`), so the constellation's own background field and then its
+ * nodes arrive in front of the streaks, and the streaks decelerate to rest at the depth that
+ * field occupies. Covering the chart instead would make the payoff a reveal — the sky lifting
+ * off a picture that was already finished underneath — rather than an arrival.
  */
 
 type Star = {

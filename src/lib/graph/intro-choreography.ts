@@ -48,12 +48,13 @@ export const INTRO_ARRIVING_MS = 560;
 export const INTRO_ARRIVING_SCALE = CHRONO_ARRIVING_MS / INTRO_ARRIVING_MS;
 
 /**
- * How long the intro stays FULLY opaque after the collapse begins.
+ * How long the intro stays at FULL strength after the collapse begins.
  *
  * This is an interlock, not a taste decision. `<ReactFlow>` runs its own
  * `transition: "opacity 220ms ease"` when `viewportReady` flips (see `network-graph.tsx`), and
- * that fade has to finish behind full cover — otherwise the user sees the chart fade in, then
- * the warp fade out, two transitions where there should be one. Must stay >= 220.
+ * that fade has to finish while the sky behind it is still solid — otherwise the nodes arrive
+ * at the same moment the sky they are arriving into starts dissolving, which reads as two
+ * transitions fighting rather than as one arrival. Must stay >= 220.
  */
 export const INTRO_OPAQUE_MS = CHRONO_OPAQUE_MS / INTRO_ARRIVING_SCALE;
 
@@ -273,12 +274,12 @@ export function introThrottle(frame: ChronoFrame): number {
 }
 
 /**
- * How much of the canvas box the intro covers, 0 to 1.
+ * How present the warp is, 0 to 1.
  *
- * Opaque from the moment the shutter opens until `INTRO_OPAQUE_MS` into the collapse, then a
- * cross-fade into the chart underneath — which by then has finished its own 220ms fade behind
- * this cover. `easeFade` for the hand-off because it has zero slope at both ends; a linear
- * ramp shows a seam at the moment it starts and stops.
+ * Full from the moment the shutter opens until `INTRO_OPAQUE_MS` into the collapse, then a
+ * cross-fade out — leaving the chart's own background field, which sits directly in front of
+ * this one and has by then finished arriving. `easeFade` for the hand-off because it has zero
+ * slope at both ends; a linear ramp shows a seam at the moment it starts and stops.
  */
 export function introCoverage(
   phase: ChronoPhase,
@@ -288,8 +289,8 @@ export function introCoverage(
   if (phase === "arriving") {
     return 1 - easeFade(span(sinceArriving, [INTRO_OPAQUE_MS, INTRO_ARRIVING_MS]));
   }
-  // Fading UP over the shutter window rather than appearing solid: the panel underneath is
-  // already on screen, and a hard cut to an opaque canvas over it is a bigger jolt than the
+  // Fading UP over the shutter window rather than appearing solid: the loading panel it comes
+  // in over is already on screen, and a hard cut to a full field is a bigger jolt than the
   // wait itself.
   return span(elapsed, [0, CHRONO_OPAQUE_MS]);
 }

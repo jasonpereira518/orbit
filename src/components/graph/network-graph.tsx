@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
 } from "react";
 import {
@@ -69,9 +70,15 @@ import {
   prunePositionsForRender,
 } from "@/lib/graph-positions";
 import {
+  getIntroRun,
   markGraphChunkLoaded,
   markGraphViewportReady,
+  subscribe as subscribeIntro,
 } from "@/lib/graph/intro-signal";
+import {
+  STAGE_CHART_LAYER,
+  STAGE_GROUND,
+} from "@/lib/graph/stage-layers";
 import {
   publishGraphScope,
   registerGraphScopeController,
@@ -1547,6 +1554,19 @@ function GraphCanvasInner({
   );
 }
 
+/**
+ * Is a warp intro on screen right now?
+ *
+ * Module scope so the snapshot function's identity is stable — `useSyncExternalStore` re-reads
+ * on every render, and a fresh closure each time would subscribe and unsubscribe forever. It
+ * returns a primitive, so an intro state change that does not cross this boundary (the collapse
+ * beginning, say) re-renders nothing.
+ */
+function introInFlight() {
+  const status = getIntroRun().status;
+  return status === "running" || status === "arriving";
+}
+
 const GRAPH_REFETCH_MIN_MS = 60_000;
 
 /**
@@ -1637,6 +1657,21 @@ export function NetworkGraph({
   });
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [cssFullscreen, setCssFullscreen] = useState(false);
+  /**
+   * Whether the warp intro is on screen behind this chart.
+   *
+   * A boolean off the same module-scope bus the intro runs on, so this re-renders exactly
+   * twice a visit — once when a run starts and once when it ends — and never at all on the
+   * fast path, where no run is ever started. `useSyncExternalStore` rather than an effect
+   * because the answer is already known at first render: an intro begun before the chunk
+   * landed is in flight by the time this mounts, and a frame of opaque ground over it would
+   * be the flash this whole arrangement exists to avoid.
+   */
+  const introBehind = useSyncExternalStore(
+    subscribeIntro,
+    introInFlight,
+    introInFlight
+  );
   // Set from an effect rather than during render: `Date.now()` in the render body is an
   // impurity the compiler-era lint (rightly) flags, and "when did we last fetch" is a fact
   // about the commit, not the render.
@@ -1652,6 +1687,7 @@ export function NetworkGraph({
   const refreshJobIdRef = useRef<string | null>(null);
 
   const fullscreenActive = isFullscreen || cssFullscreen;
+  const showIntroBehind = introBehind && !compact && !fullscreenActive;
 
   // ⌘/Ctrl+F → constellation search (instead of browser find)
   useEffect(() => {
@@ -2135,7 +2171,13 @@ export function NetworkGraph({
       <div
         ref={stageRef}
         className={cn(
-          "relative overflow-hidden border border-white/10 bg-[#03050a] shadow-[inset_0_0_120px_rgba(0,0,0,0.65)]",
+          "relative overflow-hidden border border-white/10 shadow-[inset_0_0_120px_rgba(0,0,0,0.65)]",
+          // Transparent only while the intro is behind it, and never in the dashboard's
+          // preview or in fullscreen — both are cases where there is nothing behind to show
+          // and a see-through stage would just be the page bleeding into the sky.
+          // `STAGE_CHART_LAYER` also gives the stage a stacking context, so its own toolbars
+          // ride above the intro with it instead of competing against it one by one.
+          showIntroBehind ? `bg-transparent ${STAGE_CHART_LAYER}` : STAGE_GROUND,
           compact
             ? "h-[300px] rounded-2xl"
             : // 19.5rem, not 15rem: below md the app's floating bottom nav is a fixed pill

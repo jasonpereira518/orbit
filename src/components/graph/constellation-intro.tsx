@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import { CONSTELLATION_STAGE_HEIGHT } from "@/components/graph/constellation-loading";
 import { predictSlowIntro } from "@/lib/graph/intro-choreography";
+import { STAGE_INTRO_LAYER } from "@/lib/graph/stage-layers";
 import {
   beginIntro,
   getIntroRun,
@@ -103,10 +104,13 @@ export function ConstellationIntro() {
 
   return (
     <div
-      // Absolutely positioned over the canvas box, which is why every stand-in and the real
+      // Absolutely positioned within the canvas box, which is why every stand-in and the real
       // stage had to agree on one height — see CONSTELLATION_STAGE_HEIGHT.
       className={cn(
-        "pointer-events-none absolute inset-x-0 top-0 z-30 overflow-hidden rounded-2xl",
+        "pointer-events-none absolute inset-x-0 top-0 overflow-hidden rounded-2xl",
+        // Above the loading panel, below the chart — so the stars fly BEHIND the constellation
+        // rather than over it, and settle at the depth its own background field occupies.
+        STAGE_INTRO_LAYER,
         CONSTELLATION_STAGE_HEIGHT
       )}
       // Contributes nothing to the accessibility tree: the `role="status"` live region in the

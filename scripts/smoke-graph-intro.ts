@@ -36,6 +36,7 @@ import {
   registerIntroHost,
   suppressIntro,
 } from "../src/lib/graph/intro-signal";
+import { STAGE_CHART_Z, STAGE_INTRO_Z } from "../src/lib/graph/stage-layers";
 import {
   CONSTELLATION_STAR_PX,
   WARP_STAR_MAX_R,
@@ -108,15 +109,15 @@ check(
 // ---------------------------------------------------------------------------------------
 
 console.log("\nHand-off interlock…");
-// If this ever fails, `network-graph.tsx` fades <ReactFlow> in over 220ms while the intro is
-// already going transparent — the user sees two transitions instead of one.
+// If this ever fails, `network-graph.tsx` fades <ReactFlow> in over 220ms while the sky behind
+// it is already dissolving — the user sees two transitions instead of one arrival.
 check(
-  "the intro holds full cover for longer than ReactFlow's 220ms opacity fade",
+  "the intro holds full strength for longer than ReactFlow's 220ms opacity fade",
   INTRO_OPAQUE_MS >= 220,
   `INTRO_OPAQUE_MS=${INTRO_OPAQUE_MS.toFixed(0)} vs the "opacity 220ms ease" literal in network-graph.tsx`
 );
 check(
-  "cover is total while the collapse runs",
+  "the field is at full strength while the collapse runs",
   introCoverage("arriving", 5000, 0) === 1 &&
     introCoverage("arriving", 5000, INTRO_OPAQUE_MS) === 1
 );
@@ -234,6 +235,12 @@ check(
 // ---------------------------------------------------------------------------------------
 // The two fields drawn over the same box
 // ---------------------------------------------------------------------------------------
+
+check(
+  "the chart sits above the intro, so the stars fly behind the nodes",
+  STAGE_CHART_Z > STAGE_INTRO_Z,
+  `chart z-${STAGE_CHART_Z} vs intro z-${STAGE_INTRO_Z}; inverted, the warp covers the constellation instead of arriving into it`
+);
 
 console.log("\nThe warp's stars against the graph's own…");
 // Radii here, diameters there — the halving is where this last drifted apart.

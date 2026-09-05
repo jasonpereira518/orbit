@@ -7,6 +7,7 @@ import {
   CONSTELLATION_STAGE_HEIGHT,
 } from "@/components/graph/constellation-loading";
 import { NetworkGraphLazy } from "@/components/graph/network-graph-lazy";
+import { STAGE_GROUND } from "@/lib/graph/stage-layers";
 
 /**
  * The heading paints from the layout immediately; the full-network scan streams in behind
@@ -51,7 +52,15 @@ export default function GraphPage() {
         render underneath it — a real heading and a grey fake one on screen together.
         `loading.tsx` still uses the full skeleton, where nothing has painted yet.
       */}
-      <div className="relative">
+      {/*
+        The wrapper paints the ground, not the chart's own stage.
+        The intro sits BETWEEN the two states of this box — over the loading panel it covers,
+        under the chart it hands over to — so the chart has to be transparent for it to show
+        through from behind. Something has to hold the near-black, and the box that outlives
+        both of them is the honest place for it. Same colour either way, so the handover when
+        the stage takes its background back is not a step.
+      */}
+      <div className={`relative rounded-2xl ${STAGE_GROUND}`}>
         <ConstellationIntro />
         <Suspense
           fallback={<ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />}
