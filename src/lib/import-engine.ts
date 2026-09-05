@@ -649,15 +649,23 @@ export async function runImportJob(importId: string): Promise<void> {
         // event whose *time* changed used to pick up the new date and now didn't. Fixed by
         // updating on conflict instead of re-documenting the gap.
         //
-        // Verified safe for the other `interactions()` producer, LinkedIn messages: its
-        // `externalId` (`li-msg:conv:date:hash(content)` — see `linkedInMessageExternalId` in
+        // For the other `interactions()` producer, LinkedIn messages: its `externalId`
+        // (`li-msg:conv:date:hash(content)` — see `linkedInMessageExternalId` in
         // `src/actions/imports.ts`) is itself a function of the date and content, so a message
         // whose date or content changed produces a *different* id and never conflicts at all
         // — it's a plain insert. The only way to hit the conflict branch for messages is a
-        // byte-identical re-import, where `DO UPDATE` writes back the exact values already
-        // there — a genuine no-op (`interactions` has no `updated_at` column for this to even
-        // touch). The messages re-import scenario in `smoke-import-engine.ts` (interaction
-        // count unchanged across two runs) still passes with this change, confirming it.
+        // byte-identical re-import.
+        //
+        // That used to make the branch a genuine no-op, because every column in the `set` was
+        // already derived from data the id hashes. `direction` broke that, deliberately: it is
+        // NOT hashed into the id, so a byte-identical re-import now writes a value that was
+        // previously NULL. That is the entire backfill mechanism for message direction, which
+        // is otherwise unrecoverable — the sender was never persisted, so re-uploading the
+        // export is the only way to learn it. Drop `direction` from this `set` and the
+        // re-upload silently accomplishes nothing.
+        //
+        // The re-import scenario in `smoke-import-engine.ts` (interaction count unchanged
+        // across two runs) still holds — this updates rows, it does not add them.
         //
         // `targetWhere` mirrors the partial index's own `WHERE external_id IS NOT NULL` —
         // Postgres requires the ON CONFLICT clause to match a partial unique index's
@@ -712,6 +720,10 @@ export async function runImportJob(importId: string): Promise<void> {
                   aiSummary: sql`excluded.ai_summary`,
                   topics: sql`excluded.topics`,
                   source: sql`excluded.source`,
+                  // `coalesce`, not a bare overwrite: a resumed pre-change job row carries no
+                  // direction, and letting its NULL clobber a direction an earlier re-upload
+                  // established would undo the backfill it just did.
+                  direction: sql`coalesce(excluded.direction, ${interactions.direction})`,
                 },
               })
               .returning();

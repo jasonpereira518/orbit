@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   priority_level integer NOT NULL DEFAULT 0,
   source text,
   industry text,
+  constellation_pin text,
   met_context text,
   date_met timestamptz,
   how_met text,
@@ -165,6 +166,7 @@ CREATE TABLE IF NOT EXISTS interactions (
   topics jsonb DEFAULT '[]',
   action_items jsonb DEFAULT '[]',
   sentiment text,
+  direction text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS reminder_lists (
@@ -386,6 +388,7 @@ CREATE INDEX IF NOT EXISTS interactions_contact_idx ON interactions(contact_id);
 CREATE INDEX IF NOT EXISTS interactions_user_idx ON interactions(user_id);
 CREATE INDEX IF NOT EXISTS interactions_user_type_idx ON interactions(user_id, interaction_type);
 CREATE INDEX IF NOT EXISTS interactions_user_contact_type_date_idx ON interactions(user_id, contact_id, interaction_type, interaction_date);
+CREATE INDEX IF NOT EXISTS interactions_user_contact_direction_idx ON interactions(user_id, contact_id, direction) WHERE interaction_type = 'linkedin_message';
 CREATE UNIQUE INDEX IF NOT EXISTS interactions_user_external_uidx ON interactions(user_id, external_id) WHERE external_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS reminders_user_status_idx ON reminders(user_id, status);
 CREATE INDEX IF NOT EXISTS reminders_due_idx ON reminders(user_id, due_date);
@@ -774,6 +777,15 @@ CREATE TABLE IF NOT EXISTS app_surface_flags (
   hidden_at timestamptz NOT NULL DEFAULT now(),
   hidden_by text NOT NULL
 );
+CREATE TABLE IF NOT EXISTS constellation_settings (
+  id integer PRIMARY KEY DEFAULT 1,
+  filter_enabled boolean NOT NULL DEFAULT true,
+  min_inbound_messages integer NOT NULL DEFAULT 3,
+  min_outbound_messages integer NOT NULL DEFAULT 3,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  updated_by text,
+  CONSTRAINT constellation_settings_single_row CHECK (id = 1)
+);
 CREATE TABLE IF NOT EXISTS startup_expenses (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   category text NOT NULL,
@@ -863,13 +875,19 @@ CREATE TABLE IF NOT EXISTS non_dilutive_funding (
  * v25 = imports.stall_resumes (the process-stalled cron's give-up counter).
  * v26 = rate_limit_buckets (DB-backed rate limiting for chat, capture, and avatar resolve).
  * v27 = contact_profiles + contact_experiences (LinkedIn experience extraction).
- * v28 = feedback triage columns (area, category, status, status_changed_at/by,
- * resolution_note) plus the feedback_screenshots child table. This branch numbered them 27
- * too, in parallel; main's 27 landed first, so a database stamped 27 has main's tables and
- * none of these, and the feedback pass has to sit behind a number of its own. Same reason
- * v21 exists.
+ * v28 = the constellation filter: constellation_settings, contacts.constellation_pin,
+ * interactions.direction, and the partial index that keeps the eligibility aggregate an
+ * index-only scan once `direction` joins its predicate.
+ * v29 = feedback triage columns (area, category, status, status_changed_at/by,
+ * resolution_note) plus the feedback_screenshots child table.
+ *
+ * (Three branches have now collided on a number here, and each time the one that merged
+ * second had to move: the feedback work called itself 27, then 28, and lands as 29. The
+ * rule is the one v21 records — a database stamped N by the branch that merged first has
+ * none of the second branch's DDL, so re-using N would skip the sweep on every instance
+ * that had already migrated, and the columns would simply never appear.)
  */
-export const SCHEMA_VERSION = 28;
+export const SCHEMA_VERSION = 29;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1261,6 +1279,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "preferred_name", "text");
   await ensureColumn(client, "contacts", "website", "text");
   await ensureColumn(client, "interactions", "external_id", "text");
+  await ensureColumn(client, "interactions", "direction", "text");
+  await ensureColumn(client, "contacts", "constellation_pin", "text");
   await ensureColumn(
     client,
     "interactions",
@@ -1747,6 +1767,8 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS company_id uuid`,
   `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS external_id text`,
   `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS same_day_order integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS direction text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS constellation_pin text`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS error_message text`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS stats jsonb DEFAULT '{}'`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,

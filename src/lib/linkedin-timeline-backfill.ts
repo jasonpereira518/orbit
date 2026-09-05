@@ -49,16 +49,17 @@
  * never claimed. They keep the events they have; they do not get a second, differently-keyed
  * set.
  *
- * ## Known fidelity gap vs. the pre-engine importer
+ * ## Sender labelling
  *
  * `extractLinkedInTimelineEvents` accepts a `from` label per message and puts it in the
- * transcript it shows the model. Nothing stores it any more: Task 14's
- * `LinkedInMessageThreadRowPayload` carries only `{ id, body, sentAt }`, so the sender is
- * dropped at parse time, before any row is written. This runner therefore passes
- * `from: null` and the model sees an undirected thread — it can still tell that a meeting
- * was proposed, but not by whom. Closing that gap means widening the payload, the parse,
- * and the adapter's `aiSummary`, which is a change to the import path rather than to this
- * restoration, and is deliberately not done here.
+ * transcript it shows the model. That label was dead for a while — the payload carried only
+ * `{ id, body, sentAt }`, so the sender was dropped at parse time and this runner passed
+ * `from: null`, leaving the model to read an undirected thread. It could tell a meeting was
+ * proposed but not by whom.
+ *
+ * `interactions.direction` closed that. Rows imported before it exists still carry NULL and
+ * still read as `"?"`, so a contact's transcript is labelled only as well as its most recent
+ * import — a re-upload of the LinkedIn export is what upgrades it.
  */
 import { and, asc, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
@@ -244,8 +245,9 @@ export async function runLinkedInTimelineBackfill(
         // pre-engine importer already processed.
         contactId,
         msgs.map((m) => ({
-          // See the header's fidelity note: the sender is no longer stored anywhere.
-          from: null,
+          // Null for rows imported before `direction` existed; the extractor renders those
+          // as "?" exactly as it did when nothing stored the sender at all.
+          from: m.direction === "out" ? "you" : m.direction === "in" ? "them" : null,
           content: m.rawNotes || "",
           parsedDate: m.interactionDate ? new Date(m.interactionDate) : null,
         }))

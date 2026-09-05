@@ -38,6 +38,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-stream": "pure",
   "smoke-closeness": "pure",
   "smoke-closeness-materialized": "pure",
+  "smoke-constellation-eligibility": "pure",
   "smoke-contact-profile-format": "pure",
   "smoke-dashboard-search": "pure",
   "smoke-date-commitments": "pure",
@@ -47,7 +48,10 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-fast-model": "pure",
   "smoke-feedback-image": "pure",
   "smoke-gmail-send-mime": "pure",
+  "smoke-graph-intro": "pure",
   "smoke-graph-layout": "pure",
+  "smoke-graph-positions": "pure",
+  "smoke-graph-scope": "pure",
   "smoke-ics-feed": "pure",
   "smoke-import-progress-card": "pure",
   "smoke-lifetime-pricing": "pure",
@@ -62,6 +66,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-scale-schema": "pure", // own in-memory PGlite
   "smoke-schema-ddl": "pure",
   "smoke-security-headers": "pure",
+  "smoke-timeline-vocabulary": "pure",
   "smoke-warp-chrono": "pure",
   "smoke-warp-journeys": "pure",
   // pglite ----------------------------------------------------------------------------
@@ -79,6 +84,10 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-broadcasts": "pglite",
   "smoke-chat-context": "pglite",
   "smoke-contact-brief": "pglite",
+  "smoke-constellation-admin": "pglite",
+  "smoke-constellation-payload-leak": "pglite",
+  "smoke-constellation-pin": "pglite",
+  "smoke-constellation-signals": "pglite",
   "smoke-contact-profile": "pglite",
   "smoke-contacts-page": "pglite", // own in-memory PGlite, but imports the DDL from ../src/db
   "smoke-csp-report": "pglite",
@@ -94,6 +103,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-instrumentation-streams": "pglite",
   "smoke-interest-list-admin": "pglite",
   "smoke-internal-auth": "pglite", // imports route handlers that reach @/db
+  "smoke-linkedin-direction": "pglite",
   "smoke-linkedin-timeline-backfill": "pglite",
   "smoke-interaction-delete": "pglite",
   "smoke-note-batch": "pglite",

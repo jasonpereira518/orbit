@@ -1,6 +1,21 @@
 import { cn } from "@/lib/utils";
 
 /**
+ * The canvas box's height, shared by every stand-in and by the real stage.
+ *
+ * These had drifted: the loaders used `100dvh-15rem` while the stage itself uses
+ * `100dvh-19.5rem`, so below `md` the box grew 4.5rem taller the moment the graph appeared —
+ * a visible jump at the end of every load. 19.5rem is the correct one: the app's floating
+ * bottom nav is a fixed ~5rem pill below `md`, and the shorter box ran the canvas and its
+ * Key / fullscreen / home buttons underneath it, where they could not be tapped.
+ *
+ * It also has to be one value because the warp intro is `absolute inset-0` inside this box —
+ * if the children disagreed about height, the animation would resize mid-run.
+ */
+export const CONSTELLATION_STAGE_HEIGHT =
+  "h-[calc(100dvh-19.5rem)] md:h-[calc(100dvh-10.5rem)]";
+
+/**
  * Stand-in for the star chart while its (large) chunk and data load.
  *
  * A bare `<Skeleton>` was doing this job, but on the canvas's near-black ground

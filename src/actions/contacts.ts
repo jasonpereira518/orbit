@@ -604,6 +604,28 @@ export async function getContact(id: string) {
     with: {
       contactTags: { with: { tag: true } },
       interactions: {
+        // The timeline renders a two-line clamp, so shipping whole pasted notes to a client
+        // component on every profile view bought nothing — a contact carrying an imported
+        // LinkedIn thread paid for thousands of characters to show two lines of them.
+        // `notesPreview` is truncated in SQL and is only ever used for that preview and for
+        // "does this have notes at all"; the detail sheet still loads the full row lazily
+        // through `getInteractionDetail`.
+        //
+        // Columns are restricted, not rows: `contacts/[id]/page.tsx` derives
+        // `hasLoggedInteraction` from `interactions.length > 0`, which a LIMIT would survive
+        // but a WHERE would not.
+        columns: {
+          id: true,
+          interactionType: true,
+          interactionDate: true,
+          sameDayOrder: true,
+          aiSummary: true,
+        },
+        extras: {
+          notesPreview: sql<
+            string | null
+          >`left(${interactions.rawNotes}, 600)`.as("notes_preview"),
+        },
         orderBy: [
           desc(interactions.interactionDate),
           asc(interactions.sameDayOrder),
@@ -755,6 +777,41 @@ export async function deleteContact(id: string) {
   revalidatePath("/");
   revalidatePath("/contacts");
   revalidatePath("/graph");
+}
+
+/**
+ * Force a contact onto the constellation, off it, or back to the automatic rule.
+ *
+ * A direct update rather than `updateContactForUser`, which is the shared write path for
+ * everything else on a contact. That path sets `embeddingStaleAt` unconditionally and calls
+ * `scoreAfterWrite`, both correct for content changes and both wrong here: a pin is not part
+ * of the embedded text (see `buildContactEmbeddingContent`), so routing through it would
+ * enqueue a paid re-embed and dirty the closeness cohort for a value neither one reads.
+ *
+ * `updatedAt` is deliberately left alone for the same reason. The dashboard's contact scan
+ * orders by `desc(updated_at)`, so bumping it would shove whoever you pinned to the top of
+ * "recently updated" — a visible, confusing consequence of an invisible setting.
+ *
+ * Ownership lives in the WHERE clause, the house pattern: a row belonging to someone else
+ * simply matches nothing.
+ */
+export async function setConstellationPin(
+  contactId: string,
+  pin: "in" | "out" | null
+) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  await db
+    .update(contacts)
+    .set({ constellationPin: pin })
+    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+
+  revalidatePath("/");
+  revalidatePath("/contacts");
+  revalidatePath(`/contacts/${contactId}`);
+  revalidatePath("/graph");
+  revalidatePath("/dashboard");
+  return { pin };
 }
 
 export async function logInteraction(input: LogInteractionInput) {

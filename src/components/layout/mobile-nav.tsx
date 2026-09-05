@@ -429,7 +429,7 @@ export function MobileNav({
                 <p className="text-xs text-muted-foreground">Sign in required</p>
               )}
             </div>
-            <ThemeToggle className="h-9 w-9 text-muted-foreground hover:text-foreground" />
+            <ThemeToggle />
           </div>
         </SheetContent>
       </Sheet>
