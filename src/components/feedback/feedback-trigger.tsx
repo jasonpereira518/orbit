@@ -7,7 +7,7 @@ import {
   requestFeedbackOpen,
   useFeedbackPanelState,
 } from "@/lib/feedback-events";
-import { originFromTrigger } from "@/lib/floating-panel";
+import { anchorBelowTrigger } from "@/lib/floating-panel";
 import { cn } from "@/lib/utils";
 
 /**
@@ -34,8 +34,6 @@ export function FeedbackTrigger({
   // composited output, so a faded button would still be in the picture.
   if (state === "capturing") return null;
 
-  const open = state === "open";
-
   const button = (
     <Button
       type="button"
@@ -43,24 +41,18 @@ export function FeedbackTrigger({
       size="icon"
       aria-label="Send feedback"
       aria-haspopup="dialog"
-      aria-expanded={open}
+      aria-expanded={state === "open"}
+      // Stays visible while the panel is open. The bell ducks out because the notifications
+      // window lands ON TOP of it and is pretending to be it; this window opens BELOW the
+      // rail instead, so there is nothing to hide behind and fading would just read as the
+      // button disappearing.
       className={cn(
-        "size-10 rounded-full border-border/70 bg-background/90 shadow-md backdrop-blur-md transition-opacity hover:bg-background",
-        // The open window covers this exact spot, and the glass is see-through enough that
-        // the button would read as a smudge underneath it. Hiding it also sells the
-        // illusion that the button became the panel. Opacity rather than `hidden`, so it
-        // stays focusable for the focus Base UI returns here on close. Straight from
-        // `notifications-panel.tsx` — the two windows open the same way.
-        open
-          ? "pointer-events-none opacity-0 duration-fast"
-          : // Held back until the closing window has almost finished collapsing onto this
-            // spot, so the two are never on screen together.
-            "opacity-100 delay-100 duration-base",
+        "size-10 rounded-full border-border/70 bg-background/90 shadow-md backdrop-blur-md hover:bg-background",
         className
       )}
       // `e.currentTarget` rather than a ref: every copy anchors itself, so nothing has to
       // plumb a ref across the mount boundary to the widget.
-      onClick={(e) => requestFeedbackOpen(originFromTrigger(e.currentTarget))}
+      onClick={(e) => requestFeedbackOpen(anchorBelowTrigger(e.currentTarget))}
     >
       <MessageSquarePlus className="h-4 w-4" />
     </Button>

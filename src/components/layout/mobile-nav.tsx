@@ -25,8 +25,7 @@ import { clerkAppearance } from "@/lib/clerk-appearance";
 import { FEEDBACK_SURFACE_KEY, isHrefHidden } from "@/lib/surfaces";
 import { SPRING_PILL, SPRING_TAP } from "@/lib/motion";
 import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
-import { requestFeedbackOpen } from "@/lib/feedback-events";
-import { PANEL_ORIGIN_FALLBACK } from "@/lib/floating-panel";
+import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen } from "@/lib/feedback-events";
 
 // A finger-drag across the row must move at least this far before it counts
 // as a slide rather than a tap — filters out ordinary tap jitter.
@@ -385,7 +384,7 @@ export function MobileNav({
               onClick={() => {
                 setMoreOpen(false);
                 // No origin worth growing from: this sheet is itself closing.
-                requestFeedbackOpen(PANEL_ORIGIN_FALLBACK);
+                requestFeedbackOpen(FEEDBACK_ANCHOR_FALLBACK);
               }}
               className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
             >

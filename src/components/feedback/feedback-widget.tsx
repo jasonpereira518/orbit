@@ -5,11 +5,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { cn } from "@/lib/utils";
 import {
+  FEEDBACK_ANCHOR_FALLBACK,
   setFeedbackPanelState,
   subscribeFeedbackOpen,
   takeFeedbackOpenRequest,
 } from "@/lib/feedback-events";
-import { PANEL_ORIGIN_FALLBACK } from "@/lib/floating-panel";
+import type { PanelAnchor } from "@/lib/floating-panel";
 import { FeedbackTrigger } from "@/components/feedback/feedback-trigger";
 import { MAX_SCREENSHOTS, MAX_SCREENSHOT_BYTES, MAX_SUBMISSION_BYTES } from "@/lib/feedback-report";
 import { toast } from "@/lib/toast";
@@ -85,7 +86,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
    * release now, so the annotator is a second look rather than a gate on the way in.
    */
   const [editingShotId, setEditingShotId] = useState<string | null>(null);
-  const [origin, setOrigin] = useState(PANEL_ORIGIN_FALLBACK);
+  const [anchor, setAnchor] = useState<PanelAnchor>(FEEDBACK_ANCHOR_FALLBACK);
   /**
    * How far the window has been dragged from its anchor.
    *
@@ -110,7 +111,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     const consume = () => {
       const requested = takeFeedbackOpenRequest();
       if (requested === null) return;
-      setOrigin(requested);
+      setAnchor(requested);
       // From `closing` too: catching the window on its way out should bring it back rather
       // than doing nothing.
       setPhase((p) => (p === "closed" || p === "closing" ? "composing" : p));
@@ -345,7 +346,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
       {(phase === "composing" || phase === "closing") && (
         <FeedbackPanel
           open={phase === "composing"}
-          origin={origin}
+          anchor={anchor}
           offset={offset}
           onOffsetChange={setOffset}
           message={message}

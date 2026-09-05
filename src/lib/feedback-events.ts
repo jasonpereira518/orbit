@@ -2,6 +2,8 @@
 
 import { useSyncExternalStore } from "react";
 
+import { PANEL_INSET_PX, PANEL_ORIGIN_FALLBACK, type PanelAnchor } from "@/lib/floating-panel";
+
 /**
  * The one mounted feedback widget, and everyone who talks to it.
  *
@@ -31,7 +33,7 @@ import { useSyncExternalStore } from "react";
 export type FeedbackPanelState = "closed" | "open" | "capturing";
 
 let panelState: FeedbackPanelState = "closed";
-let pendingOrigin: string | null = null;
+let pendingAnchor: PanelAnchor | null = null;
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -45,15 +47,20 @@ function subscribe(callback: () => void) {
   };
 }
 
+/** A door with no trigger on screen: the "More" sheet and Settings → Help. */
+export const FEEDBACK_ANCHOR_FALLBACK: PanelAnchor = {
+  origin: PANEL_ORIGIN_FALLBACK,
+  top: PANEL_INSET_PX,
+};
+
 /**
- * Ask the widget to open, telling it what to grow out of.
+ * Ask the widget to open, telling it where to sit and what to grow out of.
  *
- * `origin` is a CSS `transform-origin` in the panel's own coordinate space — see
- * `originFromTrigger` in `src/lib/floating-panel.ts`. Doors with no trigger on screen pass
- * `PANEL_ORIGIN_FALLBACK`.
+ * See `anchorBelowTrigger` in `src/lib/floating-panel.ts`. Doors with no trigger on screen
+ * pass `FEEDBACK_ANCHOR_FALLBACK`.
  */
-export function requestFeedbackOpen(origin: string) {
-  pendingOrigin = origin;
+export function requestFeedbackOpen(anchor: PanelAnchor) {
+  pendingAnchor = anchor;
   emit();
 }
 
@@ -61,9 +68,9 @@ export function requestFeedbackOpen(origin: string) {
  * Widget only. Reads and clears in one go, so a request is acted on exactly once however
  * many times the subscriber re-runs.
  */
-export function takeFeedbackOpenRequest(): string | null {
-  const next = pendingOrigin;
-  pendingOrigin = null;
+export function takeFeedbackOpenRequest(): PanelAnchor | null {
+  const next = pendingAnchor;
+  pendingAnchor = null;
   return next;
 }
 

@@ -241,6 +241,14 @@ function main() {
     panelOriginFor({ left: 300, top: 20, width: 40, height: 40 }, 640)
   );
 
+  // An anchored window passes its own top, so a trigger ABOVE it yields a negative y — it
+  // scales out of a point above itself.
+  check(
+    "a window anchored below its trigger scales from a point above itself",
+    panelOriginFor(rail, 1280, 128).endsWith("-88px"),
+    panelOriginFor(rail, 1280, 128)
+  );
+
   check(
     "a trigger above the panel's inset yields a negative y",
     // It scales out of a point above itself, which is what the notifications bell does:
@@ -253,8 +261,9 @@ function main() {
   // Dragging the panel around. The header is the only handle, so the clamp is what stops a
   // window being dragged somewhere it can never be dragged back from.
   const vp = { width: 1280, height: 860 };
-  // The floating side's own geometry: inset 16px on every edge, capped at 24rem wide.
-  const box = { left: 880, top: 16, width: 384, height: 828 };
+  // The feedback window opens below the trigger rail, so its top is the rail's bottom plus
+  // a gap rather than the floating side's own inset.
+  const box = { left: 880, top: 128, width: 384, height: 716 };
   const at = (dx: number, dy: number) =>
     clampPanelOffset({ start: box, startOffset: { x: 0, y: 0 }, delta: { x: dx, y: dy }, viewport: vp });
 
