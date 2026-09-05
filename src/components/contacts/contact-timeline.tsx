@@ -616,7 +616,7 @@ export function ContactTimeline({
                           <p className="-mt-3 mb-1 flex items-center gap-2 text-[11px] text-muted-foreground">
                             <span
                               aria-hidden
-                              className="ml-[12px] flex h-4 w-[7px] flex-col items-center justify-between"
+                              className="ml-[20px] flex h-4 w-[7px] flex-col items-center justify-between"
                             >
                               <span className="size-[3px] rounded-full bg-border" />
                               <span className="size-[3px] rounded-full bg-border" />
@@ -633,7 +633,11 @@ export function ContactTimeline({
                               foot of each month so the line reads as a thread rather than a border. */}
                           <span
                             aria-hidden
-                            className="absolute left-[15px] top-2 bottom-2 w-px bg-gradient-to-b from-primary/30 via-primary/20 to-transparent"
+                            // 23px = the row's 8px left padding + half of the 32px node.
+                            // This, the gap marker's `ml` below, and the row's `pl` are one
+                            // measurement in three places: move any of them and the line
+                            // stops running through the middle of the nodes.
+                            className="absolute left-[23px] top-2 bottom-2 w-px bg-gradient-to-b from-primary/30 via-primary/20 to-transparent"
                           />
                           {group.items.map((i) => {
                             const Icon = interactionTypeIcon(i.interactionType);
@@ -675,7 +679,10 @@ export function ContactTimeline({
                                   onClick={() => setSelectedId(i.id)}
                                   aria-expanded={selected}
                                   className={cn(
-                                    "group relative flex w-full items-start gap-3 rounded-xl py-2 pr-2 text-left",
+                                    // `pl-2` is what keeps the hover background off the
+                                    // node: with no left padding its rounded corner started
+                                    // exactly on the icon and cut across it.
+                                    "group relative flex w-full items-start gap-3 rounded-xl p-2 text-left",
                                     "transition-colors duration-(--transition-duration-fast) ease-(--ease-house)",
                                     "focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
                                     selected ? "bg-muted/50" : "hover:bg-muted/40"
