@@ -374,9 +374,18 @@ export function FeedbackPanel({
             <SelectTrigger aria-labelledby="feedback-area-label" className="h-9 w-full">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent>
+            {/* `alignItemWithTrigger={false}` is the load-bearing half. The default
+                positions the popup so the selected row sits over the trigger, which both
+                covers the field you just pressed and — via
+                `data-[align-trigger=true]:animate-none` in `ui/select.tsx` — turns the
+                open and close animation off entirely. Opting out drops the list below the
+                trigger and gives back the fade-and-zoom every other popup in the app has.
+
+                `p-1` insets the rows from the popup's own rounded corners; without it the
+                first and last row sit flush against the edge. */}
+            <SelectContent alignItemWithTrigger={false} className="p-1">
               {AREA_OPTIONS.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
+                <SelectItem key={option.value} value={option.value} className="py-1.5 pl-2">
                   {option.label}
                 </SelectItem>
               ))}
@@ -401,7 +410,10 @@ export function FeedbackPanel({
           )}
         </div>
 
-        <div className="grid gap-2">
+        {/* A little clear of the message box above it. Both are large bordered surfaces, so
+            the panel's own 20px rhythm reads tighter between them than it does under a
+            text label. */}
+        <div className="mt-3 grid gap-2">
           {/* The primary way to attach one: full width, its own label, and an explanation of
               what the gesture is. It was a 72px dashed tile next to the thumbnails and read
               as an afterthought — which is backwards, since a screenshot is the most useful
@@ -482,7 +494,7 @@ export function FeedbackPanel({
           )}
         </div>
 
-        <div className="mt-auto flex justify-end gap-2 pt-2">
+        <div className="mt-auto flex justify-end gap-2 pt-5">
           <Button
             type="button"
             variant="ghost"
