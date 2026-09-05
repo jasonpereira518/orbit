@@ -34,6 +34,7 @@ import {
   discardSuggestedReminder,
 } from "@/actions/suggested-reminders";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ExpandableText } from "@/components/ui/expandable-text";
 import {
   Sheet,
@@ -66,7 +67,16 @@ type PanelItem = PanelData["items"][number];
 // (`force` after a mutation) so the action handlers below read the same.
 const refreshPanel = (force = false) => refreshPulse(force);
 
-export function NotificationsPanelButton() {
+export function NotificationsPanelButton({
+  tooltip = false,
+}: {
+  /**
+   * Desktop rail only, mirroring `FeedbackTrigger`. Touch has no hover, so a tooltip on
+   * the mobile header copy would be dead weight — the `aria-label` is the accessible name
+   * either way.
+   */
+  tooltip?: boolean;
+} = {}) {
   const [open, setOpen] = useState(false);
   // Captured on click rather than read during render: there are two bells mounted (mobile
   // header and desktop fixed, hidden from each other by CSS), and this resolves to
@@ -111,10 +121,9 @@ export function NotificationsPanelButton() {
     });
   }
 
-  return (
-    <>
-      <Button
-        type="button"
+  const button = (
+    <Button
+      type="button"
         variant="outline"
         size="icon"
         className={cn(
@@ -158,7 +167,19 @@ export function NotificationsPanelButton() {
             className="absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full bg-destructive ring-2 ring-background"
           />
         )}
-      </Button>
+    </Button>
+  );
+
+  return (
+    <>
+      {tooltip ? (
+        <Tooltip>
+          <TooltipTrigger render={button} />
+          <TooltipContent side="left">Notifications</TooltipContent>
+        </Tooltip>
+      ) : (
+        button
+      )}
 
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent

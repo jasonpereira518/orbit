@@ -46,8 +46,15 @@ export function FeedbackTrigger({
       // window lands ON TOP of it and is pretending to be it; this window opens BELOW the
       // rail instead, so there is nothing to hide behind and fading would just read as the
       // button disappearing.
+      //
+      // `aria-expanded:bg-background/90` cancels the `aria-expanded:bg-muted` the outline
+      // variant applies. That darkening is a reasonable "this is open" cue for a control
+      // you can still see the panel next to, but here the panel is a 24rem window directly
+      // below the button — nothing about it is ambiguous — and the button just sat there
+      // looking pressed for as long as the form was open. The bell keeps the darkening and
+      // never shows it, because it fades out.
       className={cn(
-        "size-10 rounded-full border-border/70 bg-background/90 shadow-md backdrop-blur-md hover:bg-background",
+        "size-10 rounded-full border-border/70 bg-background/90 shadow-md backdrop-blur-md hover:bg-background aria-expanded:bg-background/90",
         className
       )}
       // `e.currentTarget` rather than a ref: every copy anchors itself, so nothing has to

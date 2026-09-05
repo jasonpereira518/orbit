@@ -173,7 +173,7 @@ export function AppShell({
                 viewingAsUser ? "top-12" : "top-5 md:top-6"
               )}
             >
-              <NotificationsPanelButton />
+              <NotificationsPanelButton tooltip />
             </div>
 
             <div
