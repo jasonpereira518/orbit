@@ -157,9 +157,9 @@ export function ScreenshotCaptureOverlay({
               still is no longer underneath it: `fitGeometry` keeps a `CAPTURE_TOOLBAR_PX`
               band clear along the bottom for exactly this bar, which used to sit on the
               picture and hide whatever was behind it. That constant mirrors this markup —
-              the `bottom-6` offset and the pill's own height — so changing either means
+              the `bottom-3` offset and the pill's own height — so changing either means
               changing both. */}
-          <div className="pointer-events-none absolute inset-x-0 bottom-6 flex justify-center">
+          <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
             <div className="pointer-events-auto flex items-center gap-3 rounded-full bg-popover px-4 py-2 text-popover-foreground shadow-lg">
               <span className="text-xs tabular-nums text-muted-foreground">
                 {live ? `${live.w} × ${live.h}` : "Drag any area to attach it"}

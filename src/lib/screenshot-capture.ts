@@ -231,20 +231,20 @@ export type FitGeometry = { scale: number; left: number; top: number };
  * there is no seam to see. Enough to read as a margin, and no more: every pixel spent here
  * is a pixel the person is not looking at the screenshot through.
  */
-export const CAPTURE_INSET_PX = 16;
+export const CAPTURE_INSET_PX = 12;
 
 /**
  * Room kept clear along the bottom for the toolbar that floats there.
  *
  * The bar used to sit ON the still, covering whatever was behind it — including, often,
  * the thing being reported. Mirrors the markup in `screenshot-capture-overlay.tsx`: its
- * `bottom-6` offset (24px), the pill's own height (~44px at `size="sm"` with `py-2`), and
+ * `bottom-3` offset (12px), the pill's own height (~44px at `size="sm"` with `py-2`), and
  * 8px so the two do not touch. Keep in step with that component.
  *
  * The visible gap comes out larger than that 8px, because the inset above is subtracted
- * from the bottom as well: 24px on a window where the still is height-bound.
+ * from the bottom as well: 20px on a window where the still is height-bound.
  */
-export const CAPTURE_TOOLBAR_PX = 76;
+export const CAPTURE_TOOLBAR_PX = 64;
 
 /**
  * Place a captured frame so the whole of it is on screen, centred, clear of the chrome.
