@@ -8,7 +8,12 @@ import "./smoke/_env";
 import { eq, and } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, contactEmbeddings } from "../src/db/schema";
-import { computeContentHash, rebuildContactEmbeddingsBatch } from "../src/lib/search";
+import { saveContactProfile } from "../src/lib/contact-profile";
+import {
+  computeContentHash,
+  rebuildContactEmbedding,
+  rebuildContactEmbeddingsBatch,
+} from "../src/lib/search";
 
 const U = "smoke-embedwrites-user";
 
@@ -120,6 +125,112 @@ async function main() {
   check(
     "profile row now contains the short notes",
     Boolean(profileAfterShrink) && profileAfterShrink!.content.includes(shortNotes)
+  );
+
+  // --- Immediate rebuild path must not drop profile text -------------------------
+  //
+  // The Task 5 fix-round-1 gap: `saveContactProfile` only flags `embeddingStaleAt` and
+  // lets the backfill catch up eventually, but every ordinary contact write (an edit, a
+  // note, an extension re-save, a brief regenerate) fires `rebuildContactEmbedding` /
+  // `rebuildContactEmbeddingsBatch` immediately, on its own claim query. If THAT query's
+  // `with:` is missing `profile`/`experiences`, a contact who already has a captured
+  // profile gets its embedding overwritten with content that has silently lost the
+  // headline, the About, and the career line the moment anything else about the contact
+  // changes — even though the backfill path (proven separately in
+  // smoke-embedding-backfill.ts) is completely healthy. This section drives both
+  // immediate-rebuild entry points for real, not the backfill.
+  const [batchContact] = await db
+    .insert(contacts)
+    .values([{ userId: U, fullName: "Batch Rebuild Contact" }])
+    .returning();
+  await saveContactProfile(U, batchContact.id, {
+    source: "extension",
+    sourceUrl: null,
+    adapterVersion: "linkedin-2",
+    capturedAt: new Date(),
+    warnings: [],
+    headline: "Batch Path Headline",
+    about: "Batch path about text.",
+    skills: [],
+    certifications: [],
+    volunteering: [],
+    publications: [],
+    experiences: [
+      { kind: "role", organization: "Batch Past Employer LLC", title: "Engineer",
+        startYear: 2015, startMonth: null, endYear: 2019, endMonth: null,
+        isCurrent: false, location: null, description: null, fieldOfStudy: null },
+    ],
+  });
+  // `saveContactProfile` already flags the contact stale; drive the IMMEDIATE rebuild
+  // path directly (as contact-writes.ts / extension/writes.ts do after an ordinary write)
+  // rather than the backfill.
+  await rebuildContactEmbeddingsBatch(U, [batchContact.id], stubEmbed);
+  const batchRow = await db.query.contactEmbeddings.findFirst({
+    where: and(
+      eq(contactEmbeddings.userId, U),
+      eq(contactEmbeddings.contactId, batchContact.id),
+      eq(contactEmbeddings.sourceType, "profile")
+    ),
+  });
+  check(
+    "rebuildContactEmbeddingsBatch preserves profile headline",
+    Boolean(batchRow?.content.includes("Batch Path Headline")),
+    batchRow?.content ?? "no row"
+  );
+  check(
+    "rebuildContactEmbeddingsBatch preserves the past employer via the career line",
+    Boolean(batchRow?.content.includes("Batch Past Employer LLC")),
+    batchRow?.content ?? "no row"
+  );
+
+  const [singleContact] = await db
+    .insert(contacts)
+    .values([{ userId: U, fullName: "Single Rebuild Contact" }])
+    .returning();
+  await saveContactProfile(U, singleContact.id, {
+    source: "extension",
+    sourceUrl: null,
+    adapterVersion: "linkedin-2",
+    capturedAt: new Date(),
+    warnings: [],
+    headline: "Single Path Headline",
+    about: "Single path about text.",
+    skills: [],
+    certifications: [],
+    volunteering: [],
+    publications: [],
+    experiences: [
+      { kind: "role", organization: "Single Past Employer LLC", title: "Engineer",
+        startYear: 2012, startMonth: null, endYear: 2018, endMonth: null,
+        isCurrent: false, location: null, description: null, fieldOfStudy: null },
+    ],
+  });
+  // `rebuildContactEmbedding` (singular) is the OTHER immediate-rebuild entry point —
+  // called from contact-writes.ts, extension/writes.ts, contact-brief.ts, and
+  // actions/graph.ts on their own claim query, independent of the batch function above.
+  // Unlike the batch function it has no test seam of its own before this fix round — it
+  // calls the real `createEmbedding` via `upsertContactEmbedding`, which has no live AI
+  // key in this environment and would otherwise catch that failure silently and return
+  // false, making the claim-query fix unprovable here. `embed` is now injectable the same
+  // way `embedFn` already is on the batch function, purely so this can be driven for real.
+  const stubSingleEmbed = async (_userId: string, _text: string) => [1, 0.5, 0.25];
+  await rebuildContactEmbedding(U, singleContact.id, stubSingleEmbed);
+  const singleRow = await db.query.contactEmbeddings.findFirst({
+    where: and(
+      eq(contactEmbeddings.userId, U),
+      eq(contactEmbeddings.contactId, singleContact.id),
+      eq(contactEmbeddings.sourceType, "profile")
+    ),
+  });
+  check(
+    "rebuildContactEmbedding (singular) preserves profile headline",
+    Boolean(singleRow?.content.includes("Single Path Headline")),
+    singleRow?.content ?? "no row"
+  );
+  check(
+    "rebuildContactEmbedding (singular) preserves the past employer via the career line",
+    Boolean(singleRow?.content.includes("Single Past Employer LLC")),
+    singleRow?.content ?? "no row"
   );
 
   await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, U));

@@ -191,10 +191,6 @@ export function NotificationsPanelButton() {
         <SheetContent
           side="floating"
           className="liquid-glass liquid-glass-panel gap-0 p-0"
-          // Lighter than the shared default (`bg-black/10` + `backdrop-blur-xs`): the page
-          // behind stays legible, and the window's own backdrop-filter does the blurring.
-          // That is what makes this read as a pane of glass rather than as a modal.
-          overlayClassName="bg-black/5 supports-backdrop-filter:backdrop-blur-[1.5px]"
           style={{ transformOrigin: origin }}
           showCloseButton
         >

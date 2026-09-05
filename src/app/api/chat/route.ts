@@ -82,7 +82,8 @@ export async function POST(request: Request) {
               ctx.orgRosters,
               ctx.attention,
               ctx.modelRecruiters,
-              (delta) => send({ type: "answer", delta })
+              (delta) => send({ type: "answer", delta }),
+              ctx.focusProfile
             ),
           { userId }
         );

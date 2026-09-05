@@ -54,7 +54,8 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import {
-  INTERACTION_TYPES,
+  SELECTABLE_INTERACTION_TYPES,
+  interactionFamilySpec,
   interactionTypeLabel,
   interactionTypeSpec,
   normalizeInteractionType,
@@ -224,6 +225,7 @@ export function InteractionDetailSheet({
   // Read off the spec at the point of use: binding a lookup's result to a capitalized
   // local reads as constructing a component during render.
   const typeSpec = interactionTypeSpec(detail?.interactionType ?? null);
+  const typeFamily = interactionFamilySpec(detail?.interactionType ?? null);
   const hasNotes = Boolean(detail?.rawNotes?.trim());
   const canMove = canReorder.up || canReorder.down;
 
@@ -237,8 +239,13 @@ export function InteractionDetailSheet({
       <SheetContent className="overflow-hidden sm:max-w-lg">
         <SheetHeader className="border-b border-border/50 pb-4 pr-12">
           <div className="flex items-start gap-3">
-            <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border border-border/70 bg-primary/10">
-              <typeSpec.icon className="size-4 text-primary" />
+            <span
+              className={cn(
+                "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border",
+                typeFamily.node
+              )}
+            >
+              <typeSpec.icon className="size-4" />
             </span>
             <div className="min-w-0 flex-1">
               <SheetTitle>
@@ -295,22 +302,33 @@ export function InteractionDetailSheet({
             <div className="space-y-2">
               <Label>Type</Label>
               <div className="grid grid-cols-3 gap-1.5">
-                {INTERACTION_TYPES.map((t) => (
-                  <button
-                    key={t.value}
-                    type="button"
-                    aria-pressed={t.value === formType}
-                    onClick={() => setFormType(t.value)}
-                    className={cn(
-                      "rounded-lg border px-2 py-1.5 text-xs transition-colors",
-                      t.value === formType
-                        ? "border-primary/60 bg-primary/10 text-ink"
-                        : "border-border/60 text-muted-foreground hover:text-ink"
-                    )}
-                  >
-                    {t.label}
-                  </button>
-                ))}
+                {SELECTABLE_INTERACTION_TYPES.map((t) => {
+                  const fam = interactionFamilySpec(t.value);
+                  const on = t.value === formType;
+                  return (
+                    <button
+                      key={t.value}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => setFormType(t.value)}
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs transition-colors",
+                        on
+                          ? fam.chip
+                          : "border-border/60 text-muted-foreground hover:text-ink"
+                      )}
+                    >
+                      <span
+                        aria-hidden
+                        className={cn(
+                          "size-1.5 shrink-0 rounded-full",
+                          on ? fam.dot : "bg-muted-foreground/40"
+                        )}
+                      />
+                      <span className="truncate">{t.label}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
             <div className="space-y-2">

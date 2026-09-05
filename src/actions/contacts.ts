@@ -45,6 +45,7 @@ import {
   getApolloApiKey,
   type LinkedInProfileEnrichment,
 } from "@/lib/apollo";
+import { saveContactProfile } from "@/lib/contact-profile";
 import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import {
@@ -603,6 +604,28 @@ export async function getContact(id: string) {
     with: {
       contactTags: { with: { tag: true } },
       interactions: {
+        // The timeline renders a two-line clamp, so shipping whole pasted notes to a client
+        // component on every profile view bought nothing — a contact carrying an imported
+        // LinkedIn thread paid for thousands of characters to show two lines of them.
+        // `notesPreview` is truncated in SQL and is only ever used for that preview and for
+        // "does this have notes at all"; the detail sheet still loads the full row lazily
+        // through `getInteractionDetail`.
+        //
+        // Columns are restricted, not rows: `contacts/[id]/page.tsx` derives
+        // `hasLoggedInteraction` from `interactions.length > 0`, which a LIMIT would survive
+        // but a WHERE would not.
+        columns: {
+          id: true,
+          interactionType: true,
+          interactionDate: true,
+          sameDayOrder: true,
+          aiSummary: true,
+        },
+        extras: {
+          notesPreview: sql<
+            string | null
+          >`left(${interactions.rawNotes}, 600)`.as("notes_preview"),
+        },
         orderBy: [
           desc(interactions.interactionDate),
           asc(interactions.sameDayOrder),
@@ -1200,6 +1223,26 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
         },
         { skipRevalidate: true }
       );
+
+      // Apollo fills a gap; it never overwrites an extension capture. `saveContactProfile`
+      // enforces that, so this call is unconditional and cheap when it is outranked.
+      if (profile.experiences.length) {
+        await saveContactProfile(userId, contact.id, {
+          source: "apollo",
+          sourceUrl: profile.linkedinUrl,
+          adapterVersion: null,
+          capturedAt: new Date(),
+          warnings: [],
+          headline: null,
+          about: null,
+          skills: [],
+          certifications: [],
+          volunteering: [],
+          publications: [],
+          experiences: profile.experiences,
+        }).catch(() => null); // never fail a refresh over the profile half
+      }
+
       refreshed += 1;
     } catch {
       failed += 1;
