@@ -230,6 +230,9 @@ export function ContactTimeline({
     function onReveal(event: Event) {
       const id = (event as CustomEvent<RevealInteractionDetail>).detail?.interactionId;
       if (!id || !sorted.some((i) => i.id === id)) return;
+      // Already rendered: the caller's own smooth scroll has it, and starting a second one
+      // here only makes the two fight. This path exists for the rows it CANNOT reach.
+      if (document.getElementById(`interaction-${id}`)) return;
       setFilter("all");
       setExpanded(true);
       setPendingReveal(id);
@@ -242,7 +245,11 @@ export function ContactTimeline({
     if (!pendingReveal) return;
     const el = rowRefs.current.get(pendingReveal);
     if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    // Instant, not smooth. This runs in the same commit that cleared the filter and expanded
+    // the window, so the list is re-flowing underneath a smooth scroll — which loses the race
+    // and leaves the row off screen. The row was hidden a moment ago, so there is no continuity
+    // to preserve here anyway; the flash glow is what says "this one".
+    el.scrollIntoView({ block: "center" });
     setFocusId(pendingReveal);
     setPendingReveal(null);
   }, [pendingReveal, visible]);
