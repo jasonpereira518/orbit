@@ -10,6 +10,10 @@ import {
   introThrottle,
 } from "@/lib/graph/intro-choreography";
 import type { IntroRun } from "@/lib/graph/intro-signal";
+import {
+  WARP_STAR_MAX_R,
+  WARP_STAR_MIN_R,
+} from "@/lib/graph/starfield-scale";
 import { IGNITION_FRACTIONS, type ChronoFrame } from "@/lib/warp/chrono";
 
 /**
@@ -204,9 +208,11 @@ export function ConstellationWarpStage({ run }: { run: IntroRun }) {
       s.dx = Math.cos(angle) * radius * cx;
       s.dy = Math.sin(angle) * radius * cy;
       s.z = z;
-      // Squared, so most stars are small and a few are notably bigger. A uniform draw gives an
-      // evenly-sized field, which at speed is a wall of identical strokes.
-      s.r = 0.3 + Math.random() ** 2 * 1.5;
+      // Squared, so most stars are small and a few are notably bigger — the same skew the
+      // background field has, and the reason it does not read as a wall of identical strokes.
+      // The bounds are the graph's own star sizes scaled up a little; see `starfield-scale.ts`.
+      s.r =
+        WARP_STAR_MIN_R + Math.random() ** 2 * (WARP_STAR_MAX_R - WARP_STAR_MIN_R);
       s.gold = Math.random() < 0.06;
       s.drawn = false;
     }

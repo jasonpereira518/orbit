@@ -37,6 +37,12 @@ import {
   suppressIntro,
 } from "../src/lib/graph/intro-signal";
 import {
+  CONSTELLATION_STAR_PX,
+  WARP_STAR_MAX_R,
+  WARP_STAR_MIN_R,
+  WARP_STAR_SCALE,
+} from "../src/lib/graph/starfield-scale";
+import {
   CHRONO_OUT,
   CHRONO_OUTBOUND_MS,
   IGNITION_FRACTIONS,
@@ -223,6 +229,28 @@ check(
     return true;
   })(),
   "`omega` goes negative in the rewind phase the intro never enters; a stray negative must stop the field, not reverse it"
+);
+
+// ---------------------------------------------------------------------------------------
+// The two fields drawn over the same box
+// ---------------------------------------------------------------------------------------
+
+console.log("\nThe warp's stars against the graph's own…");
+// Radii here, diameters there — the halving is where this last drifted apart.
+check(
+  "the commonest warp star is larger than the commonest background star",
+  2 * WARP_STAR_MIN_R > CONSTELLATION_STAR_PX.common,
+  `${(2 * WARP_STAR_MIN_R).toFixed(2)}px vs ${CONSTELLATION_STAR_PX.common}px — a finer field reads as being behind the ground it is flying over`
+);
+check(
+  "and so is the biggest",
+  2 * WARP_STAR_MAX_R > CONSTELLATION_STAR_PX.brightest,
+  `${(2 * WARP_STAR_MAX_R).toFixed(2)}px vs ${CONSTELLATION_STAR_PX.brightest}px`
+);
+check(
+  "but only slightly — the hand-off must not show a change of size",
+  WARP_STAR_SCALE > 1 && WARP_STAR_SCALE < 2,
+  `${WARP_STAR_SCALE}x; the intro gives its canvas to the graph's own sky, and the closer the two agree the less that reads as a swap`
 );
 
 console.log("\nA hold longer than a route transition…");

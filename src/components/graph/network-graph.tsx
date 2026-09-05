@@ -76,6 +76,7 @@ import {
   publishGraphScope,
   registerGraphScopeController,
 } from "@/lib/graph/scope-signal";
+import { CONSTELLATION_STAR_PX } from "@/lib/graph/starfield-scale";
 import { clusterBrandColor } from "@/lib/school-color";
 import { CAMERA_MS } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
@@ -599,7 +600,14 @@ function Starfield() {
         id: i,
         left: `${(((i * 47 + 13) * 7) % 1000) / 10}%`,
         top: `${(((i * 83 + 29) * 11) % 1000) / 10}%`,
-        size: i % 17 === 0 ? 2.2 : i % 5 === 0 ? 1.4 : 0.8,
+        // Named rather than inline: the warp intro sizes its own field off these, and the two
+        // are drawn over the same box during the hand-off. See `starfield-scale.ts`.
+        size:
+          i % 17 === 0
+            ? CONSTELLATION_STAR_PX.brightest
+            : i % 5 === 0
+              ? CONSTELLATION_STAR_PX.bright
+              : CONSTELLATION_STAR_PX.common,
         delay: `${(i % 11) * 0.35}s`,
         dur: `${2.8 + (i % 6) * 0.7}s`,
         opacity: 0.25 + (i % 8) * 0.08,
