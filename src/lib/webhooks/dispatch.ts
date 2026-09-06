@@ -26,7 +26,6 @@
  * the response body is never echoed back beyond a short truncated snippet — because the
  * response is the channel an attacker would read secrets out of.
  */
-import { lookup } from "node:dns/promises";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
@@ -64,75 +63,14 @@ function backoffFor(attempt: number): number {
 }
 
 /**
- * Whether an IP literal is somewhere Orbit must never be made to talk to.
- *
- * The cloud metadata endpoint (169.254.169.254) is the one that matters most — it hands out
- * credentials to anything that can reach it — but loopback and private ranges are equally
- * off-limits, because reaching them means the caller has borrowed Orbit's network position.
+ * The SSRF guard now lives in `@/lib/net-guard` so it can be shared with the event-page
+ * fetcher without dragging `@/db` into a `pure`-tier smoke test. Re-exported here because
+ * `src/actions/webhook-endpoints.ts`, `src/app/api/v1/webhook-endpoints/route.ts` and
+ * `scripts/smoke-webhook-delivery.ts` all import it from this module.
  */
-export function isBlockedAddress(address: string): boolean {
-  const ip = address.trim().toLowerCase();
+import { assertDeliverable, isBlockedAddress } from "@/lib/net-guard";
 
-  // IPv6, including the mapped-IPv4 form that would otherwise slip past the v4 checks.
-  if (ip.includes(":")) {
-    if (ip === "::1" || ip === "::") return true;
-    // fc00::/7 (unique local) and fe80::/10 (link local).
-    if (/^f[cd]/.test(ip)) return true;
-    if (/^fe[89ab]/.test(ip)) return true;
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(ip);
-    if (mapped) return isBlockedAddress(mapped[1]);
-    return false;
-  }
-
-  const parts = ip.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) {
-    // Unparseable is not provably safe.
-    return true;
-  }
-  const [a, b] = parts;
-  if (a === 0) return true; // "this network"
-  if (a === 10) return true; // RFC1918
-  if (a === 127) return true; // loopback
-  if (a === 169 && b === 254) return true; // link-local, incl. cloud metadata
-  if (a === 172 && b >= 16 && b <= 31) return true; // RFC1918
-  if (a === 192 && b === 168) return true; // RFC1918
-  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
-  if (a >= 224) return true; // multicast and reserved
-  return false;
-}
-
-/**
- * Resolve the URL's host and refuse anything internal.
- *
- * Called immediately before the fetch, deliberately. Checking only at registration is
- * defeated by DNS rebinding: the attacker registers a hostname that resolves publicly, then
- * repoints it. This narrows that window to the gap between this lookup and the request —
- * genuinely narrowed, not closed; fully closing it needs a fetch pinned to the resolved IP.
- */
-export async function assertDeliverable(url: string): Promise<void> {
-  const parsed = new URL(url);
-  if (parsed.protocol !== "https:") throw new Error("Only https:// endpoints are allowed");
-  if (parsed.username || parsed.password) throw new Error("Credentials in URL are not allowed");
-
-  const host = parsed.hostname.replace(/^\[|\]$/g, "");
-  if (/\.(local|internal|localdomain)$/i.test(host) || host === "localhost") {
-    throw new Error("Internal hostnames are not allowed");
-  }
-
-  // A bare IP literal never needs DNS; check it directly.
-  if (/^[\d.]+$/.test(host) || host.includes(":")) {
-    if (isBlockedAddress(host)) throw new Error("That address is not allowed");
-    return;
-  }
-
-  const resolved = await lookup(host, { all: true });
-  if (resolved.length === 0) throw new Error("Host did not resolve");
-  for (const entry of resolved) {
-    if (isBlockedAddress(entry.address)) {
-      throw new Error("That host resolves to an internal address");
-    }
-  }
-}
+export { isBlockedAddress, assertDeliverable };
 
 /**
  * Queue an event for every endpoint subscribed to it.

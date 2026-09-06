@@ -283,6 +283,29 @@ async function seed() {
     body: "prose the user wrote about a real person",
   });
 
+  // An event, its roster, and a stored provider credential. The roster row deliberately
+  // points at `contact` so the purge also has to survive the `ON DELETE SET NULL` FK — the
+  // ordering bug that would otherwise rewrite every attendee on the way to deleting it.
+  const [eventRow] = await db
+    .insert(schema.events)
+    .values({ userId: USER, title: "Deep Learning Summit", venue: "Moscone" })
+    .returning();
+  await db.insert(schema.eventAttendees).values({
+    eventId: eventRow.id,
+    userId: USER,
+    fullName: "Ada Lovelace",
+    email: "ada@analytical.io",
+    contactId: contact.id,
+    identityKey: "em:ada@analytical.io",
+  });
+  // Same class of secret as the Gmail/Outlook rows below.
+  await db.insert(schema.eventProviderConnections).values({
+    userId: USER,
+    provider: "luma",
+    authKind: "api_key",
+    apiKeyEncrypted: "ciphertext-luma-key",
+  });
+
   for (const table of [schema.gmailConnections, schema.outlookConnections]) {
     await db.insert(table).values({
       userId: USER,

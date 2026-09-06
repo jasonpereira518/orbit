@@ -60,6 +60,14 @@ export const RATE_LIMITS = {
   mcp: { limit: 60, windowSec: 60 },
   /** One provider sync run per connection per window — see `sync-scheduler.ts`. */
   providerSync: { limit: 4, windowSec: 3600 },
+  /**
+   * Reading a public event page (`enrichEventFromUrl`).
+   *
+   * Tighter than it looks necessary because this is the one action that makes Orbit fetch an
+   * address the *user* chose. `net-guard.ts` stops it reaching anything internal; this stops
+   * it being used as a high-volume scanner wearing Orbit's network position.
+   */
+  eventEnrich: { limit: 10, windowSec: 300 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**

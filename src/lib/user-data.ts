@@ -18,6 +18,9 @@ import {
   feedback,
   feedbackScreenshots,
   gateEvents,
+  eventAttendees,
+  eventProviderConnections,
+  events,
   gmailConnections,
   imports,
   interactions,
@@ -133,6 +136,18 @@ export async function purgeUserData(
   await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, userId));
   await db.delete(imports).where(eq(imports.userId, userId));
   await db.delete(calendarSubscriptions).where(eq(calendarSubscriptions.userId, userId));
+  // Before `contacts`: `event_attendees.contact_id` is `ON DELETE SET NULL`, so deleting
+  // contacts first would rewrite every one of these rows on the way to deleting them anyway.
+  // Attendees are deleted explicitly rather than left to the cascade from `events` — they
+  // carry their own `user_id` (which is why `smoke-purge` finds them), and a roster holds
+  // names, emails and employers of people the user met.
+  await db.delete(eventAttendees).where(eq(eventAttendees.userId, userId));
+  await db.delete(events).where(eq(events.userId, userId));
+  // Holds an encrypted Luma API key or Eventbrite access token. Same class of secret as the
+  // Gmail/Outlook rows below, and it must not outlive the account.
+  await db
+    .delete(eventProviderConnections)
+    .where(eq(eventProviderConnections.userId, userId));
   await db.delete(userGoals).where(eq(userGoals.userId, userId));
   await db.delete(chatThreads).where(eq(chatThreads.userId, userId));
   // `recruiters.avg_rating` / `rating_count` / `log_count` are denormalized counters over
