@@ -58,7 +58,6 @@ import type { ChatRecommendation } from "@/db/schema";
 import { streamChat } from "@/lib/chat-stream-client";
 import { ANCHOR_INTERFERENCE, shiftAnchor, spliceSpan } from "@/lib/dictation";
 import { useDictation } from "@/lib/use-dictation";
-import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 type ChatResult = Extract<
   Awaited<ReturnType<typeof askNetwork>>,
@@ -143,7 +142,6 @@ export function ChatPanel() {
   const [selectionCollapsed, setSelectionCollapsed] = useState(true);
   const [composing, setComposing] = useState(false);
   const coarsePointer = useCoarsePointer();
-  const reducedMotion = usePrefersReducedMotion();
   /** Where the dictated span begins, or null when no session owns any text. */
   const anchorRef = useRef<number | null>(null);
   /** What currently occupies that span, so the next result can replace exactly it. */
@@ -830,8 +828,12 @@ export function ChatPanel() {
                       // Bare field: the pill around it owns the border, background, focus
                       // ring and padding. `field-sizing-content` has no ceiling of its own
                       // and this sits in a fixed-height card, so the cap stays.
-                      "min-h-[26px] max-h-40 w-full resize-none overflow-y-auto",
-                      "rounded-none border-0 bg-transparent px-1.5 py-1 shadow-none",
+                      // `min-h-9` matches the 36px control buttons exactly, and py-2 centres
+                      // a single 20px line inside it — so with `items-end` the text sits on
+                      // the same axis as the mic and send. Growing past one line just adds
+                      // height downwards and the buttons stay on the last line.
+                      "min-h-9 max-h-40 w-full resize-none overflow-y-auto",
+                      "rounded-none border-0 bg-transparent px-1.5 py-2 shadow-none",
                       "focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent",
                       // The mirror paints the glyphs while it is up. The caret is left
                       // visible so the field still reads as focused and editable.
@@ -884,24 +886,9 @@ export function ChatPanel() {
               <div className="sr-only" aria-live="polite">
                 {dictationNote}
               </div>
-              {/* The visible twin. `aria-hidden` because the live region above already
-                  announces this — without it, screen readers say it twice. */}
-              {dictation.listening && (
-                <div
-                  aria-hidden
-                  className="flex items-center gap-1.5 text-[11px] text-primary"
-                >
-                  <span className="relative flex size-1.5">
-                    {!reducedMotion && (
-                      <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary opacity-70" />
-                    )}
-                    <span className="relative inline-flex size-1.5 rounded-full bg-primary" />
-                  </span>
-                  {dictation.state === "requesting"
-                    ? "Starting…"
-                    : "Listening — click the mic or press Escape to stop"}
-                </div>
-              )}
+              {/* The visible twin lives on the mic itself (`dictation-button.tsx`), not
+                  here: as a row it pushed the suggestion chips down every time dictation
+                  started, and the cue belongs to the control it describes. */}
               <div className="flex flex-wrap gap-1.5">
                 {SUGGESTION_CHIPS.map((chip) => (
                   <button

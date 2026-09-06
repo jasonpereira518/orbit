@@ -71,7 +71,7 @@ export function ComposerMirror({
       // composer pill the field is bare, so there is no border to mirror any more.
       className={cn(
         "pointer-events-none absolute inset-0 overflow-hidden",
-        "border-0 px-1.5 py-1 text-base md:text-sm",
+        "border-0 px-1.5 py-2 text-base md:text-sm",
         "whitespace-pre-wrap break-words",
       )}
       style={{

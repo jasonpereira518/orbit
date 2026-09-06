@@ -12,7 +12,7 @@
  */
 
 import { Loader2, Mic } from "lucide-react";
-import { motion, useTransform, type MotionValue } from "motion/react";
+import { AnimatePresence, motion, useTransform, type MotionValue } from "motion/react";
 
 
 import { Button } from "@/components/ui/button";
@@ -106,7 +106,9 @@ export function DictationButton({
       aria-disabled={state === "requesting" || undefined}
       aria-pressed={state === "listening"}
       aria-label={listening ? "Stop dictating" : "Dictate"}
-      title={listening ? "Stop dictating" : "Dictate"}
+      // No `title` while listening: the bubble below already says it, and a native
+      // tooltip next to it is two tooltips saying nearly the same thing.
+      title={listening ? undefined : "Dictate"}
       onClick={(e) => onToggle(e.detail === 0 ? "keyboard" : "pointer")}
       className={cn(
         "relative size-9 shrink-0 overflow-visible rounded-full text-muted-foreground",
@@ -119,6 +121,41 @@ export function DictationButton({
         errored && "text-destructive",
       )}
     >
+      {/* The state cue, floating over the mic rather than sitting in a row under the
+          composer — a row shifted the suggestion chips down every time dictation started.
+          `aria-hidden` because the composer's sr-only live region already announces this;
+          without it screen readers say it twice. */}
+      <AnimatePresence initial={false}>
+        {listening && (
+          <motion.span
+            aria-hidden
+            key="cue"
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 4 }}
+            transition={{ duration: reduced ? 0 : DUR.fast, ease: EASE_HOUSE }}
+            className={cn(
+              // mb-3, not mb-2: the button sits inside the pill's padding, so a smaller
+              // offset leaves the bubble overlapping the pill's top border.
+              "absolute bottom-full left-1/2 z-20 mb-3 -translate-x-1/2",
+              "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full",
+              "border border-border/70 bg-popover px-2.5 py-1 text-[11px] text-primary shadow-md",
+              // Load-bearing: the bubble overhangs the composer and would otherwise
+              // swallow clicks aimed at the text field.
+              "pointer-events-none",
+            )}
+          >
+            <span className="relative flex size-1.5">
+              {!reduced && (
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary opacity-70" />
+              )}
+              <span className="relative inline-flex size-1.5 rounded-full bg-primary" />
+            </span>
+            {state === "requesting" ? "Starting…" : "Listening — Esc to stop"}
+          </motion.span>
+        )}
+      </AnimatePresence>
+
       {/* The halo. Driven by a MotionValue, so no React render per frame — and no infinite
           keyframe loop for `reducedMotion="user"` to leave spinning at zero. */}
       {state === "listening" && !reduced && (
