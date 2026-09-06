@@ -10,6 +10,10 @@ import { cn } from "@/lib/utils";
 
 const PREVIEW_COUNT = 5;
 
+/** Shared by the preview list and its collapsed overflow so both lay out alike. */
+const LIST_CLASS =
+  "space-y-2 @3xl:grid @3xl:grid-cols-2 @3xl:gap-2 @3xl:space-y-0";
+
 export type SuggestedOutreachItem = {
   id: string;
   suggestionType: string;
@@ -34,7 +38,8 @@ export function SuggestedOutreachCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasMore = items.length > PREVIEW_COUNT;
-  const visible = expanded ? items : items.slice(0, PREVIEW_COUNT);
+  const preview = items.slice(0, PREVIEW_COUNT);
+  const overflow = items.slice(PREVIEW_COUNT);
   const hiddenCount = items.length - PREVIEW_COUNT;
 
   return (
@@ -75,8 +80,8 @@ export function SuggestedOutreachCard({
             {/* Two-up once the card itself is past ~768px. Stretched to a full
                 row, a suggestion put its name a thousand pixels from its own
                 dismiss button with nothing in between. */}
-            <div className="space-y-2 @3xl:grid @3xl:grid-cols-2 @3xl:gap-2 @3xl:space-y-0">
-              {visible.map((s) => (
+            <div className={LIST_CLASS}>
+              {preview.map((s) => (
                 <SuggestionRow
                   key={s.id}
                   id={s.id}
@@ -91,19 +96,56 @@ export function SuggestedOutreachCard({
               ))}
             </div>
             {hasMore ? (
-              <div className="mt-auto pt-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="w-full text-muted-foreground"
-                  onClick={() => setExpanded((v) => !v)}
+              <>
+                {/* The overflow stays mounted and collapses to zero height, so
+                    growing the list is a transition rather than a jump. 0fr->1fr
+                    on a grid row is the repo's own height-collapse technique
+                    (contacts-list.tsx:434) — it animates to the content's real
+                    height without measuring it. `inert` keeps the collapsed rows
+                    out of the tab order and the accessibility tree; without it
+                    they stay reachable while invisible. */}
+                <div
+                  id="suggestions-overflow"
+                  inert={!expanded}
+                  className={cn(
+                    "grid transition-[grid-template-rows,opacity] duration-slow ease-house",
+                    expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+                  )}
                 >
-                  {expanded
-                    ? "See less"
-                    : `See more${hiddenCount > 0 ? ` (${hiddenCount})` : ""}`}
-                </Button>
-              </div>
+                  <div className="overflow-hidden">
+                    <div className={cn(LIST_CLASS, "pt-2")}>
+                      {overflow.map((s) => (
+                        <SuggestionRow
+                          key={s.id}
+                          id={s.id}
+                          suggestionType={s.suggestionType}
+                          description={s.description}
+                          contactId={s.contactId}
+                          contactName={s.contactName}
+                          contactTitle={s.contactTitle}
+                          contactCompany={s.contactCompany}
+                          tier={s.tier}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-auto pt-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="w-full text-muted-foreground"
+                    aria-expanded={expanded}
+                    aria-controls="suggestions-overflow"
+                    onClick={() => setExpanded((v) => !v)}
+                  >
+                    {expanded
+                      ? "See less"
+                      : `See more${hiddenCount > 0 ? ` (${hiddenCount})` : ""}`}
+                  </Button>
+                </div>
+              </>
             ) : null}
           </>
         )}

@@ -30,7 +30,8 @@ export function RemindersDashboardCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasMore = items.length > PREVIEW_COUNT;
-  const visible = expanded ? items : items.slice(0, PREVIEW_COUNT);
+  const preview = items.slice(0, PREVIEW_COUNT);
+  const overflow = items.slice(PREVIEW_COUNT);
   const hiddenCount = items.length - PREVIEW_COUNT;
 
   return (
@@ -56,7 +57,7 @@ export function RemindersDashboardCard({
         ) : (
           <>
             <div className="space-y-2">
-              {visible.map((r) => (
+              {preview.map((r) => (
                 <ReminderRow
                   key={r.id}
                   id={r.id}
@@ -72,19 +73,51 @@ export function RemindersDashboardCard({
               ))}
             </div>
             {hasMore ? (
-              <div className="mt-auto pt-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="w-full text-muted-foreground"
-                  onClick={() => setExpanded((v) => !v)}
+              <>
+                {/* Same collapse as Suggested outreach — see the comment there. */}
+                <div
+                  id="reminders-overflow"
+                  inert={!expanded}
+                  className={cn(
+                    "grid transition-[grid-template-rows,opacity] duration-slow ease-house",
+                    expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+                  )}
                 >
-                  {expanded
-                    ? "See less"
-                    : `See more${hiddenCount > 0 ? ` (${hiddenCount})` : ""}`}
-                </Button>
-              </div>
+                  <div className="overflow-hidden">
+                    <div className="space-y-2 pt-2">
+                      {overflow.map((r) => (
+                        <ReminderRow
+                          key={r.id}
+                          id={r.id}
+                          title={r.title}
+                          description={r.description}
+                          dueDate={r.dueDate}
+                          reminderType={r.reminderType}
+                          actionKind={r.actionKind}
+                          contactId={r.contactId}
+                          contactName={r.contactName}
+                          noteBatchId={r.noteBatchId}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-auto pt-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="w-full text-muted-foreground"
+                    aria-expanded={expanded}
+                    aria-controls="reminders-overflow"
+                    onClick={() => setExpanded((v) => !v)}
+                  >
+                    {expanded
+                      ? "See less"
+                      : `See more${hiddenCount > 0 ? ` (${hiddenCount})` : ""}`}
+                  </Button>
+                </div>
+              </>
             ) : null}
           </>
         )}

@@ -10,6 +10,7 @@ import type { UserGoal } from "@/db/schema";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PRESS, ROW_HOVER_INSET } from "@/lib/interaction";
 import { cn } from "@/lib/utils";
 
 type GoalAlignedContact = {
@@ -121,7 +122,11 @@ export function GoalsSummary({
                 <li key={c.id}>
                   <Link
                     href={`/contacts/${c.id}`}
-                    className="flex items-center justify-between rounded-lg px-2 py-1.5 hover:bg-muted/60"
+                    className={cn(
+                      "flex items-center justify-between px-2 py-1.5",
+                      ROW_HOVER_INSET,
+                      PRESS
+                    )}
                   >
                     <span>
                       <span className="font-medium">{c.preferredName || c.fullName}</span>

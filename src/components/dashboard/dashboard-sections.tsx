@@ -16,6 +16,7 @@ import { RemindersDashboardCard } from "@/components/dashboard/reminders-dashboa
 import { SuggestedOutreachCard } from "@/components/dashboard/suggested-outreach-card";
 import { OutreachPerformanceCard } from "@/components/outreach/outreach-performance-card";
 import { buttonVariants } from "@/components/ui/button";
+import { CARD_HOVER, PRESS, ROW_HOVER_INSET } from "@/lib/interaction";
 import { cn } from "@/lib/utils";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
@@ -365,7 +366,11 @@ export async function RecentlyUpdatedSection({
                 <Link
                   key={c.id}
                   href={`/contacts/${c.id}`}
-                  className="flex items-center justify-between rounded-lg px-2 py-2 hover:bg-muted/60"
+                  className={cn(
+                    "flex items-center justify-between px-2 py-2",
+                    ROW_HOVER_INSET,
+                    PRESS
+                  )}
                 >
                   <div className="flex min-w-0 items-center gap-2">
                     {tier && <ClosenessTierBadge tier={tier} dotOnly />}
@@ -454,7 +459,11 @@ function StatCard({
     return (
       <Link
         href={href}
-        className="block rounded-2xl border border-border/70 bg-card/80 p-4 backdrop-blur transition-[border-color,box-shadow,background-color] hover:border-primary/30 hover:bg-card hover:shadow-md"
+        className={cn(
+          "block rounded-2xl border border-border/70 bg-card/80 p-4 backdrop-blur hover:bg-card",
+          CARD_HOVER,
+          PRESS
+        )}
       >
         {inner}
       </Link>
