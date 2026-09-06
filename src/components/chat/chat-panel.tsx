@@ -13,7 +13,6 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  ArrowUp,
   History,
   Loader2,
   NotebookPen,
@@ -33,6 +32,7 @@ import { createReminder } from "@/actions/reminders";
 import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";
 import { ComposerMirror, useCoarsePointer } from "@/components/chat/composer-mirror";
 import { DictationButton } from "@/components/chat/dictation-button";
+import { SendPlaneButton } from "@/components/chat/send-plane-button";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -805,15 +805,14 @@ export function ChatPanel() {
                     if (source === "pointer") textareaRef.current?.focus();
                   }}
                 />
-                <Button
-                  type="button"
-                  size="icon"
+                <SendPlaneButton
+                  mode={question.trim() ? "send" : "recall"}
+                  busy={busy}
                   disabled={
                     busy ||
                     loadingThread ||
                     (!question.trim() && !lastUserQuery)
                   }
-                  className="h-11 w-11 shrink-0 bg-primary text-primary-foreground hover:bg-primary/90"
                   onClick={() => {
                     if (!question.trim()) {
                       fillMostRecentUserMessage();
@@ -821,14 +820,7 @@ export function ChatPanel() {
                     }
                     sendQuestion(question);
                   }}
-                  aria-label={question.trim() ? "Send" : "Recall last message"}
-                >
-                  {busy ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <ArrowUp className="size-4" />
-                  )}
-                </Button>
+                />
               </div>
               {/* State only — never the transcript, which would re-announce every
                   150ms as the recogniser revises it. */}
