@@ -57,6 +57,7 @@ import type { ChatRecommendation } from "@/db/schema";
 import { streamChat } from "@/lib/chat-stream-client";
 import { ANCHOR_INTERFERENCE, shiftAnchor, spliceSpan } from "@/lib/dictation";
 import { useDictation } from "@/lib/use-dictation";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 type ChatResult = Extract<
   Awaited<ReturnType<typeof askNetwork>>,
@@ -141,6 +142,7 @@ export function ChatPanel() {
   const [selectionCollapsed, setSelectionCollapsed] = useState(true);
   const [composing, setComposing] = useState(false);
   const coarsePointer = useCoarsePointer();
+  const reducedMotion = usePrefersReducedMotion();
   /** Where the dictated span begins, or null when no session owns any text. */
   const anchorRef = useRef<number | null>(null);
   /** What currently occupies that span, so the next result can replace exactly it. */
@@ -568,7 +570,13 @@ export function ChatPanel() {
         Mobile offsets: top header + page title + padding + bottom nav.
         Desktop offsets: page title + vertical padding.
       */}
-      <div className="flex h-[calc(100dvh-16.5rem)] w-full max-h-[calc(100dvh-16.5rem)] flex-col overflow-hidden rounded-2xl border border-border/70 bg-card md:h-[calc(100dvh-11rem)] md:max-h-[calc(100dvh-11rem)]">
+      {/* Sized by the flex column it sits in, NOT a viewport calc. The old
+          `h-[calc(100dvh-16.5rem)]` hardcoded an assumption about how much chrome was above
+          it, so the API-key notice pushed the card past the bottom of the screen and clipped
+          the suggestion chips. The whole ancestor chain is bounded (app-shell `h-dvh` →
+          `min-h-0 flex-1` → page `flex min-h-0 flex-1`), and ChatPanelSkeleton already sized
+          itself this way — so this also removes the height jump when the panel swaps in. */}
+      <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-2xl border border-border/70 bg-card">
         <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2.5 sm:px-4">
           <DropdownMenu open={historyOpen} onOpenChange={setHistoryOpen}>
             <DropdownMenuTrigger
@@ -753,6 +761,11 @@ export function ChatPanel() {
                       // `field-sizing-content` has no ceiling of its own, and this sits in
                       // a fixed-height card: a long dictation would squeeze the thread away.
                       "min-h-[44px] max-h-40 w-full resize-none overflow-y-auto",
+                      // Quieter than the shared primitive's `ring-3 ring-ring/50`. The
+                      // border colour carries the focus indicator so it stays perceptible
+                      // (WCAG 2.4.7) and the ring is a soft halo rather than a slab.
+                      // Scoped here on purpose — the primitive dresses every input in the app.
+                      "focus-visible:ring-[2px] focus-visible:ring-ring/20",
                       dictation.listening &&
                         "border-primary/40 bg-primary/[0.035] dark:bg-primary/[0.06]",
                       // The mirror paints the glyphs while it is up. The caret is left
@@ -814,6 +827,24 @@ export function ChatPanel() {
               <div className="sr-only" aria-live="polite">
                 {dictationNote}
               </div>
+              {/* The visible twin. `aria-hidden` because the live region above already
+                  announces this — without it, screen readers say it twice. */}
+              {dictation.listening && (
+                <div
+                  aria-hidden
+                  className="flex items-center gap-1.5 text-[11px] text-primary"
+                >
+                  <span className="relative flex size-1.5">
+                    {!reducedMotion && (
+                      <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary opacity-70" />
+                    )}
+                    <span className="relative inline-flex size-1.5 rounded-full bg-primary" />
+                  </span>
+                  {dictation.state === "requesting"
+                    ? "Starting…"
+                    : "Listening — click the mic or press Escape to stop"}
+                </div>
+              )}
               <div className="flex flex-wrap gap-1.5">
                 {SUGGESTION_CHIPS.map((chip) => (
                   <button

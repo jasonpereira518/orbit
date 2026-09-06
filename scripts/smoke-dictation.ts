@@ -10,6 +10,7 @@ import {
   UNSUPPORTED_LATCH_MS,
   dictationReducer,
   initialMachine,
+  punctuateSegment,
   shiftAnchor,
   spliceSpan,
   tidyTranscript,
@@ -55,6 +56,48 @@ for (const sample of [
 // spoken punctuation words could only ever corrupt real speech. Do not "helpfully" add it.
 check('does not rewrite the word "period"', tidyTranscript("period tracking app") === "Period tracking app");
 check('does not rewrite the word "comma"', tidyTranscript("the comma splice") === "The comma splice");
+
+// ── punctuateSegment ──────────────────────────────────────────────────────────────────
+console.log("\npunctuateSegment");
+
+check("terminates a statement", punctuateSegment("i met sara at yc") === "I met sara at yc.");
+check(
+  "uses a question mark for an interrogative opener",
+  punctuateSegment("who do I know at stripe") === "Who do I know at stripe?",
+);
+check('"how" opens a question', punctuateSegment("how many recruiters") === "How many recruiters?");
+check('"can" opens a question', punctuateSegment("can anyone intro me") === "Can anyone intro me?");
+check(
+  "a non-interrogative gets a period",
+  punctuateSegment("remind me about marcus") === "Remind me about marcus.",
+);
+check("leaves an existing period alone", punctuateSegment("Done already.") === "Done already.");
+check("leaves an existing question mark alone", punctuateSegment("Who is it?") === "Who is it?");
+check("leaves an ellipsis alone", punctuateSegment("wait\u2026") === "Wait\u2026");
+check("empty stays empty", punctuateSegment("") === "");
+check("whitespace-only stays empty", punctuateSegment("   ") === "");
+check(
+  "a dangling comma becomes a terminator",
+  punctuateSegment("stripe, figma, notion,") === "Stripe, figma, notion.",
+);
+check(
+  "an interrogative later in the sentence does not trigger a question mark",
+  punctuateSegment("tell me who works there") === "Tell me who works there.",
+);
+check(
+  "still applies the tidy pass",
+  punctuateSegment("  who  is at   stripe ") === "Who is at stripe?",
+);
+for (const sample of ["who do I know at stripe", "i met sara", "Done already.", ""]) {
+  const once = punctuateSegment(sample);
+  check(`idempotent: ${JSON.stringify(sample)}`, punctuateSegment(once) === once, once);
+}
+// Filler stripping is deliberately NOT done: Chrome rarely emits "um"/"uh", and a stripper
+// aggressive enough to catch them also eats real speech. This pins that decision.
+check(
+  "does not strip filler-looking words",
+  punctuateSegment("um and uh are words") === "Um and uh are words.",
+);
 
 // ── spliceSpan ────────────────────────────────────────────────────────────────────────
 console.log("\nspliceSpan");
@@ -235,17 +278,18 @@ check("a supported machine starts idle", initialMachine(true).state === "idle");
 }
 
 {
+  // Chrome raises no-speech after ~7-8s of quiet. It used to end the session, which was
+  // the "mic dies while I stop to think" bug. It must now be survivable.
   const r = run(initialMachine(true), [
     { t: "start", now: 0 },
     { t: "audiostart" },
     { t: "error", code: "no-speech", now: 3000 },
   ]);
   check("no-speech never surfaces", r.effects.filter((x) => x.startsWith("toast")).length === 0);
-  check("...and reads as an intentional stop", r.machine.intentionalStop === true);
-  check(
-    "...so the following end is idle, not a restart",
-    dictationReducer(r.machine, { t: "end", now: 3010 }).machine.state === "idle",
-  );
+  check("no-speech does NOT mark an intentional stop", r.machine.intentionalStop === false);
+  const after = dictationReducer(r.machine, { t: "end", now: 3010 });
+  check("...so the following end restarts", after.effects.includes("restart-recognition"));
+  check("...and the session stays live", after.machine.state === "listening", after.machine.state);
 }
 {
   const r = run(initialMachine(true), [
@@ -302,6 +346,36 @@ check("a supported machine starts idle", initialMachine(true).state === "idle");
 {
   const idle = initialMachine(true);
   check("reset on a healthy machine is a no-op", dictationReducer(idle, { t: "reset" }).machine.state === "idle");
+}
+
+{
+  // A pause seals a sentence and keeps listening. It must never stop the engine.
+  const r = run(initialMachine(true), [
+    { t: "start", now: 0 },
+    { t: "audiostart" },
+    { t: "segment" },
+  ]);
+  check("a pause seals", r.effects.includes("seal-segment"));
+  check("...without stopping", !r.effects.includes("stop-recognition"));
+  check("...and stays listening", r.machine.state === "listening", r.machine.state);
+  check("...leaving the stop unintentional", r.machine.intentionalStop === false);
+}
+{
+  const r = run(initialMachine(true), [{ t: "start", now: 0 }, { t: "segment" }]);
+  check("a pause before audio does nothing", r.effects.join() === "start-recognition", r.effects.join());
+}
+{
+  const idle = initialMachine(true);
+  check("a pause while idle does nothing", dictationReducer(idle, { t: "segment" }).effects.length === 0);
+}
+{
+  // Sealing repeatedly across a long dictation must never accumulate a stop.
+  const events: DictationEvent[] = [{ t: "start", now: 0 }, { t: "audiostart" }];
+  for (let i = 0; i < 5; i++) events.push({ t: "result" }, { t: "segment" });
+  const r = run(initialMachine(true), events);
+  check("five seals, still listening", r.machine.state === "listening", r.machine.state);
+  check("...five seal effects", r.effects.filter((x) => x === "seal-segment").length === 5);
+  check("...and no stop", !r.effects.includes("stop-recognition"));
 }
 
 console.log("\nsmoke-dictation: all checks passed");

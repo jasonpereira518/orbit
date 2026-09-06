@@ -19,11 +19,11 @@ import {
 } from "react";
 import { useMotionValue, type MotionValue } from "motion/react";
 import {
-  FIRST_SPEECH_GRACE_MS,
   MAX_SESSION_MS,
-  SILENCE_MS,
+  SEGMENT_PAUSE_MS,
   dictationReducer,
   initialMachine,
+  punctuateSegment,
   tidyTranscript,
   type DictationEffect,
   type DictationEndReason,
@@ -192,13 +192,14 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
   /** Finals from PREVIOUS recognition instances, i.e. across internal restarts. */
   const baseCommittedRef = useRef("");
   const lastFinalsRef = useRef("");
+  /** The last span handed to the caller — what a seal must commit, interim tail included. */
+  const lastSpanRef = useRef("");
   const spanLengthRef = useRef(0);
   const speakingRef = useRef(false);
   const energyRef = useRef(0);
   const rafRef = useRef<number | null>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const maxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const heardSpeechRef = useRef(false);
   const endReasonRef = useRef<DictationEndReason>("user");
 
   const dispatchRef = useRef<(e: DictationEvent) => void>(() => {});
@@ -229,14 +230,17 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
     rafRef.current = requestAnimationFrame(tick);
   }, [level]);
 
-  /** Restart the silence countdown. Longer before the first word than between words. */
-  const armSilence = useCallback(() => {
+  /**
+   * Restart the sentence-boundary countdown.
+   *
+   * This used to end the session. It now only closes a sentence — pausing to think is the
+   * single most common thing a person does mid-question, and the mic must survive it.
+   */
+  const armSegmentPause = useCallback(() => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-    const wait = heardSpeechRef.current ? SILENCE_MS : FIRST_SPEECH_GRACE_MS;
     silenceTimerRef.current = setTimeout(() => {
-      endReasonRef.current = "silence";
-      dispatchRef.current({ t: "stop" });
-    }, wait);
+      dispatchRef.current({ t: "segment" });
+    }, SEGMENT_PAUSE_MS);
   }, []);
 
   /** Detach every handler before touching the engine, so a dying instance stays quiet. */
@@ -283,13 +287,12 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
       };
       rec.onsoundstart = () => {
         if (stale()) return;
-        armSilence();
+        armSegmentPause();
       };
       rec.onspeechstart = () => {
         if (stale()) return;
         speakingRef.current = true;
-        heardSpeechRef.current = true;
-        armSilence();
+        armSegmentPause();
       };
       rec.onspeechend = () => {
         if (stale()) return;
@@ -323,6 +326,7 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
         ) {
           interimStart++;
         }
+        lastSpanRef.current = span;
         const grew = span.length - spanLengthRef.current;
         spanLengthRef.current = span.length;
 
@@ -333,8 +337,7 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
             Math.min(ENERGY_CHAR_CAP, Math.max(0, grew) * ENERGY_PER_CHAR),
         );
 
-        heardSpeechRef.current = true;
-        armSilence();
+        armSegmentPause();
         dispatchRef.current({ t: "result" });
         cb.current.onTranscript(span, {
           hasInterim: interim.length > 0,
@@ -354,7 +357,7 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
 
       return rec;
     },
-    [armSilence, lang],
+    [armSegmentPause, lang],
   );
 
   const runEffects = useCallback(
@@ -365,8 +368,8 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
           case "start-recognition": {
             baseCommittedRef.current = "";
             lastFinalsRef.current = "";
+            lastSpanRef.current = "";
             spanLengthRef.current = 0;
-            heardSpeechRef.current = false;
             endReasonRef.current = "user";
             cb.current.onSessionStart?.();
             const rec = buildRecognition(sessionId);
@@ -379,12 +382,50 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
               break;
             }
             startEnergyLoop();
-            armSilence();
+            armSegmentPause();
             if (maxTimerRef.current) clearTimeout(maxTimerRef.current);
             maxTimerRef.current = setTimeout(() => {
-              endReasonRef.current = "silence";
+              endReasonRef.current = "timeout";
               dispatchRef.current({ t: "stop" });
             }, MAX_SESSION_MS);
+            break;
+          }
+
+          case "seal-segment": {
+            // Punctuate everything said so far and make it the new committed base. Writing
+            // it into `baseCommittedRef` is what stops a later result from resurrecting the
+            // un-punctuated version.
+            // Seal what the caller is actually showing, not just the finals: if the engine
+            // has not finalised the tail yet, committing finals alone would drop words the
+            // user can see on screen.
+            const sealed = punctuateSegment(lastSpanRef.current);
+            // Trailing space so the next utterance starts a new sentence, not a new word.
+            const nextBase = sealed ? sealed + " " : "";
+            // Nothing new since the last seal. Bail BEFORE restarting the engine — otherwise
+            // sitting silent would seal, and therefore restart, every SEGMENT_PAUSE_MS.
+            if (!sealed || nextBase === baseCommittedRef.current) break;
+            baseCommittedRef.current = nextBase;
+            lastFinalsRef.current = "";
+            lastSpanRef.current = nextBase;
+
+            // The restart is load-bearing, not incidental: it clears the engine's own
+            // results list, which still holds the raw finals we just rewrote. Without it
+            // the next event would re-append them after the sealed copy.
+            teardownRecognition();
+            const resealed = buildRecognition(sessionId);
+            if (!resealed) break;
+            recRef.current = resealed;
+            try {
+              resealed.start();
+            } catch {
+              break;
+            }
+            cb.current.onTranscript(baseCommittedRef.current, {
+              hasInterim: false,
+              interimStart: baseCommittedRef.current.length,
+            });
+            // Deliberately NOT re-arming: the next pause countdown starts when the user
+            // speaks again. Re-arming here would seal-and-restart forever during silence.
             break;
           }
 
@@ -401,7 +442,7 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
             } catch {
               break;
             }
-            armSilence();
+            armSegmentPause();
             break;
           }
 
@@ -434,7 +475,7 @@ export function useDictation(options: UseDictationOptions): DictationHandle {
         }
       }
     },
-    [armSilence, buildRecognition, clearTimers, startEnergyLoop, stopEnergyLoop, teardownRecognition],
+    [armSegmentPause, buildRecognition, clearTimers, startEnergyLoop, stopEnergyLoop, teardownRecognition],
   );
 
   const dispatch = useCallback(

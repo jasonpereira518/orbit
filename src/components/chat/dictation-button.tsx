@@ -14,12 +14,59 @@
 import { Loader2, Mic } from "lucide-react";
 import { motion, useTransform, type MotionValue } from "motion/react";
 
+
 import { Button } from "@/components/ui/button";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { useDelayedLoading } from "@/lib/use-delayed-loading";
 import { cn } from "@/lib/utils";
 import type { DictationState } from "@/lib/dictation";
+
+
+/**
+ * The listening glyph: four bars that ride the speech energy.
+ *
+ * Each bar maps `level` through its own range so they move as a group without marching in
+ * lockstep — a single shared transform reads as a slider, not a voice. Driven entirely by
+ * the MotionValue, so none of this re-renders the chat thread.
+ */
+function LevelBars({ level, reduced }: { level: MotionValue<number>; reduced: boolean }) {
+  return (
+    <span aria-hidden className="relative flex h-4 items-center gap-[2px]">
+      {LEVEL_BAR_RANGES.map((range, i) => (
+        <LevelBar key={i} level={level} range={range} reduced={reduced} />
+      ))}
+    </span>
+  );
+}
+
+/** Min/max height in px per bar. The outer pair stay shorter, so the shape reads as a voice. */
+const LEVEL_BAR_RANGES: Array<[min: number, max: number]> = [
+  [3, 9],
+  [5, 15],
+  [4, 12],
+  [3, 8],
+];
+
+function LevelBar({
+  level,
+  range,
+  reduced,
+}: {
+  level: MotionValue<number>;
+  range: [number, number];
+  reduced: boolean;
+}) {
+  const height = useTransform(level, [0, 1], range);
+  return (
+    <motion.span
+      className="w-[2.5px] rounded-full bg-current"
+      // Reduced motion keeps the bars, frozen at a resting height: the shape still says
+      // "listening" without anything moving.
+      style={reduced ? { height: range[0] + 2 } : { height }}
+    />
+  );
+}
 
 export function DictationButton({
   state,
@@ -65,12 +112,15 @@ export function DictationButton({
         "relative h-11 w-11 shrink-0 overflow-visible text-muted-foreground",
         "transition-colors",
         state === "requesting" && "pointer-events-none",
-        listening && "bg-primary/12 text-primary hover:bg-primary/16 hover:text-primary",
+        // Solid, not a tint: at a glance the only question that matters is "is it on?".
+        state === "listening" &&
+          "bg-primary text-primary-foreground shadow-sm hover:bg-primary hover:text-primary-foreground",
+        state === "requesting" && "bg-primary/12 text-primary",
         errored && "text-destructive",
       )}
     >
-      {/* The liveness. Driven by a MotionValue, so no React render per frame — and no
-          infinite keyframe loop for `reducedMotion="user"` to leave spinning at zero. */}
+      {/* The halo. Driven by a MotionValue, so no React render per frame — and no infinite
+          keyframe loop for `reducedMotion="user"` to leave spinning at zero. */}
       {state === "listening" && !reduced && (
         <motion.span
           aria-hidden
@@ -78,23 +128,19 @@ export function DictationButton({
           style={{ scale, opacity }}
         />
       )}
-      {/* Reduced motion keeps the state legible without the ring. */}
-      {state === "listening" && reduced && (
-        <span aria-hidden className="pointer-events-none absolute inset-0 rounded-lg bg-primary/15" />
-      )}
 
       {showSpinner ? (
         <Loader2 className="relative size-4 animate-spin" />
+      ) : state === "listening" ? (
+        // Bars, not a mic glyph: a mic means "you can dictate", moving bars mean "it is
+        // hearing you right now". `MicOff` was rejected — it reads as muted, the opposite.
+        <LevelBars level={level} reduced={reduced} />
       ) : (
         <motion.span
           className="relative inline-flex"
           initial={false}
-          // A single restrained gesture on arrival, matching the house register.
-          animate={{ scale: state === "listening" ? 1.06 : 1 }}
           transition={{ duration: reduced ? 0 : DUR.fast, ease: EASE_HOUSE }}
         >
-          {/* Stays `Mic` while listening on purpose: `MicOff` reads as "muted", which is
-              the opposite of what is happening. */}
           <Mic className="size-4" />
         </motion.span>
       )}

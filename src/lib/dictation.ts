@@ -11,15 +11,18 @@
 
 // ── Timing ────────────────────────────────────────────────────────────────────────────
 
-/** Silence that ends a session, once speech has actually been heard. */
-export const SILENCE_MS = 2200;
 /**
- * Grace before the FIRST word. Without a separate, longer window, clicking the mic and
- * taking a moment to gather your thought cuts you off before you say anything.
+ * A pause this long closes a sentence. It does NOT stop the session — pausing to think is
+ * the most common thing a person does mid-question, and being cut off for it was the worst
+ * part of the first cut. The cost of getting this wrong is now a stray period, which is
+ * why it can afford to be shorter than the old stop threshold.
  */
-export const FIRST_SPEECH_GRACE_MS = 7000;
-/** Hard cap, so a forgotten tab cannot hold the mic open indefinitely. */
-export const MAX_SESSION_MS = 90_000;
+export const SEGMENT_PAUSE_MS = 1500;
+/**
+ * The only remaining time-based stop. A forgotten tab holding the microphone open is a
+ * privacy and battery problem; five minutes is far longer than any single dictation.
+ */
+export const MAX_SESSION_MS = 300_000;
 
 /** Chrome spin-loops end→start→end when the mic device disappears mid-session. */
 export const RESTART_STORM_WINDOW_MS = 1000;
@@ -47,7 +50,8 @@ export type DictationErrorCode =
   | "network"
   | "unknown";
 
-export type DictationEndReason = "user" | "silence" | "error" | "cancel";
+/** Silence is no longer an ending; the 5-minute cap is what "timeout" means. */
+export type DictationEndReason = "user" | "timeout" | "error" | "cancel";
 
 // ── Transcript tidying ────────────────────────────────────────────────────────────────
 
@@ -68,6 +72,43 @@ export function tidyTranscript(raw: string): string {
     .trim()
     .replace(/^([a-z])/, (m) => m.toUpperCase())
     .replace(/([.!?]\s+)([a-z])/g, (_m, p, c: string) => p + c.toUpperCase());
+}
+
+/**
+ * Words that, at the start of a spoken segment, make it a question.
+ *
+ * Almost everything typed into this box is a question about the user's network, so getting
+ * the question mark right is most of the perceived quality of the whole feature.
+ */
+const INTERROGATIVE_OPENERS = new Set([
+  "who", "what", "where", "when", "why", "how", "which", "whose", "whom",
+  "is", "are", "was", "were", "am",
+  "do", "does", "did",
+  "can", "could", "should", "would", "will", "shall",
+  "have", "has", "had",
+]);
+
+/** Already-terminated segments are left alone. */
+const TERMINAL_PUNCTUATION = /[.!?…]$/;
+
+/**
+ * Close off a spoken segment: tidy it, then terminate it.
+ *
+ * Called when a pause says the sentence is over, NOT on every interim event — `tidy` stays
+ * the per-event pass. Deliberately does not strip filler words ("um", "uh"): Chrome's
+ * recogniser rarely emits them, and a stripper aggressive enough to catch them also eats
+ * real speech. See the assertion in the smoke test.
+ */
+export function punctuateSegment(raw: string): string {
+  const text = tidyTranscript(raw);
+  if (!text) return "";
+  if (TERMINAL_PUNCTUATION.test(text)) return text;
+
+  const firstWord = text.slice(0, text.search(/[\s,]|$/)).toLowerCase();
+  // A trailing comma means the speaker was still mid-list; a period reads better than
+  // leaving the comma dangling at the end of a sealed sentence.
+  const body = text.replace(/,$/, "");
+  return body + (INTERROGATIVE_OPENERS.has(firstWord) ? "?" : ".");
 }
 
 // ── Anchored span splice ──────────────────────────────────────────────────────────────
@@ -167,6 +208,8 @@ export type DictationEvent =
   | { t: "audiostart" }
   | { t: "result" }
   | { t: "stop" }
+  /** A pause long enough to close a sentence. Seals; never stops. */
+  | { t: "segment" }
   | { t: "cancel" }
   | { t: "end"; now: number }
   | { t: "error"; code: string; now: number }
@@ -177,6 +220,8 @@ export type DictationEvent =
 export type DictationEffect =
   | "start-recognition"
   | "restart-recognition"
+  /** Punctuate what has been said so far, commit it, and restart the engine. */
+  | "seal-segment"
   | "stop-recognition"
   | "abort-recognition"
   | "toast-denied"
@@ -245,6 +290,11 @@ export function dictationReducer(m: Machine, e: DictationEvent): Reduced {
       if (m.state !== "requesting" && m.state !== "listening") return keep();
       return keep({ intentionalStop: true }, ["stop-recognition"]);
 
+    case "segment":
+      // Sealing is not stopping: the session stays live and the mic stays open.
+      if (m.state !== "listening") return keep();
+      return keep({}, ["seal-segment"]);
+
     case "cancel":
       // Bumping the session invalidates any result the abort flushes on its way out.
       return keep(
@@ -285,9 +335,14 @@ export function dictationReducer(m: Machine, e: DictationEvent): Reduced {
         case "aborted":
           return keep();
 
-        // The engine's own endpointer reaching the same conclusion as our silence timer.
+        /**
+         * Chrome raises this after ~7-8s of quiet. It used to end the session, which is
+         * precisely the "mic dies while I think" bug. It is now a silent restart, in the
+         * same bucket as the engine timing out server-side: `end` follows, and because
+         * `intentionalStop` stays false, that restarts us.
+         */
         case "no-speech":
-          return keep({ intentionalStop: true });
+          return keep();
 
         case "not-allowed":
         case "service-not-allowed": {
