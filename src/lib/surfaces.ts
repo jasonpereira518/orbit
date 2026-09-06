@@ -49,6 +49,13 @@ const PAGES: Surface[] = [
     reason: "Onboarding and the app shell both redirect here.",
   },
   {
+    key: "page.events",
+    kind: "page",
+    label: "Events",
+    description: "Events you attended, their attendee lists, and who you spoke to.",
+    href: "/events",
+  },
+  {
     key: "page.contacts",
     kind: "page",
     label: "Contacts",

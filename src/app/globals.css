@@ -1873,3 +1873,38 @@ html[data-celebration-handoff] [data-app-logo] {
     transition: none;
   }
 }
+
+/* --- Per-event theming ------------------------------------------------------------------
+   Each event carries a colour derived from its own page (see src/lib/events/theme.ts). The
+   detail page sets the six *-light / *-dark variables inline; these two rules pick between
+   them.
+
+   Why both values ship at once: an inline style attribute cannot be theme-conditional, and
+   next-themes can flip `.dark` after render with no round trip. Choosing in CSS keeps the
+   swap free and flash-free — the same reason `.reveal-mount` stays pure CSS.
+
+   Every accent here is already contrast-clamped by `eventThemeVars`; there is no unclamped
+   path out of that module, so nothing below needs to re-check legibility. */
+.event-theme {
+  --event-accent: var(--event-accent-light);
+  --event-tint: var(--event-tint-light);
+  --event-ring: var(--event-ring-light);
+}
+
+.dark .event-theme {
+  --event-accent: var(--event-accent-dark);
+  --event-tint: var(--event-tint-dark);
+  --event-ring: var(--event-ring-dark);
+}
+
+/* The scrim over a cover image. Without it, light cover art and white heading text collide;
+   the gradient guarantees the bottom third is dark enough to read against regardless of
+   what the host chose as their graphic. */
+.event-hero-scrim {
+  background-image: linear-gradient(
+    to top,
+    color-mix(in oklab, black 72%, transparent) 0%,
+    color-mix(in oklab, black 28%, transparent) 45%,
+    transparent 100%
+  );
+}

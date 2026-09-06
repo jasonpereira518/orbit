@@ -803,3 +803,28 @@ export function PricingPageSkeleton() {
     </div>
   );
 }
+
+/** Mirrors the events list: a filter row and a grid of cover-topped cards. */
+export function EventsListSkeleton() {
+  return (
+    <div className="space-y-4">
+      <Skeleton className="h-24 w-full rounded-2xl" />
+      <div className="grid gap-4 sm:grid-cols-2">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-44 w-full rounded-2xl" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Mirrors the event detail shell: themed hero, then the roster. */
+export function EventDetailSkeleton() {
+  return (
+    <div className="space-y-6">
+      <Skeleton className="h-60 w-full rounded-2xl" />
+      <Skeleton className="h-40 w-full rounded-2xl" />
+      <Skeleton className="h-72 w-full rounded-2xl" />
+    </div>
+  );
+}

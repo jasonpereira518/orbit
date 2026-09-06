@@ -11,6 +11,7 @@ import {
   MoreHorizontal,
   Bell,
   BookOpen,
+  PartyPopper,
 } from "lucide-react";
 
 export type AppNavItem = {
@@ -38,6 +39,13 @@ const IMPORTS: AppNavItem = {
   href: "/imports",
   label: "Imports",
   icon: Upload,
+};
+const EVENTS: AppNavItem = {
+  href: "/events",
+  label: "Events",
+  // The same icon INTERACTION_TYPES gives the "event" interaction type, so the sidebar and
+  // the timeline entries these events create read as the same thing.
+  icon: PartyPopper,
 };
 const REMINDERS: AppNavItem = {
   href: "/reminders",
@@ -70,6 +78,7 @@ export const APP_NAV_CORE: AppNavItem[] = [
   DASHBOARD,
   CONTACTS,
   CAPTURE,
+  EVENTS,
   IMPORTS,
   REMINDERS,
   CHAT,
@@ -102,6 +111,7 @@ export const MOBILE_BOTTOM_NAV: Array<
 ];
 
 export const MOBILE_MORE_NAV = [
+  EVENTS,
   IMPORTS,
   REMINDERS,
   CONSTELLATION,
