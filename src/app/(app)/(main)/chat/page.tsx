@@ -11,7 +11,21 @@ export default async function ChatPage() {
   const settings = await getSettings();
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+    /**
+     * Height lives here, not on the panel.
+     *
+     * `(app)/template.tsx` wraps every route in a bare `<div>` for the view transition,
+     * which is display:block — so the shell's bounded flex column stops there and neither
+     * `flex-1` nor `h-full` reaches a page. That break is why this surface (and /graph)
+     * size themselves off the viewport at all.
+     *
+     * Pinning the height on THIS container rather than the card is what fixes the
+     * API-key notice: the notice is a sibling in this flex column, so it takes its share
+     * and the card absorbs the rest, instead of the card assuming a fixed amount of
+     * chrome above it and running off the bottom of the screen. Subtracts only the shell's
+     * own padding and mobile header — chrome that does not change with content.
+     */
+    <div className="flex h-[calc(100dvh-9.75rem)] min-h-0 flex-col gap-4 overflow-hidden md:h-[calc(100dvh-4rem)]">
       <div className="shrink-0">
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
           Chat with your network

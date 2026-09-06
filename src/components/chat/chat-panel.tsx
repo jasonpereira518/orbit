@@ -677,7 +677,15 @@ export function ChatPanel() {
             onScroll={onListScroll}
             className="min-h-0 flex-1 basis-0 overflow-y-auto overscroll-y-contain px-3 py-4 touch-pan-y sm:px-4"
           >
-            <div className="mx-auto flex max-w-3xl flex-col gap-4 pb-2">
+            <div
+              className={cn(
+                "mx-auto flex max-w-3xl flex-col gap-4 pb-2",
+                // An empty thread centres its prompt in the whole area rather than
+                // hugging the top; once messages exist the column goes back to
+                // top-aligned so the thread reads normally.
+                messages.length === 0 && !busy && !loadingThread && "h-full",
+              )}
+            >
               {loadingThread ? (
                 <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" />
@@ -686,7 +694,7 @@ export function ChatPanel() {
               ) : (
                 <>
                   {messages.length === 0 && !busy && (
-                    <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+                    <div className="flex flex-1 flex-col items-center justify-center gap-3 py-16 text-center">
                       <p className="font-[family-name:var(--font-display)] text-xl text-ink sm:text-2xl">
                         Ask your network
                       </p>
