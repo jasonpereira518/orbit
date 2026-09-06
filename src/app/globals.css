@@ -384,33 +384,48 @@
   z-index: 1;
 }
 
-.liquid-glass:hover {
-  background: linear-gradient(
-    165deg,
-    rgba(255, 255, 255, 0.58) 0%,
-    rgba(255, 255, 255, 0.32) 42%,
-    rgba(247, 248, 246, 0.28) 100%
-  );
-  border-color: rgba(255, 255, 255, 0.72);
-  box-shadow:
-    0 1px 0 0 rgba(255, 255, 255, 0.8) inset,
-    0 -1px 0 0 rgba(15, 61, 62, 0.03) inset,
-    0 12px 40px -8px rgba(26, 28, 26, 0.22),
-    0 4px 14px -2px rgba(26, 28, 26, 0.1);
+/* The five rules below are gated on hover capability.
+ *
+ * Tailwind's `hover:` variant compiles inside `@media (hover: hover)` on its own, but
+ * these are hand-written and were not — so on a touch device the lightening fired on
+ * tap and then STUCK, because a touch "hover" is never exited. `.liquid-glass` is what
+ * the mobile bottom nav is built from, which is exactly a touch-first surface.
+ *
+ * A media query does not change specificity, so the `.liquid-glass-panel` neutralisers
+ * further down still outrank these, as their own comments describe. Those neutralisers
+ * are deliberately NOT gated: they cancel the lightening, so on touch they are a
+ * harmless no-op rather than something that needs suppressing. */
+@media (hover: hover) {
+  .liquid-glass:hover {
+    background: linear-gradient(
+      165deg,
+      rgba(255, 255, 255, 0.58) 0%,
+      rgba(255, 255, 255, 0.32) 42%,
+      rgba(247, 248, 246, 0.28) 100%
+    );
+    border-color: rgba(255, 255, 255, 0.72);
+    box-shadow:
+      0 1px 0 0 rgba(255, 255, 255, 0.8) inset,
+      0 -1px 0 0 rgba(15, 61, 62, 0.03) inset,
+      0 12px 40px -8px rgba(26, 28, 26, 0.22),
+      0 4px 14px -2px rgba(26, 28, 26, 0.1);
+  }
 }
 
-.liquid-glass:hover::before {
-  background:
-    radial-gradient(
-      130% 90% at 10% -15%,
-      rgba(255, 255, 255, 0.88) 0%,
-      transparent 58%
-    ),
-    radial-gradient(
-      95% 65% at 100% 100%,
-      rgba(15, 61, 62, 0.05) 0%,
-      transparent 50%
-    );
+@media (hover: hover) {
+  .liquid-glass:hover::before {
+    background:
+      radial-gradient(
+        130% 90% at 10% -15%,
+        rgba(255, 255, 255, 0.88) 0%,
+        transparent 58%
+      ),
+      radial-gradient(
+        95% 65% at 100% 100%,
+        rgba(15, 61, 62, 0.05) 0%,
+        transparent 50%
+      );
+  }
 }
 
 /* Built on the navy surface values rather than the old rgba(55,55,55): the
@@ -445,33 +460,37 @@
     );
 }
 
-.dark .liquid-glass:hover {
-  background: linear-gradient(
-    165deg,
-    rgba(52, 68, 102, 0.55) 0%,
-    rgba(33, 44, 66, 0.4) 45%,
-    rgba(18, 27, 45, 0.36) 100%
-  );
-  border-color: rgba(255, 255, 255, 0.18);
-  box-shadow:
-    0 1px 0 0 rgba(255, 255, 255, 0.2) inset,
-    0 -1px 0 0 rgba(0, 0, 0, 0.2) inset,
-    0 16px 48px -10px rgba(0, 0, 0, 0.6),
-    0 4px 14px -2px rgba(0, 0, 0, 0.4);
+@media (hover: hover) {
+  .dark .liquid-glass:hover {
+    background: linear-gradient(
+      165deg,
+      rgba(52, 68, 102, 0.55) 0%,
+      rgba(33, 44, 66, 0.4) 45%,
+      rgba(18, 27, 45, 0.36) 100%
+    );
+    border-color: rgba(255, 255, 255, 0.18);
+    box-shadow:
+      0 1px 0 0 rgba(255, 255, 255, 0.2) inset,
+      0 -1px 0 0 rgba(0, 0, 0, 0.2) inset,
+      0 16px 48px -10px rgba(0, 0, 0, 0.6),
+      0 4px 14px -2px rgba(0, 0, 0, 0.4);
+  }
 }
 
-.dark .liquid-glass:hover::before {
-  background:
-    radial-gradient(
-      130% 90% at 10% -15%,
-      rgba(255, 255, 255, 0.18) 0%,
-      transparent 58%
-    ),
-    radial-gradient(
-      95% 65% at 100% 100%,
-      rgba(124, 195, 226, 0.16) 0%,
-      transparent 50%
-    );
+@media (hover: hover) {
+  .dark .liquid-glass:hover::before {
+    background:
+      radial-gradient(
+        130% 90% at 10% -15%,
+        rgba(255, 255, 255, 0.18) 0%,
+        transparent 58%
+      ),
+      radial-gradient(
+        95% 65% at 100% 100%,
+        rgba(124, 195, 226, 0.16) 0%,
+        transparent 50%
+      );
+  }
 }
 
 @supports not (
@@ -481,8 +500,10 @@
     background: color-mix(in oklab, var(--sidebar) 92%, transparent);
   }
 
-  .liquid-glass:hover {
-    background: color-mix(in oklab, var(--sidebar) 86%, transparent);
+  @media (hover: hover) {
+    .liquid-glass:hover {
+      background: color-mix(in oklab, var(--sidebar) 86%, transparent);
+    }
   }
 }
 
@@ -1899,5 +1920,53 @@ html[data-celebration-handoff] [data-app-logo] {
     /* Inset to match `focus-visible:ring-inset`, so the indicator lands in the
        same place in both modes rather than jumping outside the row. */
     outline-offset: -2px;
+  }
+}
+
+/* ── Navigation pending hint ──
+ * Driven by `useLinkStatus` via `components/layout/nav-pending-dot.tsx`.
+ *
+ * Absolutely positioned and ALWAYS rendered, toggling visibility rather than
+ * mounting — the Next docs call out inline pending indicators as an easy source of
+ * layout shift, and this has to sit inside a nav item that is icon-only at one
+ * breakpoint and icon+label at another.
+ *
+ * The 100ms animation-delay is the documented anti-flash: a navigation that
+ * resolves faster than that never paints the dot, so quick moves stay silent and
+ * only a genuinely slow one gets acknowledged.
+ *
+ * Under reduced motion the global clamp zeroes both the delay and the durations,
+ * which degrades exactly the right way: the dot appears instantly and holds a
+ * steady opacity instead of pulsing. Feedback kept, movement dropped. */
+.nav-pending-dot {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  z-index: 20;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 9999px;
+  background: currentColor;
+  opacity: 0;
+  /* Reserves nothing and shows nothing until a navigation is actually in flight. */
+  visibility: hidden;
+}
+
+.nav-pending-dot[data-pending] {
+  visibility: visible;
+  animation:
+    var(--transition-duration-base) var(--ease-house) 100ms both nav-pending-in,
+    1.2s ease-in-out 100ms infinite nav-pending-pulse;
+}
+
+@keyframes nav-pending-in {
+  to {
+    opacity: 0.65;
+  }
+}
+
+@keyframes nav-pending-pulse {
+  50% {
+    opacity: 0.25;
   }
 }
