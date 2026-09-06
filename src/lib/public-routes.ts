@@ -10,6 +10,9 @@
 export const PUBLIC_ROUTES = [
   "/",
   "/pricing",
+  // The standalone interest-list page. Its form posts to a server action, which is not
+  // matched here — actions POST to the page's own URL, so a public page covers them.
+  "/interest",
   "/privacy",
   "/terms",
   "/contact",
