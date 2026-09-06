@@ -78,7 +78,9 @@ export function GoalsSummary({
         )}
 
         <form
-          className="flex gap-2"
+          // Capped: a goal is a short phrase, and the input inherited the card's
+          // full width — a thousand-pixel field for "raise a seed round".
+          className="flex max-w-md gap-2"
           onSubmit={(e) => {
             e.preventDefault();
             const trimmed = text.trim();

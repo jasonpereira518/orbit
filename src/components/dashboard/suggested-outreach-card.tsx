@@ -50,7 +50,12 @@ export function SuggestedOutreachCard({
       </CardHeader>
       <CardContent
         id="suggestions"
-        className="flex flex-1 flex-col space-y-2 scroll-mt-8"
+        // @container so the list below can respond to THIS CARD's width rather than
+        // the viewport's. The card is half-width when Outreach performance is
+        // showing and full-width when it isn't (that card removes itself for any
+        // account that has never run a campaign — most of them), and a viewport
+        // breakpoint cannot tell those apart.
+        className="@container flex flex-1 flex-col space-y-2 scroll-mt-8"
       >
         {items.length === 0 ? (
           <p className="rounded-xl border border-dashed border-border/70 px-4 py-8 text-center text-sm text-muted-foreground">
@@ -67,7 +72,10 @@ export function SuggestedOutreachCard({
           </p>
         ) : (
           <>
-            <div className="space-y-2">
+            {/* Two-up once the card itself is past ~768px. Stretched to a full
+                row, a suggestion put its name a thousand pixels from its own
+                dismiss button with nothing in between. */}
+            <div className="space-y-2 @3xl:grid @3xl:grid-cols-2 @3xl:gap-2 @3xl:space-y-0">
               {visible.map((s) => (
                 <SuggestionRow
                   key={s.id}

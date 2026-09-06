@@ -337,7 +337,12 @@ export async function RecentlyUpdatedSection({
               </div>
             </div>
           ) : (
-            data.recentContacts.map((c) => {
+            // Two columns from lg. This card owns a full-width row (see page.tsx),
+            // and six rows stretched across it would put each name a thousand
+            // pixels from its own timestamp. Splitting the same six into 3x2 fills
+            // the width with content instead of with gap.
+            <div className="grid gap-x-8 gap-y-1 lg:grid-cols-2">
+            {data.recentContacts.map((c) => {
               const tier = tierForContact(data, c.id);
               return (
                 <Link
@@ -359,7 +364,8 @@ export async function RecentlyUpdatedSection({
                   </span>
                 </Link>
               );
-            })
+            })}
+            </div>
           )}
         </CardContent>
       </Card>
@@ -373,7 +379,10 @@ export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
   // resolved them for the sidebar's tier ring — so this costs nothing extra.
   const { plan } = await getEntitlements(await requireUserId());
   return (
-    <div className="reveal-mount space-y-8" style={revealDelay(240)}>
+    // space-y-6, not the page's space-y-8: these three are a group at the foot of
+    // the dashboard, and giving them the same gap as the major section breaks made
+    // them read as three more top-level sections rather than one block.
+    <div className="reveal-mount space-y-6" style={revealDelay(240)}>
       <GoalsSummary
         goals={data.goals}
         goalAlignedContacts={data.goalAlignedContacts.map((c) => ({
