@@ -1873,3 +1873,31 @@ html[data-celebration-handoff] [data-app-logo] {
     transition: none;
   }
 }
+
+/* ── Forced-colors focus fallback ──
+ * Tailwind's `ring-*` compiles to a `box-shadow`, and Windows High Contrast
+ * Mode strips box-shadows outright — so a `focus-visible:outline-none` +
+ * `focus-visible:ring-*` pair, which is this repo's standard focus treatment
+ * (`ui/button.tsx`, `contacts/contacts-list.tsx`), leaves a keyboard user with
+ * NO visible focus indicator there. The `focus-visible:bg-*` half is overridden
+ * by the forced palette too, so nothing survives.
+ *
+ * Restoring a real outline is the fix. `outline` is honoured in forced-colors
+ * mode and, given no colour, is painted in the system's own Highlight colour —
+ * which is the correct thing to defer to.
+ *
+ * Unlayered on purpose: Tailwind's utilities live in `@layer utilities`, and
+ * unlayered CSS outranks any layer regardless of source order. That is what
+ * lets this beat `focus-visible:outline-none` without `!important` and without
+ * depending on which rule Tailwind happens to emit last. Same mechanism the
+ * `.liquid-glass` block above relies on.
+ *
+ * Applied via `ROW_HOVER` / `ROW_HOVER_INSET` in `src/lib/interaction.ts`. */
+@media (forced-colors: active) {
+  .focus-ring-fallback:focus-visible {
+    outline: 2px solid;
+    /* Inset to match `focus-visible:ring-inset`, so the indicator lands in the
+       same place in both modes rather than jumping outside the row. */
+    outline-offset: -2px;
+  }
+}
