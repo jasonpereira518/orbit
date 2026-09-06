@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useTransition,
@@ -30,8 +31,17 @@ import {
 } from "@/actions/chat";
 import { createReminder } from "@/actions/reminders";
 import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";
-import { ComposerMirror, useCoarsePointer } from "@/components/chat/composer-mirror";
-import { ComposerToolsMenu } from "@/components/chat/composer-tools-menu";
+import { ComposerHighlights } from "@/components/chat/composer-highlights";
+import {
+  COMPOSER_TEXT_BOX,
+  ComposerMirror,
+  useCoarsePointer,
+} from "@/components/chat/composer-mirror";
+import {
+  ComposerToolsMenu,
+  type ComposerInsert,
+} from "@/components/chat/composer-tools-menu";
+import { MentionText } from "@/components/chat/mention-text";
 import { DictationButton } from "@/components/chat/dictation-button";
 import { ComposerSendButton } from "@/components/chat/composer-send-button";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
@@ -56,6 +66,11 @@ import {
 import { cn } from "@/lib/utils";
 import type { ChatRecommendation } from "@/db/schema";
 import { streamChat } from "@/lib/chat-stream-client";
+import {
+  activeMentions,
+  mentionToken,
+  uniqueMentionName,
+} from "@/lib/chat-mentions";
 import { ANCHOR_INTERFERENCE, shiftAnchor, spliceSpan } from "@/lib/dictation";
 import { useDictation } from "@/lib/use-dictation";
 
@@ -75,7 +90,22 @@ type UserMessage = {
   id: string;
   role: "user";
   content: string;
+  /**
+   * Who was attached when this was sent, so the bubble marks exactly those names.
+   *
+   * Absent on messages loaded back from the database — the attachment list is not a
+   * persisted column — and `MentionText` falls back to a shape heuristic there.
+   */
+  mentionNames?: string[];
 };
+
+/**
+ * A person the user attached with `+`, and the token that stands for them in the box.
+ *
+ * The token is the contract: `activeMentions` re-derives the attachment list from the text
+ * on every change, so deleting the words removes the person and nothing has to watch for it.
+ */
+type ContextPerson = { id: string; name: string };
 
 type AssistantMessage = {
   id: string;
@@ -114,6 +144,8 @@ export function ChatPanel() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
   const [lastUserQuery, setLastUserQuery] = useState("");
+  /** People attached with `+`, kept in step with the tokens actually in the box. */
+  const [attached, setAttached] = useState<ContextPerson[]>([]);
   const [pending, start] = useTransition();
   // Streaming is deliberately NOT a transition: updates inside `startTransition` are
   // deferred, which would hold every streamed token back until the whole answer landed.
@@ -169,6 +201,11 @@ export function ChatPanel() {
     spanRef.current = "";
     lastValueRef.current = value;
     setQuestion(value);
+    // Deliberately does NOT touch `attached`. A failed send clears the box and then puts
+    // the text back, and pruning on the way through left the restored `@Marcus Webb` grey
+    // and unattached — the retry would have sent no context at all. The registry is inert
+    // while its token is absent, so keeping it costs nothing; it is cleared where a reset
+    // really does mean a different conversation (`clearComposer`).
   }, []);
 
   const dictation = useDictation({
@@ -267,6 +304,31 @@ export function ChatPanel() {
     if (busy || loadingThread) dictation.cancel();
   }, [busy, loadingThread, dictation]);
 
+  /**
+   * The text decides who is attached, not the other way round.
+   *
+   * `attached` is only a registry of what has been picked; this is the live set, derived
+   * from the box on every render. So deleting `@Marcus Webb` drops Marcus with no effect
+   * watching for it, whether the deletion came from typing, dictating or a programmatic
+   * clear. A stale registry entry is inert — it fails to appear here — and is swept by
+   * `clearComposer`.
+   */
+  const context = useMemo(() => activeMentions(question, attached), [question, attached]);
+  /** Only attached people are painted green: the mark means "this is context", not "@". */
+  const attachedNames = useMemo(() => context.map((p) => p.name), [context]);
+
+  /**
+   * Empty the box and forget what was attached to it.
+   *
+   * For the resets that mean "a different conversation" — a new chat, a thread loaded from
+   * history, the current thread deleted. Sending is not one of them: the send path clears
+   * the box but may have to put the question back.
+   */
+  const clearComposer = useCallback(() => {
+    resetQuestion("");
+    setAttached([]);
+  }, [resetQuestion]);
+
   const refreshThreads = useCallback(async () => {
     try {
       const rows = await listChatThreads();
@@ -347,14 +409,14 @@ export function ChatPanel() {
       );
       const lastUser = [...rows].reverse().find((row) => row.role === "user");
       setLastUserQuery(lastUser?.content ?? "");
-      resetQuestion("");
+      clearComposer();
       requestAnimationFrame(() => scrollToBottom(false));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to load chat");
     } finally {
       setLoadingThread(false);
     }
-  }, [resetQuestion, scrollToBottom]);
+  }, [clearComposer, scrollToBottom]);
 
   const startNewChat = useCallback(() => {
     start(async () => {
@@ -363,7 +425,7 @@ export function ChatPanel() {
         setThreadId(created.id);
         setThreadTitle(created.title);
         setMessages([]);
-        resetQuestion("");
+        clearComposer();
         setLastUserQuery("");
         setThreads((prev) => [
           {
@@ -379,7 +441,7 @@ export function ChatPanel() {
         toast.error(err instanceof Error ? err.message : "Could not start chat");
       }
     });
-  }, [resetQuestion]);
+  }, [clearComposer]);
 
   const removeThread = useCallback(
     (id: string) => {
@@ -391,7 +453,7 @@ export function ChatPanel() {
             setThreadId(null);
             setThreadTitle(null);
             setMessages([]);
-            resetQuestion("");
+            clearComposer();
           }
           toast.success("Chat deleted");
         } catch (err) {
@@ -399,7 +461,7 @@ export function ChatPanel() {
         }
       });
     },
-    [resetQuestion, threadId]
+    [clearComposer, threadId]
   );
 
   const sendQuestion = useCallback(
@@ -408,10 +470,14 @@ export function ChatPanel() {
       if (!q || busy || loadingThread) return;
 
       setLastUserQuery(q);
+      // Resolved from the text, not from `attached` directly: a token the user deleted
+      // must not still ship that person's history to the model.
+      const sending = activeMentions(q, attached);
       const userMsg: UserMessage = {
         id: newId(),
         role: "user",
         content: q,
+        mentionNames: sending.length ? sending.map((p) => p.name) : undefined,
       };
       stickToBottomRef.current = true;
       setMessages((prev) => [...prev, userMsg]);
@@ -447,7 +513,11 @@ export function ChatPanel() {
         };
 
         await streamChat(
-          { question: q, threadId: activeId },
+          {
+            question: q,
+            threadId: activeId,
+            contextContactIds: sending.map((p) => p.id),
+          },
           {
             onAnswer: (delta) => {
               ensurePlaceholder();
@@ -484,7 +554,7 @@ export function ChatPanel() {
         setStreaming(false);
       })();
     },
-    [busy, loadingThread, ensureThread, resetQuestion, scrollToBottom]
+    [attached, busy, loadingThread, ensureThread, resetQuestion, scrollToBottom]
   );
 
   function fillMostRecentUserMessage() {
@@ -568,6 +638,34 @@ export function ChatPanel() {
       requestAnimationFrame(() => textareaRef.current?.focus());
     },
     [],
+  );
+
+  /**
+   * A pick from the `+` menu.
+   *
+   * A meeting is only ever words. A person is words plus a claim — the `@Name` token goes
+   * in the box and the contact id rides along to the send path, which is what puts their
+   * role and timeline in front of the model.
+   */
+  const onToolInsert = useCallback(
+    (item: ComposerInsert) => {
+      if (item.kind === "text") {
+        insertAtCaret(item.text);
+        return;
+      }
+      const already = attached.find((p) => p.id === item.contactId);
+      // Re-picking someone reuses their token; a namesake gets a longer one, or the two
+      // would share a token and `activeMentions` could only ever resolve it to one of them.
+      const name =
+        already?.name ??
+        uniqueMentionName(
+          item.nameCandidates,
+          attached.map((p) => p.name),
+        );
+      if (!already) setAttached((prev) => [...prev, { id: item.contactId, name }]);
+      insertAtCaret(mentionToken(name));
+    },
+    [attached, insertAtCaret],
   );
 
   /**
@@ -749,7 +847,7 @@ export function ChatPanel() {
                     msg.role === "user" ? (
                       <div key={msg.id} className="flex justify-end">
                         <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm text-primary-foreground">
-                          {msg.content}
+                          <MentionText text={msg.content} names={msg.mentionNames} />
                         </div>
                       </div>
                     ) : (
@@ -804,12 +902,20 @@ export function ChatPanel() {
               >
                 <ComposerToolsMenu
                   disabled={busy || loadingThread}
-                  onInsert={insertAtCaret}
+                  onInsert={onToolInsert}
                 />
                 {/* No vertical padding here: the mirror is `inset-0` of this box, so any
                     padding on it would offset the field from its ghost layer. The field and
                     the mirror each carry their own py instead. */}
                 <div className="relative flex-1">
+                  {/* The green marks. They show through because the field's own background
+                      is transparent — the pill owns it — and they stay behind the glyphs
+                      because of the z ladder, not this DOM order. */}
+                  <ComposerHighlights
+                    value={question}
+                    names={attachedNames}
+                    textareaRef={textareaRef}
+                  />
                   <Textarea
                     ref={textareaRef}
                     rows={1}
@@ -832,8 +938,12 @@ export function ChatPanel() {
                       // a single 20px line inside it — so with `items-end` the text sits on
                       // the same axis as the mic and send. Growing past one line just adds
                       // height downwards and the buttons stay on the last line.
-                      "min-h-9 max-h-40 w-full resize-none overflow-y-auto",
-                      "rounded-none border-0 bg-transparent px-1.5 py-2 shadow-none",
+                      // `relative z-[1]` is load-bearing: it lifts the field above the
+                      // mention marks, which are positioned and would otherwise paint over
+                      // the glyphs whatever the DOM order.
+                      "relative z-[1] min-h-9 max-h-40 w-full resize-none overflow-y-auto",
+                      COMPOSER_TEXT_BOX,
+                      "rounded-none border-0 bg-transparent shadow-none",
                       "focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent",
                       // The mirror paints the glyphs while it is up. The caret is left
                       // visible so the field still reads as focused and editable.

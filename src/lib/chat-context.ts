@@ -8,6 +8,11 @@ import {
   userGoals,
   type ChatRecommendation,
 } from "@/db/schema";
+import {
+  loadAttachedPeople,
+  renderAttachedPeople,
+  type AttachedPerson,
+} from "@/lib/chat-attached";
 import { getAttentionBrief, isAttentionQuestion, type AttentionBrief } from "@/lib/chat-attention";
 import {
   budgetContactsContext,
@@ -59,6 +64,16 @@ export type ChatContext = {
   orgRosters: OrgRoster[];
   attention: AttentionBrief | null;
   recruitersForChat: Recruiters;
+  /**
+   * People the user attached with the composer's `+`, with their role and timeline.
+   *
+   * Deliberately not folded into `retrieved`: an attachment is the user naming someone
+   * outright, not a guess, so it carries a fuller record than a relevance-ranked row can
+   * afford and is exempt from the retrieval budget.
+   */
+  attachedPeople: AttachedPerson[];
+  /** The `attachedContext` argument of `chatWithNetwork` — the block above, as text. */
+  attachedContext: string | null;
   /** Contacts the model may recommend: budgeted-in, on a roster, or in the attention brief. */
   allowedContacts: Set<string>;
   allowedRecruiters: Set<string>;
@@ -266,17 +281,25 @@ export function renderFocusProfile(profile: Awaited<ReturnType<typeof getContact
 export async function prepareChatContext(
   userId: string,
   question: string,
-  options: { threadId?: string | null; focusContactId?: string | null }
+  options: {
+    threadId?: string | null;
+    focusContactId?: string | null;
+    /** Contact ids the user attached with the composer's `+`. See `@/lib/chat-attached`. */
+    contextContactIds?: readonly string[] | null;
+  }
 ): Promise<ChatContext> {
   const db = await getDb();
   const q = question.trim();
   if (!q) throw new Error("Question is required");
   const threadId = options.threadId ?? null;
   const focusContactId = options.focusContactId?.trim() || null;
+  const attachedIds = (options.contextContactIds ?? []).filter(
+    (id): id is string => typeof id === "string" && id.trim().length > 0
+  );
 
   // Everything that depends only on the question and the user, at once. Retrieval is its
   // own multi-stage pipeline (see retrieveRankedContacts) that runs as one unit here.
-  const [thread, priorRows, retrieved, orgRosters, attention, recruitersForChat] =
+  const [thread, priorRows, retrieved, orgRosters, attention, recruitersForChat, attachedPeople] =
     await Promise.all([
       threadId
         ? db.query.chatThreads.findFirst({
@@ -304,6 +327,11 @@ export async function prepareChatContext(
             .catch(() => null)
         : Promise.resolve(null),
       isRecruiterIntent(q) ? loadRecruitersForChat(q, 8) : Promise.resolve([] as Recruiters),
+      // Depends on ids the client already resolved, so it needs neither the question nor
+      // the search. Never fatal: a question with a dead attachment is still a question.
+      attachedIds.length
+        ? loadAttachedPeople(userId, attachedIds).catch(() => [] as AttachedPerson[])
+        : Promise.resolve([] as AttachedPerson[]),
     ]);
 
   if (threadId && !thread) throw new Error("Chat not found");
@@ -394,6 +422,9 @@ export async function prepareChatContext(
   // trailing contacts once the char budget runs out.
   const allowedContacts = new Set([
     ...modelContacts.map((c) => c.id),
+    // An attached person is in the prompt whether or not retrieval found them, so they
+    // must be recommendable — otherwise the model names them and the filter drops the card.
+    ...attachedPeople.map((p) => p.id),
     ...orgRosters.flatMap((r) => r.people.map((p) => p.id)),
     ...(attention?.overdue.map((c) => c.id) ?? []),
     ...(attention?.suggestions.map((c) => c.id) ?? []),
@@ -411,6 +442,8 @@ export async function prepareChatContext(
     orgRosters,
     attention,
     recruitersForChat,
+    attachedPeople,
+    attachedContext: renderAttachedPeople(attachedPeople),
     allowedContacts,
     allowedRecruiters,
     modelContacts,

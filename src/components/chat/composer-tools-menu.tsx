@@ -6,6 +6,11 @@
  * Chat retrieval is text-driven, so "grounding" a question is literally a matter of getting
  * the right name or meeting into the prompt. This inserts that text at the caret rather
  * than maintaining a parallel structure of attachments the model would never see.
+ *
+ * People are the exception, and only just: picking one still inserts plain text — an
+ * `@Name` token — but it hands the caller the contact id alongside, so the send path can
+ * put that person's role and timeline in front of the model. The token remains the source
+ * of truth; delete it from the box and the attachment goes with it.
  */
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
@@ -21,6 +26,21 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 
 type Tab = "people" | "events";
+
+/**
+ * What picking a row asks the composer to do.
+ *
+ * A person is not just text: the caller has to mint a token that does not collide with an
+ * already-attached namesake, so the menu passes the candidate names rather than choosing.
+ */
+export type ComposerInsert =
+  | { kind: "text"; text: string }
+  | {
+      kind: "person";
+      contactId: string;
+      /** Preferred name first, then full name — the caller takes the first that is free. */
+      nameCandidates: string[];
+    };
 
 /** Matches the composer's own debounce so typing does not fire a query per keystroke. */
 const SEARCH_DEBOUNCE_MS = 180;
@@ -57,8 +77,8 @@ export function ComposerToolsMenu({
   onInsert,
 }: {
   disabled: boolean;
-  /** Text to splice in at the caret. The caller owns the composer. */
-  onInsert: (text: string) => void;
+  /** What to splice in at the caret. The caller owns the composer. */
+  onInsert: (item: ComposerInsert) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("people");
@@ -102,8 +122,15 @@ export function ComposerToolsMenu({
             key: p.id,
             title: p.preferredName?.trim() || p.fullName,
             subtitle: p.company || null,
-            // The name alone is what retrieval matches on.
-            insert: p.preferredName?.trim() || p.fullName,
+            insert: {
+              kind: "person" as const,
+              contactId: p.id,
+              nameCandidates: [
+                p.preferredName?.trim() || "",
+                p.fullName,
+                p.company ? `${p.preferredName?.trim() || p.fullName} (${p.company})` : "",
+              ].filter(Boolean),
+            },
           }))
         : events.map((e) => {
             // Reuse the app's own vocabulary rather than de-underscoring the raw column:
@@ -113,7 +140,10 @@ export function ComposerToolsMenu({
               key: e.id,
               title: `${e.contactName} — ${label.toLowerCase()}`,
               subtitle: e.summary || formatEventDate(e.interactionDate),
-              insert: `my ${NOUN_FOR.get(label) ?? label.toLowerCase()} with ${e.contactName} on ${formatEventDate(e.interactionDate)}`,
+              insert: {
+                kind: "text" as const,
+                text: `my ${NOUN_FOR.get(label) ?? label.toLowerCase()} with ${e.contactName} on ${formatEventDate(e.interactionDate)}`,
+              },
             };
           }),
     [tab, people, events]
@@ -173,6 +203,14 @@ export function ComposerToolsMenu({
             autoFocus
           />
         </div>
+
+        {/* What the green token will mean once it is in the box. Worth a line: the menu
+            otherwise looks like it only types a name for you. */}
+        {tab === "people" && (
+          <p className="border-b border-border/60 px-3 py-1.5 text-[11px] text-muted-foreground">
+            Adds their role and interaction history to your question.
+          </p>
+        )}
 
         <div className="max-h-64 overflow-y-auto p-1">
           {rows.length === 0 ? (

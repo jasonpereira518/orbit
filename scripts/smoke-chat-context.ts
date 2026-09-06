@@ -124,6 +124,97 @@ async function main() {
     !JSON.stringify(katherine ?? {}).includes("Computed orbital mechanics by hand.")
   );
 
+  // --- attached people: the composer's `+` puts a real timeline in front of the model ---
+
+  const marcus = (
+    await db
+      .insert(contacts)
+      .values({
+        userId: USER,
+        fullName: "Marcus Webb",
+        preferredName: "Marcus",
+        company: "Ramp",
+        title: "Head of Platform",
+        relationshipScore: 4,
+      })
+      .returning()
+  )[0].id;
+  await db.insert(interactions).values([
+    {
+      userId: USER,
+      contactId: marcus,
+      interactionType: "in_person",
+      rawNotes: "Coffee near Bryant Park. Talked through their on-call rota.",
+      interactionDate: new Date("2026-08-15T15:00:00Z"),
+    },
+    {
+      userId: USER,
+      contactId: marcus,
+      interactionType: "email",
+      aiSummary: "Sent the incident-review template.",
+      interactionDate: new Date("2026-05-02T09:00:00Z"),
+    },
+  ]);
+
+  const attachedCtx = await prepareChatContext(USER, "what should I ask next time?", {
+    contextContactIds: [marcus],
+  });
+  check(
+    "an attached person is loaded",
+    attachedCtx.attachedPeople.length === 1 && attachedCtx.attachedPeople[0]!.id === marcus,
+    JSON.stringify(attachedCtx.attachedPeople.map((p) => p.id))
+  );
+  const attachedMarcus = attachedCtx.attachedPeople[0]!;
+  check("their preferred name is used, not the full name", attachedMarcus.name === "Marcus");
+  check(
+    "their role comes through",
+    attachedMarcus.title === "Head of Platform" && attachedMarcus.company === "Ramp"
+  );
+  check(
+    "their timeline comes through, newest first",
+    attachedMarcus.timeline.length === 2 &&
+      attachedMarcus.timeline[0]!.dateIso === "2026-08-15" &&
+      attachedMarcus.timeline[1]!.dateIso === "2026-05-02",
+    JSON.stringify(attachedMarcus.timeline)
+  );
+  check(
+    "the timeline uses the house vocabulary, not the raw column value",
+    attachedMarcus.timeline[0]!.label === "In person",
+    attachedMarcus.timeline[0]!.label
+  );
+  check(
+    "an interaction with only raw notes still yields a line",
+    attachedMarcus.timeline[0]!.line.startsWith("Coffee near Bryant Park"),
+    attachedMarcus.timeline[0]!.line
+  );
+  check("the interaction count is the real total", attachedMarcus.totalInteractions === 2);
+  check(
+    "the rendered block reaches the context",
+    (attachedCtx.attachedContext ?? "").includes(`[id=${marcus}]`),
+    attachedCtx.attachedContext ?? "null"
+  );
+  check(
+    "an attached person is recommendable even if retrieval never saw them",
+    attachedCtx.allowedContacts.has(marcus) &&
+      !attachedCtx.modelContacts.some((c) => c.id === marcus),
+    JSON.stringify(attachedCtx.modelContacts.map((c) => c.id))
+  );
+
+  // Someone else's contact id must not become someone else's context.
+  const foreign = await prepareChatContext(USER, "what should I ask next time?", {
+    contextContactIds: ["00000000-0000-4000-8000-000000000000"],
+  });
+  check(
+    "an id the user does not own attaches nothing",
+    foreign.attachedPeople.length === 0 && foreign.attachedContext === null
+  );
+
+  const none = await prepareChatContext(USER, "who do I know at Acme?", {});
+  check(
+    "no attachment, no block",
+    none.attachedPeople.length === 0 && none.attachedContext === null
+  );
+
   await db.delete(contacts).where(eq(contacts.userId, USER));
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

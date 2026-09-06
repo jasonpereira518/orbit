@@ -17,6 +17,17 @@ import { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 
+/**
+ * The box model every layer stacked on the composer field must share.
+ *
+ * Three layers now sit in that one box — the field itself, the green mention highlights
+ * behind it, and the dictation ghost in front — and a single character of padding
+ * disagreement offsets one from the others and wraps a line early. That has already
+ * happened twice, both times because a padding change landed on one layer and not the
+ * rest, so the value lives here and every layer spreads it.
+ */
+export const COMPOSER_TEXT_BOX = "px-1.5 py-2 text-base md:text-sm";
+
 /** Coarse pointers mean predictive text and `text-size-adjust`: the mirror cannot win. */
 export function useCoarsePointer(): boolean {
   const [coarse, setCoarse] = useState(false);
@@ -70,8 +81,10 @@ export function ComposerMirror({
       // early. Kept in step with the textarea's own classes in chat-panel.tsx — inside the
       // composer pill the field is bare, so there is no border to mirror any more.
       className={cn(
-        "pointer-events-none absolute inset-0 overflow-hidden",
-        "border-0 px-1.5 py-2 text-base md:text-sm",
+        // z-[2]: above both the field and the mention marks. See the layer ladder in
+        // `composer-highlights.tsx`.
+        "pointer-events-none absolute inset-0 z-[2] overflow-hidden border-0",
+        COMPOSER_TEXT_BOX,
         "whitespace-pre-wrap break-words",
       )}
       style={{

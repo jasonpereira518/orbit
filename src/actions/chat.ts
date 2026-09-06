@@ -88,7 +88,7 @@ export async function deleteChatThread(threadId: string) {
 
 export async function askNetwork(
   question: string,
-  options?: { threadId?: string; contactId?: string }
+  options?: { threadId?: string; contactId?: string; contextContactIds?: string[] }
 ) {
   // Traced because this is the one action with no upper bound of its own: retrieval plus
   // a full model completion, on a user's own key. A slow provider used to be invisible.
@@ -97,7 +97,7 @@ export async function askNetwork(
 
 async function askNetworkInner(
   question: string,
-  options?: { threadId?: string; contactId?: string }
+  options?: { threadId?: string; contactId?: string; contextContactIds?: string[] }
 ) {
   try {
     const userId = await requireUserForSurface("page.chat");
@@ -110,6 +110,7 @@ async function askNetworkInner(
     const ctx = await prepareChatContext(userId, question, {
       threadId,
       focusContactId: options?.contactId,
+      contextContactIds: options?.contextContactIds,
     });
 
     if (threadId) {
@@ -124,7 +125,8 @@ async function askNetworkInner(
       ctx.orgRosters,
       ctx.attention,
       ctx.modelRecruiters,
-      ctx.focusProfile
+      ctx.focusProfile,
+      ctx.attachedContext
     );
     const recommendations = ctx.filterRecommendations(
       (result.recommendations || []) as ChatRecommendation[]

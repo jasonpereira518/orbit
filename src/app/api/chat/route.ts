@@ -45,16 +45,30 @@ export async function POST(request: Request) {
   }
 
   const body = (await request.json().catch(() => null)) as
-    | { question?: unknown; threadId?: unknown; contactId?: unknown }
+    | {
+        question?: unknown;
+        threadId?: unknown;
+        contactId?: unknown;
+        contextContactIds?: unknown;
+      }
     | null;
   const question = typeof body?.question === "string" ? body.question.trim() : "";
   if (!question) return NextResponse.json({ error: "Question is required" }, { status: 400 });
   const threadId = typeof body?.threadId === "string" ? body.threadId : null;
   const contactId = typeof body?.contactId === "string" ? body.contactId : null;
+  // Ids the composer resolved from its `@Name` chips. Bounded and re-checked against the
+  // user's own rows in `loadAttachedPeople`, so a forged id reaches nothing.
+  const contextContactIds = Array.isArray(body?.contextContactIds)
+    ? body.contextContactIds.filter((id): id is string => typeof id === "string").slice(0, 10)
+    : [];
 
   let ctx: Awaited<ReturnType<typeof prepareChatContext>>;
   try {
-    ctx = await prepareChatContext(userId, question, { threadId, focusContactId: contactId });
+    ctx = await prepareChatContext(userId, question, {
+      threadId,
+      focusContactId: contactId,
+      contextContactIds,
+    });
     if (threadId) {
       const db = await getDb();
       await db.insert(chatMessages).values({ threadId, userId, role: "user", content: ctx.q });
@@ -83,7 +97,8 @@ export async function POST(request: Request) {
               ctx.attention,
               ctx.modelRecruiters,
               (delta) => send({ type: "answer", delta }),
-              ctx.focusProfile
+              ctx.focusProfile,
+              ctx.attachedContext
             ),
           { userId }
         );
