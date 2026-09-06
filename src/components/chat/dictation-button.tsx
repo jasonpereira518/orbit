@@ -109,7 +109,7 @@ export function DictationButton({
       title={listening ? "Stop dictating" : "Dictate"}
       onClick={(e) => onToggle(e.detail === 0 ? "keyboard" : "pointer")}
       className={cn(
-        "relative h-11 w-11 shrink-0 overflow-visible text-muted-foreground",
+        "relative size-9 shrink-0 overflow-visible rounded-full text-muted-foreground",
         "transition-colors",
         state === "requesting" && "pointer-events-none",
         // Solid, not a tint: at a glance the only question that matters is "is it on?".
@@ -124,7 +124,7 @@ export function DictationButton({
       {state === "listening" && !reduced && (
         <motion.span
           aria-hidden
-          className="pointer-events-none absolute inset-0 rounded-lg bg-primary"
+          className="pointer-events-none absolute inset-0 rounded-full bg-primary"
           style={{ scale, opacity }}
         />
       )}

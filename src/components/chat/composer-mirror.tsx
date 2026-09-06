@@ -66,11 +66,12 @@ export function ComposerMirror({
       ref={mirrorRef}
       aria-hidden
       data-slot="composer-mirror"
-      // `border-transparent` rather than no border: the box model has to match the
-      // field's, or every line wraps a character early.
+      // The box model has to match the field's exactly or every line wraps a character
+      // early. Kept in step with the textarea's own classes in chat-panel.tsx — inside the
+      // composer pill the field is bare, so there is no border to mirror any more.
       className={cn(
-        "pointer-events-none absolute inset-0 overflow-hidden rounded-lg",
-        "border border-transparent px-2.5 py-2 text-base md:text-sm",
+        "pointer-events-none absolute inset-0 overflow-hidden",
+        "border-0 px-1.5 py-1 text-base md:text-sm",
         "whitespace-pre-wrap break-words",
       )}
       style={{

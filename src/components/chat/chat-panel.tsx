@@ -31,8 +31,9 @@ import {
 import { createReminder } from "@/actions/reminders";
 import { BulkNotesPanel } from "@/components/chat/bulk-notes-panel";
 import { ComposerMirror, useCoarsePointer } from "@/components/chat/composer-mirror";
+import { ComposerToolsMenu } from "@/components/chat/composer-tools-menu";
 import { DictationButton } from "@/components/chat/dictation-button";
-import { SendPlaneButton } from "@/components/chat/send-plane-button";
+import { ComposerSendButton } from "@/components/chat/composer-send-button";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -531,6 +532,47 @@ export function ChatPanel() {
   }
 
   /**
+   * Splice text from the `+` menu in at the caret.
+   *
+   * Goes through the same anchor bookkeeping as typing: it is a user edit as far as an
+   * in-flight dictation is concerned, so `onComposerChange`'s logic has to see it or the
+   * dictated span would drift out of alignment with the field.
+   */
+  const insertAtCaret = useCallback(
+    (text: string) => {
+      const el = textareaRef.current;
+      const value = el?.value ?? "";
+      const start = el?.selectionStart ?? value.length;
+      const end = el?.selectionEnd ?? start;
+      const needsLeading = start > 0 && !/\s$/.test(value.slice(0, start));
+      const needsTrailing = !/^\s/.test(value.slice(end));
+      const insert = `${needsLeading ? " " : ""}${text}${needsTrailing ? " " : ""}`;
+      const next = value.slice(0, start) + insert + value.slice(end);
+      const caret = start + insert.length;
+
+      if (anchorRef.current !== null) {
+        const shifted = shiftAnchor(
+          lastValueRef.current,
+          next,
+          anchorRef.current,
+          spanRef.current.length,
+        );
+        if (shifted === ANCHOR_INTERFERENCE) {
+          anchorRef.current = null;
+          cancelDictationRef.current();
+        } else {
+          anchorRef.current = shifted;
+        }
+      }
+      lastValueRef.current = next;
+      pendingCaretRef.current = caret;
+      setQuestion(next);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    },
+    [],
+  );
+
+  /**
    * Every condition the mirror needs, checked together. The moment one fails it unmounts
    * and the plain field shows — the two layers look identical, so nothing jumps.
    */
@@ -749,11 +791,30 @@ export function ChatPanel() {
 
           <div className="shrink-0 border-t border-border/60 bg-card p-3 sm:p-4">
             <div className="mx-auto max-w-3xl space-y-2.5">
-              <div className="flex gap-2">
+              {/* One pill holding every control, rather than a field with satellites.
+                  `items-end` keeps the buttons on the last line as the field grows. */}
+              <div
+                className={cn(
+                  "flex items-end gap-1 rounded-[1.75rem] border border-input bg-transparent px-1.5 py-1.5 transition-colors",
+                  "dark:bg-input/30",
+                  // Focus lives on the pill now: the field inside has no border or ring of
+                  // its own, so without this there would be no focus indicator at all.
+                  "focus-within:border-ring focus-within:ring-[2px] focus-within:ring-ring/20",
+                  dictation.listening &&
+                    "border-primary/40 bg-primary/[0.035] dark:bg-primary/[0.06]",
+                )}
+              >
+                <ComposerToolsMenu
+                  disabled={busy || loadingThread}
+                  onInsert={insertAtCaret}
+                />
+                {/* No vertical padding here: the mirror is `inset-0` of this box, so any
+                    padding on it would offset the field from its ghost layer. The field and
+                    the mirror each carry their own py instead. */}
                 <div className="relative flex-1">
                   <Textarea
                     ref={textareaRef}
-                    rows={2}
+                    rows={1}
                     placeholder="Ask about your network…"
                     value={question}
                     onChange={onComposerChange}
@@ -766,16 +827,12 @@ export function ChatPanel() {
                     onCompositionEnd={() => setComposing(false)}
                     data-dictating={dictation.listening || undefined}
                     className={cn(
-                      // `field-sizing-content` has no ceiling of its own, and this sits in
-                      // a fixed-height card: a long dictation would squeeze the thread away.
-                      "min-h-[44px] max-h-40 w-full resize-none overflow-y-auto",
-                      // Quieter than the shared primitive's `ring-3 ring-ring/50`. The
-                      // border colour carries the focus indicator so it stays perceptible
-                      // (WCAG 2.4.7) and the ring is a soft halo rather than a slab.
-                      // Scoped here on purpose — the primitive dresses every input in the app.
-                      "focus-visible:ring-[2px] focus-visible:ring-ring/20",
-                      dictation.listening &&
-                        "border-primary/40 bg-primary/[0.035] dark:bg-primary/[0.06]",
+                      // Bare field: the pill around it owns the border, background, focus
+                      // ring and padding. `field-sizing-content` has no ceiling of its own
+                      // and this sits in a fixed-height card, so the cap stays.
+                      "min-h-[26px] max-h-40 w-full resize-none overflow-y-auto",
+                      "rounded-none border-0 bg-transparent px-1.5 py-1 shadow-none",
+                      "focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent",
                       // The mirror paints the glyphs while it is up. The caret is left
                       // visible so the field still reads as focused and editable.
                       showMirror && "text-transparent caret-ink selection:text-foreground",
@@ -805,7 +862,7 @@ export function ChatPanel() {
                     if (source === "pointer") textareaRef.current?.focus();
                   }}
                 />
-                <SendPlaneButton
+                <ComposerSendButton
                   mode={question.trim() ? "send" : "recall"}
                   busy={busy}
                   disabled={

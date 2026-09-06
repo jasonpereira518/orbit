@@ -1,10 +1,12 @@
 "use server";
 
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   chatMessages,
   chatThreads,
+  contacts,
+  interactions,
   type ChatRecommendation,
 } from "@/db/schema";
 import { chatWithNetwork } from "@/lib/ai";
@@ -158,4 +160,72 @@ async function askNetworkInner(
       error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message,
     };
   }
+}
+
+/** One meeting/call/note the composer's tools menu can pull into a question. */
+export type EventPickerOption = {
+  id: string;
+  contactId: string;
+  contactName: string;
+  interactionType: string;
+  interactionDate: string;
+  summary: string | null;
+};
+
+/**
+ * Recent interactions for the composer's tools menu — the "events" half of `+`.
+ *
+ * Mirrors `searchContactsForPicker`: a bounded, searchable slice rather than the whole
+ * history. Searches the person's name and the interaction's own text, because "the coffee
+ * with Marcus" and "that intro call" are both how people actually refer to a meeting.
+ */
+export async function searchEventsForPicker(
+  q?: string,
+  limit = 25
+): Promise<EventPickerOption[]> {
+  const userId = await requireUserForSurface("page.chat");
+  const db = await getDb();
+
+  const term = q?.trim();
+  const conditions = [eq(interactions.userId, userId)];
+  if (term) {
+    const like = `%${term.replace(/[%_]/g, (m) => `\\${m}`)}%`;
+    conditions.push(
+      sql`(${contacts.fullName} ILIKE ${like}
+        OR coalesce(${contacts.preferredName}, '') ILIKE ${like}
+        OR coalesce(${interactions.aiSummary}, '') ILIKE ${like}
+        OR coalesce(${interactions.rawNotes}, '') ILIKE ${like}
+        OR ${interactions.interactionType} ILIKE ${like})`
+    );
+  }
+
+  const rows = await db
+    .select({
+      id: interactions.id,
+      contactId: interactions.contactId,
+      fullName: contacts.fullName,
+      preferredName: contacts.preferredName,
+      interactionType: interactions.interactionType,
+      interactionDate: interactions.interactionDate,
+      aiSummary: interactions.aiSummary,
+      rawNotes: interactions.rawNotes,
+    })
+    .from(interactions)
+    .innerJoin(contacts, eq(contacts.id, interactions.contactId))
+    .where(and(...conditions))
+    .orderBy(desc(interactions.interactionDate), desc(interactions.sameDayOrder))
+    .limit(Math.min(Math.max(limit, 1), 50));
+
+  return rows.map((r) => ({
+    id: r.id,
+    contactId: r.contactId,
+    contactName: r.preferredName?.trim() || r.fullName,
+    interactionType: r.interactionType,
+    interactionDate: r.interactionDate.toISOString(),
+    // A one-line gist; the picker is a list, not a reader.
+    summary:
+      r.aiSummary?.trim() ||
+      r.rawNotes?.trim().split("\n")[0]?.slice(0, 120) ||
+      null,
+  }));
 }
