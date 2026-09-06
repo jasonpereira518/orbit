@@ -24,8 +24,9 @@ import { getEntitlements } from "@/lib/entitlements";
  * Async server sections for the streamed dashboard. Every bundle section
  * awaits the SAME fetchDashboard() promise (started, un-awaited, in
  * page.tsx) — one scan feeds all cards; the win is the instant shell.
- * Each section's root carries .reveal-mount so streamed arrival plays the
- * staged-reveal cascade (pure CSS — swaps happen pre-hydration).
+ * Each section's root carries .reveal-mount so streamed arrival plays a rise
+ * (pure CSS — swaps happen pre-hydration). The rise is per-boundary, not a
+ * page-wide cascade; see `revealDelay` below for why.
  */
 
 type DashboardBundle = ReturnType<typeof fetchDashboard>;
@@ -53,6 +54,22 @@ function contactMeta(data: BundleData, contactId: string | null | undefined) {
   };
 }
 
+/**
+ * Stagger for elements that share ONE Suspense boundary.
+ *
+ * `--reveal-delay` is an `animation-delay`, and `.reveal-mount` plays on
+ * insertion — so the clock starts when THAT boundary's content lands, not when
+ * the page did. These delays used to run 60/120/160/180/240 ACROSS the seven
+ * boundaries below, which encoded a cascade that never happens: each boundary
+ * arrives when its own data does, so the number was pure added latency on
+ * whatever was already slowest, and it stacked worst on the card that arrived
+ * last. Outreach performance was the clearest case — it awaits a different
+ * promise from its row partner and could never have been in step with it.
+ *
+ * So every boundary now restarts at 0. A delay is only correct BETWEEN siblings
+ * that land in the same commit, where it produces a real cascade — that is the
+ * 40ms below, inside the three sections that render two cards each.
+ */
 const revealDelay = (ms: number) =>
   ({ "--reveal-delay": `${ms}ms` }) as React.CSSProperties;
 
@@ -65,7 +82,7 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
       {isEmptyNetwork && (
         <div
           className="reveal-mount rounded-2xl border border-dashed border-border/70 px-6 py-10 text-center"
-          style={revealDelay(60)}
+          style={revealDelay(0)}
         >
           <h2 className="font-[family-name:var(--font-display)] text-2xl text-ink">
             Your orbit is empty
@@ -103,7 +120,7 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
         // wrong trade on the surface that is supposed to answer "what should I do
         // today" — the cards are four short numbers and fit side by side fine.
         className="reveal-mount grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4"
-        style={revealDelay(60)}
+        style={revealDelay(40)}
       >
         <StatCard
           label="Contacts"
@@ -151,14 +168,14 @@ export async function ChartsSection({ bundle }: { bundle: DashboardBundle }) {
       {showDepth && (
         <div
           className="reveal-mount min-w-0 lg:flex-1 [&>*]:h-full"
-          style={revealDelay(120)}
+          style={revealDelay(0)}
         >
           <NetworkDepthChart metrics={data.networkMetrics} />
         </div>
       )}
       <div
         className="reveal-mount min-w-0 lg:flex-1 [&>*]:h-full"
-        style={revealDelay(160)}
+        style={revealDelay(40)}
       >
         <DashboardGraphPreview graphPreview={data.graphPreview} />
       </div>
@@ -175,7 +192,7 @@ export async function SuggestedOutreachSection({
   return (
     <div
       className="reveal-mount h-full min-w-0 lg:flex-1 [&>*]:h-full"
-      style={revealDelay(180)}
+      style={revealDelay(0)}
     >
       <SuggestedOutreachCard
         networkIsEmpty={data.stats.totalContacts === 0}
@@ -218,7 +235,7 @@ export async function OutreachPerformanceSection({
   return (
     <div
       className="reveal-mount h-full min-w-0 lg:flex-1 [&>*]:h-full"
-      style={revealDelay(180)}
+      style={revealDelay(0)}
     >
       <OutreachPerformanceCard
         accountRate={outreachPerformance.accountMetrics.successfulReplyRate}
@@ -238,7 +255,7 @@ export async function RemindersAndFollowUpsSection({
   const { data } = await bundle;
   return (
     <>
-      <div className="reveal-mount min-w-0" style={revealDelay(240)}>
+      <div className="reveal-mount min-w-0" style={revealDelay(0)}>
         <RemindersDashboardCard
           items={data.reminders.map((r) => ({
             id: r.id,
@@ -256,7 +273,7 @@ export async function RemindersAndFollowUpsSection({
         />
       </div>
 
-      <div className="reveal-mount min-w-0" style={revealDelay(240)}>
+      <div className="reveal-mount min-w-0" style={revealDelay(40)}>
         <Card id="due-follow-ups" className="border-border/70 shadow-none scroll-mt-8">
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
             <CardTitle as="h2" className="text-base">Due follow-ups</CardTitle>
@@ -306,7 +323,7 @@ export async function RecentlyUpdatedSection({
 }) {
   const { data } = await bundle;
   return (
-    <div className="reveal-mount min-w-0" style={revealDelay(240)}>
+    <div className="reveal-mount min-w-0" style={revealDelay(0)}>
       <Card className="border-border/70 shadow-none">
         <CardHeader>
           <CardTitle as="h2" className="text-base">Recently updated</CardTitle>
@@ -382,7 +399,7 @@ export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
     // space-y-6, not the page's space-y-8: these three are a group at the foot of
     // the dashboard, and giving them the same gap as the major section breaks made
     // them read as three more top-level sections rather than one block.
-    <div className="reveal-mount space-y-6" style={revealDelay(240)}>
+    <div className="reveal-mount space-y-6" style={revealDelay(0)}>
       <GoalsSummary
         goals={data.goals}
         goalAlignedContacts={data.goalAlignedContacts.map((c) => ({
