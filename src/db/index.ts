@@ -909,6 +909,77 @@ CREATE TABLE IF NOT EXISTS non_dilutive_funding (
   note text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  title text NOT NULL,
+  starts_at timestamptz,
+  ends_at timestamptz,
+  timezone text,
+  venue text,
+  city text,
+  url text,
+  role text NOT NULL DEFAULT 'attended',
+  source text NOT NULL DEFAULT 'manual',
+  provider text,
+  provider_event_id text,
+  description text,
+  cover_image_url text,
+  cover_source_url text,
+  theme_color text,
+  theme_source text,
+  theme_locked integer NOT NULL DEFAULT 0,
+  attendee_count integer,
+  notes text,
+  enriched_at timestamptz,
+  enrich_error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS event_attendees (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id uuid NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  full_name text,
+  email text,
+  company text,
+  title text,
+  linkedin_url text,
+  x_handle text,
+  phone text,
+  attendee_role text,
+  source text NOT NULL DEFAULT 'paste',
+  external_ref text,
+  spoke_to integer NOT NULL DEFAULT 0,
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  converted_at timestamptz,
+  identity_key text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS event_provider_connections (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  provider text NOT NULL,
+  auth_kind text NOT NULL,
+  label text,
+  account_ref text,
+  api_key_encrypted text,
+  access_token_encrypted text,
+  refresh_token_encrypted text,
+  token_expires_at timestamptz,
+  scopes text,
+  status text NOT NULL DEFAULT 'active',
+  last_synced_at timestamptz,
+  sync_cursor jsonb,
+  next_sync_at timestamptz,
+  sync_status text,
+  sync_started_at timestamptz,
+  sync_error text,
+  sync_failures integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -961,11 +1032,13 @@ CREATE TABLE IF NOT EXISTS non_dilutive_funding (
  * sync_error/sync_failures on both connection tables, plus their partial due indexes.
  * v31 = the connector platform: api_keys, api_idempotency_keys, webhook_endpoints,
  * outbound_webhook_deliveries.
+ * v32 = the events feature: events, event_attendees, event_provider_connections.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
- * LinkedIn, constellation and feedback branches each landed first.)
+ * LinkedIn, constellation and feedback branches each landed first. If this one collides
+ * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
  */
-export const SCHEMA_VERSION = 31;
+export const SCHEMA_VERSION = 32;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2055,6 +2128,22 @@ const alters = [
   `CREATE UNIQUE INDEX IF NOT EXISTS outbound_deliveries_endpoint_event_uidx ON outbound_webhook_deliveries(endpoint_id, event_id)`,
   `CREATE INDEX IF NOT EXISTS outbound_deliveries_due_idx ON outbound_webhook_deliveries(status, next_attempt_at)`,
   `CREATE INDEX IF NOT EXISTS outbound_deliveries_user_created_idx ON outbound_webhook_deliveries(user_id, created_at)`,
+  // Schema v32: the events feature. Same rule as v31 above — the CREATE TABLEs repair a
+  // fresh database, these repair an existing one, so every index is written in both places.
+  //
+  // The two unique indexes are the feature's whole idempotency story and must match their
+  // `uniqueIndex()` declarations in schema.ts by name AND column list, or smoke-schema-ddl
+  // fails: `events_provider_uidx` makes a provider re-sync update its event instead of
+  // adding one, and `event_attendees_identity_uidx` makes re-pasting a roster a no-op.
+  `CREATE INDEX IF NOT EXISTS events_user_idx ON events(user_id)`,
+  `CREATE INDEX IF NOT EXISTS events_user_starts_idx ON events(user_id, starts_at, id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS events_provider_uidx ON events(user_id, provider, provider_event_id) WHERE provider_event_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS event_attendees_event_idx ON event_attendees(event_id)`,
+  `CREATE INDEX IF NOT EXISTS event_attendees_user_idx ON event_attendees(user_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS event_attendees_identity_uidx ON event_attendees(event_id, identity_key)`,
+  `CREATE INDEX IF NOT EXISTS event_attendees_contact_idx ON event_attendees(contact_id) WHERE contact_id IS NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS event_provider_connections_user_uidx ON event_provider_connections(user_id, provider)`,
+  `CREATE INDEX IF NOT EXISTS event_provider_connections_due_idx ON event_provider_connections(next_sync_at) WHERE next_sync_at IS NOT NULL`,
 ];
 
 /**

@@ -1246,6 +1246,34 @@
   animation: landing-solar-enter 0.9s var(--ease-house) 0.15s both;
 }
 
+/* ── Interest list (/interest) ──
+ * Two ambient loops. Linear, not the house curve: these are orbits, and an
+ * orbit that eases would read as a wobble. The global reduced-motion clamp at
+ * the bottom of this file freezes both. */
+@keyframes interest-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The decorative rings behind the signup card, and the dot circling the
+ * submit button while a join is in flight (`animate-[interest-orbit_…]`).
+ * `transform-box: fill-box` centres the spin on the ring group's own box —
+ * without it an SVG group rotates about the viewBox origin. */
+.interest-rings-spin {
+  animation: interest-orbit 160s linear infinite;
+  transform-origin: 50% 50%;
+  transform-box: fill-box;
+  will-change: transform;
+}
+
+.interest-rings-spin-reverse {
+  animation: interest-orbit 110s linear infinite reverse;
+  transform-origin: 50% 50%;
+  transform-box: fill-box;
+  will-change: transform;
+}
+
 /* Orbit Lifetime's badge is the one place the brand gold appears as a surface
  * rather than as text, so it gets a metal glint: one band crosses the pill and
  * then rests off-frame for most of the cycle, which reads as material catching
@@ -1969,4 +1997,39 @@ html[data-celebration-handoff] [data-app-logo] {
   50% {
     opacity: 0.25;
   }
+}
+
+/* --- Per-event theming ------------------------------------------------------------------
+   Each event carries a colour derived from its own page (see src/lib/events/theme.ts). The
+   detail page sets the six *-light / *-dark variables inline; these two rules pick between
+   them.
+
+   Why both values ship at once: an inline style attribute cannot be theme-conditional, and
+   next-themes can flip `.dark` after render with no round trip. Choosing in CSS keeps the
+   swap free and flash-free — the same reason `.reveal-mount` stays pure CSS.
+
+   Every accent here is already contrast-clamped by `eventThemeVars`; there is no unclamped
+   path out of that module, so nothing below needs to re-check legibility. */
+.event-theme {
+  --event-accent: var(--event-accent-light);
+  --event-tint: var(--event-tint-light);
+  --event-ring: var(--event-ring-light);
+}
+
+.dark .event-theme {
+  --event-accent: var(--event-accent-dark);
+  --event-tint: var(--event-tint-dark);
+  --event-ring: var(--event-ring-dark);
+}
+
+/* The scrim over a cover image. Without it, light cover art and white heading text collide;
+   the gradient guarantees the bottom third is dark enough to read against regardless of
+   what the host chose as their graphic. */
+.event-hero-scrim {
+  background-image: linear-gradient(
+    to top,
+    color-mix(in oklab, black 72%, transparent) 0%,
+    color-mix(in oklab, black 28%, transparent) 45%,
+    transparent 100%
+  );
 }

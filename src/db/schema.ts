@@ -1443,10 +1443,26 @@ export type CalendarSyncCursor = {
   windowEnd?: string | null;
 };
 
+/**
+ * Where an event provider's listing left off.
+ *
+ * Both Luma and Eventbrite paginate with an opaque forward cursor, so one shape covers
+ * them. `syncedThrough` is the high-water mark of event start times already ingested: a
+ * finished pass clears `cursor` and advances it, and the next pass asks only for events
+ * after it rather than replaying the whole calendar.
+ */
+export type EventProviderSyncCursor = {
+  cursor?: string | null;
+  syncedThrough?: string | null;
+};
+
 export type ProviderSyncCursor = {
   /** Explicitly nullable, not merely optional: "no cursor yet" and "cursor deliberately
    *  cleared after a 410" are the same state, and callers pass it around as `| null`. */
   calendar?: CalendarSyncCursor | null;
+  /** Same nullability rule as `calendar` above — a cleared cursor is a real state. */
+  luma?: EventProviderSyncCursor | null;
+  eventbrite?: EventProviderSyncCursor | null;
 };
 
 /**
@@ -2700,6 +2716,189 @@ export const extensionUsage = pgTable("extension_usage", {
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
 });
 
+
+/* ==================================================================================
+ * Events — conferences, meetups and parties you attended.
+ *
+ * NAMING, read this before adding anything here. "Event" means two different things in
+ * this codebase and they must not be conflated:
+ *
+ *   - `NetworkEvent` (`src/lib/ingest/events.ts`) is an *interaction* — a meeting, an
+ *     email, a call — the unit every connector produces and `ingestEvents` writes to the
+ *     `interactions` table. `POST /api/v1/events` ingests those.
+ *   - `events` (this table) is a *place you went*: a conference with a public page, a
+ *     cover image, and a guest list.
+ *
+ * The two meet in exactly one spot, and it is deliberate: connecting an attendee produces
+ * a `NetworkEvent` whose `externalIdBase` is `evt:<eventId>` and whose interaction lands
+ * with `interaction_type = 'event'` — a value `src/lib/interaction-types.ts` already
+ * defines as "Met them at a conference, talk or mixer". Nothing in `src/lib/events/` may
+ * export a type named `NetworkEvent`.
+ * ================================================================================== */
+
+export const events = pgTable(
+  "events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    title: text("title").notNull(),
+    /**
+     * Nullable on purpose. A roster pasted from a badge scan months later often arrives
+     * before anyone remembers the date, and refusing the row over a missing date would
+     * push the user back to free-text notes — the exact thing this table replaces.
+     */
+    startsAt: timestamp("starts_at", { withTimezone: true }),
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    timezone: text("timezone"),
+    venue: text("venue"),
+    city: text("city"),
+    /** The public event page. Also the enrichment input and the "more info" link. */
+    url: text("url"),
+    /**
+     * Whether you ran this event or merely turned up — a column, not just UI copy, because
+     * it decides what Orbit can honestly offer. A full guest list is reachable through a
+     * provider API only for `hosted`; for `attended` the roster is always pasted or
+     * uploaded. Keeping it in the schema is what stops that distinction from drifting.
+     */
+    role: text("role").$type<"attended" | "hosted">().default("attended").notNull(),
+    /** How the event row itself got here, as distinct from how its roster did. */
+    source: text("source")
+      .$type<"manual" | "page" | "luma" | "eventbrite">()
+      .default("manual")
+      .notNull(),
+    provider: text("provider").$type<"luma" | "eventbrite">(),
+    providerEventId: text("provider_event_id"),
+    description: text("description"),
+    /** Durable Blob URL once persisted; falls back to the remote URL without Blob storage. */
+    coverImageUrl: text("cover_image_url"),
+    coverSourceUrl: text("cover_source_url"),
+    /** Raw derived accent as `#rrggbb`. NEVER rendered directly — clamped for contrast first. */
+    themeColor: text("theme_color"),
+    themeSource: text("theme_source").$type<"meta" | "jsonld" | "image" | "hash">(),
+    /** 0/1 per house convention. Set when the user picks a colour, which then sticks. */
+    themeLocked: integer("theme_locked").default(0).notNull(),
+    /** As the host reports it. May legitimately exceed the number of roster rows we hold. */
+    attendeeCount: integer("attendee_count"),
+    notes: text("notes"),
+    enrichedAt: timestamp("enriched_at", { withTimezone: true }),
+    enrichError: text("enrich_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("events_user_idx").on(t.userId),
+    /**
+     * The list order. `id` trails the sort key to make the ordering total — the same
+     * lesson `contacts_user_sort_idx` records, without which keyset pagination can drop
+     * or repeat a row when two events share a start time.
+     */
+    index("events_user_starts_idx").on(t.userId, t.startsAt, t.id),
+    /** Connector idempotency: re-syncing a provider updates the row rather than adding one. */
+    uniqueIndex("events_provider_uidx")
+      .on(t.userId, t.provider, t.providerEventId)
+      .where(sql`provider_event_id is not null`),
+  ]
+);
+
+export const eventAttendees = pgTable(
+  "event_attendees",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    /** Denormalised from the event: every query here filters on it, and there are no user FKs. */
+    userId: text("user_id").notNull(),
+    fullName: text("full_name"),
+    email: text("email"),
+    company: text("company"),
+    title: text("title"),
+    linkedinUrl: text("linkedin_url"),
+    xHandle: text("x_handle"),
+    phone: text("phone"),
+    attendeeRole: text("attendee_role").$type<"attendee" | "host" | "speaker">(),
+    /** Which acquisition path produced this row. Rendered as a badge, so it must be honest. */
+    source: text("source")
+      .$type<"paste" | "csv" | "screenshot" | "luma" | "eventbrite">()
+      .default("paste")
+      .notNull(),
+    /** The provider's own guest id, where there is one. */
+    externalRef: text("external_ref"),
+    /** 0/1. Set by the human, never by a sync — see `contactId`. */
+    spokeTo: integer("spoke_to").default(0).notNull(),
+    /**
+     * Null until the user marks this person as someone they spoke to and connects them.
+     *
+     * A background provider sync fills this table but NEVER writes this column: nobody
+     * becomes a contact without a human saying so. That is what keeps a 900-person
+     * conference from silently consuming a free user's contact allowance.
+     */
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    convertedAt: timestamp("converted_at", { withTimezone: true }),
+    /**
+     * Mirrors `participantIdentityKey` in `src/lib/ingest/events.ts` — strongest signal
+     * first (linkedin > email > handle > name). Stored rather than computed so re-pasting
+     * the same list is idempotent against the unique index below, and so this table's
+     * notion of "same person" cannot drift from ingest's.
+     */
+    identityKey: text("identity_key").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("event_attendees_event_idx").on(t.eventId),
+    index("event_attendees_user_idx").on(t.userId),
+    /** Re-importing the same roster updates rows instead of duplicating them. */
+    uniqueIndex("event_attendees_identity_uidx").on(t.eventId, t.identityKey),
+    /**
+     * An index on the FK. `contacts_company_id_idx` and `contact_tags_tag_idx` were both
+     * added to fix exactly this omission — without it, deleting a contact scans this table.
+     */
+    index("event_attendees_contact_idx").on(t.contactId).where(sql`contact_id is not null`),
+  ]
+);
+
+export const eventProviderConnections = pgTable(
+  "event_provider_connections",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    provider: text("provider").$type<"luma" | "eventbrite">().notNull(),
+    /**
+     * Luma authenticates with a user-supplied API key scoped to one calendar; Eventbrite
+     * uses OAuth. One table with a discriminator rather than two near-identical ones —
+     * unlike Gmail/Outlook, these two genuinely differ in their credential shape, so the
+     * difference is worth naming instead of hiding behind duplicate columns.
+     */
+    authKind: text("auth_kind").$type<"api_key" | "oauth">().notNull(),
+    /** Calendar or organisation name, shown so the user can tell two connections apart. */
+    label: text("label"),
+    /** Luma calendar api id / Eventbrite organization_id. */
+    accountRef: text("account_ref"),
+    apiKeyEncrypted: text("api_key_encrypted"),
+    accessTokenEncrypted: text("access_token_encrypted"),
+    refreshTokenEncrypted: text("refresh_token_encrypted"),
+    tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+    scopes: text("scopes"),
+    /**
+     * Exactly two values, matching the Gmail/Outlook rule: disconnecting deletes the row,
+     * so a third value nothing writes would be dead code. Distinct from `syncStatus` below
+     * — this is about *consent*, that one is about a *run*.
+     */
+    status: text("status").$type<"active" | "needs_reauth">().default("active").notNull(),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    ...syncStateColumns(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("event_provider_connections_user_uidx").on(t.userId, t.provider),
+    index("event_provider_connections_due_idx")
+      .on(t.nextSyncAt)
+      .where(sql`next_sync_at is not null`),
+  ]
+);
+
 export type Contact = typeof contacts.$inferSelect;
 export type NewContact = typeof contacts.$inferInsert;
 export type ExtensionUsage = typeof extensionUsage.$inferSelect;
@@ -2739,3 +2938,8 @@ export type BillingEvent = typeof billingEvents.$inferSelect;
 export type NewBillingEvent = typeof billingEvents.$inferInsert;
 export type InfraCost = typeof infraCosts.$inferSelect;
 export type GateEvent = typeof gateEvents.$inferSelect;
+export type EventRecord = typeof events.$inferSelect;
+export type NewEventRecord = typeof events.$inferInsert;
+export type EventAttendeeRecord = typeof eventAttendees.$inferSelect;
+export type NewEventAttendeeRecord = typeof eventAttendees.$inferInsert;
+export type EventProviderConnection = typeof eventProviderConnections.$inferSelect;
