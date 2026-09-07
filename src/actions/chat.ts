@@ -10,7 +10,15 @@ import {
   type ChatRecommendation,
 } from "@/db/schema";
 import { chatWithNetwork } from "@/lib/ai";
+import { requireUserId } from "@/lib/auth";
 import { prepareChatContext } from "@/lib/chat-context";
+import {
+  buildChatSuggestions,
+  GENERIC_SUGGESTIONS,
+  GENERIC_RANK,
+  type ChatSuggestion,
+} from "@/lib/chat-suggestions";
+import { loadSuggestionSignals } from "@/lib/chat-suggestions-data";
 import { persistAssistantTurn } from "@/lib/chat-persist";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { traced } from "@/lib/perf-trace";
@@ -161,6 +169,35 @@ async function askNetworkInner(
       ok: false as const,
       error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message,
     };
+  }
+}
+
+/**
+ * The personalised cards under the composer, best first.
+ *
+ * Guarded with `requireUserId`, deliberately **not** `requireUserForSurface("page.chat")`
+ * like its neighbours: the floating ask bar shows the same suggestions and is mounted by
+ * `AppShell` on nearly every route, so a user whose chat surface is hidden would otherwise
+ * get a thrown action while sitting on `/contacts`.
+ *
+ * Never throws. A failure here should cost the user their personalisation, not their
+ * composer, so anything going wrong falls back to the four generic questions.
+ */
+export async function getChatSuggestions(): Promise<ChatSuggestion[]> {
+  try {
+    const userId = await requireUserId();
+    const signals = await loadSuggestionSignals(userId);
+    return buildChatSuggestions(signals);
+  } catch {
+    return GENERIC_SUGGESTIONS.map((question, i) => ({
+      id: `generic:${i}`,
+      kind: "generic" as const,
+      question,
+      basis: "",
+      contactId: null,
+      interactionType: null,
+      rank: GENERIC_RANK,
+    }));
   }
 }
 

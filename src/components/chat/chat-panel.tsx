@@ -42,6 +42,11 @@ import {
   type ComposerInsert,
 } from "@/components/chat/composer-tools-menu";
 import { MentionText } from "@/components/chat/mention-text";
+import {
+  SuggestionCards,
+  SuggestionCardsSkeleton,
+} from "@/components/chat/suggestion-cards";
+import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { DictationButton } from "@/components/chat/dictation-button";
 import { ComposerSendButton } from "@/components/chat/composer-send-button";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
@@ -117,13 +122,6 @@ type AssistantMessage = {
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
-
-const SUGGESTION_CHIPS = [
-  "Who do I know at AWS?",
-  "Who have I not followed up with recently?",
-  "Who are the best recruiters for my search?",
-  "Who should I reconnect with this week?",
-];
 
 function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -317,6 +315,11 @@ export function ChatPanel() {
   /** Only attached people are painted green: the mark means "this is context", not "@". */
   const attachedNames = useMemo(() => context.map((p) => p.name), [context]);
 
+  // Mirrors the empty state's own condition, so the prompt above ("try a suggestion below")
+  // and the row it points at appear and disappear together.
+  const showSuggestions = messages.length === 0 && !loadingThread;
+  const suggestions = useChatSuggestions(showSuggestions);
+
   /**
    * Empty the box and forget what was attached to it.
    *
@@ -465,7 +468,7 @@ export function ChatPanel() {
   );
 
   const sendQuestion = useCallback(
-    (raw: string) => {
+    (raw: string, opts?: { contextContactIds?: readonly string[] }) => {
       const q = raw.trim();
       if (!q || busy || loadingThread) return;
 
@@ -473,6 +476,13 @@ export function ChatPanel() {
       // Resolved from the text, not from `attached` directly: a token the user deleted
       // must not still ship that person's history to the model.
       const sending = activeMentions(q, attached);
+      // A suggestion card names a person without an `@` token, so its id arrives here
+      // rather than being re-derived from the text. Without it the card's question is
+      // answered from a notes blob: `loadKnowledgeSnippets` keeps only LinkedIn messages,
+      // so the interaction the card is *about* never reaches the model.
+      const contextContactIds = [
+        ...new Set([...sending.map((p) => p.id), ...(opts?.contextContactIds ?? [])]),
+      ];
       const userMsg: UserMessage = {
         id: newId(),
         role: "user",
@@ -516,7 +526,7 @@ export function ChatPanel() {
           {
             question: q,
             threadId: activeId,
-            contextContactIds: sending.map((p) => p.id),
+            contextContactIds,
           },
           {
             onAnswer: (delta) => {
@@ -997,21 +1007,26 @@ export function ChatPanel() {
                 {dictationNote}
               </div>
               {/* The visible twin lives on the mic itself (`dictation-button.tsx`), not
-                  here: as a row it pushed the suggestion chips down every time dictation
+                  here: as a row it pushed the suggestions down every time dictation
                   started, and the cue belongs to the control it describes. */}
-              <div className="flex flex-wrap gap-1.5">
-                {SUGGESTION_CHIPS.map((chip) => (
-                  <button
-                    key={chip}
-                    type="button"
+              {/* Only while the thread is empty. The footer is `shrink-0` above a message
+                  list with no floor, so a permanent row would take that height out of the
+                  answers for the whole conversation. The skeleton is the same size as the
+                  cards, so nothing moves when they land. */}
+              {showSuggestions &&
+                (suggestions === null ? (
+                  <SuggestionCardsSkeleton />
+                ) : (
+                  <SuggestionCards
+                    items={suggestions}
                     disabled={busy || loadingThread}
-                    className="rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-                    onClick={() => sendQuestion(chip)}
-                  >
-                    {chip}
-                  </button>
+                    onPick={(s) =>
+                      sendQuestion(s.question, {
+                        contextContactIds: s.contactId ? [s.contactId] : undefined,
+                      })
+                    }
+                  />
                 ))}
-              </div>
             </div>
           </div>
         </div>

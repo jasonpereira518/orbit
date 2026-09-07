@@ -1,6 +1,11 @@
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
+import {
+  MIN_ORG_NAME_LEN,
+  normalizeQuestionForOrgs,
+  questionMentionsOrg,
+} from "@/lib/chat-roster-match";
 import { canonicalCompanyClusterName } from "@/lib/company-family";
 import { normalizeCompanyName } from "@/lib/company-name";
 
@@ -30,30 +35,9 @@ export type OrgRoster = {
 const ROSTER_PEOPLE_CAP = 50;
 /** At most this many organisations per question, so a rambling question can't blow the prompt. */
 const MAX_ROSTERS = 2;
-/**
- * Names shorter than this are not matched: a two-letter company would fire on almost any
- * question, and the false positives are worse than the miss.
- */
-const MIN_ORG_NAME_LEN = 3;
-
-/** Everyday words that also happen to be company names; matching them is nearly always wrong. */
-const STOPLIST = new Set([
-  "the", "and", "for", "you", "who", "how", "new", "one", "next", "now", "all",
-  "get", "app", "inc", "llc", "self", "self employed", "freelance", "student",
-  "none", "n/a", "unknown", "independent",
-]);
-
-function normalizeQuestion(question: string) {
-  // Punctuation to spaces so "at Google?" and "Google's" both match "google", and pad the
-  // ends so a whole-word test can be a plain substring test.
-  return ` ${question.toLowerCase().replace(/[^a-z0-9+&. ]+/g, " ").replace(/\s+/g, " ").trim()} `;
-}
-
-function mentions(haystack: string, name: string) {
-  const needle = normalizeCompanyName(name).replace(/[^a-z0-9+&. ]+/g, " ").replace(/\s+/g, " ").trim();
-  if (needle.length < MIN_ORG_NAME_LEN || STOPLIST.has(needle)) return false;
-  return haystack.includes(` ${needle} `);
-}
+// The name test and its stoplist live in `@/lib/chat-roster-match`: the composer's
+// suggestion cards have to ask the same question before offering "Who else do I know at
+// {company}?", and a second copy of the list would drift.
 
 type OrgRow = { name: string; kind: "company" | "school"; total: number };
 
@@ -61,7 +45,7 @@ export async function findOrgRosters(
   userId: string,
   question: string
 ): Promise<OrgRoster[]> {
-  const haystack = normalizeQuestion(question);
+  const haystack = normalizeQuestionForOrgs(question);
   if (haystack.trim().length < MIN_ORG_NAME_LEN) return [];
 
   const db = await getDb();
@@ -107,8 +91,8 @@ export async function findOrgRosters(
   const matched = [...byCanonical.values()]
     .filter(
       (entry) =>
-        mentions(haystack, entry.display) ||
-        [...entry.variants].some((v) => mentions(haystack, v))
+        questionMentionsOrg(haystack, entry.display) ||
+        [...entry.variants].some((v) => questionMentionsOrg(haystack, v))
     )
     // Longest name first: "Google DeepMind" should win over "Google" when both match.
     .sort((a, b) => b.display.length - a.display.length)

@@ -7,6 +7,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   useTransition,
@@ -20,6 +21,9 @@ import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
 import { useFeedbackPanelState } from "@/lib/feedback-events";
 import { askNetwork, createChatThread } from "@/actions/chat";
 import { streamChat } from "@/lib/chat-stream-client";
+import { SuggestionPills } from "@/components/chat/suggestion-cards";
+import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
+import type { ChatSuggestion } from "@/lib/chat-suggestions";
 import { getAskBarContact } from "@/actions/contacts";
 import { searchDashboardContacts } from "@/actions/search";
 import { createReminder } from "@/actions/reminders";
@@ -79,13 +83,15 @@ type ThreadMessage = UserMessage | AssistantMessage;
 const CONTACT_PATH_RE =
   /^\/contacts\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
-const SUGGESTIONS = [
-  "Who do I know at AWS?",
-  "Who have I not followed up with recently?",
-  "Who are the best recruiters for my search?",
-  "Who should I reconnect with this week?",
-];
-
+/**
+ * Only the contact-scoped set is hardcoded here now.
+ *
+ * The general ones were a verbatim copy of the chat panel's, which is how they drifted from
+ * what the pipeline could actually answer. They come from `useChatSuggestions` instead —
+ * the same personalised row `/chat` shows, rendered as pills because this popover is too
+ * narrow for a card. On a contact's page these still win: the pathname is a stronger signal
+ * about what you are asking than anything a general rule could infer.
+ */
 const PROFILE_SUGGESTIONS = [
   "What should I know before we talk?",
   "Summarize our relationship",
@@ -325,7 +331,7 @@ export function FloatingAskBar() {
   }, []);
 
   const sendQuestion = useCallback(
-    (raw: string) => {
+    (raw: string, opts?: { contextContactIds?: readonly string[] }) => {
       const q = raw.trim();
       if (!q || chatPending) return;
 
@@ -377,7 +383,17 @@ export function FloatingAskBar() {
         };
 
         await streamChat(
-          { question: q, threadId, contactId: contactId ?? undefined },
+          {
+            question: q,
+            threadId,
+            contactId: contactId ?? undefined,
+            // A suggestion card names someone without an `@` token, so its id rides along
+            // here — that is what routes the question through `loadAttachedPeople` and puts
+            // the real timeline in front of the model.
+            contextContactIds: opts?.contextContactIds
+              ? [...opts.contextContactIds]
+              : undefined,
+          },
           {
             onAnswer: (delta) => {
               ensurePlaceholder();
@@ -413,8 +429,27 @@ export function FloatingAskBar() {
 
   const showPanel = open;
   const visible = !hidden || stayVisibleWhileWaiting;
+  // Fetched only once the bar is open: it is mounted on nearly every route, and a closed
+  // bar has no business issuing a query. Shares a module-level cache with /chat.
+  const personalised = useChatSuggestions(open && !personContextActive);
+  // Shaped as suggestions so one component renders both sets. `kind` is "generic" because
+  // that is what these are — fixed strings, not a rule's output — and nothing here reads it
+  // beyond picking an icon the pill variant does not draw.
+  const profileChips: ChatSuggestion[] = useMemo(
+    () =>
+      PROFILE_SUGGESTIONS.map((question, i) => ({
+        id: `profile:${i}`,
+        kind: "generic" as const,
+        question,
+        basis: "",
+        contactId: null,
+        interactionType: null,
+        rank: 10,
+      })),
+    [],
+  );
   const suggestionChips =
-    personContextActive && open ? PROFILE_SUGGESTIONS : SUGGESTIONS;
+    personContextActive && open ? profileChips : (personalised ?? []);
   const placeholder =
     personContextActive && open && activeContactName
       ? `Ask about ${activeContactName}…`
@@ -518,19 +553,15 @@ export function FloatingAskBar() {
                             ? `Ask anything about ${activeContactName}—relationship history, talking points, or follow-ups.`
                             : "Ask anything about people, companies, or follow-ups in your network."}
                         </p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {suggestionChips.map((chip) => (
-                            <button
-                              key={chip}
-                              type="button"
-                              disabled={chatPending}
-                              className="rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-                              onClick={() => sendQuestion(chip)}
-                            >
-                              {chip}
-                            </button>
-                          ))}
-                        </div>
+                        <SuggestionPills
+                          items={suggestionChips}
+                          disabled={chatPending}
+                          onPick={(s) =>
+                            sendQuestion(s.question, {
+                              contextContactIds: s.contactId ? [s.contactId] : undefined,
+                            })
+                          }
+                        />
                       </>
                     )}
                   </div>

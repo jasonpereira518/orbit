@@ -20,7 +20,7 @@ import { searchEventsForPicker, type EventPickerOption } from "@/actions/chat";
 import { searchContactsForPicker } from "@/actions/contacts";
 import type { ContactPickerOption } from "@/lib/contacts-page";
 import { Button } from "@/components/ui/button";
-import { interactionTypeLabel } from "@/lib/interaction-types";
+import { interactionTypeLabel, interactionTypeNoun } from "@/lib/interaction-types";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -44,23 +44,6 @@ export type ComposerInsert =
 
 /** Matches the composer's own debounce so typing does not fire a query per keystroke. */
 const SEARCH_DEBOUNCE_MS = 180;
-
-/**
- * The app's display labels are adjectival ("In person", "Coffee"); a sentence needs a noun.
- * Anything unmapped falls back to the lowercased label, which reads acceptably.
- */
-const NOUN_FOR = new Map<string, string>([
-  ["In person", "meeting"],
-  ["Coffee", "coffee"],
-  ["Call", "call"],
-  ["Video call", "video call"],
-  ["Email", "email"],
-  ["Message", "message"],
-  ["LinkedIn message", "LinkedIn message"],
-  ["Note", "note"],
-  ["Event", "event"],
-  ["Intro", "intro"],
-]);
 
 function formatEventDate(iso: string) {
   const d = new Date(iso);
@@ -134,7 +117,7 @@ export function ComposerToolsMenu({
           }))
         : events.map((e) => {
             // Reuse the app's own vocabulary rather than de-underscoring the raw column:
-            // "in_person" reads as "In person", which cannot be dropped into a sentence.
+            // "in_person" reads as "In person" in a list and "catch-up" in a sentence.
             const label = interactionTypeLabel(e.interactionType);
             return {
               key: e.id,
@@ -142,7 +125,7 @@ export function ComposerToolsMenu({
               subtitle: e.summary || formatEventDate(e.interactionDate),
               insert: {
                 kind: "text" as const,
-                text: `my ${NOUN_FOR.get(label) ?? label.toLowerCase()} with ${e.contactName} on ${formatEventDate(e.interactionDate)}`,
+                text: `my ${interactionTypeNoun(e.interactionType)} with ${e.contactName} on ${formatEventDate(e.interactionDate)}`,
               },
             };
           }),

@@ -37,6 +37,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-prompt": "pure",
   "smoke-chat-retrieval": "pure",
   "smoke-chat-stream": "pure",
+  "smoke-chat-suggestions": "pure",
   "smoke-closeness": "pure",
   "smoke-closeness-materialized": "pure",
   "smoke-constellation-eligibility": "pure",

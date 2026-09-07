@@ -26,6 +26,7 @@ import { contacts } from "../src/db/schema";
 import { getDashboardData } from "../src/lib/reminders";
 import { loadGraphData } from "../src/lib/graph-data";
 import { loadNotificationPanel } from "../src/lib/notification-panel";
+import { loadSuggestionSignals } from "../src/lib/chat-suggestions-data";
 import {
   findAvatarBackfillCandidates,
   runAvatarBackfillBatch,
@@ -238,6 +239,43 @@ async function main() {
   check(
     "panel surfaces the due follow-up at row 2900",
     Boolean(dueId) && panel.items.some((i) => i.kind === "follow_up" && i.contactId === dueId)
+  );
+
+  // ---- Composer suggestion signals ---------------------------------------------------
+  // The row renders on every visit to an empty /chat and on every open of the floating ask
+  // bar, so its cost is paid far more often than a page load. Six statements in the steady
+  // state; the ceiling leaves room for the conditional mention lookup and one future rung.
+  console.log("\nComposer suggestions (loadSuggestionSignals)…");
+  startQueryCount();
+  await loadSuggestionSignals(USER);
+  const suggestionCount = stopQueryCount();
+  const suggestionScans = contactScans(capturedQueries());
+  console.log(`  statements: ${suggestionCount}`);
+  check("suggestions issue ≤ 8 statements", suggestionCount <= 8, `got ${suggestionCount}`);
+  check(
+    "suggestions do not pull notes as a bare column — the emptiness test belongs in the predicate",
+    suggestionScans.every((s) => !selectsBare(s, "notes")),
+    suggestionScans.find((s) => selectsBare(s, "notes"))?.slice(0, 300)
+  );
+  check(
+    "suggestions do not pull profile_image_url",
+    suggestionScans.every((s) => !selectsBare(s, "profile_image_url")),
+    suggestionScans.find((s) => selectsBare(s, "profile_image_url"))?.slice(0, 200)
+  );
+  check(
+    "every suggestion scan is bounded in SQL",
+    suggestionScans.every((s) => /\blimit\b/i.test(s)),
+    suggestionScans.find((s) => !/\blimit\b/i.test(s))?.slice(0, 300)
+  );
+  // The point of the budget: cost must not track network size. If the closeness cohort ever
+  // creeps back into `getAttentionBrief` here, this is the check that fails.
+  startQueryCount();
+  await loadSuggestionSignals(`${USER}-empty`);
+  const emptyCount = stopQueryCount();
+  check(
+    "an empty account issues the same number of statements as a 3,000-contact one",
+    emptyCount === suggestionCount,
+    `empty ${emptyCount} vs populated ${suggestionCount}`
   );
 
   // ---- Avatar backfill candidates ----------------------------------------------------
