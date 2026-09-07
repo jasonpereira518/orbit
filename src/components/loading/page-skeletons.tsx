@@ -258,14 +258,15 @@ export function ChatPanelSkeleton({ className }: { className?: string }) {
       <div className="shrink-0 space-y-2 border-t border-border/60 p-4">
         <div className="mx-auto max-w-3xl space-y-2.5">
           <Skeleton className="h-14 w-full rounded-lg" />
-          {/* The suggestion cards, at their real size. Fixed boxes on purpose: the composer
+          {/* The suggestion pills, at their real height. Fixed on purpose: the composer
               footer is `shrink-0` above a message list with no floor, so a placeholder of
               the wrong height hands the panel a different layout than the one that swaps in
-              — the failure GraphPageSkeleton's comment below records. */}
+              — the failure GraphPageSkeleton's comment below records. Kept in step with
+              `PILL_BOX` in components/chat/suggestion-cards.tsx. */}
           <div className="flex gap-2 overflow-hidden">
-            <Skeleton className="h-[4.5rem] w-56 shrink-0 rounded-xl" />
-            <Skeleton className="h-[4.5rem] w-56 shrink-0 rounded-xl" />
-            <Skeleton className="h-[4.5rem] w-56 shrink-0 rounded-xl" />
+            <Skeleton className="h-8 w-52 shrink-0 rounded-full" />
+            <Skeleton className="h-8 w-44 shrink-0 rounded-full" />
+            <Skeleton className="h-8 w-56 shrink-0 rounded-full" />
           </div>
         </div>
       </div>

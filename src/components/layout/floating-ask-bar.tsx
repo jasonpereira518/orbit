@@ -92,6 +92,9 @@ const CONTACT_PATH_RE =
  * narrow for a card. On a contact's page these still win: the pathname is a stronger signal
  * about what you are asking than anything a general rule could infer.
  */
+/** How many fit the bar's panel without crowding out the search results below. */
+const ASK_BAR_SUGGESTIONS = 4;
+
 const PROFILE_SUGGESTIONS = [
   "What should I know before we talk?",
   "Summarize our relationship",
@@ -448,8 +451,11 @@ export function FloatingAskBar() {
       })),
     [],
   );
-  const suggestionChips =
-    personContextActive && open ? profileChips : (personalised ?? []);
+  // Capped: this popover is `w-80` inside a 48vh scroller, and six long questions wrapped
+  // to five lines of pills, which pushed the results below the fold.
+  const suggestionChips = (
+    personContextActive && open ? profileChips : (personalised ?? [])
+  ).slice(0, ASK_BAR_SUGGESTIONS);
   const placeholder =
     personContextActive && open && activeContactName
       ? `Ask about ${activeContactName}…`
