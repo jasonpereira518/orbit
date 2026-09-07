@@ -33,7 +33,7 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
           className="group inline-flex shrink-0 items-center gap-1.5 text-sm font-medium text-primary underline-offset-4 hover:underline"
         >
           See all plans
-          <ArrowUpRight className="size-3.5 transition-transform duration-200 ease-out group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+          <ArrowUpRight className="size-3.5 transition-transform duration-fast ease-house group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
         </WarpLink>
       </div>
     );
@@ -42,7 +42,7 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
   return (
     <WarpLink
       href="/pricing"
-      className="group relative block overflow-hidden rounded-2xl border border-[#f2c14e]/25 bg-[#03050c] p-6 text-[#e8f3f1] transition-[border-color,box-shadow] duration-300 ease-out hover:border-[#f2c14e]/45 hover:shadow-[0_0_40px_-12px_rgba(242,193,78,0.35)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#f2c14e] md:p-7"
+      className="group relative block overflow-hidden rounded-2xl border border-[#f2c14e]/25 bg-[#03050c] p-6 text-[#e8f3f1] transition-[border-color,box-shadow] duration-fast ease-house hover:border-[#f2c14e]/45 hover:shadow-[0_0_40px_-12px_rgba(242,193,78,0.35)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#f2c14e] md:p-7"
     >
       {/* Deep-space base — the same gradient lib/sky-palette.ts paints, so the
           panel and the page you land on are literally the same sky. */}
@@ -75,7 +75,7 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
       {/* The limb of the planet you're about to leave. Lifts on hover. */}
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute -bottom-24 left-1/2 h-48 w-[140%] -translate-x-1/2 rounded-[50%] transition-transform duration-500 ease-out group-hover:-translate-y-2"
+        className="pointer-events-none absolute -bottom-24 left-1/2 h-48 w-[140%] -translate-x-1/2 rounded-[50%] transition-transform duration-slow ease-house group-hover:-translate-y-2"
         style={{
           background:
             "radial-gradient(closest-side, rgba(242,193,78,0.28), rgba(242,193,78,0.08) 55%, transparent 78%)",
@@ -97,10 +97,10 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
           </p>
         </div>
 
-        <span className="inline-flex shrink-0 items-center gap-2 rounded-full bg-[#f2c14e] px-5 py-2.5 text-sm font-medium text-[#0a1024] shadow-[0_0_24px_-8px_rgba(242,193,78,0.8)] transition-transform duration-300 ease-out group-hover:-translate-y-0.5">
+        <span className="inline-flex shrink-0 items-center gap-2 rounded-full bg-[#f2c14e] px-5 py-2.5 text-sm font-medium text-[#0a1024] shadow-[0_0_24px_-8px_rgba(242,193,78,0.8)] transition-transform duration-fast ease-house group-hover:-translate-y-0.5">
           Compare plans
           <ArrowUpRight
-            className="size-4 transition-transform duration-300 ease-out group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+            className="size-4 transition-transform duration-fast ease-house group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
             aria-hidden="true"
           />
         </span>

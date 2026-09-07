@@ -56,10 +56,18 @@ export function RemindersViewSkeleton() {
   );
 }
 
-/** Matches the dashboard's 4-up stat grid (also its Suspense fallback). */
+/**
+ * Matches the dashboard's 4-up stat grid (also its Suspense fallback).
+ *
+ * The grid classes here MUST track `StatsSection` in `dashboard-sections.tsx`
+ * exactly. They had drifted: this was `gap-4 sm:grid-cols-2`, i.e. ONE column on
+ * a phone, while the real row is two — so four stacked bars collapsed into a 2x2
+ * grid the moment data landed, on the surface whose whole promise is that the
+ * skeleton and the content are the same shape.
+ */
 export function DashboardStatRowSkeleton() {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
       {Array.from({ length: 4 }).map((_, i) => (
         <Skeleton key={i} className="h-24 rounded-2xl" />
       ))}

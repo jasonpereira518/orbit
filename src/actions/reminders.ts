@@ -19,7 +19,10 @@ import {
 } from "@/lib/reminder-action-kind";
 import { loadNotificationPanel } from "@/lib/notification-panel";
 import { traced } from "@/lib/perf-trace";
-import { revalidateReminderPaths } from "@/lib/reminder-paths";
+import {
+  revalidatePathIfRequestScoped,
+  revalidateReminderPaths,
+} from "@/lib/reminder-paths";
 import {
   displayListName,
   ensureReminderLists,
@@ -503,13 +506,17 @@ export async function scheduleContactFollowUp(
 
   let row;
   if (existing) {
+    // Rescheduling changes WHEN a follow-up is due, not WHAT it says.
+    //
+    // This used to also write `title`, `reminderType` and `actionKind`, which meant
+    // pressing a day preset on the dashboard silently renamed the reminder: a
+    // hand-written "Send Priya the deck" became "Follow up with Priya", and its type
+    // was reset to "manual". The generated `title`/`actionKind` above are still
+    // correct for the INSERT below, where there is no existing wording to protect.
     const [updated] = await db
       .update(reminders)
       .set({
-        title,
         dueDate: due,
-        reminderType: "manual",
-        actionKind,
         listId: existing.listId || inboxId,
       })
       .where(eq(reminders.id, existing.id))
@@ -543,7 +550,7 @@ export async function scheduleContactFollowUp(
     .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
 
   revalidateReminderPaths(contactId);
-  revalidatePath("/contacts");
+  revalidatePathIfRequestScoped("/contacts");
   return { reminder: row, dueDate: due.toISOString(), days };
 }
 
@@ -623,7 +630,7 @@ export async function scheduleContactFollowUpAt(
     .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
 
   revalidateReminderPaths(contactId);
-  revalidatePath("/contacts");
+  revalidatePathIfRequestScoped("/contacts");
   return { reminder: row, dueDate: due.toISOString() };
 }
 
@@ -652,8 +659,12 @@ export async function clearContactFollowUp(contactId: string) {
   }
 
   revalidateReminderPaths(contactId);
-  revalidatePath("/contacts");
-  return { ok: true };
+  revalidatePathIfRequestScoped("/contacts");
+  // The count is load-bearing, not telemetry: clearing a follow-up also marks every
+  // pending reminder for the contact done (and completes their linked action items),
+  // which the caller has to be able to say out loud. It used to return a bare
+  // `{ ok: true }` and the UI said only "Follow-up cleared".
+  return { ok: true, remindersClosed: open.length };
 }
 
 export type FollowUpTouchChannel = "email" | "linkedin_message" | "note";
@@ -704,7 +715,7 @@ export async function snoozeReminderAction(id: string, days = 7) {
   const userId = await requireUserId();
   await snoozeReminder(userId, id, days);
   revalidateReminderPaths();
-  revalidatePath("/contacts");
+  revalidatePathIfRequestScoped("/contacts");
   revalidatePath("/graph");
 }
 
@@ -830,7 +841,7 @@ export async function acceptScoreBump(suggestionId: string) {
 
   await dismissSuggestion(suggestionId);
 
-  revalidatePath("/contacts");
+  revalidatePathIfRequestScoped("/contacts");
   revalidatePath(`/contacts/${contactId}`);
   revalidatePath("/graph");
   return { contactId, newScore };
@@ -841,7 +852,7 @@ export async function generateDueFollowUpsAction(limit = 8) {
   const userId = await requireUserId();
   const result = await generateDueFollowUps(userId, limit);
   revalidateReminderPaths();
-  revalidatePath("/contacts");
+  revalidatePathIfRequestScoped("/contacts");
   revalidatePath("/graph");
   return result;
 }

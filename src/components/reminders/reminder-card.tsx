@@ -10,7 +10,6 @@ import {
   Pencil,
   Phone,
   Sparkles,
-  UserRound,
   NotebookPen,
   Coffee,
 } from "lucide-react";
@@ -191,19 +190,22 @@ export function ReminderCard({
           )}
 
           <div className="mt-2 flex flex-wrap gap-1.5">
-            {contactId && (
-              <Link href={`/contacts/${contactId}`} className={actionClass}>
-                <UserRound className="mr-1.5 h-3.5 w-3.5" />
-                Open
-              </Link>
-            )}
+            {/* The contact name above is already a link to /contacts/{id}; a second
+                "Open" button three lines below it was the same destination twice.
+                For `meet` this used to render BOTH "Log" and "Log meeting" pointing
+                at the identical /capture url — now one control, labelled for the
+                kind. */}
             {contactId && (
               <Link
                 href={`/capture?contactId=${contactId}`}
                 className={actionClass}
               >
-                <NotebookPen className="mr-1.5 h-3.5 w-3.5" />
-                Log
+                {actionKind === "meet" ? (
+                  <Coffee className="mr-1.5 h-3.5 w-3.5" />
+                ) : (
+                  <NotebookPen className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                {actionKind === "meet" ? "Log meeting" : "Log"}
               </Link>
             )}
             {actionKind === "call" && contactPhone && (
@@ -220,15 +222,6 @@ export function ReminderCard({
                 <Mail className="mr-1.5 h-3.5 w-3.5" />
                 Email
               </a>
-            )}
-            {actionKind === "meet" && contactId && (
-              <Link
-                href={`/capture?contactId=${contactId}`}
-                className={actionClass}
-              >
-                <Coffee className="mr-1.5 h-3.5 w-3.5" />
-                Log meeting
-              </Link>
             )}
             {showDraft && contactId && (
               <Button
