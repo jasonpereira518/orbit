@@ -27,6 +27,7 @@
   --color-import-connections: var(--import-connections);
   --color-import-messages: var(--import-messages);
   --color-import-calendar: var(--import-calendar);
+  --color-import-scan: var(--import-scan);
   --color-interaction-together: var(--interaction-together);
   --color-interaction-live: var(--interaction-live);
   --color-interaction-written: var(--interaction-written);
@@ -111,6 +112,7 @@
   --import-connections: #5b5fc7;
   --import-messages: #c2694a;
   --import-calendar: #b8873a;
+  --import-scan: #3f8a63;
   /* Timeline interaction families. Four groups over the ten interaction types, ordered by
      how much of the person was actually present: together (met them) -> live (spoke to them)
      -> written (exchanged text) -> yours (your own record, nothing confirmed). See
@@ -228,6 +230,7 @@
   --import-connections: #9b9ff5;
   --import-messages: #f0956f;
   --import-calendar: #e2b45f;
+  --import-scan: #6fd39d;
   /* Same ladder inverted: brighter means more present on a dark card. */
   --interaction-together: #f5cd7a;
   --interaction-live: #f5a3c0;

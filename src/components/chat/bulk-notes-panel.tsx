@@ -105,6 +105,9 @@ export function BulkNotesPanel({
   lockedParticipantName = null,
   entryPoint,
   hasApiKey: hasApiKeyProp,
+  initialText = null,
+  initialSources = null,
+  autoParse = false,
   onSaved,
 }: {
   compact?: boolean;
@@ -121,6 +124,23 @@ export function BulkNotesPanel({
   entryPoint?: "capture" | "profile";
   /** When known from the server, skips a settings round-trip. */
   hasApiKey?: boolean;
+  /**
+   * Text to open with, instead of an empty textarea — a transcript from a scanned photo.
+   * Changing it reseeds the panel, which is what lets a second scan replace the first.
+   */
+  initialText?: string | null;
+  /** Provenance labels for that text, e.g. `photos:3`. */
+  initialSources?: string[] | null;
+  /**
+   * Extract as soon as `initialText` arrives, without waiting for a click.
+   *
+   * On for scanning and off for pasting, deliberately. Someone pasting is mid-edit and an
+   * extraction that fires under them would be an interruption; someone who has just
+   * photographed a page has already said what they want, and a second button in the way
+   * would be ceremony. The transcript stays visible either way, so an OCR mistake is still
+   * catchable — see the disclosure in the review step.
+   */
+  autoParse?: boolean;
   /** Called after a successful save. Defaults to staying on the paste step. */
   onSaved?: (result: SaveNoteBatchOutput) => void;
 }) {
@@ -372,6 +392,126 @@ export function BulkNotesPanel({
     });
   }
 
+  /**
+   * Extract people from a block of notes.
+   *
+   * Takes the text as an argument rather than reading `notes`, because scanning calls
+   * this the instant a transcript lands and must not race the state update that put it
+   * there.
+   */
+  /**
+   * Adopt a transcript handed in from outside (a scan), and extract from it.
+   *
+   * Keyed on the text itself rather than a mount flag so a second scan replaces the first
+   * instead of being ignored. `runParse` is called with the value directly, not read back
+   * out of state, so it cannot race the `setNotes` above it.
+   */
+  const seededRef = useRef<string | null>(null);
+  useEffect(() => {
+    const text = initialText?.trim();
+    if (!text || seededRef.current === text) return;
+    seededRef.current = text;
+    setNotes(text);
+    setIngestSources(initialSources ?? []);
+    setStep("paste");
+    if (autoParse && hasApiKey) runParse(text);
+    // runParse is redefined every render; depending on it would re-fire the extraction.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialText, initialSources, autoParse, hasApiKey]);
+
+  function runParse(text: string) {
+    if (!text.trim()) return;
+    start(async () => {
+      try {
+        const hints: CaptureParseHints | null =
+          lockedParticipantId && lockedParticipantName
+            ? withLockedSeedPerson(captureHints, lockedParticipantName)
+            : captureHints;
+        const res = await parseBulkCaptureNotes(text, hints);
+        if (!res.ok) {
+          const missingKey = isMissingAiApiKeyError(res.error);
+          if (missingKey) setHasApiKey(false);
+          toast.error(
+            missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error
+          );
+          return;
+        }
+        setSharedNotes(res.sharedNotes || []);
+        const lockedKey =
+          lockedParticipantId && lockedParticipantName
+            ? pickLockedParticipant(
+                res.items.map((item) => ({
+                  key: item.key,
+                  name: item.parsed.name,
+                  duplicateIds: item.duplicates.map((d) => d.id),
+                })),
+                { id: lockedParticipantId, name: lockedParticipantName }
+              )
+            : null;
+        setItems(
+          res.items.map((item) => {
+            const isLocked = lockedKey !== null && item.key === lockedKey;
+            const preferredMatch =
+              preferredContactId &&
+              item.duplicates.some((d) => d.id === preferredContactId)
+                ? preferredContactId
+                : null;
+            return {
+              ...item,
+              decision: "pending" as const,
+              mergeContactId: isLocked
+                ? lockedParticipantId
+                : preferredMatch || item.suggestedMergeId,
+              locked: isLocked,
+              createReminder: Boolean(
+                item.parsed.follow_up_recommendation
+              ),
+              relationshipScore:
+                item.parsed.relationship_score_suggestion || 2,
+              tagNames: (item.parsed.tags || []).join(", "),
+              followUpDays: item.parsed.follow_up_days || 14,
+            };
+          })
+        );
+        const found = res.suggestedReminders || [];
+        setSourceText(res.sourceText);
+        setSourceHash(res.sourceHash);
+        setAnchorIso(res.anchorIso);
+        setAnchorBasis(res.anchorBasis);
+        setSkipped(res.suggestionsSkipped || null);
+        setMentions(res.mentions || []);
+        setSuggestions(
+          found.map((s) => ({
+            ...s,
+            // High-confidence items start checked; the user still sees
+            // every one before anything is written.
+            checked: s.confidenceScore >= 60,
+            personNameOverride: null,
+          }))
+        );
+        setReviewIndex(0);
+        setSlideDirection(1);
+        // A note can carry dates but no people — skip the person carousel.
+        setStep(res.items.length ? "review" : "done");
+
+        const peopleLabel = `${res.items.length} ${
+          res.items.length === 1 ? "person" : "people"
+        }`;
+        const dateLabel = found.length
+          ? `, ${found.length} ${found.length === 1 ? "date" : "dates"}`
+          : "";
+        toast.success(`Found ${peopleLabel}${dateLabel}`);
+      } catch (err) {
+        const message = toUserFacingError(
+          err,
+          MISSING_AI_API_KEY_MESSAGE
+        ).message;
+        if (isMissingAiApiKeyError(message)) setHasApiKey(false);
+        toast.error(message);
+      }
+});
+  }
+
   return (
     <div className={cn("space-y-4", compact && "space-y-3")}>
       {step === "paste" && (
@@ -474,101 +614,48 @@ export function BulkNotesPanel({
             disabled={pending || !notes.trim() || !hasApiKey}
             size={compact ? "sm" : "default"}
             className="w-full bg-primary text-primary-foreground hover:bg-primary/90 sm:w-auto"
-            onClick={() =>
-              start(async () => {
-                try {
-                  const hints: CaptureParseHints | null =
-                    lockedParticipantId && lockedParticipantName
-                      ? withLockedSeedPerson(captureHints, lockedParticipantName)
-                      : captureHints;
-                  const res = await parseBulkCaptureNotes(notes, hints);
-                  if (!res.ok) {
-                    const missingKey = isMissingAiApiKeyError(res.error);
-                    if (missingKey) setHasApiKey(false);
-                    toast.error(
-                      missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error
-                    );
-                    return;
-                  }
-                  setSharedNotes(res.sharedNotes || []);
-                  const lockedKey =
-                    lockedParticipantId && lockedParticipantName
-                      ? pickLockedParticipant(
-                          res.items.map((item) => ({
-                            key: item.key,
-                            name: item.parsed.name,
-                            duplicateIds: item.duplicates.map((d) => d.id),
-                          })),
-                          { id: lockedParticipantId, name: lockedParticipantName }
-                        )
-                      : null;
-                  setItems(
-                    res.items.map((item) => {
-                      const isLocked = lockedKey !== null && item.key === lockedKey;
-                      const preferredMatch =
-                        preferredContactId &&
-                        item.duplicates.some((d) => d.id === preferredContactId)
-                          ? preferredContactId
-                          : null;
-                      return {
-                        ...item,
-                        decision: "pending" as const,
-                        mergeContactId: isLocked
-                          ? lockedParticipantId
-                          : preferredMatch || item.suggestedMergeId,
-                        locked: isLocked,
-                        createReminder: Boolean(
-                          item.parsed.follow_up_recommendation
-                        ),
-                        relationshipScore:
-                          item.parsed.relationship_score_suggestion || 2,
-                        tagNames: (item.parsed.tags || []).join(", "),
-                        followUpDays: item.parsed.follow_up_days || 14,
-                      };
-                    })
-                  );
-                  const found = res.suggestedReminders || [];
-                  setSourceText(res.sourceText);
-                  setSourceHash(res.sourceHash);
-                  setAnchorIso(res.anchorIso);
-                  setAnchorBasis(res.anchorBasis);
-                  setSkipped(res.suggestionsSkipped || null);
-                  setMentions(res.mentions || []);
-                  setSuggestions(
-                    found.map((s) => ({
-                      ...s,
-                      // High-confidence items start checked; the user still sees
-                      // every one before anything is written.
-                      checked: s.confidenceScore >= 60,
-                      personNameOverride: null,
-                    }))
-                  );
-                  setReviewIndex(0);
-                  setSlideDirection(1);
-                  // A note can carry dates but no people — skip the person carousel.
-                  setStep(res.items.length ? "review" : "done");
-
-                  const peopleLabel = `${res.items.length} ${
-                    res.items.length === 1 ? "person" : "people"
-                  }`;
-                  const dateLabel = found.length
-                    ? `, ${found.length} ${found.length === 1 ? "date" : "dates"}`
-                    : "";
-                  toast.success(`Found ${peopleLabel}${dateLabel}`);
-                } catch (err) {
-                  const message = toUserFacingError(
-                    err,
-                    MISSING_AI_API_KEY_MESSAGE
-                  ).message;
-                  if (isMissingAiApiKeyError(message)) setHasApiKey(false);
-                  toast.error(message);
-                }
-              })
-            }
+            onClick={() => runParse(notes)}
           >
             {pending ? "Parsing…" : "Extract people"}
           </Button>
         </div>
+      )}
+
+      {/*
+        What the model read, kept one click away.
+
+        Scanning transcribes a photograph and then throws the photograph away, so this is
+        the only place an OCR mistake can still be caught — and a misread name that reaches
+        a contact record is not obviously wrong once it is sitting in a form field. Closed
+        by default because it is usually right; editable and re-runnable because when it is
+        wrong, retyping one word beats rephotographing the page.
+      */}
+      {step !== "paste" && seededRef.current && (
+        <details className="rounded-lg border border-border/70 bg-muted/40 px-3 py-2">
+          <summary className="cursor-pointer list-none text-xs font-medium text-muted-foreground marker:hidden hover:text-ink">
+            Show what we read
+            {ingestSources.length > 0 && (
+              <span className="ml-1 font-normal">({ingestSources.join(", ")})</span>
+            )}
+          </summary>
+          <div className="mt-2 space-y-2">
+            <Textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={6}
+              className="text-xs"
+              aria-label="Transcribed text"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending || !notes.trim() || !hasApiKey}
+              onClick={() => runParse(notes)}
+            >
+              {pending ? "Re-reading…" : "Re-run extraction"}
+            </Button>
+          </div>
+        </details>
       )}
 
       {step === "review" && current && (

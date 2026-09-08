@@ -9,6 +9,7 @@ import {
   FileSpreadsheet,
   MessageSquare,
   NotebookPen,
+  ScanLine,
 } from "lucide-react";
 import {
   ImportHistory,
@@ -26,7 +27,7 @@ import { SPRING_PILL } from "@/lib/motion";
 import { useRefreshOnVisible } from "@/lib/use-refresh-on-visible";
 import { cn } from "@/lib/utils";
 
-type ImportTab = "connections" | "messages" | "calendar";
+type ImportTab = "scan" | "connections" | "messages" | "calendar";
 
 type CalendarSub = {
   id: string;
@@ -52,6 +53,15 @@ const TABS: {
   icon: typeof FileSpreadsheet;
   activeText: string;
 }[] = [
+  // First, and the default. The other three are bulk list transfers you do once when you
+  // join; this is the one you reach for every week, and the only one that starts with
+  // something physical in front of you.
+  {
+    id: "scan",
+    label: "Scan",
+    icon: ScanLine,
+    activeText: "text-import-scan",
+  },
   {
     id: "connections",
     label: "Connections",
@@ -97,6 +107,14 @@ const PanelSkeleton = () => (
     <Skeleton className="h-24 w-full" />
     <Skeleton className="h-9 w-32" />
   </div>
+);
+
+const ScanNotesPanel = dynamic(
+  () =>
+    import("@/components/imports/scan-notes-panel").then((m) => ({
+      default: m.ScanNotesPanel,
+    })),
+  { loading: () => <PanelSkeleton /> },
 );
 
 const LinkedInConnectionsImport = dynamic(
@@ -145,6 +163,7 @@ const CalendarImportSection = dynamic(
  * simply will not open its tab, silently.
  */
 const TAB_FOR_ANCHOR: Record<string, ImportTab | undefined> = {
+  "import-panel-scan": "scan",
   "import-panel-connections": "connections",
   "import-google-contacts": "connections",
   "import-outlook-contacts": "connections",
@@ -163,11 +182,12 @@ export function ImportHub({
   canUseSync?: boolean;
 }) {
   const job = useImportJob();
-  const [tab, setTab] = useState<ImportTab>("connections");
+  const [tab, setTab] = useState<ImportTab>("scan");
   // Mount panels on first visit so inactive tabs don't load code upfront,
   // but keep them mounted afterward so in-flight imports survive switches.
   const [mounted, setMounted] = useState<Record<ImportTab, boolean>>({
-    connections: true,
+    scan: true,
+    connections: false,
     messages: false,
     calendar: false,
   });
@@ -270,6 +290,16 @@ export function ImportHub({
         })}
       </div>
 
+      {mounted.scan && (
+        <div
+          id="import-panel-scan"
+          role="tabpanel"
+          aria-labelledby="import-tab-scan"
+          hidden={tab !== "scan"}
+        >
+          <ScanNotesPanel />
+        </div>
+      )}
       {mounted.connections && (
         <div
           id="import-panel-connections"
@@ -320,8 +350,10 @@ export function ImportHub({
         </div>
       )}
 
-      {/* Notes live in Capture rather than as a tab here, so there's exactly one
-          extraction path — but this is where people look for them. */}
+      {/* Typing and pasting notes still lives in Capture; only the Scan tab above has a
+          door here. There is still exactly one extraction path — Scan feeds the same
+          parse-and-review pipeline — but pasting is a different enough job (you are
+          mid-edit, with text you already have) that it keeps its own page. */}
       <Link
         href="/capture"
         className="flex items-start gap-3 rounded-2xl border border-border/70 bg-card p-5 transition-colors hover:border-primary/40"

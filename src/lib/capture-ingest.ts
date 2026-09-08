@@ -1,9 +1,14 @@
 import { parseIcsEvents } from "@/lib/calendar-import";
 import {
   transcribeAudioWithAI,
-  transcribeImagesWithAI,
+  transcribeImagePages,
   type CaptureParseHints,
 } from "@/lib/ai";
+import {
+  MAX_SCAN_PAGES,
+  pageUnreadableMarker,
+  scanSourceLabel,
+} from "@/lib/scan-image";
 
 export type CaptureMediaFile = {
   filename: string;
@@ -19,7 +24,8 @@ export type NormalizedCaptureInput = {
   sources: string[];
 };
 
-const MAX_IMAGES = 8;
+/** Shared with the scan UI's page counter — see `scan-image.ts`. */
+const MAX_IMAGES = MAX_SCAN_PAGES;
 const MAX_AUDIO_FILES = 3;
 const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
 const MAX_SINGLE_BYTES = 12 * 1024 * 1024;
@@ -377,7 +383,7 @@ export async function normalizeCaptureInput(
   }
 
   if (images.length) {
-    const text = await transcribeImagesWithAI(
+    const pages = await transcribeImagePages(
       userId,
       images.map((img) => ({
         mimeType: img.mimeType.startsWith("image/")
@@ -386,10 +392,36 @@ export async function normalizeCaptureInput(
         base64: img.base64,
       }))
     );
-    if (text.trim()) {
-      chunks.push(text.trim());
-      sources.push(`photos:${images.length}`);
+
+    const succeeded = pages.filter((page) => page.ok && page.text.trim()).length;
+    // A page that failed leaves a visible marker rather than vanishing: to the extraction
+    // pass downstream, and to the person reading the transcript, a silent gap is
+    // indistinguishable from a page that simply had no people on it.
+    const body = pages
+      .map((page) =>
+        page.ok && page.text.trim()
+          ? page.text.trim()
+          : pageUnreadableMarker(page.pageNumber)
+      )
+      .join("\n\n");
+
+    // Every page failing is not partial success — it is the whole step failing. When the
+    // pages failed for a REASON (no API key, a provider outage, a rate limit), that reason
+    // is what the person needs: told "try a clearer photo" for a missing key, they will
+    // retake the photo forever. Only when the model came back successfully but empty is
+    // "could not be read" actually true.
+    if (!succeeded) {
+      const cause = pages.find((page) => page.error)?.error;
+      throw new Error(
+        cause ??
+          (images.length === 1
+            ? "That photo could not be read. Try a clearer, better-lit shot."
+            : "None of those photos could be read. Try clearer, better-lit shots.")
+      );
     }
+
+    chunks.push(body);
+    sources.push(scanSourceLabel(succeeded, images.length));
   }
 
   for (const audio of audios) {

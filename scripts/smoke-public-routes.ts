@@ -85,6 +85,11 @@ function main() {
     "/api/health",
     // Browsers report CSP violations without one.
     "/api/csp-report",
+    // The phone half of note scanning, authenticated by the opaque token in the path. If
+    // these fall out of PUBLIC_ROUTES the QR code leads to a sign-in page in production
+    // and nowhere else — the phone has no session and cannot get one usefully.
+    "/scan/orb_scan_7f3a9c2b_" + "a".repeat(43),
+    "/api/scan/orb_scan_7f3a9c2b_" + "a".repeat(43) + "/pages",
   ];
   const blocked: string[] = [];
   for (const route of internalRoutes) {

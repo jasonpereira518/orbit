@@ -980,6 +980,21 @@ CREATE TABLE IF NOT EXISTS event_provider_connections (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS capture_handoffs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  token_hash text NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  transcript text,
+  page_count integer NOT NULL DEFAULT 0,
+  sources text,
+  error text,
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS capture_handoffs_token_uidx ON capture_handoffs(token_hash);
+CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expires_at);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -1033,12 +1048,13 @@ CREATE TABLE IF NOT EXISTS event_provider_connections (
  * v31 = the connector platform: api_keys, api_idempotency_keys, webhook_endpoints,
  * outbound_webhook_deliveries.
  * v32 = the events feature: events, event_attendees, event_provider_connections.
+ * v33 = capture_handoffs: the phone-to-desktop scanning handoff.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
  * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
  */
-export const SCHEMA_VERSION = 32;
+export const SCHEMA_VERSION = 33;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
