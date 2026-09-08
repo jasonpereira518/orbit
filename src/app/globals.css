@@ -1980,6 +1980,15 @@ html [data-sonner-toaster] {
   opacity: 0;
 }
 
+/* The description's "See more" takes the variant's own colour, the same accent
+   as the icon chip and the rail, so the control reads as part of the toast
+   rather than as body text. `--toast-accent` is set per type on the toast
+   itself and inherits; `default` toasts set none and fall back to the app
+   accent. Set from `maybeExpandableDescription` in lib/toast.tsx. */
+[data-sonner-toaster] li.orbit-toast .orbit-toast-expander {
+  color: var(--toast-accent, var(--primary));
+}
+
 /* A kept toast leaves toward the bell it is going to end up in, rather than
    straight out the side: it lifts, shrinks and fades up-and-right, which is
    where `NotificationsPanelButton` sits (fixed top-right in `app-shell.tsx`).

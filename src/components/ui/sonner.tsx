@@ -240,23 +240,30 @@ const Toaster = ({ ...props }: ToasterProps) => {
           toast:
             "orbit-toast group/toast flex w-full cursor-pointer items-start gap-3 " +
             "rounded-xl bg-popover p-3 pr-9 text-popover-foreground",
-          // Capped so an expanded stack trace cannot grow into a full-height
-          // panel. `min-h-0` because a flex child will not shrink below its
-          // content without it, and the cap would do nothing. Sonner puts
+          // The hard cap, and the reason "See more" can be unbounded: expanding
+          // a description grows the toast until it hits this, then scrolls, so
+          // a stack trace can be read in full without becoming a full-height
+          // panel. Nothing collapsed comes near 224px — a two-line title over a
+          // three-line description is about 100px — so this only bites once the
+          // reader has asked for more.
+          //
+          // `min-h-0` because a flex child will not shrink below its content
+          // without it, and the cap would do nothing. Sonner puts
           // `touch-action: none` on the toast for its swipe, which also kills
           // touch scrolling in here — `pan-y` gives the vertical axis back
           // while leaving the horizontal swipe to dismiss.
           content:
-            "flex min-h-0 max-h-40 min-w-0 flex-1 touch-pan-y flex-col gap-0.5 overflow-y-auto overscroll-contain",
+            "flex min-h-0 max-h-56 min-w-0 flex-1 touch-pan-y flex-col gap-0.5 overflow-y-auto overscroll-contain",
           icon: "orbit-toast-icon mt-px flex size-6 shrink-0 items-center justify-center rounded-md",
           title: "text-[13px] leading-5 font-medium break-words whitespace-pre-wrap",
-          // Three lines, then ellipsis. The description is secondary text and
-          // has no expander of its own — the title does (`ExpandableToastMessage`
-          // in lib/toast.tsx), and that is where errors put the detail worth
-          // reading. `line-clamp` brings its own display mode, which still
-          // honours the `whitespace-pre-wrap` sitting alongside it.
+          // No clamp here on purpose. A string description is wrapped in
+          // `ExpandableText` by `maybeExpandableDescription` in lib/toast.tsx,
+          // which owns the three-line clamp and the "See more" — a clamp on
+          // this wrapper would keep cutting at three lines even once expanded.
+          // These styles still apply to a description passed as a ReactNode,
+          // which nothing does today but the API allows.
           description:
-            "line-clamp-3 text-[13px] leading-5 text-muted-foreground break-words whitespace-pre-wrap",
+            "text-[13px] leading-5 text-muted-foreground break-words whitespace-pre-wrap",
           actionButton:
             "shrink-0 self-center rounded-md bg-primary px-2.5 py-1 text-xs font-medium " +
             "text-primary-foreground transition-colors duration-fast hover:bg-primary/90",

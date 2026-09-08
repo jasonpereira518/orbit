@@ -6,6 +6,7 @@ import {
   type ExternalToast,
 } from "sonner";
 import { cn } from "@/lib/utils";
+import { ExpandableText } from "@/components/ui/expandable-text";
 import { keepNotification } from "@/lib/kept-notifications";
 
 const EXPAND_THRESHOLD = 100;
@@ -64,6 +65,40 @@ function maybeExpandable(
     return message;
   }
   return <ExpandableToastMessage message={message} tone={tone} />;
+}
+
+/**
+ * Give a long description a "See more" instead of just cutting it off.
+ *
+ * The title has had an expander for a while; the description was clamped at
+ * three lines with an ellipsis and no way past it, so anything a caller put
+ * beyond that was simply unreadable. `ExpandableText` measures rather than
+ * counting characters, so the control only appears when the text genuinely
+ * overflows — a three-line description shows no button at all.
+ *
+ * Expanded it is still capped: the content column in `ui/sonner.tsx` has a
+ * max height and scrolls, which is what stops a stack trace turning the toast
+ * into a full-height panel. The clamp lives here rather than on
+ * `classNames.description`, because a clamp on the wrapper would keep cutting
+ * at three lines no matter what this expanded to.
+ */
+function maybeExpandableDescription(
+  data?: ExternalToast
+): ExternalToast | undefined {
+  if (!data || typeof data.description !== "string") return data;
+  return {
+    ...data,
+    description: (
+      <ExpandableText
+        text={data.description}
+        lines={3}
+        // `classNames.description` sizes the wrapper; this matches it on the
+        // paragraph, which `ExpandableText` otherwise renders at `text-sm`.
+        className="text-[13px] leading-5 text-muted-foreground"
+        buttonClassName="orbit-toast-expander"
+      />
+    ),
+  };
 }
 
 /**
@@ -147,48 +182,63 @@ export const toast = {
   ...sonnerToast,
   error(message: string | ReactNode, data?: OrbitToastData) {
     if (data?.keep === false) {
-      return sonnerToast.error(maybeExpandable(message, "error"), {
-        ...stripKeep(data),
-        duration: data.duration ?? 10_000,
-      });
+      return sonnerToast.error(
+        maybeExpandable(message, "error"),
+        maybeExpandableDescription({
+          ...stripKeep(data),
+          duration: data.duration ?? 10_000,
+        })
+      );
     }
     return withKeep("error", message, data, (d) =>
-      sonnerToast.error(maybeExpandable(message, "error"), {
-        ...d,
-        duration: d.duration ?? 10_000,
-      })
+      sonnerToast.error(
+        maybeExpandable(message, "error"),
+        maybeExpandableDescription({ ...d, duration: d.duration ?? 10_000 })
+      )
     );
   },
   message(message: string | ReactNode, data?: OrbitToastData) {
     if (!data?.action || data.keep === false) {
-      return sonnerToast.message(maybeExpandable(message), stripKeep(data));
+      return sonnerToast.message(
+        maybeExpandable(message),
+        maybeExpandableDescription(stripKeep(data))
+      );
     }
     return withKeep("action", message, data, (d) =>
-      sonnerToast.message(maybeExpandable(message), d)
+      sonnerToast.message(maybeExpandable(message), maybeExpandableDescription(d))
     );
   },
   warning(message: string | ReactNode, data?: OrbitToastData) {
     if (!data?.action || data.keep === false) {
-      return sonnerToast.warning(maybeExpandable(message), stripKeep(data));
+      return sonnerToast.warning(
+        maybeExpandable(message),
+        maybeExpandableDescription(stripKeep(data))
+      );
     }
     return withKeep("action", message, data, (d) =>
-      sonnerToast.warning(maybeExpandable(message), d)
+      sonnerToast.warning(maybeExpandable(message), maybeExpandableDescription(d))
     );
   },
   success(message: string | ReactNode, data?: OrbitToastData) {
     if (!data?.action || data.keep === false) {
-      return sonnerToast.success(maybeExpandable(message), stripKeep(data));
+      return sonnerToast.success(
+        maybeExpandable(message),
+        maybeExpandableDescription(stripKeep(data))
+      );
     }
     return withKeep("action", message, data, (d) =>
-      sonnerToast.success(maybeExpandable(message), d)
+      sonnerToast.success(maybeExpandable(message), maybeExpandableDescription(d))
     );
   },
   info(message: string | ReactNode, data?: OrbitToastData) {
     if (!data?.action || data.keep === false) {
-      return sonnerToast.info(maybeExpandable(message), stripKeep(data));
+      return sonnerToast.info(
+        maybeExpandable(message),
+        maybeExpandableDescription(stripKeep(data))
+      );
     }
     return withKeep("action", message, data, (d) =>
-      sonnerToast.info(maybeExpandable(message), d)
+      sonnerToast.info(maybeExpandable(message), maybeExpandableDescription(d))
     );
   },
 };
