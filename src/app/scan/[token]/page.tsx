@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { ScanPhoneCapture } from "@/components/imports/scan-phone-capture";
+import { ScanPhoneCapture } from "@/components/scan/scan-phone-capture";
 import { findScanHandoff } from "@/lib/scan-handoff";
 
 /**

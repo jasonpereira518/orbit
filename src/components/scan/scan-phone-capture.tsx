@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Camera, Check, Images, X } from "lucide-react";
+import { ScanChip } from "@/components/scan/scan-controls";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/lib/toast";
 import { SPRING_PILL } from "@/lib/motion";
@@ -135,9 +136,15 @@ export function ScanPhoneCapture({ token }: { token: string }) {
 
   return (
     <div className="flex w-full flex-col gap-5">
-      <div className="space-y-1 text-center">
+      {/*
+        The same icon chip the scan controls use in Capture, so the two halves of one
+        handoff look like one feature. The display face stays here and only here: this is a
+        standalone page with a real page title, not a panel heading inside a card.
+      */}
+      <div className="flex flex-col items-center gap-2 text-center">
+        <ScanChip />
         <h1 className="font-heading text-xl font-medium text-ink">Scan your notes</h1>
-        <p className="text-sm text-muted-foreground">
+        <p className="mt-1 text-sm text-muted-foreground">
           Photograph each page. They&apos;ll appear on your computer.
         </p>
       </div>

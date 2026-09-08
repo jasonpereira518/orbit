@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
  * signed-in user downloads. Same convention as `capture-form-lazy` and `feedback-widget-lazy`.
  */
 export const ScanCameraLazy = dynamic(
-  () => import("@/components/imports/scan-camera").then((m) => ({ default: m.ScanCamera })),
+  () => import("@/components/scan/scan-camera").then((m) => ({ default: m.ScanCamera })),
   {
     ssr: false,
     loading: () => (

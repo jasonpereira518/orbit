@@ -19,6 +19,14 @@ import {
   formatUploadSize,
 } from "@/lib/capture-limits";
 import { getSettings } from "@/actions/settings";
+import { BusyHint } from "@/components/imports/import-utils";
+import {
+  ScanControls,
+  sortAndNormalizeScanFiles,
+  useScanDropZone,
+} from "@/components/scan/scan-controls";
+import { finishBackgroundJob, startBackgroundJob } from "@/lib/background-jobs";
+import { releaseScanPage, type ScanPage } from "@/lib/scan-capture";
 import type { SaveNoteBatchOutput } from "@/lib/note-batch-save";
 import {
   pickLockedParticipant,
@@ -78,6 +86,8 @@ const CAPTURE_FILE_ACCEPT = [
   "text/calendar",
   "message/rfc822",
   "image/*",
+  "application/pdf",
+  ".pdf",
   "audio/*",
   ".webm",
   ".mp3",
@@ -97,6 +107,24 @@ async function fileToBase64(file: File): Promise<string> {
   return btoa(binary);
 }
 
+/** Filename and provenance for whatever was last ingested — "note.jpg · via photos:2". */
+function IngestMeta({
+  fileName,
+  sources,
+}: {
+  fileName: string | null;
+  sources: string[];
+}) {
+  if (!fileName && !sources.length) return null;
+  return (
+    <span className="truncate text-xs text-muted-foreground">
+      {fileName}
+      {fileName && sources.length ? " · " : ""}
+      {sources.length ? `via ${sources.join(", ")}` : ""}
+    </span>
+  );
+}
+
 export function BulkNotesPanel({
   compact = false,
   preferredContactId = null,
@@ -105,9 +133,6 @@ export function BulkNotesPanel({
   lockedParticipantName = null,
   entryPoint,
   hasApiKey: hasApiKeyProp,
-  initialText = null,
-  initialSources = null,
-  autoParse = false,
   onSaved,
 }: {
   compact?: boolean;
@@ -124,23 +149,6 @@ export function BulkNotesPanel({
   entryPoint?: "capture" | "profile";
   /** When known from the server, skips a settings round-trip. */
   hasApiKey?: boolean;
-  /**
-   * Text to open with, instead of an empty textarea — a transcript from a scanned photo.
-   * Changing it reseeds the panel, which is what lets a second scan replace the first.
-   */
-  initialText?: string | null;
-  /** Provenance labels for that text, e.g. `photos:3`. */
-  initialSources?: string[] | null;
-  /**
-   * Extract as soon as `initialText` arrives, without waiting for a click.
-   *
-   * On for scanning and off for pasting, deliberately. Someone pasting is mid-edit and an
-   * extraction that fires under them would be an interruption; someone who has just
-   * photographed a page has already said what they want, and a second button in the way
-   * would be ceremony. The transcript stays visible either way, so an OCR mistake is still
-   * catchable — see the disclosure in the review step.
-   */
-  autoParse?: boolean;
   /** Called after a successful save. Defaults to staying on the paste step. */
   onSaved?: (result: SaveNoteBatchOutput) => void;
 }) {
@@ -336,9 +344,82 @@ export function BulkNotesPanel({
     });
   }
 
-  function handleFilesSelected(fileList: FileList | null) {
-    if (!fileList?.length) return;
-    const files = Array.from(fileList);
+  /**
+   * Send already-normalized scan pages for transcription.
+   *
+   * Deliberately does NOT pass `text`: a photographed page replaces what is in the box
+   * rather than appending to it, which is what made the old dedicated scan screen feel
+   * right. Uploading a .txt still merges, because that is additive by nature.
+   */
+  function ingestScanPages(pages: ScanPage[]) {
+    if (!pages.length) return;
+
+    const totalBytes = pages.reduce((sum, page) => sum + page.bytes, 0);
+    if (totalBytes > CAPTURE_MAX_UPLOAD_BYTES) {
+      toast.error(
+        `Those pages come to ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}. Try fewer at a time.`
+      );
+      return;
+    }
+
+    // Auto-extract ONLY into an empty box. A scan is a complete thought, so a second click
+    // would be ceremony — but firing extraction under someone who was mid-sentence would
+    // be worse, so notes already typed mean the transcript lands and waits.
+    const wasEmpty = !notes.trim();
+
+    start(async () => {
+      // Inside the transition, not beside it: `Date.now()` and the job store are both
+      // impure, and the React compiler rightly refuses them in a component body.
+      const jobId = `scan-${Date.now()}`;
+      // Indeterminate (both zero) on purpose: transcription is one server action that fans
+      // out to a call per page on the far side, so the browser learns nothing until every
+      // page is back. A bar here could only be animated, never measured. The page count
+      // goes in the label instead, which is the part we genuinely know.
+      startBackgroundJob({
+        id: jobId,
+        kind: "scan-notes",
+        label: pages.length === 1 ? "Reading your page" : `Reading ${pages.length} pages`,
+        startedAt: Date.now(),
+        done: 0,
+        total: 0,
+      });
+      try {
+        const res = await ingestCaptureMedia({
+          files: pages.map((page) => ({
+            filename: page.filename,
+            mimeType: page.mimeType,
+            base64: page.base64,
+          })),
+        });
+        if (!res.ok) {
+          const missingKey = isMissingAiApiKeyError(res.error);
+          if (missingKey) setHasApiKey(false);
+          finishBackgroundJob(jobId, { status: "failed", error: res.error });
+          toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
+          return;
+        }
+        finishBackgroundJob(jobId, {
+          status: "completed",
+          resultMessage: pages.length === 1 ? "Read 1 page" : `Read ${pages.length} pages`,
+        });
+        setNotes(res.text);
+        setCaptureHints(res.hints || null);
+        setIngestSources(res.sources || []);
+        setFileName(pages.length === 1 ? pages[0]!.filename : `${pages.length} pages`);
+        if (wasEmpty && hasApiKey) runParse(res.text);
+      } catch (err) {
+        const message = toUserFacingError(err, "Could not read those pages").message;
+        finishBackgroundJob(jobId, { status: "failed", error: message });
+        toast.error(message);
+      } finally {
+        // The blobs only ever backed thumbnails; the base64 has already been sent.
+        for (const page of pages) releaseScanPage(page);
+      }
+    });
+  }
+
+  function handleFilesSelected(files: File[]) {
+    if (!files.length) return;
 
     // REJECT BEFORE ENCODING, because the failure downstream is invisible. An oversized
     // body is not refused by the server: Next buffers the first N bytes, warns in the
@@ -399,25 +480,27 @@ export function BulkNotesPanel({
    * this the instant a transcript lands and must not race the state update that put it
    * there.
    */
+  /** A file dropped on the card takes the same path as one chosen from the picker. */
+  async function acceptDroppedFiles(files: File[]) {
+    if (!files.length) return;
+    const { pages, raw } = await sortAndNormalizeScanFiles(files);
+    if (raw.length) handleFilesSelected(raw);
+    if (pages.length) ingestScanPages(pages);
+  }
+
+  const { dragging, dropProps } = useScanDropZone({
+    onFiles: (files) => void acceptDroppedFiles(files),
+    disabled: compact || pending,
+  });
+
   /**
-   * Adopt a transcript handed in from outside (a scan), and extract from it.
+   * Whether the text in the box came from a photograph.
    *
-   * Keyed on the text itself rather than a mount flag so a second scan replaces the first
-   * instead of being ignored. `runParse` is called with the value directly, not read back
-   * out of state, so it cannot race the `setNotes` above it.
+   * Derived from the ingest sources rather than remembered in a ref, because
+   * `resetToPaste` clears those — so the "Show what we read" disclosure disappears along
+   * with the scan that justified it, instead of clinging to every later hand-typed note.
    */
-  const seededRef = useRef<string | null>(null);
-  useEffect(() => {
-    const text = initialText?.trim();
-    if (!text || seededRef.current === text) return;
-    seededRef.current = text;
-    setNotes(text);
-    setIngestSources(initialSources ?? []);
-    setStep("paste");
-    if (autoParse && hasApiKey) runParse(text);
-    // runParse is redefined every render; depending on it would re-fire the extraction.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialText, initialSources, autoParse, hasApiKey]);
+  const scannedPhotos = ingestSources.some((s) => s.startsWith("photos"));
 
   function runParse(text: string) {
     if (!text.trim()) return;
@@ -516,9 +599,11 @@ export function BulkNotesPanel({
     <div className={cn("space-y-4", compact && "space-y-3")}>
       {step === "paste" && (
         <div
+          {...(compact ? {} : dropProps)}
           className={cn(
-            "space-y-3",
-            !compact && "rounded-2xl border border-border/70 bg-card p-6 space-y-4"
+            "space-y-3 transition-colors",
+            !compact && "rounded-2xl border border-border/70 bg-card p-6 space-y-4",
+            !compact && dragging && "border-dashed border-import-scan bg-import-scan/5"
           )}
         >
           {!hasApiKey && (
@@ -549,13 +634,15 @@ export function BulkNotesPanel({
             </p>
           )}
           <div>
-            <Label htmlFor="bulk-notes">Paste or upload notes</Label>
+            <Label htmlFor="bulk-notes">
+              {compact ? "Paste or upload notes" : "Paste, upload or photograph notes"}
+            </Label>
             {!compact && (
               <p className="mt-1 text-sm text-muted-foreground">
-                Drop in notes about one person or many — text, voice, photos,
-                calendar invites, or email forwards. Orbit splits profiles out,
-                keeps shared event/group context attached to each, and you
-                review one card at a time.
+                Drop in notes about one person or many — typed, spoken,
+                photographed, or a PDF, plus calendar invites and email
+                forwards. Orbit splits profiles out, keeps shared event/group
+                context attached to each, and you review one card at a time.
               </p>
             )}
             {compact && (
@@ -577,38 +664,54 @@ export function BulkNotesPanel({
             />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              ref={fileRef}
-              type="file"
-              multiple
-              accept={CAPTURE_FILE_ACCEPT}
-              className="hidden"
-              onChange={(e) => {
-                handleFilesSelected(e.target.files);
-                e.target.value = "";
-              }}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size={compact ? "sm" : "default"}
-              disabled={pending}
-              onClick={() => fileRef.current?.click()}
-            >
-              Upload notes / media
-            </Button>
-            {fileName && (
-              <span className="truncate text-xs text-muted-foreground">
-                {fileName}
-              </span>
-            )}
-            {ingestSources.length > 0 && (
-              <span className="truncate text-xs text-muted-foreground">
-                via {ingestSources.join(", ")}
-              </span>
-            )}
-          </div>
+          {compact ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={fileRef}
+                type="file"
+                multiple
+                accept={CAPTURE_FILE_ACCEPT}
+                className="hidden"
+                onChange={(e) => {
+                  handleFilesSelected(Array.from(e.target.files ?? []));
+                  e.target.value = "";
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={pending}
+                onClick={() => fileRef.current?.click()}
+              >
+                Upload notes / media
+              </Button>
+              <IngestMeta fileName={fileName} sources={ingestSources} />
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <ScanControls
+                accept={CAPTURE_FILE_ACCEPT}
+                disabled={pending}
+                onRawFiles={handleFilesSelected}
+                onPages={ingestScanPages}
+                onTranscript={(text, sources) => {
+                  const wasEmpty = !notes.trim();
+                  setNotes(text);
+                  setIngestSources(sources);
+                  setFileName("from your phone");
+                  if (wasEmpty && hasApiKey) runParse(text);
+                }}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                {pending ? <BusyHint>Reading…</BusyHint> : null}
+                <IngestMeta fileName={fileName} sources={ingestSources} />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Drop a file anywhere on this card, or paste a screenshot.
+              </p>
+            </div>
+          )}
 
           <Button
             disabled={pending || !notes.trim() || !hasApiKey}
@@ -630,7 +733,7 @@ export function BulkNotesPanel({
         by default because it is usually right; editable and re-runnable because when it is
         wrong, retyping one word beats rephotographing the page.
       */}
-      {step !== "paste" && seededRef.current && (
+      {step !== "paste" && scannedPhotos && (
         <details className="rounded-lg border border-border/70 bg-muted/40 px-3 py-2">
           <summary className="cursor-pointer list-none text-xs font-medium text-muted-foreground marker:hidden hover:text-ink">
             Show what we read
