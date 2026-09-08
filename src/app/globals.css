@@ -2038,6 +2038,42 @@ html [data-sonner-toaster] {
   transition: none;
 }
 
+/* ── Two-finger trackpad swipe ──
+ *
+ * Sonner's swipe is pointer-driven, so a trackpad two-finger swipe — which is
+ * `wheel` events and no pointer at all — never reaches it. `useWheelSwipeDismiss`
+ * in `ui/sonner.tsx` drives the gesture and sets `--orbit-wheel-x` here.
+ *
+ * It deliberately does NOT reuse sonner's `--swipe-amount-x`: the rule reading
+ * that variable takes over the whole `transform` and pins `transition: none` for
+ * as long as it matches. Keeping `var(--y)` in front of our own translate means
+ * the stacking, hover-expand and exit maths carry on underneath a toast that is
+ * mid-slide, instead of being replaced by it.
+ *
+ * (0,3,1) so these outrank both sonner's transform rules and the retime above,
+ * whichever order the sheets end up in. */
+[data-sonner-toaster] li.orbit-toast[data-orbit-wheel] {
+  transform: var(--y) translateX(var(--orbit-wheel-x, 0px));
+}
+
+/* Tracking the fingers: no easing between frames, or it lags behind them. */
+[data-sonner-toaster] li.orbit-toast[data-orbit-wheel="dragging"] {
+  transition: none;
+}
+
+/* Let go short of the threshold and it glides back; past it, it carries on out
+   and the JS dismisses it for real once this has played. */
+[data-sonner-toaster] li.orbit-toast[data-orbit-wheel="settling"],
+[data-sonner-toaster] li.orbit-toast[data-orbit-wheel="flinging"] {
+  transition:
+    transform 160ms ease-out,
+    opacity 160ms ease-out;
+}
+
+[data-sonner-toaster] li.orbit-toast[data-orbit-wheel="flinging"] {
+  opacity: 0;
+}
+
 /* ── Variant accent ──
  * `--toast-accent` is set per type by the `success`/`error`/`warning`/`info`
  * entries in the Toaster's `classNames`. `data-type="default"` (the dozen

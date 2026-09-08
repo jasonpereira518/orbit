@@ -78,9 +78,112 @@ function useDismissOnBodyClick() {
   }, []);
 }
 
+/**
+ * Dismiss a toast by pushing it right with a two-finger trackpad swipe.
+ *
+ * Sonner's own swipe is pointer-driven — press, move, release — and a trackpad
+ * two-finger swipe emits `wheel` events with a horizontal delta and no pointer
+ * at all, so none of that machinery ever fires. This adds the gesture on top.
+ *
+ * It drives its own `--orbit-wheel-x` rather than sonner's `--swipe-amount-x`,
+ * because the rule that reads that variable also sets `transition: none` and
+ * owns the whole transform for the duration — the CSS in globals.css keeps
+ * `var(--y)` in front of our translate instead, so the stacking maths
+ * underneath is untouched while the toast slides.
+ */
+function useWheelSwipeDismiss() {
+  useEffect(() => {
+    /** Travel that counts as "gone" rather than a nudge. */
+    const DISMISS_PX = 96;
+    /** No wheel for this long ends an unfinished gesture. */
+    const IDLE_MS = 120;
+    /** Send-off and spring-back both take this long; matches the CSS. */
+    const GLIDE_MS = 160;
+
+    let active: HTMLElement | null = null;
+    let offset = 0;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function clear(el: HTMLElement) {
+      el.style.removeProperty("--orbit-wheel-x");
+      el.removeAttribute("data-orbit-wheel");
+    }
+
+    function fling(el: HTMLElement) {
+      active = null;
+      offset = 0;
+      el.setAttribute("data-orbit-wheel", "flinging");
+      el.style.setProperty("--orbit-wheel-x", `${el.offsetWidth + 48}px`);
+      setTimeout(() => {
+        // Dismiss through sonner's own path, so `onDismiss` still runs and the
+        // notification center still gets anything worth keeping.
+        el.querySelector<HTMLButtonElement>("[data-close-button]")?.click();
+        clear(el);
+      }, GLIDE_MS);
+    }
+
+    function settle() {
+      const el = active;
+      active = null;
+      offset = 0;
+      if (!el) return;
+      el.setAttribute("data-orbit-wheel", "settling");
+      el.style.setProperty("--orbit-wheel-x", "0px");
+      setTimeout(() => clear(el), GLIDE_MS);
+    }
+
+    function onWheel(event: WheelEvent) {
+      const target = event.target as HTMLElement | null;
+      const el = target?.closest<HTMLElement>("[data-sonner-toast]");
+      if (!el || el.dataset.orbitWheel === "flinging") return;
+
+      // Vertical intent belongs to the description's own scroller, which is the
+      // only thing inside a toast that scrolls.
+      if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
+
+      // Without this, macOS reads the same gesture as a back-navigation swipe.
+      event.preventDefault();
+
+      if (active !== el) {
+        if (active) clear(active);
+        active = el;
+        offset = 0;
+      }
+
+      // Under natural scrolling — the macOS default — fingers moving right
+      // report a negative deltaX, so the toast follows the fingers. Clamped at
+      // zero because right is the only direction that dismisses, matching the
+      // `swipeDirections` given to the Toaster.
+      offset = Math.max(0, offset - event.deltaX);
+      el.setAttribute("data-orbit-wheel", "dragging");
+      el.style.setProperty("--orbit-wheel-x", `${offset}px`);
+
+      clearTimeout(idleTimer);
+      if (offset >= DISMISS_PX) {
+        fling(el);
+        return;
+      }
+      idleTimer = setTimeout(settle, IDLE_MS);
+    }
+
+    // Capture phase so this sees the event before the description's scroller,
+    // and non-passive so `preventDefault` is allowed at all.
+    document.addEventListener("wheel", onWheel, {
+      passive: false,
+      capture: true,
+    });
+    return () => {
+      clearTimeout(idleTimer);
+      document.removeEventListener("wheel", onWheel, true);
+      if (active) clear(active);
+    };
+  }, []);
+}
+
 const Toaster = ({ ...props }: ToasterProps) => {
   const { theme = "system" } = useTheme();
   useDismissOnBodyClick();
+  useWheelSwipeDismiss();
 
   return (
     <Sonner
