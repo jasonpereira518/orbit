@@ -283,7 +283,8 @@ export async function runCaptureParse(
             role: p.role ?? null,
           })),
         });
-        emit({ type: "stage", stage: "detailing", done: 0, total: shown.length });
+        // No detailing stage here: the batch loop emits `onDetailBatch(0, total)` a beat
+        // later with the same numbers, and sending both put a duplicate event on the wire.
       },
       onDetailBatch: (done, total) => {
         emit({ type: "stage", stage: "detailing", done, total });

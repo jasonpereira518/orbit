@@ -1323,6 +1323,20 @@ export async function parseMultiPersonNotesWithAI(
   const single = await parseMultiPersonSinglePass(userId, notes, hints);
   // Escalate to two-pass when many people came back (token pressure risk).
   if (single.people.length > DETAIL_BATCH_SIZE) {
+    // The two-pass rerun starts from scratch, so its own identify call is a second full
+    // model latency before it can announce anything — measured at 28s on a six-person note,
+    // which is a long time to watch an indeterminate bar. The names are already in hand
+    // here, so hand them over now and let the rerun's roster refine them.
+    progress?.onRoster?.(
+      single.people.map((p) => ({
+        name: p.name || "",
+        email: p.email ?? null,
+        company: p.company ?? null,
+        role: p.role ?? null,
+        presence: p.presence ?? "participant",
+      })),
+      { sharedNotes: single.shared_notes, interactionDate: single.interaction_date ?? null },
+    );
     return parseMultiPersonTwoPass(userId, notes, hints, progress);
   }
   // The single pass returns everything at once, so there is no roster to announce ahead of

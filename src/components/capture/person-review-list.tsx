@@ -7,7 +7,7 @@
  * even when the extraction was perfect. Rows arrive checked; the work is scanning and
  * unchecking, which is the same shape as `import-people-review.tsx` — and this borrows its
  * idioms deliberately: the "N of M selected" header, select-all, `opacity-55` on a
- * deselected row rather than hiding it, and a fixed-width New/Update status column.
+ * deselected row rather than hiding it, and an aligned New/Update status column.
  *
  * Rows collapse to name, company/role and status; clicking one expands the full editable
  * card in place. That is what keeps the list usable in the two constrained call sites — the
@@ -141,11 +141,16 @@ export function PersonReviewList({
                     )}
                   </span>
 
+                  {/*
+                    Auto-width on a narrow screen, fixed above it. A fixed column aligns the
+                    badges nicely on desktop, but at 375px it takes ~128px of a ~300px row
+                    and the name truncates to "Elena Vasq…" — legibility wins over alignment
+                    at that size.
+                  */}
                   <span
                     className={cn(
-                      "flex shrink-0 items-center gap-1.5",
-                      compact ? "w-24" : "w-32",
-                      "justify-end"
+                      "flex shrink-0 items-center justify-end gap-1.5",
+                      compact ? "sm:w-24" : "sm:w-32"
                     )}
                   >
                     {item.placeholder ? (

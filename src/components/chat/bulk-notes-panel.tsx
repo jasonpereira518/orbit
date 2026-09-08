@@ -628,8 +628,8 @@ export function BulkNotesPanel({
               <p className="mt-1 text-sm text-muted-foreground">
                 Drop in notes about one person or many — text, voice, photos,
                 calendar invites, or email forwards. Orbit splits profiles out,
-                keeps shared event/group context attached to each, and you
-                review one card at a time.
+                keeps shared event/group context attached to each, and shows
+                you everyone it found in one list to review.
               </p>
             )}
             {compact && (
