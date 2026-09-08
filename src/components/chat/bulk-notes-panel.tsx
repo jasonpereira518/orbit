@@ -1,19 +1,23 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AnimatePresence, motion } from "motion/react";
 import { addDays, format } from "date-fns";
 import { toast } from "@/lib/toast";
-import {
-  confirmBulkCapture,
-  ingestCaptureMedia,
-  parseBulkCaptureNotes,
-  type BulkNotePersonPreview,
-  type SuggestedReminderPreview,
-} from "@/actions/capture";
+import { confirmBulkCapture, ingestCaptureMedia } from "@/actions/capture";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
+import { PersonReviewList } from "@/components/capture/person-review-list";
+import {
+  CaptureProgress,
+  type CaptureProgressState,
+} from "@/components/capture/capture-progress";
+import { streamCaptureParse } from "@/lib/capture-stream-client";
+import type { BulkNotePersonPreview } from "@/lib/capture-preview";
+import type {
+  ReviewItem,
+  SuggestionReviewItem,
+} from "@/lib/capture-review-item";
 import {
   CAPTURE_MAX_UPLOAD_BYTES,
   formatUploadSize,
@@ -25,47 +29,16 @@ import {
   withLockedSeedPerson,
   type PreviewMention,
 } from "@/lib/note-batches";
-import type {
-  CaptureParseHints,
-  ParsedNote,
-  SharedNoteContext,
-} from "@/lib/ai";
+import type { CaptureParseHints, ParsedNote, SharedNoteContext } from "@/lib/ai";
 import {
   MISSING_AI_API_KEY_MESSAGE,
   isMissingAiApiKeyError,
   toUserFacingError,
 } from "@/lib/errors";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
-import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
-
-type Decision = "pending" | "accepted" | "discarded";
-
-export type SuggestionReviewItem = SuggestedReminderPreview & {
-  checked: boolean;
-  /**
-   * Overrides which person this date belongs to, by name. Names rather than ids
-   * because the contacts do not exist yet at review time — the server resolves the
-   * name to a contact id after the person loop creates them.
-   */
-  personNameOverride: string | null;
-};
-
-type ReviewItem = BulkNotePersonPreview & {
-  decision: Decision;
-  mergeContactId: string | null;
-  createReminder: boolean;
-  relationshipScore: number;
-  tagNames: string;
-  followUpDays: number;
-  /** Locked to `lockedParticipantId` — the panel was opened from that contact's profile. */
-  locked?: boolean;
-};
 
 const CAPTURE_FILE_ACCEPT = [
   ".txt",
@@ -96,6 +69,38 @@ async function fileToBase64(file: File): Promise<string> {
   }
   return btoa(binary);
 }
+
+/**
+ * A fully-formed empty `ParsedNote`, for a roster row whose detail pass has not landed.
+ *
+ * Spread rather than cast: a partial object asserted as a `ParsedNote` type-checks and then
+ * throws on the first `.topics.map` somewhere downstream. Filling the arrays costs nothing
+ * and makes a placeholder row safe to read like any other.
+ */
+const EMPTY_PARSED: ParsedNote = {
+  name: null,
+  company: null,
+  role: null,
+  presence: "participant",
+  location: null,
+  email: null,
+  linkedin_url: null,
+  met_at: null,
+  topics: [],
+  action_items: [],
+  follow_up_recommendation: null,
+  follow_up_days: null,
+  relationship_score_suggestion: null,
+  tags: [],
+  summary: null,
+  key_facts: [],
+  opportunities: [],
+  shared_interests: [],
+  suggested_next_message: null,
+  confidence: null,
+  interaction_date: null,
+  low_confidence_fields: [],
+};
 
 export function BulkNotesPanel({
   compact = false,
@@ -132,11 +137,11 @@ export function BulkNotesPanel({
     null
   );
   const [ingestSources, setIngestSources] = useState<string[]>([]);
-  const [step, setStep] = useState<"paste" | "review" | "done">("paste");
+  const [step, setStep] = useState<"paste" | "review">("paste");
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [sharedNotes, setSharedNotes] = useState<SharedNoteContext[]>([]);
-  const [reviewIndex, setReviewIndex] = useState(0);
-  const [slideDirection, setSlideDirection] = useState<1 | -1>(1);
+  /** Which row is open for editing. One at a time keeps the list scannable. */
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<SuggestionReviewItem[]>([]);
   const [sourceText, setSourceText] = useState<string | null>(null);
   const [sourceHash, setSourceHash] = useState<string | null>(null);
@@ -152,6 +157,13 @@ export function BulkNotesPanel({
   const [mentions, setMentions] = useState<PreviewMention[]>([]);
   const [hasApiKey, setHasApiKey] = useState(hasApiKeyProp ?? true);
   const [pending, start] = useTransition();
+  /**
+   * Extraction state is `useState`, not `useTransition`. A transition's `pending` is a
+   * single boolean that ends when the awaited call returns; a stream produces many updates
+   * over its lifetime and has to keep rendering them as they land.
+   */
+  const [progress, setProgress] = useState<CaptureProgressState | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (hasApiKeyProp !== undefined) {
@@ -171,10 +183,7 @@ export function BulkNotesPanel({
     };
   }, [hasApiKeyProp]);
 
-  const accepted = items.filter((i) => i.decision === "accepted");
-  const discarded = items.filter((i) => i.decision === "discarded");
-  const current = items[reviewIndex] ?? null;
-  const isLastCard = reviewIndex >= items.length - 1 && items.length > 0;
+  const accepted = items.filter((i) => i.decision === "accepted" && !i.placeholder);
   const checkedDates = suggestions.filter((s) => s.checked).length;
   const saveLabel = (() => {
     const parts: string[] = [];
@@ -191,7 +200,10 @@ export function BulkNotesPanel({
     return parts.length ? `Save ${parts.join(" + ")}` : "Save";
   })();
 
-  function resetToPaste() {
+  const resetToPaste = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setProgress(null);
     setStep("paste");
     setNotes("");
     setFileName(null);
@@ -199,7 +211,7 @@ export function BulkNotesPanel({
     setIngestSources([]);
     setItems([]);
     setSharedNotes([]);
-    setReviewIndex(0);
+    setExpandedKey(null);
     setSuggestions([]);
     setSourceText(null);
     setSourceHash(null);
@@ -207,36 +219,238 @@ export function BulkNotesPanel({
     setAnchorBasis(null);
     setSkipped(null);
     setMentions([]);
-  }
+  }, []);
 
-  function decide(decision: "accepted" | "discarded") {
-    if (!current) return;
-    setSlideDirection(1);
+  // An extraction abandoned by navigating away should stop costing money server-side.
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  /**
+   * Keyed, not indexed. Rows arrive progressively — a roster row is replaced in place by
+   * its detail event — so a row's position is not a stable identity mid-stream.
+   */
+  const updateItem = useCallback((key: string, next: ReviewItem) => {
+    setItems((prev) => prev.map((item) => (item.key === key ? next : item)));
+  }, []);
+
+  const setDecision = useCallback((key: string, isAccepted: boolean) => {
     setItems((prev) =>
-      prev.map((item, i) =>
-        i === reviewIndex ? { ...item, decision } : item
+      prev.map((item) =>
+        item.key === key
+          ? { ...item, decision: isAccepted ? "accepted" : "discarded" }
+          : item
       )
     );
-    if (reviewIndex >= items.length - 1) {
-      setStep("done");
-    } else {
-      setReviewIndex((i) => i + 1);
-    }
-  }
+  }, []);
 
-  function goBack() {
-    if (reviewIndex <= 0) {
-      setStep("paste");
-      return;
-    }
-    setSlideDirection(-1);
-    setReviewIndex((i) => i - 1);
+  const setAllDecisions = useCallback((isAccepted: boolean) => {
     setItems((prev) =>
-      prev.map((item, i) =>
-        i === reviewIndex - 1 ? { ...item, decision: "pending" } : item
+      prev.map((item) =>
+        item.placeholder
+          ? item
+          : { ...item, decision: isAccepted ? "accepted" : "discarded" }
       )
     );
-    setStep("review");
+  }, []);
+
+  /**
+   * Turn a parsed person into a review row.
+   *
+   * Rows land `accepted`: the extraction is usually right, and the list's whole point is
+   * that the common case is a scan, not N clicks. The merge target is pre-selected the same
+   * way it always was — locked participant wins, then the preferred contact, then a
+   * duplicate the matcher was confident about.
+   */
+  const toReviewItem = useCallback(
+    (item: BulkNotePersonPreview, lockedKey: string | null): ReviewItem => {
+      const isLocked = lockedKey !== null && item.key === lockedKey;
+      const preferredMatch =
+        preferredContactId &&
+        item.duplicates.some((d) => d.id === preferredContactId)
+          ? preferredContactId
+          : null;
+      return {
+        ...item,
+        decision: "accepted",
+        mergeContactId: isLocked
+          ? lockedParticipantId
+          : preferredMatch || item.suggestedMergeId,
+        locked: isLocked,
+        createReminder: Boolean(item.parsed.follow_up_recommendation),
+        relationshipScore: item.parsed.relationship_score_suggestion || 2,
+        tagNames: (item.parsed.tags || []).join(", "),
+        followUpDays: item.parsed.follow_up_days || 14,
+      };
+    },
+    [preferredContactId, lockedParticipantId]
+  );
+
+  function extract() {
+    const controller = new AbortController();
+    abortRef.current?.abort();
+    abortRef.current = controller;
+
+    const hints: CaptureParseHints | null =
+      lockedParticipantId && lockedParticipantName
+        ? withLockedSeedPerson(captureHints, lockedParticipantName)
+        : captureHints;
+
+    setItems([]);
+    setExpandedKey(null);
+    setProgress({ stage: "reading" });
+
+    // The locked participant can only be resolved once every person is known — it picks the
+    // best match across the whole set — so rows start unlocked and are re-keyed on `result`.
+    let finished = false;
+    // Counted here rather than read off state: these callbacks close over the render that
+    // created them, so `items` would be the empty list it was when the stream opened.
+    const seen = new Set<string>();
+
+    void streamCaptureParse(
+      { notes, hints },
+      {
+        onEvent: (event) => {
+          switch (event.type) {
+            case "stage":
+              setProgress({
+                stage: event.stage,
+                done: event.done,
+                total: event.total,
+              });
+              break;
+
+            case "roster":
+              // Names are known a full detail pass before the details are. Paint the rows
+              // now; each fills in when its `person` event lands.
+              setItems(
+                event.people.map((p) => ({
+                  key: p.key,
+                  placeholder: true,
+                  decision: "pending",
+                  notes: "",
+                  parsed: {
+                    ...EMPTY_PARSED,
+                    name: p.name,
+                    company: p.company,
+                    role: p.role,
+                  },
+                  duplicates: [],
+                  suggestedMergeId: null,
+                  sharedNoteTexts: [],
+                  interactionDate: null,
+                  interactionType: null,
+                  mergeContactId: null,
+                  createReminder: false,
+                  relationshipScore: 2,
+                  tagNames: "",
+                  followUpDays: 14,
+                }))
+              );
+              setStep("review");
+              break;
+
+            case "person": {
+              const next = toReviewItem(event.item, null);
+              seen.add(next.key);
+              setItems((prev) => {
+                const at = prev.findIndex((p) => p.key === next.key);
+                if (at === -1) return [...prev, next];
+                // Replace the skeleton, but keep a decision the user already changed while
+                // the details were still in flight.
+                const existing = prev[at]!;
+                const merged = existing.placeholder
+                  ? next
+                  : { ...next, decision: existing.decision };
+                return prev.map((p, i) => (i === at ? merged : p));
+              });
+              setStep("review");
+              break;
+            }
+
+            case "result": {
+              finished = true;
+              const r = event.result;
+              setSharedNotes(r.sharedNotes || []);
+              setSourceText(r.sourceText);
+              setSourceHash(r.sourceHash);
+              setAnchorIso(r.anchorIso);
+              setAnchorBasis(r.anchorBasis);
+              setSkipped(r.suggestionsSkipped || null);
+              setMentions(r.mentions || []);
+              const found = r.suggestedReminders || [];
+              setSuggestions(
+                found.map((sug) => ({
+                  ...sug,
+                  // High-confidence items start checked; the user still sees
+                  // every one before anything is written.
+                  checked: sug.confidenceScore >= 60,
+                  personNameOverride: null,
+                }))
+              );
+              setItems((prev) => {
+                // Drop any skeleton the details never reached, and settle the lock now that
+                // the full set is known.
+                const real = prev.filter((p) => !p.placeholder);
+                const lockedKey =
+                  lockedParticipantId && lockedParticipantName
+                    ? pickLockedParticipant(
+                        real.map((item) => ({
+                          key: item.key,
+                          name: item.parsed.name,
+                          duplicateIds: item.duplicates.map((d) => d.id),
+                        })),
+                        { id: lockedParticipantId, name: lockedParticipantName }
+                      )
+                    : null;
+                if (!lockedKey) return real;
+                return real.map((item) =>
+                  item.key === lockedKey
+                    ? { ...item, locked: true, mergeContactId: lockedParticipantId }
+                    : item
+                );
+              });
+              setProgress(null);
+              setStep("review");
+
+              const peopleCount = seen.size;
+              const peopleLabel = `${peopleCount} ${
+                peopleCount === 1 ? "person" : "people"
+              }`;
+              const dateLabel = found.length
+                ? `, ${found.length} ${found.length === 1 ? "date" : "dates"}`
+                : "";
+              toast.success(`Found ${peopleLabel}${dateLabel}`);
+              break;
+            }
+
+            case "error": {
+              finished = true;
+              const missingKey = isMissingAiApiKeyError(event.message);
+              if (missingKey) setHasApiKey(false);
+              toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : event.message);
+              setProgress(null);
+              setItems([]);
+              setStep("paste");
+              break;
+            }
+          }
+        },
+        onError: (message) => {
+          finished = true;
+          const missingKey = isMissingAiApiKeyError(message);
+          if (missingKey) setHasApiKey(false);
+          toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : message);
+          setProgress(null);
+          setItems([]);
+          setStep("paste");
+        },
+      },
+      controller.signal
+    ).finally(() => {
+      if (abortRef.current === controller) abortRef.current = null;
+      // A stream that ended without a terminal event is already reported by the client;
+      // this only clears the spinner so the button comes back.
+      if (!finished) setProgress(null);
+    });
   }
 
   function saveAccepted() {
@@ -471,109 +685,38 @@ export function BulkNotesPanel({
           </div>
 
           <Button
-            disabled={pending || !notes.trim() || !hasApiKey}
+            disabled={pending || Boolean(progress) || !notes.trim() || !hasApiKey}
             size={compact ? "sm" : "default"}
             className="w-full bg-primary text-primary-foreground hover:bg-primary/90 sm:w-auto"
-            onClick={() =>
-              start(async () => {
-                try {
-                  const hints: CaptureParseHints | null =
-                    lockedParticipantId && lockedParticipantName
-                      ? withLockedSeedPerson(captureHints, lockedParticipantName)
-                      : captureHints;
-                  const res = await parseBulkCaptureNotes(notes, hints);
-                  if (!res.ok) {
-                    const missingKey = isMissingAiApiKeyError(res.error);
-                    if (missingKey) setHasApiKey(false);
-                    toast.error(
-                      missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error
-                    );
-                    return;
-                  }
-                  setSharedNotes(res.sharedNotes || []);
-                  const lockedKey =
-                    lockedParticipantId && lockedParticipantName
-                      ? pickLockedParticipant(
-                          res.items.map((item) => ({
-                            key: item.key,
-                            name: item.parsed.name,
-                            duplicateIds: item.duplicates.map((d) => d.id),
-                          })),
-                          { id: lockedParticipantId, name: lockedParticipantName }
-                        )
-                      : null;
-                  setItems(
-                    res.items.map((item) => {
-                      const isLocked = lockedKey !== null && item.key === lockedKey;
-                      const preferredMatch =
-                        preferredContactId &&
-                        item.duplicates.some((d) => d.id === preferredContactId)
-                          ? preferredContactId
-                          : null;
-                      return {
-                        ...item,
-                        decision: "pending" as const,
-                        mergeContactId: isLocked
-                          ? lockedParticipantId
-                          : preferredMatch || item.suggestedMergeId,
-                        locked: isLocked,
-                        createReminder: Boolean(
-                          item.parsed.follow_up_recommendation
-                        ),
-                        relationshipScore:
-                          item.parsed.relationship_score_suggestion || 2,
-                        tagNames: (item.parsed.tags || []).join(", "),
-                        followUpDays: item.parsed.follow_up_days || 14,
-                      };
-                    })
-                  );
-                  const found = res.suggestedReminders || [];
-                  setSourceText(res.sourceText);
-                  setSourceHash(res.sourceHash);
-                  setAnchorIso(res.anchorIso);
-                  setAnchorBasis(res.anchorBasis);
-                  setSkipped(res.suggestionsSkipped || null);
-                  setMentions(res.mentions || []);
-                  setSuggestions(
-                    found.map((s) => ({
-                      ...s,
-                      // High-confidence items start checked; the user still sees
-                      // every one before anything is written.
-                      checked: s.confidenceScore >= 60,
-                      personNameOverride: null,
-                    }))
-                  );
-                  setReviewIndex(0);
-                  setSlideDirection(1);
-                  // A note can carry dates but no people — skip the person carousel.
-                  setStep(res.items.length ? "review" : "done");
-
-                  const peopleLabel = `${res.items.length} ${
-                    res.items.length === 1 ? "person" : "people"
-                  }`;
-                  const dateLabel = found.length
-                    ? `, ${found.length} ${found.length === 1 ? "date" : "dates"}`
-                    : "";
-                  toast.success(`Found ${peopleLabel}${dateLabel}`);
-                } catch (err) {
-                  const message = toUserFacingError(
-                    err,
-                    MISSING_AI_API_KEY_MESSAGE
-                  ).message;
-                  if (isMissingAiApiKeyError(message)) setHasApiKey(false);
-                  toast.error(message);
-                }
-              })
-            }
+            onClick={extract}
           >
-            {pending ? "Parsing…" : "Extract people"}
+            Extract people
           </Button>
+
+          {progress && (
+            <CaptureProgress
+              state={progress}
+              compact={compact}
+              onCancel={() => {
+                abortRef.current?.abort();
+                abortRef.current = null;
+                setProgress(null);
+                setItems([]);
+                setExpandedKey(null);
+              }}
+            />
+          )}
         </div>
       )}
 
-      {step === "review" && current && (
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+      {step === "review" && (
+        <div
+          className={cn(
+            "space-y-4",
+            !compact && "rounded-2xl border border-border/70 bg-card p-6"
+          )}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
               <h2
                 className={cn(
@@ -581,37 +724,21 @@ export function BulkNotesPanel({
                   compact ? "text-base" : "text-lg"
                 )}
               >
-                {reviewIndex + 1} of {items.length}
+                {progress ? "Finding people" : "Review and save"}
               </h2>
               <p className="text-xs text-muted-foreground">
-                Edit if needed, then accept or discard. Shared notes stay on
-                matching people.
+                Everyone is selected. Uncheck anyone you don&apos;t want, and
+                open a row to edit before saving.
               </p>
             </div>
-            <Button variant="ghost" size="sm" onClick={goBack}>
-              Back
+            <Button variant="ghost" size="sm" onClick={resetToPaste}>
+              Start over
             </Button>
           </div>
 
-          <div className="flex gap-1.5" aria-hidden>
-            {items.map((item, i) => (
-              <span
-                key={item.key}
-                className={cn(
-                  "h-1 flex-1 rounded-full transition-colors",
-                  i < reviewIndex && item.decision === "accepted"
-                    ? "bg-primary"
-                    : i < reviewIndex && item.decision === "discarded"
-                      ? "bg-muted-foreground/30"
-                      : i === reviewIndex
-                        ? "bg-primary/60"
-                        : "bg-muted"
-                )}
-              />
-            ))}
-          </div>
+          {progress && <CaptureProgress state={progress} compact={compact} />}
 
-          {sharedNotes.length > 0 && reviewIndex === 0 && (
+          {sharedNotes.length > 0 && (
             <div className="space-y-2 rounded-2xl border border-sky-200/80 bg-sky-50/60 p-3 dark:border-sky-900/50 dark:bg-sky-950/20">
               <p className="text-xs font-medium text-ink">
                 Shared context ({sharedNotes.length}) — applied to matching
@@ -628,145 +755,30 @@ export function BulkNotesPanel({
             </div>
           )}
 
-          <div className="relative overflow-hidden">
-            <AnimatePresence mode="wait" custom={slideDirection}>
-              <motion.div
-                key={current.key}
-                custom={slideDirection}
-                initial={{
-                  opacity: 0,
-                  x: slideDirection * 48,
-                  rotate: slideDirection * 1.5,
-                }}
-                animate={{ opacity: 1, x: 0, rotate: 0 }}
-                exit={{
-                  opacity: 0,
-                  x: slideDirection * -56,
-                  rotate: slideDirection * -2,
-                }}
-                transition={{ duration: DUR.base, ease: EASE_HOUSE }}
-              >
-                <PersonReviewCard
-                  item={current}
-                  compact={compact}
-                  preferredContactId={preferredContactId}
-                  preferredContactName={preferredContactName}
-                  lockedParticipantName={lockedParticipantName}
-                  onChange={(next) =>
-                    setItems((prev) =>
-                      prev.map((p, i) => (i === reviewIndex ? next : p))
-                    )
-                  }
-                />
-              </motion.div>
-            </AnimatePresence>
-          </div>
-
-          <div
-            className={cn(
-              "grid grid-cols-2 gap-2",
-              compact &&
-                "sticky bottom-0 -mx-1 border-t border-border/60 bg-card pt-3"
-            )}
-          >
-            <Button
-              type="button"
-              variant="outline"
-              size={compact ? "sm" : "default"}
-              disabled={pending}
-              onClick={() => decide("discarded")}
-            >
-              Discard
-            </Button>
-            <Button
-              type="button"
-              size={compact ? "sm" : "default"}
-              disabled={pending || !current.parsed.name?.trim()}
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
-              onClick={() => decide("accepted")}
-            >
-              {isLastCard ? "Accept" : "Accept & next"}
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {step === "done" && (
-        <div
-          className={cn(
-            "space-y-4",
-            !compact && "rounded-2xl border border-border/70 bg-card p-6"
-          )}
-        >
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <h2
-                className={cn(
-                  "font-medium text-ink",
-                  compact ? "text-base" : "text-lg"
-                )}
-              >
-                Ready to save
-              </h2>
-              <p className="text-xs text-muted-foreground">
-                {accepted.length} accepted
-                {discarded.length > 0 ? `, ${discarded.length} discarded` : ""}
-              </p>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setSlideDirection(-1);
-                setReviewIndex(Math.max(0, items.length - 1));
-                setItems((prev) =>
-                  prev.map((item, i) =>
-                    i === items.length - 1
-                      ? { ...item, decision: "pending" }
-                      : item
-                  )
-                );
-                setStep("review");
-              }}
-            >
-              Back
-            </Button>
-          </div>
-
-          {accepted.length > 0 ? (
-            <ul className="space-y-2">
-              {accepted.map((item) => (
-                <li
-                  key={item.key}
-                  className="flex items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/30 px-3 py-2 text-sm"
-                >
-                  <span className="font-medium">
-                    {item.parsed.name}
-                    {item.parsed.company ? (
-                      <span className="font-normal text-muted-foreground">
-                        {" "}
-                        · {item.parsed.company}
-                      </span>
-                    ) : null}
-                  </span>
-                  <Badge variant="secondary" className="text-[10px]">
-                    {item.mergeContactId ? "Update" : "New"}
-                  </Badge>
-                </li>
-              ))}
-            </ul>
-          ) : suggestions.length > 0 ? (
+          {items.length > 0 ? (
+            <PersonReviewList
+              items={items}
+              expandedKey={expandedKey}
+              onExpandedKeyChange={setExpandedKey}
+              onItemChange={updateItem}
+              onDecisionChange={setDecision}
+              onSelectAll={setAllDecisions}
+              compact={compact}
+              preferredContactId={preferredContactId}
+              preferredContactName={preferredContactName}
+              lockedParticipantName={lockedParticipantName}
+            />
+          ) : progress ? null : suggestions.length > 0 ? (
             <p className="text-sm text-muted-foreground">
               No people to save from these notes — just the dates below.
             </p>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              You discarded everyone. Go back to review again, or start over.
-            </p>
-          )}
+          ) : null}
 
           {(() => {
-            const itemCount = accepted.reduce((n, i) => n + i.parsed.action_items.length, 0);
+            const itemCount = accepted.reduce(
+              (n, i) => n + (i.parsed.action_items?.length || 0),
+              0
+            );
             if (itemCount === 0) return null;
             const dueLabel = anchorIso
               ? format(addDays(new Date(`${anchorIso}T12:00:00`), 14), "MMM d")
@@ -791,29 +803,33 @@ export function BulkNotesPanel({
             </div>
           )}
 
-          <SuggestedRemindersReview
-            items={suggestions}
-            people={accepted.map((item) => ({
-              key: item.key,
-              name: item.parsed.name || "Unnamed",
-            }))}
-            onChange={setSuggestions}
-            skipped={skipped}
-          />
+          {suggestions.length > 0 && (
+            <SuggestedRemindersReview
+              items={suggestions}
+              people={accepted.map((item) => ({
+                key: item.key,
+                name: item.parsed.name || "Unnamed",
+              }))}
+              onChange={setSuggestions}
+              skipped={skipped}
+            />
+          )}
 
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Button
-              type="button"
-              variant="outline"
-              size={compact ? "sm" : "default"}
-              onClick={resetToPaste}
-            >
-              Start over
-            </Button>
+          <div
+            className={cn(
+              "flex flex-col gap-2 sm:flex-row",
+              compact &&
+                "sticky bottom-0 -mx-1 border-t border-border/60 bg-card px-1 pt-3"
+            )}
+          >
             <Button
               type="button"
               size={compact ? "sm" : "default"}
-              disabled={pending || (accepted.length === 0 && checkedDates === 0)}
+              disabled={
+                pending ||
+                Boolean(progress) ||
+                (accepted.length === 0 && checkedDates === 0)
+              }
               className="bg-primary text-primary-foreground hover:bg-primary/90 sm:flex-1"
               onClick={saveAccepted}
             >
@@ -822,289 +838,6 @@ export function BulkNotesPanel({
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function PersonReviewCard({
-  item,
-  onChange,
-  compact,
-  preferredContactId,
-  preferredContactName,
-  lockedParticipantName,
-}: {
-  item: ReviewItem;
-  onChange: (next: ReviewItem) => void;
-  compact?: boolean;
-  preferredContactId?: string | null;
-  preferredContactName?: string | null;
-  lockedParticipantName?: string | null;
-}) {
-  const updateParsed = (patch: Partial<ParsedNote>) =>
-    onChange({ ...item, parsed: { ...item.parsed, ...patch } });
-
-  const lowConfidence = new Set(item.parsed.low_confidence_fields || []);
-  const [showSource, setShowSource] = useState(false);
-
-  const showPreferred =
-    preferredContactId &&
-    preferredContactName &&
-    !item.duplicates.some((d) => d.id === preferredContactId);
-
-  return (
-    <div
-      className={cn(
-        "space-y-3 rounded-2xl border border-border/70 bg-card shadow-sm",
-        compact ? "p-3.5" : "p-5 space-y-4"
-      )}
-    >
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <p className="text-sm font-medium text-foreground">
-          {item.parsed.name || "Unnamed person"}
-        </p>
-        <div className="flex flex-wrap gap-1.5">
-          {item.sharedNoteTexts.length > 0 && (
-            <Badge variant="secondary" className="text-[10px]">
-              Includes shared note
-            </Badge>
-          )}
-          {item.suggestedMergeId && (
-            <Badge variant="secondary" className="text-[10px]">
-              Likely existing
-            </Badge>
-          )}
-        </div>
-      </div>
-
-      <div
-        className={cn(
-          "grid gap-2.5",
-          compact ? "grid-cols-1" : "sm:grid-cols-2 gap-3"
-        )}
-      >
-        <Field label="Name" lowConfidence={lowConfidence.has("name")}>
-          <Input
-            value={item.parsed.name || ""}
-            onChange={(e) => updateParsed({ name: e.target.value })}
-          />
-        </Field>
-        <Field label="Company" lowConfidence={lowConfidence.has("company")}>
-          <Input
-            value={item.parsed.company || ""}
-            onChange={(e) => updateParsed({ company: e.target.value })}
-          />
-        </Field>
-        <Field label="Role" lowConfidence={lowConfidence.has("role")}>
-          <Input
-            value={item.parsed.role || ""}
-            onChange={(e) => updateParsed({ role: e.target.value })}
-          />
-        </Field>
-        <Field label="Met at" lowConfidence={lowConfidence.has("met_at")}>
-          <Input
-            value={item.parsed.met_at || ""}
-            onChange={(e) => updateParsed({ met_at: e.target.value })}
-          />
-        </Field>
-        <Field label="Tags">
-          <Input
-            value={item.tagNames}
-            onChange={(e) => onChange({ ...item, tagNames: e.target.value })}
-          />
-        </Field>
-      </div>
-
-      {!compact && (
-        <Field label="Summary">
-          <Textarea
-            value={item.parsed.summary || ""}
-            onChange={(e) => updateParsed({ summary: e.target.value })}
-          />
-        </Field>
-      )}
-
-      {compact && item.parsed.summary && (
-        <p className="text-xs text-muted-foreground sm:text-sm">
-          {item.parsed.summary}
-        </p>
-      )}
-
-      {item.sharedNoteTexts.length > 0 && (
-        <div className="rounded-xl border border-sky-200/70 bg-sky-50/40 px-3 py-2 text-xs text-muted-foreground dark:border-sky-900/40 dark:bg-sky-950/15">
-          <p className="mb-1 font-medium text-foreground">Shared with others</p>
-          {item.sharedNoteTexts.map((text) => (
-            <p key={text.slice(0, 40)} className="whitespace-pre-wrap">
-              {text}
-            </p>
-          ))}
-        </div>
-      )}
-
-      {item.notes.trim() && (
-        <div>
-          <button
-            type="button"
-            className="text-xs font-medium text-primary underline-offset-2 hover:underline"
-            onClick={() => setShowSource((v) => !v)}
-          >
-            {showSource ? "Hide source text" : "Show source text"}
-          </button>
-          {showSource && (
-            <p className="mt-1.5 whitespace-pre-wrap rounded-xl border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-              {item.notes}
-            </p>
-          )}
-        </div>
-      )}
-
-      {(item.parsed.topics || []).length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {item.parsed.topics.map((t) => (
-            <Badge key={t} variant="secondary" className="text-[10px]">
-              {t}
-            </Badge>
-          ))}
-        </div>
-      )}
-
-      <div className="space-y-1.5 rounded-xl border border-border/60 bg-muted/30 p-2.5">
-        {item.locked ? (
-          <p className="text-xs text-muted-foreground">
-            Logging on{" "}
-            <span className="font-medium text-foreground">
-              {lockedParticipantName}
-            </span>
-            &apos;s timeline
-          </p>
-        ) : (
-          <>
-            <p className="text-xs font-medium">Save as</p>
-            <label className="flex items-center gap-2 text-xs">
-              <input
-                type="radio"
-                name={`merge-${item.key}`}
-                checked={!item.mergeContactId}
-                onChange={() => onChange({ ...item, mergeContactId: null })}
-              />
-              Create new contact
-            </label>
-            {showPreferred && (
-              <label className="flex items-center gap-2 text-xs">
-                <input
-                  type="radio"
-                  name={`merge-${item.key}`}
-                  checked={item.mergeContactId === preferredContactId}
-                  onChange={() =>
-                    onChange({ ...item, mergeContactId: preferredContactId })
-                  }
-                />
-                Merge into {preferredContactName}
-              </label>
-            )}
-            {item.duplicates.map((d) => (
-              <label key={d.id} className="flex items-start gap-2 text-xs">
-                <input
-                  type="radio"
-                  className="mt-0.5"
-                  name={`merge-${item.key}`}
-                  checked={item.mergeContactId === d.id}
-                  onChange={() => onChange({ ...item, mergeContactId: d.id })}
-                />
-                <span>
-                  Update{" "}
-                  <Link
-                    href={`/contacts/${d.id}`}
-                    className="text-primary underline"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {d.fullName}
-                  </Link>
-                  {d.company ? ` (${d.company})` : ""}
-                </span>
-              </label>
-            ))}
-          </>
-        )}
-      </div>
-
-      <div
-        className={cn(
-          "grid gap-2.5",
-          compact ? "grid-cols-2" : "sm:grid-cols-3 gap-3"
-        )}
-      >
-        <Field label="Closeness">
-          <Input
-            type="number"
-            min={1}
-            max={5}
-            value={item.relationshipScore}
-            onChange={(e) =>
-              onChange({
-                ...item,
-                relationshipScore: Number(e.target.value),
-              })
-            }
-          />
-        </Field>
-        <Field label="Follow-up days">
-          <Input
-            type="number"
-            min={1}
-            value={item.followUpDays}
-            onChange={(e) =>
-              onChange({ ...item, followUpDays: Number(e.target.value) })
-            }
-          />
-        </Field>
-        <label
-          className={cn(
-            "flex items-center gap-2 text-xs",
-            compact ? "col-span-2" : "items-end pb-2 text-sm"
-          )}
-        >
-          <Checkbox
-            checked={item.createReminder}
-            onCheckedChange={(v) =>
-              onChange({ ...item, createReminder: Boolean(v) })
-            }
-          />
-          Reminder
-        </label>
-      </div>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  children,
-  lowConfidence,
-}: {
-  label: string;
-  children: React.ReactNode;
-  lowConfidence?: boolean;
-}) {
-  return (
-    <div className={cn("space-y-1", lowConfidence && "rounded-lg")}>
-      <Label
-        className={cn(
-          "text-xs",
-          lowConfidence && "text-amber-700 dark:text-amber-400"
-        )}
-      >
-        {label}
-        {lowConfidence ? " *" : ""}
-      </Label>
-      <div
-        className={cn(
-          lowConfidence &&
-            "rounded-md ring-1 ring-amber-500/50 ring-offset-1 ring-offset-background"
-        )}
-      >
-        {children}
-      </div>
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { CalendarClock, ChevronDown, ChevronUp } from "lucide-react";
-import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
+import type { SuggestionReviewItem } from "@/lib/capture-review-item";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";

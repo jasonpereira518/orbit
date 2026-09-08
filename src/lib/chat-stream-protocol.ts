@@ -13,6 +13,11 @@
  *     in the browser across arbitrary chunk boundaries.
  */
 
+import {
+  formatSse as formatSseGeneric,
+  parseSseChunk as parseSseChunkGeneric,
+} from "@/lib/sse";
+
 export const RECOMMENDATIONS_MARKER = "---RECOMMENDATIONS---";
 
 export type RawRecommendation = {
@@ -125,26 +130,15 @@ export type ChatStreamEvent =
     }
   | { type: "error"; message: string };
 
-/** One event, as the `data:` line the browser's parser expects. JSON never contains a raw newline. */
+/**
+ * The framing itself now lives in `src/lib/sse.ts`, generic over the event union, because
+ * `/api/capture/parse` needs the identical wire format. These wrappers keep chat's call
+ * sites (and `scripts/smoke-chat-stream.ts`) reading in terms of `ChatStreamEvent`.
+ */
 export function formatSse(event: ChatStreamEvent): string {
-  return `data: ${JSON.stringify(event)}\n\n`;
+  return formatSseGeneric(event);
 }
 
-/** Re-assemble events from a chunk of the stream, carrying any incomplete tail forward. */
 export function parseSseChunk(chunk: string, carry: string): { events: ChatStreamEvent[]; carry: string } {
-  const text = carry + chunk;
-  const parts = text.split("\n\n");
-  const rest = parts.pop() ?? "";
-  const events: ChatStreamEvent[] = [];
-  for (const part of parts) {
-    for (const line of part.split("\n")) {
-      if (!line.startsWith("data:")) continue;
-      try {
-        events.push(JSON.parse(line.slice(5).trim()) as ChatStreamEvent);
-      } catch {
-        // A malformed frame is dropped rather than poisoning the rest of the stream.
-      }
-    }
-  }
-  return { events, carry: rest };
+  return parseSseChunkGeneric<ChatStreamEvent>(chunk, carry);
 }

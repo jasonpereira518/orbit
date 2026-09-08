@@ -163,6 +163,9 @@ const personIdentitySchema = z.object({
   presence: personPresence,
 });
 
+/** Pass A output for one person: a name and whatever context came free with it. */
+export type ParsedPersonIdentity = z.infer<typeof personIdentitySchema>;
+
 const multiPersonIdentitySchema = z.object({
   shared_notes: z
     .array(sharedNoteContextSchema)
@@ -1079,10 +1082,35 @@ Rules:
   };
 }
 
+/**
+ * Progress reported out of the capture parse, for `/api/capture/parse` to stream.
+ *
+ * Optional everywhere: with no callback the pipeline behaves exactly as it did, which is
+ * what `parseBulkCaptureNotes` (and `log-interaction-sheet`, which has no review step)
+ * still rely on.
+ */
+export type CaptureParseProgress = {
+  /**
+   * The identify pass resolved: these names exist, their details do not yet.
+   *
+   * Carries the shared context too, because the caller needs it to compose a person's notes
+   * and topics — and on this path it is known a full detail pass before the people are.
+   */
+  onRoster?: (
+    people: ParsedPersonIdentity[],
+    context: { sharedNotes: SharedNoteContext[]; interactionDate: string | null },
+  ) => void;
+  /** About to run detail batch covering people `done`..`done + size` of `total`. */
+  onDetailBatch?: (done: number, total: number) => void;
+  /** One person's full detail is ready. */
+  onPerson?: (person: ParsedPersonNote, index: number) => void;
+};
+
 async function parseMultiPersonTwoPass(
   userId: string,
   notes: string,
   hints?: CaptureParseHints | null,
+  progress?: CaptureParseProgress,
 ): Promise<ParsedMultiPersonNotes> {
   const sliced = notes.slice(0, 100_000);
   const identityRaw = await completeJson(userId, {
@@ -1152,6 +1180,7 @@ Rules:
   }
 
   if (!peopleIds.length) {
+    progress?.onRoster?.([], { sharedNotes: [], interactionDate: null });
     return { shared_notes: [], interaction_date: null, people: [], mentions: identity.mentions };
   }
 
@@ -1164,10 +1193,20 @@ Rules:
   const sharedMetAt = identity.met_at || null;
   const sharedBlock = shared_notes.map((s) => s.text).join("\n\n");
 
+  // The roster is the whole reason this path can stream: the names are settled now, and the
+  // detail batches below cost one model call per four people to fill them in. Emitted after
+  // `normalizeSharedNotes` so the context handed out matches the one the details are built
+  // against.
+  progress?.onRoster?.(peopleIds, {
+    sharedNotes: shared_notes,
+    interactionDate: defaultDate,
+  });
+
   const detailed: ParsedPersonNote[] = [];
 
   for (let i = 0; i < peopleIds.length; i += DETAIL_BATCH_SIZE) {
     const batch = peopleIds.slice(i, i + DETAIL_BATCH_SIZE);
+    progress?.onDetailBatch?.(i, peopleIds.length);
     const batchRaw = await completeJson(userId, {
       operation: "capture.parse.details",
       temperature: 0.2,
@@ -1253,9 +1292,11 @@ Rules:
         }
       }
 
+      progress?.onPerson?.(merged, detailed.length);
       detailed.push(merged);
     }
   }
+  progress?.onDetailBatch?.(peopleIds.length, peopleIds.length);
 
   return {
     shared_notes,
@@ -1269,20 +1310,24 @@ export async function parseMultiPersonNotesWithAI(
   userId: string,
   notes: string,
   hints?: CaptureParseHints | null,
+  progress?: CaptureParseProgress,
 ): Promise<ParsedMultiPersonNotes> {
   const useTwoPass =
     notes.length >= TWO_PASS_CHAR_THRESHOLD ||
     (hints?.seedPeople?.length || 0) >= 5;
 
   if (useTwoPass) {
-    return parseMultiPersonTwoPass(userId, notes, hints);
+    return parseMultiPersonTwoPass(userId, notes, hints, progress);
   }
 
   const single = await parseMultiPersonSinglePass(userId, notes, hints);
   // Escalate to two-pass when many people came back (token pressure risk).
   if (single.people.length > DETAIL_BATCH_SIZE) {
-    return parseMultiPersonTwoPass(userId, notes, hints);
+    return parseMultiPersonTwoPass(userId, notes, hints, progress);
   }
+  // The single pass returns everything at once, so there is no roster to announce ahead of
+  // the details — reporting one here would just be the same list twice, a frame apart.
+  single.people.forEach((person, index) => progress?.onPerson?.(person, index));
   return single;
 }
 
