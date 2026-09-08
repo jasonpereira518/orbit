@@ -7,6 +7,10 @@ import {
   STARFIELD_PULSE_EVENT,
   type StarfieldPulseDetail,
 } from "@/lib/starfield-events";
+import {
+  matchConstellation,
+  type ConstellationMatch,
+} from "@/lib/constellation-match";
 
 type Star = {
   x: number;
@@ -40,6 +44,9 @@ type ShootingStar = {
 
 /** One signup burst: a ring expanding from where the form's button was. */
 type Pulse = { x: number; y: number; start: number };
+
+/** What the constellation matcher is handed: drawn positions, nothing else. */
+type FieldPoint = { x: number; y: number };
 
 /** The star field is this many viewports tall and wraps vertically. The
  * canvas itself stays viewport-sized: sizing it to the page's scrollHeight
@@ -90,6 +97,27 @@ const PULSE_PUSH = 34;
 const PULSE_RATE = 14;
 const PULSE_SHOOTERS = 4;
 const PULSE_CAP = 3;
+
+/* ── Constellation recognition ──
+ *
+ * Hold the cursor still and the sky answers: the stars around it are searched
+ * for the real figure they come closest to tracing, and that figure is drawn
+ * over them and named (`lib/constellation-match.ts`).
+ *
+ * The wait is deliberate. It has to be long enough that someone crossing the
+ * page is never interrupted by a figure they did not ask for, and short enough
+ * that resting the cursor and looking at the sky is rewarded before attention
+ * moves on. Movement below JITTER_PX does not count as moving: a hand resting
+ * on a trackpad still sends events. */
+const IDLE_MS = 620;
+const JITTER_PX = 4;
+/** Movement past this abandons the figure — it belongs to where the cursor was. */
+const RELEASE_PX = 26;
+const FIGURE_IN_MS = 900;
+const FIGURE_OUT_MS = 420;
+/** Each line is drawn in turn rather than the figure appearing at once, which
+ * is what makes it read as being traced for you. */
+const FIGURE_EDGE_STAGGER_MS = 90;
 
 /* Nebulae, the base gradient and the corner vignette all live in
  * `lib/sky-palette.ts` now: the warp stage cross-fades into this exact
@@ -145,6 +173,21 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     let lastNow = 0;
     let pulses: Pulse[] = [];
 
+    // The figure currently drawn over the sky, if any. It holds the star
+    // objects rather than their positions, so the lines stay glued to the
+    // stars as they settle instead of hanging in the empty space where they were found.
+    let figure: {
+      match: ConstellationMatch;
+      stars: Star[];
+      shownAt: number;
+      /** Set when the pointer has left; the figure fades from here. */
+      endedAt: number | null;
+    } | null = null;
+    let restingSince = 0;
+    /** One search per rest: a failed look must not re-run every frame. */
+    let searched = false;
+    let figureScrollY = 0;
+
     function paintBackground() {
       const off = document.createElement("canvas");
       off.width = Math.floor(width * dpr);
@@ -186,6 +229,11 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
           glow: 0,
         };
       });
+
+      // `stars` has just been rebuilt, so a figure still holding the old
+      // objects would draw lines to stars that are no longer in the sky.
+      figure = null;
+      searched = false;
 
       if (reduced) draw(performance.now());
     }
@@ -257,6 +305,153 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
         ctx!.arc(p.x, p.y, ringR, 0, Math.PI * 2);
         ctx!.stroke();
       }
+    }
+
+    /**
+     * Look for a figure in the stars around the resting cursor.
+     *
+     * The positions handed to the matcher are the DRAWN ones — the well has
+     * pulled the nearby stars toward the cursor, and matching the pattern as it
+     * appears is what keeps the lines landing exactly on the stars a viewer can
+     * see. Running once per rest keeps the cost off the frame budget.
+     */
+    function search(now: number, yOff: number) {
+      const points: FieldPoint[] = [];
+      const refs: Star[] = [];
+      for (const s of stars) {
+        const sy = ((s.y - yOff) % fieldH + fieldH) % fieldH;
+        const y = sy + s.oy;
+        if (y < -8 || y > height + 8) continue;
+        points.push({ x: s.x + s.ox, y });
+        refs.push(s);
+      }
+
+      const match = matchConstellation(points, { cursorX: px, cursorY: py });
+      if (!match) return;
+
+      figure = {
+        match,
+        stars: match.starIndices.map((i) => refs[i]),
+        shownAt: now,
+        endedAt: null,
+      };
+      figureScrollY = window.scrollY;
+    }
+
+    /** Where a figure star is being drawn this frame. */
+    function starAt(s: Star, yOff: number) {
+      const sy = ((s.y - yOff) % fieldH + fieldH) % fieldH;
+      return { x: s.x + s.ox, y: sy + s.oy };
+    }
+
+    /**
+     * The figure itself: lines traced between the stars, a ring around each one,
+     * and the name underneath.
+     *
+     * Painted after the stars so the lines sit over them, and in gold rather
+     * than white so a figure never reads as just brighter sky.
+     */
+    function paintFigure(now: number, yOff: number) {
+      if (!figure) return;
+      const { match } = figure;
+
+      const fade = figure.endedAt
+        ? 1 - Math.min(1, (now - figure.endedAt) / FIGURE_OUT_MS)
+        : 1;
+      if (fade <= 0) {
+        figure = null;
+        return;
+      }
+
+      const pts = figure.stars.map((s) => starAt(s, yOff));
+
+      ctx!.lineCap = "round";
+      ctx!.lineJoin = "round";
+      for (let i = 0; i < match.edges.length; i++) {
+        const [a, b] = match.edges[i];
+        const p = pts[a];
+        const q = pts[b];
+        if (!p || !q) continue;
+        // Each line has its own start, so the figure draws itself in order.
+        const t = Math.min(
+          1,
+          Math.max(
+            0,
+            (now - figure.shownAt - i * FIGURE_EDGE_STAGGER_MS) / FIGURE_IN_MS
+          )
+        );
+        if (t <= 0) continue;
+        const eased = 1 - Math.pow(1 - t, 3);
+        ctx!.strokeStyle = `rgba(${STAR_GOLD}, ${0.4 * fade})`;
+        ctx!.lineWidth = 1;
+        ctx!.beginPath();
+        ctx!.moveTo(p.x, p.y);
+        ctx!.lineTo(p.x + (q.x - p.x) * eased, p.y + (q.y - p.y) * eased);
+        ctx!.stroke();
+      }
+
+      const settle = Math.min(1, Math.max(0, (now - figure.shownAt) / FIGURE_IN_MS));
+      for (const p of pts) {
+        ctx!.strokeStyle = `rgba(${STAR_GOLD}, ${0.5 * settle * fade})`;
+        ctx!.lineWidth = 1;
+        ctx!.beginPath();
+        ctx!.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
+        ctx!.stroke();
+      }
+
+      // The name, set outside the figure on the side facing away from the middle
+      // of the screen.
+      //
+      // Placing it directly under the figure was the obvious choice and the
+      // wrong one: this page's copy runs down the centre column, so "GEMINI"
+      // landed on the form card in gold caps directly above the card's own gold
+      // caps kicker, reading as a second label for the input. Pushing it outward
+      // moves it into open sky in the common case, and it is what a star chart
+      // does anyway — the name sits off the figure, not inside it.
+      const label = match.name.toUpperCase();
+      const nameT = Math.min(
+        1,
+        Math.max(0, (now - figure.shownAt - 320) / FIGURE_IN_MS)
+      );
+      if (nameT <= 0) return;
+
+      let sumX = 0;
+      let sumY = 0;
+      for (const p of pts) {
+        sumX += p.x;
+        sumY += p.y;
+      }
+      const fx = sumX / pts.length;
+      const fy = sumY / pts.length;
+      let ax = fx - width / 2;
+      let ay = fy - height / 2;
+      const away = Math.hypot(ax, ay);
+      if (away < 1) {
+        // Dead centre: no outward direction to speak of, so fall back to below.
+        ax = 0;
+        ay = 1;
+      } else {
+        ax /= away;
+        ay /= away;
+      }
+      const reach = match.radius + 38;
+      const cx = Math.min(width - 64, Math.max(64, fx + ax * reach));
+      const cy = Math.min(height - 16, Math.max(16, fy + ay * reach));
+
+      ctx!.save();
+      ctx!.font =
+        "500 11px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+      ctx!.textAlign = "center";
+      ctx!.textBaseline = "middle";
+      // Not every engine supports letterSpacing; the label reads fine without it.
+      try {
+        ctx!.letterSpacing = "0.16em";
+      } catch {
+        /* older Safari */
+      }
+      ctx!.fillStyle = `rgba(${STAR_GOLD}, ${0.78 * nameT * fade})`;
+      ctx!.fillText(label, cx, cy);
+      ctx!.restore();
     }
 
     function draw(now: number) {
@@ -402,6 +597,20 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
 
       if (active) settled = !anyMoving;
 
+      // A figure belongs to the spot it was found at: a scroll slides the whole
+      // sky under a stationary cursor, so the pattern it named is no longer the
+      // pattern there. Release it rather than let the lines drift.
+      if (figure && !figure.endedAt && window.scrollY !== figureScrollY) {
+        figure.endedAt = now;
+      }
+      if (hoverOk && pointerActive) {
+        if (!searched && restingSince && now - restingSince >= IDLE_MS) {
+          searched = true;
+          search(now, yOff);
+        }
+      }
+      if (figure) paintFigure(now, yOff);
+
       if (!reduced) {
         if (now >= nextShot && shooters.length < 2) {
           spawnShooter(now);
@@ -459,7 +668,7 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     // Don't burn battery repainting a starfield in a background tab.
     function onVisibility() {
       cancelAnimationFrame(raf);
-      pointerActive = false;
+      endRest(performance.now());
       if (!document.hidden && !reduced) {
         raf = requestAnimationFrame(draw);
       }
@@ -470,19 +679,39 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     // CSS px, which is the space the DPR transform leaves the context in.
     function onPointerMove(e: PointerEvent) {
       if (e.pointerType === "touch") return;
+      const moved = Math.hypot(e.clientX - px, e.clientY - py);
       px = e.clientX;
       py = e.clientY;
       pointerActive = true;
       settled = false;
+      // A hand resting on a trackpad still sends events, so only real movement
+      // restarts the clock — otherwise the figure could never be reached.
+      if (moved < JITTER_PX) return;
+      const now = performance.now();
+      restingSince = now;
+      searched = false;
+      // Released by leaving the figure, not by moving at all: tracing the lines
+      // with the cursor is the natural thing to do once one appears, and that
+      // must not be what dismisses it.
+      if (figure && !figure.endedAt) {
+        const away = Math.hypot(e.clientX - figure.match.cx, e.clientY - figure.match.cy);
+        if (away > figure.match.radius + RELEASE_PX) figure.endedAt = now;
+      }
     }
     // `pointerleave` on window is unreliable; a `pointerout` with no
     // relatedTarget is the pointer leaving the document for browser chrome or
     // another window. `blur` covers cmd-tab with the cursor still parked here.
+    function endRest(now: number) {
+      pointerActive = false;
+      restingSince = 0;
+      searched = false;
+      if (figure && !figure.endedAt) figure.endedAt = now;
+    }
     function onPointerOut(e: PointerEvent) {
-      if (e.relatedTarget === null) pointerActive = false;
+      if (e.relatedTarget === null) endRest(performance.now());
     }
     function onBlur() {
-      pointerActive = false;
+      endRest(performance.now());
     }
 
     // Listeners attach before the first draw so that if the viewport is zero-sized at

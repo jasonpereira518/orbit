@@ -44,6 +44,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-events-page": "pure",
   "smoke-closeness-materialized": "pure",
   "smoke-constellation-eligibility": "pure",
+  "smoke-constellation-match": "pure",
   "smoke-contact-profile-format": "pure",
   "smoke-dashboard-search": "pure",
   "smoke-date-commitments": "pure",
