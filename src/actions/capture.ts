@@ -37,6 +37,7 @@ import {
 import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { resolveMentions, type MentionCandidate } from "@/lib/mention-resolution";
+import { getSelfIdentity, isSelf } from "@/lib/self-identity";
 import type { PreviewMention } from "@/lib/note-batches";
 import {
   saveNoteBatch,
@@ -199,15 +200,23 @@ export async function parseBulkCaptureNotes(
 
     // Auto-detect pasted ICS / email forwards when caller didn't supply hints.
     const detected = normalizePastedCaptureText(notes);
-    const seedPeople = [
+    const self = await getSelfIdentity(userId);
+    const rawSeedPeople = [
       ...(hints?.seedPeople || []),
       ...(detected.hints.seedPeople || []),
     ];
+    // The root of the self-contact bug. A pasted invite seeds the organizer and every
+    // attendee, and a forwarded email seeds From/To/Cc — the user is in one of those every
+    // time. `parseMultiPersonTwoPass` then force-adds any seed the model didn't return, so
+    // an unfiltered seed becomes a participant even when the model correctly omitted them.
+    const seedPeople = rawSeedPeople.filter((p) => !isSelf(p, self));
+    let selfFiltered = seedPeople.length < rawSeedPeople.length;
     const mergedHints: CaptureParseHints = {
       eventDate: hints?.eventDate || detected.hints.eventDate || null,
       seedPeople: seedPeople.length ? seedPeople : undefined,
       interactionType:
         hints?.interactionType || detected.hints.interactionType || null,
+      self: self.name || self.emails.size ? { name: self.name, email: [...self.emails][0] ?? null } : null,
     };
 
     const corpus =
@@ -231,8 +240,14 @@ export async function parseBulkCaptureNotes(
     // people[] mixes two roles: participants (actually talked to) and mentions demoted into
     // people[] because the note gave them real profile detail. Only participants get a
     // review card; demoted mentions fold into mention resolution below.
-    const participants = people.filter((p) => p.presence !== "mentioned");
-    const demoted = people.filter((p) => p.presence === "mentioned");
+    // Backstop the seed filter and the prompt instruction: the model can still name the
+    // author from the note body itself ("Jason walked me through the roadmap").
+    const notSelf = people.filter(
+      (p) => !isSelf({ name: p.name, email: p.email, linkedinUrl: p.linkedin_url }, self)
+    );
+    if (notSelf.length < people.length) selfFiltered = true;
+    const participants = notSelf.filter((p) => p.presence !== "mentioned");
+    const demoted = notSelf.filter((p) => p.presence === "mentioned");
     // The anchor is the date the notes are ABOUT: what the people pass found, else the
     // calendar/email hint, else the upload moment. Relative phrases count from it.
     const anchorSource = interaction_date || mergedHints.eventDate || null;
@@ -310,8 +325,13 @@ export async function parseBulkCaptureNotes(
       };
     });
 
+    // Self has to be dropped here too, not just from participants: an unresolved mention
+    // gets an "Add as contact" button on the results page, so leaving the owner in
+    // mentions[] would only relocate the bug one screen later.
     const candidates: MentionCandidate[] = [
-      ...personParse.mentions.map((m) => ({ name: m.name, context: m.context, nearPerson: m.near_person })),
+      ...personParse.mentions
+        .filter((m) => !isSelf({ name: m.name }, self))
+        .map((m) => ({ name: m.name, context: m.context, nearPerson: m.near_person })),
       // A demoted mention with no usable name has nothing to resolve against — the
       // non-null assertion below would otherwise hand `resolveMentions` a null name.
       ...demoted
@@ -334,7 +354,10 @@ export async function parseBulkCaptureNotes(
     if (!participants.length && !commitmentResult.commitments.length) {
       return {
         ok: false as const,
-        error: "No people or dates found in those notes",
+        // "No people found" would be a lie when the only person in the note was the user.
+        error: selfFiltered
+          ? "The only person in those notes was you — nothing to add"
+          : "No people or dates found in those notes",
       };
     }
 

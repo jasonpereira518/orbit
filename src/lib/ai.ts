@@ -190,6 +190,13 @@ export type CaptureParseHints = {
   eventDate?: string | null;
   seedPeople?: Array<{ name?: string | null; email?: string | null }>;
   interactionType?: string | null;
+  /**
+   * Who is writing these notes. The prompts describe what a participant is but never who
+   * the author is, so the model had no way to know the owner is not one of the people to
+   * extract. Belt-and-braces with the seed filter and the post-parse backstop in
+   * `runCaptureParse` — see `src/lib/self-identity.ts`.
+   */
+  self?: { name?: string | null; email?: string | null } | null;
 };
 
 const TWO_PASS_CHAR_THRESHOLD = 2500;
@@ -966,6 +973,15 @@ function hintsPreamble(hints?: CaptureParseHints | null) {
     if (seeds.length) {
       lines.push(`Likely attendees / seed people:\n- ${seeds.join("\n- ")}`);
     }
+  }
+  const selfName = hints.self?.name?.trim() || "";
+  const selfEmail = hints.self?.email?.trim() || "";
+  if (selfName || selfEmail) {
+    const who =
+      selfName && selfEmail ? `${selfName} <${selfEmail}>` : selfName || selfEmail;
+    lines.push(
+      `Note author (the user writing these notes): ${who}. They are NOT a person to extract — never return them in people[] or mentions[], even if the notes address them by name or list them as an attendee.`
+    );
   }
   if (!lines.length) return "";
   return `\n\nStructured hints from calendar/email (use when consistent with the notes):\n${lines.join("\n")}`;

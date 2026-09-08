@@ -16,12 +16,12 @@ export type DuplicateSubject = Pick<
 /** Confidence at/above which a duplicate match is treated as an auto-merge, not just a hint. */
 export const DUPLICATE_MERGE_CONFIDENCE = 0.85;
 
-function normalize(s: string | null | undefined) {
+export function normalize(s: string | null | undefined) {
   return (s || "").trim().toLowerCase();
 }
 
 /** Strip punctuation/accents-ish noise for fuzzy name compares. */
-function normalizeName(s: string | null | undefined) {
+export function normalizeName(s: string | null | undefined) {
   return normalize(s)
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
