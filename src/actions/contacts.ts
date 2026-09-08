@@ -56,6 +56,7 @@ import {
   MicrolinkRateLimitError,
 } from "@/lib/contact-avatar";
 import { clientContactAvatarUrl } from "@/lib/contact-avatar-url";
+import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
 import {
   countAvatarBackfillCandidates,
@@ -341,6 +342,11 @@ export async function searchContactsForPicker(
       fullName: contacts.fullName,
       preferredName: contacts.preferredName,
       company: contacts.company,
+      firstName: contacts.firstName,
+      // Never `profileImageUrl` itself: that column carries base64 up to 120 KB a row when
+      // Blob storage is unconfigured, and a 200-row picker would drag all of it across the
+      // wire only to rewrite it to `/api/avatars/{id}` anyway.
+      avatarUrl: clientAvatarUrlSql.as("avatar_url"),
     })
     .from(contacts)
     .where(and(...conditions))

@@ -85,6 +85,84 @@ export function findMentions(text: string, names?: readonly string[]): ChatMenti
   return found;
 }
 
+/**
+ * How much text after an `@` can still be someone's name being typed.
+ *
+ * Both bounds exist to close the menu on an `@` the user has moved on from: nobody's name
+ * runs past 48 characters, and a run with three spaces in it is a sentence, not a name.
+ */
+const MENTION_QUERY_MAX_LEN = 48;
+const MENTION_QUERY_MAX_SPACES = 2;
+
+export type MentionQuery = {
+  /** Index of the `@`. */
+  start: number;
+  /** What has been typed after it, which may be empty. */
+  query: string;
+};
+
+/**
+ * The `@`-token the caret is sitting inside, or null.
+ *
+ * Deliberately independent of `findMentions`: that one asks "which spans are complete
+ * mentions of an attached person", this one asks "is the user part-way through typing
+ * one". A half-typed `@Mar` is not a mention yet and must never be painted green, but it
+ * is exactly what the autocomplete needs.
+ */
+export function mentionQueryAt(text: string, caret: number): MentionQuery | null {
+  if (caret < 1 || caret > text.length) return null;
+  let spaces = 0;
+  // Walk back from the caret to the nearest plausible `@`. Bounded by the query limits,
+  // so this is a handful of characters however long the box gets.
+  for (let i = caret - 1; i >= 0 && caret - i <= MENTION_QUERY_MAX_LEN + 1; i--) {
+    const ch = text[i]!;
+    if (ch === "\n") return null;
+    if (ch === "@") {
+      if (!opensHere(text, i)) return null;
+      return { start: i, query: text.slice(i + 1, caret) };
+    }
+    if (ch === " ") {
+      spaces++;
+      if (spaces > MENTION_QUERY_MAX_SPACES) return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Candidates ordered by how well they answer what has been typed.
+ *
+ * `searchContactsForPicker` returns alphabetically — right for browsing a list, wrong for a
+ * type-ahead, where the thing you have half-typed should be first. Pure and generic over
+ * the row shape so the people and event lists can share it.
+ */
+export function rankMentionCandidates<T>(
+  query: string,
+  items: readonly T[],
+  labelsOf: (item: T) => readonly (string | null | undefined)[],
+): T[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [...items];
+  const score = (item: T): number => {
+    let best = 3;
+    for (const raw of labelsOf(item)) {
+      const label = raw?.trim().toLowerCase();
+      if (!label) continue;
+      if (label.startsWith(q)) return 0;
+      // A surname typed on its own should still rank above a mid-word coincidence.
+      if (label.split(/\s+/).some((word) => word.startsWith(q))) best = Math.min(best, 1);
+      else if (label.includes(q)) best = Math.min(best, 2);
+    }
+    return best;
+  };
+  // Decorated sort: `Array.prototype.sort` is stable, so equal scores keep the order the
+  // server chose rather than being reshuffled.
+  return items
+    .map((item, i) => ({ item, i, score: score(item) }))
+    .sort((a, b) => a.score - b.score || a.i - b.i)
+    .map((entry) => entry.item);
+}
+
 /** The literal text the composer inserts for a person. */
 export function mentionToken(name: string): string {
   return `@${name}`;

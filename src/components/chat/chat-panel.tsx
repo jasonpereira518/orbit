@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -42,6 +43,11 @@ import {
   type ComposerInsert,
 } from "@/components/chat/composer-tools-menu";
 import { MentionText } from "@/components/chat/mention-text";
+import {
+  MentionAutocomplete,
+  type MentionOption,
+} from "@/components/chat/mention-autocomplete";
+import { useMentionAutocomplete } from "@/components/chat/use-mention-autocomplete";
 import {
   SuggestionCards,
   SuggestionCardsSkeleton,
@@ -607,6 +613,10 @@ export function ChatPanel() {
     }
     lastValueRef.current = next;
     setQuestion(next);
+    // The caret has already moved by the time this fires, so `selectionStart` is where the
+    // user is — which is what decides whether they are inside an `@`. `onSelect` alone is
+    // not enough: it does not fire for every keystroke.
+    mention.refresh(next, e.target.selectionStart ?? next.length);
   }
 
   /**
@@ -616,17 +626,15 @@ export function ChatPanel() {
    * in-flight dictation is concerned, so `onComposerChange`'s logic has to see it or the
    * dictated span would drift out of alignment with the field.
    */
-  const insertAtCaret = useCallback(
-    (text: string) => {
+  const spliceComposer = useCallback(
+    (from: number, to: number, text: string) => {
       const el = textareaRef.current;
       const value = el?.value ?? "";
-      const start = el?.selectionStart ?? value.length;
-      const end = el?.selectionEnd ?? start;
-      const needsLeading = start > 0 && !/\s$/.test(value.slice(0, start));
-      const needsTrailing = !/^\s/.test(value.slice(end));
+      const needsLeading = from > 0 && !/\s$/.test(value.slice(0, from));
+      const needsTrailing = !/^\s/.test(value.slice(to));
       const insert = `${needsLeading ? " " : ""}${text}${needsTrailing ? " " : ""}`;
-      const next = value.slice(0, start) + insert + value.slice(end);
-      const caret = start + insert.length;
+      const next = value.slice(0, from) + insert + value.slice(to);
+      const caret = from + insert.length;
 
       if (anchorRef.current !== null) {
         const shifted = shiftAnchor(
@@ -650,6 +658,37 @@ export function ChatPanel() {
     [],
   );
 
+  /** The caret case: `+` menu picks, which have no range of their own to replace. */
+  const insertAtCaret = useCallback(
+    (text: string) => {
+      const el = textareaRef.current;
+      const value = el?.value ?? "";
+      const from = el?.selectionStart ?? value.length;
+      const to = el?.selectionEnd ?? from;
+      spliceComposer(from, to, text);
+    },
+    [spliceComposer],
+  );
+
+  /**
+   * Register a person and hand back the token that stands for them.
+   *
+   * Shared by the `+` menu and the `@` type-ahead so the two cannot mint different tokens
+   * for the same contact — which would leave one of them grey and unattached.
+   */
+  const tokenForPerson = useCallback(
+    (contactId: string, nameCandidates: string[]) => {
+      const already = attached.find((p) => p.id === contactId);
+      // Re-picking someone reuses their token; a namesake gets a longer one, or the two
+      // would share a token and `activeMentions` could only ever resolve it to one of them.
+      const name =
+        already?.name ?? uniqueMentionName(nameCandidates, attached.map((p) => p.name));
+      if (!already) setAttached((prev) => [...prev, { id: contactId, name }]);
+      return mentionToken(name);
+    },
+    [attached],
+  );
+
   /**
    * A pick from the `+` menu.
    *
@@ -663,19 +702,9 @@ export function ChatPanel() {
         insertAtCaret(item.text);
         return;
       }
-      const already = attached.find((p) => p.id === item.contactId);
-      // Re-picking someone reuses their token; a namesake gets a longer one, or the two
-      // would share a token and `activeMentions` could only ever resolve it to one of them.
-      const name =
-        already?.name ??
-        uniqueMentionName(
-          item.nameCandidates,
-          attached.map((p) => p.name),
-        );
-      if (!already) setAttached((prev) => [...prev, { id: item.contactId, name }]);
-      insertAtCaret(mentionToken(name));
+      insertAtCaret(tokenForPerson(item.contactId, item.nameCandidates));
     },
-    [attached, insertAtCaret],
+    [insertAtCaret, tokenForPerson],
   );
 
   /**
@@ -690,7 +719,61 @@ export function ChatPanel() {
     !composing &&
     !coarsePointer;
 
+  // Off while the recogniser owns the box — an accepted row splices text the dictated span
+  // is anchored against — and off mid-IME, where `.value` is not yet what the user sees.
+  const mention = useMentionAutocomplete(
+    !dictation.listening && !composing && !busy && !loadingThread,
+  );
+  const mentionListboxId = useId();
+  const mentionOptionId = (index: number) => `${mentionListboxId}-${index}`;
+
+  /**
+   * Take a row from the `@` menu, replacing the half-typed token rather than the caret.
+   *
+   * A person becomes their `@Name` token and is attached; an event becomes prose, because
+   * an event is not someone the model can be handed a timeline for. Either way the `@` and
+   * everything typed after it goes — the fragment was scaffolding, not text the user meant.
+   */
+  const acceptMention = useCallback(
+    (option: MentionOption) => {
+      const el = textareaRef.current;
+      if (!el || mention.start === null) return;
+      const to = el.selectionStart ?? el.value.length;
+      const text =
+        option.kind === "person"
+          ? tokenForPerson(option.contactId, option.nameCandidates)
+          : option.text;
+      spliceComposer(mention.start, to, text);
+      // Dismiss rather than reset: the completed token still parses as a query, so a plain
+      // reset would reopen the menu on the name that was just accepted.
+      mention.dismiss();
+    },
+    [mention, spliceComposer, tokenForPerson],
+  );
+
   function onComposerKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    // First refusal, before Enter sends and before ArrowUp recalls: while the type-ahead is
+    // up those keys belong to it, and the caret never leaves the textarea to say so.
+    if (mention.open) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        mention.move(e.key === "ArrowDown" ? 1 : -1);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        const option = mention.active();
+        if (option) {
+          e.preventDefault();
+          acceptMention(option);
+          return;
+        }
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        mention.dismiss();
+        return;
+      }
+    }
     if (e.key === "Escape" && dictation.listening) {
       e.preventDefault();
       dictation.stop();
@@ -896,7 +979,19 @@ export function ChatPanel() {
           </div>
 
           <div className="shrink-0 border-t border-border/60 bg-card p-3 sm:p-4">
-            <div className="mx-auto max-w-3xl space-y-2.5">
+            {/* `relative`: the `@` type-ahead anchors to this box's top edge, which is the
+                top of the composer pill. */}
+            <div className="relative mx-auto max-w-3xl space-y-2.5">
+              {mention.open && (
+                <MentionAutocomplete
+                  options={mention.options}
+                  activeIndex={mention.activeIndex}
+                  loading={mention.loading}
+                  listboxId={mentionListboxId}
+                  optionId={mentionOptionId}
+                  onPick={acceptMention}
+                />
+              )}
               {/* One pill holding every control, rather than a field with satellites.
                   `items-end` keeps the buttons on the last line as the field grows. */}
               <div
@@ -935,10 +1030,23 @@ export function ChatPanel() {
                     onKeyDown={onComposerKeyDown}
                     onSelect={(e) => {
                       const el = e.currentTarget;
-                      setSelectionCollapsed(el.selectionStart === el.selectionEnd);
+                      const collapsed = el.selectionStart === el.selectionEnd;
+                      setSelectionCollapsed(collapsed);
+                      // Arrowing into an existing `@Marcus` should offer it again; a
+                      // selection means the user is doing something else entirely.
+                      if (collapsed) mention.refresh(el.value, el.selectionStart);
+                      else mention.reset();
                     }}
                     onCompositionStart={() => setComposing(true)}
                     onCompositionEnd={() => setComposing(false)}
+                    onBlur={() => mention.reset()}
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-expanded={mention.open}
+                    aria-controls={mention.open ? mentionListboxId : undefined}
+                    aria-activedescendant={
+                      mention.open ? mentionOptionId(mention.activeIndex) : undefined
+                    }
                     data-dictating={dictation.listening || undefined}
                     className={cn(
                       // Bare field: the pill around it owns the border, background, focus

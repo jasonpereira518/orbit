@@ -19,6 +19,7 @@ import { CalendarDays, Plus, Search, User } from "lucide-react";
 import { searchEventsForPicker, type EventPickerOption } from "@/actions/chat";
 import { searchContactsForPicker } from "@/actions/contacts";
 import type { ContactPickerOption } from "@/lib/contacts-page";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
 import { interactionTypeLabel, interactionTypeNoun } from "@/lib/interaction-types";
 import { Input } from "@/components/ui/input";
@@ -105,6 +106,19 @@ export function ComposerToolsMenu({
             key: p.id,
             title: p.preferredName?.trim() || p.fullName,
             subtitle: p.company || null,
+            // A face is how you recognise the right Chris out of three. The url is already
+            // browser-safe from `clientAvatarUrlSql`; `ContactAvatar` routes it through
+            // `/api/avatars/{id}` and falls back to the gendered illustration.
+            avatar: (
+              <ContactAvatar
+                contactId={p.id}
+                firstName={p.firstName}
+                fullName={p.fullName}
+                profileImageUrl={p.avatarUrl}
+                size="sm"
+                className="size-7"
+              />
+            ),
             insert: {
               kind: "person" as const,
               contactId: p.id,
@@ -123,6 +137,9 @@ export function ComposerToolsMenu({
               key: e.id,
               title: `${e.contactName} — ${label.toLowerCase()}`,
               subtitle: e.summary || formatEventDate(e.interactionDate),
+              // Events are a meeting, not a person, so they keep the tab's own icon rather
+              // than borrowing the contact's face.
+              avatar: null as React.ReactNode,
               insert: {
                 kind: "text" as const,
                 text: `my ${interactionTypeNoun(e.interactionType)} with ${e.contactName} on ${formatEventDate(e.interactionDate)}`,
@@ -214,14 +231,17 @@ export function ComposerToolsMenu({
                   setOpen(false);
                   setQuery("");
                 }}
-                className="flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted"
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted"
               >
-                <span className="text-sm text-foreground">{row.title}</span>
-                {row.subtitle && (
-                  <span className="line-clamp-1 text-xs text-muted-foreground">
-                    {row.subtitle}
-                  </span>
-                )}
+                {row.avatar}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-foreground">{row.title}</span>
+                  {row.subtitle && (
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {row.subtitle}
+                    </span>
+                  )}
+                </span>
               </button>
             ))
           )}

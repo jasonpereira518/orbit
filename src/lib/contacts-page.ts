@@ -60,4 +60,11 @@ export type ContactPickerOption = {
   fullName: string;
   preferredName: string | null;
   company: string | null;
+  /** For the gendered fallback illustration when there is no photo. */
+  firstName: string | null;
+  /**
+   * Already browser-safe — `clientAvatarUrlSql` decides this in Postgres so a picker never
+   * selects `profile_image_url`, which holds up to 120 KB of base64 per contact.
+   */
+  avatarUrl: string | null;
 };

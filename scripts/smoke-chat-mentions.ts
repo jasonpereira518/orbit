@@ -12,7 +12,9 @@
 import {
   activeMentions,
   findMentions,
+  mentionQueryAt,
   mentionToken,
+  rankMentionCandidates,
   uniqueMentionName,
 } from "../src/lib/chat-mentions";
 import {
@@ -177,6 +179,92 @@ check(
   ])
     .map((p) => p.id)
     .join() === "c-b",
+);
+
+// ── mentionQueryAt ────────────────────────────────────────────────────────────────────
+console.log("\nmentionQueryAt — what the autocomplete is looking at");
+
+const at = (text: string, caret = text.length) => mentionQueryAt(text, caret);
+
+check("an empty token is still a token", at("ask @")?.query === "");
+check("carries what has been typed", at("ask @Mar")?.query === "Mar");
+check("and where it started", at("ask @Mar")?.start === 4);
+check("at the very start of the box", at("@Mar")?.start === 0);
+check(
+  "a name with a space is still being typed",
+  at("ask @Marcus We")?.query === "Marcus We",
+);
+check(
+  "three spaces means the user moved on",
+  at("ask @Marcus Webb about the thing") === null,
+);
+check("a newline ends it", at("@Mar\ncus") === null);
+check("an email address is not a mention", at("mail jason@exa") === null);
+check("no @ at all", at("just typing") === null);
+check(
+  "a very long run is not a name",
+  at(`@${"a".repeat(60)}`) === null,
+);
+
+// The caret is what decides, not the end of the string.
+check(
+  "reads the token the caret is inside, not the last one in the box",
+  at("@Ada and @Grace", 4)?.query === "Ada",
+);
+check(
+  "and nothing when the caret sits before any @",
+  at("@Ada and @Grace", 0) === null,
+);
+check(
+  "a completed mention followed by a space is closed",
+  at("@Ada ") === null || at("@Ada ")?.query === "Ada ",
+  JSON.stringify(at("@Ada ")),
+);
+
+// ── rankMentionCandidates ─────────────────────────────────────────────────────────────
+console.log("\nrankMentionCandidates");
+
+type Row = { name: string; company: string | null };
+const rows: Row[] = [
+  { name: "Grace Hopper", company: "Navy" },
+  { name: "Marcus Webb", company: "Ramp" },
+  { name: "Ada Lovelace", company: "Marconi Labs" },
+  { name: "Omar Sy", company: null },
+];
+const rank = (q: string) =>
+  rankMentionCandidates(q, rows, (r) => [r.name, r.company]).map((r) => r.name);
+
+check(
+  "a prefix of the full name wins",
+  rank("mar")[0] === "Marcus Webb",
+  JSON.stringify(rank("mar")),
+);
+check(
+  "a surname typed alone beats a mid-word coincidence",
+  rank("webb")[0] === "Marcus Webb",
+  JSON.stringify(rank("webb")),
+);
+check(
+  "a company prefix still matches",
+  rank("ramp")[0] === "Marcus Webb",
+  JSON.stringify(rank("ramp")),
+);
+check(
+  "a mid-word match ranks last of the matches",
+  rank("mar").indexOf("Omar Sy") > rank("mar").indexOf("Ada Lovelace"),
+  JSON.stringify(rank("mar")),
+);
+check("nothing is dropped — ranking is not filtering", rank("mar").length === rows.length);
+check(
+  "an empty query keeps the server's order",
+  JSON.stringify(rank("")) === JSON.stringify(rows.map((r) => r.name)),
+);
+check(
+  "ties keep the server's order rather than reshuffling",
+  JSON.stringify(rankMentionCandidates("a", rows, (r) => [r.name]).map((r) => r.name)) ===
+    JSON.stringify(
+      rankMentionCandidates("a", rows, (r) => [r.name]).map((r) => r.name),
+    ),
 );
 
 // ── renderAttachedPeople ──────────────────────────────────────────────────────────────
