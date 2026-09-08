@@ -86,6 +86,78 @@ export function findMentions(text: string, names?: readonly string[]): ChatMenti
 }
 
 /**
+ * Where a caret sits relative to the mentions around it.
+ *
+ * A green `@Name` reads as one object, so it has to behave like one: the caret cannot come
+ * to rest inside it, and one Backspace takes the whole thing. A `<textarea>` has no notion
+ * of an atomic token, so these three answer the only questions the composer needs to fake
+ * one — and being pure, they are answerable without a DOM.
+ */
+
+/** The mention the caret is strictly inside. Edges are outside: those are valid positions. */
+export function mentionUnderCaret(
+  text: string,
+  caret: number,
+  names?: readonly string[],
+): ChatMention | null {
+  return findMentions(text, names).find((m) => caret > m.start && caret < m.end) ?? null;
+}
+
+/** The mention a Backspace here should take whole, i.e. the one the caret sits just after. */
+export function mentionBeforeCaret(
+  text: string,
+  caret: number,
+  names?: readonly string[],
+): ChatMention | null {
+  return findMentions(text, names).find((m) => m.end === caret) ?? null;
+}
+
+/** The mention a forward Delete here should take whole. */
+export function mentionAfterCaret(
+  text: string,
+  caret: number,
+  names?: readonly string[],
+): ChatMention | null {
+  return findMentions(text, names).find((m) => m.start === caret) ?? null;
+}
+
+/**
+ * Where the caret should go when it lands inside a mention.
+ *
+ * `prefer` is the direction it was travelling, so arrowing left out of a token does not
+ * bounce off its own trailing edge and appear stuck. A click has no direction and takes the
+ * nearer edge. Returns null when the caret is already somewhere legal.
+ */
+export function snapCaretOutOfMention(
+  text: string,
+  caret: number,
+  prefer: "left" | "right" | "nearest",
+  names?: readonly string[],
+): number | null {
+  const inside = mentionUnderCaret(text, caret, names);
+  if (!inside) return null;
+  if (prefer === "left") return inside.start;
+  if (prefer === "right") return inside.end;
+  return caret - inside.start <= inside.end - caret ? inside.start : inside.end;
+}
+
+/**
+ * The span a whole-mention delete should remove.
+ *
+ * Widened by one adjacent space so removing a token from mid-sentence does not leave a
+ * double space behind — the trailing one by preference, since that is the space the
+ * composer itself added when it inserted the token.
+ */
+export function mentionDeletionRange(
+  text: string,
+  mention: ChatMention,
+): { from: number; to: number } {
+  if (text[mention.end] === " ") return { from: mention.start, to: mention.end + 1 };
+  if (text[mention.start - 1] === " ") return { from: mention.start - 1, to: mention.end };
+  return { from: mention.start, to: mention.end };
+}
+
+/**
  * How much text after an `@` can still be someone's name being typed.
  *
  * Both bounds exist to close the menu on an `@` the user has moved on from: nobody's name

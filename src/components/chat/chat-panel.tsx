@@ -79,7 +79,11 @@ import type { ChatRecommendation } from "@/db/schema";
 import { streamChat } from "@/lib/chat-stream-client";
 import {
   activeMentions,
+  mentionAfterCaret,
+  mentionBeforeCaret,
+  mentionDeletionRange,
   mentionToken,
+  snapCaretOutOfMention,
   uniqueMentionName,
 } from "@/lib/chat-mentions";
 import { ANCHOR_INTERFERENCE, shiftAnchor, spliceSpan } from "@/lib/dictation";
@@ -185,6 +189,12 @@ export function ChatPanel() {
   /** The value as of the last change, to tell the user's edits from our own. */
   const lastValueRef = useRef("");
   const pendingCaretRef = useRef<number | null>(null);
+  /**
+   * Where the caret was last time, so a snap out of a mention knows which way it was
+   * going. Without the direction, arrowing left out of a token bounces off its own
+   * trailing edge and the caret looks stuck.
+   */
+  const lastCaretRef = useRef<number | null>(null);
   /**
    * Breaks the declaration cycle: `resetQuestion` must be able to cancel dictation, but
    * the hook's callbacks need `resetQuestion`'s siblings.
@@ -616,7 +626,9 @@ export function ChatPanel() {
     // The caret has already moved by the time this fires, so `selectionStart` is where the
     // user is — which is what decides whether they are inside an `@`. `onSelect` alone is
     // not enough: it does not fire for every keystroke.
-    mention.refresh(next, e.target.selectionStart ?? next.length);
+    const caret = e.target.selectionStart ?? next.length;
+    lastCaretRef.current = caret;
+    mention.refresh(next, caret);
   }
 
   /**
@@ -630,8 +642,10 @@ export function ChatPanel() {
     (from: number, to: number, text: string) => {
       const el = textareaRef.current;
       const value = el?.value ?? "";
-      const needsLeading = from > 0 && !/\s$/.test(value.slice(0, from));
-      const needsTrailing = !/^\s/.test(value.slice(to));
+      // Padding is for inserting; a deletion passes "" and must not gain a space for it.
+      const pad = text.length > 0;
+      const needsLeading = pad && from > 0 && !/\s$/.test(value.slice(0, from));
+      const needsTrailing = pad && !/^\s/.test(value.slice(to));
       const insert = `${needsLeading ? " " : ""}${text}${needsTrailing ? " " : ""}`;
       const next = value.slice(0, from) + insert + value.slice(to);
       const caret = from + insert.length;
@@ -772,6 +786,26 @@ export function ChatPanel() {
         e.preventDefault();
         mention.dismiss();
         return;
+      }
+    }
+
+    // An attached `@Name` reads as one object, so it deletes as one. Only when the caret is
+    // flush against it and nothing is selected — a Backspace anywhere else is ordinary, and
+    // a name that is not attached is just words.
+    if (e.key === "Backspace" || e.key === "Delete") {
+      const el = e.currentTarget;
+      if (el.selectionStart === el.selectionEnd) {
+        const caret = el.selectionStart;
+        const whole =
+          e.key === "Backspace"
+            ? mentionBeforeCaret(el.value, caret, attachedNames)
+            : mentionAfterCaret(el.value, caret, attachedNames);
+        if (whole) {
+          e.preventDefault();
+          const { from, to } = mentionDeletionRange(el.value, whole);
+          spliceComposer(from, to, "");
+          return;
+        }
       }
     }
     if (e.key === "Escape" && dictation.listening) {
@@ -1032,10 +1066,34 @@ export function ChatPanel() {
                       const el = e.currentTarget;
                       const collapsed = el.selectionStart === el.selectionEnd;
                       setSelectionCollapsed(collapsed);
-                      // Arrowing into an existing `@Marcus` should offer it again; a
-                      // selection means the user is doing something else entirely.
-                      if (collapsed) mention.refresh(el.value, el.selectionStart);
-                      else mention.reset();
+                      if (!collapsed) {
+                        lastCaretRef.current = null;
+                        mention.reset();
+                        return;
+                      }
+                      // The caret may not come to rest inside a token. Re-setting the
+                      // range fires `select` again, which terminates because an edge is a
+                      // legal position and snaps to null.
+                      const prev = lastCaretRef.current;
+                      const prefer =
+                        prev === null || prev === el.selectionStart
+                          ? "nearest"
+                          : el.selectionStart < prev
+                            ? "left"
+                            : "right";
+                      const snapped = composing
+                        ? null
+                        : snapCaretOutOfMention(
+                            el.value,
+                            el.selectionStart,
+                            prefer,
+                            attachedNames,
+                          );
+                      const caret = snapped ?? el.selectionStart;
+                      if (snapped !== null) el.setSelectionRange(snapped, snapped);
+                      lastCaretRef.current = caret;
+                      // Arrowing into an existing `@Marcus` should offer it again.
+                      mention.refresh(el.value, caret);
                     }}
                     onCompositionStart={() => setComposing(true)}
                     onCompositionEnd={() => setComposing(false)}

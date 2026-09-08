@@ -12,8 +12,13 @@
 import {
   activeMentions,
   findMentions,
+  mentionAfterCaret,
+  mentionBeforeCaret,
+  mentionDeletionRange,
   mentionQueryAt,
   mentionToken,
+  mentionUnderCaret,
+  snapCaretOutOfMention,
   rankMentionCandidates,
   uniqueMentionName,
 } from "../src/lib/chat-mentions";
@@ -179,6 +184,72 @@ check(
   ])
     .map((p) => p.id)
     .join() === "c-b",
+);
+
+// ── the mention as one object ─────────────────────────────────────────────────────────
+console.log("\nan attached mention behaves as one object");
+
+const ATOMIC = ["Marcus Webb"];
+const LINE = "ask @Marcus Webb about it";
+//            0123456789...
+//                ^4        ^16
+
+check("the span is where we think it is", LINE.slice(4, 16) === "@Marcus Webb");
+
+// Where the caret may not come to rest.
+check("mid-token is inside", mentionUnderCaret(LINE, 9, ATOMIC)?.start === 4);
+check("the opening edge is NOT inside", mentionUnderCaret(LINE, 4, ATOMIC) === null);
+check("the closing edge is NOT inside", mentionUnderCaret(LINE, 16, ATOMIC) === null);
+check("plain text is not inside anything", mentionUnderCaret(LINE, 2, ATOMIC) === null);
+check(
+  "an unattached name is not an object — no snapping, no whole-word delete",
+  mentionUnderCaret("ask @Someone Else now", 9, ATOMIC) === null,
+);
+
+// Which way it jumps.
+check("travelling left, it lands before the token", snapCaretOutOfMention(LINE, 9, "left", ATOMIC) === 4);
+check("travelling right, it lands after", snapCaretOutOfMention(LINE, 9, "right", ATOMIC) === 16);
+check("a click near the start takes the start", snapCaretOutOfMention(LINE, 6, "nearest", ATOMIC) === 4);
+check("a click near the end takes the end", snapCaretOutOfMention(LINE, 14, "nearest", ATOMIC) === 16);
+check(
+  "a legal caret is left alone — this is what stops a snap loop",
+  snapCaretOutOfMention(LINE, 16, "nearest", ATOMIC) === null &&
+    snapCaretOutOfMention(LINE, 2, "left", ATOMIC) === null,
+);
+
+// Backspace and Delete.
+check("Backspace just after the token takes it", mentionBeforeCaret(LINE, 16, ATOMIC)?.start === 4);
+check("Backspace mid-token is not a whole-token delete", mentionBeforeCaret(LINE, 9, ATOMIC) === null);
+check("Backspace elsewhere is an ordinary Backspace", mentionBeforeCaret(LINE, 20, ATOMIC) === null);
+check("Delete just before the token takes it", mentionAfterCaret(LINE, 4, ATOMIC)?.end === 16);
+check("Delete just after it does not", mentionAfterCaret(LINE, 16, ATOMIC) === null);
+
+// What gets removed, including the space the composer added.
+const midSentence = mentionDeletionRange(LINE, findMentions(LINE, ATOMIC)[0]!);
+check(
+  "mid-sentence removal takes the trailing space, leaving one gap",
+  LINE.slice(0, midSentence.from) + LINE.slice(midSentence.to) === "ask about it",
+  JSON.stringify(LINE.slice(0, midSentence.from) + LINE.slice(midSentence.to)),
+);
+const trailing = "ask @Marcus Webb ";
+const atEnd = mentionDeletionRange(trailing, findMentions(trailing, ATOMIC)[0]!);
+check(
+  "at the end of the box it takes its own trailing space",
+  trailing.slice(0, atEnd.from) + trailing.slice(atEnd.to) === "ask ",
+  JSON.stringify(trailing.slice(0, atEnd.from) + trailing.slice(atEnd.to)),
+);
+const noSpaceAfter = "ask @Marcus Webb.";
+const beforePunct = mentionDeletionRange(noSpaceAfter, findMentions(noSpaceAfter, ATOMIC)[0]!);
+check(
+  "with punctuation after, it takes the space before instead of eating the full stop",
+  noSpaceAfter.slice(0, beforePunct.from) + noSpaceAfter.slice(beforePunct.to) === "ask.",
+  JSON.stringify(noSpaceAfter.slice(0, beforePunct.from) + noSpaceAfter.slice(beforePunct.to)),
+);
+const alone = "@Marcus Webb";
+const onlyToken = mentionDeletionRange(alone, findMentions(alone, ATOMIC)[0]!);
+check(
+  "a token alone in the box leaves nothing behind",
+  alone.slice(0, onlyToken.from) + alone.slice(onlyToken.to) === "",
 );
 
 // ── mentionQueryAt ────────────────────────────────────────────────────────────────────
