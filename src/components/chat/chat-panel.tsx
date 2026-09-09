@@ -108,8 +108,10 @@ type UserMessage = {
   /**
    * Who was attached when this was sent, so the bubble marks exactly those names.
    *
-   * Absent on messages loaded back from the database — the attachment list is not a
-   * persisted column — and `MentionText` falls back to a shape heuristic there.
+   * Now persisted, so it survives a reload. `MentionText` still has its shape heuristic
+   * for messages written before the column existed, but it is a fallback rather than the
+   * normal path — it over-reaches on "@Marcus Webb Who else", where a capitalised word
+   * after a name looks like part of it.
    */
   mentionNames?: string[];
 };
@@ -417,6 +419,9 @@ export function ChatPanel() {
                 id: row.id,
                 role: "user" as const,
                 content: row.content,
+                mentionNames: row.attachedContacts?.length
+                  ? row.attachedContacts.map((c) => c.name)
+                  : undefined,
               }
             : {
                 id: row.id,

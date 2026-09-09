@@ -14,7 +14,7 @@ import "./smoke/_env";
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, interactions } from "../src/db/schema";
+import { chatMessages, chatThreads, contacts, interactions } from "../src/db/schema";
 import { prepareChatContext } from "../src/lib/chat-context";
 import { saveContactProfile } from "../src/lib/contact-profile";
 import { ensureUserSettings } from "../src/lib/user-settings";
@@ -134,6 +134,46 @@ async function main() {
     "a retrieved contact does not carry the whole profile",
     !JSON.stringify(katherine ?? {}).includes("Computed orbital mechanics by hand.")
   );
+
+  // --- who was attached survives a reload ----------------------------------------------
+  // The mark on a sent question used to be re-derived from its text by a shape heuristic,
+  // because the attachment list was not persisted. This is the round trip that replaced it.
+
+  const thread = (await db.insert(chatThreads).values({ userId: USER }).returning())[0];
+  await db.insert(chatMessages).values({
+    threadId: thread.id,
+    userId: USER,
+    role: "user",
+    content: "What should I ask @Ada Lovelace next time we speak?",
+    attachedContacts: [{ id: ada, name: "Ada Lovelace" }],
+  });
+  const [savedMsg] = await db
+    .select()
+    .from(chatMessages)
+    .where(eq(chatMessages.threadId, thread.id));
+  check(
+    "the attached contacts column round-trips",
+    savedMsg?.attachedContacts?.[0]?.id === ada &&
+      savedMsg?.attachedContacts?.[0]?.name === "Ada Lovelace",
+    JSON.stringify(savedMsg?.attachedContacts)
+  );
+
+  await db.insert(chatMessages).values({
+    threadId: thread.id,
+    userId: USER,
+    role: "user",
+    content: "Who do I know at Acme?",
+  });
+  const savedMsgs = await db
+    .select()
+    .from(chatMessages)
+    .where(eq(chatMessages.threadId, thread.id));
+  check(
+    "a question with nothing attached defaults to empty, not null",
+    savedMsgs.every((r) => Array.isArray(r.attachedContacts)),
+    JSON.stringify(savedMsgs.map((r) => r.attachedContacts))
+  );
+  await db.delete(chatThreads).where(eq(chatThreads.userId, USER));
 
   // --- every interaction type reaches a retrieved contact, fairly ---------------------
 

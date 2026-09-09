@@ -71,7 +71,16 @@ export async function POST(request: Request) {
     });
     if (threadId) {
       const db = await getDb();
-      await db.insert(chatMessages).values({ threadId, userId, role: "user", content: ctx.q });
+      await db.insert(chatMessages).values({
+        threadId,
+        userId,
+        role: "user",
+        content: ctx.q,
+        // Resolved server-side rather than trusted from the client: these are the people
+        // `loadAttachedPeople` actually found and put in front of the model, so the mark on
+        // a reloaded thread describes what the answer was really given.
+        attachedContacts: ctx.attachedPeople.map((p) => ({ id: p.id, name: p.name })),
+      });
     }
   } catch (err) {
     return NextResponse.json(

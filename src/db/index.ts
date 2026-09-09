@@ -472,6 +472,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   role text NOT NULL,
   content text NOT NULL,
   recommendations jsonb,
+  attached_contacts jsonb DEFAULT '[]',
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages(thread_id);
@@ -965,7 +966,12 @@ CREATE TABLE IF NOT EXISTS non_dilutive_funding (
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first.)
  */
-export const SCHEMA_VERSION = 31;
+// 34, not 33: `origin/main` is at 32 and two unmerged branches already claim 33
+// (claude/laughing-hodgkin-8627d2, claude/import-image-to-text-feature-eb8585). A repeated
+// version is the one failure mode this counter has — the alters are all
+// `IF NOT EXISTS` and concatenate harmlessly on merge, but a collision means one branch's
+// DDL never runs.
+export const SCHEMA_VERSION = 34;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1961,6 +1967,7 @@ const alters = [
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS ai_summary text`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS companies_mentioned jsonb DEFAULT '[]'`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS roles_discussed jsonb DEFAULT '[]'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attached_contacts jsonb DEFAULT '[]'`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS first_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS last_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email_count integer NOT NULL DEFAULT 0`,

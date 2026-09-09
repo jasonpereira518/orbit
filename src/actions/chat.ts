@@ -123,7 +123,13 @@ async function askNetworkInner(
     });
 
     if (threadId) {
-      await db.insert(chatMessages).values({ threadId, userId, role: "user", content: ctx.q });
+      await db.insert(chatMessages).values({
+        threadId,
+        userId,
+        role: "user",
+        content: ctx.q,
+        attachedContacts: ctx.attachedPeople.map((p) => ({ id: p.id, name: p.name })),
+      });
     }
 
     const result = await chatWithNetwork(
