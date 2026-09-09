@@ -18,13 +18,15 @@ import type { ContactPickerOption } from "@/lib/contacts-page";
  */
 
 /**
- * One character, not zero.
+ * Zero: the menu opens on the bare `@`.
  *
- * A bare `@` has nothing to rank by, and `searchContactsForPicker` orders alphabetically,
- * so opening on the sigil alone would offer whoever comes first in the address book — which
- * looks like a broken suggestion rather than a waiting one.
+ * It used to wait for a character, because a bare `@` has nothing to rank by and the picker
+ * ordered alphabetically — so the sigil alone offered whoever came first in the address
+ * book, which reads as broken rather than as waiting. The picker now answers "who have I
+ * spoken to most recently" for an empty term, so there is something worth showing from the
+ * moment the `@` lands.
  */
-const MIN_QUERY_CHARS = 1;
+const MIN_QUERY_CHARS = 0;
 /** Matches the `+` menu's, so the two feel like one surface. */
 const SEARCH_DEBOUNCE_MS = 140;
 const MAX_PEOPLE = 5;
@@ -77,7 +79,10 @@ export function useMentionAutocomplete(enabled: boolean): MentionAutocompleteSta
   const searchTerm = live ? term.trim() : "";
 
   useEffect(() => {
-    if (!searchTerm) return;
+    // `live`, not `searchTerm`: an empty term is now a legitimate search — the bare `@`
+    // asks for the most recent people. While the minimum was one character the two were
+    // the same condition, and keying on the term is what kept the menu shut on `@` alone.
+    if (!live) return;
     const run = ++runRef.current;
     // Inside the timer, not the effect body: a keystroke that gets debounced away should
     // never have flashed a loading state.
@@ -85,7 +90,12 @@ export function useMentionAutocomplete(enabled: boolean): MentionAutocompleteSta
       setLoading(true);
       try {
         const [p, e] = await Promise.all([
-          searchContactsForPicker(searchTerm, 12).catch(() => [] as ContactPickerOption[]),
+          // "recent" is what makes the bare `@` worth opening. With a term the server
+          // filters and `rankMentionCandidates` reorders on the client, so it does not
+          // matter there.
+          searchContactsForPicker(searchTerm, 12, "recent").catch(
+            () => [] as ContactPickerOption[]
+          ),
           searchEventsForPicker(searchTerm, 8).catch(() => [] as EventPickerOption[]),
         ]);
         // Only the newest search may write: a slow early query must not overwrite a fast
@@ -99,7 +109,7 @@ export function useMentionAutocomplete(enabled: boolean): MentionAutocompleteSta
       }
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [searchTerm]);
+  }, [live, searchTerm]);
 
   const options = useMemo<MentionOption[]>(() => {
     if (!live) return [];

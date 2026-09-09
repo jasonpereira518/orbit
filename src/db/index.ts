@@ -966,12 +966,16 @@ CREATE TABLE IF NOT EXISTS non_dilutive_funding (
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first.)
  */
-// 34, not 33: `origin/main` is at 32 and two unmerged branches already claim 33
+// 33 is skipped: `origin/main` is at 32 and two unmerged branches already claim 33
 // (claude/laughing-hodgkin-8627d2, claude/import-image-to-text-feature-eb8585). A repeated
-// version is the one failure mode this counter has — the alters are all
+// version is the one real failure mode this counter has — the alters are all
 // `IF NOT EXISTS` and concatenate harmlessly on merge, but a collision means one branch's
-// DDL never runs.
-export const SCHEMA_VERSION = 34;
+// DDL never runs. A gap costs nothing.
+//
+// Two bumps on this branch (34 then 35) because the guard requires one per DDL change:
+// 34 added `chat_messages.attached_contacts`, 35 the last-interaction index the composer's
+// pickers order on.
+export const SCHEMA_VERSION = 35;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1074,6 +1078,10 @@ export const SCALE_DDL: string[] = [
   // the same way, so the index has to be declared that way to serve it.
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_idx ON contacts(user_id, closeness DESC, id DESC)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
+  // For the composer's pickers, which open on "who have I actually spoken to lately"
+  // rather than whoever is alphabetically first. `updated_at` is the wrong column for
+  // that — editing a contact is not talking to them.
+  `CREATE INDEX IF NOT EXISTS contacts_user_last_interaction_idx ON contacts(user_id, last_interaction_at DESC NULLS LAST)`,
   `CREATE INDEX IF NOT EXISTS contacts_search_gin ON contacts USING gin(search_tsv)`,
   `CREATE INDEX IF NOT EXISTS contacts_slug_idx ON contacts(linkedin_slug) WHERE linkedin_slug IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS contacts_user_email_idx ON contacts(user_id, email) WHERE email IS NOT NULL`,

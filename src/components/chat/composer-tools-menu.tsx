@@ -85,7 +85,7 @@ export function ComposerToolsMenu({
       setLoading(true);
       try {
         if (tab === "people") {
-          const rows = await searchContactsForPicker(query, 20);
+          const rows = await searchContactsForPicker(query, 20, "recent");
           if (runRef.current === run) setPeople(rows);
         } else {
           const rows = await searchEventsForPicker(query, 20);
