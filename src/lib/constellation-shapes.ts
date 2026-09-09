@@ -716,42 +716,6 @@ export function resolveConstellationShape(
   return { ...extended, stars: normalizeStars(extended.stars) };
 }
 
-/**
- * The figures the interactive starfield tries to recognise in a random field
- * (`lib/constellation-match.ts`).
- *
- * Drawn from the same table the star chart lays clusters out with, so Orbit
- * only ever claims to have found a figure it can also draw elsewhere.
- *
- * THE LOWER BOUND IS THE INTERESTING ONE, and it is about honesty rather than
- * taste. A similarity transform has four degrees of freedom, so a small figure
- * leaves little to argue with, and a dense field offers an enormous number of
- * candidate tuples to argue it against. Measured on random skies at the
- * starfield's own density:
- *
- *   - three-point figures (Orion's Belt, the Summer Triangle) were claimed on
- *     399 rests out of 400, at a near-zero residual;
- *   - four-point figures (Crux, Delphinus) on 100% of the remainder, again at
- *     a residual near zero.
- *
- * Neither is a statement about the sky; both are statements about geometry.
- * Five points is the first size a fit is not simply always available, so that
- * is where the pool starts.
- *
- * The upper bound is only economy: a twelve-point asterism has no realistic
- * chance of landing on twelve unrelated stars, so carrying Draco and Hercules
- * through the search costs time and returns nothing.
- */
-export const FIGURE_MATCH_MIN = 5;
-export const FIGURE_MATCH_MAX = 11;
-
-export function recognizableConstellations(): ConstellationShape[] {
-  return SHAPES.filter(
-    (s) =>
-      s.stars.length >= FIGURE_MATCH_MIN && s.stars.length <= FIGURE_MATCH_MAX
-  );
-}
-
 export function scaleForStarCount(n: number) {
   // Roomier figures so classic stick-shapes stay readable
   return 130 + Math.min(n, 20) * 16;
