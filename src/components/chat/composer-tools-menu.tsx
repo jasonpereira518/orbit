@@ -20,6 +20,7 @@ import { searchEventsForPicker, type EventPickerOption } from "@/actions/chat";
 import { searchContactsForPicker } from "@/actions/contacts";
 import type { ContactPickerOption } from "@/lib/contacts-page";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
+import { EventAvatar } from "@/components/chat/event-avatar";
 import { Button } from "@/components/ui/button";
 import { interactionTypeLabel, interactionTypeNoun } from "@/lib/interaction-types";
 import { Input } from "@/components/ui/input";
@@ -137,9 +138,17 @@ export function ComposerToolsMenu({
               key: e.id,
               title: `${e.contactName} — ${label.toLowerCase()}`,
               subtitle: e.summary || formatEventDate(e.interactionDate),
-              // Events are a meeting, not a person, so they keep the tab's own icon rather
-              // than borrowing the contact's face.
-              avatar: null as React.ReactNode,
+              // Whose meeting it was, badged with what kind. The tab keeps its own
+              // calendar icon; the rows carry the face you actually recognise.
+              avatar: (
+                <EventAvatar
+                  contactId={e.contactId}
+                  contactName={e.contactName}
+                  contactFirstName={e.contactFirstName}
+                  avatarUrl={e.contactAvatarUrl}
+                  interactionType={e.interactionType}
+                />
+              ) as React.ReactNode,
               insert: {
                 kind: "text" as const,
                 text: `my ${interactionTypeNoun(e.interactionType)} with ${e.contactName} on ${formatEventDate(e.interactionDate)}`,

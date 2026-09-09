@@ -136,6 +136,11 @@ export function useMentionAutocomplete(enabled: boolean): MentionAutocompleteSta
           id: `event:${e.id}`,
           title: `${e.contactName} — ${label.toLowerCase()}`,
           subtitle: e.summary || eventDate(e.interactionDate),
+          contactId: e.contactId,
+          contactName: e.contactName,
+          contactFirstName: e.contactFirstName,
+          avatarUrl: e.contactAvatarUrl,
+          interactionType: e.interactionType,
           // The noun, not the lowercased label: "my in person with Marcus" is not English.
           // Same map the `+` menu uses, so the two surfaces phrase an event identically.
           text: `my ${interactionTypeNoun(e.interactionType)} with ${e.contactName} on ${eventDate(e.interactionDate)}`,

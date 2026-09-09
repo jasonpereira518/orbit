@@ -10,6 +10,7 @@ import {
   type ChatRecommendation,
 } from "@/db/schema";
 import { chatWithNetwork } from "@/lib/ai";
+import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { requireUserId } from "@/lib/auth";
 import { prepareChatContext } from "@/lib/chat-context";
 import {
@@ -206,6 +207,16 @@ export type EventPickerOption = {
   id: string;
   contactId: string;
   contactName: string;
+  /** Drives the gendered fallback illustration when there is no photo. */
+  contactFirstName: string | null;
+  /**
+   * Browser-safe already, decided in Postgres.
+   *
+   * Never `profile_image_url` itself: that column holds base64 up to 120 KB a row when Blob
+   * storage is unconfigured, so a 25-row picker would drag the bytes out of the database
+   * only to rewrite them to `/api/avatars/{id}`.
+   */
+  contactAvatarUrl: string | null;
   interactionType: string;
   interactionDate: string;
   summary: string | null;
@@ -244,6 +255,8 @@ export async function searchEventsForPicker(
       contactId: interactions.contactId,
       fullName: contacts.fullName,
       preferredName: contacts.preferredName,
+      firstName: contacts.firstName,
+      avatarUrl: clientAvatarUrlSql.as("avatar_url"),
       interactionType: interactions.interactionType,
       interactionDate: interactions.interactionDate,
       aiSummary: interactions.aiSummary,
@@ -259,6 +272,8 @@ export async function searchEventsForPicker(
     id: r.id,
     contactId: r.contactId,
     contactName: r.preferredName?.trim() || r.fullName,
+    contactFirstName: r.firstName,
+    contactAvatarUrl: r.avatarUrl,
     interactionType: r.interactionType,
     interactionDate: r.interactionDate.toISOString(),
     // A one-line gist; the picker is a list, not a reader.

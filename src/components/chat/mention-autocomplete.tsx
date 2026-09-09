@@ -10,9 +10,9 @@
  */
 
 import { useEffect, useRef } from "react";
-import { CalendarDays } from "lucide-react";
 
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
+import { EventAvatar } from "@/components/chat/event-avatar";
 import { cn } from "@/lib/utils";
 
 /** One row, flattened from either source so the list can be one keyboard sequence. */
@@ -34,6 +34,11 @@ export type MentionOption =
       id: string;
       title: string;
       subtitle: string | null;
+      contactId: string;
+      contactName: string;
+      contactFirstName: string | null;
+      avatarUrl: string | null;
+      interactionType: string;
       /** The prose this row splices in. Events carry no `@` token — see the composer. */
       text: string;
     };
@@ -102,9 +107,13 @@ export function MentionAutocomplete({
                 className="size-7"
               />
             ) : (
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted">
-                <CalendarDays className="size-3.5 text-muted-foreground" aria-hidden />
-              </span>
+              <EventAvatar
+                contactId={option.contactId}
+                contactName={option.contactName}
+                contactFirstName={option.contactFirstName}
+                avatarUrl={option.avatarUrl}
+                interactionType={option.interactionType}
+              />
             )}
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm text-foreground">{option.title}</span>
