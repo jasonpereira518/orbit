@@ -22,9 +22,53 @@ export const DOUBLE_TAP_FACTOR = 1.8;
 export const INERTIA_DECAY = 0.94;
 export const INERTIA_MIN_PX_PER_FRAME = 0.06;
 /** How much recent movement feeds the flick velocity. */
-const VELOCITY_WINDOW_MS = 80;
+export const VELOCITY_WINDOW_MS = 80;
+/**
+ * Ceiling on a flick, in px per frame.
+ *
+ * A coast decays by INERTIA_DECAY per frame, so it travels roughly v / (1 - decay) —
+ * about 17x its opening speed. Without a ceiling one fast sample can throw the sky most
+ * of a screen-width past anything the finger suggested.
+ */
+export const MAX_FLICK_PX_PER_FRAME = 40;
 
-type Sample = { dx: number; dy: number; t: number };
+/** `dt` is the time since the previous move, so a sample carries its own duration. */
+export type Sample = { dx: number; dy: number; dt: number; t: number };
+
+/**
+ * How fast the finger was moving when it left the glass, in px per frame.
+ *
+ * Distance over the time those samples actually cover — NOT over the gap between the
+ * oldest one and now. Measuring against `now` collapses to near-zero whenever the window
+ * holds a single fresh sample, and a gentle 8px nudge before lifting then reads as
+ * hundreds of px per frame and hurls the sky off-screen. Seen doing exactly that on an
+ * iPhone; `scripts/smoke-graph-canvas.ts` pins the case.
+ */
+export function flickVelocity(samples: Sample[], now: number): Vec2 {
+  const recent = samples.filter((s) => now - s.t < VELOCITY_WINDOW_MS);
+  if (recent.length === 0) return { x: 0, y: 0 };
+
+  let dx = 0;
+  let dy = 0;
+  let elapsed = 0;
+  for (const s of recent) {
+    dx += s.dx;
+    dy += s.dy;
+    elapsed += s.dt;
+  }
+  // One frame is the shortest interval a pointer stream can meaningfully report.
+  elapsed = Math.max(elapsed, 16.67);
+
+  const vx = (dx / elapsed) * 16.67;
+  const vy = (dy / elapsed) * 16.67;
+
+  const speed = Math.hypot(vx, vy);
+  if (speed > MAX_FLICK_PX_PER_FRAME) {
+    const scale = MAX_FLICK_PX_PER_FRAME / speed;
+    return { x: vx * scale, y: vy * scale };
+  }
+  return { x: vx, y: vy };
+}
 
 export type SkyGestureHandlers = {
   /** Mutated in place and read by the draw loop — never React state. */
@@ -67,6 +111,7 @@ export function useSkyGestures(
     let lastTapAt = 0;
     let lastTapPoint: Vec2 | null = null;
     let samples: Sample[] = [];
+    let lastMoveAt = 0;
     let inertiaRaf = 0;
     let pinchDistance = 0;
     let pinchMid: Vec2 | null = null;
@@ -94,13 +139,9 @@ export function useSkyGestures(
      */
     const startInertia = () => {
       if (handlers.reducedMotion) return;
-      const now = performance.now();
-      const recent = samples.filter((s) => now - s.t < VELOCITY_WINDOW_MS);
-      if (recent.length === 0) return;
-
-      const span = Math.max(1, now - recent[0].t);
-      let vx = (recent.reduce((sum, s) => sum + s.dx, 0) / span) * 16.67;
-      let vy = (recent.reduce((sum, s) => sum + s.dy, 0) / span) * 16.67;
+      const v = flickVelocity(samples, performance.now());
+      let vx = v.x;
+      let vy = v.y;
       if (Math.hypot(vx, vy) < INERTIA_MIN_PX_PER_FRAME) return;
 
       const step = () => {
@@ -132,6 +173,7 @@ export function useSkyGestures(
       }
     };
 
+
     const onPointerDown = (e: PointerEvent) => {
       stopInertia();
       handlers.cancelTween();
@@ -143,6 +185,7 @@ export function useSkyGestures(
         start = { x: p.x, y: p.y, t: performance.now() };
         travelled = 0;
         samples = [];
+        lastMoveAt = start.t;
       } else if (pointers.size === 2) {
         const [a, b] = [...pointers.values()];
         pinchDistance = Math.hypot(b.x - a.x, b.y - a.y);
@@ -160,7 +203,9 @@ export function useSkyGestures(
         const dx = next.x - prev.x;
         const dy = next.y - prev.y;
         travelled += Math.hypot(dx, dy);
-        samples.push({ dx, dy, t: performance.now() });
+        const at = performance.now();
+        samples.push({ dx, dy, dt: at - lastMoveAt, t: at });
+        lastMoveAt = at;
         if (samples.length > 8) samples.shift();
         commit(panBy(handlers.cameraRef.current, dx, dy));
         return;
@@ -207,6 +252,7 @@ export function useSkyGestures(
         const [only] = [...pointers.values()];
         start = { x: only.x, y: only.y, t: performance.now() };
         samples = [];
+        lastMoveAt = start.t;
         pinchMid = null;
         pinchDistance = 0;
         return;

@@ -34,6 +34,13 @@ import {
 } from "../src/lib/graph/sky-camera";
 import { buildSkyGrid, hitTest, queryRect, type SkyTarget } from "../src/lib/graph/hit-test";
 import {
+  INERTIA_DECAY,
+  INERTIA_MIN_PX_PER_FRAME,
+  MAX_FLICK_PX_PER_FRAME,
+  flickVelocity,
+  type Sample,
+} from "../src/components/graph/sky-canvas/use-sky-gestures";
+import {
   SMALL_SKY_MAX_PX,
   SMALL_SKY_QUERY,
   isSmallSkyViewport,
@@ -201,6 +208,80 @@ console.log("\ncamera transform\n");
     }
     check("lerpCamera interpolates zoom geometrically, not linearly", alwaysBelow);
   }
+}
+
+// ---------------------------------------------------------------------------
+console.log("\nflick velocity\n");
+// ---------------------------------------------------------------------------
+{
+  const now = 10_000;
+  /** How far a coast travels in total, given its opening speed. */
+  const coastDistance = (v: number) => {
+    let speed = v;
+    let total = 0;
+    while (Math.abs(speed) >= INERTIA_MIN_PX_PER_FRAME) {
+      speed *= INERTIA_DECAY;
+      total += speed;
+    }
+    return Math.abs(total);
+  };
+
+  check(
+    "no samples means no coast",
+    flickVelocity([], now).x === 0 && flickVelocity([], now).y === 0
+  );
+  check(
+    "samples older than the window are ignored",
+    flickVelocity([{ dx: -40, dy: 0, dt: 16, t: now - 500 }], now).x === 0,
+    "a finger that paused before lifting is not a flick"
+  );
+
+  /**
+   * The case caught on a real iPhone: a slow drag that ends with one small nudge.
+   *
+   * Measuring against `now` rather than the samples' own duration made the elapsed time
+   * collapse toward zero, so an 8px nudge read as hundreds of px per frame and threw the
+   * sky most of a screen off. 8px over 250ms is about half a pixel a frame.
+   */
+  const gentle: Sample[] = [{ dx: -8, dy: -8, dt: 250, t: now - 1 }];
+  const gentleV = flickVelocity(gentle, now);
+  check(
+    "a slow nudge before lifting stays a slow nudge",
+    Math.hypot(gentleV.x, gentleV.y) < 2,
+    `${Math.hypot(gentleV.x, gentleV.y).toFixed(1)} px/frame`
+  );
+  check(
+    "...so it coasts a few pixels, not across the sky",
+    coastDistance(gentleV.x) < 20,
+    `${coastDistance(gentleV.x).toFixed(0)}px of coast`
+  );
+
+  const flick: Sample[] = [
+    { dx: -18, dy: 0, dt: 16, t: now - 48 },
+    { dx: -20, dy: 0, dt: 16, t: now - 32 },
+    { dx: -22, dy: 0, dt: 16, t: now - 16 },
+  ];
+  const flickV = flickVelocity(flick, now);
+  check(
+    "a real flick keeps the speed the finger actually had",
+    Math.abs(flickV.x + 20) < 1.5,
+    `${flickV.x.toFixed(1)} px/frame against ~-20 measured`
+  );
+
+  const violent: Sample[] = [{ dx: -900, dy: 0, dt: 16, t: now - 8 }];
+  check(
+    "an absurd sample is capped rather than trusted",
+    Math.abs(flickVelocity(violent, now).x) === MAX_FLICK_PX_PER_FRAME
+  );
+  check(
+    "so a coast can never exceed a bounded distance",
+    coastDistance(MAX_FLICK_PX_PER_FRAME) < 700,
+    `${coastDistance(MAX_FLICK_PX_PER_FRAME).toFixed(0)}px worst case`
+  );
+  check(
+    "the coast always terminates",
+    Number.isFinite(coastDistance(MAX_FLICK_PX_PER_FRAME))
+  );
 }
 
 // ---------------------------------------------------------------------------

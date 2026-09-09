@@ -159,7 +159,19 @@ export function GraphCanvasMobile(props: GraphChartProps) {
   /**
    * One coalescing invalidator. Between interactions this schedules nothing at all —
    * the canvas sits at zero frames until something actually changes.
+   *
+   * The pending handle is the gate, so whoever cancels a frame MUST clear it. Cancelling
+   * without clearing wedges the canvas permanently: every later `requestDraw` sees a
+   * truthy handle, assumes a frame is already coming, and returns. The chart then keeps
+   * accepting gestures and updating the camera while painting nothing — it looks frozen
+   * but is fully alive, which is a genuinely confusing way to fail. StrictMode's
+   * mount/cleanup/mount reaches this in development, because the refs survive it.
    */
+  const cancelDraw = useCallback(() => {
+    if (drawRafRef.current) cancelAnimationFrame(drawRafRef.current);
+    drawRafRef.current = 0;
+  }, []);
+
   const requestDraw = useCallback(() => {
     if (drawRafRef.current) return;
     drawRafRef.current = requestAnimationFrame(() => {
@@ -306,10 +318,13 @@ export function GraphCanvasMobile(props: GraphChartProps) {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [cancelTween, requestDraw]);
 
-  useEffect(() => () => {
-    if (drawRafRef.current) cancelAnimationFrame(drawRafRef.current);
-    if (tweenRafRef.current) cancelAnimationFrame(tweenRafRef.current);
-  }, []);
+  useEffect(
+    () => () => {
+      cancelDraw();
+      cancelTween();
+    },
+    [cancelDraw, cancelTween]
+  );
 
   // --- redraw triggers ----------------------------------------------------
   useEffect(() => {
