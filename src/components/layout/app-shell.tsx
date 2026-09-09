@@ -188,6 +188,13 @@ export function AppShell({
             <div
               className={cn(
                 "mx-auto flex w-full max-w-6xl flex-col px-4 py-6 md:px-10 md:py-8",
+                // Gutter for a page that floats a fixed rail over the right edge — the
+                // contacts A-Z scrubber is the one that does. It is an opaque card, so
+                // whatever it covers is gone, not dimmed. It publishes the variable only
+                // while mounted, so every other route pays nothing. On the content column
+                // rather than <main>, which also wraps the app header: insetting the logo
+                // and bell on one route would make the header jump between pages.
+                "pr-[var(--content-rail-gutter,0px)]",
                 isViewportLocked
                   ? "min-h-0 flex-1 overflow-hidden pb-[calc(5.25rem+env(safe-area-inset-bottom))] md:pb-8"
                   : isSettings

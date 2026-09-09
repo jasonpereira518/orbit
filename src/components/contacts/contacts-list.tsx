@@ -698,6 +698,26 @@ function AlphabetScrubber({
     setMounted(true);
   }, []);
 
+  /**
+   * Reserve the rail's width in the page, rather than floating over it.
+   *
+   * The rail is portalled to `<body>` and fixed to the right edge, so nothing in the
+   * page knows it is there. It is also an opaque card, so everything it covers is not
+   * dimmed but gone: the "Add contact" button, the Recruiters tab, the plan notice, and
+   * a row's own delete button were all being clipped by it on a phone.
+   *
+   * Publishing the footprint as a variable — rather than hard-coding padding on each
+   * page — keeps the gutter tied to the rail's actual presence: it is only paid while
+   * the rail is mounted, and it disappears with it.
+   */
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--content-rail-gutter", "3.25rem");
+    return () => {
+      root.style.removeProperty("--content-rail-gutter");
+    };
+  }, []);
+
   function letterFromClientY(clientY: number) {
     const el = railRef.current;
     if (!el) return null;

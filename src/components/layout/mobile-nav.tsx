@@ -378,9 +378,19 @@ export function MobileNav({
       <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
         <SheetContent
           side="bottom"
-          className="rounded-t-2xl pb-[env(safe-area-inset-bottom)]"
+          className="gap-0 pb-[max(0.5rem,env(safe-area-inset-bottom))]"
         >
-          <SheetHeader>
+          {/* A grabber, not a title bar.
+           *
+           * The sheet is opened by tapping a control labelled "More", so a heading
+           * repeating the word is weight without information. The handle says the same
+           * thing the heading was there to say — this is a panel that came up — in a
+           * quarter of the height and none of the voice. The accessible name stays; a
+           * dialog still has to announce itself. */}
+          <div className="flex justify-center pt-2.5 pb-1" aria-hidden="true">
+            <div className="h-1 w-9 rounded-full bg-foreground/15" />
+          </div>
+          <SheetHeader className="sr-only">
             <SheetTitle>More</SheetTitle>
           </SheetHeader>
 
