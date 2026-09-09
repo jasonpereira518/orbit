@@ -6,6 +6,7 @@ import { toast } from "@/lib/toast";
 import { deleteAllData, exportAllData } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
 import { AvatarSyncStatus } from "@/components/settings/avatar-sync-status";
+import { GooglePhotoMatch } from "@/components/settings/google-photo-match";
 import { cancelImportJob } from "@/lib/import-job-runner";
 
 export function DataSettings() {
@@ -74,6 +75,7 @@ export function DataSettings() {
           Delete all data
         </Button>
       </div>
+      <GooglePhotoMatch />
       <AvatarSyncStatus />
     </section>
   );

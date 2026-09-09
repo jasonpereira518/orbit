@@ -663,7 +663,6 @@ export function FloatingAskBar() {
                 contactId={profileContact.id}
                 firstName={profileContact.firstName}
                 fullName={profileContact.fullName}
-                linkedinUrl={profileContact.linkedinUrl}
                 profileImageUrl={profileContact.profileImageUrl}
                 size="sm"
                 className="size-6"

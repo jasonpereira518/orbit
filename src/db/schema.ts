@@ -305,6 +305,15 @@ export const contacts = pgTable(
     xHandle: text("x_handle"),
     website: text("website"),
     profileImageUrl: text("profile_image_url"),
+    /**
+     * When we last tried, and failed, to find a photo for this contact.
+     *
+     * Without it the only memory of a failed lookup was the client's in-page `skipIds`,
+     * so every page load re-attempted every unresolvable contact against every free
+     * tier — thousands of pointless requests per visit on a large network. The backfill
+     * skips a contact whose last attempt is inside AVATAR_RECHECK_DAYS.
+     */
+    profileImageCheckedAt: timestamp("profile_image_checked_at"),
     relationshipScore: integer("relationship_score").default(2).notNull(),
     /**
      * Closeness the user actually asserted, 1–5. NULL means never rated —

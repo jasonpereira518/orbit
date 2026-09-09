@@ -1,10 +1,15 @@
+import { createHash } from "node:crypto";
 import { put } from "@vercel/blob";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { linkedinSlug } from "@/lib/duplicates";
-import { isDurableAvatarUrl, isUnusableAvatarUrl } from "@/lib/contact-avatar-url";
+import {
+  isDurableAvatarUrl,
+  isUnfetchableImageUrl,
+} from "@/lib/contact-avatar-url";
 
 export {
   isDurableAvatarUrl,
+  isUnfetchableImageUrl,
   isUnusableAvatarUrl,
   resolveContactPhotoUrl,
 } from "@/lib/contact-avatar-url";
@@ -134,10 +139,15 @@ export function parseImageDataUrl(
 }
 
 /**
- * Resolve a LinkedIn profile photo and return a durable Blob URL.
- * Tries Microlink (OG image) first, then Unavatar as a fallback.
- * Throws {@link MicrolinkRateLimitError} only when Microlink is limited
- * and the Unavatar fallback also fails (so callers can surface quota).
+ * Resolve a LinkedIn profile photo and return a durable URL.
+ *
+ * Unavatar runs FIRST because it is free and unmetered for us; Microlink's free
+ * tier is ~25 lookups/day, so spending it before trying Unavatar capped the whole
+ * pipeline at ~25 contacts/day. Quota is now only ever spent on profiles Unavatar
+ * could not resolve.
+ *
+ * Throws {@link MicrolinkRateLimitError} only when Unavatar has already failed and
+ * Microlink is cooled down, so callers still surface quota exhaustion honestly.
  */
 export async function fetchLinkedInPhotoUrl(
   contactId: string,
@@ -146,40 +156,54 @@ export async function fetchLinkedInPhotoUrl(
   const slug = linkedinSlug(linkedinUrl);
   if (!slug) return null;
 
-  const normalized = linkedinUrl.includes("linkedin.com/in/")
-    ? linkedinUrl.trim()
-    : `https://www.linkedin.com/in/${slug}`;
-
-  let microlinkLimited = false;
-
-  if (!isMicrolinkRateLimited()) {
-    try {
-      const imageUrl = await resolveLinkedInOgImage(normalized);
-      if (imageUrl) {
-        const photoUrl = await downloadAndPersistAvatar(contactId, imageUrl);
-        if (photoUrl) return photoUrl;
-      }
-    } catch (err) {
-      // A broken photo store fails the same way for Unavatar — don't retry it.
-      if (err instanceof AvatarStorageError) throw err;
-      if (err instanceof MicrolinkRateLimitError) {
-        microlinkLimited = true;
-      }
-      // Fall through to Unavatar.
-    }
-  } else {
-    microlinkLimited = true;
-  }
-
-  // Unavatar resolves public LinkedIn avatars without spending Microlink quota.
+  // Free tier. Nothing stores this URL — `persistAvatar` returns inline/Blob bytes.
   const unavatarUrl = `https://unavatar.io/linkedin/${encodeURIComponent(slug)}?fallback=false`;
   const fromUnavatar = await downloadAndPersistAvatar(contactId, unavatarUrl);
   if (fromUnavatar) return fromUnavatar;
 
-  if (microlinkLimited) {
+  // Metered tier. Report exhaustion rather than silently returning "no photo".
+  if (isMicrolinkRateLimited()) {
     throw new MicrolinkRateLimitError(getMicrolinkCooldownUntil());
   }
+
+  const normalized = linkedinUrl.includes("linkedin.com/in/")
+    ? linkedinUrl.trim()
+    : `https://www.linkedin.com/in/${slug}`;
+
+  try {
+    const imageUrl = await resolveLinkedInOgImage(normalized);
+    if (imageUrl) {
+      const photoUrl = await downloadAndPersistAvatar(contactId, imageUrl);
+      if (photoUrl) return photoUrl;
+    }
+  } catch (err) {
+    // A broken photo store, or exhausted quota, are both worth surfacing.
+    if (err instanceof AvatarStorageError) throw err;
+    if (err instanceof MicrolinkRateLimitError) throw err;
+  }
+
   return null;
+}
+
+/**
+ * Resolve a photo from Gravatar by email address. Free and unmetered, so it runs
+ * alongside Unavatar ahead of Microlink's quota.
+ *
+ * `d=404` is load-bearing. Without it Gravatar happily serves a generated identicon
+ * for every address on earth, so we would persist a placeholder for every contact
+ * and — because that placeholder is a perfectly valid JPEG — never look again.
+ */
+export async function fetchGravatarPhotoUrl(
+  contactId: string,
+  email: string
+): Promise<string | null> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized.includes("@")) return null;
+  const hash = createHash("sha256").update(normalized, "utf8").digest("hex");
+  return downloadAndPersistAvatar(
+    contactId,
+    `https://gravatar.com/avatar/${hash}?s=256&d=404`
+  );
 }
 
 /**
@@ -192,7 +216,7 @@ export async function downloadAndPersistAvatar(
   imageUrl: string
 ): Promise<string | null> {
   if (isDurableAvatarUrl(imageUrl)) return imageUrl;
-  if (isUnusableAvatarUrl(imageUrl)) return null;
+  if (isUnfetchableImageUrl(imageUrl)) return null;
 
   const downloaded = await downloadImageBytes(imageUrl);
   if (!downloaded) return null;
@@ -204,7 +228,7 @@ export async function downloadImageBytes(
 ): Promise<{ buf: Buffer; contentType: string } | null> {
   const fromDataUrl = parseImageDataUrl(imageUrl);
   if (fromDataUrl) return fromDataUrl;
-  if (isUnusableAvatarUrl(imageUrl)) return null;
+  if (isUnfetchableImageUrl(imageUrl)) return null;
 
   try {
     const res = await fetch(imageUrl, {

@@ -27,9 +27,11 @@ import { getDashboardData } from "../src/lib/reminders";
 import { loadGraphData } from "../src/lib/graph-data";
 import { loadNotificationPanel } from "../src/lib/notification-panel";
 import {
+  AVATAR_RECHECK_DAYS,
   findAvatarBackfillCandidates,
   runAvatarBackfillBatch,
 } from "../src/lib/avatar-backfill";
+import { contactsListSelection } from "../src/lib/contact-avatar-sql";
 import { traced } from "../src/lib/perf-trace";
 import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { scaleContactRows } from "./lib/scale-fixture";
@@ -58,6 +60,18 @@ function selectsBare(statement: string, column: string) {
   return new RegExp(`"${column}"\\s*(,|\\bfrom\\b)`, "i").test(statement);
 }
 
+type SpecialRow = {
+  key: string;
+  profileImageUrl: string | null;
+  linkedinUrl: string | null;
+  email: string | null;
+  profileImageCheckedAt?: Date | null;
+};
+
+/** Hand-shaped avatar fixtures seeded on top of the N scaled rows. Keep in step with `special`. */
+const SPECIAL_ROWS = 8;
+const DAY_MS = 86_400_000;
+
 async function reset() {
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, USER));
@@ -74,12 +88,30 @@ async function seed() {
     await db.insert(contacts).values(rows.slice(start, start + 250));
   }
   // A handful of hand-shaped avatar states for the backfill candidate query.
-  const special = [
-    { key: "remote", profileImageUrl: "https://media.licdn.com/dms/image/abc/photo.jpg", linkedinUrl: null },
-    { key: "blob", profileImageUrl: "https://xyz.public.blob.vercel-storage.com/avatars/a.jpg", linkedinUrl: "https://www.linkedin.com/in/blob-person/" },
-    { key: "inline", profileImageUrl: `data:image/jpeg;base64,${"A".repeat(400)}`, linkedinUrl: "https://www.linkedin.com/in/inline-person/" },
-    { key: "unavatar", profileImageUrl: "https://unavatar.io/linkedin/someone", linkedinUrl: "https://www.linkedin.com/in/unavatar-person/" },
-    { key: "nothing", profileImageUrl: null, linkedinUrl: null },
+  const special: SpecialRow[] = [
+    { key: "remote", profileImageUrl: "https://media.licdn.com/dms/image/abc/photo.jpg", linkedinUrl: null, email: null },
+    { key: "blob", profileImageUrl: "https://xyz.public.blob.vercel-storage.com/avatars/a.jpg", linkedinUrl: "https://www.linkedin.com/in/blob-person/", email: null },
+    { key: "inline", profileImageUrl: `data:image/jpeg;base64,${"A".repeat(400)}`, linkedinUrl: "https://www.linkedin.com/in/inline-person/", email: null },
+    { key: "unavatar", profileImageUrl: "https://unavatar.io/linkedin/someone", linkedinUrl: "https://www.linkedin.com/in/unavatar-person/", email: null },
+    // No LinkedIn, but an email — Gravatar can still resolve this one.
+    { key: "emailOnly", profileImageUrl: null, linkedinUrl: null, email: "gravatar-person@example.com" },
+    { key: "nothing", profileImageUrl: null, linkedinUrl: null, email: null },
+    // Tried recently and found nothing: inside the cooldown, so not worth re-asking.
+    {
+      key: "checkedRecently",
+      profileImageUrl: null,
+      linkedinUrl: "https://www.linkedin.com/in/checked-person/",
+      email: null,
+      profileImageCheckedAt: new Date(Date.now() - 2 * DAY_MS),
+    },
+    // Tried long ago: the cooldown has expired, so it is due another look.
+    {
+      key: "checkedLongAgo",
+      profileImageUrl: null,
+      linkedinUrl: "https://www.linkedin.com/in/stale-person/",
+      email: null,
+      profileImageCheckedAt: new Date(Date.now() - (AVATAR_RECHECK_DAYS + 5) * DAY_MS),
+    },
   ];
   const ids: Record<string, string> = {};
   for (const s of special) {
@@ -87,7 +119,7 @@ async function seed() {
     // partial-shape overload does not resolve across both.
     const [row] = await db
       .insert(contacts)
-      .values({ userId: USER, fullName: `Special ${s.key}`, profileImageUrl: s.profileImageUrl, linkedinUrl: s.linkedinUrl })
+      .values({ userId: USER, fullName: `Special ${s.key}`, profileImageUrl: s.profileImageUrl, linkedinUrl: s.linkedinUrl, email: s.email, profileImageCheckedAt: s.profileImageCheckedAt ?? null })
       .returning();
     ids[s.key] = row.id;
   }
@@ -174,7 +206,7 @@ async function main() {
   check("graph payload under 3 MB", graphJson.length < 3_000_000, `${(graphJson.length / 1024).toFixed(0)} KB`);
   // Unfiltered on purpose, and now load-bearing: the constellation filter hides stars but
   // must never change what Orbit says the network *is*. This is the guard on that.
-  check("graph reports every contact", graph.summary.total === N + 5, `got ${graph.summary.total}`);
+  check("graph reports every contact", graph.summary.total === N + SPECIAL_ROWS, `got ${graph.summary.total}`);
   // The whole point of filtering server-side: the default view must not carry the people it
   // is not drawing. At ~741 bytes a contact, shipping them anyway is megabytes per visit.
   check(
@@ -199,7 +231,7 @@ async function main() {
   check("show-all issues ≤ 9 statements", graphAllCount <= 9, `got ${graphAllCount}`);
   check(
     "show-all carries the whole network",
-    graphAll.contacts.length === N + 5,
+    graphAll.contacts.length === N + SPECIAL_ROWS,
     `${graphAll.contacts.length}`
   );
   const engagedBytes = JSON.stringify(graph.contacts).length;
@@ -240,6 +272,37 @@ async function main() {
     Boolean(dueId) && panel.items.some((i) => i.kind === "follow_up" && i.contactId === dueId)
   );
 
+  // ---- Contacts list projection ------------------------------------------------------
+  // The hottest contacts scan in the app, and the one that was NOT guarded here — it
+  // selected profile_image_url whole (up to 120 KB of base64 per row) and then threw the
+  // bytes away in JS. `listContactsPage` calls requireUserId(), so run its exported
+  // projection directly.
+  console.log("\nContacts list (contactsListSelection)…");
+  startQueryCount();
+  const listRows = await db
+    .select(contactsListSelection)
+    .from(contacts)
+    .where(eq(contacts.userId, USER))
+    .limit(50);
+  stopQueryCount();
+  const listScans = contactScans(capturedQueries());
+  check("contacts list scans contacts", listScans.length >= 1);
+  check(
+    "contacts list does not pull profile_image_url as a bare column",
+    listScans.every((s) => !selectsBare(s, "profile_image_url")),
+    listScans.find((s) => selectsBare(s, "profile_image_url"))?.slice(0, 200)
+  );
+  check(
+    "contacts list does not pull notes",
+    listScans.every((s) => !selectsBare(s, "notes"))
+  );
+  const listJson = JSON.stringify(listRows);
+  check("contacts list payload carries no inline base64", !listJson.includes("data:image/"));
+  check(
+    "contacts list still resolves an inline avatar to the avatar route",
+    listJson.includes("/api/avatars/")
+  );
+
   // ---- Avatar backfill candidates ----------------------------------------------------
   console.log("\nAvatar backfill (findAvatarBackfillCandidates)…");
   startQueryCount();
@@ -270,7 +333,40 @@ async function main() {
   const ids = new Set(candidates.map((c) => c.id));
   check("a Blob-hosted photo is not a candidate", !ids.has(specialIds.blob));
   check("an inline photo is not a candidate", !ids.has(specialIds.inline));
-  check("a contact with no photo and no LinkedIn is not a candidate", !ids.has(specialIds.nothing));
+  check(
+    "a contact with no photo, no LinkedIn and no email is not a candidate",
+    !ids.has(specialIds.nothing)
+  );
+  // Gravatar tier: an email alone is enough to be worth a (free) lookup. Checked over the
+  // whole backlog rather than the first 25 — the scaled fixtures have emails too, so this
+  // contact sorts well past any small limit.
+  const allCandidates = await findAvatarBackfillCandidates(db, USER, {
+    limit: N + SPECIAL_ROWS,
+    skipIds: [],
+  });
+  const allIds = new Set(allCandidates.map((c) => c.id));
+  check(
+    "a contact with only an email is a candidate (Gravatar tier)",
+    allIds.has(specialIds.emailOnly)
+  );
+  check(
+    "a contact with no photo, no LinkedIn and no email is still not a candidate",
+    !allIds.has(specialIds.nothing)
+  );
+  // The cooldown is what stops every page load re-paying for the permanent misses.
+  check(
+    "a contact checked inside the cooldown is NOT a candidate",
+    !allIds.has(specialIds.checkedRecently)
+  );
+  check(
+    "a contact checked before the cooldown expired IS a candidate again",
+    allIds.has(specialIds.checkedLongAgo)
+  );
+  check(
+    "candidates carry the email needed for the Gravatar lookup",
+    allCandidates.find((c) => c.id === specialIds.emailOnly)?.email ===
+      "gravatar-person@example.com"
+  );
   const skipped = await findAvatarBackfillCandidates(db, USER, { limit: 25, skipIds: [specialIds.remote] });
   check("skipIds removes a candidate", !skipped.some((c) => c.id === specialIds.remote));
 
@@ -285,13 +381,16 @@ async function main() {
   const fake = Array.from({ length: 10 }, (_, i) => ({
     id: `fake-${i}`,
     linkedinUrl: `https://www.linkedin.com/in/fake-${i}/`,
+    email: null,
     remoteUrl: null,
   }));
   const result = await runAvatarBackfillBatch(fake, {
     deadline: Date.now() + 50,
     resolveLinkedIn: slow,
+    resolveGravatar: slow,
     persistRemote: slow,
     save: async () => {},
+    markChecked: async () => {},
   });
   check("batch stops at the deadline", resolved < 10, `resolved ${resolved}`);
   check(

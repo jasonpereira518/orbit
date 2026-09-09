@@ -224,7 +224,6 @@ export function WizardTriage({ onDone }: { onDone: () => void }) {
               contactId={c.id}
               firstName={c.firstName}
               fullName={c.fullName}
-              linkedinUrl={c.linkedinUrl}
               profileImageUrl={c.profileImageUrl}
               size="default"
             />

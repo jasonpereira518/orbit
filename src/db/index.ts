@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   x_handle text,
   website text,
   profile_image_url text,
+  profile_image_checked_at timestamp,
   relationship_score integer NOT NULL DEFAULT 2,
   priority_level integer NOT NULL DEFAULT 0,
   source text,
@@ -1038,7 +1039,7 @@ CREATE TABLE IF NOT EXISTS event_provider_connections (
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
  * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
  */
-export const SCHEMA_VERSION = 32;
+export const SCHEMA_VERSION = 33;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1479,6 +1480,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   );
   await ensureColumn(client, "contacts", "school", "text");
   await ensureColumn(client, "contacts", "profile_image_url", "text");
+  await ensureColumn(client, "contacts", "profile_image_checked_at", "timestamp");
   await ensureColumn(
     client,
     "user_settings",
@@ -1973,6 +1975,7 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS error_events_user_created_idx ON error_events(user_id, created_at)`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_checked_at timestamp`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS x_handle text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_linkedin_idx ON contacts(user_id, linkedin_url)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle)`,
