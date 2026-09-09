@@ -294,7 +294,14 @@
  * The breakpoint is 48rem (Tailwind's `md`, where `md:hidden` takes the nav
  * away) and NOT sonner's own 600px mobile breakpoint — otherwise toasts in the
  * 600-768px band would sit on a nav that is still there. That is why the
- * Toaster hands `offset` and `mobileOffset` the same variable. */
+ * Toaster hands `offset` and `mobileOffset` the same variable.
+ *
+ * A SECOND `:root` on purpose, so these sit with the media query that overrides
+ * them rather than in the middle of the colour palette. Be aware that
+ * `extension/scripts/tokens.mjs` mirrors only the FIRST `:root` block into the
+ * extension's tokens.css — correct here, since a 400px panel has no
+ * bottom-right widget stack, but it means anything the extension DOES need has
+ * to go in the block above, and `check:tokens` will not tell you otherwise. */
 :root {
   --orbit-corner-bottom: calc(
     5.25rem + env(safe-area-inset-bottom) + var(--orbit-corner-lift)
