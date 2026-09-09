@@ -712,7 +712,15 @@ function AlphabetScrubber({
    */
   useEffect(() => {
     const root = document.documentElement;
-    root.style.setProperty("--content-rail-gutter", "3.25rem");
+    /**
+     * The rail occupies 2.75rem of the right edge — `right-2` (0.5rem) plus its own
+     * `w-9` (2.25rem). The content column already carries 1rem of base padding, so the
+     * gutter only has to make up the difference plus a little air: 1 + 2.25 = 3.25rem
+     * total, which stops the content 0.5rem clear of the rail. Publishing the full
+     * 3.25rem here instead would double-count the padding and squeeze the header hard
+     * enough to change how its buttons wrap.
+     */
+    root.style.setProperty("--content-rail-gutter", "2.25rem");
     return () => {
       root.style.removeProperty("--content-rail-gutter");
     };
