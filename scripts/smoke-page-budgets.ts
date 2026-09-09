@@ -271,14 +271,24 @@ async function main() {
     suggestionScans.every((s) => /\blimit\b/i.test(s)),
     suggestionScans.find((s) => !/\blimit\b/i.test(s))?.slice(0, 300)
   );
-  // The point of the budget: cost must not track network size. If the closeness cohort ever
-  // creeps back into `getAttentionBrief` here, this is the check that fails.
+  // The point of the budget: cost must not track network SIZE. That is not the same as
+  // "identical regardless of data" — several lookups are conditional on there being
+  // something to look up (mentions only when the user uses `@`, contact briefs only when
+  // somebody is actually overdue), and skipping those on an empty account is correct.
+  // What must never happen is the count going UP with the size of the network, which is
+  // what a scan creeping in — the closeness cohort back inside `getAttentionBrief`, say —
+  // would look like. The bounded-in-SQL assertion above is the other half of that guard.
   startQueryCount();
   await loadSuggestionSignals(`${USER}-empty`);
   const emptyCount = stopQueryCount();
   check(
-    "an empty account issues the same number of statements as a 3,000-contact one",
-    emptyCount === suggestionCount,
+    "3,000 contacts cost no more statements than an empty account plus its conditional lookups",
+    suggestionCount <= emptyCount + 2,
+    `empty ${emptyCount} vs populated ${suggestionCount}`
+  );
+  check(
+    "and an empty account is never the more expensive one",
+    emptyCount <= suggestionCount,
     `empty ${emptyCount} vs populated ${suggestionCount}`
   );
 

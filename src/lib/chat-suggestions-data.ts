@@ -2,6 +2,7 @@ import { and, desc, eq, gte, inArray, isNotNull, lte, or, sql } from "drizzle-or
 import { getDb } from "@/db";
 import {
   chatMessages,
+  contactBriefs,
   contacts,
   interactionMentions,
   interactions,
@@ -213,15 +214,45 @@ export async function loadSuggestionSignals(
       .catch(() => []),
   ]);
 
+  // What you last talked about, for the people the row is about to nag you over. Keyed on
+  // ids already in hand and on the table's own primary key, so it stays one bounded read —
+  // `contact_briefs` has no `user_id` index, and a query that needed one would be a scan.
+  const nagIds = [
+    ...new Set([
+      ...(attention?.overdue ?? []).map((c) => c.id),
+      ...(attention?.suggestions ?? []).map((c) => c.id),
+    ]),
+  ];
+  const briefRows = nagIds.length
+    ? await db
+        .select({
+          contactId: contactBriefs.contactId,
+          recentDiscussions: contactBriefs.recentDiscussions,
+        })
+        .from(contactBriefs)
+        .where(
+          and(eq(contactBriefs.userId, userId), inArray(contactBriefs.contactId, nagIds))
+        )
+        .catch(() => [])
+    : [];
+  const lastDiscussedById = new Map<string, string>();
+  for (const row of briefRows) {
+    // Newest first is how `buildRecentDiscussions` writes them, so the head is the freshest.
+    const line = row.recentDiscussions?.[0]?.line?.trim();
+    if (line) lastDiscussedById.set(row.contactId, line);
+  }
+
   const overdue = (attention?.overdue ?? []).map((c) => ({
     id: c.id,
     name: c.name,
     daysOverdue: c.daysOverdue,
+    lastDiscussed: lastDiscussedById.get(c.id) ?? null,
   }));
   const goneQuiet = (attention?.suggestions ?? []).map((c) => ({
     id: c.id,
     name: c.name,
     reason: c.reason,
+    lastDiscussed: lastDiscussedById.get(c.id) ?? null,
   }));
 
   const recentInteractions = recentRows.map((r) => ({

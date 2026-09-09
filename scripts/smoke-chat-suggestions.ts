@@ -102,6 +102,48 @@ check(
   ladder.some((s) => s.question === "What should I ask Ada Lovelace next time we speak?"),
 );
 check("its basis counts the days", ladder.some((s) => s.basis === "Follow-up due 6 days ago"));
+
+// Urgency without a subject is half the story — the brief supplies the other half.
+const withBrief = buildChatSuggestions(
+  signals({
+    overdue: [
+      {
+        id: "c1",
+        name: "Ada",
+        daysOverdue: 6,
+        lastDiscussed: "Their on-call rota and the incident review.",
+      },
+    ],
+  }),
+);
+check(
+  "a remembered conversation joins the reason line",
+  withBrief[0]!.basis === "Follow-up due 6 days ago · last talked about Their on-call rota and the incident review.",
+  withBrief[0]!.basis,
+);
+check(
+  "and a contact with no brief keeps the plain reason",
+  buildChatSuggestions(signals({ overdue: [{ id: "c1", name: "Ada", daysOverdue: 6 }] }))[0]!
+    .basis === "Follow-up due 6 days ago",
+);
+check(
+  "a long remembered line is clipped rather than filling the tooltip",
+  buildChatSuggestions(
+    signals({
+      overdue: [{ id: "c1", name: "Ada", daysOverdue: 2, lastDiscussed: "x".repeat(300) }],
+    }),
+  )[0]!.basis.length < 130,
+);
+check(
+  "a newline in the brief cannot break the reason onto two lines",
+  !/[\r\n]/.test(
+    buildChatSuggestions(
+      signals({
+        overdue: [{ id: "c1", name: "Ada", daysOverdue: 2, lastDiscussed: "one\ntwo" }],
+      }),
+    )[0]!.basis,
+  ),
+);
 check("company cluster fires", ladder.some((s) => s.question === "Who else do I know at Ramp?"));
 check(
   "and names two of them",

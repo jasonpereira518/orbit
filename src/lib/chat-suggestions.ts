@@ -94,8 +94,25 @@ export type ChatSuggestion = {
 
 export type SuggestionSignals = {
   now: Date;
-  overdue: Array<{ id: string; name: string; daysOverdue: number }>;
-  goneQuiet: Array<{ id: string; name: string; reason: string }>;
+  /**
+   * `lastDiscussed` is the one-line summary from their contact brief, when there is one.
+   *
+   * Urgency without a subject is half the story: "follow-up due 6 days ago" says you should
+   * write, not whether you have anything to say. The brief already holds a sentence about
+   * what you last talked about, written when it was fresh.
+   */
+  overdue: Array<{
+    id: string;
+    name: string;
+    daysOverdue: number;
+    lastDiscussed?: string | null;
+  }>;
+  goneQuiet: Array<{
+    id: string;
+    name: string;
+    reason: string;
+    lastDiscussed?: string | null;
+  }>;
   recentInteractions: Array<{
     contactId: string;
     name: string;
@@ -230,6 +247,18 @@ function displayName(raw: string): string | null {
   return clean.length > MAX_NAME_LEN ? `${clean.slice(0, MAX_NAME_LEN - 1)}…` : clean;
 }
 
+/** How much of a remembered conversation fits a tooltip before it stops being glanceable. */
+const SUBJECT_MAX_LEN = 70;
+
+/** "Follow-up due 6 days ago" plus what it was about, when the brief remembers. */
+function withSubject(base: string, lastDiscussed?: string | null): string {
+  const subject = sanitizeProfileLine(lastDiscussed ?? "");
+  if (!subject) return base;
+  const clipped =
+    subject.length > SUBJECT_MAX_LEN ? `${subject.slice(0, SUBJECT_MAX_LEN - 1)}…` : subject;
+  return `${base} · last talked about ${clipped}`;
+}
+
 type Candidate = ChatSuggestion & {
   /**
    * Breaks rank ties, higher first.
@@ -270,10 +299,12 @@ function buildCandidates(signals: SuggestionSignals): Candidate[] {
       id: `overdue:${c.id}`,
       kind: "overdue",
       question: `What should I ask ${name} next time we speak?`,
-      basis:
+      basis: withSubject(
         c.daysOverdue <= 0
           ? "Follow-up due today"
           : `Follow-up due ${c.daysOverdue} day${c.daysOverdue === 1 ? "" : "s"} ago`,
+        c.lastDiscussed
+      ),
       contactIds: [c.id],
       interactionType: null,
       rank: 1,
@@ -344,7 +375,7 @@ function buildCandidates(signals: SuggestionSignals): Candidate[] {
       id: `gone_quiet:${c.id}`,
       kind: "gone_quiet",
       question: `What could I message ${name} about?`,
-      basis: sanitizeProfileLine(c.reason) || "No contact in a while",
+      basis: withSubject(sanitizeProfileLine(c.reason) || "No contact in a while", c.lastDiscussed),
       contactIds: [c.id],
       interactionType: null,
       rank: 6,
