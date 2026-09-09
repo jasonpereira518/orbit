@@ -213,21 +213,40 @@ export function MobileNav({
     <>
       <nav
         className="fixed inset-x-0 bottom-0 z-40 flex justify-center px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] md:hidden"
-        style={{ viewTransitionName: "app-mobile-nav" }}
         aria-label="Main navigation"
       >
         {/* Scrim behind the now-transparent pill — grounds it against
          * whatever's scrolling underneath so it stays readable without
-         * giving the pill itself an opaque fill. */}
+         * giving the pill itself an opaque fill.
+         *
+         * It fades to the page background, not to black. The pill is glass: it is
+         * painted over whatever sits behind it, and this scrim IS what sits behind it.
+         * A black wash therefore did not ground the pill against the page — it became
+         * the pill's backdrop, and a translucent white pill over 25% black renders as a
+         * grey slab rather than as frosted glass. Fading to `--background` gives the
+         * glass the page colour to frost, which is what it was designed to sit on.
+         *
+         * Dark mode keeps its black wash: there the pill is meant to read dark, and the
+         * scrim is also what keeps the portalled starfield from showing through the nav. */}
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-black/25 via-black/8 to-transparent dark:from-black/55 dark:via-black/20"
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-background via-background/45 to-transparent dark:from-black/55 dark:via-black/20"
         />
 
         <div className="relative w-full max-w-lg">
           <div className="liquid-glass liquid-glass-pill" aria-hidden="true" />
 
+          {/*
+            The view-transition name sits on the list, not on the <nav>.
+            An element with `view-transition-name` becomes a backdrop root, so while it
+            was on the <nav> the glass pill inside had nothing behind it to sample and
+            `backdrop-filter` silently did nothing — which is why the nav depended on a
+            black scrim to stay readable in the first place. On the list it still names
+            the one part that must persist across a route change, and the pill beneath it
+            can actually frost the page. Moving it back up re-breaks the blur.
+          */}
           <ul
+            style={{ viewTransitionName: "app-mobile-nav" }}
             className="relative z-10 flex touch-none items-stretch justify-around gap-0.5 px-1.5 pt-1 pb-1.5"
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
