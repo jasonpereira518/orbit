@@ -223,6 +223,28 @@ export async function downloadAndPersistAvatar(
   return persistAvatar(contactId, downloaded.buf, downloaded.contentType);
 }
 
+/**
+ * A photograph is never a vector.
+ *
+ * Unavatar answers LinkedIn lookups with HTTP 200 and a GENERATED PERSON SILHOUETTE
+ * in SVG — it ignores `fallback=false` for that provider. sharp decodes SVG happily,
+ * so without this guard the placeholder is stored as though it were a real headshot
+ * and `isDurableAvatarUrl` then reports it as done, meaning the contact is never
+ * looked at again. Every LinkedIn contact would end up with a permanent fake face.
+ *
+ * A silhouette that admits it is a silhouette is strictly better than one that lies:
+ * the honest one is retryable and reads as "no photo yet".
+ */
+function isVectorContentType(contentType: string): boolean {
+  return contentType === "image/svg+xml" || contentType === "image/svg";
+}
+
+/** Magic-byte check, for placeholders whose content-type does not admit to being SVG. */
+function looksLikeSvg(buf: Buffer): boolean {
+  const head = buf.subarray(0, 256).toString("utf8").trimStart().toLowerCase();
+  return head.startsWith("<svg") || (head.startsWith("<?xml") && head.includes("<svg"));
+}
+
 export async function downloadImageBytes(
   imageUrl: string
 ): Promise<{ buf: Buffer; contentType: string } | null> {
@@ -247,9 +269,12 @@ export async function downloadImageBytes(
       .split(";")[0]
       .trim();
     if (!contentType.startsWith("image/")) return null;
+    if (isVectorContentType(contentType)) return null;
 
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.byteLength === 0 || buf.byteLength > MAX_DOWNLOAD_BYTES) return null;
+    // Sniff too: a placeholder served as image/png that is really SVG still counts.
+    if (looksLikeSvg(buf)) return null;
     return { buf, contentType };
   } catch {
     return null;

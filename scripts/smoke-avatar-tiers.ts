@@ -18,6 +18,7 @@
  */
 import { createHash } from "node:crypto";
 import {
+  downloadAndPersistAvatar,
   fetchGravatarPhotoUrl,
   fetchLinkedInPhotoUrl,
   isUnfetchableImageUrl,
@@ -63,6 +64,18 @@ function jpegResponse() {
   return new Response(Buffer.from(PIXEL_JPEG_BASE64, "base64"), {
     status: 200,
     headers: { "Content-Type": "image/jpeg" },
+  });
+}
+
+/** What unavatar.io actually returns for a LinkedIn lookup: a generated silhouette. */
+const PLACEHOLDER_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" id="person-accent-4">' +
+  '<path fill="#e7e2dc" d="M0 0h128v128H0z"/></svg>';
+
+function svgResponse(contentType = "image/svg+xml") {
+  return new Response(PLACEHOLDER_SVG, {
+    status: 200,
+    headers: { "Content-Type": contentType },
   });
 }
 
@@ -140,6 +153,55 @@ async function main() {
         "unavatar is tried BEFORE microlink",
         unavatarAt >= 0 && microlinkAt > unavatarAt,
         `unavatar@${unavatarAt}, microlink@${microlinkAt}`
+      );
+    }
+  );
+
+  // ---- Placeholder rejection ---------------------------------------------------
+  // Unavatar answers LinkedIn with HTTP 200 and a generated person silhouette in SVG,
+  // ignoring `fallback=false`. sharp decodes it, so an unguarded pipeline stores it as a
+  // real headshot AND marks it durable — every LinkedIn contact gets a permanent fake
+  // face and is never retried. Verified against the live service before writing this.
+  //
+  // Asserted on the download step rather than the whole ladder: the ladder correctly
+  // moves on to Microlink after a placeholder, whose rate-limit state is process-wide
+  // and would make this assertion depend on test ordering.
+  const UNAVATAR_URL = "https://unavatar.io/linkedin/tier-person?fallback=false";
+
+  await withFetch(
+    () => svgResponse(),
+    async () => {
+      const stored = await downloadAndPersistAvatar("svg-1", UNAVATAR_URL);
+      check(
+        "a vector placeholder is NOT persisted as a headshot",
+        stored === null,
+        String(stored).slice(0, 60)
+      );
+    }
+  );
+
+  // Same placeholder, but the service lies about the type.
+  await withFetch(
+    () => svgResponse("image/png"),
+    async () => {
+      const stored = await downloadAndPersistAvatar("svg-2", UNAVATAR_URL);
+      check(
+        "an SVG mislabelled as image/png is still rejected (magic bytes)",
+        stored === null,
+        String(stored).slice(0, 60)
+      );
+    }
+  );
+
+  // The guard must not reject real raster photos.
+  await withFetch(
+    () => jpegResponse(),
+    async () => {
+      const stored = await downloadAndPersistAvatar("svg-3", UNAVATAR_URL);
+      check(
+        "a real raster photo still persists",
+        Boolean(stored?.startsWith("data:image/")),
+        String(stored).slice(0, 48)
       );
     }
   );
