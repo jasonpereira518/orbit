@@ -425,7 +425,6 @@
     0 8px 32px -8px rgba(26, 28, 26, 0.18),
     0 2px 8px -2px rgba(26, 28, 26, 0.08);
   backdrop-filter: blur(28px) saturate(1.65);
-  -webkit-backdrop-filter: blur(28px) saturate(1.65);
   /* backdrop-filter is intentionally NOT transitioned — animating a re-blur
    * of the largest persistent surface is one of the most expensive effects
    * a browser can run. */
@@ -701,7 +700,6 @@
    * the panel makes the browser resample it every frame. Switched off rather than left to
    * burn frames for an effect nobody can see. */
   backdrop-filter: none;
-  -webkit-backdrop-filter: none;
   /* `.liquid-glass` declares `transition` as a SHORTHAND, and being unlayered it beats
    * Tailwind's `transition`/`duration-*` utilities outright — which silently reduces the
    * open/close to background+border+shadow and makes the window snap into place instead
@@ -1234,7 +1232,6 @@
     rgba(232, 243, 241, 0.015) 100%
   );
   backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
 }
 
 /* Sticky nav pill — more opaque than .dark .liquid-glass so the starfield
@@ -1257,7 +1254,6 @@
     0 16px 48px -12px rgba(0, 0, 0, 0.65),
     0 4px 14px -4px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(24px) saturate(1.4);
-  -webkit-backdrop-filter: blur(24px) saturate(1.4);
 }
 
 .landing-header-glass::before {
