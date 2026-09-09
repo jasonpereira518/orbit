@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   chatMessages,
@@ -29,6 +29,8 @@ import {
   sanitizeProfileText,
 } from "@/lib/contact-profile-format";
 import { getQueryEmbedding } from "@/lib/embedding-cache";
+import { interactionTypeLabel } from "@/lib/interaction-types";
+import { isoDay } from "@/lib/suggested-reminder-utils";
 import { hybridSearchContacts, type RankedContact } from "@/lib/hybrid-search";
 import { isRecruiterIntent } from "@/lib/recruiters";
 import { loadRecruitersForChat } from "@/actions/recruiters";
@@ -59,7 +61,8 @@ export type ChatContext = {
   thread: { id: string; title: string | null } | null;
   priorTurns: ChatTurn[];
   retrieved: RankedContact[];
-  snippets: Map<string, { recentMessages: string[] }>;
+  /** Recent interactions per retrieved contact, as dated lines. */
+  snippets: Map<string, { timeline: string[] }>;
   scopedQuestion: string;
   orgRosters: OrgRoster[];
   attention: AttentionBrief | null;
@@ -105,36 +108,78 @@ export type ChatContext = {
   focusProfile: string | null;
 };
 
-async function loadKnowledgeSnippets(
+/** Per contact, before the rank tiers trim it further. */
+const TIMELINE_FETCH_PER_CONTACT = 8;
+
+/**
+ * What has actually happened with each retrieved contact.
+ *
+ * This used to filter to `interaction_type = 'linkedin_message'`, which meant the coffee
+ * you logged on Tuesday never reached the model: unless a contact was explicitly attached,
+ * every answer about them was written from a free-text notes blob. That was a quality
+ * ceiling on the whole feature, not a gap in one corner of it. Lines are shaped like the
+ * attached block's (`renderAttachedPeople`) so a contact reads the same however they got
+ * into the prompt.
+ *
+ * The `row_number()` window is what makes it fair. A flat `LIMIT contactIds.length * N`
+ * ordered by date takes the most recent rows across everyone, so one contact you message
+ * daily can fill the whole allowance and leave eleven others with nothing. Partitioning
+ * gives each contact their own N.
+ */
+async function loadRecentInteractions(
   userId: string,
   contactIds: string[]
-): Promise<Map<string, { recentMessages: string[] }>> {
-  const result = new Map<string, { recentMessages: string[] }>();
+): Promise<Map<string, { timeline: string[] }>> {
+  const result = new Map<string, { timeline: string[] }>();
   if (!contactIds.length) return result;
 
   const db = await getDb();
-  const msgs = await db.query.interactions.findMany({
-    where: and(
-      eq(interactions.userId, userId),
-      inArray(interactions.contactId, contactIds),
-      eq(interactions.interactionType, "linkedin_message")
-    ),
-    orderBy: [desc(interactions.interactionDate)],
-    limit: contactIds.length * 8,
-  });
+  const ranked = db
+    .select({
+      contactId: interactions.contactId,
+      interactionDate: interactions.interactionDate,
+      interactionType: interactions.interactionType,
+      aiSummary: interactions.aiSummary,
+      rawNotes: interactions.rawNotes,
+      rn: sql<number>`row_number() over (
+        partition by ${interactions.contactId}
+        order by ${interactions.interactionDate} desc, ${interactions.sameDayOrder} desc
+      )`.as("rn"),
+    })
+    .from(interactions)
+    .where(
+      and(eq(interactions.userId, userId), inArray(interactions.contactId, contactIds))
+    )
+    .as("ranked");
+
+  const rows = await db
+    .select({
+      contactId: ranked.contactId,
+      interactionDate: ranked.interactionDate,
+      interactionType: ranked.interactionType,
+      aiSummary: ranked.aiSummary,
+      rawNotes: ranked.rawNotes,
+    })
+    .from(ranked)
+    .where(sql`${ranked.rn} <= ${TIMELINE_FETCH_PER_CONTACT}`)
+    .orderBy(desc(ranked.interactionDate));
 
   const byContact = new Map<string, string[]>();
-  for (const m of msgs) {
-    const list = byContact.get(m.contactId) || [];
-    if (list.length >= 6) continue;
-    const text = (m.aiSummary || m.rawNotes || "").trim();
+  for (const row of rows) {
+    const text = (row.aiSummary || row.rawNotes || "").trim();
     if (!text) continue;
-    list.push(text.slice(0, 280));
-    byContact.set(m.contactId, list);
+    const list = byContact.get(row.contactId) || [];
+    // Sanitized for the same reason the attached block sanitizes: a newline inside a note
+    // would otherwise forge a row of its own inside the fenced contacts list.
+    const line = `${isoDay(new Date(row.interactionDate))} · ${interactionTypeLabel(
+      row.interactionType
+    )}: ${sanitizeProfileLine(text)}`;
+    list.push(line);
+    byContact.set(row.contactId, list);
   }
 
   for (const id of contactIds) {
-    result.set(id, { recentMessages: byContact.get(id) || [] });
+    result.set(id, { timeline: byContact.get(id) || [] });
   }
   return result;
 }
@@ -169,7 +214,7 @@ async function retrieveRankedContacts(
     expansionTerms: parsedQuery.expansionTerms,
     limit: CANDIDATE_POOL,
   });
-  return rerankCandidates(userId, q, candidates);
+  return rerankCandidates(userId, q, candidates, undefined, parsedQuery.semanticQuery);
 }
 
 // Every field below is written by the profile's owner, so it is exactly as
@@ -382,7 +427,7 @@ export async function prepareChatContext(
   // in this parallel batch rather than a serial await gated on that lookup.
   const retrievedIds = retrieved.map((c) => c.id);
   const [snippets, careerLines, focusMsgs, focusProfileData] = await Promise.all([
-    loadKnowledgeSnippets(userId, retrievedIds),
+    loadRecentInteractions(userId, retrievedIds),
     getCareerLines(userId, retrievedIds).catch(() => new Map<string, string>()),
     focusContactId
       ? db.query.interactions.findMany({
@@ -397,12 +442,19 @@ export async function prepareChatContext(
   ]);
   const focusProfile = renderFocusProfile(focusProfileData);
   if (focusContactId) {
+    // The focused contact still gets a deeper slice than the tiers would allow, and now in
+    // the same dated shape as everyone else.
     snippets.set(focusContactId, {
-      recentMessages: focusMsgs
-        .map((m) => (m.aiSummary || m.rawNotes || "").trim())
+      timeline: focusMsgs
+        .map((m) => {
+          const text = (m.aiSummary || m.rawNotes || "").trim();
+          if (!text) return "";
+          return `${isoDay(new Date(m.interactionDate))} · ${interactionTypeLabel(
+            m.interactionType
+          )}: ${sanitizeProfileLine(text).slice(0, 320)}`;
+        })
         .filter(Boolean)
-        .slice(0, 12)
-        .map((t) => t.slice(0, 320)),
+        .slice(0, 12),
     });
   }
 

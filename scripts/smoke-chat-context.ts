@@ -64,15 +64,26 @@ async function main() {
   check("the Acme roster is exhaustive (2 people)", acme?.total === 2, JSON.stringify(ctx.orgRosters));
   check("roster people are eligible recommendations", Boolean(acme) && acme!.people.every((p) => ctx.allowedContacts.has(p.id)));
   check("snippets exist for every retrieved contact", ctx.retrieved.every((c) => ctx.snippets.has(c.id)));
-  check("Ada's LinkedIn message is a snippet", (ctx.snippets.get(ada)?.recentMessages ?? []).some((m) => /Tuesday/.test(m)));
+  check(
+    "Ada's message reaches the timeline",
+    (ctx.snippets.get(ada)?.timeline ?? []).some((m: string) => /Tuesday/.test(m)),
+    JSON.stringify(ctx.snippets.get(ada)?.timeline)
+  );
+  check(
+    "and it is dated and labelled, not bare text",
+    (ctx.snippets.get(ada)?.timeline ?? []).some((m: string) =>
+      /^\d{4}-\d{2}-\d{2} · LinkedIn: /.test(m)
+    ),
+    JSON.stringify(ctx.snippets.get(ada)?.timeline)
+  );
   check("no focus: the question is passed through unscoped", ctx.scopedQuestion === ctx.q);
   check("no thread: no prior turns", ctx.priorTurns.length === 0 && ctx.thread === null);
-  check("model context rows carry recent messages", ctx.modelContacts.find((c) => c.id === ada)?.recentMessages.length === 1);
+  check("model context rows carry the timeline", ctx.modelContacts.find((c) => c.id === ada)?.timeline.length === 1);
 
   const focused = await prepareChatContext(USER, "What did we last discuss?", { focusContactId: ada });
   check("focus: the pinned contact leads the list with relevance 1", focused.retrieved[0]?.id === ada && focused.retrieved[0]?.relevance === 1);
   check("focus: the question is scoped to the pinned contact", focused.scopedQuestion.includes(ada) && focused.scopedQuestion.endsWith("What did we last discuss?"));
-  check("focus: the pinned contact's interactions are the snippets", (focused.snippets.get(ada)?.recentMessages ?? []).length >= 1);
+  check("focus: the pinned contact's interactions are the snippets", (focused.snippets.get(ada)?.timeline ?? []).length >= 1);
 
   const filtered = ctx.filterRecommendations([
     { contact_id: ada, recruiter_id: null, name: "Ada", reason: "r", suggested_action: "a", draft_message: null },
@@ -122,6 +133,75 @@ async function main() {
   check(
     "a retrieved contact does not carry the whole profile",
     !JSON.stringify(katherine ?? {}).includes("Computed orbital mechanics by hand.")
+  );
+
+  // --- every interaction type reaches a retrieved contact, fairly ---------------------
+
+  const chatty = (
+    await db.insert(contacts).values({ userId: USER, fullName: "Chatty Person", company: "Acme" }).returning()
+  )[0].id;
+  const quiet = (
+    await db.insert(contacts).values({ userId: USER, fullName: "Quiet Person", company: "Acme" }).returning()
+  )[0].id;
+  // 20 recent rows for one, 1 old row for the other. A flat `LIMIT n * perContact` ordered
+  // by date hands every slot to the chatty one and the quiet one arrives with nothing.
+  await db.insert(interactions).values([
+    ...Array.from({ length: 20 }, (_, i) => ({
+      userId: USER,
+      contactId: chatty,
+      interactionType: "in_person",
+      rawNotes: `Chatty meeting ${i}`,
+      interactionDate: new Date(Date.now() - i * 3_600_000),
+    })),
+    {
+      userId: USER,
+      contactId: quiet,
+      interactionType: "call",
+      rawNotes: "The one call we ever had.",
+      interactionDate: new Date(Date.now() - 400 * 86_400_000),
+    },
+  ]);
+
+  const fair = await prepareChatContext(USER, "Who do I know at Acme?", {});
+  check(
+    "a coffee reaches the model, not just LinkedIn messages",
+    (fair.snippets.get(chatty)?.timeline ?? []).some((l: string) => /In person: Chatty meeting/.test(l)),
+    JSON.stringify(fair.snippets.get(chatty)?.timeline?.slice(0, 2))
+  );
+  check(
+    "a quiet contact is not starved by a chatty one",
+    (fair.snippets.get(quiet)?.timeline ?? []).some((l: string) => /The one call we ever had/.test(l)),
+    JSON.stringify(fair.snippets.get(quiet)?.timeline)
+  );
+  check(
+    "and the chatty one is still capped",
+    (fair.snippets.get(chatty)?.timeline ?? []).length <= 8,
+    String((fair.snippets.get(chatty)?.timeline ?? []).length)
+  );
+
+  // --- a school roster counts alumni who also have jobs --------------------------------
+
+  await db.insert(contacts).values([
+    { userId: USER, fullName: "Employed Alum", company: "Ramp", school: "Wossamotta U" },
+    { userId: USER, fullName: "Studying Alum", school: "Wossamotta U" },
+  ]);
+  const schoolCtx = await prepareChatContext(USER, "Who do I know from Wossamotta U?", {});
+  const wossamotta = schoolCtx.orgRosters.find((r) => r.kind === "school");
+  check(
+    "the school roster counts the alum who also has an employer",
+    wossamotta?.total === 2,
+    JSON.stringify(schoolCtx.orgRosters.map((r) => [r.kind, r.name, r.total]))
+  );
+  check(
+    "and its total matches the people it lists",
+    wossamotta?.total === wossamotta?.people.length,
+    JSON.stringify({ total: wossamotta?.total, listed: wossamotta?.people.length })
+  );
+  check(
+    "the employer still counts them too — one contact, two organisations",
+    schoolCtx.orgRosters.every((r) => r.kind !== "company") ||
+      (schoolCtx.orgRosters.find((r) => r.kind === "company")?.total ?? 0) >= 1,
+    JSON.stringify(schoolCtx.orgRosters.map((r) => [r.kind, r.name, r.total]))
   );
 
   // --- attached people: the composer's `+` puts a real timeline in front of the model ---

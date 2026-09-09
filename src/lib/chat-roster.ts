@@ -50,24 +50,31 @@ export async function findOrgRosters(
 
   const db = await getDb();
 
-  // Cheap: one grouped scan over two indexed-ish columns, no joins, no row bodies.
-  const orgRows = await db
-    .select({
-      name: sql<string>`coalesce(${contacts.company}, ${contacts.school})`,
-      kind: sql<"company" | "school">`case when ${contacts.company} is not null then 'company' else 'school' end`,
-      total: sql<number>`count(*)::int`,
-    })
-    .from(contacts)
-    .where(
-      and(
-        eq(contacts.userId, userId),
-        sql`(${contacts.company} is not null or ${contacts.school} is not null)`
-      )
-    )
-    .groupBy(
-      sql`coalesce(${contacts.company}, ${contacts.school})`,
-      sql`case when ${contacts.company} is not null then 'company' else 'school' end`
-    );
+  // Two grouped scans rather than one, because a contact belongs to their employer AND
+  // their school. This was `coalesce(company, school)` with a `case` for the kind, which
+  // counts anyone holding a job as a company row only — so a school's `total` excluded
+  // every employed alum while the roster fetch below, keyed on `school` alone, listed them.
+  // The block still printed "(complete)", over a number the system prompt calls
+  // "authoritative and exhaustive". Two scans is the price of the count being true.
+  const groupedBy = (
+    column: typeof contacts.company | typeof contacts.school,
+    kind: "company" | "school"
+  ) =>
+    db
+      .select({
+        name: sql<string>`${column}`,
+        kind: sql<"company" | "school">`${kind}`,
+        total: sql<number>`count(*)::int`,
+      })
+      .from(contacts)
+      .where(and(eq(contacts.userId, userId), isNotNull(column)))
+      .groupBy(column);
+
+  const [companyRows, schoolRows] = await Promise.all([
+    groupedBy(contacts.company, "company"),
+    groupedBy(contacts.school, "school"),
+  ]);
+  const orgRows = [...companyRows, ...schoolRows];
 
   // Fold aliases together the same way the constellation does, so "AWS" and "Amazon Web
   // Services" are one organisation here too and the count matches what the map shows.
