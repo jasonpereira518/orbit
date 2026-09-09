@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import {
   useCallback,
   useEffect,
@@ -9,23 +8,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type CSSProperties,
 } from "react";
-import {
-  ReactFlow,
-  Background,
-  useReactFlow,
-  ReactFlowProvider,
-  applyNodeChanges,
-  useStoreApi,
-  type Node,
-  type Edge,
-  type EdgeTypes,
-  type NodeMouseHandler,
-  type OnNodeDrag,
-  type OnNodesChange,
-} from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
 import {
   getFullGraphData,
   getGraphData,
@@ -48,23 +31,21 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
-  ClusterLabelNode,
-  ContactNode,
-  LabeledEdge,
-  NebulaNode,
-  OrbitRingsNode,
-  SunNode,
-} from "@/components/graph/graph-nodes";
-import {
   ContactInspectPanel,
   type InspectSelection,
 } from "@/components/graph/contact-inspect-panel";
+import type { GraphNodeData } from "@/lib/graph-layout";
+import { Starfield } from "@/components/graph/constellation-starfield";
+import { useSmallSky } from "@/components/graph/use-small-sky";
 import {
-  buildHybridGraphLayout,
-  type ClusterLabelData,
-  type GraphNodeData,
-  type NebulaData,
-} from "@/lib/graph-layout";
+  buildContactHaystackIndex,
+  findClusterMatch,
+  matchGraphContacts,
+} from "@/lib/graph/search-match";
+import {
+  loadPositions,
+  savePositions,
+} from "@/lib/graph/positions-storage";
 import {
   mergePositionsForStorage,
   prunePositionsForRender,
@@ -72,7 +53,6 @@ import {
 import {
   getIntroRun,
   markGraphChunkLoaded,
-  markGraphViewportReady,
   subscribe as subscribeIntro,
 } from "@/lib/graph/intro-signal";
 import {
@@ -83,10 +63,7 @@ import {
   publishGraphScope,
   registerGraphScopeController,
 } from "@/lib/graph/scope-signal";
-import { CONSTELLATION_STAR_PX } from "@/lib/graph/starfield-scale";
 import { clusterBrandColor } from "@/lib/school-color";
-import { CAMERA_MS } from "@/lib/motion";
-import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { cn } from "@/lib/utils";
 import {
   dismissBackgroundJob,
@@ -117,1451 +94,31 @@ type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
  */
 markGraphChunkLoaded();
 
+/**
+ * The two renderers, each in its own chunk.
+ *
+ * Only the branch that renders is ever requested, which is the whole point: a phone must
+ * not download, parse, or mount `@xyflow/react` and the per-contact DOM nodes that come
+ * with it. See `use-small-sky.ts` for which device gets which.
+ */
+const GraphCanvasFlow = dynamic(
+  () =>
+    import("@/components/graph/graph-canvas-flow").then((m) => ({
+      default: m.GraphCanvasFlow,
+    })),
+  { ssr: false, loading: () => null }
+);
+
+const GraphCanvasMobile = dynamic(
+  () =>
+    import("@/components/graph/graph-canvas-mobile").then((m) => ({
+      default: m.GraphCanvasMobile,
+    })),
+  { ssr: false, loading: () => null }
+);
+
 type PositionMap = import("@/lib/graph-positions").PositionMap;
 
-/**
- * Half-extents from the sun at (0, 0). Zoom is derived from how far
- * stars/labels/nebulae extend so everyone fits while you stay centered.
- */
-function computeSunExtents(
-  layoutNodes: ReturnType<typeof buildHybridGraphLayout>["nodes"],
-  positionOverrides: PositionMap,
-  liveNodes: Node[]
-): { maxAbsX: number; maxAbsY: number } {
-  let maxAbsX = 240;
-  let maxAbsY = 240;
-
-  const expand = (x: number, y: number, halfW: number, halfH: number) => {
-    maxAbsX = Math.max(maxAbsX, Math.abs(x) + halfW);
-    maxAbsY = Math.max(maxAbsY, Math.abs(y) + halfH);
-  };
-
-  for (const n of layoutNodes) {
-    if (n.type === "contact") {
-      expand(n.position.x, n.position.y, 56, 64);
-      continue;
-    }
-    if (n.type === "user") {
-      expand(n.position.x, n.position.y, 64, 64);
-      continue;
-    }
-    if (n.type === "clusterLabel") {
-      expand(n.position.x, n.position.y, 120, 32);
-      continue;
-    }
-    if (n.type === "nebula") {
-      const r = (n.data as NebulaData).radius || 80;
-      expand(n.position.x, n.position.y, r, r);
-    }
-  }
-
-  for (const pos of Object.values(positionOverrides)) {
-    expand(pos.x, pos.y, 56, 64);
-  }
-
-  for (const n of liveNodes) {
-    if (n.hidden) continue;
-    if (n.type === "orbitRings") continue;
-    const halfW = Math.max(24, (n.measured?.width ?? 48) / 2);
-    const halfH = Math.max(24, (n.measured?.height ?? 48) / 2);
-    if (n.type === "nebula") {
-      const r = (n.data as NebulaData).radius || Math.max(halfW, halfH);
-      expand(n.position.x, n.position.y, r, r);
-      continue;
-    }
-    if (
-      n.type === "contact" ||
-      n.type === "user" ||
-      n.type === "clusterLabel" ||
-      n.id === "me"
-    ) {
-      expand(n.position.x, n.position.y, halfW, halfH);
-    }
-  }
-
-  return { maxAbsX, maxAbsY };
-}
-
-function zoomToFitSunCentered(
-  maxAbsX: number,
-  maxAbsY: number,
-  width: number,
-  height: number
-): number {
-  // Padding factor so stars aren't flush against the pane edge
-  const pad = 1.18;
-  const zoomX = width / (2 * maxAbsX * pad);
-  const zoomY = height / (2 * maxAbsY * pad);
-  return Math.min(1.35, Math.max(0.05, Math.min(zoomX, zoomY)));
-}
-
-/**
- * Sole owner of the default view: sun locked to viewport center.
- * Mount with key={homeToken} so every Home click gets a fresh apply
- * (avoids cancelled effects / stale appliedToken races).
- */
-function DefaultViewFitter({
-  homeToken,
-  layoutNodes,
-  positionOverrides,
-  onSettled,
-}: {
-  homeToken: number;
-  layoutNodes: ReturnType<typeof buildHybridGraphLayout>["nodes"];
-  positionOverrides: PositionMap;
-  /**
-   * Fires once the *refined* (post-measurement) framing has been applied.
-   * The first pass runs before React Flow has measured node DOM sizes, so
-   * it frames too tight; callers should stay hidden until this fires to
-   * avoid painting that too-tight frame.
-   */
-  onSettled?: () => void;
-}) {
-  const { setCenter, getNodes } = useReactFlow();
-  const storeApi = useStoreApi();
-  const layoutRef = useRef(layoutNodes);
-  const overridesRef = useRef(positionOverrides);
-  const onSettledRef = useRef(onSettled);
-  layoutRef.current = layoutNodes;
-  overridesRef.current = positionOverrides;
-  onSettledRef.current = onSettled;
-
-  useEffect(() => {
-    if (homeToken <= 0) return;
-
-    let cancelled = false;
-    let tries = 0;
-    let timeoutId: number | undefined;
-
-    const centerNow = () => {
-      if (cancelled) return;
-      const { width, height, panZoom } = storeApi.getState();
-      if (!panZoom || width < 48 || height < 48) {
-        if (tries < 80) {
-          tries += 1;
-          timeoutId = window.setTimeout(centerNow, 32);
-        }
-        return;
-      }
-
-      const { maxAbsX, maxAbsY } = computeSunExtents(
-        layoutRef.current,
-        overridesRef.current,
-        getNodes()
-      );
-      const zoom = zoomToFitSunCentered(maxAbsX, maxAbsY, width, height);
-      const duration = homeToken <= 1 ? 0 : CAMERA_MS.move;
-
-      void setCenter(0, 0, { zoom, duration }).then((ok) => {
-        if (cancelled) return;
-        if (!ok) {
-          if (tries < 80) {
-            tries += 1;
-            timeoutId = window.setTimeout(centerNow, 32);
-          }
-          return;
-        }
-        // One refine after layout settles (no animation) — the first pass
-        // above ran before nodes were DOM-measured, so it under-estimates
-        // extents and frames too tight. This is the frame callers should
-        // actually reveal.
-        timeoutId = window.setTimeout(() => {
-          if (cancelled) return;
-          const size = storeApi.getState();
-          if (size.width < 48 || size.height < 48) {
-            onSettledRef.current?.();
-            return;
-          }
-          const extents = computeSunExtents(
-            layoutRef.current,
-            overridesRef.current,
-            getNodes()
-          );
-          const z = zoomToFitSunCentered(
-            extents.maxAbsX,
-            extents.maxAbsY,
-            size.width,
-            size.height
-          );
-          void setCenter(0, 0, { zoom: z, duration: 0 }).then(() => {
-            if (cancelled) return;
-            onSettledRef.current?.();
-          });
-        }, 100);
-      });
-    };
-
-    // Defer one frame so pane dimensions are current after filter resets
-    timeoutId = window.setTimeout(centerNow, homeToken <= 1 ? 0 : 40);
-
-    return () => {
-      cancelled = true;
-      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
-    };
-    // Only homeToken should retrigger — refs hold the rest
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [homeToken]);
-
-  return null;
-}
-
-const nodeTypes = {
-  contact: ContactNode,
-  user: SunNode,
-  orbitRings: OrbitRingsNode,
-  clusterLabel: ClusterLabelNode,
-  nebula: NebulaNode,
-};
-
-const edgeTypes: EdgeTypes = {
-  labeled: LabeledEdge,
-  straight: LabeledEdge,
-};
-
-/** Ambient galaxy drift — slow enough to feel alive without distracting. */
-const GALAXY_DEG_PER_MIN = 3;
-/**
- * How often the CSS-var rotation is committed back into node positions
- * (an O(contactCount) React state update). Spaced out further as the
- * network grows so the commit cost stays bounded; disabled entirely past
- * ROTATION_DISABLE_ABOVE contacts.
- */
-function rotationCommitMs(contactCount: number): number {
-  if (contactCount > 900) return 1500;
-  if (contactCount > 400) return 900;
-  return 450;
-}
-const ROTATION_DISABLE_ABOVE = 2500;
-
-// v5: the honest-orbit layout invalidated spiral-era drag positions.
-function positionsStorageKey(userId: string) {
-  return `orbit-graph-positions-v5:${userId}`;
-}
-
-function loadPositions(userId: string): PositionMap {
-  try {
-    const raw = localStorage.getItem(positionsStorageKey(userId));
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as PositionMap;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function savePositions(userId: string, positions: PositionMap) {
-  try {
-    localStorage.setItem(positionsStorageKey(userId), JSON.stringify(positions));
-  } catch {
-    // ignore quota / private mode
-  }
-}
-
-function contactMatchesLocal(d: GraphNodeData, q: string): boolean {
-  if (!q) return true;
-  const hay = [
-    d.label,
-    d.fullName,
-    d.preferredName,
-    d.company,
-    d.school,
-    d.title,
-    d.aiSummary,
-    d.howMet,
-    d.metContext,
-    d.email,
-    d.phone,
-    d.linkedinUrl,
-    d.website,
-    d.clusterName,
-    ...(d.tags || []),
-    ...(d.keyFacts || []),
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  const phrase = q.trim().toLowerCase();
-  if (!phrase) return true;
-  if (hay.includes(phrase)) return true;
-  const tokens = phrase
-    .split(/[^a-z0-9+#.]+/i)
-    .filter((t) => t.length > 1);
-  if (tokens.length === 0) return false;
-  return tokens.every((t) => hay.includes(t));
-}
-
-type GraphContact = GraphPayload["contacts"][number];
-type GraphCluster = GraphPayload["clusters"][number];
-
-function contactSearchHaystack(c: GraphContact): string {
-  return [
-    c.fullName,
-    c.preferredName,
-    c.company,
-    c.school,
-    c.title,
-    c.aiSummary,
-    c.howMet,
-    c.metContext,
-    c.notes,
-    c.email,
-    c.phone,
-    c.linkedinUrl,
-    c.website,
-    ...(c.tags || []),
-    ...(c.keyFacts || []),
-    ...(c.sharedInterests || []),
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-}
-
-function buildContactHaystackIndex(contacts: GraphContact[]): Map<string, string> {
-  const index = new Map<string, string>();
-  for (const c of contacts) index.set(c.id, contactSearchHaystack(c));
-  return index;
-}
-
-/**
- * Bounded Levenshtein distance for typo tolerance. Name words are short, so
- * a two-row DP with an early exit is plenty.
- */
-function withinEditDistance(a: string, b: string, max: number): boolean {
-  if (max <= 0) return a === b;
-  if (Math.abs(a.length - b.length) > max) return false;
-  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    const cur = [i];
-    let rowMin = i;
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
-      if (cur[j] < rowMin) rowMin = cur[j];
-    }
-    if (rowMin > max) return false;
-    prev = cur;
-  }
-  return prev[b.length] <= max;
-}
-
-/** Allowed typos scale with how much of the name has been typed. */
-function typoBudget(token: string) {
-  return token.length >= 7 ? 2 : token.length >= 4 ? 1 : 0;
-}
-
-/** Plain Levenshtein distance — name-sized strings only. */
-function editDistance(a: string, b: string): number {
-  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    const cur = [i];
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
-    }
-    prev = cur;
-  }
-  return prev[b.length];
-}
-
-/**
- * A query only "completes" a name once it's this close (in edits) to being
- * the whole thing. Below this, any edit-distance gap between candidates is
- * just an artifact of their differing name lengths, not a real signal.
- */
-const NAME_LOCK_MAX_DIST = 2;
-
-/**
- * Once the query is close to a *complete* name and one candidate fits it
- * decisively better than every other, keep only that one — "Viktor Larsen"
- * should not also highlight the other Larsens. While the query is still a
- * short/partial fragment of a much longer name, every candidate's edit
- * distance is large regardless of how good a fit they are, so this never
- * fires early: "Larsen" alone keeps every Larsen highlighted, and only
- * something close to a full name locks onto one.
- */
-function dominantNameHit<T>(
-  hits: T[],
-  nameOf: (hit: T) => string,
-  phrase: string
-): T[] {
-  if (hits.length <= 1) return hits;
-  const scored = hits
-    .map((hit) => ({ hit, dist: editDistance(nameOf(hit), phrase) }))
-    .sort((a, b) => a.dist - b.dist);
-  const [best, second] = scored;
-  if (best.dist > NAME_LOCK_MAX_DIST) return hits;
-  if (second.dist - best.dist >= 2) return [best.hit];
-  return hits;
-}
-
-/** Does a query token match a name word, tolerating typos and partial typing? */
-function fuzzyNameWordMatch(word: string, token: string) {
-  if (word.startsWith(token)) return true;
-  const budget = typoBudget(token);
-  if (budget === 0) return false;
-  if (withinEditDistance(word, token, budget)) return true;
-  // Partial typing with a typo: compare against the same-length prefix
-  // ("victo" ↔ "vikto" while typing toward Viktor).
-  return (
-    token.length >= 4 &&
-    word.length > token.length &&
-    withinEditDistance(word.slice(0, token.length), token, budget)
-  );
-}
-
-type GraphContactMatch = {
-  ids: string[];
-  /** True when the hits came from the name tiers (exact or fuzzy). */
-  nameTier: boolean;
-};
-
-function matchGraphContacts(
-  contacts: GraphContact[],
-  query: string,
-  haystackById: Map<string, string>
-): GraphContactMatch {
-  const phrase = query.trim().toLowerCase().replace(/\s+/g, " ");
-  if (!phrase) return { ids: [], nameTier: false };
-  const tokens = phrase
-    .split(/[^a-z0-9+#.]+/i)
-    .filter((t) => t.length > 1);
-
-  const nameOf = (c: GraphContact) =>
-    [c.fullName, c.preferredName].filter(Boolean).join(" ").toLowerCase();
-
-  // Names take precedence: "Viktor Larsen" should land on Viktor Larsen,
-  // not also on everyone whose notes mention a Viktor or a Larsen. Within a
-  // name tier, one decisively-best fit wins alone.
-  const exactNameHits = contacts.filter((c) => nameOf(c).includes(phrase));
-  if (exactNameHits.length > 0) {
-    return {
-      ids: dominantNameHit(exactNameHits, nameOf, phrase).map((c) => c.id),
-      nameTier: true,
-    };
-  }
-
-  // Typo-tolerant name pass: every token must fuzzily match one of the
-  // contact's name words ("Victor Larson" still finds Viktor Larsen).
-  if (tokens.length > 0) {
-    const fuzzyNameHits = contacts.filter((c) => {
-      const words = nameOf(c).split(/\s+/).filter(Boolean);
-      return tokens.every((t) => words.some((w) => fuzzyNameWordMatch(w, t)));
-    });
-    if (fuzzyNameHits.length > 0) {
-      return {
-        ids: dominantNameHit(fuzzyNameHits, nameOf, phrase).map((c) => c.id),
-        nameTier: true,
-      };
-    }
-  }
-
-  const ids = contacts
-    .filter((c) => {
-      const hay = haystackById.get(c.id) ?? contactSearchHaystack(c);
-      if (hay.includes(phrase)) return true;
-      if (tokens.length === 0) return false;
-      if (tokens.length === 1) return hay.includes(tokens[0]);
-      // Multi-word: prefer all tokens; allow strong partial if ≥2 long tokens hit
-      if (tokens.every((t) => hay.includes(t))) return true;
-      const strong = tokens.filter((t) => t.length >= 4 && hay.includes(t));
-      return strong.length >= 2;
-    })
-    .map((c) => c.id);
-  return { ids, nameTier: false };
-}
-
-function findClusterMatch(
-  clusters: GraphCluster[],
-  query: string
-): GraphCluster | null {
-  const phrase = query.trim().toLowerCase().replace(/\s+/g, " ");
-  if (!phrase || clusters.length === 0) return null;
-
-  const exact = clusters.find((c) => c.name.toLowerCase() === phrase);
-  if (exact) return exact;
-
-  const starts = clusters.filter((c) =>
-    c.name.toLowerCase().startsWith(phrase)
-  );
-  if (starts.length === 1) return starts[0];
-
-  const includes = clusters
-    .filter((c) => {
-      const name = c.name.toLowerCase();
-      return name.includes(phrase) || phrase.includes(name);
-    })
-    .sort((a, b) => a.name.length - b.name.length);
-  if (includes.length === 1) return includes[0];
-  if (includes.length > 1 && phrase.length >= 3) {
-    // Prefer the shortest name that still contains the query (e.g. "AWS")
-    return includes[0];
-  }
-  return null;
-}
-
-function Starfield() {
-  const stars = useMemo(
-    () =>
-      Array.from({ length: 220 }, (_, i) => ({
-        id: i,
-        left: `${(((i * 47 + 13) * 7) % 1000) / 10}%`,
-        top: `${(((i * 83 + 29) * 11) % 1000) / 10}%`,
-        // Named rather than inline: the warp intro sizes its own field off these, and the two
-        // are drawn over the same box during the hand-off. See `starfield-scale.ts`.
-        size:
-          i % 17 === 0
-            ? CONSTELLATION_STAR_PX.brightest
-            : i % 5 === 0
-              ? CONSTELLATION_STAR_PX.bright
-              : CONSTELLATION_STAR_PX.common,
-        delay: `${(i % 11) * 0.35}s`,
-        dur: `${2.8 + (i % 6) * 0.7}s`,
-        opacity: 0.25 + (i % 8) * 0.08,
-      })),
-    []
-  );
-
-  return (
-    <div
-      className="constellation-starfield pointer-events-none absolute inset-0 overflow-hidden"
-      aria-hidden
-    >
-      <div className="constellation-milky-way absolute inset-0" />
-      {stars.map((s) => (
-        <span
-          key={s.id}
-          className="absolute rounded-full bg-white"
-          style={
-            {
-              left: s.left,
-              top: s.top,
-              width: s.size,
-              height: s.size,
-              opacity: s.opacity,
-              "--twinkle-delay": s.delay,
-              "--twinkle-dur": s.dur,
-            } as CSSProperties
-          }
-        />
-      ))}
-    </div>
-  );
-}
-
-function buildStructuralNodes(
-  layoutNodes: ReturnType<typeof buildHybridGraphLayout>["nodes"],
-  positionOverrides: PositionMap,
-  compact?: boolean
-): Node[] {
-  return layoutNodes.map((n) => {
-    if (
-      n.type === "orbitRings" ||
-      n.type === "user" ||
-      n.type === "clusterLabel" ||
-      n.type === "nebula"
-    ) {
-      return {
-        ...n,
-        draggable: false,
-      } as Node;
-    }
-
-    const d = n.data as GraphNodeData;
-    const override = positionOverrides[n.id];
-    return {
-      ...n,
-      position: override || n.position,
-      draggable: !compact,
-      data: {
-        ...d,
-        motionPaused: Boolean(override),
-      },
-    } as Node;
-  });
-}
-
-function GraphCanvas(props: {
-  data: GraphPayload;
-  company: string;
-  school: string;
-  keyword: string;
-  minScore: string;
-  search: string;
-  searchHitIds: Set<string>;
-  focusCluster: string | null;
-  zoomToken: number;
-  homeToken: number;
-  peekPersonId: string | null;
-  peekToken: number;
-  positionOverrides: PositionMap;
-  onPositionOverridesChange: (next: PositionMap) => void;
-  selection: InspectSelection;
-  hoveredId: string | null;
-  onSelect: (selection: InspectSelection) => void;
-  onHover: (id: string | null) => void;
-  onFocusCluster: (clusterId: string) => void;
-  resetToken: number;
-  compact?: boolean;
-  /** Whether this payload is the engaged-only scope (vs. the full network). */
-  constellationFilterOn: boolean;
-  onShowAll: () => void;
-  loadingAll: boolean;
-}) {
-  // Keyword is the one filter driven by continuous typing — debounce it so
-  // the (potentially expensive) filter/layout rebuild below doesn't run on
-  // every keystroke. Company/school/minScore come from discrete selects.
-  const [debouncedKeyword, setDebouncedKeyword] = useState(props.keyword);
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedKeyword(props.keyword), 220);
-    return () => clearTimeout(t);
-  }, [props.keyword]);
-
-  const filteredContacts = useMemo(() => {
-    const kw = debouncedKeyword.trim().toLowerCase();
-    return props.data.contacts.filter((c) => {
-      // No `substantive` check here: the server already shipped only what this scope draws,
-      // so filtering again would be redundant — and would silently hide pinned-in contacts
-      // in the "show all" view.
-      if (props.company !== "all" && c.company !== props.company) return false;
-      if (props.school !== "all" && (c.school || "") !== props.school) {
-        return false;
-      }
-      const orbit = c.orbitScore ?? c.relationshipScore ?? 1;
-      if (orbit < Number(props.minScore)) return false;
-      if (kw) {
-        const hay = [
-          c.fullName,
-          c.preferredName,
-          c.company,
-          c.school,
-          c.title,
-          c.aiSummary,
-          ...(c.tags || []),
-          ...(c.keyFacts || []),
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        if (!hay.includes(kw)) return false;
-      }
-      return true;
-    });
-  }, [
-    props.data.contacts,
-    props.company,
-    props.school,
-    debouncedKeyword,
-    props.minScore,
-  ]);
-
-  const layout = useMemo(() => {
-    return buildHybridGraphLayout(filteredContacts, props.data.summary.userName);
-  }, [filteredContacts, props.data.summary.userName]);
-
-  // Only remount the canvas subtree when the set of visible contacts (or an
-  // explicit reset) actually changes — `ids` already reflects any change in
-  // company/school/keyword/minScore, so those don't need to be in the key
-  // themselves. Keying on the raw, per-keystroke `keyword` value here was
-  // forcing a full remount (and rotation-loop restart) on every keystroke.
-  const layoutKey = useMemo(() => {
-    const ids = filteredContacts.map((c) => c.id).join(",");
-    return [props.resetToken, ids].join("|");
-  }, [filteredContacts, props.resetToken]);
-
-  return (
-    <GraphCanvasInner
-      key={layoutKey}
-      {...props}
-      filteredContacts={filteredContacts}
-      layout={layout}
-    />
-  );
-}
-
-function GraphCanvasInner({
-  company,
-  search,
-  searchHitIds,
-  focusCluster,
-  zoomToken,
-  homeToken,
-  peekPersonId,
-  peekToken,
-  positionOverrides,
-  onPositionOverridesChange,
-  selection,
-  hoveredId,
-  onSelect,
-  onHover,
-  onFocusCluster,
-  filteredContacts,
-  layout,
-  compact,
-  data,
-  constellationFilterOn,
-  onShowAll,
-  loadingAll,
-}: {
-  company: string;
-  school: string;
-  keyword: string;
-  minScore: string;
-  search: string;
-  searchHitIds: Set<string>;
-  focusCluster: string | null;
-  zoomToken: number;
-  homeToken: number;
-  peekPersonId: string | null;
-  peekToken: number;
-  positionOverrides: PositionMap;
-  onPositionOverridesChange: (next: PositionMap) => void;
-  selection: InspectSelection;
-  hoveredId: string | null;
-  onSelect: (selection: InspectSelection) => void;
-  onHover: (id: string | null) => void;
-  onFocusCluster: (clusterId: string) => void;
-  filteredContacts: GraphPayload["contacts"];
-  layout: ReturnType<typeof buildHybridGraphLayout>;
-  compact?: boolean;
-  data: GraphPayload;
-  constellationFilterOn: boolean;
-  onShowAll: () => void;
-  loadingAll: boolean;
-}) {
-  const router = useRouter();
-  const { fitView, getNodes, getViewport, setViewport } = useReactFlow();
-  const storeApi = useStoreApi();
-  const draggingId = useRef<string | null>(null);
-  const fitViewRef = useRef(fitView);
-  const getNodesRef = useRef(getNodes);
-  const prevClusterZoomKey = useRef("");
-  const prevPeekZoomKey = useRef("");
-  fitViewRef.current = fitView;
-  getNodesRef.current = getNodes;
-  /** Total ambient rotation shown by the CSS var (rings + arm glow). */
-  const galaxyThetaRef = useRef(0);
-  const prefersReducedMotion = usePrefersReducedMotion();
-
-  const [orbitNodes, setOrbitNodes] = useState<Node[]>(() =>
-    buildStructuralNodes(layout.nodes, positionOverrides, compact)
-  );
-
-  /**
-   * The initial (and every post-remount) framing pass runs before React Flow
-   * has measured node DOM sizes, so it frames too tight, then snaps out to
-   * the correct view ~100ms later — a visible double-zoom jump. Stay hidden
-   * (chrome and starfield stay visible; only the graph itself is gated)
-   * until DefaultViewFitter confirms the refined frame is applied. A safety
-   * timeout reveals regardless so a stalled measurement never hides the sky
-   * forever.
-   */
-  const [viewportReady, setViewportReady] = useState(false);
-  useEffect(() => {
-    const t = window.setTimeout(() => setViewportReady(true), 1500);
-    return () => window.clearTimeout(t);
-  }, []);
-
-  /**
-   * Tell the intro the chart is genuinely visible, so it can begin its collapse.
-   *
-   * One effect covers both sources of `viewportReady` — the fitter settling and the 1500ms
-   * safety timer — since neither does anything but set this flag. It re-fires on every remount
-   * of this component, which is harmless: a ready signal can only END an intro run, never start
-   * one, so the per-batch remounts of a refresh cannot replay the animation.
-   */
-  useEffect(() => {
-    if (viewportReady) markGraphViewportReady();
-  }, [viewportReady]);
-
-  const focusCompany = useMemo(() => {
-    if (focusCluster) {
-      const hit = data.clusters.find(
-        (c) => c.id === focusCluster || c.name === focusCluster || c.company === focusCluster
-      );
-      return hit?.name || focusCluster;
-    }
-    if (company !== "all") return company;
-    if (hoveredId && hoveredId !== "me") {
-      const node = layout.nodes.find((n) => n.id === hoveredId);
-      const d = node?.data as GraphNodeData | undefined;
-      return d?.clusterName || d?.company || null;
-    }
-    if (selection?.type === "contact") {
-      return selection.data.clusterName || selection.data.company || null;
-    }
-    return null;
-  }, [focusCluster, company, hoveredId, selection, layout.nodes, data.clusters]);
-
-  const searchQuery = search.trim().toLowerCase();
-  const hasSearch = Boolean(searchQuery) || searchHitIds.size > 0;
-  // Dim the rest of the sky only when the search actually hit someone —
-  // a no-match query must not blank the whole map.
-  const searchDimActive = hasSearch && searchHitIds.size > 0;
-
-  const nodes = useMemo(() => {
-    return orbitNodes.map((n) => {
-      if (n.type === "orbitRings") {
-        return n;
-      }
-      if (n.type === "user") {
-        return {
-          ...n,
-          selected: selection?.type === "user",
-        } as Node;
-      }
-      if (n.type === "clusterLabel" || n.type === "nebula") {
-        const nebula = n.data as NebulaData | { company?: string };
-        const co =
-          "company" in nebula
-            ? nebula.company
-            : (n.data as { label?: string }).label;
-        const hidden =
-          Boolean(focusCompany) && co !== focusCompany && company === "all";
-        return {
-          ...n,
-          hidden: false,
-          style: {
-            opacity: hidden && searchDimActive ? 0.35 : 1,
-            transition: "opacity 200ms ease",
-          },
-        } as Node;
-      }
-
-      const d = n.data as GraphNodeData;
-      const isHovered = hoveredId === n.id;
-      const isSelected = selection?.type === "contact" && selection.id === n.id;
-      // Spotlight only explicit search hits — not every star in a zoomed cluster
-      const spotlight = searchDimActive && searchHitIds.has(n.id);
-      const dimFromSearch = searchDimActive && !spotlight;
-      const dimFromFocus =
-        Boolean(hoveredId || selection?.type === "contact") &&
-        !isHovered &&
-        !isSelected;
-      const hasOverride = Boolean(positionOverrides[n.id]);
-
-      // Search keeps the rest of the sky readable as context; hover/selection
-      // focus dims harder because it's transient.
-      const opacity = dimFromFocus ? 0.15 : dimFromSearch ? 0.35 : 1;
-
-      return {
-        ...n,
-        selected: isSelected,
-        hidden: false,
-        data: {
-          ...d,
-          motionPaused: isHovered || isSelected || hasOverride,
-          spotlight,
-          spotlightSolo: spotlight && searchHitIds.size === 1,
-        },
-        style: {
-          opacity,
-          transition: "opacity 200ms ease",
-        },
-      } as Node;
-    });
-  }, [
-    orbitNodes,
-    hoveredId,
-    selection,
-    searchHitIds,
-    searchDimActive,
-    positionOverrides,
-    focusCompany,
-    company,
-  ]);
-
-  const edges = useMemo(() => {
-    const mapped = layout.edges
-      .filter((e) => {
-        const kind = e.data?.kind;
-        // Peer constellation / knows links only — sun rays are injected below
-        return kind === "constellation" || kind === "knows";
-      })
-      .map((e) => {
-        const relatedToHover =
-          hoveredId && (e.source === hoveredId || e.target === hoveredId);
-
-        const relatedToSelection =
-          selection?.type === "contact" &&
-          (e.source === selection.id || e.target === selection.id);
-
-        const dimOthers = Boolean(hoveredId || selection?.type === "contact");
-        const emphasized = relatedToHover || relatedToSelection;
-
-        let opacity = Number(e.style?.opacity ?? 0.5);
-        const edgeKind = e.data?.kind;
-        if (searchDimActive) {
-          const sourceOk = searchHitIds.has(e.source);
-          const targetOk = searchHitIds.has(e.target);
-          if (focusCluster && edgeKind === "constellation") {
-            // Framing a cluster for a person search — keep constellation lines,
-            // slightly emphasize edges that touch the highlighted person
-            if (sourceOk || targetOk) {
-              opacity = Math.min(1, opacity + 0.25);
-            }
-          } else if (!(sourceOk && targetOk)) {
-            opacity = Math.min(opacity, 0.25);
-          }
-        }
-        if (dimOthers && !emphasized) {
-          opacity = Math.min(opacity, 0.1);
-        } else if (emphasized) {
-          opacity = Math.min(1, opacity + 0.35);
-        }
-
-        return {
-          ...e,
-          type: "labeled" as const,
-          label: undefined,
-          animated: false,
-          data: { ...e.data, label: undefined },
-          style: {
-            ...e.style,
-            opacity,
-            strokeWidth: emphasized
-              ? Number(e.style?.strokeWidth ?? 1) + 0.75
-              : e.style?.strokeWidth,
-          },
-        } as Edge;
-      });
-
-    return mapped;
-  }, [
-    layout.edges,
-    focusCluster,
-    hoveredId,
-    selection,
-    searchHitIds,
-    searchDimActive,
-  ]);
-
-  /**
-   * Ambient sky rotation. Every frame the accrued angle lands on a CSS var
-   * (rings rotate on the compositor, no React render); every
-   * rotationCommitMs(count) the pending delta is committed to node state as a
-   * plain rigid rotation about the sun — spaced out further as the network
-   * grows so the commit cost stays bounded, and disabled entirely past
-   * ROTATION_DISABLE_ABOVE contacts. Paused while dragging, while the
-   * inspect panel is open, while a search spotlight is active (a studied
-   * star must hold still), in the compact card, in hidden tabs, and under
-   * prefers-reduced-motion. State lives inside GraphCanvasInner, so a
-   * layoutKey remount resets θ to 0 alongside the freshly built (unrotated)
-   * layout — the stale CSS var dies with the old React Flow DOM node.
-   */
-  useEffect(() => {
-    if (compact || prefersReducedMotion || selection || searchDimActive) return;
-    if (filteredContacts.length > ROTATION_DISABLE_ABOVE) return;
-
-    const commitMs = rotationCommitMs(filteredContacts.length);
-    let frame = 0;
-    let last = performance.now();
-    let lastCommit = last;
-    let pendingDelta = 0;
-
-    const commitPending = () => {
-      const delta = pendingDelta;
-      if (delta === 0) return;
-      pendingDelta = 0;
-      const cos = Math.cos(delta);
-      const sin = Math.sin(delta);
-      setOrbitNodes((prev) =>
-        prev.map((n) => {
-          if (
-            n.type !== "contact" &&
-            n.type !== "nebula" &&
-            n.type !== "clusterLabel"
-          ) {
-            return n;
-          }
-          if (draggingId.current === n.id) return n;
-          const ux = n.position.x;
-          const uy = n.position.y;
-          const position = {
-            x: ux * cos - uy * sin,
-            y: ux * sin + uy * cos,
-          };
-          if (n.type !== "contact") return { ...n, position };
-          const d = n.data as GraphNodeData;
-          return {
-            ...n,
-            position,
-            data: {
-              ...d,
-              orbitAngle: Math.atan2(position.y, position.x),
-              orbitRadius: Math.hypot(position.x, position.y),
-            },
-          };
-        })
-      );
-    };
-
-    const tick = (now: number) => {
-      frame = requestAnimationFrame(tick);
-      const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
-      last = now;
-      if (draggingId.current !== null || document.hidden) return;
-
-      const delta = (((GALAXY_DEG_PER_MIN / 60) * Math.PI) / 180) * dt;
-      pendingDelta += delta;
-      galaxyThetaRef.current += delta;
-      storeApi
-        .getState()
-        .domNode?.style.setProperty(
-          "--galaxy-rot",
-          `${galaxyThetaRef.current.toFixed(6)}rad`
-        );
-
-      if (now - lastCommit >= commitMs) {
-        lastCommit = now;
-        commitPending();
-      }
-    };
-
-    frame = requestAnimationFrame(tick);
-    return () => {
-      cancelAnimationFrame(frame);
-      // Keep stars in step with the CSS-var rotation across pauses
-      commitPending();
-    };
-  }, [
-    compact,
-    prefersReducedMotion,
-    selection,
-    searchDimActive,
-    storeApi,
-    filteredContacts.length,
-  ]);
-
-  /**
-   * Keep the sky anchored when the pane resizes (window resize, fullscreen,
-   * side panel): shift the viewport by half the size delta so the world point
-   * at the old view center stays at the new center — the sun, and everything
-   * else, holds its relative position.
-   */
-  useEffect(() => {
-    const el = storeApi.getState().domNode;
-    if (!el) return;
-    let last = { w: el.clientWidth, h: el.clientHeight };
-    const observer = new ResizeObserver(() => {
-      const w = el.clientWidth;
-      const h = el.clientHeight;
-      if (!w || !h) return;
-      const dw = w - last.w;
-      const dh = h - last.h;
-      if (dw === 0 && dh === 0) return;
-      last = { w, h };
-      const vp = getViewport();
-      void setViewport({
-        x: vp.x + dw / 2,
-        y: vp.y + dh / 2,
-        zoom: vp.zoom,
-      });
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [storeApi, getViewport, setViewport]);
-
-  /**
-   * Cluster / search / peek zooms are separate. Default wide view is owned by
-   * <DefaultViewFitter homeToken={...} /> inside ReactFlow.
-   */
-  useEffect(() => {
-    // Invalidate other zoom locks whenever we request the default view
-    prevClusterZoomKey.current = "";
-    prevPeekZoomKey.current = "";
-  }, [homeToken]);
-
-  // Cluster pill / search cluster focus — retry until nodes exist; stable deps
-  useEffect(() => {
-    if (!focusCluster) return;
-    const key = `${focusCluster}::${zoomToken}`;
-    if (key === prevClusterZoomKey.current) return;
-
-    let cancelled = false;
-    let attempts = 0;
-
-    const run = () => {
-      if (cancelled) return;
-
-      const cluster = data.clusters.find(
-        (c) =>
-          c.id === focusCluster ||
-          c.name === focusCluster ||
-          c.company === focusCluster
-      );
-      const matchIds = cluster?.contactIds?.length
-        ? cluster.contactIds
-        : filteredContacts
-            .filter(
-              (c) =>
-                c.company === focusCluster ||
-                (c.school || "").trim() === focusCluster
-            )
-            .map((c) => c.id);
-
-      const present = new Set(getNodesRef.current().map((n) => n.id));
-      let nodesToFit = matchIds.filter((id) => present.has(id));
-
-      // Fallback: use layout positions if RF hasn't registered ids yet
-      if (nodesToFit.length === 0) {
-        nodesToFit = matchIds.filter((id) =>
-          layout.nodes.some((n) => n.id === id)
-        );
-      }
-
-      if (nodesToFit.length === 0 && attempts < 15) {
-        attempts += 1;
-        window.setTimeout(run, 40);
-        return;
-      }
-      if (nodesToFit.length === 0) return;
-
-      prevClusterZoomKey.current = key;
-      void fitViewRef.current({
-        nodes: nodesToFit.map((id) => ({ id })),
-        padding: 0.4,
-        // Snappy direct flight: pan and zoom move together, no arc.
-        duration: CAMERA_MS.snap,
-        interpolate: "linear",
-        maxZoom: 1.5,
-        minZoom: 0.2,
-      });
-    };
-
-    const timer = window.setTimeout(run, 50);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only focus/zoom should retrigger
-  }, [focusCluster, zoomToken, data.clusters]);
-
-  // Re-engage list hover — zoom in on that person
-  useEffect(() => {
-    if (!peekPersonId) return;
-    const key = `peek::${peekPersonId}::${peekToken}`;
-    if (key === prevPeekZoomKey.current) return;
-
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      if (cancelled) return;
-      const present = getNodesRef.current().some((n) => n.id === peekPersonId);
-      if (!present) return;
-      prevPeekZoomKey.current = key;
-      void fitViewRef.current({
-        nodes: [{ id: peekPersonId }],
-        padding: 0.55,
-        duration: CAMERA_MS.move,
-        maxZoom: 1.8,
-        minZoom: 0.3,
-      });
-    }, 40);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [peekPersonId, peekToken]);
-
-  // Search hit framing (person / multi-match) when not focusing a named cluster.
-  // Only zoomToken should reframe — searchHitIds alone updates from semantic
-  // enrichment and must not yank the camera back out.
-  useEffect(() => {
-    if (focusCluster || !hasSearch) return;
-
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      if (cancelled) return;
-      // Frame exactly the hit set; the local matcher is only a fallback for
-      // the beat before searchHitIds state catches up with fresh keystrokes.
-      const matchIds = nodes
-        .filter((n) => {
-          if (n.type !== "contact") return false;
-          if (searchHitIds.size > 0) return searchHitIds.has(n.id);
-          return contactMatchesLocal(n.data as GraphNodeData, searchQuery);
-        })
-        .map((n) => n.id);
-      if (matchIds.length === 0) return;
-      void fitViewRef.current({
-        nodes: matchIds.map((nid) => ({ id: nid })),
-        // Multi-hit padding leaves headroom so the slow ambient rotation
-        // doesn't immediately drift an edge hit out of frame.
-        padding: matchIds.length === 1 ? 0.55 : 0.45,
-        // Snappy direct flight: pan and zoom move together, no arc.
-        duration: CAMERA_MS.snap,
-        interpolate: "linear",
-        maxZoom: matchIds.length === 1 ? 1.75 : 1.2,
-      });
-    }, 40);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- zoomToken owns reframes
-  }, [focusCluster, zoomToken, hasSearch]);
-
-  const onNodeClick: NodeMouseHandler = useCallback(
-    (_, node) => {
-      if (node.id === "rings") return;
-
-      if (node.type === "clusterLabel" || node.type === "nebula") {
-        if (compact) return;
-        const d = node.data as ClusterLabelData | NebulaData;
-        const clusterId =
-          d.clusterId ||
-          node.id.replace(/^(cluster|nebula)-/, "");
-        if (clusterId) onFocusCluster(clusterId);
-        return;
-      }
-
-      if (compact && node.type === "contact") {
-        router.push(`/contacts/${node.id}`);
-        return;
-      }
-      if (node.id === "me" || node.type === "user") {
-        const d = node.data as GraphNodeData;
-        onSelect({
-          type: "user",
-          data: d,
-          summary: {
-            total: data.summary.total,
-            companyCount: data.summary.companyCount,
-            // The server's counts, computed over the whole network — not a client recompute
-            // over `data.contacts`. That recompute sat directly beneath `total`, which has
-            // always been the full network, so the two disagreed whenever the payload was a
-            // subset: the dashboard preview caps at 150, and the constellation filter narrows
-            // it further. A ring histogram summing to 150 under a headline of 1,240 reads as
-            // a bug in the numbers rather than as two different questions.
-            scoreCounts: data.summary.scoreCounts,
-            strongTies: data.summary.strongTies,
-            dormantCount: data.summary.dormantCount,
-            overdueCount: data.summary.overdueCount,
-            userImageUrl: data.summary.userImageUrl,
-            userEmail: data.summary.userEmail,
-            socialLinks: data.summary.socialLinks,
-            goals: data.summary.goals,
-          },
-        });
-        return;
-      }
-      onSelect({
-        type: "contact",
-        id: node.id,
-        data: node.data as GraphNodeData,
-      });
-    },
-    [onSelect, onFocusCluster, data, compact, router]
-  );
-
-  const onNodeMouseEnter: NodeMouseHandler = useCallback(
-    (_, node) => {
-      if (
-        node.id === "rings" ||
-        node.id === "me" ||
-        node.type === "clusterLabel" ||
-        node.type === "nebula"
-      ) {
-        onHover(null);
-        return;
-      }
-      onHover(node.id);
-    },
-    [onHover]
-  );
-
-  const onNodeMouseLeave = useCallback(() => {
-    onHover(null);
-  }, [onHover]);
-
-  const onNodesChange: OnNodesChange = useCallback((changes) => {
-    setOrbitNodes((nds) => applyNodeChanges(changes, nds));
-  }, []);
-
-  const onNodeDragStart: OnNodeDrag = useCallback((_, node) => {
-    if (node.type === "contact") draggingId.current = node.id;
-  }, []);
-
-  const onNodeDragStop: OnNodeDrag = useCallback(
-    (_, node) => {
-      draggingId.current = null;
-      if (node.type !== "contact") return;
-      const next = {
-        ...positionOverrides,
-        [node.id]: { x: node.position.x, y: node.position.y },
-      };
-      onPositionOverridesChange(next);
-      const angle = Math.atan2(node.position.y, node.position.x);
-      const radius = Math.hypot(node.position.x, node.position.y);
-      setOrbitNodes((prev) =>
-        prev.map((n) =>
-          n.id === node.id
-            ? {
-                ...n,
-                position: node.position,
-                data: {
-                  ...(n.data as GraphNodeData),
-                  orbitAngle: angle,
-                  orbitRadius: radius,
-                  motionPaused: true,
-                },
-              }
-            : n
-        )
-      );
-    },
-    [positionOverrides, onPositionOverridesChange]
-  );
-
-  const isEmpty = filteredContacts.length === 0;
-
-  return (
-    <>
-      <ReactFlow
-        nodes={nodes}
-        edges={isEmpty ? [] : edges}
-        onNodesChange={onNodesChange}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        nodeOrigin={[0.5, 0.5]}
-        minZoom={0.05}
-        maxZoom={2.4}
-        onlyRenderVisibleElements
-        style={{
-          width: "100%",
-          height: "100%",
-          opacity: viewportReady ? 1 : 0,
-          transition: viewportReady ? "opacity 220ms ease" : "none",
-          pointerEvents: viewportReady ? "auto" : "none",
-        }}
-        onInit={(instance) => {
-          const pane = document.querySelector(
-            ".constellation-stage.react-flow"
-          ) as HTMLElement | null;
-          const w = pane?.clientWidth ?? 0;
-          const h = pane?.clientHeight ?? 0;
-          if (w < 48 || h < 48) return;
-          const { maxAbsX, maxAbsY } = computeSunExtents(
-            layout.nodes,
-            positionOverrides,
-            instance.getNodes()
-          );
-          const zoom = zoomToFitSunCentered(maxAbsX, maxAbsY, w, h);
-          void instance.setViewport({ x: w / 2, y: h / 2, zoom });
-        }}
-        onNodeClick={onNodeClick}
-        onNodeMouseEnter={onNodeMouseEnter}
-        onNodeMouseLeave={onNodeMouseLeave}
-        onNodeDragStart={onNodeDragStart}
-        onNodeDragStop={onNodeDragStop}
-        onPaneClick={() => onSelect(null)}
-        proOptions={{ hideAttribution: true }}
-        defaultEdgeOptions={{
-          type: "straight",
-          selectable: false,
-          focusable: false,
-        }}
-        nodesDraggable={!compact}
-        className="constellation-stage"
-      >
-        <DefaultViewFitter
-          key={homeToken}
-          homeToken={homeToken}
-          layoutNodes={layout.nodes}
-          positionOverrides={positionOverrides}
-          onSettled={() => setViewportReady(true)}
-        />
-        <Background
-          gap={48}
-          color="rgba(255, 255, 255, 0.03)"
-          size={1}
-          style={{ background: "transparent" }}
-        />
-      </ReactFlow>
-
-      {/*
-        Three different empty skies, which used to be one. "Add contacts" is right only when
-        there genuinely are none — said to someone whose 800 contacts were filtered out it is
-        both wrong and unactionable, and it points at the one button that will not help.
-      */}
-      {isEmpty && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="pointer-events-auto max-w-sm rounded-2xl border border-white/10 bg-[#080b12]/90 px-6 py-5 text-center shadow-xl backdrop-blur-md">
-            {data.summary.total === 0 ? (
-              <>
-                <p className="font-[family-name:var(--font-display)] text-lg text-white">
-                  Your sky is empty
-                </p>
-                <p className="mt-1 text-sm text-white/55">
-                  Add contacts and they will appear as stars in your constellation.
-                </p>
-                <Link
-                  href="/contacts/new"
-                  className="mt-4 inline-flex h-8 items-center rounded-lg bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/15"
-                >
-                  Add a contact
-                </Link>
-              </>
-            ) : constellationFilterOn && data.contacts.length === 0 ? (
-              <>
-                <p className="font-[family-name:var(--font-display)] text-lg text-white">
-                  Nobody here yet
-                </p>
-                <p className="mt-1 text-sm text-white/55">
-                  Your chart shows the people you have notes on, met, or really talked with.
-                  Write a note about someone and they take their place in the sky.
-                </p>
-                <div className="mt-4 flex items-center justify-center gap-2">
-                  <Link
-                    href="/capture"
-                    className="inline-flex h-8 items-center rounded-lg bg-white/10 px-3 text-sm font-medium text-white hover:bg-white/15"
-                  >
-                    Add notes
-                  </Link>
-                  <button
-                    type="button"
-                    disabled={loadingAll}
-                    onClick={onShowAll}
-                    aria-busy={loadingAll}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm text-white/70 hover:text-white disabled:opacity-70"
-                  >
-                    {loadingAll && (
-                      <Loader2 className="size-3 animate-spin" aria-hidden />
-                    )}
-                    {loadingAll
-                      ? "Loading…"
-                      : `Show all ${data.summary.total.toLocaleString()}`}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="font-[family-name:var(--font-display)] text-lg text-white">
-                  No stars match
-                </p>
-                <p className="mt-1 text-sm text-white/55">
-                  {constellationFilterOn
-                    ? "Nobody fits these filters and the people you know. Widen the filters, or show everyone."
-                    : "Nobody fits these filters. Try widening them."}
-                </p>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
-/**
- * Is a warp intro on screen right now?
- *
- * Module scope so the snapshot function's identity is stable — `useSyncExternalStore` re-reads
- * on every render, and a fresh closure each time would subscribe and unsubscribe forever. It
- * returns a primitive, so an intro state change that does not cross this boundary (the collapse
- * beginning, say) re-renders nothing.
- */
 function introInFlight() {
   const status = getIntroRun().status;
   return status === "running" || status === "arriving";
@@ -1603,6 +160,18 @@ export function NetworkGraph({
   initialData?: GraphPayload | null;
   compact?: boolean;
 }) {
+  /**
+   * Which renderer draws the sky.
+   *
+   * Safe during render because this component is only ever reached through
+   * `next/dynamic({ ssr: false })`, so the first render already happens in the browser
+   * and the answer is right on frame one — no flash, no double mount. The dashboard
+   * preview takes the same branch: a 300px sky on a phone is where the DOM chart's cost
+   * is least justified.
+   */
+  const smallSky = useSmallSky();
+  const Chart = smallSky ? GraphCanvasMobile : GraphCanvasFlow;
+
   const [data, setData] = useState<GraphPayload | null>(initialData);
   const [company, setCompany] = useState("all");
   const [school, setSchool] = useState("all");
@@ -2083,8 +652,17 @@ export function NetworkGraph({
     setReengageOpen(false);
     setKeyOpen(false);
 
+    /**
+     * Home undoes a hand-arranged sky — but only on the renderer that can arrange one.
+     *
+     * The canvas has no drag: a two-pixel star is not something a finger can place, so
+     * the phone reads stored positions and never writes them. Clearing them here would
+     * make an innocuous Home tap permanently delete a layout the user built on a laptop,
+     * from the one device that cannot rebuild it. So on the canvas, Home resets the
+     * camera and the filters and leaves storage alone.
+     */
     const hadOverrides = Object.keys(positionOverrides).length > 0;
-    if (hadOverrides) {
+    if (hadOverrides && !smallSky) {
       setPositionOverrides({});
       if (userId && !compact) savePositions(userId, {});
       setResetToken((t) => t + 1);
@@ -2092,7 +670,7 @@ export function NetworkGraph({
 
     // Always bump home after other state so the fitter runs on the settled map
     requestDefaultView();
-  }, [userId, compact, search, positionOverrides, requestDefaultView]);
+  }, [userId, compact, smallSky, search, positionOverrides, requestDefaultView]);
 
   const runRefresh = useCallback(async () => {
     if (refreshing) return;
@@ -2211,7 +789,7 @@ export function NetworkGraph({
           cssFullscreen && "!fixed inset-0 z-[100] w-screen"
         )}
       >
-        <Starfield />
+        {!smallSky && <Starfield />}
 
         {!compact && (
           <>
@@ -2651,34 +1229,32 @@ export function NetworkGraph({
           </>
         )}
 
-        <ReactFlowProvider>
-          <GraphCanvas
-            data={data}
-            constellationFilterOn={constellationFilterOn}
-            onShowAll={() => setScope(true)}
-            loadingAll={loadingAll}
-            company={company}
-            school={school}
-            keyword={keyword}
-            minScore={minScore}
-            search={search}
-            searchHitIds={searchHitIds}
-            focusCluster={focusCluster}
-            zoomToken={zoomToken}
-            homeToken={homeToken}
-            peekPersonId={peekPersonId}
-            peekToken={peekToken}
-            positionOverrides={positionOverrides}
-            onPositionOverridesChange={handlePositionOverridesChange}
-            selection={selection}
-            hoveredId={hoveredId}
-            onSelect={setSelection}
-            onHover={setHoveredId}
-            onFocusCluster={focusClusterById}
-            resetToken={resetToken}
-            compact={compact}
-          />
-        </ReactFlowProvider>
+        <Chart
+          data={data}
+          constellationFilterOn={constellationFilterOn}
+          onShowAll={() => setScope(true)}
+          loadingAll={loadingAll}
+          company={company}
+          school={school}
+          keyword={keyword}
+          minScore={minScore}
+          search={search}
+          searchHitIds={searchHitIds}
+          focusCluster={focusCluster}
+          zoomToken={zoomToken}
+          homeToken={homeToken}
+          peekPersonId={peekPersonId}
+          peekToken={peekToken}
+          positionOverrides={positionOverrides}
+          onPositionOverridesChange={handlePositionOverridesChange}
+          selection={selection}
+          hoveredId={hoveredId}
+          onSelect={setSelection}
+          onHover={setHoveredId}
+          onFocusCluster={focusClusterById}
+          resetToken={resetToken}
+          compact={compact}
+        />
       </div>
 
       {!compact && (
