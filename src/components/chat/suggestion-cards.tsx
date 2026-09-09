@@ -16,8 +16,11 @@
 import {
   Bell,
   Clock,
+  Handshake,
+  Link2,
   MessageSquare,
   Sparkles,
+  Target,
   UserRound,
   Users,
   type LucideIcon,
@@ -56,10 +59,18 @@ const STAGGER_LIMIT = 8;
 
 const ICON_FOR: Record<Exclude<SuggestionKind, "recent_interaction">, LucideIcon> = {
   overdue: Bell,
+  commitment: Handshake,
   company_cluster: Users,
+  // Two people, one question — the only card that attaches a pair.
+  mention: Link2,
   gone_quiet: Clock,
   asked_about: MessageSquare,
+  goal_match: Target,
   new_contact: UserRound,
+  // The cold-start tier borrows the icon of the rung it stands in for, so the row does not
+  // announce which tier it came from.
+  starter_company: Users,
+  newest_contact: UserRound,
   generic: Sparkles,
 };
 

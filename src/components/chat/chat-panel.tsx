@@ -1193,7 +1193,8 @@ export function ChatPanel() {
                     disabled={busy || loadingThread}
                     onPick={(s) =>
                       sendQuestion(s.question, {
-                        contextContactIds: s.contactId ? [s.contactId] : undefined,
+                        // A mention card carries two people; everything else nought or one.
+                        contextContactIds: s.contactIds.length ? s.contactIds : undefined,
                       })
                     }
                   />

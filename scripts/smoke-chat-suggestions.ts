@@ -16,6 +16,7 @@
  */
 import { isAttentionQuestion } from "../src/lib/chat-attention";
 import {
+  CATEGORY_FOR,
   GENERIC_SUGGESTIONS,
   MAX_CARDS,
   MAX_PER_KIND,
@@ -46,6 +47,10 @@ function signals(over: Partial<SuggestionSignals> = {}): SuggestionSignals {
     goneQuiet: [],
     recentInteractions: [],
     newContacts: [],
+    commitments: [],
+    mentions: [],
+    goalMatches: [],
+    biggestCompany: null,
     companyClusters: [],
     askedAbout: [],
     recentQuestions: [],
@@ -54,6 +59,18 @@ function signals(over: Partial<SuggestionSignals> = {}): SuggestionSignals {
 }
 
 const texts = (list: { question: string }[]) => list.map((s) => s.question);
+
+/** A contact added `days` ago with nothing logged — what the `new_contact` rung wants. */
+function newPerson(id: string, name: string, days: number) {
+  return {
+    id,
+    name,
+    company: null,
+    createdAt: daysAgo(days),
+    notesEmpty: true,
+    hasInteraction: false,
+  };
+}
 
 // -- every rung fires ------------------------------------------------------------------
 console.log("\nthe ladder");
@@ -68,7 +85,7 @@ const full = signals({
   ],
   goneQuiet: [{ id: "c3", name: "Sarah Chen", reason: "Gone quiet - last touch 105 days ago" }],
   askedAbout: [{ id: "c4", name: "Priya Raman", askedAt: daysAgo(2) }],
-  newContacts: [{ id: "c5", name: "Ken Thompson", createdAt: daysAgo(4) }],
+  newContacts: [newPerson("c5", "Ken Thompson", 4)],
 });
 const ladder = buildChatSuggestions(full);
 
@@ -115,16 +132,198 @@ check(
   ladder.some((s) => s.question === "Who in my network should meet Ken Thompson?"),
 );
 check(
-  "the exhaustively-answerable company card sits second",
-  ladder[0]!.kind === "overdue" && ladder[1]!.kind === "company_cluster",
+  "the exhaustively-answerable company card sits high",
+  ladder.findIndex((s) => s.kind === "company_cluster") <= 1,
   JSON.stringify(ladder.map((s) => s.kind)),
+);
+check(
+  "and the first pass spreads across categories rather than repeating one",
+  new Set(ladder.slice(0, 5).map((s) => CATEGORY_FOR[s.kind])).size === 5,
+  JSON.stringify(ladder.map((s) => [s.kind, CATEGORY_FOR[s.kind]])),
 );
 check(
   "every person-scoped card carries its contact id, or the timeline never reaches the model",
   ladder
     .filter((s) => s.kind !== "generic" && s.kind !== "company_cluster")
-    .every((s) => Boolean(s.contactId)),
-  JSON.stringify(ladder.map((s) => [s.kind, s.contactId])),
+    .every((s) => s.contactIds.length > 0),
+  JSON.stringify(ladder.map((s) => [s.kind, s.contactIds])),
+);
+
+// -- the new rungs ----------------------------------------------------------------------
+console.log("\nthe new rungs");
+
+const commitment = buildChatSuggestions(
+  signals({
+    commitments: [{ contactId: "c1", name: "Marcus Webb", phrase: "send the deck by Sept 2" }],
+  }),
+);
+check(
+  "a captured commitment fires",
+  commitment[0]!.question === "What did I promise Marcus Webb?",
+  JSON.stringify(texts(commitment)),
+);
+check(
+  "and quotes the user's own note back at them",
+  commitment[0]!.basis === 'From your notes: "send the deck by Sept 2"',
+  commitment[0]!.basis,
+);
+check("attaching them, so the timeline is answerable", commitment[0]!.contactIds.length === 1);
+
+const mention = buildChatSuggestions(
+  signals({
+    mentions: [
+      {
+        id: "alex",
+        name: "Alex Kim",
+        inNoteAboutId: "jordan",
+        inNoteAboutName: "Jordan Lee",
+        times: 2,
+        lastAt: daysAgo(3),
+      },
+    ],
+  }),
+);
+check(
+  "a notes mention fires as a question about the pair",
+  mention[0]!.question === "What's the connection between Alex Kim and Jordan Lee?",
+  JSON.stringify(texts(mention)),
+);
+check(
+  "attaching BOTH people — neither timeline alone answers it",
+  mention[0]!.contactIds.length === 2 &&
+    mention[0]!.contactIds.includes("alex") &&
+    mention[0]!.contactIds.includes("jordan"),
+  JSON.stringify(mention[0]!.contactIds),
+);
+check("and the count is in the basis", mention[0]!.basis.includes("2 times"));
+check(
+  "a person mentioned in their own note is not a pair",
+  suggestionsAreGeneric(
+    buildChatSuggestions(
+      signals({
+        mentions: [
+          { id: "x", name: "X", inNoteAboutId: "x", inNoteAboutName: "X", times: 1, lastAt: NOW },
+        ],
+      }),
+    ),
+  ),
+);
+
+const goal = buildChatSuggestions(
+  signals({
+    goalMatches: [{ id: "c1", name: "Sarah Chen", goal: "raise a seed round", score: 0.4 }],
+  }),
+);
+check(
+  "a goal match fires",
+  goal[0]!.question === "Could Sarah Chen help me with raise a seed round?",
+  JSON.stringify(texts(goal)),
+);
+check(
+  "a weak match produces no card at all — a coincidence is worse than nothing",
+  suggestionsAreGeneric(
+    buildChatSuggestions(
+      signals({
+        goalMatches: [{ id: "c1", name: "Sarah Chen", goal: "raise a seed round", score: 0.01 }],
+      }),
+    ),
+  ),
+);
+// The goal is the user's own text landing inside a question, outside every prompt fence.
+check(
+  "a goal whose wording would derail the prompt is dropped, not shipped",
+  suggestionsAreGeneric(
+    buildChatSuggestions(
+      signals({
+        goalMatches: [
+          { id: "c1", name: "Sarah Chen", goal: "reconnect with old colleagues", score: 0.9 },
+        ],
+      }),
+    ),
+  ),
+  "a goal containing 'reconnect' trips isAttentionQuestion",
+);
+
+// -- the cold-start tier ------------------------------------------------------------------
+console.log("\nthe cold-start tier");
+
+const cold = buildChatSuggestions(
+  signals({
+    biggestCompany: { company: "Ramp", total: 9 },
+    newContacts: [newPerson("c9", "Ken Thompson", 400)],
+  }),
+);
+check(
+  "with no recent signal at all, the starter tier still names a real company",
+  cold.some((s) => s.kind === "starter_company" && s.question === "Who else do I know at Ramp?"),
+  JSON.stringify(texts(cold)),
+);
+check("and says how many work there", cold.some((s) => s.basis === "9 people work there"));
+check(
+  "and the most recent person, however long ago they were added",
+  cold.some((s) => s.kind === "newest_contact" && s.question.includes("Ken Thompson")),
+  JSON.stringify(texts(cold)),
+);
+check(
+  "the starter tier does not outrank a real windowed signal",
+  buildChatSuggestions(
+    signals({
+      overdue: [{ id: "c1", name: "Ada", daysOverdue: 4 }],
+      biggestCompany: { company: "Ramp", total: 9 },
+    }),
+  )[0]!.kind === "overdue",
+);
+check(
+  "a company with one person in it is not a starter — there is no one else to know",
+  suggestionsAreGeneric(
+    buildChatSuggestions(signals({ biggestCompany: { company: "Ramp", total: 1 } }))
+  ),
+);
+check(
+  "a company the roster could never resolve is not a starter",
+  suggestionsAreGeneric(buildChatSuggestions(signals({ biggestCompany: { company: "N/A", total: 9 } }))),
+);
+check(
+  "and with truly nothing, two generics — not the four that included a dead-end",
+  JSON.stringify(texts(buildChatSuggestions(signals()))) ===
+    JSON.stringify([...GENERIC_SUGGESTIONS]) && GENERIC_SUGGESTIONS.length === 2,
+  JSON.stringify(texts(buildChatSuggestions(signals()))),
+);
+check(
+  "the deleted generics are really gone",
+  !GENERIC_SUGGESTIONS.some((q) => /AWS|recruiters/i.test(q)),
+  JSON.stringify(GENERIC_SUGGESTIONS),
+);
+
+// -- two passes ---------------------------------------------------------------------------
+console.log("\ntwo passes");
+
+const eightOverdueOnly = buildChatSuggestions(
+  signals({
+    overdue: Array.from({ length: 8 }, (_, i) => ({
+      id: `o${i}`,
+      name: `Person ${i}`,
+      daysOverdue: 10 - i,
+    })),
+  }),
+);
+check(
+  "one category alone still fills the row via the second pass",
+  eightOverdueOnly.filter((s) => s.kind === "overdue").length === MAX_PER_KIND,
+  JSON.stringify(texts(eightOverdueOnly)),
+);
+const threeFollowUps = buildChatSuggestions(
+  signals({
+    overdue: [{ id: "a", name: "Ada", daysOverdue: 9 }],
+    commitments: [{ contactId: "b", name: "Ben", phrase: "the deck" }],
+    goneQuiet: [{ id: "c", name: "Cy", reason: "Gone quiet" }],
+    companyClusters: [{ company: "Ramp", people: ["D", "E"], lastActiveAt: daysAgo(1) }],
+  }),
+);
+check(
+  "three follow-up rules do not open the row with three follow-up cards",
+  CATEGORY_FOR[threeFollowUps[0]!.kind] !== CATEGORY_FOR[threeFollowUps[1]!.kind],
+  JSON.stringify(threeFollowUps.map((s) => [s.kind, CATEGORY_FOR[s.kind]])),
 );
 
 // -- the wording constraint -------------------------------------------------------------
@@ -154,7 +353,7 @@ const onePerson = buildChatSuggestions(
 );
 check(
   "a one-person network yields exactly one card about that person",
-  onePerson.filter((s) => s.contactId === "solo").length === 1,
+  onePerson.filter((s) => s.contactIds.includes("solo")).length === 1,
   JSON.stringify(texts(onePerson)),
 );
 check(
@@ -242,7 +441,7 @@ const idBefore = buildChatSuggestions(
 const idAfter = buildChatSuggestions(
   signals({
     overdue: [{ id: "c1", name: "Ada", daysOverdue: 2 }],
-    newContacts: [{ id: "c9", name: "Someone Else", createdAt: daysAgo(1) }],
+    newContacts: [newPerson("c9", "Someone Else", 1)],
   }),
 )[0]!.id;
 check(
@@ -257,7 +456,7 @@ console.log("\nsuppression");
 const suppressed = buildChatSuggestions(
   signals({
     overdue: [{ id: "c1", name: "Ada Lovelace", daysOverdue: 6 }],
-    newContacts: [{ id: "c5", name: "Ken Thompson", createdAt: daysAgo(4) }],
+    newContacts: [newPerson("c5", "Ken Thompson", 4)],
     recentQuestions: ["what should i ask ada lovelace next time we speak"],
   }),
 );

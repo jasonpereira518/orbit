@@ -445,7 +445,7 @@ export function FloatingAskBar() {
         kind: "generic" as const,
         question,
         basis: "",
-        contactId: null,
+        contactIds: [],
         interactionType: null,
         rank: 10,
       })),
@@ -564,7 +564,7 @@ export function FloatingAskBar() {
                           disabled={chatPending}
                           onPick={(s) =>
                             sendQuestion(s.question, {
-                              contextContactIds: s.contactId ? [s.contactId] : undefined,
+                              contextContactIds: s.contactIds.length ? s.contactIds : undefined,
                             })
                           }
                         />

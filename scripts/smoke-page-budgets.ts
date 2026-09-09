@@ -243,15 +243,19 @@ async function main() {
 
   // ---- Composer suggestion signals ---------------------------------------------------
   // The row renders on every visit to an empty /chat and on every open of the floating ask
-  // bar, so its cost is paid far more often than a page load. Six statements in the steady
-  // state; the ceiling leaves room for the conditional mention lookup and one future rung.
+  // bar, so its cost is paid far more often than a page load. Nine in the steady state, up
+  // from six when the taxonomy added commitments, notes mentions, goals and the cold-start
+  // company aggregate. Every one is a bounded index read over the user's own slice, and the
+  // row is fetched at most once per page load — but this is the largest cost in the feature
+  // and the number is meant to be argued rather than absorbed. If it has to come down, the
+  // company aggregate is the one to drop, at the cost of the best cold-start question.
   console.log("\nComposer suggestions (loadSuggestionSignals)…");
   startQueryCount();
   await loadSuggestionSignals(USER);
   const suggestionCount = stopQueryCount();
   const suggestionScans = contactScans(capturedQueries());
   console.log(`  statements: ${suggestionCount}`);
-  check("suggestions issue ≤ 8 statements", suggestionCount <= 8, `got ${suggestionCount}`);
+  check("suggestions issue ≤ 12 statements", suggestionCount <= 12, `got ${suggestionCount}`);
   check(
     "suggestions do not pull notes as a bare column — the emptiness test belongs in the predicate",
     suggestionScans.every((s) => !selectsBare(s, "notes")),

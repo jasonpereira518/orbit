@@ -201,7 +201,7 @@ export async function getChatSuggestions(): Promise<ChatSuggestion[]> {
       kind: "generic" as const,
       question,
       basis: "",
-      contactId: null,
+      contactIds: [],
       interactionType: null,
       rank: GENERIC_RANK,
     }));
