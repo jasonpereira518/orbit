@@ -23,7 +23,7 @@ import { askNetwork, createChatThread } from "@/actions/chat";
 import { streamChat } from "@/lib/chat-stream-client";
 import { SuggestionPills } from "@/components/chat/suggestion-cards";
 import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
-import type { ChatSuggestion } from "@/lib/chat-suggestions";
+import { CONTACT_PAGE_SUGGESTIONS, type ChatSuggestion } from "@/lib/chat-suggestions";
 import { getAskBarContact } from "@/actions/contacts";
 import { searchDashboardContacts } from "@/actions/search";
 import { createReminder } from "@/actions/reminders";
@@ -94,13 +94,6 @@ const CONTACT_PATH_RE =
  */
 /** How many fit the bar's panel without crowding out the search results below. */
 const ASK_BAR_SUGGESTIONS = 4;
-
-const PROFILE_SUGGESTIONS = [
-  "What should I know before we talk?",
-  "Summarize our relationship",
-  "What have we talked about recently?",
-  "Suggest a warm follow-up angle",
-];
 
 function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -440,7 +433,7 @@ export function FloatingAskBar() {
   // beyond picking an icon the pill variant does not draw.
   const profileChips: ChatSuggestion[] = useMemo(
     () =>
-      PROFILE_SUGGESTIONS.map((question, i) => ({
+      CONTACT_PAGE_SUGGESTIONS.map((question, i) => ({
         id: `profile:${i}`,
         kind: "generic" as const,
         question,

@@ -721,6 +721,11 @@ export function ChatPanel() {
         insertAtCaret(item.text);
         return;
       }
+      if (item.kind === "event") {
+        const token = tokenForPerson(item.contactId, item.nameCandidates);
+        insertAtCaret(`${item.before}${token}${item.after}`);
+        return;
+      }
       insertAtCaret(tokenForPerson(item.contactId, item.nameCandidates));
     },
     [insertAtCaret, tokenForPerson],
@@ -758,10 +763,11 @@ export function ChatPanel() {
       const el = textareaRef.current;
       if (!el || mention.start === null) return;
       const to = el.selectionStart ?? el.value.length;
-      const text =
-        option.kind === "person"
-          ? tokenForPerson(option.contactId, option.nameCandidates)
-          : option.text;
+      // Both kinds mint a token; an event just wraps it in a sentence. That is what makes
+      // a picked meeting as well-grounded as a picked person — the same attachment, the
+      // same green mark, the same atomic delete.
+      const token = tokenForPerson(option.contactId, option.nameCandidates);
+      const text = option.kind === "person" ? token : `${option.before}${token}${option.after}`;
       spliceComposer(mention.start, to, text);
       // Dismiss rather than reset: the completed token still parses as a query, so a plain
       // reset would reopen the menu on the name that was just accepted.

@@ -244,6 +244,31 @@ async function main() {
     JSON.stringify(schoolCtx.orgRosters.map((r) => [r.kind, r.name, r.total]))
   );
 
+  // --- two spellings of one school are one roster --------------------------------------
+
+  await db.insert(contacts).values([
+    { userId: USER, fullName: "Acronym Alum", school: "MIT" },
+    { userId: USER, fullName: "Longhand Alum", school: "Massachusetts Institute of Technology" },
+  ]);
+  const mitCtx = await prepareChatContext(USER, "Who do I know from MIT?", {});
+  const mit = mitCtx.orgRosters.find((r) => r.kind === "school");
+  check(
+    "asking by the acronym finds the people listed under the long form too",
+    mit?.total === 2,
+    JSON.stringify(mitCtx.orgRosters.map((r) => [r.kind, r.name, r.total]))
+  );
+  const longCtx = await prepareChatContext(
+    USER,
+    "Who do I know from Massachusetts Institute of Technology?",
+    {}
+  );
+  const long = longCtx.orgRosters.find((r) => r.kind === "school");
+  check(
+    "and asking by the long form finds the acronym's people",
+    long?.total === 2,
+    JSON.stringify(longCtx.orgRosters.map((r) => [r.kind, r.name, r.total]))
+  );
+
   // --- attached people: the composer's `+` puts a real timeline in front of the model ---
 
   const marcus = (

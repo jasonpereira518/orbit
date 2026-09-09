@@ -7,6 +7,7 @@ import {
   questionMentionsOrg,
 } from "@/lib/chat-roster-match";
 import { canonicalCompanyClusterName } from "@/lib/company-family";
+import { foldSchoolNames } from "@/lib/school-name";
 import { normalizeCompanyName } from "@/lib/company-name";
 
 /**
@@ -76,13 +77,24 @@ export async function findOrgRosters(
   ]);
   const orgRows = [...companyRows, ...schoolRows];
 
+  // Schools fold by acronym, derived from this user's own values — "MIT" and
+  // "Massachusetts Institute of Technology" were two organisations with two counts, so a
+  // question naming either saw half the alumni. Built before the loop because folding a
+  // name needs to know every other name.
+  const schoolFold = foldSchoolNames(
+    orgRows.filter((r) => r.kind === "school").map((r) => (r.name || "").trim())
+  );
+
   // Fold aliases together the same way the constellation does, so "AWS" and "Amazon Web
   // Services" are one organisation here too and the count matches what the map shows.
   const byCanonical = new Map<string, { kind: "company" | "school"; display: string; variants: Set<string>; total: number }>();
   for (const row of orgRows as OrgRow[]) {
     const raw = (row.name || "").trim();
     if (!raw) continue;
-    const canonical = row.kind === "company" ? canonicalCompanyClusterName(raw) || raw : raw;
+    const canonical =
+      row.kind === "company"
+        ? canonicalCompanyClusterName(raw) || raw
+        : schoolFold.get(raw) || raw;
     const key = `${row.kind}:${normalizeCompanyName(canonical)}`;
     const entry = byCanonical.get(key) ?? {
       kind: row.kind,

@@ -267,6 +267,69 @@ check(
   noAttached.systemCore
 );
 
+// --- an empty attention brief must not be told to name people --------------------------
+
+const emptyBrief = buildChatPrompt({
+  ...baseChatPromptArgs(),
+  attention: { overdue: [], suggestions: [] },
+  question: "who should I reconnect with this week?",
+  contactsContext: [],
+  focusProfile: null,
+});
+check(
+  "an empty brief still reaches the model — nobody overdue IS the answer",
+  emptyBrief.user.includes("Overdue follow-ups: none"),
+  emptyBrief.user.slice(-200)
+);
+check(
+  "but it is not told to name those people",
+  !emptyBrief.systemCore.includes("name those people"),
+  emptyBrief.systemCore
+);
+check(
+  "nor told it may not plead ignorance over an empty list",
+  !emptyBrief.systemCore.includes("Do not reply that you lack information"),
+  emptyBrief.systemCore
+);
+check(
+  "it is told the emptiness is the answer, and not to fill the gap from Contacts",
+  emptyBrief.systemCore.includes("it is EMPTY") &&
+    emptyBrief.systemCore.includes("Do not substitute people"),
+  emptyBrief.systemCore
+);
+
+const fullBrief = buildChatPrompt({
+  ...baseChatPromptArgs(),
+  attention: {
+    overdue: [
+      {
+        id: "c1",
+        name: "Ada",
+        title: null,
+        company: null,
+        daysOverdue: 6,
+        daysSinceTouch: 40,
+        hasLoggedInteraction: true,
+      },
+    ],
+    suggestions: [],
+  },
+  question: "who should I reconnect with this week?",
+  contactsContext: [],
+  focusProfile: null,
+});
+check(
+  "a brief with someone in it keeps the original instruction",
+  fullBrief.systemCore.includes("name those people") &&
+    fullBrief.systemCore.includes("Do not reply that you lack information"),
+  fullBrief.systemCore
+);
+check(
+  "and does not also get the empty one",
+  !fullBrief.systemCore.includes("it is EMPTY"),
+  fullBrief.systemCore
+);
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);

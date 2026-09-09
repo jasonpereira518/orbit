@@ -12,6 +12,7 @@ import {
   type AppNavItem,
 } from "@/components/layout/app-nav";
 import { isHrefHidden, surfaceKeyForHref } from "@/lib/surfaces";
+import { NavPendingDot } from "@/components/layout/nav-pending-dot";
 import { OrbitLogo } from "@/components/orbit-logo";
 import type { Plan } from "@/lib/plan-limits";
 import { SPRING_PILL } from "@/lib/motion";
@@ -64,6 +65,7 @@ function SidebarNavLink({
           Hidden
         </span>
       )}
+      <NavPendingDot />
     </Link>
   );
 }

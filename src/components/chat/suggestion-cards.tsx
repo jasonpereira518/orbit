@@ -150,6 +150,15 @@ export function SuggestionCards({
               {/* `text-ink`, not `text-primary`: primary is an accent that flips hue
                   between themes, so a label in it turns saturated blue in dark mode. */}
               <span className="truncate text-xs font-medium text-ink">{s.question}</span>
+              {/* The reason, for anyone who cannot hover. A phone has no hover, so moving
+                  it into a tooltip made it unreachable on exactly the surface where the
+                  row is hardest to read. Shown inline only below `sm`, where it costs one
+                  extra pill's width rather than the row's height. */}
+              {s.basis && (
+                <span className="truncate text-[11px] text-muted-foreground sm:hidden">
+                  · {s.basis}
+                </span>
+              )}
             </button>
           );
 

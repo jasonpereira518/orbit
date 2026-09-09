@@ -153,7 +153,9 @@ export function useMentionAutocomplete(enabled: boolean): MentionAutocompleteSta
           interactionType: e.interactionType,
           // The noun, not the lowercased label: "my in person with Marcus" is not English.
           // Same map the `+` menu uses, so the two surfaces phrase an event identically.
-          text: `my ${interactionTypeNoun(e.interactionType)} with ${e.contactName} on ${eventDate(e.interactionDate)}`,
+          before: `my ${interactionTypeNoun(e.interactionType)} with `,
+          after: ` on ${eventDate(e.interactionDate)}`,
+          nameCandidates: [e.contactName],
         };
       }),
     ];

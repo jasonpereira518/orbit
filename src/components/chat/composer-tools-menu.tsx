@@ -37,6 +37,24 @@ type Tab = "people" | "events";
  */
 export type ComposerInsert =
   | { kind: "text"; text: string }
+  /**
+   * A past meeting, whose phrase is built around the person's own `@Name` token.
+   *
+   * The obvious shape was plain prose — "my coffee with Marcus on Aug 15" — but then the
+   * person it happened with is attached to nothing, and the model has to find Marcus by
+   * name through retrieval, which hands over far less than the attached block does.
+   * Splicing the token into the sentence reuses the whole mention mechanism instead: it
+   * goes green, deletes as one object, and drops out of the question if you remove it.
+   * The caller mints the token, because only it knows which names are already taken.
+   */
+  | {
+      kind: "event";
+      contactId: string;
+      nameCandidates: string[];
+      /** Sentence either side of the token: "my coffee with " + token + " on Aug 15". */
+      before: string;
+      after: string;
+    }
   | {
       kind: "person";
       contactId: string;
@@ -150,8 +168,11 @@ export function ComposerToolsMenu({
                 />
               ) as React.ReactNode,
               insert: {
-                kind: "text" as const,
-                text: `my ${interactionTypeNoun(e.interactionType)} with ${e.contactName} on ${formatEventDate(e.interactionDate)}`,
+                kind: "event" as const,
+                contactId: e.contactId,
+                nameCandidates: [e.contactName],
+                before: `my ${interactionTypeNoun(e.interactionType)} with `,
+                after: ` on ${formatEventDate(e.interactionDate)}`,
               },
             };
           }),

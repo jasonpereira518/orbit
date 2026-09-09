@@ -113,6 +113,30 @@ export type IngestOptions = {
    * are filtered out instead of piling up.
    */
   reminders?: (event: NetworkEvent, contactId: string, userId: string) => ReminderInsert[];
+  /**
+   * Report which contact each participant resolved to, in `IngestStats.resolutions`.
+   *
+   * Opt-in so no existing caller pays for the extra array. Added for the events feature,
+   * which has to write `event_attendees.contact_id` back after a connect and otherwise has
+   * no way to learn the mapping: `IngestStats` is counts only.
+   *
+   * The alternatives were both worse. Re-probing with `findDuplicateCandidatesIndexed` after
+   * the fact runs the matcher a SECOND time against an index this function has since mutated,
+   * so it could legitimately disagree with the answer actually used — and this module's own
+   * comments warn that a write path must never be where that divergence is discovered.
+   * Parsing the contact id back out of `external_id` reverses a format `external-id.ts`
+   * explicitly calls a data contract. Ingest is the only code that legitimately knows this
+   * mapping, so it is the code that should say.
+   */
+  reportResolutions?: boolean;
+  /**
+   * Written to `contacts.met_context` / `how_met` on contacts this run CREATES.
+   *
+   * Only on create: `bulkMergeContactsForUser` COALESCEs, so an existing contact keeps
+   * whatever story it already had rather than having it rewritten by a later source.
+   */
+  metContext?: string;
+  howMet?: (event: NetworkEvent) => string | null;
 };
 
 export type IngestStats = {
@@ -125,6 +149,8 @@ export type IngestStats = {
   /** Participants that would have been created but for the plan's contact cap. */
   blockedByPlan: number;
   remindersCreated: number;
+  /** Populated only when `IngestOptions.reportResolutions` is set. */
+  resolutions?: Array<{ participant: NetworkParticipant; contactId: string }>;
 };
 
 export type IngestContext = {
@@ -190,8 +216,14 @@ function foldMerge(into: Partial<ContactInput>, pair: { event: NetworkEvent; par
   };
 }
 
-function toContactInput(p: NetworkParticipant, source: string): ContactInput {
+function toContactInput(
+  p: NetworkParticipant,
+  source: string,
+  extra?: { metContext?: string; howMet?: string | null }
+): ContactInput {
   return {
+    metContext: extra?.metContext,
+    howMet: extra?.howMet ?? undefined,
     fullName: (p.name || p.email || "").trim(),
     email: p.email?.trim() || undefined,
     linkedinUrl: p.linkedinUrl?.trim() || undefined,
@@ -346,7 +378,10 @@ export async function ingestEvents(
       stats.blockedByPlan++;
       continue;
     }
-    const input = toContactInput(pair.participant, ctx.options.source);
+    const input = toContactInput(pair.participant, ctx.options.source, {
+      metContext: ctx.options.metContext,
+      howMet: ctx.options.howMet?.(pair.event) ?? null,
+    });
     if (!input.fullName) {
       stats.unmatched++;
       continue;
@@ -491,6 +526,13 @@ export async function ingestEvents(
         }
       }
     }
+  }
+
+  if (ctx.options.reportResolutions) {
+    stats.resolutions = resolved.map(({ pair, contactId }) => ({
+      participant: pair.participant,
+      contactId,
+    }));
   }
 
   return stats;

@@ -189,6 +189,25 @@ export const GENERIC_SUGGESTIONS: readonly string[] = [
 ];
 
 /**
+ * What the floating ask bar offers when it is opened on somebody's page.
+ *
+ * Here rather than inside the bar so it is testable next to everything else — and it needed
+ * to be. "Suggest a warm follow-up angle" contained "follow-up", which fires
+ * `isAttentionQuestion` and hands the model twelve overdue contacts on a question that is
+ * scoped to one person. It never went through the audit the general set did.
+ *
+ * These reach the model through `focusContactId`, not `contextContactIds` — a stronger
+ * path, since it also carries the contact's whole stored profile and twelve of their
+ * interactions regardless of type. So they can ask things the general set cannot.
+ */
+export const CONTACT_PAGE_SUGGESTIONS: readonly string[] = [
+  "What should I know before we talk?",
+  "Summarize our relationship",
+  "What have we talked about recently?",
+  "What could I message them about?",
+];
+
+/**
  * The comparison form of a question. Serves dedupe and suppression alike, so a card can
  * never be deduped under one rule and suppressed under another.
  */

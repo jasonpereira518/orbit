@@ -224,6 +224,12 @@ export function SceneFinale({
             Pricing
           </Link>
           <Link
+            href="/interest"
+            className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
+          >
+            Interest list
+          </Link>
+          <Link
             href="/privacy"
             className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
           >

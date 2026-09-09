@@ -39,8 +39,17 @@ export type MentionOption =
       contactFirstName: string | null;
       avatarUrl: string | null;
       interactionType: string;
-      /** The prose this row splices in. Events carry no `@` token — see the composer. */
-      text: string;
+      /**
+       * The sentence either side of the person's `@Name` token, which the composer mints
+       * and splices between them: "my coffee with " + token + " on 15 Aug".
+       *
+       * An event used to splice plain prose, which attached nobody — so the model had to
+       * find the person by name through retrieval and never saw their timeline. Building
+       * the phrase around a real token reuses the whole mention mechanism instead.
+       */
+      before: string;
+      after: string;
+      nameCandidates: string[];
     };
 
 export function MentionAutocomplete({

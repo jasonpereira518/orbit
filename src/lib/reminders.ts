@@ -786,7 +786,10 @@ export async function snoozeReminder(
 ) {
   const db = await getDb();
   const due = new Date();
-  due.setDate(due.getDate() + days);
+  // Same 1..90 clamp as `scheduleContactFollowUp`. Both write `contacts.nextFollowUpAt`
+  // for the same contact by different routes (the dashboard's day presets vs. the
+  // reminder row's snooze), so they must not disagree about what a day count means.
+  due.setDate(due.getDate() + Math.max(1, Math.min(90, days)));
 
   const reminder = await db.query.reminders.findFirst({
     where: and(eq(reminders.id, reminderId), eq(reminders.userId, userId)),

@@ -17,6 +17,7 @@
 import { isAttentionQuestion } from "../src/lib/chat-attention";
 import {
   CATEGORY_FOR,
+  CONTACT_PAGE_SUGGESTIONS,
   GENERIC_SUGGESTIONS,
   MAX_CARDS,
   MAX_PER_KIND,
@@ -26,6 +27,7 @@ import {
   type SuggestionSignals,
 } from "../src/lib/chat-suggestions";
 import { isRosterMatchableOrg } from "../src/lib/chat-roster-match";
+import { foldSchoolNames, looksLikeAcronym, schoolAcronym } from "../src/lib/school-name";
 import { interactionTypeNoun } from "../src/lib/interaction-types";
 
 let failures = 0;
@@ -147,6 +149,43 @@ check(
     .filter((s) => s.kind !== "generic" && s.kind !== "company_cluster")
     .every((s) => s.contactIds.length > 0),
   JSON.stringify(ladder.map((s) => [s.kind, s.contactIds])),
+);
+
+// -- folding two spellings of one school -------------------------------------------------
+console.log("\nschool name folding");
+
+check("initials skip the joining words", schoolAcronym("Massachusetts Institute of Technology") === "mit");
+check("two significant words is enough", schoolAcronym("Boston University") === "bu");
+check("one word has no acronym to give", schoolAcronym("Yale") === null);
+check("nor does an empty name", schoolAcronym("") === null);
+check(
+  "a long name whose initials run past six letters is not an acronym",
+  schoolAcronym("A B C D E F G H") === null,
+);
+check("an acronym-shaped name is recognised", looksLikeAcronym("MIT") && looksLikeAcronym("UCLA"));
+// Case is the only thing separating "MIT" from "Yale" — both are short single words.
+check("a short real word is not an acronym", !looksLikeAcronym("Yale"));
+check("nor is a multi-word name", !looksLikeAcronym("Stanford University"));
+check("nor a lower-case spelling, which keeps Yale safe", !looksLikeAcronym("mit"));
+
+const folded = foldSchoolNames(["MIT", "Massachusetts Institute of Technology", "Yale"]);
+check(
+  "the acronym folds into the long form, matching how AWS resolves",
+  folded.get("MIT") === "Massachusetts Institute of Technology",
+  JSON.stringify([...folded]),
+);
+check(
+  "the long form maps to itself",
+  folded.get("Massachusetts Institute of Technology") === "Massachusetts Institute of Technology",
+);
+check("a school with no counterpart is left alone", folded.get("Yale") === "Yale");
+check(
+  "an acronym with nothing to expand into keeps its own name",
+  foldSchoolNames(["MIT"]).get("MIT") === "MIT",
+);
+check(
+  "every input gets an entry, so callers can look up unconditionally",
+  ["MIT", "Yale"].every((n) => folded.has(n)),
 );
 
 // -- the new rungs ----------------------------------------------------------------------
@@ -336,6 +375,12 @@ check(
   "the generic rung is allowed to trip it, which is what it is for",
   GENERIC_SUGGESTIONS.some((q) => isAttentionQuestion(q)),
 );
+// The contact-page set is scoped to ONE person, so tripping the brief is a derailment
+// there for the same reason it is on a person-scoped card. One of these used to: "Suggest
+// a warm follow-up angle" contains "follow-up".
+for (const q of CONTACT_PAGE_SUGGESTIONS) {
+  check(`contact-page: "${q}" does not trip the attention brief`, !isAttentionQuestion(q));
+}
 
 // -- diversity ---------------------------------------------------------------------------
 console.log("\ndiversity caps");

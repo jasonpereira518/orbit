@@ -23,6 +23,7 @@ import {
 import { cn } from "@/lib/utils";
 import { clerkAppearance } from "@/lib/clerk-appearance";
 import { FEEDBACK_SURFACE_KEY, isHrefHidden } from "@/lib/surfaces";
+import { NavPendingDot } from "@/components/layout/nav-pending-dot";
 import { SPRING_PILL, SPRING_TAP } from "@/lib/motion";
 import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
 import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen } from "@/lib/feedback-events";
@@ -333,6 +334,7 @@ export function MobileNav({
                           transition={pillTransition}
                         />
                       )}
+                      <NavPendingDot className="top-0.5 right-1.5" />
                       <span
                         className="relative z-10 flex flex-col items-center gap-0.5 transition-transform duration-150 ease-out"
                         style={{
@@ -401,7 +403,7 @@ export function MobileNav({
                   href={item.href}
                   onClick={() => setMoreOpen(false)}
                   className={cn(
-                    "flex items-center gap-3 rounded-xl px-3 py-3 text-sm transition-colors",
+                    "relative flex items-center gap-3 rounded-xl px-3 py-3 text-sm transition-colors",
                     active
                       ? "bg-muted text-foreground"
                       : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"
@@ -409,6 +411,7 @@ export function MobileNav({
                 >
                   <Icon className="h-5 w-5 shrink-0" />
                   {item.label}
+                  <NavPendingDot className="top-1/2 right-3 -translate-y-1/2" />
                 </Link>
               );
             })}

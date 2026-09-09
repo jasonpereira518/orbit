@@ -1462,6 +1462,18 @@ export function buildChatPrompt({
 
   const hasRecruiters = recruitersContext.length > 0;
 
+  /**
+   * Whether the brief ran and genuinely found nobody.
+   *
+   * Distinct from "no brief at all", and the difference matters: an empty brief is real
+   * information — nobody IS overdue — so the block stays, but the instruction below must
+   * not be the one that tells the model to name people and not to plead ignorance. It was,
+   * because `attentionBlock` is truthy even when its only content is "none".
+   */
+  const attentionEmpty = Boolean(
+    attention && !attention.overdue.length && !attention.suggestions.length
+  );
+
   const attentionBlock = (() => {
     if (!attention) return "";
     const lines: string[] = [];
@@ -1561,7 +1573,7 @@ export function buildChatPrompt({
 Answer using the provided contacts${hasRecruiters ? " and recruiters" : ""} (including summaries, notes, key facts, and the dated "Recent interactions" lines). Never invent people, companies, dates, or message content — if the lists do not say it, you do not know it.
 Use prior conversation for context when present, but ground every recommendation in the provided lists.
 The Contacts list is a relevance-ranked subset, so never present it as everyone the user knows and never count from it.
-${attentionBlock ? "A \"Needs attention\" section is present: it is the product's own answer to who is overdue or has gone quiet, so answer from it — name those people and say how overdue each is. Do not reply that you lack information while it is present.\n" : ""}${attachedBlock ? "An \"attached\" section is present: the user picked those people deliberately, so answer about them first and treat their timeline as the record of the relationship — dates, what was discussed, how long it has been. Name them by name. Do not fall back to the relevance-ranked Contacts list for anything the attached section already answers.\n" : ""}${rosterBlock ? "A \"Complete roster\" section is present: its totals are authoritative and exhaustive for those organisations. Use that number when the question asks who or how many the user knows somewhere, and name people from it rather than from the Contacts list. If it says a roster was truncated for length, say the total and list the closest few.\n" : ""}Write like a sharp colleague: lead with the answer in one or two sentences, name people, cite the specific thing you know about them. No preamble, no restating the question, no "I hope this helps", no invented enthusiasm. If nothing in the lists answers the question, say so plainly and suggest what the user could add.
+${attentionBlock && !attentionEmpty ? "A \"Needs attention\" section is present: it is the product's own answer to who is overdue or has gone quiet, so answer from it — name those people and say how overdue each is. Do not reply that you lack information while it is present.\n" : ""}${attentionEmpty ? "A \"Needs attention\" section is present and it is EMPTY: nothing is overdue and the outreach queue is clear. That is a real answer — say so plainly. Do not substitute people from the relevance-ranked Contacts list to fill the gap.\n" : ""}${attachedBlock ? "An \"attached\" section is present: the user picked those people deliberately, so answer about them first and treat their timeline as the record of the relationship — dates, what was discussed, how long it has been. Name them by name. Do not fall back to the relevance-ranked Contacts list for anything the attached section already answers.\n" : ""}${rosterBlock ? "A \"Complete roster\" section is present: its totals are authoritative and exhaustive for those organisations. Use that number when the question asks who or how many the user knows somewhere, and name people from it rather than from the Contacts list. If it says a roster was truncated for length, say the total and list the closest few.\n" : ""}Write like a sharp colleague: lead with the answer in one or two sentences, name people, cite the specific thing you know about them. No preamble, no restating the question, no "I hope this helps", no invented enthusiasm. If nothing in the lists answers the question, say so plainly and suggest what the user could add.
 Titles and companies say where someone works today and nothing more — never turn "Founder @ Acme" into "founded Acme", or a seniority into a history you were not given.
 Each recommendation's reason must point at a concrete detail from that person's summary, notes, key facts, or recent interactions — not a generic statement that they work in the field. A dated interaction line is the strongest evidence available: prefer "you had coffee on 12 Aug and discussed X" over a claim from their title. Any draft_message must sound like the user wrote it: short, specific to what they actually discussed, no flattery and no filler openers.
 ${hasRecruiters ? "When the question is about recruiters, prefer recruiters the user already logged (personal_rating / status present), then highly rated community recruiters. Do not invent email/phone — contact details may be locked." : ""}`;
