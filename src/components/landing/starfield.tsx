@@ -8,8 +8,9 @@ import {
   type StarfieldPulseDetail,
 } from "@/lib/starfield-events";
 import {
-  matchConstellation,
+  createConstellationSearch,
   type ConstellationMatch,
+  type ConstellationSearch,
 } from "@/lib/constellation-match";
 
 type Star = {
@@ -30,6 +31,13 @@ type Star = {
   ox: number;
   oy: number;
   glow: number;
+  /**
+   * Displacement onto the star's place in a named constellation, on top of
+   * ox/oy. Non-zero only for the handful of stars a figure is currently drawn
+   * through, and eased back to nothing when it fades. See `applyWarp`.
+   */
+  wx: number;
+  wy: number;
 };
 
 type ShootingStar = {
@@ -118,6 +126,15 @@ const FIGURE_OUT_MS = 420;
 /** Each line is drawn in turn rather than the figure appearing at once, which
  * is what makes it read as being traced for you. */
 const FIGURE_EDGE_STAGGER_MS = 90;
+/**
+ * How long the search may run per frame.
+ *
+ * Fifty-six figures against thirty stars is roughly 10ms of work — a dropped
+ * frame if it ran in one go, at the exact moment the user is watching the sky
+ * and nothing else is moving. Spread at 2ms a frame it finishes in a handful of
+ * frames, which nobody can see, and every one of those frames still ships.
+ */
+const SEARCH_BUDGET_MS = 2;
 
 /* Nebulae, the base gradient and the corner vignette all live in
  * `lib/sky-palette.ts` now: the warp stage cross-fades into this exact
@@ -186,6 +203,10 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     let restingSince = 0;
     /** One search per rest: a failed look must not re-run every frame. */
     let searched = false;
+    /** A search in progress, stepped a couple of milliseconds at a time. */
+    let pending: ConstellationSearch | null = null;
+    /** The stars `pending` was handed, in the order it knows them by. */
+    let pendingStars: Star[] = [];
     let figureScrollY = 0;
 
     function paintBackground() {
@@ -227,13 +248,17 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
           ox: 0,
           oy: 0,
           glow: 0,
+          wx: 0,
+          wy: 0,
         };
       });
 
       // `stars` has just been rebuilt, so a figure still holding the old
       // objects would draw lines to stars that are no longer in the sky.
+      clearWarp();
       figure = null;
       searched = false;
+      pending = null;
 
       if (reduced) draw(performance.now());
     }
@@ -308,40 +333,94 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     }
 
     /**
-     * Look for a figure in the stars around the resting cursor.
+     * Begin looking for a figure in the stars around the resting cursor.
      *
      * The positions handed to the matcher are the DRAWN ones — the well has
      * pulled the nearby stars toward the cursor, and matching the pattern as it
-     * appears is what keeps the lines landing exactly on the stars a viewer can
-     * see. Running once per rest keeps the cost off the frame budget.
+     * appears is what keeps the answer anchored to the stars a viewer can see.
+     * The search is not run here: it is stepped a couple of milliseconds per
+     * frame (see SEARCH_BUDGET_MS) so a large pool never costs a frame.
      */
-    function search(now: number, yOff: number) {
+    function beginSearch(yOff: number) {
       const points: FieldPoint[] = [];
-      const refs: Star[] = [];
+      pendingStars = [];
       for (const s of stars) {
         const sy = ((s.y - yOff) % fieldH + fieldH) % fieldH;
         const y = sy + s.oy;
         if (y < -8 || y > height + 8) continue;
         points.push({ x: s.x + s.ox, y });
-        refs.push(s);
+        pendingStars.push(s);
       }
+      pending = createConstellationSearch(points, { cursorX: px, cursorY: py });
+    }
 
-      const match = matchConstellation(points, { cursorX: px, cursorY: py });
+    /** Adopt a finished search's answer, if it found one. */
+    function adopt(match: ConstellationMatch | null, now: number) {
       if (!match) return;
-
+      clearWarp();
       figure = {
         match,
-        stars: match.starIndices.map((i) => refs[i]),
+        stars: match.starIndices.map((i) => pendingStars[i]),
         shownAt: now,
         endedAt: null,
       };
       figureScrollY = window.scrollY;
     }
 
+    /**
+     * Draw the constellation at its true proportions, by moving the stars.
+     *
+     * The stars a rested cursor happens to sit near only ever approximate a
+     * figure — that is what makes the match a match rather than a coincidence —
+     * so lines drawn straight through them give a Cassiopeia whose angles are
+     * a few degrees out. Each named star is instead eased onto the place the
+     * catalogue puts it (`match.targets`, the projected figure fitted to those
+     * stars), so what finally stands on the screen has the sky's own
+     * proportions rather than the field's.
+     *
+     * The pull is bounded by the matcher, not here: no star is offered as part
+     * of a figure if it would have to move more than `maxShiftPx`. So this
+     * nudges stars a few pixels into place; it never drags one across the sky
+     * to fill a gap, which would be drawing a constellation rather than finding
+     * one.
+     */
+    function applyWarp(now: number, yOff: number) {
+      if (!figure) return;
+      const { match } = figure;
+      const into = Math.min(1, (now - figure.shownAt) / FIGURE_IN_MS);
+      // Multiplied rather than switched, so releasing a figure mid-draw eases
+      // back from where it actually got to instead of snapping to fully warped.
+      const out = figure.endedAt
+        ? 1 - Math.min(1, (now - figure.endedAt) / FIGURE_OUT_MS)
+        : 1;
+      const t = into * out;
+      const eased = t * t * (3 - 2 * t);
+      for (let i = 0; i < figure.stars.length; i++) {
+        const s = figure.stars[i];
+        const target = match.targets[i];
+        if (!s || !target) continue;
+        const sy = ((s.y - yOff) % fieldH + fieldH) % fieldH;
+        // Toward the absolute target rather than by a stored offset: the well
+        // keeps moving these stars, and easing toward the place means the
+        // figure is exact at full warp however they drifted getting there.
+        s.wx = (target.x - (s.x + s.ox)) * eased;
+        s.wy = (target.y - (sy + s.oy)) * eased;
+      }
+    }
+
+    /** Put the stars of the outgoing figure back where the field has them. */
+    function clearWarp() {
+      if (!figure) return;
+      for (const s of figure.stars) {
+        s.wx = 0;
+        s.wy = 0;
+      }
+    }
+
     /** Where a figure star is being drawn this frame. */
     function starAt(s: Star, yOff: number) {
       const sy = ((s.y - yOff) % fieldH + fieldH) % fieldH;
-      return { x: s.x + s.ox, y: sy + s.oy };
+      return { x: s.x + s.ox + s.wx, y: sy + s.oy + s.wy };
     }
 
     /**
@@ -359,6 +438,7 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
         ? 1 - Math.min(1, (now - figure.endedAt) / FIGURE_OUT_MS)
         : 1;
       if (fade <= 0) {
+        clearWarp();
         figure = null;
         return;
       }
@@ -467,6 +547,10 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
       // the value is only ever consumed here.
       const yOff = reduced ? 0 : (window.scrollY * PARALLAX) % fieldH;
 
+      // Before the stars are drawn, not after: the warp moves the stars
+      // themselves, so the glyphs, the rings and the lines all agree.
+      applyWarp(now, yOff);
+
       // Interactive bookkeeping. Cheap enough to run unconditionally; the
       // per-star block below is what `active` gates.
       const dt = lastNow ? Math.min(DT_MAX, (now - lastNow) / 1000) : 0;
@@ -494,6 +578,10 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
         if (!active) {
           // The plain sky: exactly the work a non-interactive starfield does.
           if (y < -8 || y > height + 8) continue;
+          // A figure fading out after the pointer left still has stars to put
+          // back, and that happens with the well already settled.
+          x += s.wx;
+          y += s.wy;
         } else {
           // A star well outside the viewport must not keep integrating a stale
           // offset it picked up before scrolling away — reset it instead, so it
@@ -502,6 +590,8 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
             s.ox = 0;
             s.oy = 0;
             s.glow = 0;
+            s.wx = 0;
+            s.wy = 0;
             continue;
           }
 
@@ -561,8 +651,8 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
             anyMoving = true;
           }
 
-          x = s.x + s.ox;
-          y = sy + s.oy;
+          x = s.x + s.ox + s.wx;
+          y = sy + s.oy + s.wy;
           // Cull on the DRAWN position, not the rest one.
           if (y < -8 || y > height + 8) continue;
 
@@ -605,8 +695,12 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
       }
       if (hoverOk && pointerActive) {
         if (!searched && restingSince && now - restingSince >= IDLE_MS) {
-          searched = true;
-          search(now, yOff);
+          if (!pending) beginSearch(yOff);
+          if (pending!.step(SEARCH_BUDGET_MS)) {
+            adopt(pending!.result(), now);
+            pending = null;
+            searched = true;
+          }
         }
       }
       if (figure) paintFigure(now, yOff);
@@ -690,6 +784,9 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
       const now = performance.now();
       restingSince = now;
       searched = false;
+      // The rest is over, so a half-finished search is about a pattern that is
+      // no longer being looked at. Dropped rather than resumed.
+      pending = null;
       // Released by leaving the figure, not by moving at all: tracing the lines
       // with the cursor is the natural thing to do once one appears, and that
       // must not be what dismisses it.
@@ -705,6 +802,7 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
       pointerActive = false;
       restingSince = 0;
       searched = false;
+      pending = null;
       if (figure && !figure.endedAt) figure.endedAt = now;
     }
     function onPointerOut(e: PointerEvent) {
