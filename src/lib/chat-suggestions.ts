@@ -1,4 +1,4 @@
-import { isAttentionQuestion } from "@/lib/chat-attention";
+import { isAttentionQuestion } from "@/lib/chat-attention-match";
 import { isRosterMatchableOrg, orgMatchKey } from "@/lib/chat-roster-match";
 import { canonicalCompanyClusterName } from "@/lib/company-family";
 import { sanitizeProfileLine } from "@/lib/contact-profile-format";
