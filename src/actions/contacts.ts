@@ -25,7 +25,6 @@ import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { listActiveGoalTexts } from "@/actions/goals";
 import { type CompanyResolver } from "@/lib/companies";
 import {
-  createContactForUser,
   createContactsBulkForUser,
   deleteInteractionForUser,
   logInteractionForUser,
@@ -46,6 +45,7 @@ import {
   type LinkedInProfileEnrichment,
 } from "@/lib/apollo";
 import { saveContactProfile } from "@/lib/contact-profile";
+import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import {
@@ -648,11 +648,31 @@ export async function getContact(id: string) {
   };
 }
 
+/**
+ * Create a contact from the manual "New contact" form (and any other single-record path).
+ *
+ * Goes through `resolveOrCreateContact` rather than straight to `createContactForUser`.
+ * This path performed no duplicate check at all until now — the form would happily create a
+ * second Ada Lovelace with the same LinkedIn URL as the first — which made hand entry the
+ * easiest way in the whole product to create a duplicate.
+ *
+ * Returns the contact that survives, which is not always the one that was inserted: if the
+ * record's identifiers already belonged to someone, the data is folded into them and their
+ * row comes back instead.
+ */
 export async function createContact(
   input: ContactInput,
   options?: ContactWriteOptions
 ) {
-  return createContactForUser(await requireUserId(), input, options);
+  const userId = await requireUserId();
+  const { contactId } = await resolveOrCreateContact(userId, input, options);
+  const db = await getDb();
+  const [contact] = await db
+    .select()
+    .from(contacts)
+    .where(and(eq(contacts.userId, userId), eq(contacts.id, contactId)))
+    .limit(1);
+  return contact;
 }
 
 /**
@@ -668,7 +688,7 @@ export async function createContactIfRoom(
   options?: ContactWriteOptions
 ) {
   try {
-    return await createContactForUser(await requireUserId(), input, options);
+    return await createContact(input, options);
   } catch (err) {
     if (isPaywallError(err)) return null;
     throw err;

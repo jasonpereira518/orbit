@@ -19,6 +19,9 @@ import {
   feedback,
   feedbackScreenshots,
   gateEvents,
+  contactIdentities,
+  contactMerges,
+  duplicateSuggestions,
   eventAttendees,
   eventProviderConnections,
   events,
@@ -119,6 +122,18 @@ export async function purgeUserData(
 
   await db.delete(closenessCohorts).where(eq(closenessCohorts.userId, userId));
   await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
+  // Duplicate-prevention rows. `contact_identities` and `duplicate_suggestions` do cascade
+  // from `contacts`, but they are deleted explicitly for the same reason `event_attendees`
+  // is: they carry their own `user_id`, so `smoke-purge` requires them, and leaving them to
+  // a cascade means a change to that FK silently strips them from account deletion.
+  //
+  // `contact_merges` is the one that genuinely must be here. It has NO foreign key on
+  // either contact id — by design, since the losing contact's row is deleted — so nothing
+  // cascades it, and `loser_snapshot` holds a whole archived contact: every field of a
+  // person the user knew, surviving the deletion of the contact it came from.
+  await db.delete(contactIdentities).where(eq(contactIdentities.userId, userId));
+  await db.delete(duplicateSuggestions).where(eq(duplicateSuggestions.userId, userId));
+  await db.delete(contactMerges).where(eq(contactMerges.userId, userId));
   // `note_batches` carries the raw pasted note text and has no cascading FK to `contacts`
   // or `interactions` (its `seed_contact_id` is a plain column) — it survives both of
   // those deletes below unless removed explicitly.

@@ -7,6 +7,11 @@ import {
   STARFIELD_PULSE_EVENT,
   type StarfieldPulseDetail,
 } from "@/lib/starfield-events";
+import {
+  createConstellationSearch,
+  type ConstellationMatch,
+  type ConstellationSearch,
+} from "@/lib/constellation-match";
 
 type Star = {
   x: number;
@@ -26,6 +31,13 @@ type Star = {
   ox: number;
   oy: number;
   glow: number;
+  /**
+   * Displacement onto the star's place in a named constellation, on top of
+   * ox/oy. Non-zero only for the handful of stars a figure is currently drawn
+   * through, and eased back to nothing when it fades. See `applyWarp`.
+   */
+  wx: number;
+  wy: number;
 };
 
 type ShootingStar = {
@@ -40,6 +52,9 @@ type ShootingStar = {
 
 /** One signup burst: a ring expanding from where the form's button was. */
 type Pulse = { x: number; y: number; start: number };
+
+/** What the constellation matcher is handed: drawn positions, nothing else. */
+type FieldPoint = { x: number; y: number };
 
 /** The star field is this many viewports tall and wraps vertically. The
  * canvas itself stays viewport-sized: sizing it to the page's scrollHeight
@@ -90,6 +105,36 @@ const PULSE_PUSH = 34;
 const PULSE_RATE = 14;
 const PULSE_SHOOTERS = 4;
 const PULSE_CAP = 3;
+
+/* ── Constellation recognition ──
+ *
+ * Hold the cursor still and the sky answers: the stars around it are searched
+ * for the real figure they come closest to tracing, and that figure is drawn
+ * over them and named (`lib/constellation-match.ts`).
+ *
+ * The wait is deliberate. It has to be long enough that someone crossing the
+ * page is never interrupted by a figure they did not ask for, and short enough
+ * that resting the cursor and looking at the sky is rewarded before attention
+ * moves on. Movement below JITTER_PX does not count as moving: a hand resting
+ * on a trackpad still sends events. */
+const IDLE_MS = 620;
+const JITTER_PX = 4;
+/** Movement past this abandons the figure — it belongs to where the cursor was. */
+const RELEASE_PX = 26;
+const FIGURE_IN_MS = 900;
+const FIGURE_OUT_MS = 420;
+/** Each line is drawn in turn rather than the figure appearing at once, which
+ * is what makes it read as being traced for you. */
+const FIGURE_EDGE_STAGGER_MS = 90;
+/**
+ * How long the search may run per frame.
+ *
+ * Fifty-six figures against thirty stars is roughly 10ms of work — a dropped
+ * frame if it ran in one go, at the exact moment the user is watching the sky
+ * and nothing else is moving. Spread at 2ms a frame it finishes in a handful of
+ * frames, which nobody can see, and every one of those frames still ships.
+ */
+const SEARCH_BUDGET_MS = 2;
 
 /* Nebulae, the base gradient and the corner vignette all live in
  * `lib/sky-palette.ts` now: the warp stage cross-fades into this exact
@@ -145,6 +190,25 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     let lastNow = 0;
     let pulses: Pulse[] = [];
 
+    // The figure currently drawn over the sky, if any. It holds the star
+    // objects rather than their positions, so the lines stay glued to the
+    // stars as they settle instead of hanging in the empty space where they were found.
+    let figure: {
+      match: ConstellationMatch;
+      stars: Star[];
+      shownAt: number;
+      /** Set when the pointer has left; the figure fades from here. */
+      endedAt: number | null;
+    } | null = null;
+    let restingSince = 0;
+    /** One search per rest: a failed look must not re-run every frame. */
+    let searched = false;
+    /** A search in progress, stepped a couple of milliseconds at a time. */
+    let pending: ConstellationSearch | null = null;
+    /** The stars `pending` was handed, in the order it knows them by. */
+    let pendingStars: Star[] = [];
+    let figureScrollY = 0;
+
     function paintBackground() {
       const off = document.createElement("canvas");
       off.width = Math.floor(width * dpr);
@@ -184,8 +248,17 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
           ox: 0,
           oy: 0,
           glow: 0,
+          wx: 0,
+          wy: 0,
         };
       });
+
+      // `stars` has just been rebuilt, so a figure still holding the old
+      // objects would draw lines to stars that are no longer in the sky.
+      clearWarp();
+      figure = null;
+      searched = false;
+      pending = null;
 
       if (reduced) draw(performance.now());
     }
@@ -259,6 +332,208 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
       }
     }
 
+    /**
+     * Begin looking for a figure in the stars around the resting cursor.
+     *
+     * The positions handed to the matcher are the DRAWN ones — the well has
+     * pulled the nearby stars toward the cursor, and matching the pattern as it
+     * appears is what keeps the answer anchored to the stars a viewer can see.
+     * The search is not run here: it is stepped a couple of milliseconds per
+     * frame (see SEARCH_BUDGET_MS) so a large pool never costs a frame.
+     */
+    function beginSearch(yOff: number) {
+      const points: FieldPoint[] = [];
+      pendingStars = [];
+      for (const s of stars) {
+        const sy = ((s.y - yOff) % fieldH + fieldH) % fieldH;
+        const y = sy + s.oy;
+        if (y < -8 || y > height + 8) continue;
+        points.push({ x: s.x + s.ox, y });
+        pendingStars.push(s);
+      }
+      pending = createConstellationSearch(points, { cursorX: px, cursorY: py });
+    }
+
+    /** Adopt a finished search's answer, if it found one. */
+    function adopt(match: ConstellationMatch | null, now: number) {
+      if (!match) return;
+      clearWarp();
+      figure = {
+        match,
+        stars: match.starIndices.map((i) => pendingStars[i]),
+        shownAt: now,
+        endedAt: null,
+      };
+      figureScrollY = window.scrollY;
+    }
+
+    /**
+     * Draw the constellation at its true proportions, by moving the stars.
+     *
+     * The stars a rested cursor happens to sit near only ever approximate a
+     * figure — that is what makes the match a match rather than a coincidence —
+     * so lines drawn straight through them give a Cassiopeia whose angles are
+     * a few degrees out. Each named star is instead eased onto the place the
+     * catalogue puts it (`match.targets`, the projected figure fitted to those
+     * stars), so what finally stands on the screen has the sky's own
+     * proportions rather than the field's.
+     *
+     * The pull is bounded by the matcher, not here: no star is offered as part
+     * of a figure if it would have to move more than `maxShiftPx`. So this
+     * nudges stars a few pixels into place; it never drags one across the sky
+     * to fill a gap, which would be drawing a constellation rather than finding
+     * one.
+     */
+    function applyWarp(now: number, yOff: number) {
+      if (!figure) return;
+      const { match } = figure;
+      const into = Math.min(1, (now - figure.shownAt) / FIGURE_IN_MS);
+      // Multiplied rather than switched, so releasing a figure mid-draw eases
+      // back from where it actually got to instead of snapping to fully warped.
+      const out = figure.endedAt
+        ? 1 - Math.min(1, (now - figure.endedAt) / FIGURE_OUT_MS)
+        : 1;
+      const t = into * out;
+      const eased = t * t * (3 - 2 * t);
+      for (let i = 0; i < figure.stars.length; i++) {
+        const s = figure.stars[i];
+        const target = match.targets[i];
+        if (!s || !target) continue;
+        const sy = ((s.y - yOff) % fieldH + fieldH) % fieldH;
+        // Toward the absolute target rather than by a stored offset: the well
+        // keeps moving these stars, and easing toward the place means the
+        // figure is exact at full warp however they drifted getting there.
+        s.wx = (target.x - (s.x + s.ox)) * eased;
+        s.wy = (target.y - (sy + s.oy)) * eased;
+      }
+    }
+
+    /** Put the stars of the outgoing figure back where the field has them. */
+    function clearWarp() {
+      if (!figure) return;
+      for (const s of figure.stars) {
+        s.wx = 0;
+        s.wy = 0;
+      }
+    }
+
+    /** Where a figure star is being drawn this frame. */
+    function starAt(s: Star, yOff: number) {
+      const sy = ((s.y - yOff) % fieldH + fieldH) % fieldH;
+      return { x: s.x + s.ox + s.wx, y: sy + s.oy + s.wy };
+    }
+
+    /**
+     * The figure itself: lines traced between the stars, a ring around each one,
+     * and the name underneath.
+     *
+     * Painted after the stars so the lines sit over them, and in gold rather
+     * than white so a figure never reads as just brighter sky.
+     */
+    function paintFigure(now: number, yOff: number) {
+      if (!figure) return;
+      const { match } = figure;
+
+      const fade = figure.endedAt
+        ? 1 - Math.min(1, (now - figure.endedAt) / FIGURE_OUT_MS)
+        : 1;
+      if (fade <= 0) {
+        clearWarp();
+        figure = null;
+        return;
+      }
+
+      const pts = figure.stars.map((s) => starAt(s, yOff));
+
+      ctx!.lineCap = "round";
+      ctx!.lineJoin = "round";
+      for (let i = 0; i < match.edges.length; i++) {
+        const [a, b] = match.edges[i];
+        const p = pts[a];
+        const q = pts[b];
+        if (!p || !q) continue;
+        // Each line has its own start, so the figure draws itself in order.
+        const t = Math.min(
+          1,
+          Math.max(
+            0,
+            (now - figure.shownAt - i * FIGURE_EDGE_STAGGER_MS) / FIGURE_IN_MS
+          )
+        );
+        if (t <= 0) continue;
+        const eased = 1 - Math.pow(1 - t, 3);
+        ctx!.strokeStyle = `rgba(${STAR_GOLD}, ${0.4 * fade})`;
+        ctx!.lineWidth = 1;
+        ctx!.beginPath();
+        ctx!.moveTo(p.x, p.y);
+        ctx!.lineTo(p.x + (q.x - p.x) * eased, p.y + (q.y - p.y) * eased);
+        ctx!.stroke();
+      }
+
+      const settle = Math.min(1, Math.max(0, (now - figure.shownAt) / FIGURE_IN_MS));
+      for (const p of pts) {
+        ctx!.strokeStyle = `rgba(${STAR_GOLD}, ${0.5 * settle * fade})`;
+        ctx!.lineWidth = 1;
+        ctx!.beginPath();
+        ctx!.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
+        ctx!.stroke();
+      }
+
+      // The name, set outside the figure on the side facing away from the middle
+      // of the screen.
+      //
+      // Placing it directly under the figure was the obvious choice and the
+      // wrong one: this page's copy runs down the centre column, so "GEMINI"
+      // landed on the form card in gold caps directly above the card's own gold
+      // caps kicker, reading as a second label for the input. Pushing it outward
+      // moves it into open sky in the common case, and it is what a star chart
+      // does anyway — the name sits off the figure, not inside it.
+      const label = match.name.toUpperCase();
+      const nameT = Math.min(
+        1,
+        Math.max(0, (now - figure.shownAt - 320) / FIGURE_IN_MS)
+      );
+      if (nameT <= 0) return;
+
+      let sumX = 0;
+      let sumY = 0;
+      for (const p of pts) {
+        sumX += p.x;
+        sumY += p.y;
+      }
+      const fx = sumX / pts.length;
+      const fy = sumY / pts.length;
+      let ax = fx - width / 2;
+      let ay = fy - height / 2;
+      const away = Math.hypot(ax, ay);
+      if (away < 1) {
+        // Dead centre: no outward direction to speak of, so fall back to below.
+        ax = 0;
+        ay = 1;
+      } else {
+        ax /= away;
+        ay /= away;
+      }
+      const reach = match.radius + 38;
+      const cx = Math.min(width - 64, Math.max(64, fx + ax * reach));
+      const cy = Math.min(height - 16, Math.max(16, fy + ay * reach));
+
+      ctx!.save();
+      ctx!.font =
+        "500 11px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+      ctx!.textAlign = "center";
+      ctx!.textBaseline = "middle";
+      // Not every engine supports letterSpacing; the label reads fine without it.
+      try {
+        ctx!.letterSpacing = "0.16em";
+      } catch {
+        /* older Safari */
+      }
+      ctx!.fillStyle = `rgba(${STAR_GOLD}, ${0.78 * nameT * fade})`;
+      ctx!.fillText(label, cx, cy);
+      ctx!.restore();
+    }
+
     function draw(now: number) {
       ctx!.clearRect(0, 0, width, height);
       // A zero-size viewport at mount (hidden tab being restored, prerender) produces a
@@ -271,6 +546,10 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
       // Read scroll once per frame rather than binding a scroll listener —
       // the value is only ever consumed here.
       const yOff = reduced ? 0 : (window.scrollY * PARALLAX) % fieldH;
+
+      // Before the stars are drawn, not after: the warp moves the stars
+      // themselves, so the glyphs, the rings and the lines all agree.
+      applyWarp(now, yOff);
 
       // Interactive bookkeeping. Cheap enough to run unconditionally; the
       // per-star block below is what `active` gates.
@@ -299,6 +578,10 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
         if (!active) {
           // The plain sky: exactly the work a non-interactive starfield does.
           if (y < -8 || y > height + 8) continue;
+          // A figure fading out after the pointer left still has stars to put
+          // back, and that happens with the well already settled.
+          x += s.wx;
+          y += s.wy;
         } else {
           // A star well outside the viewport must not keep integrating a stale
           // offset it picked up before scrolling away — reset it instead, so it
@@ -307,6 +590,8 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
             s.ox = 0;
             s.oy = 0;
             s.glow = 0;
+            s.wx = 0;
+            s.wy = 0;
             continue;
           }
 
@@ -366,8 +651,8 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
             anyMoving = true;
           }
 
-          x = s.x + s.ox;
-          y = sy + s.oy;
+          x = s.x + s.ox + s.wx;
+          y = sy + s.oy + s.wy;
           // Cull on the DRAWN position, not the rest one.
           if (y < -8 || y > height + 8) continue;
 
@@ -401,6 +686,24 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
       }
 
       if (active) settled = !anyMoving;
+
+      // A figure belongs to the spot it was found at: a scroll slides the whole
+      // sky under a stationary cursor, so the pattern it named is no longer the
+      // pattern there. Release it rather than let the lines drift.
+      if (figure && !figure.endedAt && window.scrollY !== figureScrollY) {
+        figure.endedAt = now;
+      }
+      if (hoverOk && pointerActive) {
+        if (!searched && restingSince && now - restingSince >= IDLE_MS) {
+          if (!pending) beginSearch(yOff);
+          if (pending!.step(SEARCH_BUDGET_MS)) {
+            adopt(pending!.result(), now);
+            pending = null;
+            searched = true;
+          }
+        }
+      }
+      if (figure) paintFigure(now, yOff);
 
       if (!reduced) {
         if (now >= nextShot && shooters.length < 2) {
@@ -459,7 +762,7 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     // Don't burn battery repainting a starfield in a background tab.
     function onVisibility() {
       cancelAnimationFrame(raf);
-      pointerActive = false;
+      endRest(performance.now());
       if (!document.hidden && !reduced) {
         raf = requestAnimationFrame(draw);
       }
@@ -470,19 +773,43 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     // CSS px, which is the space the DPR transform leaves the context in.
     function onPointerMove(e: PointerEvent) {
       if (e.pointerType === "touch") return;
+      const moved = Math.hypot(e.clientX - px, e.clientY - py);
       px = e.clientX;
       py = e.clientY;
       pointerActive = true;
       settled = false;
+      // A hand resting on a trackpad still sends events, so only real movement
+      // restarts the clock — otherwise the figure could never be reached.
+      if (moved < JITTER_PX) return;
+      const now = performance.now();
+      restingSince = now;
+      searched = false;
+      // The rest is over, so a half-finished search is about a pattern that is
+      // no longer being looked at. Dropped rather than resumed.
+      pending = null;
+      // Released by leaving the figure, not by moving at all: tracing the lines
+      // with the cursor is the natural thing to do once one appears, and that
+      // must not be what dismisses it.
+      if (figure && !figure.endedAt) {
+        const away = Math.hypot(e.clientX - figure.match.cx, e.clientY - figure.match.cy);
+        if (away > figure.match.radius + RELEASE_PX) figure.endedAt = now;
+      }
     }
     // `pointerleave` on window is unreliable; a `pointerout` with no
     // relatedTarget is the pointer leaving the document for browser chrome or
     // another window. `blur` covers cmd-tab with the cursor still parked here.
+    function endRest(now: number) {
+      pointerActive = false;
+      restingSince = 0;
+      searched = false;
+      pending = null;
+      if (figure && !figure.endedAt) figure.endedAt = now;
+    }
     function onPointerOut(e: PointerEvent) {
-      if (e.relatedTarget === null) pointerActive = false;
+      if (e.relatedTarget === null) endRest(performance.now());
     }
     function onBlur() {
-      pointerActive = false;
+      endRest(performance.now());
     }
 
     // Listeners attach before the first draw so that if the viewport is zero-sized at

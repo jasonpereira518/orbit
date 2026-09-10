@@ -292,6 +292,35 @@ async function seed() {
     body: "prose the user wrote about a real person",
   });
 
+  // Duplicate-prevention rows. `contact_merges` is the one that matters most here: it has
+  // no foreign key to either contact (the losing contact's row is deleted by design), so
+  // nothing cascades it — and `loser_snapshot` is a whole archived contact, every field of
+  // a person the user knew, which would otherwise outlive the account.
+  await db.insert(schema.contactIdentities).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "email",
+    value: "ada@analytical.io",
+  });
+  const [otherContact] = await db
+    .insert(schema.contacts)
+    .values({ userId: USER, fullName: "Ada Lovelace (dup)" })
+    .returning();
+  await db.insert(schema.duplicateSuggestions).values({
+    userId: USER,
+    contactAId: contact.id < otherContact.id ? contact.id : otherContact.id,
+    contactBId: contact.id < otherContact.id ? otherContact.id : contact.id,
+    reason: "Same full name",
+    confidence: 0.6,
+  });
+  await db.insert(schema.contactMerges).values({
+    userId: USER,
+    winnerContactId: contact.id,
+    loserContactId: otherContact.id,
+    loserSnapshot: { full_name: "Ada Lovelace (dup)", email: "ada@analytical.io" },
+    status: "done",
+  });
+
   // An event, its roster, and a stored provider credential. The roster row deliberately
   // points at `contact` so the purge also has to survive the `ON DELETE SET NULL` FK — the
   // ordering bug that would otherwise rewrite every attendee on the way to deleting it.

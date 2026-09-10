@@ -4,9 +4,12 @@
  * The dry run, shown before anything is written.
  *
  * A pasted roster is frequently name-only, and a conference is exactly where two different
- * "Sarah Chen"s turn up. `connect.ts` therefore uses the standard 0.85 merge bar rather than
- * the calendar path's 0.6, which means a bare name match CREATES rather than merges — the
- * safe direction, since a duplicate can be merged later but a wrong merge cannot be undone.
+ * "Sarah Chen"s turn up. A bare name match therefore CREATES rather than merges — now the
+ * rule everywhere contacts are created, not just here (`canFold` in
+ * `src/lib/ingest/events.ts` folds only at 0.85 and up, which a bare name does not reach).
+ * It is still the safe direction, though no longer the irreversible one it was: a merge
+ * archives the losing contact whole and can be undone from /contacts/duplicates, which is
+ * also where the lookalike this declined to merge shows up.
  *
  * This dialog is what makes that honest: the user sees which people will attach to an
  * existing contact and which will be new, before committing, and can go back and deselect.
