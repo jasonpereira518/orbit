@@ -16,6 +16,7 @@ import {
   type Suppression,
   type WeightRow,
 } from "../src/lib/follow-ups/score";
+import { SIGNAL_TRIGGER } from "../src/lib/follow-ups/registry";
 import type { ContactSnapshot, SignalCandidate } from "../src/lib/follow-ups/types";
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -92,6 +93,10 @@ console.log("\nuserWeight");
   check("an unseen kind is neutral", userWeight(undefined, 0.2) === 1);
   const young: WeightRow = { kind: "dormant", weight: 1, shown: 4, accepted: 0, dismissed: 4 };
   check("a kind shown only 4 times stays pinned at 1.0", userWeight(young, 0.2) === 1);
+  const boundary: WeightRow = { kind: "dormant", weight: 1, shown: 5, accepted: 0, dismissed: 5 };
+  const boundaryResult = userWeight(boundary, 0.2);
+  check("at the boundary (shown: 5), a kind is unpinned and computed", boundaryResult !== 1);
+  check("the computed weight for shown: 5 with 0 accepts is damped", Math.abs(boundaryResult - 5 / 7) < 1e-9);
   const hated: WeightRow = { kind: "dormant", weight: 1, shown: 40, accepted: 0, dismissed: 40 };
   check("a consistently dismissed kind is damped", userWeight(hated, 0.5) < 0.5);
   check("but never below the floor", userWeight(hated, 0.5) >= WEIGHT_MIN);
@@ -123,6 +128,26 @@ console.log("\nfilter 1 — recent contact refutes staleness");
 
   check("exactly 7 days is outside the window", !refutedByRecentContact("dormant", 7));
   check("never having spoken is not recent contact", !refutedByRecentContact("dormant", null));
+
+  // Regression loop: verify staleness/date classification for all signal kinds.
+  check(
+    "SIGNAL_TRIGGER registry covers exactly 13 kinds",
+    Object.keys(SIGNAL_TRIGGER).length === 13
+  );
+  for (const kind of Object.keys(SIGNAL_TRIGGER) as Array<keyof typeof SIGNAL_TRIGGER>) {
+    const trigger = SIGNAL_TRIGGER[kind];
+    if (trigger === "staleness") {
+      check(
+        `${kind} (staleness trigger) is refuted by recent contact`,
+        refutedByRecentContact(kind, 3) === true
+      );
+    } else if (trigger === "date") {
+      check(
+        `${kind} (date trigger) survives recent contact`,
+        refutedByRecentContact(kind, 3) === false
+      );
+    }
+  }
 
   // End to end through scoreCandidates.
   const fresh = contact({ lastInteractionAt: ago(2) });
