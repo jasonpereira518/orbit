@@ -323,6 +323,22 @@ console.log("\npost_event");
     "having spoken since the event suppresses it",
     postEventSource.detect(ctx({ contacts: [spokenSince], eventsByContact: events2 })).length === 0
   );
+
+  // A contact who qualifies for BOTH triggers at once: a first interaction inside the
+  // intro window with nothing since (Trigger A), and shared event attendance inside the
+  // event window (Trigger B). Trigger A runs first and adds the contact to `seen`, so
+  // Trigger B's loop skips it — the `seen` dedup must yield exactly one candidate, and
+  // it must be Trigger A's.
+  const both = contact({ id: "pe4", firstInteractionAt: ago(10), lastInteractionAt: ago(10), dateMet: ago(10) });
+  const bothEvents = new Map([
+    ["pe4", [{ contactId: "pe4", eventId: "e3", title: "Founder Mixer", startsAt: ago(6) }]],
+  ]);
+  const bothFound = postEventSource.detect(ctx({ contacts: [both], eventsByContact: bothEvents }));
+  check("a contact qualifying for both triggers produces exactly one candidate, not two", bothFound.length === 1);
+  check(
+    "the seen-set dedup keeps Trigger A's intro evidence, not Trigger B's event evidence",
+    bothFound[0].evidence.includes("nothing has been logged since")
+  );
 }
 
 console.log("\nopen_loop");
@@ -385,6 +401,23 @@ console.log("\nopen_loop");
   check(
     "a partially-directioned thread uses the precise path and stays silent",
     openLoopSource.detect(ctx({ contacts: [c], interactionsByContact: mixed })).length === 0
+  );
+
+  // The discriminating case: the NEWEST row has direction: null (with an action item
+  // attached, so a buggy fallback would have something to fire on) but an OLDER row is
+  // directioned "in". A correct hasDirectionData scans every row, sees the older "in",
+  // takes the precise path on the null latest, and `latest.direction !== "in"` stays
+  // silent. A rows[0]-only hasDirectionData would call this "no direction data" and
+  // wrongly take the action-item fallback instead.
+  const nullLatestOlderDirected = new Map([
+    ["ol", [
+      msg({ contactId: "ol", direction: null, text: "we talked", actionItems: ["Send the follow-up"], interactionDate: ago(12) }),
+      msg({ contactId: "ol", direction: "in", text: "Any chance you could intro me to Dana?", interactionDate: ago(40) }),
+    ]],
+  ]);
+  check(
+    "a null-directioned latest row with an older directioned row takes the precise path and stays silent, even though the fallback would have fired",
+    openLoopSource.detect(ctx({ contacts: [c], interactionsByContact: nullLatestOlderDirected })).length === 0
   );
 }
 
