@@ -22,6 +22,7 @@ config();
 import { SCHEMA_VERSION, reconcileSchema } from "../src/db";
 import { schemaCoverage } from "./lib/schema-coverage";
 import { backfillContactIdentities } from "../src/lib/contact-identity";
+import { mergeConfidentDuplicates } from "../src/lib/duplicate-sweep";
 
 async function main() {
   const target = process.env.DATABASE_URL?.trim() ? "DATABASE_URL" : "local PGlite";
@@ -62,11 +63,15 @@ async function main() {
     if (backfill.scanned > 0) {
       console.log(
         `migrate: claimed ${backfill.claimed} contact identities across ${backfill.scanned} contacts` +
-          (backfill.contested.length
-            ? `; ${backfill.contested.length} contact(s) already duplicated — left for review`
-            : "") +
           (backfill.more ? " (more remain; the next deploy continues)" : "")
       );
+    }
+    // Merge the pre-existing duplicates that are unambiguous. Bounded per account so a
+    // deploy cannot turn into an unbounded job; the review page sweeps again on render, so
+    // whatever is left over is picked up the next time anyone looks.
+    for (const userId of backfill.contestedUserIds) {
+      const { merged } = await mergeConfidentDuplicates(userId, { maxMerges: 100 });
+      if (merged) console.log(`migrate: merged ${merged} confident duplicate(s) for ${userId}`);
     }
   } catch (err) {
     console.error("migrate: contact-identity backfill failed (non-fatal)\n", err);

@@ -20,7 +20,6 @@ import {
 import {
   countDuplicatesAwaitingReview,
   getDuplicateReview,
-  findIdentityCollisions,
   type DuplicateReview,
 } from "@/lib/duplicate-review";
 
@@ -47,40 +46,6 @@ export async function mergeDuplicatePair(keepId: string, mergeId: string, reason
   revalidateContactSurfaces();
   revalidatePath(`/contacts/${keepId}`);
   return result;
-}
-
-/**
- * Merge every pair that shares an identifier.
- *
- * Only the certain half of the review — a shared email or LinkedIn profile is not a guess.
- * Name suggestions are never bulk-merged; that is the whole reason they are a separate list.
- *
- * Sequential rather than parallel: each merge changes what the next one sees (a three-way
- * duplicate produces two overlapping pairs), and the list is recomputed after each one.
- */
-export async function mergeAllCertainDuplicates() {
-  const userId = await requireUserId();
-  let merged = 0;
-  // Bounded: each pass re-reads the collisions, and a pass that merges nothing stops the
-  // loop. The cap is a backstop against a cycle nobody has thought of.
-  for (let pass = 0; pass < 25; pass++) {
-    const pairs = await findIdentityCollisions(userId, 50);
-    if (!pairs.length) break;
-    let mergedThisPass = 0;
-    for (const pair of pairs) {
-      try {
-        await mergeContacts(userId, pair.keep.id, pair.merge.id, { reason: pair.reason });
-        merged += 1;
-        mergedThisPass += 1;
-      } catch {
-        // A pair whose other half was already merged by an earlier pair in this same pass.
-        // Skipped rather than fatal: the recomputed next pass sees the current truth.
-      }
-    }
-    if (mergedThisPass === 0) break;
-  }
-  revalidateContactSurfaces();
-  return { merged };
 }
 
 /** Reject a proposed pair. Persisted, so it is never proposed again. */

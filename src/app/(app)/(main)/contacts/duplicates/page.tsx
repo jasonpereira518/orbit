@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { listDuplicates, listRecentMerges } from "@/actions/duplicates";
+import { requireUserId } from "@/lib/auth";
+import { mergeConfidentDuplicates } from "@/lib/duplicate-sweep";
 import { DuplicateReviewList } from "@/components/contacts/duplicate-review-list";
 
 export const metadata: Metadata = {
@@ -9,14 +11,25 @@ export const metadata: Metadata = {
 };
 
 /**
- * The cleanup surface for duplicates that already exist.
+ * The questions the app could not answer for itself.
  *
- * New contacts cannot become exact duplicates any more — identifiers are unique per user in
- * `contact_identities`, and a confident name match folds on its own — so everything listed
- * here is either historical, or a pair the app was not confident enough to merge for you.
+ * Sweeps first, lists second. Anything at or above the confidence line — a shared email,
+ * LinkedIn profile or X handle, a shared name plus employer or role — is merged on the way
+ * in and never appears here. Putting a pair in front of someone alongside the words "these
+ * are the same person" and asking them to confirm it is work the app should have done.
+ *
+ * The sweep runs on render rather than only on deploy so that a duplicate created by a
+ * hand-edit (someone corrects an email to one another contact already holds) is resolved by
+ * the time anyone looks. It is idempotent and costs a single query when there is nothing to
+ * do, which is the normal case.
  */
 export default async function DuplicatesPage() {
-  const [{ certain, proposed }, recentMerges] = await Promise.all([
+  // The library function, NOT the server action that wraps it: the action calls
+  // `revalidatePath`, and Next refuses that during a render. Nothing needs revalidating
+  // here anyway — every contact surface is dynamic, so the next request re-reads.
+  await mergeConfidentDuplicates(await requireUserId());
+
+  const [{ proposed }, recentMerges] = await Promise.all([
     listDuplicates(),
     listRecentMerges(),
   ]);
@@ -40,11 +53,7 @@ export default async function DuplicatesPage() {
         </p>
       </div>
 
-      <DuplicateReviewList
-        certain={certain}
-        proposed={proposed}
-        recentMerges={recentMerges}
-      />
+      <DuplicateReviewList proposed={proposed} recentMerges={recentMerges} />
     </div>
   );
 }

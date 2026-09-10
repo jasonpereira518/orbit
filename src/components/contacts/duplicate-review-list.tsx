@@ -10,7 +10,6 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   dismissDuplicatePair,
-  mergeAllCertainDuplicates,
   mergeDuplicatePair,
   undoMerge,
   type RecentMerge,
@@ -174,26 +173,14 @@ function PairCard({ pair }: { pair: DuplicatePair }) {
 }
 
 export function DuplicateReviewList({
-  certain,
   proposed,
   recentMerges,
 }: {
-  certain: DuplicatePair[];
   proposed: DuplicatePair[];
   recentMerges: RecentMerge[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-
-  const onMergeAll = () =>
-    startTransition(async () => {
-      const { merged } = await mergeAllCertainDuplicates();
-      toast.success(
-        merged === 1 ? "Merged 1 duplicate" : `Merged ${merged} duplicates`,
-        { description: "Each one can be undone below." }
-      );
-      router.refresh();
-    });
 
   const onUndo = (mergeId: string) =>
     startTransition(async () => {
@@ -208,42 +195,20 @@ export function DuplicateReviewList({
       }
     });
 
-  const nothingToDo = certain.length === 0 && proposed.length === 0;
+  const nothingToDo = proposed.length === 0;
 
   return (
     <div className="space-y-8">
       {nothingToDo ? (
         <Card>
           <CardContent className="py-10 text-center">
-            <p className="font-heading text-base">No duplicates found</p>
+            <p className="font-heading text-base">Nothing to review</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              New contacts are matched on email, phone, LinkedIn and X as they arrive, and
-              merged automatically when Orbit can tell they are the same person.
+              Duplicates are merged automatically whenever Orbit can tell two records are the
+              same person. Only genuinely ambiguous pairs land here.
             </p>
           </CardContent>
         </Card>
-      ) : null}
-
-      {certain.length > 0 ? (
-        <section className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="font-heading text-lg">Same person</h2>
-              <p className="text-sm text-muted-foreground">
-                These records share an email, phone number or profile, so they are the same
-                person.
-              </p>
-            </div>
-            <Button variant="secondary" size="sm" onClick={onMergeAll} disabled={pending}>
-              Merge all {certain.length}
-            </Button>
-          </div>
-          <div className="space-y-3">
-            {certain.map((pair) => (
-              <PairCard key={`${pair.keep.id}:${pair.merge.id}`} pair={pair} />
-            ))}
-          </div>
-        </section>
       ) : null}
 
       {proposed.length > 0 ? (

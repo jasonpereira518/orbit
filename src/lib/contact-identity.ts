@@ -171,11 +171,14 @@ export type BackfillResult = {
   /** Identity rows successfully claimed. */
   claimed: number;
   /**
-   * Contacts that carried an identifier another contact already held. These are the
-   * account's pre-existing duplicates — they are left exactly as they are, for the review
-   * page to offer, never merged automatically.
+   * Contacts that carried an identifier another contact already held — the account's
+   * pre-existing duplicates. The backfill itself does not merge them (it has no opinion
+   * about confidence); `mergeConfidentDuplicates` runs afterwards and resolves the ones
+   * that are unambiguous.
    */
   contested: string[];
+  /** The users those contested contacts belong to, so a caller knows who to sweep. */
+  contestedUserIds: string[];
   /** True when there is more to do; call again. */
   more: boolean;
 };
@@ -227,6 +230,7 @@ export async function backfillContactIdentities(options?: {
 
   let claimed = 0;
   const contested: string[] = [];
+  const contestedUserIds = new Set<string>();
 
   for (const row of pending) {
     const keys = identityKeysFor(row);
@@ -234,11 +238,20 @@ export async function backfillContactIdentities(options?: {
     const owners = await claimIdentities(row.userId, row.id, keys, "backfill");
     for (const owner of owners) {
       if (owner.contactId === row.id) claimed += 1;
-      else if (!contested.includes(row.id)) contested.push(row.id);
+      else if (!contested.includes(row.id)) {
+        contested.push(row.id);
+        contestedUserIds.add(row.userId);
+      }
     }
   }
 
-  return { scanned: pending.length, claimed, contested, more: pending.length === limit };
+  return {
+    scanned: pending.length,
+    claimed,
+    contested,
+    contestedUserIds: [...contestedUserIds],
+    more: pending.length === limit,
+  };
 }
 
 /**
