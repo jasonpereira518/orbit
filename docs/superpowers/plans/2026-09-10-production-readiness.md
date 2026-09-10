@@ -278,14 +278,36 @@ bounded.
    by capturing the whole dashboard payload before and after. The fixture writes a one-line
    `aiSummary`; a real account's is a paragraph, so this understates the production cut.
 
-   Found on the way: `getNetworkStats` declared five columns in its input type and read
-   none of them, and the dashboard donates its scan to that call — so those columns were
-   selected for every contact purely to satisfy a signature.
-4. **Materialise what cannot be bounded.** The constellation preview and the network-depth
+   Then eleven more columns came off, because nothing read them: `userId`, `firstName`,
+   `lastName`, `location`, `industry`, `source`, `followUpStatus`, `firstInteractionAt`,
+   `closeness`, `closenessTier` and `orbitScore`. **983 → 632 bytes a contact**, all of it
+   behaviour-identical.
+
+   `getNetworkStats` was why most of them survived. Its `preloaded.contacts` type named
+   eleven fields; the function reads four. The dashboard donates its scan to that call, so
+   an aspirational input type was setting the width of the widest query on the page.
+
+   **What is left is not width.** The remaining 632 bytes are spread thinly across ~20
+   columns — the largest single field is a timestamp at 46 bytes and the id is 43 — so
+   there is no surgical cut left. Reducing further means selecting fewer columns for most
+   contacts, i.e. the minimal-scan restructure below, not narrowing the ones that remain.
+
+   The other O(N) read, measured: `readStoredCohortResult` is **334 bytes a contact**
+   against the scan's 632. Total O(N) payload is 966 bytes a contact — about 2.8 MB at
+   3,000 contacts, 9.7 MB at 10,000. So bounding the scan alone caps the win at roughly
+   2.2×; the cohort read has to follow it.
+
+4. **Give the ordered lists a total order first.** Done, and it is a prerequisite rather
+   than a cleanup: `recentContacts` ordered by `updated_at` alone, and on a bulk import
+   every contact carries the same one — 1,200 fixture contacts have five distinct values,
+   250 sharing each. `ORDER BY updated_at DESC LIMIT 6` over a 250-way tie returns an
+   arbitrary six, so no list here could be bounded in SQL until the order was total. Both
+   `recentContacts` and `dueFollowUps` now break ties on `id`.
+5. **Materialise what cannot be bounded.** The constellation preview and the network-depth
    chart genuinely need the whole graph. Those belong in a per-user precomputed row,
    refreshed by the existing deferred-work path, not recomputed on every page view.
    `closeness_cohorts` and `closeness-materialize.ts` are the pattern already in the repo.
-5. **Then revert `maxDuration` to 60** in `(app)/(main)/layout.tsx` and delete the stopgap
+6. **Then revert `maxDuration` to 60** in `(app)/(main)/layout.tsx` and delete the stopgap
    comment. That revert is the definition of done for this item.
 
 ### 1.2 Continuous sync saturates at roughly ten connections
