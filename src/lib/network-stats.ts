@@ -1,9 +1,9 @@
 import { count, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { companies, contacts, interactions } from "@/db/schema";
+import { companies, interactions } from "@/db/schema";
 import { closenessTier } from "@/lib/closeness";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
-import { daysAgo } from "@/lib/duplicates";
+import { getNetworkStatsCounts } from "@/lib/dashboard-aggregates";
 
 export type NetworkStatItem = {
   label: string;
@@ -76,24 +76,6 @@ function pickHeadline(input: {
 export async function getNetworkStats(
   userId: string,
   preloaded?: {
-    /**
-     * Exactly the four fields the loop below reads, and no more.
-     *
-     * This type used to name eleven — relationshipScore, company, title, industry, howMet,
-     * notes, aiSummary, keyFacts, sharedInterests and contactTags among them — none of
-     * which this function ever touched. An over-specified input type is not free here: the
-     * dashboard donates its contact scan to this call, so every one of those was selected
-     * for every contact in the account to satisfy a signature nothing read.
-     *
-     * If this function grows to need another field, add it here AND check what that costs
-     * the callers donating rows to it.
-     */
-    contacts: Array<{
-      id: string;
-      lastInteractionAt: Date | string | null;
-      nextFollowUpAt: Date | string | null;
-      createdAt: Date | string;
-    }>;
     interactionCount?: number;
     companyCount?: number;
   }
@@ -101,17 +83,15 @@ export async function getNetworkStats(
   const db = await getDb();
 
   const [
-    allContacts,
+    aggregates,
     interactionCountRows,
     companyCountRows,
     closenessCohort,
   ] = await Promise.all([
-    preloaded?.contacts
-      ? Promise.resolve(preloaded.contacts)
-      : db.query.contacts.findMany({
-          where: eq(contacts.userId, userId),
-          with: { contactTags: { with: { tag: true } } },
-        }),
+    // Four integers from one statement, where this used to loop every contact in the
+    // account. The dashboard donated its scan for that loop, which is why two of the widest
+    // columns on the contacts row had to be selected for everyone. See getNetworkStatsCounts.
+    getNetworkStatsCounts(userId),
     preloaded?.interactionCount != null
       ? Promise.resolve([{ value: preloaded.interactionCount }])
       : db
@@ -131,30 +111,18 @@ export async function getNetworkStats(
   const companyCount = companyCountRows[0]?.value ?? 0;
 
   const now = new Date();
+  // The one figure that is not a column predicate: inner circle is counted by ABSOLUTE
+  // score rather than the displayed tier, because inner/mid/outer are quota shares — a
+  // fixed fraction of the network would be reported as "closest ties" however cold
+  // everything got. The cohort is already loaded above, so this costs nothing.
   let innerCircle = 0;
-  let dormant30 = 0;
-  let overdueFollowUps = 0;
-  let oldestContactAt: Date | null = null;
-
-  for (const c of allContacts) {
-    const breakdown = closenessCohort.byId.get(c.id);
-
-    // Counted by absolute score rather than the displayed tier: inner/mid/outer
-    // are quota shares, so counting those would report a fixed fraction of the
-    // network as "closest ties" however cold everything got.
-    if (breakdown && closenessTier(breakdown.raw) === "inner") innerCircle++;
-
-    if (c.lastInteractionAt && daysAgo(c.lastInteractionAt) >= 30) {
-      dormant30++;
-    }
-
-    if (c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now) {
-      overdueFollowUps++;
-    }
-
-    const created = new Date(c.createdAt);
-    if (!oldestContactAt || created < oldestContactAt) oldestContactAt = created;
+  for (const breakdown of closenessCohort.byId.values()) {
+    if (closenessTier(breakdown.raw) === "inner") innerCircle++;
   }
+
+  const dormant30 = aggregates.dormant30;
+  const overdueFollowUps = aggregates.overdueFollowUps;
+  const oldestContactAt = aggregates.oldestContactAt;
 
   const networkAgeDays = oldestContactAt
     ? Math.max(
@@ -169,7 +137,7 @@ export async function getNetworkStats(
   const avgCloseness = Math.round(closenessCohort.averageRaw * 100);
 
   const { headline, subheadline } = pickHeadline({
-    contacts: allContacts.length,
+    contacts: aggregates.totalContacts,
     innerCircle,
     interactions: interactionCount,
     overdue: overdueFollowUps,

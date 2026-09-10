@@ -1,7 +1,6 @@
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { COMET_DORMANT_DAYS } from "@/lib/comet";
-import { ABSOLUTE_TIER_CUTOFFS } from "@/lib/closeness";
 
 /**
  * The dashboard's whole-network counts, computed by Postgres instead of by loading the
@@ -34,13 +33,17 @@ import { ABSOLUTE_TIER_CUTOFFS } from "@/lib/closeness";
  * replacing them safe.
  */
 
-export type DashboardScoreCounts = Record<1 | 2 | 3 | 4 | 5, number>;
-
 export type DashboardCounts = {
   totalContacts: number;
   dormantCount: number;
   overdueCount: number;
-  scoreCounts: DashboardScoreCounts;
+  /**
+   * `<= now()`, where `overdueCount` is `< now()`. The two predicates differ and both are
+   * kept, because the JavaScript they replace used `<=` for the stat and `<` for the chart
+   * and quietly reporting one number for both would be a behaviour change smuggled in as a
+   * refactor.
+   */
+  dueFollowUpCount: number;
 };
 
 export type DashboardVocabularies = {
@@ -50,22 +53,32 @@ export type DashboardVocabularies = {
 };
 
 /**
- * The displayed orbit score, as SQL.
+ * ## Two aggregates that deliberately are NOT here
  *
- * Mirrors `Math.min(5, Math.max(1, (c.orbitScore ?? c.relationshipScore) || 2))` exactly,
- * and the two coalesces are not interchangeable:
+ * The score histogram and the tier counts look like they belong in this file, and both were
+ * written here before being removed. Neither is a translation this module can make honestly:
  *
- *   - the inner `COALESCE(orbit_score, relationship_score)` is the `??` — it falls through
- *     only on NULL, so a stored orbit score of 0 stays 0 here;
- *   - `NULLIF(…, 0)` then the outer `COALESCE(…, 2)` is the `|| 2`, which treats that 0 as
- *     absent. Writing it as one `COALESCE(orbit_score, relationship_score, 2)` would score
- *     a zeroed contact as 1 after the clamp instead of 2, moving a bar on the chart.
+ * **They are not derived from the columns.** The dashboard's orbit score is
+ * `closeness?.orbitScore ?? 2` — the value from the stored *breakdown*, not the
+ * `orbit_score` column, and the tier likewise comes from `closenessTier(breakdown.raw)`.
+ * The two agree for a scored contact and diverge for an unscored one: the JavaScript gives
+ * it 2, while `coalesce(orbit_score, relationship_score)` gives it whatever its
+ * relationship score happens to be. That is a moved bar on a chart with nothing failing —
+ * the exact class of bug the `ORBIT_SCORE_SQL` comment in this file's history warned about.
+ *
+ * **They are already in memory, for free.** Both read the closeness cohort, which the
+ * dashboard loads anyway to render rings and tiers. Counting a map it already holds costs
+ * nothing; asking Postgres for it costs an HTTPS round trip to compute a number the process
+ * is already holding the inputs for.
+ *
+ * What is below earns its place by a different test: each one lets a COLUMN come off the
+ * network scan. `dormantCount` retires `last_interaction_at` (the widest field on the row at
+ * 46 bytes), and the vocabularies retire the `contact_tags` join.
  */
-const ORBIT_SCORE_SQL = sql`least(5, greatest(1, coalesce(nullif(coalesce(orbit_score, relationship_score), 0), 2)))`;
 
 /**
- * One statement for the four counts. They share a scan, and on `neon-http` every statement
- * is a separate HTTPS round trip, so splitting them would cost four.
+ * One statement for the three counts. They share a scan, and on `neon-http` every statement
+ * is a separate HTTPS round trip, so splitting them would cost three.
  *
  * `now()` is Postgres's clock rather than the lambda's. That is the intended reading of
  * "overdue" — the database is the one authority both a page render and a cron job agree on
@@ -86,31 +99,22 @@ export async function getDashboardCounts(userId: string): Promise<DashboardCount
       count(*) filter (
         where next_follow_up_at is not null and next_follow_up_at < now()
       )::int as overdue,
-      count(*) filter (where ${ORBIT_SCORE_SQL} = 1)::int as s1,
-      count(*) filter (where ${ORBIT_SCORE_SQL} = 2)::int as s2,
-      count(*) filter (where ${ORBIT_SCORE_SQL} = 3)::int as s3,
-      count(*) filter (where ${ORBIT_SCORE_SQL} = 4)::int as s4,
-      count(*) filter (where ${ORBIT_SCORE_SQL} = 5)::int as s5
+      count(*) filter (
+        where next_follow_up_at is not null and next_follow_up_at <= now()
+      )::int as due
     from contacts
     where user_id = ${userId}
   `);
 
   const row = rowsOf<{
-    total: number; dormant: number; overdue: number;
-    s1: number; s2: number; s3: number; s4: number; s5: number;
+    total: number; dormant: number; overdue: number; due: number;
   }>(result)[0];
 
   return {
     totalContacts: Number(row?.total ?? 0),
     dormantCount: Number(row?.dormant ?? 0),
     overdueCount: Number(row?.overdue ?? 0),
-    scoreCounts: {
-      1: Number(row?.s1 ?? 0),
-      2: Number(row?.s2 ?? 0),
-      3: Number(row?.s3 ?? 0),
-      4: Number(row?.s4 ?? 0),
-      5: Number(row?.s5 ?? 0),
-    },
+    dueFollowUpCount: Number(row?.due ?? 0),
   };
 }
 
@@ -130,7 +134,10 @@ export async function getDashboardCounts(userId: string): Promise<DashboardCount
 export async function getDashboardVocabularies(userId: string): Promise<DashboardVocabularies> {
   const db = await getDb();
 
-  const namesResult = await db.execute(sql`
+  // All three in one statement. They are three different shapes over two tables, but on
+  // `neon-http` every statement is its own HTTPS round trip, so a `union all` with a
+  // discriminator column costs one where three queries cost three.
+  const result = await db.execute(sql`
     select 'company' as kind, btrim(company) as name
       from contacts
      where user_id = ${userId} and btrim(coalesce(company, '')) <> ''
@@ -140,77 +147,28 @@ export async function getDashboardVocabularies(userId: string): Promise<Dashboar
       from contacts
      where user_id = ${userId} and btrim(coalesce(school, '')) <> ''
      group by btrim(school)
-     order by kind, name
-  `);
-
-  const companies: string[] = [];
-  const schools: string[] = [];
-  for (const row of rowsOf<{ kind: string; name: string }>(namesResult)) {
-    (row.kind === "company" ? companies : schools).push(row.name);
-  }
-
-  // Tags reachable from this user's contacts — not every tag the user owns. An unused tag
-  // in the filter list is a filter that can only ever return nothing.
-  const tagsResult = await db.execute(sql`
-    select t.name
+    union all
+    -- Tags reachable from this user's contacts, not every tag the user owns. An unused tag
+    -- in the filter list is a filter that can only ever return nothing.
+    select 'tag' as kind, t.name as name
       from tags t
       join contact_tags ct on ct.tag_id = t.id
       join contacts c on c.id = ct.contact_id
      where c.user_id = ${userId}
      group by t.name
-     order by t.name
+     order by kind, name
   `);
 
-  return {
-    companies,
-    schools,
-    tags: rowsOf<{ name: string }>(tagsResult).map((r) => r.name),
-  };
-}
+  const companies: string[] = [];
+  const schools: string[] = [];
+  const tags: string[] = [];
+  for (const row of rowsOf<{ kind: string; name: string }>(result)) {
+    if (row.kind === "company") companies.push(row.name);
+    else if (row.kind === "school") schools.push(row.name);
+    else tags.push(row.name);
+  }
 
-export type DashboardTierCounts = { inner: number; mid: number; outer: number };
-
-/**
- * Tier counts, from the breakdown already stored on each contact.
- *
- * Two things here are easy to get subtly wrong, and both are load-bearing.
- *
- * **It buckets on `raw`, not on `closeness`.** `computeNetworkMetrics` counts by absolute
- * score rather than by the contact's displayed tier, and its own comment says why: the
- * displayed tier is quota-assigned, so counting those would pin the distribution to the
- * same shape no matter how healthy the network is. `closeness_tier` — the column — is the
- * quota tier, so it is the wrong thing to group by despite being right there.
- *
- * **It counts only contacts that have a breakdown.** The JavaScript skips a contact with no
- * stored score (`if (!breakdown) continue`), so the `is not null` is what keeps the totals
- * equal rather than a tidiness filter. An unscored contact is one recalibration away from
- * being counted, and counting it as `outer` in the meantime would be an invented number.
- *
- * Raw SQL because `closeness_breakdown` is deliberately absent from the Drizzle schema —
- * see the note on the `contacts` table in `schema.ts`. The thresholds are interpolated from
- * `ABSOLUTE_TIER_CUTOFFS` rather than written out, so this cannot drift from `closenessTier`.
- */
-export async function getDashboardTierCounts(userId: string): Promise<DashboardTierCounts> {
-  const db = await getDb();
-  const raw = sql`(closeness_breakdown->>'raw')::float8`;
-
-  const result = await db.execute(sql`
-    select
-      count(*) filter (where ${raw} >= ${ABSOLUTE_TIER_CUTOFFS.inner})::int as inner_count,
-      count(*) filter (
-        where ${raw} >= ${ABSOLUTE_TIER_CUTOFFS.mid} and ${raw} < ${ABSOLUTE_TIER_CUTOFFS.inner}
-      )::int as mid_count,
-      count(*) filter (where ${raw} < ${ABSOLUTE_TIER_CUTOFFS.mid})::int as outer_count
-    from contacts
-    where user_id = ${userId} and closeness_breakdown is not null
-  `);
-
-  const row = rowsOf<{ inner_count: number; mid_count: number; outer_count: number }>(result)[0];
-  return {
-    inner: Number(row?.inner_count ?? 0),
-    mid: Number(row?.mid_count ?? 0),
-    outer: Number(row?.outer_count ?? 0),
-  };
+  return { companies, schools, tags };
 }
 
 /**
@@ -225,6 +183,14 @@ export async function getDashboardTierCounts(userId: string): Promise<DashboardT
  * `> 0` matches the JavaScript's `.filter((c) => c.goalRelevance > 0)`: with no active
  * goals every contact scores zero, and the card renders nothing rather than an arbitrary
  * five people.
+ *
+ * The tiebreaker is not cosmetic and is not free to choose. Goal relevance saturates —
+ * on a real account a good number of contacts score exactly 1 — so with a single goal the
+ * top five are ALL ties and the tiebreaker alone decides who the card shows. The
+ * JavaScript this replaces sorted the scan with `b.goalRelevance - a.goalRelevance`, and
+ * `Array.prototype.sort` is stable, so ties came back in scan order: `updated_at DESC, id
+ * DESC`. Ordering by `id ASC` here instead would have shown five different people and
+ * nothing would have failed.
  */
 export async function getGoalAlignedContactIds(
   userId: string,
@@ -239,7 +205,7 @@ export async function getGoalAlignedContactIds(
     where user_id = ${userId}
       and closeness_breakdown is not null
       and ${relevance} > 0
-    order by ${relevance} desc, id asc
+    order by ${relevance} desc, updated_at desc, id desc
     limit ${limit}
   `);
 
@@ -247,4 +213,54 @@ export async function getGoalAlignedContactIds(
     id: r.id,
     goalRelevance: Number(r.goal_relevance),
   }));
+}
+
+export type NetworkStatsCounts = {
+  totalContacts: number;
+  /** `daysAgo(last_interaction_at) >= 30`, matching `network-stats.ts`. */
+  dormant30: number;
+  /** `next_follow_up_at <= now()`. */
+  overdueFollowUps: number;
+  oldestContactAt: Date | null;
+};
+
+/**
+ * The four whole-network figures `getNetworkStats` used to derive by looping every contact.
+ *
+ * It took the dashboard's scan as a donation to do that, which is why `last_interaction_at`
+ * and `created_at` had to be selected for the entire account — two of the widest columns on
+ * the row, feeding a loop that produced four integers. As SQL it is one statement and the
+ * scan is free of both.
+ *
+ * A different 30 to `getDashboardCounts`'s dormancy: this one is "quiet for a month", the
+ * other is `COMET_DORMANT_DAYS` (a year) and drives the comets on the star chart. Two
+ * genuinely different questions that both happen to be called dormant.
+ */
+export async function getNetworkStatsCounts(userId: string): Promise<NetworkStatsCounts> {
+  const db = await getDb();
+  const result = await db.execute(sql`
+    select
+      count(*)::int as total,
+      count(*) filter (
+        where last_interaction_at is not null
+          and last_interaction_at <= now() - make_interval(days => 30)
+      )::int as dormant30,
+      count(*) filter (
+        where next_follow_up_at is not null and next_follow_up_at <= now()
+      )::int as overdue,
+      min(created_at) as oldest
+    from contacts
+    where user_id = ${userId}
+  `);
+
+  const row = rowsOf<{
+    total: number; dormant30: number; overdue: number; oldest: string | Date | null;
+  }>(result)[0];
+
+  return {
+    totalContacts: Number(row?.total ?? 0),
+    dormant30: Number(row?.dormant30 ?? 0),
+    overdueFollowUps: Number(row?.overdue ?? 0),
+    oldestContactAt: row?.oldest ? new Date(row.oldest) : null,
+  };
 }

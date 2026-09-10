@@ -157,8 +157,16 @@ async function main() {
   const dashboardScans = contactScans(capturedQueries());
   console.log(`  statements: ${dashboardCount}`);
   if (process.env.DEBUG_QUERIES) for (const q of capturedQueries()) console.log("    ·", q.replace(/\s+/g, " ").slice(0, 110));
-  // 13 for the same one reason as the graph's 9 — see the note there.
-  check("dashboard issues ≤ 13 statements", dashboardCount <= 13, `got ${dashboardCount}`);
+  // 16, up from 13, and deliberately: the extra statements are what make the ROW count
+  // bounded. Four aggregates and a by-id hydration replaced "read the whole account and work
+  // it out in JavaScript". On neon-http a statement is an HTTPS round trip, so this trades a
+  // handful of FIXED round trips for a payload that no longer grows with the account —
+  // 3,005 rows down to 766 at 3,000 contacts, and 983 bytes a contact down to 141.
+  //
+  // Statement count is a cost to watch, not a number to minimise. If it creeps past this,
+  // the question to ask is whether something started scanning again, not whether two
+  // aggregates can be folded together.
+  check("dashboard issues ≤ 16 statements", dashboardCount <= 16, `got ${dashboardCount}`);
   check("dashboard scans contacts at least once", dashboardScans.length >= 1);
   check(
     "dashboard contacts scan does not pull notes",
@@ -378,12 +386,21 @@ async function main() {
      * happens to produce.
      */
     bound: number | null;
+    /**
+     * Whether the bound is low enough that a 4× account is expected to return roughly the
+     * same number of rows. True for the dashboard, whose ceiling sits below the fixture's
+     * smaller size. The panel is bounded at 235 and simply has not saturated at 750
+     * contacts yet — 34 → 100 is correct behaviour for it, not drift.
+     */
+    flat?: boolean;
   };
 
   const surfaces: Surface[] = [
-    // UNBOUNDED. `findMany({ where: userId })` with no limit, then filtered, sorted and
-    // aggregated in JavaScript — see src/lib/reminders.ts:414.
-    { name: "dashboard", small: smallDashboard.contactById.size, large: dashboard.contactById.size, bound: null },
+    // Bounded by what the page can render plus the link analysis's own cap:
+    // METRICS_MAX_CONTACTS (750) + the preview (150) + the two card lists + the contacts the
+    // reminder and suggestion rows name. Overlapping sets, so the real figure sits just above
+    // 750 rather than at the sum.
+    { name: "dashboard", small: smallDashboard.contactById.size, large: dashboard.contactById.size, bound: 1000, flat: true },
     // Unbounded BY DESIGN — "show all" means all. The default (engaged-only) view above is
     // the bounded one users actually get, and the assertions there cover it.
     { name: "graph (show all)", small: smallGraph.contacts.length, large: graphAll.contacts.length, bound: null },
@@ -414,6 +431,14 @@ async function main() {
         s.large < N,
         `${s.large} rows for a ${N + 5}-contact account`
       );
+      // The point of the whole exercise, for the surface it was the point for.
+      if (s.flat) {
+        check(
+          `${s.name} barely moves for a 4× account`,
+          s.small === 0 || s.large / s.small < 1.5,
+          `${s.small} → ${s.large}`
+        );
+      }
     } else {
       // Characterisation, not approval. These two return the entire network on every visit;
       // pinning it means the number is in CI output rather than in someone's memory, and a
@@ -423,11 +448,12 @@ async function main() {
       // the dashboard: aggregates into SQL, lists bounded with ORDER BY … LIMIT, and the
       // whole-graph pieces materialised. When it lands this entry gets a real `bound` and
       // `maxDuration` in (app)/(main)/layout.tsx goes back to 60.
+      // "Show all" is the one surface that means all, and is the reason the scope toggle
+      // exists. The default (engaged-only) view above is the bounded one users get.
       check(
-        `${s.name} still returns the whole account (unbounded — Phase B)`,
+        `${s.name} still returns the whole account (by design)`,
         s.large === N + 5,
-        `${s.large} rows for a ${N + 5}-contact account — if this DROPPED, the fix landed: ` +
-          `give this surface its real bound instead of null`
+        `${s.large} rows for a ${N + 5}-contact account`
       );
     }
   }
@@ -439,26 +465,25 @@ async function main() {
   //
   // Phase B flips both together: the contacts scan gets an ORDER BY … LIMIT, this check
   // inverts, and the surfaces above get real bounds.
-  // The WIDE scan specifically — the one that reads contact detail. The dashboard issues
-  // three statements against `contacts`; the other two are a `count(*)` and the closeness
-  // materialiser's own bounded batch, and both are already the right shape.
-  const networkScan = dashboardScans.find((q) => selectsBare(q, "full_name"));
+  // The network scan still reads one row per contact — clustering and constellation
+  // eligibility are whole-network questions that a sample cannot answer — but it is now
+  // NARROW, and that is the property worth pinning. A display column reappearing here would
+  // be selected for the entire account in order to render a few hundred rows, which is the
+  // mistake this whole section exists to catch.
+  //
+  // Identified by `constellation_pin`: the hydration queries below also select from
+  // `contacts`, so the scan has to be named by something only it asks for.
+  const networkScan = dashboardScans.find((q) => selectsBare(q, "constellation_pin"));
   check("the dashboard's network scan is identifiable", Boolean(networkScan));
-  // Anchored to the END of the statement on purpose. A bare /limit/ matches the `limit $1`
-  // inside the tags lateral join, which bounds tags per contact and says nothing about how
-  // many contacts come back. An OUTER limit is the last clause of the statement.
-  const outerLimit = /\blimit\s+\$?\d*\s*(offset\s+\$?\d*\s*)?$/i;
-  check(
-    "the dashboard's network scan still has no outer LIMIT (unbounded — Phase B)",
-    Boolean(networkScan) && !outerLimit.test(networkScan!.trim()),
-    "an outer LIMIT appeared: the scan is bounded now, so invert this check and give the " +
-      "dashboard surface a real bound above"
-  );
-  check(
-    "…and it is ordered, so adding one is a one-line change",
-    Boolean(networkScan) && /order by/i.test(networkScan!),
-    networkScan?.slice(-120)
-  );
+  for (const column of [
+    "full_name", "ai_summary", "email", "title", "last_interaction_at", "created_at",
+  ]) {
+    check(
+      `the network scan does not select ${column}`,
+      Boolean(networkScan) && !selectsBare(networkScan!, column),
+      networkScan?.slice(0, 220)
+    );
+  }
 
   // The dashboard's real size.
   //
@@ -486,8 +511,8 @@ async function main() {
   // silently is the per-contact cost drifting, because it multiplies by the account size
   // this section just showed is unbounded (2.9 MB at 3,000 contacts, ~9.6 MB at 10,000).
   check(
-    "dashboard moves under 1 KB per contact",
-    largeBytes / (dashboard.contactById.size || 1) < 1024,
+    "dashboard moves under 250 bytes per contact",
+    largeBytes / (dashboard.contactById.size || 1) < 250,
     `${(largeBytes / (dashboard.contactById.size || 1)).toFixed(0)} bytes a contact`
   );
 

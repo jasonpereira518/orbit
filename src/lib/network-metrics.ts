@@ -5,7 +5,6 @@ import {
 } from "@/lib/constellation-fit";
 import {
   closenessTier,
-  computeClosenessForAll,
   type ClosenessBreakdown,
   type ClosenessContact,
 } from "@/lib/closeness";
@@ -362,86 +361,50 @@ export function selectMetricsSample<T extends { id: string }>(
     .slice(0, METRICS_MAX_CONTACTS);
 }
 
+/**
+ * The dashboard's network figures, from a BOUNDED input.
+ *
+ * This used to take every contact in the account. It never needed to: the link analysis has
+ * always run over at most `METRICS_MAX_CONTACTS`, and the only thing the other N contacts
+ * contributed was `tierCounts` — a tally of the closeness cohort, which the caller already
+ * holds in memory and which needs no contact rows at all. So the whole network was being
+ * loaded, with names and text, to count a map the caller had.
+ *
+ * Now `sampled` is the sample (take it from `selectMetricsSample`), `scores` is the whole
+ * cohort, and `totalContacts` is a count. Nothing here reads a contact row it does not
+ * analyse.
+ *
+ * `contactsWithNetwork` is gone with it. Its two consumers wanted the closeness breakdown by
+ * id — which is `scores` — and the goal-relevance ranking, which is an ordered read of a
+ * stored column (`getGoalAlignedContactIds`). Neither needed a joined copy of every contact.
+ */
 export function computeNetworkMetrics(
-  contacts: Array<
-    ClosenessContact & {
-      id: string;
-      fullName: string;
-      preferredName?: string | null;
-      company?: string | null;
-      school?: string | null;
-      title?: string | null;
-      tags?: string[] | null;
-      howMet?: string | null;
-      notes?: string | null;
-      aiSummary?: string | null;
-      keyFacts?: string[] | null;
-      sharedInterests?: string[] | null;
-    }
-  >,
-  activeGoals: string[] = [],
-  /**
-   * Pre-scored contacts from the shared request cohort. Omit and the cohort is
-   * built from `contacts` alone — fine for a full list, wrong for a subset.
-   */
-  closenessById?: Map<string, ClosenessBreakdown>
-): { metrics: NetworkMetrics; contactsWithNetwork: ContactWithNetwork[] } {
-  const scores =
-    closenessById ?? computeClosenessForAll(contacts, activeGoals);
-  const graphContacts: GraphContactInput[] = contacts.map((c) => ({
-    id: c.id,
-    fullName: c.fullName,
-    preferredName: c.preferredName,
-    company: c.company ?? null,
-    school: c.school ?? null,
-    title: c.title ?? null,
-    relationshipScore: c.relationshipScore ?? 2,
-    lastInteractionAt: c.lastInteractionAt ?? null,
-    nextFollowUpAt: null,
-    tags: c.tags ?? [],
-    aiSummary: c.aiSummary ?? null,
-    keyFacts: c.keyFacts ?? null,
-    howMet: c.howMet ?? null,
-    notes: c.notes ?? null,
-    sharedInterests: c.sharedInterests ?? null,
-  }));
-
-  // Only the closest `METRICS_MAX_CONTACTS` take part in the all-pairs link analysis.
-  // Sorting by the already-computed score is O(n log n); comparing every pair is O(n²).
-  const sampled = selectMetricsSample(graphContacts, scores);
+  sampled: GraphContactInput[],
+  scores: Map<string, ClosenessBreakdown>,
+  totalContacts: number
+): NetworkMetrics {
   const sampledIds = new Set(sampled.map((c) => c.id));
-
   const peerEdges = buildPeerEdges(sampled, { metrics: true });
   const degrees = peerDegreeMap(peerEdges);
 
   const tierCounts = { inner: 0, mid: 0, outer: 0 };
-  const degreeBuckets = { none: 0, oneToTwo: 0, threePlus: 0 };
-  const contactsWithNetwork: ContactWithNetwork[] = [];
-
-  for (const c of contacts) {
-    const breakdown = scores.get(c.id);
-    if (!breakdown) continue;
+  for (const breakdown of scores.values()) {
     // Counted by absolute score, not by the contact's displayed (quota-assigned)
     // tier — quotas are fixed shares, so counting those would pin this
     // distribution to the same shape no matter how healthy the network is.
     tierCounts[closenessTier(breakdown.raw)] += 1;
-    const peerDegree = degrees.get(c.id) || 0;
-    // Bucketed over the sampled set only. Counting an unsampled contact as "no links"
-    // would not mean they have none — it would mean nobody looked.
-    if (sampledIds.has(c.id)) {
-      if (peerDegree === 0) degreeBuckets.none += 1;
-      else if (peerDegree <= 2) degreeBuckets.oneToTwo += 1;
-      else degreeBuckets.threePlus += 1;
-    }
+  }
 
-    contactsWithNetwork.push({
-      ...c,
-      closeness: breakdown.closeness,
-      tier: breakdown.tier,
-      orbitScore: breakdown.orbitScore,
-      goalRelevance: breakdown.goalRelevance,
-      peerDegree,
-    });
+  const degreeBuckets = { none: 0, oneToTwo: 0, threePlus: 0 };
+  for (const id of sampledIds) {
+    // Bucketed over the sampled set only. Counting an unsampled contact as "no links"
+    // would not mean they have none — it would mean nobody looked. Contacts with no stored
+    // breakdown are skipped, as they were when this looped the whole network.
+    if (!scores.has(id)) continue;
+    const peerDegree = degrees.get(id) || 0;
+    if (peerDegree === 0) degreeBuckets.none += 1;
+    else if (peerDegree <= 2) degreeBuckets.oneToTwo += 1;
+    else degreeBuckets.threePlus += 1;
   }
 
   const totalPeerDegree = [...degrees.values()].reduce((a, b) => a + b, 0);
@@ -450,14 +413,11 @@ export function computeNetworkMetrics(
   const avgPeerDegree = sampled.length > 0 ? totalPeerDegree / sampled.length : 0;
 
   return {
-    metrics: {
-      tierCounts,
-      totalContacts: contacts.length,
-      totalPeerEdges: peerEdges.length,
-      avgPeerDegree: Math.round(avgPeerDegree * 10) / 10,
-      degreeBuckets,
-      metricsSampleSize: sampled.length,
-    },
-    contactsWithNetwork,
+    tierCounts,
+    totalContacts,
+    totalPeerEdges: peerEdges.length,
+    avgPeerDegree: Math.round(avgPeerDegree * 10) / 10,
+    degreeBuckets,
+    metricsSampleSize: sampled.length,
   };
 }
