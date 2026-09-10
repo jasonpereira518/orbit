@@ -9,11 +9,13 @@
 import { DAILY_SOURCES } from "../src/lib/follow-ups/sources";
 import { commitmentDueSource } from "../src/lib/follow-ups/sources/commitment-due";
 import { dormantSource } from "../src/lib/follow-ups/sources/dormant";
+import { metAnniversarySource } from "../src/lib/follow-ups/sources/met-anniversary";
 import { neverContactedSource } from "../src/lib/follow-ups/sources/never-contacted";
 import { looksLikeOpenAsk, openLoopSource } from "../src/lib/follow-ups/sources/open-loop";
 import { postEventSource } from "../src/lib/follow-ups/sources/post-event";
 import { scheduledFollowUpSource } from "../src/lib/follow-ups/sources/scheduled-follow-up";
 import { threadQuietSource } from "../src/lib/follow-ups/sources/thread-quiet";
+import { workAnniversarySource } from "../src/lib/follow-ups/sources/work-anniversary";
 import type {
   ContactSnapshot,
   InteractionSnapshot,
@@ -392,6 +394,53 @@ console.log("\nlooksLikeOpenAsk");
   check("a soft ask phrase counts", looksLikeOpenAsk("let me know when you have a minute"));
   check("a statement does not", !looksLikeOpenAsk("Congrats on the launch"));
   check("empty text does not", !looksLikeOpenAsk("   "));
+}
+
+console.log("\nmet_anniversary");
+{
+  const threeYears = contact({ id: "ma", dateMet: new Date("2023-09-09T12:00:00Z") });
+  const found = metAnniversarySource.detect(ctx({ contacts: [threeYears] }));
+  check("a three-year anniversary today fires", found.length === 1);
+  check("the evidence says three years", found[0].evidence.includes("3 years"));
+
+  const otherDay = contact({ id: "ma2", dateMet: new Date("2023-09-08T12:00:00Z") });
+  check("the day before does not fire", metAnniversarySource.detect(ctx({ contacts: [otherDay] })).length === 0);
+
+  const thisYear = contact({ id: "ma3", dateMet: new Date("2026-09-09T12:00:00Z") });
+  check("a zero-year anniversary does not fire", metAnniversarySource.detect(ctx({ contacts: [thisYear] })).length === 0);
+
+  const fallback = contact({ id: "ma4", dateMet: null, firstInteractionAt: new Date("2024-09-09T12:00:00Z") });
+  check("first_interaction_at is used when date_met is null", metAnniversarySource.detect(ctx({ contacts: [fallback] })).length === 1);
+}
+
+console.log("\nwork_anniversary");
+{
+  const c = contact({ id: "wa" });
+  const exp = new Map([
+    ["wa", [{ contactId: "wa", organization: "Acme", isCurrent: true, startYear: 2021, startMonth: 9 }]],
+  ]);
+  // NOW is the 9th, and this source only fires on the 1st — the data has no day.
+  check(
+    "a matching month on the wrong day does not fire",
+    workAnniversarySource.detect(ctx({ contacts: [c], experiencesByContact: exp })).length === 0
+  );
+
+  const firstOfMonth = ctx({
+    contacts: [c],
+    experiencesByContact: exp,
+    now: new Date("2026-09-01T12:00:00Z"),
+  });
+  const found = workAnniversarySource.detect(firstOfMonth);
+  check("the first of the start month fires", found.length === 1);
+  check("the evidence names the employer", found[0].evidence.includes("Acme"));
+
+  const past = new Map([
+    ["wa", [{ contactId: "wa", organization: "Old Co", isCurrent: false, startYear: 2021, startMonth: 9 }]],
+  ]);
+  check(
+    "a past role never fires",
+    workAnniversarySource.detect({ ...firstOfMonth, experiencesByContact: past }).length === 0
+  );
 }
 
 console.log("\nAll follow-up signal checks passed.\n");
