@@ -57,23 +57,28 @@ export function LinkedInMessagesImport() {
 
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-messages/70 bg-card p-6">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex min-w-0 flex-1 items-start gap-3 pr-2">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-messages/10 text-import-messages">
-            <MessageSquare className="h-4 w-4" />
-          </span>
-          <div className="min-w-0">
-            <h2 className="text-lg font-medium text-ink">
+      {/*
+        The export guide shares the title's row, not the whole header's. Beside the full
+        text block it took ~120px from a column already sharing a phone with the icon, and
+        the description ran four words to a line. Here the description spans the card.
+      */}
+      <div className="flex items-start gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-messages/10 text-import-messages">
+          <MessageSquare className="h-4 w-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-3">
+            <h2 className="min-w-0 text-lg font-medium text-ink">
               LinkedIn messages
             </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Upload a Messages CSV or ZIP, review conversation partners, then
-              import message history. Imports keep running if you leave this
-              page.
-            </p>
+            <LinkedInExportGuide variant="messages" />
           </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Upload a Messages CSV or ZIP, review conversation partners, then
+            import message history. Imports keep running if you leave this
+            page.
+          </p>
         </div>
-        <LinkedInExportGuide variant="messages" />
       </div>
 
       <ImportFilePicker

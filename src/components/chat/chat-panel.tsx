@@ -150,6 +150,10 @@ export function ChatPanel() {
   }, []);
 
   useEffect(() => {
+    // The empty state reads top-down, like a page. Pinning it to the bottom on mount —
+    // on a phone, where the no-key notice leaves the pane ~150px tall — scrolled its
+    // heading out of view and cut its first line in half under the chat header.
+    if (messages.length === 0 && !busy) return;
     if (!stickToBottomRef.current && !isNearBottom()) return;
     // Defer so DOM has laid out new messages
     requestAnimationFrame(() => scrollToBottom(true));
@@ -491,7 +495,7 @@ export function ChatPanel() {
               ) : (
                 <>
                   {messages.length === 0 && !busy && (
-                    <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+                    <div className="flex flex-col items-center justify-center gap-3 py-8 text-center sm:py-16">
                       <p className="font-[family-name:var(--font-display)] text-xl text-ink sm:text-2xl">
                         Ask your network
                       </p>
