@@ -52,6 +52,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-env": "pure",
   "smoke-fast-model": "pure",
   "smoke-feedback-image": "pure",
+  "smoke-follow-up-scoring": "pure",
   "smoke-follow-up-signals": "pure",
   "smoke-gmail-send-mime": "pure",
   "smoke-graph-intro": "pure",
