@@ -141,7 +141,8 @@ function main() {
   if (gated.length > 0) {
     console.error(
       `\nFAILED: ${gated.join(", ")} in public/ is matched by the proxy matcher, so it will` +
-        ` 307 to /sign-in in production instead of serving. Add the extension to the` +
+        ` be answered by Clerk in production (a 404 protect-rewrite for a signed-out` +
+        ` asset request, or a 307 to /sign-in) instead of serving. Add the extension to the` +
         ` negative lookahead in src/proxy.ts.`
     );
   }
