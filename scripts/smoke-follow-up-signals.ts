@@ -7,8 +7,11 @@
  * Run: npx tsx scripts/smoke-follow-up-signals.ts
  */
 import { DAILY_SOURCES } from "../src/lib/follow-ups/sources";
+import { commitmentDueSource } from "../src/lib/follow-ups/sources/commitment-due";
 import { dormantSource } from "../src/lib/follow-ups/sources/dormant";
 import { neverContactedSource } from "../src/lib/follow-ups/sources/never-contacted";
+import { postEventSource } from "../src/lib/follow-ups/sources/post-event";
+import { scheduledFollowUpSource } from "../src/lib/follow-ups/sources/scheduled-follow-up";
 import { threadQuietSource } from "../src/lib/follow-ups/sources/thread-quiet";
 import type {
   ContactSnapshot,
@@ -250,6 +253,73 @@ console.log("\nregistry");
   const kinds = DAILY_SOURCES.map((s) => s.kind);
   check("no duplicate kinds in DAILY_SOURCES", new Set(kinds).size === kinds.length);
   check("every source is a pure detect function", DAILY_SOURCES.every((s) => typeof s.detect === "function"));
+}
+
+console.log("\ncommitment_due");
+{
+  const c = contact({ id: "cd" });
+  const due = ctx({
+    contacts: [c],
+    dueCommitments: [{ contactId: "cd", title: "Send the deck", dueDate: ago(1) }],
+  });
+  const found = commitmentDueSource.detect(due);
+  check("a commitment past its date fires", found.length === 1);
+  check("the evidence quotes the commitment", found[0].evidence.includes("Send the deck"));
+
+  const future = ctx({
+    contacts: [c],
+    dueCommitments: [{ contactId: "cd", title: "Send the deck", dueDate: new Date(NOW.getTime() + DAY) }],
+  });
+  check("a commitment due tomorrow does not fire today", commitmentDueSource.detect(future).length === 0);
+
+  // A commitment whose contact was deleted must not produce an orphan suggestion.
+  const orphan = ctx({
+    contacts: [],
+    dueCommitments: [{ contactId: "gone", title: "x", dueDate: ago(1) }],
+  });
+  check("a commitment for an unknown contact is skipped", commitmentDueSource.detect(orphan).length === 0);
+}
+
+console.log("\nscheduled_follow_up");
+{
+  const dueToday = contact({ id: "sf", nextFollowUpAt: ago(0) });
+  check("a follow-up dated today fires", scheduledFollowUpSource.detect(ctx({ contacts: [dueToday] })).length === 1);
+
+  const later = contact({ id: "sf2", nextFollowUpAt: new Date(NOW.getTime() + 5 * DAY) });
+  check("a follow-up five days out does not fire", scheduledFollowUpSource.detect(ctx({ contacts: [later] })).length === 0);
+
+  const none = contact({ id: "sf3", nextFollowUpAt: null });
+  check("no scheduled date means no signal", scheduledFollowUpSource.detect(ctx({ contacts: [none] })).length === 0);
+}
+
+console.log("\npost_event");
+{
+  const intro = contact({ id: "pe", firstInteractionAt: ago(10), lastInteractionAt: ago(10), dateMet: ago(10) });
+  check("a 10-day-old intro with nothing since fires", postEventSource.detect(ctx({ contacts: [intro] })).length === 1);
+
+  const followed = contact({ id: "pe2", firstInteractionAt: ago(10), lastInteractionAt: ago(2), dateMet: ago(10) });
+  check("an intro already followed up does not fire", postEventSource.detect(ctx({ contacts: [followed] })).length === 0);
+
+  const tooFresh = contact({ id: "pe3", firstInteractionAt: ago(2), lastInteractionAt: ago(2), dateMet: ago(2) });
+  check("a 2-day-old intro is still inside the window", postEventSource.detect(ctx({ contacts: [tooFresh] })).length === 0);
+
+  // Trigger B: the events path the old heuristic had no access to.
+  const attendee = contact({ id: "ev", firstInteractionAt: ago(300), lastInteractionAt: ago(300), dateMet: ago(300) });
+  const events = new Map([
+    ["ev", [{ contactId: "ev", eventId: "e1", title: "SaaS Summit", startsAt: ago(6) }]],
+  ]);
+  const found = postEventSource.detect(ctx({ contacts: [attendee], eventsByContact: events }));
+  check("shared event attendance fires", found.length === 1);
+  check("the evidence names the event", found[0].evidence.includes("SaaS Summit"));
+
+  const spokenSince = contact({ id: "ev2", firstInteractionAt: ago(300), lastInteractionAt: ago(1), dateMet: ago(300) });
+  const events2 = new Map([
+    ["ev2", [{ contactId: "ev2", eventId: "e2", title: "SaaS Summit", startsAt: ago(6) }]],
+  ]);
+  check(
+    "having spoken since the event suppresses it",
+    postEventSource.detect(ctx({ contacts: [spokenSince], eventsByContact: events2 })).length === 0
+  );
 }
 
 console.log("\nAll follow-up signal checks passed.\n");
