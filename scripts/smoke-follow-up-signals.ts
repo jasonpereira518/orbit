@@ -87,10 +87,72 @@ console.log("\ndormant");
     dormantSource.detect(ctx({ contacts: [never] })).length === 0
   );
 
-  const unknown = contact({ id: "unk", closenessTier: null, lastInteractionAt: ago(100) });
+  // Boundary pairs pin the comparison operator exactly: an off-by-one here means
+  // nagging someone a day early, or staying silent a day past the documented threshold.
+  const innerBoundary = dormantSource.detect(
+    ctx({
+      contacts: [
+        contact({ id: "inner29", closenessTier: "inner", lastInteractionAt: ago(29) }),
+        contact({ id: "inner30", closenessTier: "inner", lastInteractionAt: ago(30) }),
+      ],
+    })
+  );
   check(
-    "an unclassified tier falls back to the mid threshold",
-    dormantSource.detect(ctx({ contacts: [unknown] })).length === 1
+    "inner tier: idle 29 days does not fire (threshold 30)",
+    !innerBoundary.some((c) => c.contactId === "inner29")
+  );
+  check(
+    "inner tier: idle 30 days fires (threshold 30)",
+    innerBoundary.some((c) => c.contactId === "inner30")
+  );
+
+  const midBoundary = dormantSource.detect(
+    ctx({
+      contacts: [
+        contact({ id: "mid89", closenessTier: "mid", lastInteractionAt: ago(89) }),
+        contact({ id: "mid90", closenessTier: "mid", lastInteractionAt: ago(90) }),
+      ],
+    })
+  );
+  check(
+    "mid tier: idle 89 days does not fire (threshold 90)",
+    !midBoundary.some((c) => c.contactId === "mid89")
+  );
+  check(
+    "mid tier: idle 90 days fires (threshold 90)",
+    midBoundary.some((c) => c.contactId === "mid90")
+  );
+
+  const outerBoundary = dormantSource.detect(
+    ctx({
+      contacts: [
+        contact({ id: "outer179", closenessTier: "outer", lastInteractionAt: ago(179) }),
+        contact({ id: "outer180", closenessTier: "outer", lastInteractionAt: ago(180) }),
+      ],
+    })
+  );
+  check(
+    "outer tier: idle 179 days does not fire (threshold 180)",
+    !outerBoundary.some((c) => c.contactId === "outer179")
+  );
+  check(
+    "outer tier: idle 180 days fires (threshold 180)",
+    outerBoundary.some((c) => c.contactId === "outer180")
+  );
+
+  // A single idle=100 fixture only proved the fallback wasn't `outer` (180): it clears
+  // both `inner` (30) and `mid` (90), so it would also pass if the fallback were wrongly
+  // `inner`. This pair straddles the mid threshold to pin the fallback to exactly `mid`.
+  const unknownBelowMid = contact({ id: "unkBelowMid", closenessTier: null, lastInteractionAt: ago(60) });
+  check(
+    "unclassified tier: idle 60 does not fire (falls back to mid threshold 90, not inner 30)",
+    dormantSource.detect(ctx({ contacts: [unknownBelowMid] })).length === 0
+  );
+
+  const unknownAboveMid = contact({ id: "unkAboveMid", closenessTier: null, lastInteractionAt: ago(95) });
+  check(
+    "unclassified tier: idle 95 fires (falls back to mid threshold 90, not outer 180)",
+    dormantSource.detect(ctx({ contacts: [unknownAboveMid] })).length === 1
   );
 }
 
@@ -123,6 +185,31 @@ console.log("\nthread_quiet");
     "non-written interaction types are not a thread",
     threadQuietSource.detect(ctx({ contacts: [c], interactionsByContact: meetings })).length === 0
   );
+
+  // Boundary pairs on both ends of the quiet window.
+  const quiet13 = new Map([["q", [msg({ contactId: "q", interactionDate: ago(13) }), msg({ contactId: "q", interactionDate: ago(20) })]]]);
+  check(
+    "thread quiet 13 days does not fire (lower bound 14)",
+    threadQuietSource.detect(ctx({ contacts: [c], interactionsByContact: quiet13 })).length === 0
+  );
+
+  const quiet14 = new Map([["q", [msg({ contactId: "q", interactionDate: ago(14) }), msg({ contactId: "q", interactionDate: ago(20) })]]]);
+  check(
+    "thread quiet 14 days fires (lower bound 14)",
+    threadQuietSource.detect(ctx({ contacts: [c], interactionsByContact: quiet14 })).length === 1
+  );
+
+  const quiet90 = new Map([["q", [msg({ contactId: "q", interactionDate: ago(90) }), msg({ contactId: "q", interactionDate: ago(95) })]]]);
+  check(
+    "thread quiet 90 days fires (upper bound 90)",
+    threadQuietSource.detect(ctx({ contacts: [c], interactionsByContact: quiet90 })).length === 1
+  );
+
+  const quiet91 = new Map([["q", [msg({ contactId: "q", interactionDate: ago(91) }), msg({ contactId: "q", interactionDate: ago(95) })]]]);
+  check(
+    "thread quiet 91 days does not fire (upper bound 90)",
+    threadQuietSource.detect(ctx({ contacts: [c], interactionsByContact: quiet91 })).length === 0
+  );
 }
 
 console.log("\nnever_contacted");
@@ -143,6 +230,18 @@ console.log("\nnever_contacted");
   check(
     "someone already contacted never fires",
     neverContactedSource.detect(ctx({ contacts: [contacted] })).length === 0
+  );
+
+  const saved13 = contact({ id: "sv13", lastInteractionAt: null, dateMet: ago(13) });
+  check(
+    "saved 13 days ago does not fire (grace period 14)",
+    neverContactedSource.detect(ctx({ contacts: [saved13] })).length === 0
+  );
+
+  const saved14 = contact({ id: "sv14", lastInteractionAt: null, dateMet: ago(14) });
+  check(
+    "saved 14 days ago fires (grace period 14)",
+    neverContactedSource.detect(ctx({ contacts: [saved14] })).length === 1
   );
 }
 
