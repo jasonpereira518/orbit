@@ -223,9 +223,47 @@ dashboard regressions is structurally blind to the one that is actually happenin
      Measured properly: **2.9 MB at 3,000 contacts, 983 bytes a contact, ~9.6 MB at 10,000** —
      moved over the HTTP driver and aggregated in a lambda on every visit. That is the
      60-second wall in numbers.
-2. **Push the aggregates into SQL.** Counts, tier distributions, "dormant since", and
-   follow-ups due are `COUNT`/`GROUP BY`/`WHERE`, not array filters. Each one removed from
-   JS removes its rows from the payload too.
+### Correction: the snapshot is not needed
+
+Recorded because it overturns a decision already taken. The plan recommended
+materialising the dashboard's whole-network work into a per-user snapshot, and that was
+agreed with the freshness rule "live for the edited contact, snapshot for everyone else".
+Reading the code to build it showed the snapshot buys nothing, because **every expensive
+piece is already either bounded or already materialised**:
+
+| Piece | Assumed | Actually |
+|---|---|---|
+| Peer-link analysis (the O(n²)) | needs the whole network | already capped at `METRICS_MAX_CONTACTS = 750`, sliced by closeness **in JS after loading all N**. Selecting the top 750 in SQL gives identical numbers. |
+| Goal relevance per contact | recomputed from each contact's text every load | already computed during recalibration and stored in `contacts.closeness_breakdown`. `goalAlignedContacts` is `ORDER BY (closeness_breakdown->>'goalRelevance')::float DESC LIMIT 5`. |
+| `tierCounts` | needs the whole network | a `GROUP BY` over the same stored breakdown. |
+| Constellation clusters | needs the whole network | needs three columns (`id`, `company`, `school`), not the wide row — ~60 bytes a contact against 983. |
+| Preview contacts | needs the whole network, then capped | `ORDER BY orbit_score DESC LIMIT <cap>` over the eligibility predicate. |
+
+So the wide scan is not load-bearing for anything. It exists because the loader asks for
+every column of every contact and then narrows in JavaScript — the narrowing is already
+there, it is just happening on the wrong side of the wire.
+
+**This is strictly better than the snapshot on every axis the freshness question was
+about**: no staleness at all, no new table, no dirty-marking, no debounce, no background
+rebuild, and no second materialisation mechanism to keep honest alongside
+`closeness_cohorts`. The freshness trade-off that was chosen simply does not have to be
+made.
+
+One O(N) read survives and is worth naming rather than hiding: `readStoredCohortResult`
+selects `{id, breakdown}` for every contact (`closeness-cohort.ts:226`). It is far
+narrower than the wide scan — a few hundred bytes of JSON a contact rather than a
+kilobyte — and it is shared with other surfaces, so bounding it is its own change. The
+dashboard needs breakdowns only for the contacts it renders plus the top 750, both
+bounded.
+
+2. ~~**Push the aggregates into SQL.**~~ **Done** (`src/lib/dashboard-aggregates.ts`).
+   Totals, the score histogram, dormant, overdue, and the company/school/tag vocabularies,
+   in three statements. `dormantCount` and `overdueCount` stayed live rather than
+   materialised for a reason worth keeping: they compare stored timestamps against `now()`,
+   so a contact becomes overdue at a moment nobody writes anything. A materialised overdue
+   count under-reports until some unrelated write refreshes it, and overdue is one of the
+   few numbers on that page a user acts on. `smoke-dashboard-aggregates.ts` holds each SQL
+   expression against the JavaScript it replaces.
 3. **Bound the lists.** Every card on the dashboard renders a handful of rows —
    `.slice(0, 5)` appears at `reminders.ts:650`. `ORDER BY … LIMIT` those in the query
    instead of sorting the whole network to show five.
