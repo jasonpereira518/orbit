@@ -478,7 +478,9 @@ function KeptRow({
           className={cn(
             "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
             entry.tone === "error"
-              ? "bg-destructive/10 text-destructive"
+              ? // The same softened red as the toast it came from, so a missed
+                // failure does not turn back into the loud delete-button red here.
+                "bg-toast-error/10 text-toast-error"
               : "bg-muted text-muted-foreground"
           )}
         >

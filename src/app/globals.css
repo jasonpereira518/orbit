@@ -38,6 +38,7 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-info: var(--info);
+  --color-toast-error: var(--toast-error);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -122,6 +123,16 @@
   /* The toast icon chip is its accent at a wash. Light surfaces need less of it
      than dark ones, where the accent is pale and 12% vanishes into #212c42. */
   --toast-chip-strength: 12%;
+  /* The toast's own error register — deliberately NOT `--destructive`.
+     `--destructive` is oklch(0.577 0.245 27.3), which is out of sRGB gamut and clips
+     to #e7000b: correct for a button that is about to delete something, and the
+     loudest colour on the page in a toast that is only telling you something went
+     wrong. This is a step down in chroma (0.15), a touch warmer, and still 5.2:1 on
+     `--popover`. Kept separate so softening the toast cannot weaken the destructive
+     buttons that share `--destructive`. */
+  --toast-error: #b9473d; /* oklch(0.55 0.15 28) — 5.2:1 on #ffffff */
+  /* The chip reads hottest on an error, so error gets a lighter wash of its own. */
+  --toast-error-chip-strength: 9%;
   --border: #e4e7e1;
   --input: #e4e7e1;
   --ring: #0f3d3e;
@@ -236,6 +247,9 @@
   --warning: #fcd34d; /* amber-300   — 10.3:1 on #212c42 */
   --info: #93c5fd; /* blue-300    — 8.1:1 on #212c42 */
   --toast-chip-strength: 18%;
+  /* A softer coral than #ff6b6b, which is the punchiest thing in the dark palette. */
+  --toast-error: #fb9890; /* oklch(0.78 0.12 25) — 6.7:1 on #212c42 */
+  --toast-error-chip-strength: 14%;
   --border: #333f5a;
   /* Light enough to clear 3:1 against `--card` — this is a control boundary
      (WCAG 1.4.11), not decoration. The old #3d3d3d managed 1.22:1, so text
@@ -2082,7 +2096,12 @@ html [data-sonner-toaster] {
    travel reads; the box-shadow tier is the interaction one, for the hover lift. */
 [data-sonner-toaster] li.orbit-toast {
   transition:
-    transform var(--transition-duration-slow) var(--ease-house),
+    /* Arrival settles rather than snaps. `--ease-house` (0.22, 1, 0.36, 1) has y1 = 1,
+       so it leaves at full speed and then drifts — right for a panel you asked for,
+       abrupt for something that arrives unasked. This drawer curve starts gentler and
+       decelerates into place, at the same duration. The exit, below, stays brisk:
+       leaving fast reads as responsive; arriving fast reads as urgent. */
+    transform var(--transition-duration-slow) cubic-bezier(0.32, 0.72, 0, 1),
     opacity var(--transition-duration-base) ease,
     height var(--transition-duration-base) var(--ease-house),
     box-shadow var(--transition-duration-fast) ease,
@@ -2144,6 +2163,12 @@ html [data-sonner-toaster] {
  * entries in the Toaster's `classNames`. `data-type="default"` (the dozen
  * `toast.message` call sites) sets none, and gets neither chip nor rail — that
  * is the quiet variant, and it should stay quiet. */
+/* An error's chip takes the lighter wash — see `--toast-error-chip-strength`. Set on
+   the toast so it inherits into the icon rule below. */
+[data-sonner-toaster] li.orbit-toast[data-type="error"] {
+  --toast-chip-strength: var(--toast-error-chip-strength);
+}
+
 [data-sonner-toaster] li.orbit-toast .orbit-toast-icon {
   color: var(--toast-accent, var(--muted-foreground));
   background: color-mix(
