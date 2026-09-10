@@ -152,8 +152,10 @@ export function SceneFeatures() {
                     * It has to clear the TALLER preview: the Ask stack measures
                     * 175px in Chrome, and a floor under that let it push its title
                     * 15px below its neighbour's. The extra headroom absorbs line-height
-                    * differences between browsers rather than aligning to the pixel. */}
-                  <div className="flex min-h-48 items-center justify-center">
+                    * differences between browsers rather than aligning to the pixel.
+                    * Only from lg: stacked, there is no neighbour to align with, and
+                    * the floor just strands the short Imports preview in empty space. */}
+                  <div className="flex items-center justify-center lg:min-h-48">
                     {feature.visual}
                   </div>
                   <div className="mt-6">
