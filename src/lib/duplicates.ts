@@ -13,7 +13,22 @@ export type DuplicateSubject = Pick<
   "id" | "fullName" | "email" | "linkedinUrl" | "xHandle" | "company" | "title"
 >;
 
-/** Confidence at/above which a duplicate match is treated as an auto-merge, not just a hint. */
+/**
+ * The line between "confident enough to merge on its own" and "ask a human".
+ *
+ * At or above it a match is folded automatically; below it the two contacts are both kept
+ * and the pair becomes a `duplicate_suggestions` row for the review page. The tiers that
+ * clear it are every identifier match plus name+company (0.90), name+title (0.85) and the
+ * fuzzy variants (0.87/0.85). The only tier that does not is a bare full-name match at
+ * 0.60 — two people genuinely can share a name and nothing else, so that one is a question,
+ * not an answer.
+ *
+ * Merging on this threshold is safe in a way it was not before: `contact_merges` archives
+ * the losing contact whole, so a wrong automatic merge is visible in the recent-merges list
+ * and undoable. What this threshold must never do again is drop to 0.60 for a source that
+ * creates contacts — calendar sync used to, which silently collapsed every pair of people
+ * in a network who happened to share a full name.
+ */
 export const DUPLICATE_MERGE_CONFIDENCE = 0.85;
 
 function normalize(s: string | null | undefined) {
@@ -60,6 +75,11 @@ export function nameSimilarity(a: string | null | undefined, b: string | null | 
   return Math.max(0, 1 - distance / maxLen);
 }
 
+/**
+ * MUST stay equal to the `linkedin_slug` generated column in `src/db/index.ts`
+ * (`lower(split_part(linkedin_url, '/in/', 2) …)`) — the column and this function are two
+ * spellings of one rule, and `contact_identities` rows are written from this one.
+ */
 export function linkedinSlug(url: string | null | undefined) {
   if (!url) return "";
   const match = url.match(/linkedin\.com\/in\/([^/?#]+)/i);
@@ -86,103 +106,154 @@ export function normalizeXHandle(value: string | null | undefined) {
 }
 
 /**
- * Generic over `T` (defaulting to `DuplicateSubject`) so a caller that still has full
- * `Contact` rows in hand (e.g. `calendar-sync.ts`, which reads fields duplicate detection
- * itself never touches) gets `contact: Contact` back, while a caller that queried only the
- * six columns gets `contact: DuplicateSubject` — no cast needed on either side.
+ * Reduce a phone number to E.164 (`+` followed by digits), or "" when the input carries no
+ * usable signal. Phone was previously normalized nowhere and matched on nothing.
+ *
+ * A bare 10-digit number is assumed NANP (`+1`), which is the only guess made here. That
+ * guess can in principle collide a US number with a 10-digit number elsewhere sharing every
+ * digit, and such a collision auto-merges two people. Merges are reversible, and the
+ * alternative — keying on raw digits — over-merges strictly more (it would also collide
+ * `+441234567890` with `01234567890`).
  */
+export function normalizePhone(value: string | null | undefined) {
+  if (!value) return "";
+  const trimmed = value.trim();
+  const hasPlus = trimmed.startsWith("+");
+  const digits = trimmed.replace(/\D/g, "");
+  if (!digits) return "";
+  if (hasPlus) return digits.length >= 7 && digits.length <= 15 ? `+${digits}` : "";
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  if (digits.length === 10) return `+1${digits}`;
+  // Anything else (extensions, partial numbers, unprefixed international) is ambiguous:
+  // no key rather than a wrong one.
+  return "";
+}
+
+/**
+ * Mailbox local parts that belong to an organisation rather than a person. A shared inbox
+ * is not an identity — without this, importing `info@acme.com` for three different people
+ * at Acme would collapse all three into one contact, and the unique index on
+ * `contact_identities` would make that collapse mandatory rather than merely likely.
+ */
+const ROLE_EMAIL_LOCALS = new Set([
+  "info",
+  "hello",
+  "hi",
+  "contact",
+  "contactus",
+  "admin",
+  "support",
+  "help",
+  "sales",
+  "team",
+  "office",
+  "mail",
+  "email",
+  "enquiries",
+  "inquiries",
+  "billing",
+  "accounts",
+  "accounting",
+  "finance",
+  "hr",
+  "jobs",
+  "careers",
+  "recruiting",
+  "press",
+  "media",
+  "marketing",
+  "legal",
+  "privacy",
+  "security",
+  "abuse",
+  "postmaster",
+  "webmaster",
+  "noreply",
+  "no-reply",
+  "donotreply",
+  "do-not-reply",
+  "notifications",
+  "newsletter",
+  "subscriptions",
+]);
+
+/** True when an address identifies a mailbox rather than a person. */
+export function isRoleEmail(value: string | null | undefined) {
+  const email = normalize(value);
+  const at = email.lastIndexOf("@");
+  if (at <= 0) return false;
+  const local = email.slice(0, at).replace(/\+.*$/, "");
+  return ROLE_EMAIL_LOCALS.has(local);
+}
+
+/**
+ * The identifier kinds strong enough to say "this is the same person" on their own. Each is
+ * unique per user in `contact_identities`, which is what makes duplicate prevention
+ * race-proof rather than best-effort.
+ *
+ * Conceptually the same precedence as the `li:`/`em:`/`hd:`/`nm:` prefixes in
+ * `attendeeIdentityKey` (`src/lib/events/identity.ts`) and `participantIdentityKey`
+ * (`src/lib/ingest/events.ts`), with two deliberate differences: there is no `nm:` kind here
+ * (a name is never an identity *across* contacts, only within one event's roster), and every
+ * available kind is emitted rather than only the strongest, because a contact owns all of
+ * its identifiers at once.
+ */
+export const IDENTITY_KINDS = ["email", "linkedin_slug", "phone_e164", "x_handle"] as const;
+export type IdentityKind = (typeof IDENTITY_KINDS)[number];
+
+export type IdentityKey = { kind: IdentityKind; value: string };
+
+export type IdentityInput = {
+  email?: string | null;
+  phone?: string | null;
+  linkedinUrl?: string | null;
+  xHandle?: string | null;
+};
+
+/**
+ * Every strong identifier carried by a record, normalized. An empty array means "nothing
+ * here identifies a person" — such a record can only ever be matched by name, and so can
+ * only ever produce a review suggestion, never an automatic merge.
+ *
+ * Returned sorted by `(kind, value)`. That order is load-bearing at the call site: two
+ * concurrent inserts touching the same two identities in opposite order deadlock on the
+ * upsert's row locks.
+ */
+export function identityKeysFor(input: IdentityInput): IdentityKey[] {
+  const keys: IdentityKey[] = [];
+  const linkedin = linkedinSlug(input.linkedinUrl);
+  if (linkedin) keys.push({ kind: "linkedin_slug", value: linkedin });
+  const handle = normalizeXHandle(input.xHandle);
+  if (handle) keys.push({ kind: "x_handle", value: handle });
+  const email = normalize(input.email);
+  if (email && email.includes("@") && !isRoleEmail(email)) {
+    keys.push({ kind: "email", value: email });
+  }
+  const phone = normalizePhone(input.phone);
+  if (phone) keys.push({ kind: "phone_e164", value: phone });
+  return keys.sort((a, b) =>
+    a.kind === b.kind ? (a.value < b.value ? -1 : 1) : a.kind < b.kind ? -1 : 1
+  );
+}
+
 export type DuplicateMatch<T extends DuplicateSubject = DuplicateSubject> = {
   contact: T;
   reason: string;
   confidence: number;
+  /**
+   * True when the match came from a unique identifier rather than a name comparison.
+   * Whether it MERGES is decided by `confidence` against `DUPLICATE_MERGE_CONFIDENCE`,
+   * not by this.
+   */
+  strong: boolean;
 };
-
-export function findDuplicateCandidates<T extends DuplicateSubject>(
-  existing: T[],
-  incoming: {
-    fullName?: string | null;
-    email?: string | null;
-    linkedinUrl?: string | null;
-    xHandle?: string | null;
-    company?: string | null;
-    title?: string | null;
-  }
-): DuplicateMatch<T>[] {
-  const matches: DuplicateMatch<T>[] = [];
-  const name = normalize(incoming.fullName);
-  const email = normalize(incoming.email);
-  const linkedin = linkedinSlug(incoming.linkedinUrl);
-  const xHandle = normalizeXHandle(incoming.xHandle);
-  const company = normalize(incoming.company);
-  const title = normalize(incoming.title);
-
-  for (const contact of existing) {
-    if (linkedin && linkedinSlug(contact.linkedinUrl) === linkedin) {
-      matches.push({ contact, reason: "Same LinkedIn URL", confidence: 0.98 });
-      continue;
-    }
-    if (xHandle && normalizeXHandle(contact.xHandle) === xHandle) {
-      matches.push({ contact, reason: "Same X handle", confidence: 0.97 });
-      continue;
-    }
-    if (email && normalize(contact.email) === email) {
-      matches.push({ contact, reason: "Same email", confidence: 0.95 });
-      continue;
-    }
-    if (
-      name &&
-      normalize(contact.fullName) === name &&
-      company &&
-      normalize(contact.company) === company
-    ) {
-      matches.push({ contact, reason: "Same name + company", confidence: 0.9 });
-      continue;
-    }
-    if (
-      name &&
-      normalize(contact.fullName) === name &&
-      title &&
-      normalize(contact.title) === title
-    ) {
-      matches.push({ contact, reason: "Same name + title", confidence: 0.85 });
-      continue;
-    }
-    if (name && normalize(contact.fullName) === name) {
-      matches.push({ contact, reason: "Same full name", confidence: 0.6 });
-      continue;
-    }
-
-    // Fuzzy name: only when company or title also aligns (avoids false merges).
-    const fuzzy = nameSimilarity(incoming.fullName, contact.fullName);
-    if (fuzzy >= 0.88) {
-      const sameCompany =
-        company && company === normalize(contact.company);
-      const sameTitle = title && title === normalize(contact.title);
-      if (sameCompany) {
-        matches.push({
-          contact,
-          reason: "Similar name + company",
-          confidence: 0.87,
-        });
-      } else if (sameTitle) {
-        matches.push({
-          contact,
-          reason: "Similar name + title",
-          confidence: 0.85,
-        });
-      }
-    }
-  }
-
-  return matches.sort((a, b) => b.confidence - a.confidence);
-}
 
 /**
  * Precomputed lookup structure over an existing-contacts list, built once and
  * reused across many `findDuplicateCandidatesIndexed` calls. Exact-tier
  * matches (LinkedIn URL, email, name+company, name+title, name) become O(1)
  * map lookups instead of an O(existing.length) scan per row; only the fuzzy
- * fallback still scans, and only within a same-first-3-letters name bucket.
+ * fallback still scans, and only within same-first-3-letters name buckets.
  */
 export type DuplicateIndex = {
   byLinkedin: Map<string, DuplicateSubject[]>;
@@ -212,12 +283,25 @@ function compositeKey(a: string, b: string) {
   return `${a}\u001f${b}`;
 }
 
-function fuzzyBucketKey(fullName: string | null | undefined) {
-  return normalizeName(fullName).slice(0, 3);
+/**
+ * The fuzzy-scan buckets a name belongs to.
+ *
+ * Deliberately more than one. Bucketing on the first three letters of the *whole* name — as
+ * this did originally — meant "Jon Smith" (`jon`) and "John Smith" (`joh`) never landed in
+ * the same bucket, so the indexed matcher could not see a near-miss the old linear matcher
+ * caught. Indexing under the first *and* last token's prefix means a typo in either half
+ * still leaves the two names sharing a bucket.
+ */
+function fuzzyBucketKeys(fullName: string | null | undefined): string[] {
+  const tokens = normalizeName(fullName).split(" ").filter(Boolean);
+  if (!tokens.length) return [""];
+  const keys = new Set<string>([tokens[0].slice(0, 3)]);
+  if (tokens.length > 1) keys.add(tokens[tokens.length - 1].slice(0, 3));
+  return [...keys];
 }
 
-export function buildDuplicateIndex(existing: DuplicateSubject[]): DuplicateIndex {
-  const index: DuplicateIndex = {
+function emptyIndex(): DuplicateIndex {
+  return {
     byLinkedin: new Map(),
     byX: new Map(),
     byEmail: new Map(),
@@ -226,28 +310,15 @@ export function buildDuplicateIndex(existing: DuplicateSubject[]): DuplicateInde
     byName: new Map(),
     fuzzyBuckets: new Map(),
   };
-
-  for (const contact of existing) {
-    const name = normalize(contact.fullName);
-    const email = normalize(contact.email);
-    const linkedin = linkedinSlug(contact.linkedinUrl);
-    const xHandle = normalizeXHandle(contact.xHandle);
-    const company = normalize(contact.company);
-    const title = normalize(contact.title);
-
-    if (linkedin) pushTo(index.byLinkedin, linkedin, contact);
-    if (xHandle) pushTo(index.byX, xHandle, contact);
-    if (email) pushTo(index.byEmail, email, contact);
-    if (name && company) pushTo(index.byNameCompany, compositeKey(name, company), contact);
-    if (name && title) pushTo(index.byNameTitle, compositeKey(name, title), contact);
-    if (name) pushTo(index.byName, name, contact);
-    pushTo(index.fuzzyBuckets, fuzzyBucketKey(contact.fullName), contact);
-  }
-
-  return index;
 }
 
-/** Add a single contact (e.g. one just created mid-batch) into an existing index. */
+/**
+ * Add a single contact (e.g. one just created mid-batch) into an existing index.
+ *
+ * `buildDuplicateIndex` is defined in terms of this rather than repeating the key
+ * derivation: a past bug had the two computing composite keys with different separators,
+ * which silently under-merged mid-batch contacts. One body cannot drift from itself.
+ */
 export function addToDuplicateIndex(index: DuplicateIndex, contact: DuplicateSubject) {
   const name = normalize(contact.fullName);
   const email = normalize(contact.email);
@@ -262,20 +333,37 @@ export function addToDuplicateIndex(index: DuplicateIndex, contact: DuplicateSub
   if (name && company) pushTo(index.byNameCompany, compositeKey(name, company), contact);
   if (name && title) pushTo(index.byNameTitle, compositeKey(name, title), contact);
   if (name) pushTo(index.byName, name, contact);
-  pushTo(index.fuzzyBuckets, fuzzyBucketKey(contact.fullName), contact);
+  for (const key of fuzzyBucketKeys(contact.fullName)) pushTo(index.fuzzyBuckets, key, contact);
 }
 
-/** Same matching tiers/confidences as `findDuplicateCandidates`, using a prebuilt `DuplicateIndex`. */
+export function buildDuplicateIndex(existing: DuplicateSubject[]): DuplicateIndex {
+  const index = emptyIndex();
+  for (const contact of existing) addToDuplicateIndex(index, contact);
+  return index;
+}
+
+export type DuplicateProbe = {
+  fullName?: string | null;
+  email?: string | null;
+  linkedinUrl?: string | null;
+  xHandle?: string | null;
+  company?: string | null;
+  title?: string | null;
+};
+
+/**
+ * The one matcher.
+ *
+ * There used to be a second, linear implementation of these same tiers. The two were not
+ * equivalent — the linear one `continue`d after its first tier hit while this one collects
+ * across tiers — so a preview and the write path that followed it could disagree about the
+ * same row. Callers holding a small array should use `matchAgainst`, which builds a
+ * throwaway index; callers matching many probes against one population must hoist
+ * `buildDuplicateIndex` out of their loop.
+ */
 export function findDuplicateCandidatesIndexed(
   index: DuplicateIndex,
-  incoming: {
-    fullName?: string | null;
-    email?: string | null;
-    linkedinUrl?: string | null;
-    xHandle?: string | null;
-    company?: string | null;
-    title?: string | null;
-  }
+  incoming: DuplicateProbe
 ): DuplicateMatch[] {
   const name = normalize(incoming.fullName);
   const email = normalize(incoming.email);
@@ -287,41 +375,76 @@ export function findDuplicateCandidatesIndexed(
   const matched = new Set<DuplicateSubject>();
   const matches: DuplicateMatch[] = [];
 
-  const addAll = (contacts: DuplicateSubject[] | undefined, reason: string, confidence: number) => {
+  const addAll = (
+    contacts: DuplicateSubject[] | undefined,
+    reason: string,
+    confidence: number,
+    strong: boolean
+  ) => {
     for (const contact of contacts || []) {
       if (matched.has(contact)) continue;
       matched.add(contact);
-      matches.push({ contact, reason, confidence });
+      matches.push({ contact, reason, confidence, strong });
     }
   };
 
-  if (linkedin) addAll(index.byLinkedin.get(linkedin), "Same LinkedIn URL", 0.98);
-  if (xHandle) addAll(index.byX.get(xHandle), "Same X handle", 0.97);
-  if (email) addAll(index.byEmail.get(email), "Same email", 0.95);
+  if (linkedin) addAll(index.byLinkedin.get(linkedin), "Same LinkedIn URL", 0.98, true);
+  if (xHandle) addAll(index.byX.get(xHandle), "Same X handle", 0.97, true);
+  if (email) addAll(index.byEmail.get(email), "Same email", 0.95, true);
   if (name && company)
-    addAll(index.byNameCompany.get(compositeKey(name, company)), "Same name + company", 0.9);
+    addAll(
+      index.byNameCompany.get(compositeKey(name, company)),
+      "Same name + company",
+      0.9,
+      false
+    );
   if (name && title)
-    addAll(index.byNameTitle.get(compositeKey(name, title)), "Same name + title", 0.85);
-  if (name) addAll(index.byName.get(name), "Same full name", 0.6);
+    addAll(index.byNameTitle.get(compositeKey(name, title)), "Same name + title", 0.85, false);
+  if (name) addAll(index.byName.get(name), "Same full name", 0.6, false);
 
-  // Fuzzy fallback, scoped to the same first-3-letters bucket as the incoming name.
-  const bucket = index.fuzzyBuckets.get(fuzzyBucketKey(incoming.fullName)) || [];
-  for (const contact of bucket) {
-    if (matched.has(contact)) continue;
-    const fuzzy = nameSimilarity(incoming.fullName, contact.fullName);
-    if (fuzzy < 0.88) continue;
-    const sameCompany = company && company === normalize(contact.company);
-    const sameTitle = title && title === normalize(contact.title);
-    if (sameCompany) {
-      matched.add(contact);
-      matches.push({ contact, reason: "Similar name + company", confidence: 0.87 });
-    } else if (sameTitle) {
-      matched.add(contact);
-      matches.push({ contact, reason: "Similar name + title", confidence: 0.85 });
+  // Fuzzy fallback, scoped to the buckets the incoming name belongs to. A contact can sit in
+  // two buckets, so `matched` (not a per-bucket set) is what keeps it to one match.
+  for (const key of fuzzyBucketKeys(incoming.fullName)) {
+    for (const contact of index.fuzzyBuckets.get(key) || []) {
+      if (matched.has(contact)) continue;
+      const fuzzy = nameSimilarity(incoming.fullName, contact.fullName);
+      if (fuzzy < 0.88) continue;
+      const sameCompany = company && company === normalize(contact.company);
+      const sameTitle = title && title === normalize(contact.title);
+      if (sameCompany) {
+        matched.add(contact);
+        matches.push({
+          contact,
+          reason: "Similar name + company",
+          confidence: 0.87,
+          strong: false,
+        });
+      } else if (sameTitle) {
+        matched.add(contact);
+        matches.push({ contact, reason: "Similar name + title", confidence: 0.85, strong: false });
+      }
     }
   }
 
   return matches.sort((a, b) => b.confidence - a.confidence);
+}
+
+/**
+ * Match one probe against a small in-memory population, building a throwaway index.
+ *
+ * Convenience for callers that already hold a short candidate list (the extension's
+ * pre-limited page resolve, a smoke test). Never call this in a loop over many probes —
+ * that rebuilds the index every iteration and is slower than the O(N) scan it replaced.
+ * Generic so a caller holding full `Contact` rows gets `contact: Contact` back.
+ */
+export function matchAgainst<T extends DuplicateSubject>(
+  existing: T[],
+  incoming: DuplicateProbe
+): DuplicateMatch<T>[] {
+  return findDuplicateCandidatesIndexed(
+    buildDuplicateIndex(existing),
+    incoming
+  ) as DuplicateMatch<T>[];
 }
 
 export function daysAgo(date: Date | string | null | undefined) {

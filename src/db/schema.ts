@@ -419,6 +419,157 @@ export const contacts = pgTable(
 );
 
 /**
+ * The identifiers that make a contact *that person*, one row per identifier.
+ *
+ * This table, not the matcher, is what actually prevents duplicates. `UNIQUE (user_id,
+ * kind, value)` means a second contact cannot claim an identifier a first one already
+ * holds — so two concurrent imports racing on the same LinkedIn profile resolve to one
+ * contact instead of both passing a check-then-insert and both writing a row. Everything
+ * in `src/lib/duplicates.ts` is advisory next to this constraint.
+ *
+ * Rows are written from `identityKeysFor` (`src/lib/duplicates.ts`) and nothing else. That
+ * function is the single normalisation rule; `value` is stored already normalised, so a
+ * lookup is an equality probe rather than a function call over the column.
+ *
+ * Multi-valued on purpose. `contacts.email` is a single column, which meant a person's
+ * second address could only ever be represented as a second contact — a guaranteed
+ * duplicate. `contacts.email` survives as the denormalised primary for display, search and
+ * the `search_tsv` generated column; this table is the identity of record.
+ *
+ * Names are deliberately absent. A name is not an identity across contacts (two people
+ * genuinely share one), so name similarity produces a `duplicateSuggestions` row for a
+ * human instead of a constraint.
+ */
+export const contactIdentities = pgTable(
+  "contact_identities",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    /** One of `IDENTITY_KINDS` in `@/lib/duplicates`. */
+    kind: text("kind").$type<"email" | "linkedin_slug" | "phone_e164" | "x_handle">().notNull(),
+    /** Already normalised by `identityKeysFor`. Never store a raw user-typed value here. */
+    value: text("value").notNull(),
+    /** Where this identifier came from, for debugging a surprising merge. */
+    source: text("source"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    /**
+     * The whole point of the table. Declared here for drizzle's benefit, but note the DDL
+     * in `src/db/index.ts` must dedupe existing rows before creating it — an account that
+     * already has two contacts sharing an email cannot satisfy this index on day one.
+     */
+    uniqueIndex("contact_identities_user_kind_value_uidx").on(t.userId, t.kind, t.value),
+    /** Without this, deleting a contact scans the table (see `event_attendees_contact_idx`). */
+    index("contact_identities_contact_idx").on(t.contactId),
+  ]
+);
+
+/**
+ * A completed merge: the losing contact, archived whole, and everything that moved.
+ *
+ * The loser's `contacts` row is **deleted**, not flagged. A `merged_into_id` column would
+ * have to be excluded at every read site, and there are around a hundred of them with no
+ * shared predicate helper — one miss and a merged contact reappears in the graph, in chat
+ * retrieval, or in an export, permanently. Deleting the row makes it invisible everywhere
+ * by construction, and this table is what makes that reversible rather than destructive.
+ *
+ * `loserSnapshot` is written with `to_jsonb(c)` over the whole row rather than a drizzle
+ * select, because `closeness_breakdown` exists in the database but is deliberately not
+ * declared in this file (see the note on `contacts.closenessEvidence`) — a typed select
+ * would drop it silently.
+ *
+ * `repointed` maps child table name to the ids moved to the winner; `deleted` holds whole
+ * rows that could not be moved because the winner already had an equivalent (a shared tag,
+ * a duplicate mention, the loser's own brief). Unmerge replays both.
+ *
+ * Neither id column carries a foreign key. `loserContactId` cannot — that row is gone by
+ * design. `winnerContactId` must not, because a cascade would destroy this archive the
+ * moment the winner is itself merged into someone else; merges chain, and the chain is
+ * kept walkable by path-compressing `winnerContactId` forward on every subsequent merge.
+ */
+export const contactMerges = pgTable(
+  "contact_merges",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** Always the surviving contact, kept current by path compression. No FK: see above. */
+    winnerContactId: uuid("winner_contact_id").notNull(),
+    /** The contact that no longer exists. No FK, and unique: a row can only be merged once. */
+    loserContactId: uuid("loser_contact_id").notNull(),
+    loserSnapshot: jsonb("loser_snapshot").$type<Record<string, unknown>>().notNull(),
+    repointed: jsonb("repointed").$type<Record<string, string[]>>().default({}).notNull(),
+    deleted: jsonb("deleted").$type<Record<string, unknown[]>>().default({}).notNull(),
+    /**
+     * `in_progress` until every statement has landed. Only relevant if a merge ever has to
+     * run outside a single atomic batch; a stuck row means the loser is still alive with
+     * some of its children already moved, which is recoverable by re-running the merge.
+     */
+    status: text("status").$type<"in_progress" | "done">().default("in_progress").notNull(),
+    /** Why these two were considered the same person, for the undo list. */
+    reason: text("reason"),
+    confidence: real("confidence"),
+    mergedAt: timestamp("merged_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    /** Also the alias lookup: old id in, surviving id out. */
+    uniqueIndex("contact_merges_loser_uidx").on(t.loserContactId),
+    index("contact_merges_user_idx").on(t.userId, t.mergedAt.desc()),
+    index("contact_merges_winner_idx").on(t.userId, t.winnerContactId),
+  ]
+);
+
+/**
+ * Two contacts that look like the same person on their *names* alone.
+ *
+ * Only pairs the matcher was NOT confident about land here — below
+ * `DUPLICATE_MERGE_CONFIDENCE`, which in practice means a bare full-name match. Anything at
+ * or above it (an identifier, name + company, name + title) is merged automatically and
+ * recorded in `contactMerges` instead, where it can be undone.
+ *
+ * What used to happen was worse than either: calendar sync merged at 0.60 — a bare name —
+ * with no record and no way back, so two different people who shared a name were silently
+ * collapsed and nothing showed it.
+ *
+ * The pair is stored ordered (`contactAId < contactBId`) so "A and B" and "B and A" are one
+ * row rather than two, and `dismissed` is persisted rather than inferred — otherwise the
+ * review page re-proposes a pair the user has already rejected, forever.
+ */
+export const duplicateSuggestions = pgTable(
+  "duplicate_suggestions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** The lower of the two uuids, so the pair has one canonical spelling. */
+    contactAId: uuid("contact_a_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    contactBId: uuid("contact_b_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    /** The matcher's tier label, e.g. "Same name + company". */
+    reason: text("reason").notNull(),
+    confidence: real("confidence").notNull(),
+    status: text("status")
+      .$type<"pending" | "merged" | "dismissed">()
+      .default("pending")
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("duplicate_suggestions_pair_uidx").on(t.userId, t.contactAId, t.contactBId),
+    index("duplicate_suggestions_pending_idx")
+      .on(t.userId, t.confidence.desc())
+      .where(sql`status = 'pending'`),
+  ]
+);
+
+
+/**
  * The per-user closeness distribution that `contacts.closeness*` was applied against.
  *
  * `snapshot` holds a fixed-size quantile sketch rather than the full sorted score array, so
@@ -2955,3 +3106,9 @@ export type NewEventRecord = typeof events.$inferInsert;
 export type EventAttendeeRecord = typeof eventAttendees.$inferSelect;
 export type NewEventAttendeeRecord = typeof eventAttendees.$inferInsert;
 export type EventProviderConnection = typeof eventProviderConnections.$inferSelect;
+export type ContactIdentity = typeof contactIdentities.$inferSelect;
+export type NewContactIdentity = typeof contactIdentities.$inferInsert;
+export type ContactMerge = typeof contactMerges.$inferSelect;
+export type NewContactMerge = typeof contactMerges.$inferInsert;
+export type DuplicateSuggestion = typeof duplicateSuggestions.$inferSelect;
+export type NewDuplicateSuggestion = typeof duplicateSuggestions.$inferInsert;
