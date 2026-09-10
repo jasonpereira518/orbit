@@ -239,7 +239,9 @@ const Toaster = ({ ...props }: ToasterProps) => {
           // button is positioned against it either way.
           toast:
             "orbit-toast group/toast flex w-full cursor-pointer items-start gap-3 " +
-            "rounded-xl bg-popover p-3 pr-9 text-popover-foreground",
+            // A little more room than `p-3`, which was tight for a two-line title over
+            // a description. `pr-9` keeps the close button's lane clear.
+            "rounded-xl bg-popover py-3 pl-3.5 pr-9 text-popover-foreground",
           // The hard cap, and the reason "See more" can be unbounded: expanding
           // a description grows the toast until it hits this, then scrolls, so
           // a stack trace can be read in full without becoming a full-height
@@ -253,7 +255,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
           // touch scrolling in here — `pan-y` gives the vertical axis back
           // while leaving the horizontal swipe to dismiss.
           content:
-            "flex min-h-0 max-h-56 min-w-0 flex-1 touch-pan-y flex-col gap-0.5 overflow-y-auto overscroll-contain",
+            "flex min-h-0 max-h-56 min-w-0 flex-1 touch-pan-y flex-col gap-1 overflow-y-auto overscroll-contain",
           icon: "orbit-toast-icon mt-px flex size-6 shrink-0 items-center justify-center rounded-md",
           title: "text-[13px] leading-5 font-medium break-words whitespace-pre-wrap",
           // No clamp here on purpose. A string description is wrapped in

@@ -15,6 +15,8 @@ import { BusyHint } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { toast } from "@/lib/toast";
 import { IntegrationUnavailable } from "@/components/imports/integration-unavailable";
+import { describeOAuthReason, friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export function OutlookContactsImport() {
   const router = useRouter();
@@ -67,7 +69,11 @@ export function OutlookContactsImport() {
       router.refresh();
       getOutlookConnectionStatus().then(setStatus).catch(() => {});
     } else if (outlook === "error") {
-      toast.error(params.get("reason") || "Outlook connection failed");
+      {
+        const oauth = describeOAuthReason(params.get("reason"), "Outlook");
+        if (oauth.cancelled) toast.message(oauth.message);
+        else toast.error(oauth.message);
+      }
       params.delete("outlook");
       params.delete("reason");
       const next = params.toString();
@@ -115,7 +121,7 @@ export function OutlookContactsImport() {
                     const { url } = await startOutlookOAuth("/imports");
                     window.location.href = url;
                   } catch (err) {
-                    toast.error(err instanceof Error ? err.message : "OAuth failed");
+                    toast.error(friendlyError(err, TOAST_COPY.connectFailed));
                   }
                 })
               }
@@ -138,7 +144,7 @@ export function OutlookContactsImport() {
                       toast.success(`Loaded ${res.people.length} contacts`);
                     } catch (err) {
                       toast.error(
-                        err instanceof Error ? err.message : "Could not load contacts"
+                        friendlyError(err, TOAST_COPY.loadContactsFailed)
                       );
                     }
                   })
@@ -204,7 +210,7 @@ export function OutlookContactsImport() {
                 setSelected(new Set());
                 setLoaded(false);
               } catch (err) {
-                toast.error(err instanceof Error ? err.message : "Import failed");
+                toast.error(friendlyError(err, TOAST_COPY.importFailed));
               }
             }}
           >

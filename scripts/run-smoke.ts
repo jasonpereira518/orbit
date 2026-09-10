@@ -28,6 +28,9 @@ type Tier = "pure" | "pglite" | "manual";
 /** Every smoke script, by tier. `--check` fails when a script on disk is missing here. */
 const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
+  "smoke-friendly-error": "pure",
+  "smoke-toast-actions": "pure",
+  "smoke-toast-copy": "pure",
   "smoke-admin-gate": "pure",
   "smoke-admin-yc-calculations": "pure",
   "smoke-avatar-storage": "pure",
@@ -129,6 +132,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-pgvector-local": "pglite",
   "smoke-presence": "pglite",
   "smoke-follow-up-actions": "pglite",
+  "smoke-toast-undo": "pglite",
   "smoke-feedback-admin": "pglite",
   "smoke-feedback-submit": "pglite",
   "smoke-provider-connections": "pglite",

@@ -227,7 +227,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     // screen. The button's check is the acknowledgement while the panel is still up; this
     // is what remains once it has gone, and it is also how the success reaches a screen
     // reader, through sonner's live region.
-    if (wasSent) toast.success("Thanks, it's on its way!");
+    if (wasSent) toast.success("Thanks — it’s on its way");
 
     setSentBeat(false);
     setOffset({ x: 0, y: 0 });
@@ -353,7 +353,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     } catch (err) {
       setPhase("composing");
       if (!(err instanceof CaptureError)) {
-        toast.error("Couldn't capture the screen. You can still send your note.");
+        toast.error("Couldn’t capture the screen — you can still send your note");
         return;
       }
       switch (err.reason) {
@@ -362,14 +362,14 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
           // a toast for a deliberate cancel is noise.
           break;
         case "no-source":
-          toast.error("No screen or window was available to capture.");
+          toast.error("There was no screen or window to capture");
           break;
         case "unsupported":
           setCaptureSupported(false);
-          toast.error("This browser can't capture the screen. You can still send your note.");
+          toast.error("This browser can’t capture the screen — you can still send your note");
           break;
         default:
-          toast.error("Couldn't capture the screen. You can still send your note.");
+          toast.error("Couldn’t capture the screen — you can still send your note");
       }
     }
   }, [shots.length]);
@@ -388,7 +388,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
         const encoded = await cropDownscaleEncode(frame, crop, [], MAX_SCREENSHOT_BYTES);
         const used = shots.reduce((sum, s) => sum + s.bytes, 0);
         if (used + encoded.bytes > MAX_SUBMISSION_BYTES) {
-          toast.error("That screenshot would push the attachments over the limit. Remove one first.");
+          toast.error("That screenshot would go over the attachment limit — remove one first");
           setPhase("composing");
           return;
         }
@@ -407,7 +407,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
         ]);
         setPhase("composing");
       } catch {
-        toast.error("That screenshot was too large to attach. Try selecting a smaller area.");
+        toast.error("That screenshot is too large — try selecting a smaller area");
         setPhase("composing");
       } finally {
         releaseFrame(frame);
@@ -461,7 +461,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
         )
       );
     } catch {
-      toast.error("Couldn't apply the hidden areas, so that screenshot was removed.");
+      toast.error("Couldn’t hide those areas, so that screenshot was removed");
       URL.revokeObjectURL(shot.previewUrl);
       setShots((prev) => prev.filter((s) => s.id !== shot.id));
     } finally {

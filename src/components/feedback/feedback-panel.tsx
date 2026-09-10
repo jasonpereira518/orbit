@@ -369,7 +369,7 @@ export function FeedbackPanel({
       // collapsing, so the two do not talk over each other — see `clearDraft`.
       onSent();
     } catch {
-      toast.error("Couldn't send that. Try again in a moment.");
+      toast.error("That didn’t send — try again in a moment");
     } finally {
       setSending(false);
     }
