@@ -7,6 +7,8 @@ import { DataSettings } from "@/components/settings/data-settings";
 import { GoalsSettings } from "@/components/settings/goals-settings";
 import { HelpSettings } from "@/components/settings/help-settings";
 import { KnowledgeSettings } from "@/components/settings/knowledge-settings";
+import { ApiSettings } from "@/components/settings/api-settings";
+import { WebhookSettings } from "@/components/settings/webhook-settings";
 import { NotificationSettings } from "@/components/settings/notification-settings";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
 import { OutreachSettings } from "@/components/settings/outreach-settings";
@@ -19,7 +21,7 @@ import {
 } from "@/components/settings/sections";
 import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
-import { surfaceKeyForSettingsId } from "@/lib/surfaces";
+import { surfaceKeyForSettingsId, FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 
 /**
  * Anchor for the section rail. Ids and order live in `sections.ts`.
@@ -105,8 +107,14 @@ export default async function SettingsPage() {
       <Section id="settings-knowledge" hidden={hidden}>
         <KnowledgeSettings />
       </Section>
+      <Section id="settings-api" hidden={hidden}>
+        <ApiSettings />
+      </Section>
+      <Section id="settings-webhooks" hidden={hidden}>
+        <WebhookSettings />
+      </Section>
       <Section id="settings-help" hidden={hidden}>
-        <HelpSettings />
+        <HelpSettings feedbackEnabled={!hidden.has(FEEDBACK_SURFACE_KEY)} />
       </Section>
       <Section id="settings-data" hidden={hidden}>
         <DataSettings />

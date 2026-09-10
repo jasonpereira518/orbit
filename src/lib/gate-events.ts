@@ -31,6 +31,7 @@ export type GateFeature =
   | "recruiters"
   | "sync"
   | "extension"
+  | "api"
   | "contacts";
 
 export async function recordGateHit(input: {

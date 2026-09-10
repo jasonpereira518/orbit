@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { INTERACTION_TYPES } from "@/lib/interaction-types";
+import { SELECTABLE_INTERACTION_TYPES } from "@/lib/interaction-types";
 
 type CaptureMode = "messy" | "structured";
 
@@ -177,7 +177,7 @@ export function CaptureForm({
                 value={interactionType}
                 onChange={(e) => setInteractionType(e.target.value)}
               >
-                {INTERACTION_TYPES.map((t) => (
+                {SELECTABLE_INTERACTION_TYPES.map((t) => (
                   <option key={t.value} value={t.value}>
                     {t.label}
                   </option>

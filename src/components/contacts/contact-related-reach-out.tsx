@@ -51,7 +51,6 @@ export function ContactRelatedReachOut({
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent
           className="overflow-y-auto sm:max-w-lg"
-          overlayClassName="supports-backdrop-filter:backdrop-blur-[2px]"
         >
           <SheetHeader>
             <SheetTitle>Reach out to {contactName}</SheetTitle>

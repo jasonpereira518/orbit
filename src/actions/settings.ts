@@ -17,6 +17,7 @@ import { requireUserId } from "@/lib/auth";
 import { encrypt } from "@/lib/crypto";
 import { purgeUserData } from "@/lib/user-data";
 import { getEntitlements } from "@/lib/entitlements";
+import { userHasApolloKey } from "@/lib/apollo";
 import { contactUsageForUser } from "@/lib/contact-writes";
 import {
   resolveThemePreference,
@@ -38,7 +39,13 @@ export async function getSettings() {
   });
 
   const provider = resolveAiProvider(settings?.aiProvider);
-  const entitlements = await getEntitlements(userId);
+  // Run alongside entitlements rather than after: neither depends on the other, and
+  // `userHasApolloKey` already re-derives entitlements internally for its own hosted-key
+  // check, so serializing them would only add latency.
+  const [entitlements, hasApolloKey] = await Promise.all([
+    getEntitlements(userId),
+    userHasApolloKey(userId),
+  ]);
   // Mirrors the two runtime resolvers so this card states what would actually be used:
   // `sending` follows the env fallback in `getOutreachSendConfig`, `enrichment` follows
   // the one in `getApolloApiKey`. They diverge on Lifetime, so they cannot share a flag.
@@ -55,6 +62,9 @@ export async function getSettings() {
       anthropic: Boolean(settings?.anthropicApiKeyEncrypted),
     },
     usingEnvKey: usingEnvKey(provider, settings),
+    // Whether "Fill from Apollo" on the contact page has anything to call — computed via
+    // the same resolver `fillContactProfileFromApollo` itself uses, not re-derived here.
+    hasApolloKey,
     hasApiKey:
       provider === "gemini"
         ? Boolean(settings?.geminiApiKeyEncrypted) ||

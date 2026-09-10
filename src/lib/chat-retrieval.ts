@@ -200,6 +200,8 @@ export type BudgetedContact = {
   recentMessages: string[];
   tags: string[];
   relevance: number;
+  /** Compact career summary — "Ramp, ex-Stripe · MIT". Null when no profile is stored. */
+  career: string | null;
 };
 
 /**
@@ -216,7 +218,8 @@ const TOTAL_CONTEXT_CHAR_BUDGET = 48000;
 
 export function budgetContactsContext(
   contacts: RankedContact[],
-  snippets: Map<string, { recentMessages: string[] }>
+  snippets: Map<string, { recentMessages: string[] }>,
+  careerLines: Map<string, string> = new Map()
 ): BudgetedContact[] {
   const out: BudgetedContact[] = [];
   let spent = 0;
@@ -229,10 +232,11 @@ export function budgetContactsContext(
     const recentMessages = (snippets.get(c.id)?.recentMessages ?? [])
       .slice(0, tier.msgs)
       .map((m) => m.slice(0, tier.msgChars));
+    const career = careerLines.get(c.id) ?? null;
 
     const cost =
       c.fullName.length + (c.company?.length ?? 0) + (c.title?.length ?? 0) +
-      (notes?.length ?? 0) + (aiSummary?.length ?? 0) +
+      (notes?.length ?? 0) + (aiSummary?.length ?? 0) + (career?.length ?? 0) +
       keyFacts.join("").length + recentMessages.join("").length +
       c.tags.join("").length + 80; // formatting overhead
     // Budget exhaustion stops serialization entirely — a later, cheaper
@@ -252,6 +256,7 @@ export function budgetContactsContext(
       recentMessages,
       tags: c.tags,
       relevance: c.relevance,
+      career,
     });
   }
   return out;

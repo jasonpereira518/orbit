@@ -44,6 +44,12 @@ export type ClosenessCohortSnapshot = {
   maxSchool: number;
   userDomain: string | null;
   mailConnected: boolean;
+  /**
+   * Optional, deliberately. `snapshot` is jsonb and every row written before this key existed
+   * would read a required field as `undefined`, so consumers use `?? false` until the row is
+   * recalibrated. Making it required would break every stored cohort at once.
+   */
+  calendarConnected?: boolean;
 };
 
 /**
@@ -310,6 +316,16 @@ export const contacts = pgTable(
     priorityLevel: integer("priority_level").default(0).notNull(),
     source: text("source"),
     industry: text("industry"),
+    /**
+     * The user's manual override of constellation eligibility: `'in'` forces the contact onto
+     * the star chart however little evidence there is, `'out'` keeps them off it however much
+     * there is. NULL — the default — means "decide automatically", which
+     * `relationship_score`'s non-null default could never express.
+     *
+     * Deliberately only affects what `/graph` draws. A pinned-out contact is still a full
+     * member of the network everywhere else: `/contacts`, search, chat and the timeline.
+     */
+    constellationPin: text("constellation_pin").$type<"in" | "out">(),
     metContext: text("met_context"),
     dateMet: timestamp("date_met", { withTimezone: true }),
     howMet: text("how_met"),
@@ -403,6 +419,157 @@ export const contacts = pgTable(
 );
 
 /**
+ * The identifiers that make a contact *that person*, one row per identifier.
+ *
+ * This table, not the matcher, is what actually prevents duplicates. `UNIQUE (user_id,
+ * kind, value)` means a second contact cannot claim an identifier a first one already
+ * holds — so two concurrent imports racing on the same LinkedIn profile resolve to one
+ * contact instead of both passing a check-then-insert and both writing a row. Everything
+ * in `src/lib/duplicates.ts` is advisory next to this constraint.
+ *
+ * Rows are written from `identityKeysFor` (`src/lib/duplicates.ts`) and nothing else. That
+ * function is the single normalisation rule; `value` is stored already normalised, so a
+ * lookup is an equality probe rather than a function call over the column.
+ *
+ * Multi-valued on purpose. `contacts.email` is a single column, which meant a person's
+ * second address could only ever be represented as a second contact — a guaranteed
+ * duplicate. `contacts.email` survives as the denormalised primary for display, search and
+ * the `search_tsv` generated column; this table is the identity of record.
+ *
+ * Names are deliberately absent. A name is not an identity across contacts (two people
+ * genuinely share one), so name similarity produces a `duplicateSuggestions` row for a
+ * human instead of a constraint.
+ */
+export const contactIdentities = pgTable(
+  "contact_identities",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    /** One of `IDENTITY_KINDS` in `@/lib/duplicates`. */
+    kind: text("kind").$type<"email" | "linkedin_slug" | "phone_e164" | "x_handle">().notNull(),
+    /** Already normalised by `identityKeysFor`. Never store a raw user-typed value here. */
+    value: text("value").notNull(),
+    /** Where this identifier came from, for debugging a surprising merge. */
+    source: text("source"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    /**
+     * The whole point of the table. Declared here for drizzle's benefit, but note the DDL
+     * in `src/db/index.ts` must dedupe existing rows before creating it — an account that
+     * already has two contacts sharing an email cannot satisfy this index on day one.
+     */
+    uniqueIndex("contact_identities_user_kind_value_uidx").on(t.userId, t.kind, t.value),
+    /** Without this, deleting a contact scans the table (see `event_attendees_contact_idx`). */
+    index("contact_identities_contact_idx").on(t.contactId),
+  ]
+);
+
+/**
+ * A completed merge: the losing contact, archived whole, and everything that moved.
+ *
+ * The loser's `contacts` row is **deleted**, not flagged. A `merged_into_id` column would
+ * have to be excluded at every read site, and there are around a hundred of them with no
+ * shared predicate helper — one miss and a merged contact reappears in the graph, in chat
+ * retrieval, or in an export, permanently. Deleting the row makes it invisible everywhere
+ * by construction, and this table is what makes that reversible rather than destructive.
+ *
+ * `loserSnapshot` is written with `to_jsonb(c)` over the whole row rather than a drizzle
+ * select, because `closeness_breakdown` exists in the database but is deliberately not
+ * declared in this file (see the note on `contacts.closenessEvidence`) — a typed select
+ * would drop it silently.
+ *
+ * `repointed` maps child table name to the ids moved to the winner; `deleted` holds whole
+ * rows that could not be moved because the winner already had an equivalent (a shared tag,
+ * a duplicate mention, the loser's own brief). Unmerge replays both.
+ *
+ * Neither id column carries a foreign key. `loserContactId` cannot — that row is gone by
+ * design. `winnerContactId` must not, because a cascade would destroy this archive the
+ * moment the winner is itself merged into someone else; merges chain, and the chain is
+ * kept walkable by path-compressing `winnerContactId` forward on every subsequent merge.
+ */
+export const contactMerges = pgTable(
+  "contact_merges",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** Always the surviving contact, kept current by path compression. No FK: see above. */
+    winnerContactId: uuid("winner_contact_id").notNull(),
+    /** The contact that no longer exists. No FK, and unique: a row can only be merged once. */
+    loserContactId: uuid("loser_contact_id").notNull(),
+    loserSnapshot: jsonb("loser_snapshot").$type<Record<string, unknown>>().notNull(),
+    repointed: jsonb("repointed").$type<Record<string, string[]>>().default({}).notNull(),
+    deleted: jsonb("deleted").$type<Record<string, unknown[]>>().default({}).notNull(),
+    /**
+     * `in_progress` until every statement has landed. Only relevant if a merge ever has to
+     * run outside a single atomic batch; a stuck row means the loser is still alive with
+     * some of its children already moved, which is recoverable by re-running the merge.
+     */
+    status: text("status").$type<"in_progress" | "done">().default("in_progress").notNull(),
+    /** Why these two were considered the same person, for the undo list. */
+    reason: text("reason"),
+    confidence: real("confidence"),
+    mergedAt: timestamp("merged_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    /** Also the alias lookup: old id in, surviving id out. */
+    uniqueIndex("contact_merges_loser_uidx").on(t.loserContactId),
+    index("contact_merges_user_idx").on(t.userId, t.mergedAt.desc()),
+    index("contact_merges_winner_idx").on(t.userId, t.winnerContactId),
+  ]
+);
+
+/**
+ * Two contacts that look like the same person on their *names* alone.
+ *
+ * Only pairs the matcher was NOT confident about land here — below
+ * `DUPLICATE_MERGE_CONFIDENCE`, which in practice means a bare full-name match. Anything at
+ * or above it (an identifier, name + company, name + title) is merged automatically and
+ * recorded in `contactMerges` instead, where it can be undone.
+ *
+ * What used to happen was worse than either: calendar sync merged at 0.60 — a bare name —
+ * with no record and no way back, so two different people who shared a name were silently
+ * collapsed and nothing showed it.
+ *
+ * The pair is stored ordered (`contactAId < contactBId`) so "A and B" and "B and A" are one
+ * row rather than two, and `dismissed` is persisted rather than inferred — otherwise the
+ * review page re-proposes a pair the user has already rejected, forever.
+ */
+export const duplicateSuggestions = pgTable(
+  "duplicate_suggestions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** The lower of the two uuids, so the pair has one canonical spelling. */
+    contactAId: uuid("contact_a_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    contactBId: uuid("contact_b_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    /** The matcher's tier label, e.g. "Same name + company". */
+    reason: text("reason").notNull(),
+    confidence: real("confidence").notNull(),
+    status: text("status")
+      .$type<"pending" | "merged" | "dismissed">()
+      .default("pending")
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("duplicate_suggestions_pair_uidx").on(t.userId, t.contactAId, t.contactBId),
+    index("duplicate_suggestions_pending_idx")
+      .on(t.userId, t.confidence.desc())
+      .where(sql`status = 'pending'`),
+  ]
+);
+
+
+/**
  * The per-user closeness distribution that `contacts.closeness*` was applied against.
  *
  * `snapshot` holds a fixed-size quantile sketch rather than the full sorted score array, so
@@ -476,6 +643,18 @@ export const interactions = pgTable(
     topics: jsonb("topics").$type<string[]>().default([]),
     actionItems: jsonb("action_items").$type<string[]>().default([]),
     sentiment: text("sentiment"),
+    /**
+     * Who sent it: `'in'` (them) or `'out'` (the user). Only ever set for
+     * `interaction_type = 'linkedin_message'`; NULL everywhere else, and NULL on message rows
+     * imported before this column existed.
+     *
+     * NULL genuinely means "we don't know", and that is load-bearing rather than defensive:
+     * the sender was never persisted by earlier imports and cannot be recovered from the
+     * stored rows, so a re-upload of the LinkedIn export is the only backfill path. Readers
+     * must therefore treat "has messages, all directions NULL" as a distinct case from "has
+     * a real two-sided exchange" — see `src/lib/constellation-eligibility.ts`.
+     */
+    direction: text("direction").$type<"in" | "out">(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -488,6 +667,19 @@ export const interactions = pgTable(
       t.interactionType,
       t.interactionDate
     ),
+    /*
+     * Constellation eligibility counts inbound and outbound LinkedIn messages per contact, in
+     * the same `group by contact_id` the closeness cohort already runs. That aggregate is an
+     * index-only scan on `interactions_user_contact_type_date_idx` — until `direction` joins
+     * the predicate, which is not in that index and would send every row to the heap.
+     *
+     * Partial rather than a fourth column on the composite: `direction` is NULL for every
+     * interaction type except `linkedin_message`, so a full index would carry the whole table
+     * to serve one slice of it, on a table the import engine bulk-inserts into.
+     */
+    index("interactions_user_contact_direction_idx")
+      .on(t.userId, t.contactId, t.direction)
+      .where(sql`interaction_type = 'linkedin_message'`),
     // Soft unique for import dedupe; NULLs allowed (manual notes have no externalId).
     uniqueIndex("interactions_user_external_uidx").on(t.userId, t.externalId),
   ]
@@ -711,6 +903,103 @@ export const contactBriefs = pgTable("contact_briefs", {
   model: text("model"),
 });
 
+/** One entry on a LinkedIn profile: a job, or a school. */
+export type ContactExperienceKind = "role" | "education";
+/**
+ * Where a stored profile came from. Drives precedence in `saveContactProfile`: an
+ * extension capture is a page the user actually looked at and always outranks Apollo,
+ * which is a third-party inference.
+ *
+ * `"extension"` currently has NO producer — the browser capture path was removed before
+ * merge because its DOM readers had never run against a real LinkedIn page. The value and
+ * its precedence rule are kept deliberately, and are covered by
+ * `scripts/smoke-contact-profile.ts`, so restoring that path is additive rather than
+ * another change to the stored shape.
+ */
+export type ContactProfileSource = "extension" | "apollo";
+
+export type ProfileSkill = { name: string };
+export type ProfileCertification = { name: string; issuer: string | null; year: number | null };
+export type ProfileVolunteering = { organization: string; role: string | null; years: string | null };
+export type ProfilePublication = { title: string; publisher: string | null; year: number | null };
+
+/**
+ * The prose half of a captured LinkedIn profile. Roles and schools live in
+ * `contactExperiences` because they are queried structurally; everything here is read
+ * whole or not at all.
+ *
+ * Deliberately NOT a jsonb column on `contacts`: that table has 27 queries with no
+ * explicit projection, several of which scan it end to end, and every one of them would
+ * start dragging profile blobs across the wire to ignore them. Same reasoning as
+ * `closeness_breakdown` above.
+ */
+export const contactProfiles = pgTable(
+  "contact_profiles",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    headline: text("headline"),
+    about: text("about"),
+    skills: jsonb("skills").$type<ProfileSkill[]>().default([]).notNull(),
+    certifications: jsonb("certifications").$type<ProfileCertification[]>().default([]).notNull(),
+    volunteering: jsonb("volunteering").$type<ProfileVolunteering[]>().default([]).notNull(),
+    publications: jsonb("publications").$type<ProfilePublication[]>().default([]).notNull(),
+    source: text("source").$type<ContactProfileSource>().notNull(),
+    sourceUrl: text("source_url"),
+    /** The adapter that read this page, so DOM churn is visible in the data. */
+    adapterVersion: text("adapter_version"),
+    /** Extractor diagnostics; a non-empty list drives the "may be incomplete" notice. */
+    warnings: jsonb("warnings").$type<string[]>().default([]).notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("contact_profiles_contact_uidx").on(t.userId, t.contactId)]
+);
+
+/**
+ * One role or school. Both kinds share a table: they differ by four nullable columns and
+ * are always read together as one date-ordered list.
+ *
+ * Dates are stored as parts, never as a `Date`. LinkedIn frequently shows a year with no
+ * month, and a synthesized `2019-01-01` would claim a precision the source does not have —
+ * which any future overlap comparison would silently inherit.
+ */
+export const contactExperiences = pgTable(
+  "contact_experiences",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<ContactExperienceKind>().notNull(),
+    organization: text("organization").notNull(),
+    /** `normalizeCompanyKey` output — what "who worked at X" matches on. */
+    organizationNormalized: text("organization_normalized").notNull(),
+    title: text("title"),
+    fieldOfStudy: text("field_of_study"),
+    location: text("location"),
+    description: text("description"),
+    startYear: integer("start_year"),
+    startMonth: integer("start_month"),
+    endYear: integer("end_year"),
+    endMonth: integer("end_month"),
+    isCurrent: boolean("is_current").default(false).notNull(),
+    /** Captured page order, so entries with no dates keep their relative position. */
+    sortIndex: integer("sort_index").default(0).notNull(),
+    source: text("source").$type<ContactProfileSource>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("contact_experiences_contact_idx").on(t.userId, t.contactId, t.sortIndex),
+    index("contact_experiences_org_idx").on(t.userId, t.organizationNormalized),
+  ]
+);
+
 export type ImportStats = {
   skipped?: number;
   /**
@@ -879,7 +1168,19 @@ export type LinkedInMessageThreadRowPayload = {
    * pull it back. `null` is excluded from the range instead, which is what "we don't know
    * when this was sent" actually means.
    */
-  messages: { id: string; body: string; sentAt: string | null }[];
+  /**
+   * `direction` is optional, not merely nullable, and that distinction is load-bearing: these
+   * payloads are persisted as JSONB in `import_job_rows`, so a job queued or stalled before
+   * this field existed resumes through the current adapter with the key absent entirely. The
+   * adapter must resolve that to null — never to a guess — so those rows read as "unknown"
+   * rather than being permanently mislabelled by a deploy boundary.
+   */
+  messages: {
+    id: string;
+    body: string;
+    sentAt: string | null;
+    direction?: "in" | "out" | null;
+  }[];
 };
 
 /**
@@ -1276,6 +1577,83 @@ export const recruiterMessages = pgTable(
   ]
 );
 
+/**
+ * Where a provider's incremental sync left off. Opaque and provider-shaped, keyed by
+ * resource so one column serves every resource a provider exposes — Google Calendar's
+ * `syncToken`/`pageToken` today, Gmail's `historyId` and Graph's `deltaLink` later,
+ * without another migration.
+ *
+ * `pageToken` is stored alongside `syncToken` on purpose: Google only returns
+ * `nextSyncToken` on the FINAL page of a run, so a run stopped mid-chain by the time
+ * budget must resume from the page it reached or it would lose every event before it.
+ */
+export type CalendarSyncCursor = {
+  syncToken?: string | null;
+  pageToken?: string | null;
+  windowStart?: string | null;
+  windowEnd?: string | null;
+};
+
+/**
+ * Where an event provider's listing left off.
+ *
+ * Both Luma and Eventbrite paginate with an opaque forward cursor, so one shape covers
+ * them. `syncedThrough` is the high-water mark of event start times already ingested: a
+ * finished pass clears `cursor` and advances it, and the next pass asks only for events
+ * after it rather than replaying the whole calendar.
+ */
+export type EventProviderSyncCursor = {
+  cursor?: string | null;
+  syncedThrough?: string | null;
+};
+
+export type ProviderSyncCursor = {
+  /** Explicitly nullable, not merely optional: "no cursor yet" and "cursor deliberately
+   *  cleared after a 410" are the same state, and callers pass it around as `| null`. */
+  calendar?: CalendarSyncCursor | null;
+  /** Same nullability rule as `calendar` above — a cleared cursor is a real state. */
+  luma?: EventProviderSyncCursor | null;
+  eventbrite?: EventProviderSyncCursor | null;
+};
+
+/**
+ * Continuous-sync bookkeeping, shared byte-for-byte by every provider connection table.
+ *
+ * A function rather than a shared object because each `pgTable` needs its own column
+ * builder instances — reusing one object across two tables aliases them.
+ *
+ * Deliberately NOT folded into the existing `status` column. That one is about *consent*
+ * and has exactly two values on purpose (see its comment below); `admin-system.ts` counts
+ * `status <> 'active'` as "needs reauth", so a transient `'syncing'` there would report
+ * every actively-syncing connection as broken. `syncStatus` is about a *run*. The two are
+ * orthogonal and must stay separate.
+ */
+function syncStateColumns() {
+  return {
+    /** Provider-shaped incremental cursor. Null until the first successful sync. */
+    syncCursor: jsonb("sync_cursor").$type<ProviderSyncCursor>(),
+    /**
+     * When this connection next becomes eligible for a sync run, or NULL for "not
+     * scheduled" — never connected, disarmed after repeated failure, or awaiting reauth.
+     * A floor, never a promise: the scheduler is driven by GitHub Actions, whose cron
+     * routinely lags 5-30 minutes.
+     */
+    nextSyncAt: timestamp("next_sync_at", { withTimezone: true }),
+    syncStatus: text("sync_status").$type<"idle" | "syncing" | "error">(),
+    /**
+     * Lease timestamp, set when a run claims this row. Load-bearing: without it
+     * `syncStatus = 'syncing'` latches forever the first time an invocation is killed
+     * mid-run, and the connection is never swept again. The claim predicate treats a
+     * lease older than its term as reclaimable.
+     */
+    syncStartedAt: timestamp("sync_started_at", { withTimezone: true }),
+    /** Last failure, truncated on write like every other error column here. */
+    syncError: text("sync_error"),
+    /** Consecutive failures: the backoff exponent and the give-up counter. */
+    syncFailures: integer("sync_failures").notNull().default(0),
+  };
+}
+
 export const gmailConnections = pgTable(
   "gmail_connections",
   {
@@ -1298,10 +1676,16 @@ export const gmailConnections = pgTable(
     status: text("status").$type<"active" | "needs_reauth">().default("active").notNull(),
     /** Last time this connection produced a usable access token. */
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    ...syncStateColumns(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [index("gmail_connections_user_idx").on(t.userId)]
+  (t) => [
+    index("gmail_connections_user_idx").on(t.userId),
+    index("gmail_connections_due_idx")
+      .on(t.nextSyncAt)
+      .where(sql`next_sync_at is not null`),
+  ]
 );
 
 export const outlookConnections = pgTable(
@@ -1326,10 +1710,16 @@ export const outlookConnections = pgTable(
     status: text("status").$type<"active" | "needs_reauth">().default("active").notNull(),
     /** Last time this connection produced a usable access token. */
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    ...syncStateColumns(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [index("outlook_connections_user_idx").on(t.userId)]
+  (t) => [
+    index("outlook_connections_user_idx").on(t.userId),
+    index("outlook_connections_due_idx")
+      .on(t.nextSyncAt)
+      .where(sql`next_sync_at is not null`),
+  ]
 );
 
 export type ChatRecommendation = {
@@ -1478,6 +1868,149 @@ export const adminAuditLog = pgTable(
  * A crashed run therefore leaves `status='running'` forever; that is resolved on read by
  * `deriveCronRunState`, not by a second cron watching the first.
  */
+/**
+ * Keys a user issues to let a third party act as them over the public API and MCP server.
+ *
+ * Stored as a SHA-256 hash, NOT with `src/lib/crypto.ts`, and the difference is deliberate.
+ * The BYOK keys in `user_settings` must be reversible because Orbit presents them to Gemini
+ * and OpenAI; a key Orbit issues is only ever *compared*, so keeping it recoverable buys
+ * nothing and costs everything — `ENCRYPTION_SECRET` sits in the same environment as
+ * `DATABASE_URL`, so one dump would yield live credentials for every user. Hashing also makes
+ * the value indexable: `encrypt()` uses a random IV, so its ciphertext differs every call and
+ * verification would degrade into a table scan.
+ *
+ * Plain SHA-256 rather than bcrypt or argon2 because the secret is 32 bytes of CSPRNG output,
+ * not a human-chosen password. There is no dictionary to slow an attacker down, and a KDF
+ * would add real latency to every single API request.
+ */
+export const apiKeys = pgTable(
+  "api_keys",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** What the user called it, so they can tell two keys apart when revoking one. */
+    name: text("name").notNull(),
+    /**
+     * `api` for a bearer credential; `mcp_url` for one embedded in an MCP endpoint path,
+     * because claude.ai's connector UI accepts a URL and OAuth but has no header field.
+     */
+    kind: text("kind").$type<"api" | "mcp_url">().default("api").notNull(),
+    /** Leading public segment, kept in clear so Settings can show `orb_live_7f3a9c2b…`. */
+    prefix: text("prefix").notNull(),
+    keyHash: text("key_hash").notNull(),
+    scopes: jsonb("scopes").$type<Array<"read" | "write">>().default(["read"]).notNull(),
+    /** Written at most once a minute — see `touchApiKeyLastUsed`. */
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedReason: text("revoked_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    // The entire verification path is this one lookup, so it must be a unique index rather
+    // than a scan: it runs on every API and MCP request.
+    uniqueIndex("api_keys_hash_uidx").on(t.keyHash),
+    index("api_keys_user_idx").on(t.userId),
+  ]
+);
+
+/**
+ * Replay protection for non-idempotent writes.
+ *
+ * `POST /v1/events` needs none — `ingestEvents` keys on `interactions.external_id`, so the
+ * event id IS the idempotency key. `POST /v1/contacts` has no natural key, so it honours an
+ * `Idempotency-Key` header: the same key with the same body replays the stored response, and
+ * the same key with a DIFFERENT body is a client bug and answers 409.
+ */
+export const apiIdempotencyKeys = pgTable(
+  "api_idempotency_keys",
+  {
+    userId: text("user_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestHash: text("request_hash").notNull(),
+    statusCode: integer("status_code").notNull(),
+    responseBody: jsonb("response_body"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("api_idempotency_uidx").on(t.userId, t.idempotencyKey)]
+);
+
+/**
+ * Where a user wants Orbit to POST when something happens — the "trigger" half of a Zapier,
+ * Make or n8n integration.
+ *
+ * `secretEncrypted` uses `src/lib/crypto.ts`, the deliberate opposite of `api_keys` above:
+ * Orbit must re-read this value to sign every delivery, and show it once more if the user
+ * loses it, so it has to be recoverable.
+ */
+export const webhookEndpoints = pgTable(
+  "webhook_endpoints",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    url: text("url").notNull(),
+    secretEncrypted: text("secret_encrypted").notNull(),
+    eventTypes: jsonb("event_types").$type<string[]>().default([]).notNull(),
+    description: text("description"),
+    /**
+     * `pending` until a verification POST is acknowledged, so a typo'd URL never silently
+     * collects nothing. `disabled` after repeated failure — see `consecutiveFailures`.
+     */
+    status: text("status").$type<"pending" | "active" | "disabled">().default("pending").notNull(),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    disabledAt: timestamp("disabled_at", { withTimezone: true }),
+    disabledReason: text("disabled_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("webhook_endpoints_user_idx").on(t.userId)]
+);
+
+/**
+ * One queued delivery. Durability lives here, not in the attempt.
+ *
+ * The row is written synchronously inside the request that caused the event; the immediate
+ * attempt is a best-effort optimisation on top. That ordering is what makes a delivery
+ * survive the invocation being killed mid-flight.
+ *
+ * Deliberately NOT the existing `webhook_deliveries` table, which records INBOUND deliveries
+ * from Clerk, Stripe and Resend and is bucketed by a closed source union that feeds the
+ * `webhook.invalid_streak` alert. Putting customer-endpoint failures there would page Orbit
+ * at 3am because someone's Zapier URL went down.
+ */
+export const outboundWebhookDeliveries = pgTable(
+  "outbound_webhook_deliveries",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    endpointId: uuid("endpoint_id")
+      .notNull()
+      .references(() => webhookEndpoints.id, { onDelete: "cascade" }),
+    /** Stable across retries; receivers dedupe on it, and so does the unique index below. */
+    eventId: text("event_id").notNull(),
+    eventType: text("event_type").notNull(),
+    payload: jsonb("payload").notNull(),
+    status: text("status")
+      .$type<"pending" | "delivered" | "failed" | "dead">()
+      .default("pending")
+      .notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    lastStatusCode: integer("last_status_code"),
+    /** First 200 characters only. The response body is an exfiltration channel. */
+    lastError: text("last_error"),
+    lastAttemptedAt: timestamp("last_attempted_at", { withTimezone: true }),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    // Makes enqueue idempotent: a retried write cannot double-deliver the same event.
+    uniqueIndex("outbound_deliveries_endpoint_event_uidx").on(t.endpointId, t.eventId),
+    // The drain's only scan.
+    index("outbound_deliveries_due_idx").on(t.status, t.nextAttemptAt),
+    index("outbound_deliveries_user_created_idx").on(t.userId, t.createdAt),
+  ]
+);
+
 export const cronRuns = pgTable(
   "cron_runs",
   {
@@ -1638,6 +2171,36 @@ export const feedback = pgTable(
     /** PMF only: 3 very disappointed, 2 somewhat, 1 not. Null for the other kinds. */
     score: integer("score"),
     text: text("text"),
+    /**
+     * Which part of Orbit this is about, prefilled from the route and confirmable by the
+     * person writing. A column rather than a `context` key because the two are different
+     * things: `context` is what the SERVER observed, this is what the PERSON asserted, and
+     * only this one is a filter facet and a GROUP BY in the console.
+     *
+     * Plain text with no CHECK, like `kind` — the closed list the form offers and the
+     * server validates against is `FEEDBACK_AREAS` in `src/lib/feedback-submission.ts`,
+     * so adding an area needs no DDL and no `SCHEMA_VERSION` bump.
+     */
+    area: text("area"),
+    /**
+     * What kind of remark it is: `bug` | `idea` | `confusing` | `praise`. Orthogonal to
+     * `area` — one says what happened, the other says where — and both are filters.
+     */
+    category: text("category"),
+    /**
+     * Triage state. `new` on arrival for every kind, including the fire-and-forget PMF and
+     * churn rows: they should surface in the console exactly like everything else.
+     */
+    status: text("status").$type<"new" | "triaged" | "resolved">().notNull().default("new"),
+    /**
+     * When the status last moved. One timestamp rather than a `triaged_at`/`resolved_at`
+     * pair, which would start disagreeing the first time something is reopened.
+     */
+    statusChangedAt: timestamp("status_changed_at", { withTimezone: true }),
+    /** Operator id. Never a display name — the audit log resolves that. */
+    statusChangedBy: text("status_changed_by"),
+    /** What was done about it. Operator prose, not the user's. */
+    resolutionNote: text("resolution_note"),
     /** Where they were when they said it — route, plan, contact count. */
     context: jsonb("context").$type<Record<string, unknown>>().default({}).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -1645,6 +2208,68 @@ export const feedback = pgTable(
   (t) => [
     index("feedback_kind_created_idx").on(t.kind, t.createdAt),
     index("feedback_user_created_idx").on(t.userId, t.createdAt),
+    // Drives both the console's default filter and the nav's unresolved badge, and the
+    // badge runs on every admin page render.
+    index("feedback_status_created_idx").on(t.status, t.createdAt),
+  ]
+);
+
+/**
+ * Annotated screenshots attached to one feedback entry.
+ *
+ * A child table rather than a key in `feedback.context` because these are the largest
+ * values a user can put in this schema: `recentFeedback` and the console's list query both
+ * `select()` the parent bare, so an inline payload in the jsonb bag would ride along into
+ * every list read and out into the RSC payload. Same discipline as
+ * `src/lib/contact-avatar-url.ts` — the bytes stay server-side and are served through
+ * `/api/feedback/screenshots/[shotId]`.
+ *
+ * `storage` is a real discriminator rather than a prefix to sniff off `blob_url`. Blob when
+ * a store is configured, inline base64 otherwise — the same fork `persistAvatar` takes,
+ * made explicit here because the two cases are cleaned up differently: a blob object has to
+ * be deleted out of band, an inline row goes with its parent.
+ */
+export const feedbackScreenshots = pgTable(
+  "feedback_screenshots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    feedbackId: uuid("feedback_id")
+      .notNull()
+      .references(() => feedback.id, { onDelete: "cascade" }),
+    /**
+     * Denormalised from the parent. Two reasons, both load-bearing: the serving route's
+     * owner check becomes one indexed read instead of a join, and `scripts/smoke-purge.ts`
+     * only discovers tables that carry `user_id` — a cascade alone would leave this table
+     * permanently outside the leak sweep.
+     */
+    userId: text("user_id").notNull(),
+    /** 0-based, the order they were attached in. The gallery renders in this order. */
+    position: integer("position").notNull().default(0),
+    /** What the user wrote about THIS shot. The whole point of annotating them. */
+    note: text("note"),
+    storage: text("storage").$type<"blob" | "inline">().notNull(),
+    /**
+     * Vercel Blob URL when `storage = 'blob'`. Written with a random suffix, unlike
+     * avatars: their deterministic path makes the public URL guessable from an id that
+     * appears in the DOM, and a screenshot of somebody's contact list must not be.
+     */
+    blobUrl: text("blob_url"),
+    /**
+     * Raw base64 when `storage = 'inline'`, with NO `data:` prefix. The prefix would be
+     * pure overhead and an invitation to hand this column to a client component.
+     */
+    inlineData: text("inline_data"),
+    /** Sniffed from the bytes on the server. The client's declared mime is discarded. */
+    contentType: text("content_type").notNull(),
+    /** Decoded size, recorded so cost and retention questions need not decode anything. */
+    byteSize: integer("byte_size").notNull(),
+    width: integer("width"),
+    height: integer("height"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("feedback_screenshots_feedback_idx").on(t.feedbackId, t.position),
+    index("feedback_screenshots_user_idx").on(t.userId),
   ]
 );
 
@@ -1892,6 +2517,29 @@ export const gateEvents = pgTable(
  * anything — a key retired from the registry leaves a harmless orphan row rather than
  * blocking the deploy that retired it.
  */
+/**
+ * The global constellation filter: whether `/graph` shows only people the user has actually
+ * engaged with, and how much LinkedIn back-and-forth counts as engagement.
+ *
+ * A single row, pinned by a CHECK the way `schema_migrations` is. Not a key on
+ * `app_surface_flags`, which is a row-presence-means-hidden set with nowhere to put an
+ * integer — and whose writer validates every key against the pure `SURFACES` registry, so a
+ * non-surface key smuggled in there would surface in every nav filter and route guard.
+ *
+ * Operator-scoped on purpose: this is a product decision about what the chart means, in the
+ * same spirit as `app_surface_flags`, not a per-user preference.
+ */
+export const constellationSettings = pgTable("constellation_settings", {
+  id: integer("id").primaryKey().default(1),
+  filterEnabled: boolean("filter_enabled").notNull().default(true),
+  /** Inbound/outbound `linkedin_message` counts a contact needs to qualify on messages alone. */
+  minInboundMessages: integer("min_inbound_messages").notNull().default(3),
+  minOutboundMessages: integer("min_outbound_messages").notNull().default(3),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  /** The admin who last changed it. Kept for the audit trail's benefit, not read by the app. */
+  updatedBy: text("updated_by"),
+});
+
 export const appSurfaceFlags = pgTable("app_surface_flags", {
   surfaceKey: text("surface_key").primaryKey(),
   hiddenAt: timestamp("hidden_at", { withTimezone: true }).defaultNow().notNull(),
@@ -2043,6 +2691,11 @@ export const contactsRelations = relations(contacts, ({ one, many }) => ({
   contactTags: many(contactTags),
   embeddings: many(contactEmbeddings),
   brief: one(contactBriefs, { fields: [contacts.id], references: [contactBriefs.contactId] }),
+  profile: one(contactProfiles, {
+    fields: [contacts.id],
+    references: [contactProfiles.contactId],
+  }),
+  experiences: many(contactExperiences),
 }));
 
 export const tagsRelations = relations(tags, ({ many }) => ({
@@ -2119,6 +2772,20 @@ export const contactEmbeddingsRelations = relations(
     }),
   })
 );
+
+export const contactProfilesRelations = relations(contactProfiles, ({ one }) => ({
+  contact: one(contacts, {
+    fields: [contactProfiles.contactId],
+    references: [contacts.id],
+  }),
+}));
+
+export const contactExperiencesRelations = relations(contactExperiences, ({ one }) => ({
+  contact: one(contacts, {
+    fields: [contactExperiences.contactId],
+    references: [contacts.id],
+  }),
+}));
 
 export const outreachCampaignsRelations = relations(
   outreachCampaigns,
@@ -2200,6 +2867,189 @@ export const extensionUsage = pgTable("extension_usage", {
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
 });
 
+
+/* ==================================================================================
+ * Events — conferences, meetups and parties you attended.
+ *
+ * NAMING, read this before adding anything here. "Event" means two different things in
+ * this codebase and they must not be conflated:
+ *
+ *   - `NetworkEvent` (`src/lib/ingest/events.ts`) is an *interaction* — a meeting, an
+ *     email, a call — the unit every connector produces and `ingestEvents` writes to the
+ *     `interactions` table. `POST /api/v1/events` ingests those.
+ *   - `events` (this table) is a *place you went*: a conference with a public page, a
+ *     cover image, and a guest list.
+ *
+ * The two meet in exactly one spot, and it is deliberate: connecting an attendee produces
+ * a `NetworkEvent` whose `externalIdBase` is `evt:<eventId>` and whose interaction lands
+ * with `interaction_type = 'event'` — a value `src/lib/interaction-types.ts` already
+ * defines as "Met them at a conference, talk or mixer". Nothing in `src/lib/events/` may
+ * export a type named `NetworkEvent`.
+ * ================================================================================== */
+
+export const events = pgTable(
+  "events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    title: text("title").notNull(),
+    /**
+     * Nullable on purpose. A roster pasted from a badge scan months later often arrives
+     * before anyone remembers the date, and refusing the row over a missing date would
+     * push the user back to free-text notes — the exact thing this table replaces.
+     */
+    startsAt: timestamp("starts_at", { withTimezone: true }),
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    timezone: text("timezone"),
+    venue: text("venue"),
+    city: text("city"),
+    /** The public event page. Also the enrichment input and the "more info" link. */
+    url: text("url"),
+    /**
+     * Whether you ran this event or merely turned up — a column, not just UI copy, because
+     * it decides what Orbit can honestly offer. A full guest list is reachable through a
+     * provider API only for `hosted`; for `attended` the roster is always pasted or
+     * uploaded. Keeping it in the schema is what stops that distinction from drifting.
+     */
+    role: text("role").$type<"attended" | "hosted">().default("attended").notNull(),
+    /** How the event row itself got here, as distinct from how its roster did. */
+    source: text("source")
+      .$type<"manual" | "page" | "luma" | "eventbrite">()
+      .default("manual")
+      .notNull(),
+    provider: text("provider").$type<"luma" | "eventbrite">(),
+    providerEventId: text("provider_event_id"),
+    description: text("description"),
+    /** Durable Blob URL once persisted; falls back to the remote URL without Blob storage. */
+    coverImageUrl: text("cover_image_url"),
+    coverSourceUrl: text("cover_source_url"),
+    /** Raw derived accent as `#rrggbb`. NEVER rendered directly — clamped for contrast first. */
+    themeColor: text("theme_color"),
+    themeSource: text("theme_source").$type<"meta" | "jsonld" | "image" | "hash">(),
+    /** 0/1 per house convention. Set when the user picks a colour, which then sticks. */
+    themeLocked: integer("theme_locked").default(0).notNull(),
+    /** As the host reports it. May legitimately exceed the number of roster rows we hold. */
+    attendeeCount: integer("attendee_count"),
+    notes: text("notes"),
+    enrichedAt: timestamp("enriched_at", { withTimezone: true }),
+    enrichError: text("enrich_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("events_user_idx").on(t.userId),
+    /**
+     * The list order. `id` trails the sort key to make the ordering total — the same
+     * lesson `contacts_user_sort_idx` records, without which keyset pagination can drop
+     * or repeat a row when two events share a start time.
+     */
+    index("events_user_starts_idx").on(t.userId, t.startsAt, t.id),
+    /** Connector idempotency: re-syncing a provider updates the row rather than adding one. */
+    uniqueIndex("events_provider_uidx")
+      .on(t.userId, t.provider, t.providerEventId)
+      .where(sql`provider_event_id is not null`),
+  ]
+);
+
+export const eventAttendees = pgTable(
+  "event_attendees",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    /** Denormalised from the event: every query here filters on it, and there are no user FKs. */
+    userId: text("user_id").notNull(),
+    fullName: text("full_name"),
+    email: text("email"),
+    company: text("company"),
+    title: text("title"),
+    linkedinUrl: text("linkedin_url"),
+    xHandle: text("x_handle"),
+    phone: text("phone"),
+    attendeeRole: text("attendee_role").$type<"attendee" | "host" | "speaker">(),
+    /** Which acquisition path produced this row. Rendered as a badge, so it must be honest. */
+    source: text("source")
+      .$type<"paste" | "csv" | "screenshot" | "luma" | "eventbrite">()
+      .default("paste")
+      .notNull(),
+    /** The provider's own guest id, where there is one. */
+    externalRef: text("external_ref"),
+    /** 0/1. Set by the human, never by a sync — see `contactId`. */
+    spokeTo: integer("spoke_to").default(0).notNull(),
+    /**
+     * Null until the user marks this person as someone they spoke to and connects them.
+     *
+     * A background provider sync fills this table but NEVER writes this column: nobody
+     * becomes a contact without a human saying so. That is what keeps a 900-person
+     * conference from silently consuming a free user's contact allowance.
+     */
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    convertedAt: timestamp("converted_at", { withTimezone: true }),
+    /**
+     * Mirrors `participantIdentityKey` in `src/lib/ingest/events.ts` — strongest signal
+     * first (linkedin > email > handle > name). Stored rather than computed so re-pasting
+     * the same list is idempotent against the unique index below, and so this table's
+     * notion of "same person" cannot drift from ingest's.
+     */
+    identityKey: text("identity_key").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("event_attendees_event_idx").on(t.eventId),
+    index("event_attendees_user_idx").on(t.userId),
+    /** Re-importing the same roster updates rows instead of duplicating them. */
+    uniqueIndex("event_attendees_identity_uidx").on(t.eventId, t.identityKey),
+    /**
+     * An index on the FK. `contacts_company_id_idx` and `contact_tags_tag_idx` were both
+     * added to fix exactly this omission — without it, deleting a contact scans this table.
+     */
+    index("event_attendees_contact_idx").on(t.contactId).where(sql`contact_id is not null`),
+  ]
+);
+
+export const eventProviderConnections = pgTable(
+  "event_provider_connections",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    provider: text("provider").$type<"luma" | "eventbrite">().notNull(),
+    /**
+     * Luma authenticates with a user-supplied API key scoped to one calendar; Eventbrite
+     * uses OAuth. One table with a discriminator rather than two near-identical ones —
+     * unlike Gmail/Outlook, these two genuinely differ in their credential shape, so the
+     * difference is worth naming instead of hiding behind duplicate columns.
+     */
+    authKind: text("auth_kind").$type<"api_key" | "oauth">().notNull(),
+    /** Calendar or organisation name, shown so the user can tell two connections apart. */
+    label: text("label"),
+    /** Luma calendar api id / Eventbrite organization_id. */
+    accountRef: text("account_ref"),
+    apiKeyEncrypted: text("api_key_encrypted"),
+    accessTokenEncrypted: text("access_token_encrypted"),
+    refreshTokenEncrypted: text("refresh_token_encrypted"),
+    tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+    scopes: text("scopes"),
+    /**
+     * Exactly two values, matching the Gmail/Outlook rule: disconnecting deletes the row,
+     * so a third value nothing writes would be dead code. Distinct from `syncStatus` below
+     * — this is about *consent*, that one is about a *run*.
+     */
+    status: text("status").$type<"active" | "needs_reauth">().default("active").notNull(),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    ...syncStateColumns(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("event_provider_connections_user_uidx").on(t.userId, t.provider),
+    index("event_provider_connections_due_idx")
+      .on(t.nextSyncAt)
+      .where(sql`next_sync_at is not null`),
+  ]
+);
+
 export type Contact = typeof contacts.$inferSelect;
 export type NewContact = typeof contacts.$inferInsert;
 export type ExtensionUsage = typeof extensionUsage.$inferSelect;
@@ -2233,8 +3083,20 @@ export type CronRun = typeof cronRuns.$inferSelect;
 export type WebhookDelivery = typeof webhookDeliveries.$inferSelect;
 export type ErrorEvent = typeof errorEvents.$inferSelect;
 export type FeedbackEntry = typeof feedback.$inferSelect;
+export type FeedbackScreenshot = typeof feedbackScreenshots.$inferSelect;
 export type InterestListSignup = typeof interestListSignups.$inferSelect;
 export type BillingEvent = typeof billingEvents.$inferSelect;
 export type NewBillingEvent = typeof billingEvents.$inferInsert;
 export type InfraCost = typeof infraCosts.$inferSelect;
 export type GateEvent = typeof gateEvents.$inferSelect;
+export type EventRecord = typeof events.$inferSelect;
+export type NewEventRecord = typeof events.$inferInsert;
+export type EventAttendeeRecord = typeof eventAttendees.$inferSelect;
+export type NewEventAttendeeRecord = typeof eventAttendees.$inferInsert;
+export type EventProviderConnection = typeof eventProviderConnections.$inferSelect;
+export type ContactIdentity = typeof contactIdentities.$inferSelect;
+export type NewContactIdentity = typeof contactIdentities.$inferInsert;
+export type ContactMerge = typeof contactMerges.$inferSelect;
+export type NewContactMerge = typeof contactMerges.$inferInsert;
+export type DuplicateSuggestion = typeof duplicateSuggestions.$inferSelect;
+export type NewDuplicateSuggestion = typeof duplicateSuggestions.$inferInsert;

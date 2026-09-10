@@ -17,6 +17,7 @@ import { ArrowUp, Loader2, RotateCcw, Search, Sparkles, X } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
 import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
+import { useFeedbackPanelState } from "@/lib/feedback-events";
 import { askNetwork, createChatThread } from "@/actions/chat";
 import { streamChat } from "@/lib/chat-stream-client";
 import { getAskBarContact } from "@/actions/contacts";
@@ -102,6 +103,20 @@ function contactIdFromPath(pathname: string): string | null {
 }
 
 export function FloatingAskBar() {
+  /**
+   * Out of the way while a feedback screenshot is being taken or cropped.
+   *
+   * Two reasons, and the store's `"capturing"` covers both because it spans the widget's
+   * capture AND selection phases. `getDisplayMedia` photographs the composited output, so
+   * this bar would otherwise be baked into the picture of the very page being reported on.
+   * And the crop overlay leaves a clear band along the bottom for its own toolbar, which is
+   * exactly where this sits — so it showed through underneath it.
+   *
+   * `null`, not the `visible` slide-out below: that animates over `DUR.slow`, and the frame
+   * is grabbed a tick after the phase changes. A bar halfway through leaving is still in
+   * the photograph. Same reasoning as `FeedbackTrigger`.
+   */
+  const feedbackState = useFeedbackPanelState();
   const pathname = usePathname();
   const pathContactId = contactIdFromPath(pathname);
 
@@ -404,6 +419,9 @@ export function FloatingAskBar() {
     personContextActive && open && activeContactName
       ? `Ask about ${activeContactName}…`
       : "Ask your network…";
+
+  // After every hook, before the tree — see the note on `feedbackState` above.
+  if (feedbackState === "capturing") return null;
 
   return (
     <motion.div

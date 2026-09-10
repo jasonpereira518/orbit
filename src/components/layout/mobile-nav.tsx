@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { Sparkles } from "lucide-react";
+import { MessageSquarePlus, Sparkles } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import {
   APP_NAV,
@@ -22,9 +22,11 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { clerkAppearance } from "@/lib/clerk-appearance";
-import { isHrefHidden } from "@/lib/surfaces";
+import { FEEDBACK_SURFACE_KEY, isHrefHidden } from "@/lib/surfaces";
+import { NavPendingDot } from "@/components/layout/nav-pending-dot";
 import { SPRING_PILL, SPRING_TAP } from "@/lib/motion";
 import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
+import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen } from "@/lib/feedback-events";
 
 // A finger-drag across the row must move at least this far before it counts
 // as a slide rather than a tap — filters out ordinary tap jitter.
@@ -332,6 +334,7 @@ export function MobileNav({
                           transition={pillTransition}
                         />
                       )}
+                      <NavPendingDot className="top-0.5 right-1.5" />
                       <span
                         className="relative z-10 flex flex-col items-center gap-0.5 transition-transform duration-150 ease-out"
                         style={{
@@ -374,6 +377,23 @@ export function MobileNav({
               <Sparkles className="h-5 w-5 shrink-0" />
               Ask your network
             </button>
+            {/* A labelled row in the list of destinations, alongside the fast path in the
+                header. Still gated with the widget, or it becomes a button that asks a
+                component that is not mounted to open. */}
+            {!hidden.has(FEEDBACK_SURFACE_KEY) && (
+            <button
+              type="button"
+              onClick={() => {
+                setMoreOpen(false);
+                // No origin worth growing from: this sheet is itself closing.
+                requestFeedbackOpen(FEEDBACK_ANCHOR_FALLBACK);
+              }}
+              className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+            >
+              <MessageSquarePlus className="h-5 w-5 shrink-0" />
+              Send feedback
+            </button>
+            )}
             {moreNav.map((item) => {
               const active = isNavActive(pathname, item.href);
               const Icon = item.icon;
@@ -383,7 +403,7 @@ export function MobileNav({
                   href={item.href}
                   onClick={() => setMoreOpen(false)}
                   className={cn(
-                    "flex items-center gap-3 rounded-xl px-3 py-3 text-sm transition-colors",
+                    "relative flex items-center gap-3 rounded-xl px-3 py-3 text-sm transition-colors",
                     active
                       ? "bg-muted text-foreground"
                       : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"
@@ -391,6 +411,7 @@ export function MobileNav({
                 >
                   <Icon className="h-5 w-5 shrink-0" />
                   {item.label}
+                  <NavPendingDot className="top-1/2 right-3 -translate-y-1/2" />
                 </Link>
               );
             })}
@@ -411,7 +432,7 @@ export function MobileNav({
                 <p className="text-xs text-muted-foreground">Sign in required</p>
               )}
             </div>
-            <ThemeToggle className="h-9 w-9 text-muted-foreground hover:text-foreground" />
+            <ThemeToggle />
           </div>
         </SheetContent>
       </Sheet>

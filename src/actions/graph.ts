@@ -21,6 +21,26 @@ export async function getGraphData() {
   });
 }
 
+/**
+ * The whole network, including people you have never engaged with.
+ *
+ * Deliberately its own call rather than a flag on the page load. The chart is the people you
+ * know; everyone else is a much larger set (~741 bytes a head, so megabytes on a real
+ * network) that most visits never look at. Fetching it only when someone asks is what keeps
+ * the option from costing anything on every other page view.
+ *
+ * The client caches the result for the session, so toggling back and forth costs one fetch,
+ * not one per toggle.
+ */
+export async function getFullGraphData() {
+  const userId = await requireUserForSurface("page.graph");
+  return traced(
+    "graph.load.all",
+    () => loadGraphData(userId, { profile: getCurrentUserProfile(), scope: "all" }),
+    { userId }
+  );
+}
+
 /** Wall-clock budget for one constellation refresh tick. */
 const CONSTELLATION_REFRESH_BUDGET_MS = 20_000;
 

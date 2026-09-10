@@ -5,7 +5,6 @@ import type { AppPulse } from "@/lib/app-pulse";
 import Link from "next/link";
 import {
   useEffect,
-  useRef,
   useState,
   useTransition,
 } from "react";
@@ -35,6 +34,7 @@ import {
   discardSuggestedReminder,
 } from "@/actions/suggested-reminders";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ExpandableText } from "@/components/ui/expandable-text";
 import {
   Sheet,
@@ -52,36 +52,19 @@ import {
   useBackgroundJobs,
   type BackgroundJob,
 } from "@/lib/background-jobs";
+import {
+  clearKeptNotifications,
+  dismissKeptNotification,
+  hasLiveAction,
+  markKeptNotificationsRead,
+  runKeptAction,
+  useKeptNotifications,
+  type KeptNotification,
+} from "@/lib/kept-notifications";
+import { PANEL_ORIGIN_FALLBACK, originFromTrigger } from "@/lib/floating-panel";
 
 type PanelData = AppPulse["panel"];
 type PanelItem = PanelData["items"][number];
-
-/**
- * The floating window's own geometry, mirrored from the `data-[side=floating]`
- * utilities in `src/components/ui/sheet.tsx` (`inset-y-4 right-4`, `sm:max-w-md`).
- *
- * Duplicated here because the panel is portalled and positioned by CSS, so its box does
- * not exist to measure at the moment the bell is clicked — and the transform-origin has
- * to be correct on the very first painted frame or the window visibly jumps as it opens.
- * Keep the two in step.
- */
-const PANEL_INSET_PX = 16;
-const PANEL_MAX_W_PX = 384; // sm:max-w-sm = 24rem
-
-/** Where the window should appear to grow from: the middle of the bell that was clicked. */
-function originFromButton(button: HTMLElement | null): string {
-  if (!button) return "top right";
-  const rect = button.getBoundingClientRect();
-  if (rect.width === 0) return "top right";
-  const panelWidth = Math.min(
-    window.innerWidth - PANEL_INSET_PX * 2,
-    PANEL_MAX_W_PX
-  );
-  const panelLeft = window.innerWidth - PANEL_INSET_PX - panelWidth;
-  return `${Math.round(rect.left + rect.width / 2 - panelLeft)}px ${Math.round(
-    rect.top + rect.height / 2 - PANEL_INSET_PX
-  )}px`;
-}
 
 /* -------------------------------------------------------------------------- */
 /* Shared panel state                                                         */
@@ -93,13 +76,21 @@ function originFromButton(button: HTMLElement | null): string {
 // (`force` after a mutation) so the action handlers below read the same.
 const refreshPanel = (force = false) => refreshPulse(force);
 
-export function NotificationsPanelButton() {
+export function NotificationsPanelButton({
+  tooltip = false,
+}: {
+  /**
+   * Desktop rail only, mirroring `FeedbackTrigger`. Touch has no hover, so a tooltip on
+   * the mobile header copy would be dead weight — the `aria-label` is the accessible name
+   * either way.
+   */
+  tooltip?: boolean;
+} = {}) {
   const [open, setOpen] = useState(false);
-  const buttonRef = useRef<HTMLButtonElement>(null);
   // Captured on click rather than read during render: there are two bells mounted (mobile
   // header and desktop fixed, hidden from each other by CSS), and this resolves to
   // whichever one the user actually pressed.
-  const [origin, setOrigin] = useState("top right");
+  const [origin, setOrigin] = useState(PANEL_ORIGIN_FALLBACK);
   const { pulse, loading } = useAppPulse();
   const data = pulse?.panel ?? null;
   const [pending, start] = useTransition();
@@ -112,10 +103,21 @@ export function NotificationsPanelButton() {
     if (open) void refreshPanel();
   }, [open]);
 
+  // Opening the panel is what "seen" means here. The entries stay in the list —
+  // only the badge stops counting them.
+  useEffect(() => {
+    if (open) markKeptNotificationsRead();
+  }, [open]);
+
   const jobs = useBackgroundJobs();
   const activeJobCount = useActiveBackgroundJobCount();
+  const kept = useKeptNotifications();
+  const unreadKeptCount = kept.filter((entry) => !entry.read).length;
   const dueCount = data?.dueCount ?? 0;
-  const badgeCount = dueCount + activeJobCount;
+  // Unread missed notifications count toward the badge — that is the whole
+  // point of keeping them; a failure nobody saw should say so on the bell.
+  // They stop counting once the panel has been opened, but stay in the list.
+  const badgeCount = dueCount + activeJobCount + unreadKeptCount;
   const dueItems = data?.items.filter((i) => i.urgency === "due") ?? [];
   const upcomingItems =
     data?.items.filter((i) => i.urgency === "upcoming") ?? [];
@@ -125,7 +127,8 @@ export function NotificationsPanelButton() {
   // Account alerts deliberately do NOT count here. They live in the pinned footer, so an
   // alert-only account should still see the scroll area say there is nothing due rather
   // than render an empty region with no explanation.
-  const hasAnything = (data?.totalCount ?? 0) > 0 || jobs.length > 0;
+  const hasAnything =
+    (data?.totalCount ?? 0) > 0 || jobs.length > 0 || kept.length > 0;
 
   function runAction(label: string, action: () => Promise<unknown>) {
     start(async () => {
@@ -139,10 +142,9 @@ export function NotificationsPanelButton() {
     });
   }
 
-  return (
-    <>
-      <Button
-        type="button"
+  const button = (
+    <Button
+      type="button"
         variant="outline"
         size="icon"
         className={cn(
@@ -160,14 +162,21 @@ export function NotificationsPanelButton() {
         )}
         aria-label={[
           "Open notifications",
-          badgeCount > 0 ? `${badgeCount} due or in progress` : null,
+          dueCount + activeJobCount > 0
+            ? `${dueCount + activeJobCount} due or in progress`
+            : null,
+          // Counted separately from the phrase above: a missed failure is not
+          // "due", and rolling it into that number would misdescribe it to a
+          // screen reader even though the badge shows the two added together.
+          unreadKeptCount > 0 ? `${unreadKeptCount} missed` : null,
           data?.alertDot ? "account needs attention" : null,
         ]
           .filter(Boolean)
           .join(", ")}
-        ref={buttonRef}
-        onClick={() => {
-          setOrigin(originFromButton(buttonRef.current));
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={(e) => {
+          setOrigin(originFromTrigger(e.currentTarget));
           setOpen(true);
         }}
       >
@@ -185,16 +194,24 @@ export function NotificationsPanelButton() {
             className="absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full bg-destructive ring-2 ring-background"
           />
         )}
-      </Button>
+    </Button>
+  );
+
+  return (
+    <>
+      {tooltip ? (
+        <Tooltip>
+          <TooltipTrigger render={button} />
+          <TooltipContent side="left">Notifications</TooltipContent>
+        </Tooltip>
+      ) : (
+        button
+      )}
 
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent
           side="floating"
           className="liquid-glass liquid-glass-panel gap-0 p-0"
-          // Lighter than the shared default (`bg-black/10` + `backdrop-blur-xs`): the page
-          // behind stays legible, and the window's own backdrop-filter does the blurring.
-          // That is what makes this read as a pane of glass rather than as a modal.
-          overlayClassName="bg-black/5 supports-backdrop-filter:backdrop-blur-[1.5px]"
           style={{ transformOrigin: origin }}
           showCloseButton
         >
@@ -207,7 +224,7 @@ export function NotificationsPanelButton() {
             </SheetDescription>
           </SheetHeader>
 
-          <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
             {data && <ExtensionPromo canUseExtension={data.canUseExtension} />}
 
             {loading && !data ? (
@@ -333,16 +350,55 @@ export function NotificationsPanelButton() {
                     <JobRow key={job.id} job={job} />
                   ))}
                 </Section>
+
+                {/* Last, under everything the user is being asked to do: these are
+                    things that already happened and were missed, not work outstanding. */}
+                <Section title="Missed" count={kept.length}>
+                  {kept.map((entry) => (
+                    <KeptRow
+                      key={entry.id}
+                      entry={entry}
+                      onAct={() => {
+                        runKeptAction(entry.id);
+                        dismissKeptNotification(entry.id);
+                        setOpen(false);
+                      }}
+                    />
+                  ))}
+                  {kept.length > 1 && (
+                    <button
+                      type="button"
+                      className="px-0.5 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                      onClick={() => clearKeptNotifications()}
+                    >
+                      Clear all
+                    </button>
+                  )}
+                </Section>
               </div>
             )}
 
-            {/* Outside the ternary above, so an account whose only news is an alert still
-                sees it — that branch renders the "nothing due" empty state instead of the
-                section list. */}
-            <AccountAlerts alerts={alerts} onNavigate={() => setOpen(false)} />
           </div>
 
-          <div className="flex items-center justify-between gap-3 border-t border-border/60 p-4">
+          {/* Pinned to the foot of the window rather than sitting in the list above it.
+              An alert is a standing statement about the account — an expired card, a failed
+              import — and scrolling one out of sight is exactly how you stop acting on it.
+              The list keeps its own scrollbar; `min-h-0` on it is what lets it give up the
+              room this needs instead of overflowing the window.
+
+              The cap is a backstop for the expanded state only: collapsed, this is at most
+              `ALERTS_COLLAPSED_VISIBLE` rows and nowhere near 45% of the window, so the
+              nested scroller the alerts docblock warns about never actually appears.
+
+              It renders nothing when there are no live alerts, so the border comes from the
+              component rather than from a wrapper that would otherwise draw a stray line. */}
+          <AccountAlerts
+            alerts={alerts}
+            onNavigate={() => setOpen(false)}
+            className="max-h-[45%] shrink-0 overflow-y-auto border-t border-border/60 px-4 py-3"
+          />
+
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border/60 p-4">
             <Link
               href="/dashboard"
               onClick={() => setOpen(false)}
@@ -394,6 +450,80 @@ function Section({
       </div>
       <div className="space-y-2">{children}</div>
     </section>
+  );
+}
+
+/**
+ * A toast that timed out before it was dealt with. Same row shape as `JobRow`,
+ * but the icon carries the tone: a failure looks like a failure here too.
+ *
+ * The action button appears only while its callback is still in memory. After a
+ * reload the entry survives (it is mirrored to localStorage) but the closure
+ * does not, so the row states what happened without offering a button that
+ * could not do anything. See `lib/kept-notifications.ts`.
+ */
+function KeptRow({
+  entry,
+  onAct,
+}: {
+  entry: KeptNotification;
+  onAct: () => void;
+}) {
+  const actionable = !!entry.actionLabel && hasLiveAction(entry.id);
+
+  return (
+    <div className="rounded-xl border border-border/60 bg-card p-3">
+      <div className="flex items-start gap-3">
+        <div
+          className={cn(
+            "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+            entry.tone === "error"
+              ? "bg-destructive/10 text-destructive"
+              : "bg-muted text-muted-foreground"
+          )}
+        >
+          {entry.tone === "error" ? (
+            <XCircle className="h-3.5 w-3.5" />
+          ) : (
+            <Clock className="h-3.5 w-3.5" />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <ExpandableText text={entry.title} className="font-medium text-ink" />
+          {entry.description && (
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {entry.description}
+            </p>
+          )}
+          <div className="mt-1 flex items-center gap-2">
+            <p className="text-xs text-muted-foreground">
+              {formatDistanceToNow(entry.at, { addSuffix: true })}
+            </p>
+            {actionable && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-6 px-2 text-xs"
+                onClick={onAct}
+              >
+                {entry.actionLabel}
+              </Button>
+            )}
+          </div>
+        </div>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className="size-7 shrink-0 text-muted-foreground"
+          aria-label="Dismiss notification"
+          onClick={() => dismissKeptNotification(entry.id)}
+        >
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </div>
   );
 }
 

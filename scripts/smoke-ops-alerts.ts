@@ -31,7 +31,10 @@ const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
 
 /** Everything healthy. Each case overrides one field. */
 const HEALTHY: OpsSnapshot = {
-  cron: { processStalled: { lastStartedAt: hoursAgo(2), lastState: "ok" } },
+  cron: {
+    processStalled: { lastStartedAt: hoursAgo(2), lastState: "ok" },
+    syncRun: { lastStartedAt: hoursAgo(1), lastState: "ok" },
+  },
   webhooks: { clerk: ["handled", "handled", "ignored"], stripe: ["handled"], resend: [] },
   stripeCheckoutErrorsLastHour: 0,
   wedgedImports: 0,
@@ -43,6 +46,8 @@ const HEALTHY: OpsSnapshot = {
   missingRequiredEnv: [],
   deploy: { prodSha: "abc", mainSha: "abc", mainCommittedAt: hoursAgo(30) },
   reauthNeeded: 0,
+  wedgedSyncs: 0,
+  failingSyncs: 0,
 };
 
 const ids = (s: OpsSnapshot) => evaluateOpsConditions(s, NOW).map((c) => c.id).sort();
@@ -53,13 +58,30 @@ function main() {
   check("a healthy snapshot raises nothing", ids(HEALTHY).length === 0, ids(HEALTHY).join(","));
 
   check("cron never ran → cron.missed (warning)",
-    find({ ...HEALTHY, cron: { processStalled: { lastStartedAt: null, lastState: null } } }, "cron.missed")?.severity === "warning");
+    find({ ...HEALTHY, cron: { ...HEALTHY.cron, processStalled: { lastStartedAt: null, lastState: null } } }, "cron.missed")?.severity === "warning");
   check("cron last ran 26h ago → cron.missed",
-    Boolean(find({ ...HEALTHY, cron: { processStalled: { lastStartedAt: hoursAgo(26), lastState: "ok" } } }, "cron.missed")));
+    Boolean(find({ ...HEALTHY, cron: { ...HEALTHY.cron, processStalled: { lastStartedAt: hoursAgo(26), lastState: "ok" } } }, "cron.missed")));
   check("cron last run failed → cron.failed",
-    Boolean(find({ ...HEALTHY, cron: { processStalled: { lastStartedAt: hoursAgo(2), lastState: "failed" } } }, "cron.failed")));
+    Boolean(find({ ...HEALTHY, cron: { ...HEALTHY.cron, processStalled: { lastStartedAt: hoursAgo(2), lastState: "failed" } } }, "cron.failed")));
   check("cron last run stale (killed) → cron.failed",
-    Boolean(find({ ...HEALTHY, cron: { processStalled: { lastStartedAt: hoursAgo(2), lastState: "stale" } } }, "cron.failed")));
+    Boolean(find({ ...HEALTHY, cron: { ...HEALTHY.cron, processStalled: { lastStartedAt: hoursAgo(2), lastState: "stale" } } }, "cron.failed")));
+
+  // Connector sync. Its freshness window is its own (3h), not the nightly job's 25h — a job
+  // that should run every fifteen minutes must not be able to go a full day unnoticed.
+  check("sync never ran → sync.schedule_missed",
+    Boolean(find({ ...HEALTHY, cron: { ...HEALTHY.cron, syncRun: { lastStartedAt: null, lastState: null } } }, "sync.schedule_missed")));
+  check("sync silent for 4h → sync.schedule_missed",
+    Boolean(find({ ...HEALTHY, cron: { ...HEALTHY.cron, syncRun: { lastStartedAt: hoursAgo(4), lastState: "ok" } } }, "sync.schedule_missed")));
+  check("sync silent for 2h is still within tolerance",
+    !find({ ...HEALTHY, cron: { ...HEALTHY.cron, syncRun: { lastStartedAt: hoursAgo(2), lastState: "ok" } } }, "sync.schedule_missed"));
+  check("a 26h-silent sync would be missed by the nightly job's threshold but not by this one",
+    Boolean(find({ ...HEALTHY, cron: { ...HEALTHY.cron, syncRun: { lastStartedAt: hoursAgo(26), lastState: "ok" } } }, "sync.schedule_missed")));
+  check("sync last run failed → sync.run_failed",
+    Boolean(find({ ...HEALTHY, cron: { ...HEALTHY.cron, syncRun: { lastStartedAt: hoursAgo(1), lastState: "failed" } } }, "sync.run_failed")));
+  check("a wedged sync lease → sync.wedged",
+    find({ ...HEALTHY, wedgedSyncs: 2 }, "sync.wedged")?.severity === "warning");
+  check("a disarmed connection → sync.failing",
+    find({ ...HEALTHY, failingSyncs: 1 }, "sync.failing")?.severity === "warning");
 
   check("three invalid Clerk deliveries in a row → critical",
     find({ ...HEALTHY, webhooks: { ...HEALTHY.webhooks, clerk: ["invalid", "invalid", "invalid"] } }, "webhook.invalid_streak:clerk")?.severity === "critical");

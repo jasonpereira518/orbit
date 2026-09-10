@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import { resetOnboarding } from "@/actions/onboarding";
 import { resetWizard } from "@/actions/onboarding-wizard";
 import { Button } from "@/components/ui/button";
+import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen } from "@/lib/feedback-events";
 
-export function HelpSettings() {
+export function HelpSettings({ feedbackEnabled }: { feedbackEnabled: boolean }) {
   const router = useRouter();
   const [tourPending, startTour] = useTransition();
   const [wizardPending, startWizard] = useTransition();
@@ -16,8 +17,8 @@ export function HelpSettings() {
       <div>
         <h2 className="text-lg font-medium text-ink">Help</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Replay the first-run walkthrough, or jump straight into a guided
-          setup for adding people to your orbit.
+          Replay the first-run walkthrough, jump straight into a guided setup for adding
+          people to your orbit, or tell us what isn&apos;t working.
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -49,6 +50,20 @@ export function HelpSettings() {
         >
           Run guided setup
         </Button>
+        {/* The third door into the one mounted widget, alongside the floating button and
+            the mobile "More" sheet — and gone when the widget is, since it dispatches an
+            event at a component that would not be mounted. */}
+        {feedbackEnabled && (
+        <Button
+          variant="outline"
+          size="sm"
+          // Mid-page, so anchoring the window to this button would fly it in from
+          // wherever the page happens to be scrolled.
+          onClick={() => requestFeedbackOpen(FEEDBACK_ANCHOR_FALLBACK)}
+        >
+          Send feedback
+        </Button>
+        )}
       </div>
     </section>
   );

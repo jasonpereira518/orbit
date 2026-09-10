@@ -15,7 +15,14 @@ import { and, count, eq, inArray, sql, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getDb } from "@/db";
-import { contactTags, contacts, interactions, tags, type Interaction } from "@/db/schema";
+import {
+  contactIdentities,
+  contactTags,
+  contacts,
+  interactions,
+  tags,
+  type Interaction,
+} from "@/db/schema";
 import { PaywallError, getEntitlements } from "@/lib/entitlements";
 import { recordGateHit } from "@/lib/gate-events";
 import {
@@ -26,6 +33,8 @@ import {
 import { isMetContext } from "@/lib/met-context";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { markCohortDirty, rescoreContact } from "@/lib/closeness-materialize";
+import { claimIdentities, syncIdentitiesForContact } from "@/lib/contact-identity";
+import { identityKeysFor } from "@/lib/duplicates";
 import {
   rebuildContactEmbedding,
   rebuildContactEmbeddingsBatch,
@@ -129,6 +138,13 @@ export type LogInteractionInput = {
   parseDateFromNotes?: boolean;
   externalId?: string;
   noteBatchId?: string;
+  /**
+   * Who sent it, for `linkedin_message` rows. Orbit only ever logs a message the user just
+   * sent, so this is `"out"` in practice — but it has to be set explicitly, because a NULL
+   * here reads as "imported before direction existed" and drags the contact onto the legacy
+   * volume fallback in `src/lib/constellation-eligibility.ts`.
+   */
+  direction?: "in" | "out" | null;
 };
 
 /** Thrown when a write targets a contact the user does not own (or that no longer exists). */
@@ -360,6 +376,19 @@ export async function createContactForUser(
     })
     .returning();
 
+  // Claim this contact's identifiers.
+  //
+  // Here rather than only in `resolveOrCreateContact` so that no path can produce a contact
+  // without identity rows — a contact missing them is invisible to duplicate prevention and
+  // would be silently duplicable forever after.
+  //
+  // The result is ignored on purpose: this function cannot merge (importing
+  // `contact-merge` from here would be a cycle — it imports `scheduleEmbeddingRebuild` back
+  // out of this file). Callers that need to act on a lost claim go through
+  // `resolveOrCreateContact`, which re-claims and reads the answer. Claiming is idempotent,
+  // so doing it twice costs a statement and changes nothing.
+  await claimIdentities(userId, contact.id, identityKeysFor(input), input.source);
+
   await syncTags(userId, contact.id, input.tagNames);
   if (!options?.skipEmbedding) {
     deferEmbeddingRebuild(userId, contact.id, now);
@@ -500,6 +529,41 @@ export async function createContactsBulkForUser(
   }));
 
   const created = await db.insert(contacts).values(values).returning();
+
+  // Claim identifiers for the whole batch in ONE statement.
+  //
+  // This is the highest-volume contact-creating path in the product — every import and
+  // every calendar sync lands here — so a contact created without identity rows here is a
+  // contact that duplicate prevention cannot see. Per-row `claimIdentities` calls would add
+  // one statement per contact and blow `smoke-import-perf`'s budget; the multi-VALUES upsert
+  // adds exactly one per chunk.
+  //
+  // Rows are sorted by `(kind, value)` across the whole batch for the same reason
+  // `identityKeysFor` sorts within one record: two concurrent statements touching the same
+  // identifiers in opposite order deadlock on the upsert's row locks.
+  //
+  // Losers are not merged here. A batch row whose identifier is already held is a
+  // pre-existing duplicate, and bulk paths have no user to ask — it surfaces on
+  // /contacts/duplicates instead. `resolveOrCreateContact` is the path that merges.
+  const identityRows = created
+    .flatMap((contact, i) =>
+      identityKeysFor(admitted[i]).map((key) => ({
+        userId,
+        contactId: contact.id,
+        kind: key.kind,
+        value: key.value,
+        source: admitted[i].source ?? null,
+      }))
+    )
+    .sort((a, b) => (a.kind === b.kind ? (a.value < b.value ? -1 : 1) : a.kind < b.kind ? -1 : 1));
+  if (identityRows.length) {
+    await db
+      .insert(contactIdentities)
+      .values(identityRows)
+      .onConflictDoNothing({
+        target: [contactIdentities.userId, contactIdentities.kind, contactIdentities.value],
+      });
+  }
 
   // Deliberately no per-row scoring here. The caller recalibrates once when the import
   // finishes, and scoring each row against a distribution that is about to be redrawn would
@@ -737,6 +801,24 @@ export async function updateContactForUser(
     .where(and(eq(contacts.id, id), eq(contacts.userId, userId)))
     .returning();
 
+  // Keep identity rows in step with the columns. An email corrected here must release the
+  // old address and claim the new one, or duplicate prevention keeps matching on a value
+  // the contact no longer has.
+  //
+  // Best-effort: if the new identifier already belongs to somebody else, the claim simply
+  // does not land and the pair surfaces on the review page. Merging from here is not
+  // possible without an import cycle, and silently merging two contacts because a user
+  // fixed a typo would be worse than surfacing it.
+  if (
+    contact &&
+    (input.email !== undefined ||
+      input.phone !== undefined ||
+      input.linkedinUrl !== undefined ||
+      input.xHandle !== undefined)
+  ) {
+    await syncIdentitiesForContact(userId, id, contact, input.source);
+  }
+
   if (input.tagNames) {
     await syncTags(userId, id, input.tagNames);
   }
@@ -832,6 +914,7 @@ export async function logInteractionForUser(
       sameDayOrder: 0,
       externalId: input.externalId,
       noteBatchId: input.noteBatchId,
+      direction: input.direction ?? null,
     })
     .returning();
 

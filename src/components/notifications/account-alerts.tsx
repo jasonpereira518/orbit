@@ -37,9 +37,12 @@ import { dismissAlert, loadActiveDismissals } from "@/lib/alert-dismissals";
 export function AccountAlerts({
   alerts,
   onNavigate,
+  className,
 }: {
   alerts: AccountAlert[];
   onNavigate: () => void;
+  /** Supplied by the panel: the pinned block's own padding, border and height cap. */
+  className?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   // Read once at mount, like the extension promo's own dismissal, so a warning the user
@@ -60,12 +63,12 @@ export function AccountAlerts({
   const visible = showAll ? live : live.slice(0, ALERTS_COLLAPSED_VISIBLE);
   const hiddenCount = live.length - visible.length;
 
-  // Deliberately the same shape as the panel's own `Section` helper — this is one more
-  // section in the scrolling list now, not a pinned footer block, so it should not look
-  // like a different kind of thing. No height cap and no inner scroller either: it scrolls
-  // with everything above it, and a scroller inside a scroller is a trap on a touchpad.
+  // Keeps the shape of the panel's own `Section` helper — heading, count, stack of rows —
+  // so that being pinned reads as "this section sits at the bottom" rather than as a
+  // different kind of thing bolted on. The padding, border and height cap belong to the
+  // panel, which is the only place that knows what it is being pinned against.
   return (
-    <section className="space-y-2">
+    <section className={cn("space-y-2", className)}>
       <div className="flex items-center justify-between px-0.5">
         <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Alerts

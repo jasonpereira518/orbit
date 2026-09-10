@@ -11,11 +11,18 @@ export function DashboardHeader() {
       </h1>
       <p className="max-w-xl text-muted-foreground">
         Follow-ups, dormant connections, and people worth reaching out to — in one place.
-        Press{" "}
-        <kbd className="rounded-md border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[11px]">
-          ⌘K
-        </kbd>{" "}
-        to ask your network.
+        {/* A keyboard shortcut is unusable on a touch device that has no keyboard,
+            where it also costs a line of a three-line paragraph. Gated on hover
+            capability rather than viewport width: a narrow window on a laptop
+            still has a ⌘K, and a large tablet still does not. */}
+        <span className="hidden [@media(hover:hover)]:inline">
+          {" "}
+          Press{" "}
+          <kbd className="rounded-md border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[11px]">
+            ⌘K
+          </kbd>{" "}
+          to ask your network.
+        </span>
       </p>
     </header>
   );

@@ -39,8 +39,6 @@ export default async function DashboardPage() {
   // Each row is guarded as well as each card: a `grid` whose children are all hidden still
   // renders, and its `gap` would leave an unexplained band of empty page behind.
   const showSuggestedRow = show("dashboard.suggested-outreach") || outreachSummary;
-  const showRemindersRow =
-    show("dashboard.reminders") || show("dashboard.recently-updated");
 
   return (
     <div className="space-y-8">
@@ -93,26 +91,31 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {showRemindersRow && (
+      {/* One section, TWO cards — so this grid always holds exactly two children,
+          and `dashboard.reminders` hides both together. Recently updated used to
+          share this row, which put THREE children in a two-column grid and left a
+          visible empty cell beside the third; hiding Reminders left the same hole
+          on the other side. It owns the row below instead, where its own column
+          count can adapt. */}
+      {show("dashboard.reminders") && (
         <div className="grid items-start gap-6 lg:grid-cols-2">
-          {show("dashboard.reminders") && (
-            <Suspense
-              fallback={
-                <>
-                  <DashboardCardSkeleton className="h-64" />
-                  <DashboardCardSkeleton className="h-64" />
-                </>
-              }
-            >
-              <RemindersAndFollowUpsSection bundle={bundle} />
-            </Suspense>
-          )}
-          {show("dashboard.recently-updated") && (
-            <Suspense fallback={<DashboardCardSkeleton className="h-64" />}>
-              <RecentlyUpdatedSection bundle={bundle} />
-            </Suspense>
-          )}
+          <Suspense
+            fallback={
+              <>
+                <DashboardCardSkeleton className="h-64" />
+                <DashboardCardSkeleton className="h-64" />
+              </>
+            }
+          >
+            <RemindersAndFollowUpsSection bundle={bundle} />
+          </Suspense>
         </div>
+      )}
+
+      {show("dashboard.recently-updated") && (
+        <Suspense fallback={<DashboardCardSkeleton className="h-64" />}>
+          <RecentlyUpdatedSection bundle={bundle} />
+        </Suspense>
       )}
 
       {show("dashboard.tail") && (

@@ -33,18 +33,32 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-avatar-storage": "pure",
   "smoke-capture-body-limits": "pure",
   "smoke-chat-pipeline": "pure",
+  "smoke-chat-prompt": "pure",
   "smoke-chat-retrieval": "pure",
   "smoke-chat-stream": "pure",
   "smoke-closeness": "pure",
+  "smoke-event-connectors": "pure",
+  "smoke-event-parse": "pure",
+  "smoke-event-theme": "pure",
+  "smoke-event-url-guard": "pure",
+  "smoke-events-page": "pure",
   "smoke-closeness-materialized": "pure",
+  "smoke-constellation-eligibility": "pure",
+  "smoke-constellation-match": "pure",
+  "smoke-contact-profile-format": "pure",
   "smoke-dashboard-search": "pure",
   "smoke-date-commitments": "pure",
   "smoke-duplicate-index": "pure",
   "smoke-embedding-cache": "pure",
   "smoke-env": "pure",
   "smoke-fast-model": "pure",
+  "smoke-feedback-image": "pure",
   "smoke-gmail-send-mime": "pure",
+  "smoke-graph-intro": "pure",
   "smoke-graph-layout": "pure",
+  "smoke-google-calendar-map": "pure",
+  "smoke-graph-positions": "pure",
+  "smoke-graph-scope": "pure",
   "smoke-ics-feed": "pure",
   "smoke-import-progress-card": "pure",
   "smoke-lifetime-pricing": "pure",
@@ -59,10 +73,15 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-scale-schema": "pure", // own in-memory PGlite
   "smoke-schema-ddl": "pure",
   "smoke-security-headers": "pure",
+  "smoke-sky-figures": "pure",
+  "smoke-timeline-vocabulary": "pure",
+  "smoke-webhook-signing": "pure",
   "smoke-warp-chrono": "pure",
   "smoke-warp-journeys": "pure",
   // pglite ----------------------------------------------------------------------------
   "smoke-account-alerts": "pglite",
+  "smoke-api-keys": "pglite",
+  "smoke-api-routes": "pglite",
   "smoke-action-items": "pglite",
   "smoke-admin": "pglite",
   "smoke-app-pulse": "pglite",
@@ -76,6 +95,15 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-broadcasts": "pglite",
   "smoke-chat-context": "pglite",
   "smoke-contact-brief": "pglite",
+  "smoke-contact-merge": "pglite",
+  "smoke-contact-resolve": "pglite",
+  "smoke-duplicate-review": "pglite",
+  "smoke-event-roster": "pglite",
+  "smoke-constellation-admin": "pglite",
+  "smoke-constellation-payload-leak": "pglite",
+  "smoke-constellation-pin": "pglite",
+  "smoke-constellation-signals": "pglite",
+  "smoke-contact-profile": "pglite",
   "smoke-contacts-page": "pglite", // own in-memory PGlite, but imports the DDL from ../src/db
   "smoke-csp-report": "pglite",
   "smoke-embedding-backfill": "pglite",
@@ -85,28 +113,38 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-hybrid-search": "pglite",
   "smoke-import-engine": "pglite",
   "smoke-import-stall": "pglite",
+  "smoke-ingest-events": "pglite",
   "smoke-import-resumption-auth": "pglite",
   "smoke-instrumentation": "pglite",
   "smoke-instrumentation-streams": "pglite",
   "smoke-interest-list-admin": "pglite",
   "smoke-internal-auth": "pglite", // imports route handlers that reach @/db
+  "smoke-linkedin-direction": "pglite",
   "smoke-linkedin-timeline-backfill": "pglite",
   "smoke-interaction-delete": "pglite",
+  "smoke-mcp-server": "pglite",
   "smoke-note-batch": "pglite",
   "smoke-ops-sweep": "pglite",
   "smoke-page-budgets": "pglite",
   "smoke-pgvector-local": "pglite",
   "smoke-presence": "pglite",
+  "smoke-follow-up-actions": "pglite",
+  "smoke-feedback-admin": "pglite",
+  "smoke-feedback-submit": "pglite",
+  "smoke-provider-connections": "pglite",
   "smoke-purge": "pglite",
   "smoke-rate-limit": "pglite",
   "smoke-recruiter-sharing": "pglite",
   "smoke-schema-upgrade": "pglite",
   "smoke-stripe-webhook": "pglite",
   "smoke-surface-visibility": "pglite",
+  "smoke-sync-scheduler": "pglite",
+  "smoke-sync-columns": "pglite",
   "smoke-trigram-search": "pglite",
   "smoke-usage-events": "pglite",
   "smoke-user-settings-race": "pglite",
   "smoke-webhook-guard": "pglite",
+  "smoke-webhook-delivery": "pglite",
   "smoke-write-path": "pglite",
   // manual ----------------------------------------------------------------------------
   "smoke-import-perf": "manual", // wall-clock budgets; run by hand or nightly
@@ -187,30 +225,66 @@ function main() {
     process.exit(2);
   }
 
-  const results: Array<{ name: string; ok: boolean; ms: number; note: string }> = [];
+  const results: Array<{ name: string; ok: boolean; ms: number; note: string; pending: boolean }> = [];
   for (const name of selected) {
     const started = Date.now();
     const timeout = TIMEOUT_MS[name] ?? DEFAULT_TIMEOUT_MS;
     process.stdout.write(`\n━━━ ${name} (${MANIFEST[name]}) ━━━\n`);
-    const r = spawnSync(tsx, [join("scripts", `${name}.ts`)], { env, stdio: "inherit", timeout });
+    // stdout stays INHERITED so a long or hanging script prints as it goes — piping it
+    // meant nothing appeared until the child exited, which for a hang is not until the
+    // timeout fires. Only stderr is piped, and only because the PENDING marker is written
+    // there (see below); it is replayed the instant the child exits, so a failing script's
+    // stack trace is still shown, just after its stdout rather than interleaved with it.
+    const r = spawnSync(tsx, [join("scripts", `${name}.ts`)], {
+      env,
+      stdio: ["inherit", "inherit", "pipe"],
+      timeout,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    if (r.stderr) process.stderr.write(r.stderr);
     const ms = Date.now() - started;
     const timedOut = r.error && (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT";
     const ok = !timedOut && r.status === 0;
+
+    // A script that degraded rather than fully verified something signals it with a
+    // "PENDING: <reason>" line on STDERR — stderr, not stdout, precisely so that stdout can
+    // stay inherited and live (see scripts/smoke-contact-profile-format.ts for
+    // the first user of this). This is a general runner capability, not special-cased to
+    // one script: any smoke script with an environment-dependent gap can use it, and a
+    // green exit code alone can no longer read as "fully verified" for that row.
+    const pendingReasons = [...(r.stderr ?? "").matchAll(/^PENDING:\s*(.+)$/gm)].map((m) => m[1].trim());
+    const pending = ok && pendingReasons.length > 0;
+
     results.push({
       name,
       ok,
       ms,
-      note: timedOut ? `timed out after ${timeout / 1000}s` : r.status === 0 ? "" : `exit ${r.status ?? r.signal}`,
+      pending,
+      note: timedOut
+        ? `timed out after ${timeout / 1000}s`
+        : r.status !== 0
+          ? `exit ${r.status ?? r.signal}`
+          : pending
+            ? `PENDING: ${pendingReasons.join("; ")}`
+            : "",
     });
   }
 
   const failed = results.filter((r) => !r.ok);
+  const pending = results.filter((r) => r.pending);
   console.log("\n" + "═".repeat(72));
   for (const r of results) {
-    console.log(`${r.ok ? " ok " : "FAIL"}  ${r.name.padEnd(40)} ${(r.ms / 1000).toFixed(1).padStart(6)}s  ${r.note}`);
+    const label = !r.ok ? "FAIL" : r.pending ? "PEND" : " ok ";
+    console.log(`${label}  ${r.name.padEnd(40)} ${(r.ms / 1000).toFixed(1).padStart(6)}s  ${r.note}`);
   }
   console.log("═".repeat(72));
   console.log(`${results.length - failed.length}/${results.length} passed in ${(results.reduce((s, r) => s + r.ms, 0) / 1000).toFixed(0)}s`);
+  if (pending.length > 0) {
+    console.log(
+      `${pending.length} script${pending.length === 1 ? "" : "s"} reported PENDING coverage — passing but incomplete; see notes above.`
+    );
+  }
   process.exit(failed.length > 0 ? 1 : 0);
 }
 

@@ -55,6 +55,40 @@ export type EvidenceInput = {
   coveredByConnectedSource?: boolean;
 };
 
+/**
+ * Whether a connected source could plausibly have observed this contact.
+ *
+ * One function because the predicate was previously written out twice — in
+ * `closeness-cohort.ts` and `closeness-materialize.ts` — and two copies of a scoring rule
+ * drift silently: the cohort would score a contact one way and the materializer another, and
+ * nothing would fail.
+ *
+ * The rule is deliberately narrow. Coverage is a claim about *plausible reach*, weak by
+ * construction, and the email requirement is what keeps it that way: mail and calendar invites
+ * are both addressed by email, so "we have an address for them and a connected source that
+ * uses addresses" is the honest bar.
+ *
+ * Two wider rules were considered and rejected:
+ *
+ *   - `mailConnected || calendarConnected` alone would cover every contact in the orbit,
+ *     including people with no address at all — the exact inflation `closeness-cohort.ts`
+ *     warns about for `userSettings.email`.
+ *   - adding "…and we have seen an interaction" would be redundant: a single logged
+ *     interaction already earns `EVIDENCE_WEIGHTS.interactions` (0.4), which clears
+ *     `EVIDENCE_FLOOR` (0.25) on its own. It would move nobody across the floor and merely
+ *     inflate contacts that are already evidenced.
+ *
+ * So adding calendar widens WHICH USERS get coverage — someone who granted calendar but not
+ * mailbox access, or an Outlook user whose connection predates the mail scopes — without
+ * widening which contacts inside a given user.
+ */
+export function isCoveredByConnectedSource(
+  sources: { mailConnected: boolean; calendarConnected?: boolean },
+  contact: { email?: string | null }
+): boolean {
+  return (sources.mailConnected || !!sources.calendarConnected) && !!contact.email;
+}
+
 function clamp01(n: number) {
   return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0;
 }

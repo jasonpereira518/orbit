@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { addDays, format } from "date-fns";
 import { toast } from "@/lib/toast";
+import { useCornerClearanceAbove } from "@/lib/corner-clearance";
 import {
   confirmBulkCapture,
   ingestCaptureMedia,
@@ -133,6 +134,12 @@ export function BulkNotesPanel({
   );
   const [ingestSources, setIngestSources] = useState<string[]>([]);
   const [step, setStep] = useState<"paste" | "review" | "done">("paste");
+  // The review card's Accept row sits where the toast stack lands, and
+  // `Found N people` fires in the same commit that renders the card. Lift the
+  // corner above the row for as long as it is on screen — this is what keeps
+  // interactive toasts from swallowing that click. See lib/corner-clearance.ts.
+  const actionRowRef = useRef<HTMLDivElement | null>(null);
+  useCornerClearanceAbove(actionRowRef, step === "review");
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [sharedNotes, setSharedNotes] = useState<SharedNoteContext[]>([]);
   const [reviewIndex, setReviewIndex] = useState(0);
@@ -663,6 +670,7 @@ export function BulkNotesPanel({
           </div>
 
           <div
+            ref={actionRowRef}
             className={cn(
               "grid grid-cols-2 gap-2",
               compact &&

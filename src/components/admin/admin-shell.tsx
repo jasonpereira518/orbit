@@ -26,6 +26,7 @@ export function AdminShell({
   children,
   adminEmail,
   hiddenSurfaceCount = 0,
+  unresolvedFeedbackCount = 0,
   ycMode = false,
 }: {
   children: React.ReactNode;
@@ -37,6 +38,7 @@ export function AdminShell({
    * already have to be looking at.
    */
   hiddenSurfaceCount?: number;
+  unresolvedFeedbackCount?: number;
   ycMode?: boolean;
 }) {
   const pathname = usePathname();
@@ -95,6 +97,17 @@ export function AdminShell({
                         className="rounded-full bg-accent/25 px-1.5 text-[0.625rem] font-medium tabular-nums text-accent-foreground"
                       >
                         {hiddenSurfaceCount}
+                      </span>
+                    )}
+                    {/* Same reasoning as the hidden-surface badge: it rides on every screen
+                        because otherwise the only trace of a backlog is on the page you
+                        would already have to be looking at. */}
+                    {item.href === "/admin/feedback" && unresolvedFeedbackCount > 0 && (
+                      <span
+                        title={`${unresolvedFeedbackCount} unresolved`}
+                        className="rounded-full bg-accent/25 px-1.5 text-[0.625rem] font-medium tabular-nums text-accent-foreground"
+                      >
+                        {unresolvedFeedbackCount}
                       </span>
                     )}
                   </span>

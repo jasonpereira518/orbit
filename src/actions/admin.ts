@@ -10,6 +10,7 @@ import { adminAuditLog, userSettings } from "@/db/schema";
 import { requireAdminUserId } from "@/lib/admin";
 import * as ops from "@/lib/admin-operations";
 import * as interestList from "@/lib/admin-interest-list";
+import * as adminFeedback from "@/lib/admin-feedback";
 import * as broadcast from "@/lib/broadcasts";
 import { recordAdminAction } from "@/lib/admin-operations";
 import { resolvePlan } from "@/lib/entitlements";
@@ -20,6 +21,10 @@ import {
   setSurfaceHidden,
   VIEW_AS_USER_COOKIE,
 } from "@/lib/surface-visibility";
+import {
+  setConstellationConfig,
+  type ConstellationConfig,
+} from "@/lib/constellation-config";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -259,6 +264,33 @@ export async function setSurfaceHiddenAction(input: {
   revalidatePath("/", "layout");
   revalidatePath("/admin/product");
   return { ok: true };
+}
+
+/**
+ * Change the constellation filter for everyone.
+ *
+ * Same shape as the surface toggle above and the same reasoning about invalidation: the
+ * filter decides what `/graph` and the dashboard preview draw, so both of those and anything
+ * that caches them have to be dropped, not just this console page.
+ *
+ * Thresholds are clamped in `setConstellationConfig` rather than validated to an error here —
+ * an operator nudging a number field into nonsense should land on the nearest sane value, not
+ * on a stack trace.
+ */
+export async function setConstellationConfigAction(input: {
+  enabled?: boolean;
+  minInbound?: number;
+  minOutbound?: number;
+}): Promise<ConstellationConfig> {
+  const adminUserId = await requireAdminUserId();
+
+  const next = await setConstellationConfig(adminUserId, input);
+
+  revalidatePath("/", "layout");
+  revalidatePath("/admin/product");
+  revalidatePath("/graph");
+  revalidatePath("/dashboard");
+  return next;
 }
 
 /**
@@ -625,5 +657,105 @@ export async function sendTestAlertAction(): Promise<{ ok: true }> {
     `:mega: Test alert from the Orbit admin console (sent by \`${adminUserId}\`). If you can read this, ops alerts reach Slack.`
   );
   await recordAdminAction({ adminUserId, action: "ops.test_alert" });
+  return { ok: true };
+}
+
+/**
+ * Both paths the feedback console can change, plus the nav badge.
+ *
+ * The badge is rendered by `AdminShell` from `(admin)/layout.tsx`, and a plain path
+ * revalidate does not re-run a layout — so the second call is what makes the count drop
+ * when something is resolved.
+ */
+function revalidateFeedback() {
+  revalidatePath("/admin/feedback");
+  revalidatePath("/admin", "layout");
+}
+
+/**
+ * Move one entry between new / triaged / resolved.
+ *
+ * Throws rather than returning a failure shape, like every action in this file:
+ * `ConfirmActionDialog` reports success for any resolved promise and surfaces only a
+ * rejection's message.
+ */
+export async function setFeedbackStatusAction(input: {
+  id: string;
+  status: "new" | "triaged" | "resolved";
+  reason: string;
+  resolutionNote?: string;
+}): Promise<{ ok: true; from: string }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  const moved = await adminFeedback.setFeedbackStatus({
+    id: input.id,
+    status: input.status,
+    adminUserId,
+    resolutionNote: input.resolutionNote?.trim() || undefined,
+  });
+  if (!moved) throw new Error("That feedback entry no longer exists.");
+  if (moved.from === input.status) throw new Error(`That entry is already ${input.status}.`);
+
+  await recordAdminAction({
+    adminUserId,
+    action:
+      input.status === "resolved"
+        ? "feedback.resolve"
+        : input.status === "triaged"
+          ? "feedback.triage"
+          : "feedback.reopen",
+    resourceType: "feedback",
+    resourceId: input.id,
+    detail: {
+      from: moved.from,
+      to: input.status,
+      excerpt: moved.excerpt,
+      ...(input.resolutionNote ? { resolutionNote: input.resolutionNote } : {}),
+    },
+    reason,
+  });
+
+  revalidateFeedback();
+  return { ok: true, from: moved.from };
+}
+
+/**
+ * Delete one screenshot, and then its blob object.
+ *
+ * The row is the contract and the blob is cleanup: a Blob outage must not stop an operator
+ * removing something that should never have been captured in the first place.
+ */
+export async function deleteFeedbackScreenshotAction(input: {
+  id: string;
+  reason: string;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  const removed = await adminFeedback.deleteFeedbackScreenshot(input.id);
+  if (!removed) throw new Error("That screenshot no longer exists.");
+
+  let blobDeleted = false;
+  if (removed.blobUrl) {
+    try {
+      const { del } = await import("@vercel/blob");
+      await del(removed.blobUrl);
+      blobDeleted = true;
+    } catch {
+      // See above.
+    }
+  }
+
+  await recordAdminAction({
+    adminUserId,
+    action: "feedback.screenshot_delete",
+    resourceType: "feedback_screenshot",
+    resourceId: input.id,
+    detail: { feedbackId: removed.feedbackId, storage: removed.storage, blobDeleted },
+    reason,
+  });
+
+  revalidateFeedback();
   return { ok: true };
 }

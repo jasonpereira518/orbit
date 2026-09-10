@@ -1,3 +1,4 @@
+import { del } from "@vercel/blob";
 import { eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
@@ -11,13 +12,23 @@ import {
   contacts,
   contactTags,
   errorEvents,
+  apiIdempotencyKeys,
+  apiKeys,
   extensionUsage,
   feedback,
+  feedbackScreenshots,
   gateEvents,
+  contactIdentities,
+  contactMerges,
+  duplicateSuggestions,
+  eventAttendees,
+  eventProviderConnections,
+  events,
   gmailConnections,
   imports,
   interactions,
   noteBatches,
+  outboundWebhookDeliveries,
   outlookConnections,
   outreachCampaigns,
   recruiterMessages,
@@ -26,6 +37,7 @@ import {
   suggestedReminders,
   tags,
   usageEvents,
+  webhookEndpoints,
   userGoals,
   userRecruiterLinks,
   userSettings,
@@ -36,12 +48,15 @@ import { recomputeRecruiterRating } from "@/lib/recruiters";
  * Delete all Orbit data for a user (does not delete the Clerk account).
  *
  * Every table carrying a `user_id` must be handled here, either by an explicit delete or
- * by a cascade from one. The five covered by cascade, so deliberately absent below:
+ * by a cascade from one. The seven covered by cascade, so deliberately absent below:
  *   - `chat_messages`        → cascades from `chat_threads`
  *   - `import_job_rows`      → cascades from `imports`
  *   - `action_items`         → cascades from `contacts` and `interactions`
  *   - `contact_briefs`       → cascades from `contacts`
  *   - `interaction_mentions` → cascades from `contacts` and `interactions`
+ *   - `contact_profiles`     → cascades from `contacts` (verified by `scripts/smoke-purge.ts`,
+ *                              not assumed — see that script's header)
+ *   - `contact_experiences`  → cascades from `contacts` (same)
  * Nothing else may be omitted. A `user_id` column is not on its own evidence of a cascade:
  * `note_batches` and `extension_usage` both have one and neither has a foreign key to
  * anything, so both are deleted explicitly below. `suggested_reminders` looks like it would cascade but does
@@ -106,6 +121,18 @@ export async function purgeUserData(
 
   await db.delete(closenessCohorts).where(eq(closenessCohorts.userId, userId));
   await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
+  // Duplicate-prevention rows. `contact_identities` and `duplicate_suggestions` do cascade
+  // from `contacts`, but they are deleted explicitly for the same reason `event_attendees`
+  // is: they carry their own `user_id`, so `smoke-purge` requires them, and leaving them to
+  // a cascade means a change to that FK silently strips them from account deletion.
+  //
+  // `contact_merges` is the one that genuinely must be here. It has NO foreign key on
+  // either contact id — by design, since the losing contact's row is deleted — so nothing
+  // cascades it, and `loser_snapshot` holds a whole archived contact: every field of a
+  // person the user knew, surviving the deletion of the contact it came from.
+  await db.delete(contactIdentities).where(eq(contactIdentities.userId, userId));
+  await db.delete(duplicateSuggestions).where(eq(duplicateSuggestions.userId, userId));
+  await db.delete(contactMerges).where(eq(contactMerges.userId, userId));
   // `note_batches` carries the raw pasted note text and has no cascading FK to `contacts`
   // or `interactions` (its `seed_contact_id` is a plain column) — it survives both of
   // those deletes below unless removed explicitly.
@@ -124,6 +151,18 @@ export async function purgeUserData(
   await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, userId));
   await db.delete(imports).where(eq(imports.userId, userId));
   await db.delete(calendarSubscriptions).where(eq(calendarSubscriptions.userId, userId));
+  // Before `contacts`: `event_attendees.contact_id` is `ON DELETE SET NULL`, so deleting
+  // contacts first would rewrite every one of these rows on the way to deleting them anyway.
+  // Attendees are deleted explicitly rather than left to the cascade from `events` — they
+  // carry their own `user_id` (which is why `smoke-purge` finds them), and a roster holds
+  // names, emails and employers of people the user met.
+  await db.delete(eventAttendees).where(eq(eventAttendees.userId, userId));
+  await db.delete(events).where(eq(events.userId, userId));
+  // Holds an encrypted Luma API key or Eventbrite access token. Same class of secret as the
+  // Gmail/Outlook rows below, and it must not outlive the account.
+  await db
+    .delete(eventProviderConnections)
+    .where(eq(eventProviderConnections.userId, userId));
   await db.delete(userGoals).where(eq(userGoals.userId, userId));
   await db.delete(chatThreads).where(eq(chatThreads.userId, userId));
   // `recruiters.avg_rating` / `rating_count` / `log_count` are denormalized counters over
@@ -156,6 +195,19 @@ export async function purgeUserData(
   }
   await db.delete(gmailConnections).where(eq(gmailConnections.userId, userId));
   await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
+  // The connector platform's four tables.
+  //
+  // `api_keys` matters most: a key that outlives the account it belongs to is a live
+  // credential with no owner, and the whole point of deleting an account is that nothing
+  // keeps working afterwards. The deliveries go before the endpoints they reference, because
+  // the FK cascades and doing it in the other order would rewrite rows on the way to
+  // deleting them. `api_idempotency_keys` is a replay guard rather than content, but the
+  // rule here admits no exceptions that are not written down — and this is the fifth
+  // user-scoped table family to be caught by `scripts/smoke-purge.ts` rather than by review.
+  await db.delete(apiKeys).where(eq(apiKeys.userId, userId));
+  await db.delete(apiIdempotencyKeys).where(eq(apiIdempotencyKeys.userId, userId));
+  await db.delete(outboundWebhookDeliveries).where(eq(outboundWebhookDeliveries.userId, userId));
+  await db.delete(webhookEndpoints).where(eq(webhookEndpoints.userId, userId));
   await db.delete(usageEvents).where(eq(usageEvents.userId, userId));
   // Extension rate-limit counters, keyed by `user_id` as the primary key with no parent
   // to cascade from. Not content, but it is a per-user row and the rule above admits no
@@ -174,6 +226,26 @@ export async function purgeUserData(
   // most valuable feedback Orbit gets and they are exactly the ones that leave with the
   // account. That trade is the right way round; keeping them would mean a user who asked
   // to be deleted still has their opinion on file.
+  //
+  // Screenshots go first, and by hand rather than through the `ON DELETE CASCADE`, because
+  // the blob objects behind them have no foreign key and nothing else in Orbit will ever
+  // come back for them. Best-effort on the blob side: a Blob outage must not be able to
+  // block an erasure request, and the row going is the part that is the contract.
+  const shots = await db
+    .select({ blobUrl: feedbackScreenshots.blobUrl })
+    .from(feedbackScreenshots)
+    .where(eq(feedbackScreenshots.userId, userId));
+  await db.delete(feedbackScreenshots).where(eq(feedbackScreenshots.userId, userId));
+  for (const shot of shots) {
+    if (!shot.blobUrl) continue;
+    try {
+      await del(shot.blobUrl);
+    } catch {
+      // See above. The row is gone either way; an orphaned object is a cost problem, not a
+      // privacy one, and it is not worth failing a deletion request over.
+    }
+  }
+
   await db.delete(feedback).where(eq(feedback.userId, userId));
   await db.delete(gateEvents).where(eq(gateEvents.userId, userId));
 

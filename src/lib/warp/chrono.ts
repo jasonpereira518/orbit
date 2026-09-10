@@ -221,9 +221,9 @@ export type ChronoFrame = {
  * How many bursts a hold of `elapsed` total run time has added on top of the
  * scripted seven. Clamped to the reserve the stage actually seeded.
  */
-function cruiseBurstsBy(elapsed: number) {
+function cruiseBurstsBy(elapsed: number, maxBursts = CRUISE_BURSTS) {
   const held = Math.max(0, elapsed - CHRONO_OUTBOUND_MS);
-  return Math.min(CRUISE_BURSTS, Math.floor(held / CRUISE_BURST_MS));
+  return Math.min(maxBursts, Math.floor(held / CRUISE_BURST_MS));
 }
 
 function burstsBy(elapsed: number) {
@@ -245,7 +245,17 @@ function burstsBy(elapsed: number) {
 export function chronoFrame(
   phase: ChronoPhase,
   elapsed: number,
-  sinceArriving: number
+  sinceArriving: number,
+  /**
+   * Ceiling on reserve bursts, for consumers that hold longer than a route transition.
+   *
+   * `CRUISE_BURSTS` is derived from `CRUISE_CAP_MS`, the 4s ceiling the warp provider enforces
+   * on a journey. The constellation intro has no such ceiling — a cold chunk on a bad
+   * connection legitimately runs longer — and past the reserve the sky stops growing, which is
+   * the loop the reserve exists to prevent. Defaulted, so `/upgrade` is untouched; the default
+   * is asserted in `scripts/smoke-warp-chrono.ts`.
+   */
+  maxCruiseBursts: number = CRUISE_BURSTS
 ): ChronoFrame {
   if (phase === "arriving") {
     // Collapse fills the first 560ms of the arriving window (the shutter
@@ -259,7 +269,9 @@ export function chronoFrame(
       // the elapsed time at the instant deceleration began. Reporting a bare
       // seven here would snuff out every star a cruise hold had just lit, at
       // exactly the moment the sky is being handed to the page.
-      bursts: IGNITION_FRACTIONS.length + cruiseBurstsBy(elapsed - sinceArriving),
+      bursts:
+        IGNITION_FRACTIONS.length +
+        cruiseBurstsBy(elapsed - sinceArriving, maxCruiseBursts),
       alive: 1,
     };
   }
@@ -281,7 +293,7 @@ export function chronoFrame(
     return {
       omega: OMEGA_PEAK,
       alpha: ALPHA_FAST,
-      bursts: IGNITION_FRACTIONS.length + cruiseBurstsBy(elapsed),
+      bursts: IGNITION_FRACTIONS.length + cruiseBurstsBy(elapsed, maxCruiseBursts),
       alive: 1,
     };
   }

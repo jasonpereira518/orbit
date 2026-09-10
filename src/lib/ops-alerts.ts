@@ -38,6 +38,7 @@ export type WebhookOutcome = "handled" | "ignored" | "invalid" | "error";
 export type OpsSnapshot = {
   cron: {
     processStalled: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    syncRun: { lastStartedAt: Date | null; lastState: CronRunState | null };
   };
   /** Most recent delivery outcomes per source, newest first. */
   webhooks: { clerk: WebhookOutcome[]; stripe: WebhookOutcome[]; resend: WebhookOutcome[] };
@@ -52,6 +53,10 @@ export type OpsSnapshot = {
   /** Null when the caller (the scheduler) did not say what `main` is. */
   deploy: { prodSha: string | null; mainSha: string; mainCommittedAt: Date } | null;
   reauthNeeded: number;
+  /** Connections holding a sync lease far longer than any run should take. */
+  wedgedSyncs: number;
+  /** Connections the scheduler gave up on and disarmed. */
+  failingSyncs: number;
 };
 
 /** How often a persisting condition is repeated. Info is said once. */
@@ -69,6 +74,15 @@ const OUTAGE_ACCOUNTS = 2;
 const DRIFT_AFTER_MS = 6 * 60 * 60 * 1000;
 
 const isRejected = (o: WebhookOutcome) => o === "invalid" || o === "error";
+
+/**
+ * How long the connector sync may be silent before it is treated as dead.
+ *
+ * The schedule is every 15 minutes; this is twelve times that. Loose on purpose — GitHub
+ * Actions schedules lag 5-30 minutes under load and are disabled entirely after 60 days
+ * without a commit on a public repo, and it is the second failure this needs to catch.
+ */
+const SYNC_SCHEDULE_SILENT_MS = 3 * 60 * 60 * 1000;
 
 export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[] {
   const out: OpsCondition[] = [];
@@ -136,6 +150,55 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: "Imports are failing",
       detail: `${s.failedImportsLast24h} imports failed in the last 24 hours.`,
+      href: "/admin/health",
+    });
+  }
+
+  // Freshness for the connector sync, with its OWN threshold rather than `hasMissedRun`.
+  // That helper's 25-hour window is calibrated for the nightly job; applied to a job that is
+  // supposed to run every fifteen minutes it would stay silent for a full day of no syncing.
+  // Three hours is deliberately loose — GitHub's scheduler routinely lags 5-30 minutes, and
+  // this must alert on "the schedule is dead", not on "the schedule is late".
+  const sync = s.cron.syncRun;
+  const syncSilentFor = sync.lastStartedAt ? now.getTime() - sync.lastStartedAt.getTime() : null;
+  if (syncSilentFor === null || syncSilentFor > SYNC_SCHEDULE_SILENT_MS) {
+    out.push({
+      id: "sync.schedule_missed",
+      severity: "warning",
+      title: "Connector sync has stopped running",
+      detail: sync.lastStartedAt
+        ? `Last started ${sync.lastStartedAt.toISOString()}; mailboxes and calendars are not being synced.`
+        : "No run has ever been recorded; mailboxes and calendars are not being synced.",
+      href: "/admin/health",
+    });
+  } else if (sync.lastState === "failed" || sync.lastState === "stale") {
+    out.push({
+      id: "sync.run_failed",
+      severity: "warning",
+      title: `Connector sync ${sync.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${sync.lastStartedAt?.toISOString() ?? "unknown"} ended ${sync.lastState}.`,
+      href: "/admin/health",
+    });
+  }
+
+  // The sync equivalents of the two import conditions above. A wedged sync is invisible
+  // otherwise: the connection simply stops updating, and no error is raised anywhere, because
+  // the invocation that held the lease was killed rather than failing.
+  if (s.wedgedSyncs > 0) {
+    out.push({
+      id: "sync.wedged",
+      severity: "warning",
+      title: "A connector sync is wedged",
+      detail: `${s.wedgedSyncs} connection(s) have held a sync lease for over 15 minutes.`,
+      href: "/admin/health",
+    });
+  }
+  if (s.failingSyncs > 0) {
+    out.push({
+      id: "sync.failing",
+      severity: "warning",
+      title: "Connector sync has given up on an account",
+      detail: `${s.failingSyncs} connection(s) were disarmed after repeated sync failures and will not retry until the user reconnects.`,
       href: "/admin/health",
     });
   }

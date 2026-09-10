@@ -1,7 +1,13 @@
 import { Suspense } from "react";
 import { getGraphData } from "@/actions/graph";
+import { ConstellationIntro } from "@/components/graph/constellation-intro";
+import { ConstellationScopeToggle } from "@/components/graph/constellation-scope-toggle";
+import {
+  ConstellationLoading,
+  CONSTELLATION_STAGE_HEIGHT,
+} from "@/components/graph/constellation-loading";
 import { NetworkGraphLazy } from "@/components/graph/network-graph-lazy";
-import { GraphPageSkeleton } from "@/components/loading/page-skeletons";
+import { STAGE_GROUND } from "@/lib/graph/stage-layers";
 
 /**
  * The heading paints from the layout immediately; the full-network scan streams in behind
@@ -11,21 +17,57 @@ import { GraphPageSkeleton } from "@/components/loading/page-skeletons";
 export default function GraphPage() {
   return (
     <div className="-mx-1 space-y-3 overflow-hidden md:-mx-2">
-      <div className="shrink-0 px-1">
-        <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-primary">
-          Star chart
-        </p>
-        <h1 className="mt-0.5 font-[family-name:var(--font-display)] text-2xl text-ink md:text-3xl">
-          Constellation
-        </h1>
-        <p className="mt-0.5 max-w-xl text-sm text-muted-foreground">
-          You are the sun. Companies and schools form constellations around
-          you — each figure traced by its own people.
-        </p>
+      {/*
+        The scope toggle is here, in the header, rather than over the canvas: the canvas is
+        where the stars are, so anything sitting on it is either covering the network or
+        getting out of the way of it.
+
+        `items-end` sits it at the FOOT of the header, immediately above the chart's top-right
+        corner. Aligned to the top instead it landed level with the app's notification bell —
+        near enough to read as a third piece of app chrome, when it is a control for this one
+        chart and belongs next to it.
+      */}
+      <div className="flex shrink-0 items-end justify-between gap-3 px-1">
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-primary">
+            Star chart
+          </p>
+          <h1 className="mt-0.5 font-[family-name:var(--font-display)] text-2xl text-ink md:text-3xl">
+            Constellation
+          </h1>
+          <p className="mt-0.5 max-w-xl text-sm text-muted-foreground">
+            You are the sun. Companies and schools form constellations around
+            you — each figure traced by its own people.
+          </p>
+        </div>
+        <ConstellationScopeToggle className="mb-0.5 shrink-0" />
       </div>
-      <Suspense fallback={<GraphPageSkeleton />}>
-        <GraphIsland />
-      </Suspense>
+      {/*
+        The intro sits OUTSIDE the boundary so it outlives every phase swap beneath it — the
+        payload streaming, the chunk landing, and every canvas remount thereafter. Inside, it
+        would be unmounted and restarted at each handover.
+
+        The fallback is the bare canvas panel, not `GraphPageSkeleton`: the real <h1> above is
+        outside the boundary and already painted, so the skeleton's own header bars used to
+        render underneath it — a real heading and a grey fake one on screen together.
+        `loading.tsx` still uses the full skeleton, where nothing has painted yet.
+      */}
+      {/*
+        The wrapper paints the ground, not the chart's own stage.
+        The intro sits BETWEEN the two states of this box — over the loading panel it covers,
+        under the chart it hands over to — so the chart has to be transparent for it to show
+        through from behind. Something has to hold the near-black, and the box that outlives
+        both of them is the honest place for it. Same colour either way, so the handover when
+        the stage takes its background back is not a step.
+      */}
+      <div className={`relative rounded-2xl ${STAGE_GROUND}`}>
+        <ConstellationIntro />
+        <Suspense
+          fallback={<ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />}
+        >
+          <GraphIsland />
+        </Suspense>
+      </div>
     </div>
   );
 }

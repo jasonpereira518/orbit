@@ -4,6 +4,8 @@ import {
   ViewAsUserButton,
 } from "@/components/admin/surface-toggles";
 import { requireAdminPage } from "@/lib/admin";
+import { ConstellationFilterPanel } from "@/components/admin/constellation-filter-panel";
+import { getConstellationConfig } from "@/lib/constellation-config";
 import {
   getHiddenSurfaceKeys,
   isViewingAsUser,
@@ -28,9 +30,10 @@ export const metadata = { title: "Admin · Product" };
  */
 export default async function AdminProductPage() {
   const adminUserId = await requireAdminPage();
-  const [hidden, viewingAsUser] = await Promise.all([
+  const [hidden, viewingAsUser, constellation] = await Promise.all([
     getHiddenSurfaceKeys(),
     isViewingAsUser(adminUserId),
+    getConstellationConfig(),
   ]);
 
   const hiddenKeys = [...hidden];
@@ -65,6 +68,10 @@ export default async function AdminProductPage() {
           </p>
         </AdminPanel>
 
+        <AdminPanel title="Constellation">
+          <ConstellationFilterPanel config={constellation} />
+        </AdminPanel>
+
         <AdminPanel title="Pages">
           <SurfaceToggles surfaces={surfacesOfKind("page")} hidden={hiddenKeys} />
         </AdminPanel>
@@ -74,6 +81,10 @@ export default async function AdminProductPage() {
             surfaces={surfacesOfKind("dashboard")}
             hidden={hiddenKeys}
           />
+        </AdminPanel>
+
+        <AdminPanel title="Widgets">
+          <SurfaceToggles surfaces={surfacesOfKind("widget")} hidden={hiddenKeys} />
         </AdminPanel>
 
         <AdminPanel title="Settings sections">

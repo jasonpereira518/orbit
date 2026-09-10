@@ -1,4 +1,6 @@
 import { drizzle as drizzleNeon } from "drizzle-orm/neon-http";
+import type { BatchItem } from "drizzle-orm/batch";
+import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { neon } from "@neondatabase/serverless";
 import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import { PGlite } from "@electric-sql/pglite";
@@ -102,6 +104,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   priority_level integer NOT NULL DEFAULT 0,
   source text,
   industry text,
+  constellation_pin text,
   met_context text,
   date_met timestamptz,
   how_met text,
@@ -163,6 +166,7 @@ CREATE TABLE IF NOT EXISTS interactions (
   topics jsonb DEFAULT '[]',
   action_items jsonb DEFAULT '[]',
   sentiment text,
+  direction text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS reminder_lists (
@@ -323,6 +327,44 @@ CREATE TABLE IF NOT EXISTS contact_embeddings (
   content text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS contact_profiles (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  headline text,
+  about text,
+  skills jsonb NOT NULL DEFAULT '[]',
+  certifications jsonb NOT NULL DEFAULT '[]',
+  volunteering jsonb NOT NULL DEFAULT '[]',
+  publications jsonb NOT NULL DEFAULT '[]',
+  source text NOT NULL,
+  source_url text,
+  adapter_version text,
+  warnings jsonb NOT NULL DEFAULT '[]',
+  captured_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS contact_experiences (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  organization text NOT NULL,
+  organization_normalized text NOT NULL,
+  title text,
+  field_of_study text,
+  location text,
+  description text,
+  start_year integer,
+  start_month integer,
+  end_year integer,
+  end_month integer,
+  is_current boolean NOT NULL DEFAULT false,
+  sort_index integer NOT NULL DEFAULT 0,
+  source text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS calendar_subscriptions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -346,6 +388,7 @@ CREATE INDEX IF NOT EXISTS interactions_contact_idx ON interactions(contact_id);
 CREATE INDEX IF NOT EXISTS interactions_user_idx ON interactions(user_id);
 CREATE INDEX IF NOT EXISTS interactions_user_type_idx ON interactions(user_id, interaction_type);
 CREATE INDEX IF NOT EXISTS interactions_user_contact_type_date_idx ON interactions(user_id, contact_id, interaction_type, interaction_date);
+CREATE INDEX IF NOT EXISTS interactions_user_contact_direction_idx ON interactions(user_id, contact_id, direction) WHERE interaction_type = 'linkedin_message';
 CREATE UNIQUE INDEX IF NOT EXISTS interactions_user_external_uidx ON interactions(user_id, external_id) WHERE external_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS reminders_user_status_idx ON reminders(user_id, status);
 CREATE INDEX IF NOT EXISTS reminders_due_idx ON reminders(user_id, due_date);
@@ -505,6 +548,12 @@ CREATE TABLE IF NOT EXISTS gmail_connections (
   scopes text,
   status text NOT NULL DEFAULT 'active',
   last_synced_at timestamptz,
+  sync_cursor jsonb,
+  next_sync_at timestamptz,
+  sync_status text,
+  sync_started_at timestamptz,
+  sync_error text,
+  sync_failures integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -519,6 +568,12 @@ CREATE TABLE IF NOT EXISTS outlook_connections (
   scopes text,
   status text NOT NULL DEFAULT 'active',
   last_synced_at timestamptz,
+  sync_cursor jsonb,
+  next_sync_at timestamptz,
+  sync_status text,
+  sync_started_at timestamptz,
+  sync_error text,
+  sync_failures integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -556,6 +611,64 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
 );
 CREATE INDEX IF NOT EXISTS admin_audit_log_created_idx ON admin_audit_log(created_at);
 CREATE INDEX IF NOT EXISTS admin_audit_log_target_idx ON admin_audit_log(target_user_id);
+CREATE TABLE IF NOT EXISTS api_keys (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  name text NOT NULL,
+  kind text NOT NULL DEFAULT 'api',
+  prefix text NOT NULL,
+  key_hash text NOT NULL,
+  scopes jsonb NOT NULL DEFAULT '["read"]',
+  last_used_at timestamptz,
+  revoked_at timestamptz,
+  revoked_reason text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS api_keys_hash_uidx ON api_keys(key_hash);
+CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys(user_id);
+CREATE TABLE IF NOT EXISTS api_idempotency_keys (
+  user_id text NOT NULL,
+  idempotency_key text NOT NULL,
+  request_hash text NOT NULL,
+  status_code integer NOT NULL,
+  response_body jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS api_idempotency_uidx ON api_idempotency_keys(user_id, idempotency_key);
+CREATE TABLE IF NOT EXISTS webhook_endpoints (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  url text NOT NULL,
+  secret_encrypted text NOT NULL,
+  event_types jsonb NOT NULL DEFAULT '[]',
+  description text,
+  status text NOT NULL DEFAULT 'pending',
+  consecutive_failures integer NOT NULL DEFAULT 0,
+  disabled_at timestamptz,
+  disabled_reason text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS webhook_endpoints_user_idx ON webhook_endpoints(user_id);
+CREATE TABLE IF NOT EXISTS outbound_webhook_deliveries (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  endpoint_id uuid NOT NULL REFERENCES webhook_endpoints(id) ON DELETE CASCADE,
+  event_id text NOT NULL,
+  event_type text NOT NULL,
+  payload jsonb NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  attempts integer NOT NULL DEFAULT 0,
+  next_attempt_at timestamptz,
+  last_status_code integer,
+  last_error text,
+  last_attempted_at timestamptz,
+  delivered_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outbound_deliveries_endpoint_event_uidx ON outbound_webhook_deliveries(endpoint_id, event_id);
+CREATE INDEX IF NOT EXISTS outbound_deliveries_due_idx ON outbound_webhook_deliveries(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS outbound_deliveries_user_created_idx ON outbound_webhook_deliveries(user_id, created_at);
 CREATE TABLE IF NOT EXISTS cron_runs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   job text NOT NULL,
@@ -621,11 +734,35 @@ CREATE TABLE IF NOT EXISTS feedback (
   kind text NOT NULL,
   score integer,
   text text,
+  area text,
+  category text,
+  status text NOT NULL DEFAULT 'new',
+  status_changed_at timestamptz,
+  status_changed_by text,
+  resolution_note text,
   context jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS feedback_screenshots (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  feedback_id uuid NOT NULL REFERENCES feedback(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  position integer NOT NULL DEFAULT 0,
+  note text,
+  storage text NOT NULL,
+  blob_url text,
+  inline_data text,
+  content_type text NOT NULL,
+  byte_size integer NOT NULL,
+  width integer,
+  height integer,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS feedback_kind_created_idx ON feedback(kind, created_at);
 CREATE INDEX IF NOT EXISTS feedback_user_created_idx ON feedback(user_id, created_at);
+CREATE INDEX IF NOT EXISTS feedback_status_created_idx ON feedback(status, created_at);
+CREATE INDEX IF NOT EXISTS feedback_screenshots_feedback_idx ON feedback_screenshots(feedback_id, position);
+CREATE INDEX IF NOT EXISTS feedback_screenshots_user_idx ON feedback_screenshots(user_id);
 CREATE TABLE IF NOT EXISTS interest_list_signups (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   email text NOT NULL,
@@ -710,6 +847,15 @@ CREATE TABLE IF NOT EXISTS app_surface_flags (
   hidden_at timestamptz NOT NULL DEFAULT now(),
   hidden_by text NOT NULL
 );
+CREATE TABLE IF NOT EXISTS constellation_settings (
+  id integer PRIMARY KEY DEFAULT 1,
+  filter_enabled boolean NOT NULL DEFAULT true,
+  min_inbound_messages integer NOT NULL DEFAULT 3,
+  min_outbound_messages integer NOT NULL DEFAULT 3,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  updated_by text,
+  CONSTRAINT constellation_settings_single_row CHECK (id = 1)
+);
 CREATE TABLE IF NOT EXISTS startup_expenses (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   category text NOT NULL,
@@ -763,6 +909,110 @@ CREATE TABLE IF NOT EXISTS non_dilutive_funding (
   note text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  title text NOT NULL,
+  starts_at timestamptz,
+  ends_at timestamptz,
+  timezone text,
+  venue text,
+  city text,
+  url text,
+  role text NOT NULL DEFAULT 'attended',
+  source text NOT NULL DEFAULT 'manual',
+  provider text,
+  provider_event_id text,
+  description text,
+  cover_image_url text,
+  cover_source_url text,
+  theme_color text,
+  theme_source text,
+  theme_locked integer NOT NULL DEFAULT 0,
+  attendee_count integer,
+  notes text,
+  enriched_at timestamptz,
+  enrich_error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS event_attendees (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id uuid NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  full_name text,
+  email text,
+  company text,
+  title text,
+  linkedin_url text,
+  x_handle text,
+  phone text,
+  attendee_role text,
+  source text NOT NULL DEFAULT 'paste',
+  external_ref text,
+  spoke_to integer NOT NULL DEFAULT 0,
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  converted_at timestamptz,
+  identity_key text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS event_provider_connections (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  provider text NOT NULL,
+  auth_kind text NOT NULL,
+  label text,
+  account_ref text,
+  api_key_encrypted text,
+  access_token_encrypted text,
+  refresh_token_encrypted text,
+  token_expires_at timestamptz,
+  scopes text,
+  status text NOT NULL DEFAULT 'active',
+  last_synced_at timestamptz,
+  sync_cursor jsonb,
+  next_sync_at timestamptz,
+  sync_status text,
+  sync_started_at timestamptz,
+  sync_error text,
+  sync_failures integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS contact_identities (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  value text NOT NULL,
+  source text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS contact_merges (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  winner_contact_id uuid NOT NULL,
+  loser_contact_id uuid NOT NULL,
+  loser_snapshot jsonb NOT NULL,
+  repointed jsonb NOT NULL DEFAULT '{}'::jsonb,
+  deleted jsonb NOT NULL DEFAULT '{}'::jsonb,
+  status text NOT NULL DEFAULT 'in_progress',
+  reason text,
+  confidence real,
+  merged_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS duplicate_suggestions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_a_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  contact_b_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  reason text NOT NULL,
+  confidence real NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  resolved_at timestamptz
+);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -798,8 +1048,34 @@ CREATE TABLE IF NOT EXISTS non_dilutive_funding (
  * v24 = ops_alert_state (the production-readiness ops sweep's alert ledger).
  * v25 = imports.stall_resumes (the process-stalled cron's give-up counter).
  * v26 = rate_limit_buckets (DB-backed rate limiting for chat, capture, and avatar resolve).
+ * v27 = contact_profiles + contact_experiences (LinkedIn experience extraction).
+ * v28 = the constellation filter: constellation_settings, contacts.constellation_pin,
+ * interactions.direction, and the partial index that keeps the eligibility aggregate an
+ * index-only scan once `direction` joins its predicate.
+ * v29 = feedback triage columns (area, category, status, status_changed_at/by,
+ * resolution_note) plus the feedback_screenshots child table.
+ *
+ * (Three branches have now collided on a number here, and each time the one that merged
+ * second had to move: the feedback work called itself 27, then 28, and lands as 29. The
+ * rule is the one v21 records — a database stamped N by the branch that merged first has
+ * none of the second branch's DDL, so re-using N would skip the sweep on every instance
+ * that had already migrated, and the columns would simply never appear.)
+ *
+ * v30 = continuous provider sync: sync_cursor/next_sync_at/sync_status/sync_started_at/
+ * sync_error/sync_failures on both connection tables, plus their partial due indexes.
+ * v31 = the connector platform: api_keys, api_idempotency_keys, webhook_endpoints,
+ * outbound_webhook_deliveries.
+ * v32 = the events feature: events, event_attendees, event_provider_connections.
+ * v33 = duplicate prevention: contact_identities (the unique index that actually stops
+ * duplicates being created), contact_merges (a merged contact archived whole, so the
+ * loser's row can be deleted rather than flagged), duplicate_suggestions (name-tier
+ * matches, which no longer auto-merge).
+ *
+ * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
+ * LinkedIn, constellation and feedback branches each landed first. If this one collides
+ * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
  */
-export const SCHEMA_VERSION = 26;
+export const SCHEMA_VERSION = 33;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -963,6 +1239,74 @@ export const SCALE_DDL: string[] = [
    FROM interactions i, jsonb_array_elements_text(COALESCE(i.action_items, '[]'::jsonb)) WITH ORDINALITY a
    WHERE jsonb_typeof(i.action_items) = 'array' AND btrim(a.value) <> ''
    ON CONFLICT (user_id, item_hash) DO NOTHING`,
+
+  // --- LinkedIn profiles -----------------------------------------------------------
+  //
+  // The unique index is what makes a profile row per contact an invariant rather than a
+  // convention: `saveContactProfile` upserts on it.
+  `CREATE UNIQUE INDEX IF NOT EXISTS contact_profiles_contact_uidx
+     ON contact_profiles(user_id, contact_id)`,
+  `CREATE INDEX IF NOT EXISTS contact_experiences_contact_idx
+     ON contact_experiences(user_id, contact_id, sort_index)`,
+  // "Who has ever worked at X". Read by experienceArm in src/lib/hybrid-search.ts -- but
+  // for its LEADING COLUMN ONLY: EXPLAIN over 60k rows across 120 tenants shows a bitmap
+  // index scan whose Index Cond is user_id alone, scoping the scan to one tenant, after
+  // which the organization patterns are applied as a post-index filter. The arm ORs
+  // word-boundary patterns (leading wildcard, unindexable) with its exact/prefix tiers,
+  // and that disjunction is what stops the second column from being used.
+  //
+  // It is NOT read by experienceExists in filterCondition, despite an earlier comment here
+  // saying so: Postgres hashes that correlated subquery into a SubPlan and seq-scans
+  // contact_experiences across every tenant (60000 rows removed by filter), losing even
+  // the user_id scoping. Worth revisiting if the filter path ever gets hot.
+  //
+  // Keep prose in this array free of backticks: the schema-ddl guard's fingerprint treats
+  // every backtick pair between these brackets as a DDL statement.
+  `CREATE INDEX IF NOT EXISTS contact_experiences_org_idx
+     ON contact_experiences(user_id, organization_normalized)`,
+
+  // --- Duplicate prevention --------------------------------------------------------
+  //
+  // This unique index is the feature. Every other piece of duplicate handling is advisory;
+  // this is the only thing that can stop two concurrent writers both creating a contact
+  // for the same person, because it is the only check that is not a check-then-insert.
+  //
+  // It is safe to create unconditionally, which is worth spelling out because the obvious
+  // reading says otherwise. An existing account can absolutely have two contacts sharing an
+  // email, so a unique index over a table backfilled from contacts would fail -- the trap
+  // contact_tags_pair_uidx hit, which had to delete rows before it could claim its
+  // constraint. It does not apply here because contact_identities starts EMPTY on every
+  // database, new or upgrading. The backfill runs afterwards, in TypeScript, and claims
+  // identities oldest-contact-first with ON CONFLICT DO NOTHING; the contacts that lose a
+  // claim are precisely the pre-existing duplicates, and they are surfaced for review
+  // rather than deleted to make an index creatable. See backfillContactIdentities in
+  // src/lib/contact-identity.ts.
+  `CREATE UNIQUE INDEX IF NOT EXISTS contact_identities_user_kind_value_uidx
+     ON contact_identities(user_id, kind, value)`,
+  // The anti-join the backfill pages through, and the FK index that stops a contact
+  // delete from scanning this table (the omission contacts_company_id_idx was added for).
+  `CREATE INDEX IF NOT EXISTS contact_identities_contact_idx
+     ON contact_identities(contact_id)`,
+
+  // Alias lookup: a stale contact id in, the surviving contact id out. Unique because a
+  // contact can only be merged away once -- attempting it twice is a bug, not a no-op.
+  `CREATE UNIQUE INDEX IF NOT EXISTS contact_merges_loser_uidx
+     ON contact_merges(loser_contact_id)`,
+  // The undo list, newest first.
+  `CREATE INDEX IF NOT EXISTS contact_merges_user_idx
+     ON contact_merges(user_id, merged_at DESC)`,
+  // Path compression rewrites winner_contact_id on every subsequent merge in a chain.
+  `CREATE INDEX IF NOT EXISTS contact_merges_winner_idx
+     ON contact_merges(user_id, winner_contact_id)`,
+
+  `CREATE UNIQUE INDEX IF NOT EXISTS duplicate_suggestions_pair_uidx
+     ON duplicate_suggestions(user_id, contact_a_id, contact_b_id)`,
+  // Partial: the review page only ever reads pending pairs, and dismissed ones accumulate
+  // forever by design (a dismissal has to outlive the suggestion or the page re-proposes
+  // a pair the user already rejected).
+  `CREATE INDEX IF NOT EXISTS duplicate_suggestions_pending_idx
+     ON duplicate_suggestions(user_id, confidence DESC)
+     WHERE status = 'pending'`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
@@ -1166,6 +1510,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "preferred_name", "text");
   await ensureColumn(client, "contacts", "website", "text");
   await ensureColumn(client, "interactions", "external_id", "text");
+  await ensureColumn(client, "interactions", "direction", "text");
+  await ensureColumn(client, "contacts", "constellation_pin", "text");
   await ensureColumn(
     client,
     "interactions",
@@ -1463,6 +1809,15 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "interest_list_signups", "welcome_planet", "text");
   await ensureColumn(client, "interest_list_signups", "follow_up_sent_at", "timestamptz");
 
+  // And the same for the feedback triage columns: a local database built before the
+  // feedback console existed has the table but none of them.
+  await ensureColumn(client, "feedback", "area", "text");
+  await ensureColumn(client, "feedback", "category", "text");
+  await ensureColumn(client, "feedback", "status", "text NOT NULL DEFAULT 'new'");
+  await ensureColumn(client, "feedback", "status_changed_at", "timestamptz");
+  await ensureColumn(client, "feedback", "status_changed_by", "text");
+  await ensureColumn(client, "feedback", "resolution_note", "text");
+
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
   // list above via `applySchema` — not here. `ADMIN_V2_STATEMENTS` is spread into that
@@ -1643,6 +1998,8 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS company_id uuid`,
   `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS external_id text`,
   `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS same_day_order integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE interactions ADD COLUMN IF NOT EXISTS direction text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS constellation_pin text`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS error_message text`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS stats jsonb DEFAULT '{}'`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,
@@ -1740,6 +2097,16 @@ const alters = [
   // CREATE TABLE IF NOT EXISTS will never go back and add a column to it.
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS welcome_planet text`,
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS follow_up_sent_at timestamptz`,
+
+  // Feedback triage. The table shipped long before anything wrote to it, so every existing
+  // database has it without these columns — and `CREATE TABLE IF NOT EXISTS` will never go
+  // back and add one. Same reason the two `interest_list_signups` lines above exist.
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS area text`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS category text`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'new'`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS status_changed_at timestamptz`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS status_changed_by text`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS resolution_note text`,
   `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS recruiter_sharing integer NOT NULL DEFAULT 0`,
@@ -1793,6 +2160,70 @@ const alters = [
   `DROP INDEX IF EXISTS embeddings_user_contact_source_uidx`,
   `CREATE UNIQUE INDEX IF NOT EXISTS embeddings_user_contact_source_id_uidx
    ON contact_embeddings(user_id, contact_id, source_type, source_id)`,
+  // Schema v30: continuous provider sync. The same six columns on both connection tables —
+  // they are byte-identical by design, and `syncStateColumns()` in schema.ts is the one
+  // place their shape is written down.
+  //
+  // Deliberately no backfill of `next_sync_at`: NULL means "not scheduled", so nothing is
+  // claimable until a connector exists to serve it. Arming existing connections is its own
+  // statement, added once the Google Calendar connector lands.
+  //
+  // `sync_failures` is the only NOT NULL column here, and it carries a DEFAULT, so the
+  // ALTER is safe on a populated table.
+  ...["gmail_connections", "outlook_connections"].flatMap((table) => [
+    `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS sync_cursor jsonb`,
+    `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS next_sync_at timestamptz`,
+    `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS sync_status text`,
+    `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS sync_started_at timestamptz`,
+    `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS sync_error text`,
+    `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS sync_failures integer NOT NULL DEFAULT 0`,
+    // The scheduler's claim orders by next_sync_at over the due rows only; the partial
+    // predicate keeps the index to the handful of armed connections rather than every row.
+    `CREATE INDEX IF NOT EXISTS ${table}_due_idx ON ${table}(next_sync_at) WHERE next_sync_at IS NOT NULL`,
+  ]),
+  // Arm the connections that already exist.
+  //
+  // `sync_status IS NULL` is the load-bearing half of this predicate, not decoration.
+  // `next_sync_at IS NULL` alone means BOTH "never scheduled" and "deliberately disarmed
+  // after repeated failure" — so on its own this statement would resurrect every known-dead
+  // connection on every deploy, and the scheduler would claim, fail and disarm them again,
+  // forever. Only a row the scheduler has never touched still has a NULL `sync_status`;
+  // `disarmSync` always writes 'error'.
+  //
+  // Scoped to Google, because Google Calendar is the only connector that exists — arming an
+  // Outlook row would have the scheduler claim it every run to find nothing to do. Outlook
+  // joins when its calendar/mail scopes ship.
+  //
+  // Not scoped to `hasCalendarScope`, deliberately: a connection made before the scope shipped
+  // needs to be claimed exactly once so the scheduler can disarm it with a message telling the
+  // user to reconnect. Filtering it out here would leave it silently doing nothing instead.
+  `UPDATE gmail_connections SET next_sync_at = now()
+    WHERE status = 'active' AND next_sync_at IS NULL AND sync_status IS NULL`,
+  // Schema v31: the connector platform. The CREATE TABLEs above land on a fresh database;
+  // these repair an existing one, which is why every index appears in both places.
+  `CREATE UNIQUE INDEX IF NOT EXISTS api_keys_hash_uidx ON api_keys(key_hash)`,
+  `CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys(user_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS api_idempotency_uidx ON api_idempotency_keys(user_id, idempotency_key)`,
+  `CREATE INDEX IF NOT EXISTS webhook_endpoints_user_idx ON webhook_endpoints(user_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS outbound_deliveries_endpoint_event_uidx ON outbound_webhook_deliveries(endpoint_id, event_id)`,
+  `CREATE INDEX IF NOT EXISTS outbound_deliveries_due_idx ON outbound_webhook_deliveries(status, next_attempt_at)`,
+  `CREATE INDEX IF NOT EXISTS outbound_deliveries_user_created_idx ON outbound_webhook_deliveries(user_id, created_at)`,
+  // Schema v32: the events feature. Same rule as v31 above — the CREATE TABLEs repair a
+  // fresh database, these repair an existing one, so every index is written in both places.
+  //
+  // The two unique indexes are the feature's whole idempotency story and must match their
+  // `uniqueIndex()` declarations in schema.ts by name AND column list, or smoke-schema-ddl
+  // fails: `events_provider_uidx` makes a provider re-sync update its event instead of
+  // adding one, and `event_attendees_identity_uidx` makes re-pasting a roster a no-op.
+  `CREATE INDEX IF NOT EXISTS events_user_idx ON events(user_id)`,
+  `CREATE INDEX IF NOT EXISTS events_user_starts_idx ON events(user_id, starts_at, id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS events_provider_uidx ON events(user_id, provider, provider_event_id) WHERE provider_event_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS event_attendees_event_idx ON event_attendees(event_id)`,
+  `CREATE INDEX IF NOT EXISTS event_attendees_user_idx ON event_attendees(user_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS event_attendees_identity_uidx ON event_attendees(event_id, identity_key)`,
+  `CREATE INDEX IF NOT EXISTS event_attendees_contact_idx ON event_attendees(contact_id) WHERE contact_id IS NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS event_provider_connections_user_uidx ON event_provider_connections(user_id, provider)`,
+  `CREATE INDEX IF NOT EXISTS event_provider_connections_due_idx ON event_provider_connections(next_sync_at) WHERE next_sync_at IS NOT NULL`,
 ];
 
 /**
@@ -2021,6 +2452,59 @@ export async function getDb(): Promise<Db> {
       : drizzlePglite(globalForDb.orbitPglite!, { schema, logger: countingLogger });
   }
   return globalForDb.orbitDrizzle;
+}
+
+/**
+ * A statement builder that both a live `Db` and a PGlite transaction satisfy. Both drizzle
+ * instances are `PgDatabase`s and `PgTransaction extends PgDatabase`, so one type covers
+ * the writer `runAtomicWrite` hands to its callback on either driver.
+ */
+export type AtomicWriter = PgDatabase<PgQueryResultHKT, typeof schema>;
+/** One statement in an atomic group: any drizzle insert/update/delete/select builder. */
+export type AtomicStatement = BatchItem<"pg">;
+
+/**
+ * Runs a group of statements atomically on whichever driver is live.
+ *
+ * `db.transaction()` is NOT an option: `getDb()` returns the `drizzle-orm/neon-http`
+ * instance whenever `DATABASE_URL` is set — i.e. always in production — and that driver's
+ * session throws `No transactions support in neon-http driver` unconditionally
+ * (`node_modules/drizzle-orm/neon-http/session.cjs`). Neon's HTTP endpoint has no
+ * cross-request session to hold a transaction open in.
+ *
+ * What it does have is `db.batch()`, which drizzle maps to `client.transaction(queries)` —
+ * one HTTP request carrying every statement, committed or rolled back together. PGlite's
+ * drizzle driver has no `batch` at all (only the batch-capable drivers — neon-http,
+ * libsql, d1, planetscale — declare one), so the local path uses a real transaction
+ * instead. Hence the callback shape rather than a plain array: the PGlite branch has to
+ * build its statements against the transaction handle, or they would execute outside it.
+ *
+ * Callers must therefore never reach for `db.transaction` or `db.batch` directly — this is
+ * the one place that knows which driver is underneath.
+ */
+export async function runAtomicWrite(
+  db: Db,
+  build: (writer: AtomicWriter) => AtomicStatement[]
+): Promise<void> {
+  const batchable = db as unknown as {
+    batch?: (statements: AtomicStatement[]) => Promise<unknown>;
+  };
+
+  if (typeof batchable.batch === "function") {
+    const statements = build(db as unknown as AtomicWriter);
+    if (!statements.length) return;
+    await batchable.batch(statements);
+    return;
+  }
+
+  const local = db as ReturnType<typeof drizzlePglite<typeof schema>>;
+  await local.transaction(async (tx) => {
+    // Awaited one at a time on purpose: these are ordered writes (delete-then-insert),
+    // and a `Promise.all` would let the driver interleave them.
+    for (const statement of build(tx as unknown as AtomicWriter)) {
+      await (statement as unknown as Promise<unknown>);
+    }
+  });
 }
 
 export { schema };

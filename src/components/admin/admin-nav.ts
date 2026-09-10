@@ -5,6 +5,7 @@ import {
   Gauge,
   HandCoins,
   LayoutTemplate,
+  MessageSquareText,
   Scale,
   ScrollText,
   TrendingUp,
@@ -35,6 +36,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
   // which pages, dashboard cards, and settings sections every user can see.
   { href: "/admin/product", label: "Product", icon: LayoutTemplate },
   // Trends live here rather than on the overview, which stays triage-only by design.
+  { href: "/admin/feedback", label: "Feedback", icon: MessageSquareText },
   { href: "/admin/growth", label: "Growth", icon: TrendingUp },
   // Route is /admin/billing, but the screen covers money in AND money out — "Billing"
   // alone reads as revenue-only.

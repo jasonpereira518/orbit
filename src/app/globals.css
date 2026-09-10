@@ -27,10 +27,17 @@
   --color-import-connections: var(--import-connections);
   --color-import-messages: var(--import-messages);
   --color-import-calendar: var(--import-calendar);
+  --color-interaction-together: var(--interaction-together);
+  --color-interaction-live: var(--interaction-live);
+  --color-interaction-written: var(--interaction-written);
+  --color-interaction-yours: var(--interaction-yours);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -96,6 +103,25 @@
   --accent: #e7f0ee;
   --accent-foreground: #0f3d3e;
   --destructive: oklch(0.577 0.245 27.325);
+  /* ── Status semantics ──
+     `--destructive` above already owns error, so this names only the three it
+     does not cover. Not new hues: these are the emerald/amber the app already
+     reaches for ad hoc at ~30 call sites (`closeness-tier-badge`, `ai-key-notice`,
+     `account-alerts`), plus the blue that neither `--primary` (near-black teal in
+     light, which is why `--ink` was split out) nor `--tier-pro` (claimed by
+     pricing) can supply.
+
+     Not `--chart-*` or `--interaction-*` for the reason argued below: a category
+     token that means two things is the mistake `--tier-lifetime` exists to avoid.
+
+     Every value clears 4.5:1 on `--popover`, so these can carry text, not just an
+     icon glyph. */
+  --success: #047857; /* emerald-700 — 5.0:1 on #ffffff */
+  --warning: #b45309; /* amber-700   — 4.8:1 on #ffffff */
+  --info: #1d4ed8; /* blue-700    — 7.0:1 on #ffffff */
+  /* The toast icon chip is its accent at a wash. Light surfaces need less of it
+     than dark ones, where the accent is pale and 12% vanishes into #212c42. */
+  --toast-chip-strength: 12%;
   --border: #e4e7e1;
   --input: #e4e7e1;
   --ring: #0f3d3e;
@@ -107,6 +133,23 @@
   --import-connections: #5b5fc7;
   --import-messages: #c2694a;
   --import-calendar: #b8873a;
+  /* Timeline interaction families. Four groups over the ten interaction types, ordered by
+     how much of the person was actually present: together (met them) -> live (spoke to them)
+     -> written (exchanged text) -> yours (your own record, nothing confirmed). See
+     `src/lib/interaction-types.ts`.
+
+     Not `--primary` (an accent that flips hue between themes), `--ink` (strong text),
+     `--chart-*` (data series, also hue-flipping) or `--import-*` (already claimed): a category
+     token that means two things is the mistake `--tier-lifetime` below exists to avoid.
+
+     Lightness is staggered monotonically with presence -- L* 36.0 / 41.0 / 45.1 / 48.2 here,
+     84.2 / 75.7 / 69.6 / 64.3 in dark. That stagger is what keeps `together` (gold ~75deg) and
+     `live` (rose ~350deg) apart under deuteranopia, where the two hues converge. Every value
+     clears 4.5:1 on its card, so these can carry text as well as icons. */
+  --interaction-together: #6d5009;
+  --interaction-live: #a8375f;
+  --interaction-written: #4a63c9;
+  --interaction-yours: #6b7380;
   /* Orbit Pro reads as `--primary` (the product's own color, per the pricing
      tiers). Orbit Lifetime gets this dedicated gold so paywalled surfaces can
      name which tier(s) unlock a feature without borrowing a hue that already
@@ -187,6 +230,12 @@
   --accent: #20374f;
   --accent-foreground: #aeddf0;
   --destructive: #ff6b6b;
+  /* Inverted for the dark ladder: `--popover` is #212c42 (L* 18), so the accents
+     go pale — the same 300-weights the app already pairs with the light 700s. */
+  --success: #6ee7b7; /* emerald-300 — 8.9:1 on #212c42 */
+  --warning: #fcd34d; /* amber-300   — 10.3:1 on #212c42 */
+  --info: #93c5fd; /* blue-300    — 8.1:1 on #212c42 */
+  --toast-chip-strength: 18%;
   --border: #333f5a;
   /* Light enough to clear 3:1 against `--card` — this is a control boundary
      (WCAG 1.4.11), not decoration. The old #3d3d3d managed 1.22:1, so text
@@ -207,6 +256,11 @@
   --import-connections: #9b9ff5;
   --import-messages: #f0956f;
   --import-calendar: #e2b45f;
+  /* Same ladder inverted: brighter means more present on a dark card. */
+  --interaction-together: #f5cd7a;
+  --interaction-live: #f5a3c0;
+  --interaction-written: #8aa9f2;
+  --interaction-yours: #8f9db2;
   /* Brighter on a dark card so it keeps 4.5:1 text contrast (#8a6423 would
      read as near-black here). */
   --tier-lifetime: #f2c14e;
@@ -226,6 +280,58 @@
   --sidebar-ring: #7cc3e2;
   color-scheme: dark;
 }
+
+/* ── The bottom-right corner ──
+ * One anchor for every floating widget that lives there: the job progress list
+ * (`jobs/global-job-progress-bar.tsx`) and the toast stack (`ui/sonner.tsx`).
+ * They used to hard-code their own offsets — 20px vs sonner's 24px default —
+ * so a toast painted straight over a running job card.
+ *
+ * The mobile baseline clears the fixed nav pill: `layout/mobile-nav.tsx` is
+ * `bottom-0` with `pb-[calc(0.75rem+env(safe-area-inset-bottom))]` around a
+ * ~60px pill, so ~5.25rem is the occupied band.
+ *
+ * The breakpoint is 48rem (Tailwind's `md`, where `md:hidden` takes the nav
+ * away) and NOT sonner's own 600px mobile breakpoint — otherwise toasts in the
+ * 600-768px band would sit on a nav that is still there. That is why the
+ * Toaster hands `offset` and `mobileOffset` the same variable.
+ *
+ * A SECOND `:root` on purpose, so these sit with the media query that overrides
+ * them rather than in the middle of the colour palette. Be aware that
+ * `extension/scripts/tokens.mjs` mirrors only the FIRST `:root` block into the
+ * extension's tokens.css — correct here, since a 400px panel has no
+ * bottom-right widget stack, but it means anything the extension DOES need has
+ * to go in the block above, and `check:tokens` will not tell you otherwise. */
+:root {
+  --orbit-corner-bottom: calc(
+    5.25rem + env(safe-area-inset-bottom) + var(--orbit-corner-lift)
+  );
+  --orbit-corner-right: 0.75rem;
+
+  /* Raised by pages that put a primary action in this corner, so a toast can
+     never cover it — see `lib/corner-clearance.ts`. Set on <html>, because the
+     toaster is portalled to <body> and a wrapper override would never reach it. */
+  --orbit-corner-lift: 0px;
+
+  /* Height the job widget currently occupies, published by the widget itself
+     via ResizeObserver, plus the gap a toast should keep off its top edge.
+     0px whenever no job is running — which is almost always — so toasts do not
+     float above a reserved-but-empty band. */
+  --orbit-job-stack-height: 0px;
+
+  /* Toasts stack ABOVE the job widget, never on it. */
+  --orbit-toast-bottom: calc(
+    var(--orbit-corner-bottom) + var(--orbit-job-stack-height)
+  );
+}
+
+@media (min-width: 48rem) {
+  :root {
+    --orbit-corner-bottom: calc(1.25rem + var(--orbit-corner-lift));
+    --orbit-corner-right: 1.25rem;
+  }
+}
+
 
 /* YC-mode admin console. Same scoping approach as `.dark`: applied on the
    AdminShell wrapper only when the operator has toggled YC mode on
@@ -358,33 +464,48 @@
   z-index: 1;
 }
 
-.liquid-glass:hover {
-  background: linear-gradient(
-    165deg,
-    rgba(255, 255, 255, 0.58) 0%,
-    rgba(255, 255, 255, 0.32) 42%,
-    rgba(247, 248, 246, 0.28) 100%
-  );
-  border-color: rgba(255, 255, 255, 0.72);
-  box-shadow:
-    0 1px 0 0 rgba(255, 255, 255, 0.8) inset,
-    0 -1px 0 0 rgba(15, 61, 62, 0.03) inset,
-    0 12px 40px -8px rgba(26, 28, 26, 0.22),
-    0 4px 14px -2px rgba(26, 28, 26, 0.1);
+/* The five rules below are gated on hover capability.
+ *
+ * Tailwind's `hover:` variant compiles inside `@media (hover: hover)` on its own, but
+ * these are hand-written and were not — so on a touch device the lightening fired on
+ * tap and then STUCK, because a touch "hover" is never exited. `.liquid-glass` is what
+ * the mobile bottom nav is built from, which is exactly a touch-first surface.
+ *
+ * A media query does not change specificity, so the `.liquid-glass-panel` neutralisers
+ * further down still outrank these, as their own comments describe. Those neutralisers
+ * are deliberately NOT gated: they cancel the lightening, so on touch they are a
+ * harmless no-op rather than something that needs suppressing. */
+@media (hover: hover) {
+  .liquid-glass:hover {
+    background: linear-gradient(
+      165deg,
+      rgba(255, 255, 255, 0.58) 0%,
+      rgba(255, 255, 255, 0.32) 42%,
+      rgba(247, 248, 246, 0.28) 100%
+    );
+    border-color: rgba(255, 255, 255, 0.72);
+    box-shadow:
+      0 1px 0 0 rgba(255, 255, 255, 0.8) inset,
+      0 -1px 0 0 rgba(15, 61, 62, 0.03) inset,
+      0 12px 40px -8px rgba(26, 28, 26, 0.22),
+      0 4px 14px -2px rgba(26, 28, 26, 0.1);
+  }
 }
 
-.liquid-glass:hover::before {
-  background:
-    radial-gradient(
-      130% 90% at 10% -15%,
-      rgba(255, 255, 255, 0.88) 0%,
-      transparent 58%
-    ),
-    radial-gradient(
-      95% 65% at 100% 100%,
-      rgba(15, 61, 62, 0.05) 0%,
-      transparent 50%
-    );
+@media (hover: hover) {
+  .liquid-glass:hover::before {
+    background:
+      radial-gradient(
+        130% 90% at 10% -15%,
+        rgba(255, 255, 255, 0.88) 0%,
+        transparent 58%
+      ),
+      radial-gradient(
+        95% 65% at 100% 100%,
+        rgba(15, 61, 62, 0.05) 0%,
+        transparent 50%
+      );
+  }
 }
 
 /* Built on the navy surface values rather than the old rgba(55,55,55): the
@@ -419,33 +540,37 @@
     );
 }
 
-.dark .liquid-glass:hover {
-  background: linear-gradient(
-    165deg,
-    rgba(52, 68, 102, 0.55) 0%,
-    rgba(33, 44, 66, 0.4) 45%,
-    rgba(18, 27, 45, 0.36) 100%
-  );
-  border-color: rgba(255, 255, 255, 0.18);
-  box-shadow:
-    0 1px 0 0 rgba(255, 255, 255, 0.2) inset,
-    0 -1px 0 0 rgba(0, 0, 0, 0.2) inset,
-    0 16px 48px -10px rgba(0, 0, 0, 0.6),
-    0 4px 14px -2px rgba(0, 0, 0, 0.4);
+@media (hover: hover) {
+  .dark .liquid-glass:hover {
+    background: linear-gradient(
+      165deg,
+      rgba(52, 68, 102, 0.55) 0%,
+      rgba(33, 44, 66, 0.4) 45%,
+      rgba(18, 27, 45, 0.36) 100%
+    );
+    border-color: rgba(255, 255, 255, 0.18);
+    box-shadow:
+      0 1px 0 0 rgba(255, 255, 255, 0.2) inset,
+      0 -1px 0 0 rgba(0, 0, 0, 0.2) inset,
+      0 16px 48px -10px rgba(0, 0, 0, 0.6),
+      0 4px 14px -2px rgba(0, 0, 0, 0.4);
+  }
 }
 
-.dark .liquid-glass:hover::before {
-  background:
-    radial-gradient(
-      130% 90% at 10% -15%,
-      rgba(255, 255, 255, 0.18) 0%,
-      transparent 58%
-    ),
-    radial-gradient(
-      95% 65% at 100% 100%,
-      rgba(124, 195, 226, 0.16) 0%,
-      transparent 50%
-    );
+@media (hover: hover) {
+  .dark .liquid-glass:hover::before {
+    background:
+      radial-gradient(
+        130% 90% at 10% -15%,
+        rgba(255, 255, 255, 0.18) 0%,
+        transparent 58%
+      ),
+      radial-gradient(
+        95% 65% at 100% 100%,
+        rgba(124, 195, 226, 0.16) 0%,
+        transparent 50%
+      );
+  }
 }
 
 @supports not (
@@ -455,8 +580,10 @@
     background: color-mix(in oklab, var(--sidebar) 92%, transparent);
   }
 
-  .liquid-glass:hover {
-    background: color-mix(in oklab, var(--sidebar) 86%, transparent);
+  @media (hover: hover) {
+    .liquid-glass:hover {
+      background: color-mix(in oklab, var(--sidebar) 86%, transparent);
+    }
   }
 }
 
@@ -668,17 +795,101 @@
   position: absolute;
 }
 
+/* Same exemption, and for the same reason: the discard confirmation is a layer over the
+ * whole window, so it has to escape the `position: relative` that `.liquid-glass > *`
+ * forces on every direct child — an unlayered rule that beats Tailwind's `absolute`
+ * utility, so it cannot be done from the JSX. `z-index: 2` puts it above its siblings,
+ * which that same rule pins at 1, including the close button: while the question is on
+ * screen the X behind it must not be clickable. */
+.liquid-glass.liquid-glass-panel > [data-slot="feedback-discard"] {
+  position: absolute;
+  z-index: 2;
+}
+
 /* The window still appears and disappears, it just stops travelling to do it.
  * `transform: none` also cancels the starting/ending scale, so the whole
  * enter/exit collapses to the opacity fade the primitive already provides. */
 @media (prefers-reduced-motion: reduce) {
   [data-slot="sheet-content"][data-side="floating"] {
-    /* `scale`/`translate`, not `transform`: Tailwind v4 sets the discrete properties, so
-     * cancelling `transform` here would leave the starting-style scale fully applied and
-     * the window would open stuck at its collapsed size. */
+    transition-property: opacity;
+  }
+
+  /* Scoped to the two animating states rather than the element at rest.
+   *
+   * The reset exists to cancel the ENTER and EXIT scale, and `!important` is what makes it
+   * outrank the utilities that set them. Applied unconditionally it also outranks the
+   * feedback panel's inline `style.translate`, which is how that window is dragged — so
+   * with reduced motion on, the pointer moved and the window did not. Naming the states
+   * cancels the animation and leaves a resting window free to be moved.
+   *
+   * `scale`/`translate`, not `transform`: Tailwind v4 sets the discrete properties, so
+   * cancelling `transform` here would leave the starting-style scale fully applied and the
+   * window would open stuck at its collapsed size. */
+  [data-slot="sheet-content"][data-side="floating"][data-starting-style],
+  [data-slot="sheet-content"][data-side="floating"][data-ending-style] {
     scale: none !important;
     translate: none !important;
-    transition-property: opacity;
+  }
+}
+
+/* ── The feedback form's Send button, in flight ──
+ * A light running the button's border while the submission uploads. Not a spinner: a
+ * screenshot submission takes 1.5-4s, and the point is that the wait and the success beat
+ * that follows it (`send-button.tsx`) are one gesture — the signal travels, then it lands.
+ *
+ * An ambient loop, so it takes a bare `linear` rather than `--ease-house`, matching the
+ * `constellation-*` family. `--ease-house` is for discrete arrivals.
+ *
+ * The angle is animated through a registered custom property, which is the only way to
+ * move a `conic-gradient`'s origin — the alternative is rotating an element, and rotating
+ * a non-square box would swing the ring's shape around with it. Where `@property` is not
+ * supported the declaration below still resolves `--send-sweep` to its own `0deg` and the
+ * ring simply sits still, lit but stationary. That degrades; it does not break.
+ *
+ * Two backgrounds against the button's transparent 1px border paint the ring: an opaque
+ * fill clipped to `padding-box`, the gradient clipped to `border-box`. No mask compositing.
+ *
+ * Unlayered, so this beats the `bg-primary` utility it replaces — the same cascade
+ * behaviour `.liquid-glass` relies on, and the reason the fill has to be restated here. */
+@property --send-sweep {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes send-signal-sweep {
+  to {
+    --send-sweep: 360deg;
+  }
+}
+
+.send-signal {
+  --send-sweep: 0deg;
+  border-color: transparent;
+  background:
+    linear-gradient(var(--primary), var(--primary)) padding-box,
+    conic-gradient(
+        from var(--send-sweep),
+        transparent 0deg 250deg,
+        color-mix(in oklab, var(--primary-foreground) 85%, transparent) 330deg,
+        transparent 360deg
+      )
+      border-box;
+  animation: send-signal-sweep 1.1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The global 0.01ms clamp would freeze the sweep at whatever angle it reached — a lit
+   * arc parked on one edge, which reads as a rendering fault rather than as progress. The
+   * button goes back to being a plain button and `send-button.tsx` restores the spinner,
+   * the same way `.plan-badge-glint` leaves rather than resting mid-sweep.
+   *
+   * The fill is restated rather than dropped: the rule above sets `background` as a
+   * SHORTHAND, so `background: none` here would reset the colour too and leave a
+   * transparent button. */
+  .send-signal {
+    background: var(--primary);
+    animation: none;
   }
 }
 
@@ -1113,6 +1324,34 @@
 
 .landing-solar-enter {
   animation: landing-solar-enter 0.9s var(--ease-house) 0.15s both;
+}
+
+/* ── Interest list (/interest) ──
+ * Two ambient loops. Linear, not the house curve: these are orbits, and an
+ * orbit that eases would read as a wobble. The global reduced-motion clamp at
+ * the bottom of this file freezes both. */
+@keyframes interest-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The decorative rings behind the signup card, and the dot circling the
+ * submit button while a join is in flight (`animate-[interest-orbit_…]`).
+ * `transform-box: fill-box` centres the spin on the ring group's own box —
+ * without it an SVG group rotates about the viewBox origin. */
+.interest-rings-spin {
+  animation: interest-orbit 160s linear infinite;
+  transform-origin: 50% 50%;
+  transform-box: fill-box;
+  will-change: transform;
+}
+
+.interest-rings-spin-reverse {
+  animation: interest-orbit 110s linear infinite reverse;
+  transform-origin: 50% 50%;
+  transform-box: fill-box;
+  will-change: transform;
 }
 
 /* Orbit Lifetime's badge is the one place the brand gold appears as a surface
@@ -1712,32 +1951,280 @@ html[data-warp-journey="chrono"][data-warp="inbound"] [data-warp-craft] {
 }
 
 /* ---------------------------------------------------------------------------
- * Toasts must never swallow a click on the page underneath.
+ * Toasts.
  *
- * Sonner anchors bottom-right with `pointer-events: auto`, and Orbit puts primary
- * actions there too: the Accept / Accept & next buttons on the Capture review card sit
- * at x 780-1160, y 692-724 on a 1280x820 viewport, and the "Found N people" toast that
- * fires the moment the card appears covers x 900-1256, y 675-729. For the four seconds
- * the toast is up (ten for an error), `document.elementFromPoint` on the middle of that
- * button returns the toast — so the click does nothing, twice in a row, on the exact
- * step of the demo where you have just pasted your notes. The constellation's
- * full-screen and Home buttons sit in the same corner.
- *
- * The toast layer becomes transparent to hit-testing; anything genuinely interactive
- * inside a toast (the "See more" expander in `lib/toast.tsx`, a close or action button)
- * opts back in. The cost is swipe-to-dismiss on a four-second notification, which is
- * a better trade than a dead primary button.
+ * The Toaster runs `unstyled` (see `components/ui/sonner.tsx`), so the surface
+ * itself is Tailwind classes over there. What has to live here is everything
+ * sonner declares on the toast element directly — because sonner injects its
+ * stylesheet UNLAYERED at runtime (`__insertCSS` -> `head.appendChild`), and an
+ * unlayered rule beats every Tailwind utility no matter how specific, since
+ * utilities sit in `@layer utilities`. Anything sonner sets on `[data-sonner-toast]`
+ * can therefore only be overridden from a rule like these, never from a class.
  * --------------------------------------------------------------------------- */
-[data-sonner-toaster],
-[data-sonner-toaster] [data-sonner-toast] {
+
+/* Sonner hard-codes a `ui-sans-serif, system-ui, ...` stack on the container, so
+   an unstyled toast would be the one surface in the app not set in Outfit.
+   Needs the `html` — sonner's rule is `[data-sonner-toaster]` at the same
+   specificity, and since it is appended to <head> at runtime it is later in the
+   cascade and wins every tie. Verified: without the type selector the toast
+   renders in system-ui. */
+html [data-sonner-toaster] {
+  font-family: inherit;
+}
+
+/* The container is a fixed box the size of the whole stack, including the gaps
+   between toasts and the room a collapsed stack reserves — clicks there would
+   land on nothing visible. The toasts themselves opt back in.
+
+   This is the surviving half of a rule that used to cover the toasts too. It was
+   written because the toast covered the Capture review card's Accept button and
+   `elementFromPoint` returned the toast, so the click did nothing — twice in a
+   row, on the exact step of the demo where you have just pasted your notes. The
+   toast is interactive again now (hover pauses, click dismisses, drag flings it
+   away); what keeps that from re-breaking Capture is `lib/corner-clearance.ts`,
+   which lifts `--orbit-corner-lift` above the action row while it is on screen.
+   That hook is load-bearing, not a nicety. */
+[data-sonner-toaster] {
   pointer-events: none;
 }
 
-[data-sonner-toaster] [data-sonner-toast] button,
-[data-sonner-toaster] [data-sonner-toast] a,
-[data-sonner-toaster] [data-sonner-toast] [data-close-button],
-[data-sonner-toaster] [data-sonner-toast] [data-button] {
+[data-sonner-toaster] [data-sonner-toast] {
   pointer-events: auto;
+}
+
+/* ── Enter and exit: in and out through the right edge ──
+ *
+ * Sonner has no keyframes for this. It composes stacking, hover-expand, swipe
+ * AND enter/exit into one custom property, `--y`, then feeds it to `transform`.
+ * Overriding `transform` takes the stacking math down with it, and so does
+ * simply out-specifying `--y` — every stacking rule is itself a `--y` declaration.
+ *
+ * The pre-mount resting place is NOT the (0,1,0) base rule but
+ * `[data-sonner-toast][data-y-position='bottom']` at (0,2,0), which sonner
+ * re-declares. Rather than fight that for the cascade, scope on `data-mounted`:
+ * this rule is (0,2,1) so it wins while the toast is unmounted, and then stops
+ * matching altogether the moment `data-mounted` flips, handing `--y` straight
+ * back to sonner's `[data-mounted='true'] { --y: translateY(0) }`. Nothing else
+ * in the stacking chain is touched.
+ *
+ * The two transform lists interpolate via matrix fallback, which for a pair of
+ * pure translations is exact — no wobble on the diagonal. */
+[data-sonner-toaster] li.orbit-toast[data-mounted="false"] {
+  --y: translateX(2rem);
+}
+
+/* Exit mirrors the swipe. These selectors are sonner's own `data-removed` rules
+   with `li.orbit-toast` swapped in for `[data-sonner-toast]`, which adds a type
+   to the same attribute count and so wins by one point; the `--lift`/`--offset`
+   stack term is preserved verbatim, only the flight direction changes. `--lift`
+   is -1 at the bottom, which is why sonner's own front exit reads as downward. */
+[data-sonner-toaster]
+  li.orbit-toast[data-removed="true"][data-front="true"][data-swipe-out="false"] {
+  --y: translateX(2.5rem);
+  opacity: 0;
+}
+
+[data-sonner-toaster]
+  li.orbit-toast[data-removed="true"][data-front="false"][data-swipe-out="false"][data-expanded="true"] {
+  --y: translateY(calc(var(--lift) * var(--offset))) translateX(2.5rem);
+  opacity: 0;
+}
+
+[data-sonner-toaster]
+  li.orbit-toast[data-removed="true"][data-front="false"][data-swipe-out="false"][data-expanded="false"] {
+  --y: translateX(2.5rem);
+  opacity: 0;
+}
+
+/* The description's "See more" takes the variant's own colour, the same accent
+   as the icon chip and the rail, so the control reads as part of the toast
+   rather than as body text. `--toast-accent` is set per type on the toast
+   itself and inherits; `default` toasts set none and fall back to the app
+   accent. Set from `maybeExpandableDescription` in lib/toast.tsx. */
+[data-sonner-toaster] li.orbit-toast .orbit-toast-expander {
+  color: var(--toast-accent, var(--primary));
+}
+
+/* A kept toast leaves toward the bell it is going to end up in, rather than
+   straight out the side: it lifts, shrinks and fades up-and-right, which is
+   where `NotificationsPanelButton` sits (fixed top-right in `app-shell.tsx`).
+   Deliberately a short gesture rather than a real flight to the button's
+   measured position — sonner unmounts 200ms after `data-removed` flips, so a
+   full-screen traversal would be cut off halfway. The direction is the message;
+   the distance only has to be enough to read as "up, not sideways".
+
+   `.orbit-toast-kept` is set per-toast from `lib/toast.tsx`, on exactly the
+   toasts that get recorded, so the two outcomes look different. One more class
+   than the plain exit rules below, so it wins. */
+[data-sonner-toaster]
+  li.orbit-toast.orbit-toast-kept[data-removed="true"][data-front="true"][data-swipe-out="false"] {
+  --y: translate(1.5rem, -2.25rem) scale(0.92);
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Still a distinct exit, but without the travel: fade in place. */
+  [data-sonner-toaster] li.orbit-toast.orbit-toast-kept[data-removed="true"] {
+    --y: translateY(0) scale(0.98);
+  }
+}
+
+/* The content column scrolls once a message outgrows `max-h-40`. Keep that
+   scrollbar from reading as page chrome inside a 320px card. */
+[data-sonner-toaster] li.orbit-toast [data-content] {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--foreground) 25%, transparent)
+    transparent;
+}
+
+/* Retime sonner's flat 400ms onto the house tiers. Safe to do here because this
+   touches `transition`, not `--y`. Enter rides the slow tier so the horizontal
+   travel reads; the box-shadow tier is the interaction one, for the hover lift. */
+[data-sonner-toaster] li.orbit-toast {
+  transition:
+    transform var(--transition-duration-slow) var(--ease-house),
+    opacity var(--transition-duration-base) ease,
+    height var(--transition-duration-base) var(--ease-house),
+    box-shadow var(--transition-duration-fast) ease,
+    outline-color var(--transition-duration-fast) ease;
+}
+
+/* Sonner unmounts 200ms after `data-removed` flips (its TIME_BEFORE_UNMOUNT), so
+   a 320ms exit would be cut off in flight. Drop to the interaction tier. */
+[data-sonner-toaster] li.orbit-toast[data-removed="true"] {
+  transition-duration: var(--transition-duration-fast);
+}
+
+/* Re-declare what the shorthand above just clobbered. Sonner's own
+   `[data-swiping='true'] { transition: none }` is (0,2,0) and loses to the
+   (0,2,1) retime; without this, a drag eases between frames instead of tracking
+   the finger. */
+[data-sonner-toaster] li.orbit-toast[data-swiping="true"] {
+  transition: none;
+}
+
+/* ── Two-finger trackpad swipe ──
+ *
+ * Sonner's swipe is pointer-driven, so a trackpad two-finger swipe — which is
+ * `wheel` events and no pointer at all — never reaches it. `useWheelSwipeDismiss`
+ * in `ui/sonner.tsx` drives the gesture and sets `--orbit-wheel-x` here.
+ *
+ * It deliberately does NOT reuse sonner's `--swipe-amount-x`: the rule reading
+ * that variable takes over the whole `transform` and pins `transition: none` for
+ * as long as it matches. Keeping `var(--y)` in front of our own translate means
+ * the stacking, hover-expand and exit maths carry on underneath a toast that is
+ * mid-slide, instead of being replaced by it.
+ *
+ * (0,3,1) so these outrank both sonner's transform rules and the retime above,
+ * whichever order the sheets end up in. */
+[data-sonner-toaster] li.orbit-toast[data-orbit-wheel] {
+  transform: var(--y) translateX(var(--orbit-wheel-x, 0px));
+}
+
+/* Tracking the fingers: no easing between frames, or it lags behind them. */
+[data-sonner-toaster] li.orbit-toast[data-orbit-wheel="dragging"] {
+  transition: none;
+}
+
+/* Let go short of the threshold and it glides back; past it, it carries on out
+   and the JS dismisses it for real once this has played. */
+[data-sonner-toaster] li.orbit-toast[data-orbit-wheel="settling"],
+[data-sonner-toaster] li.orbit-toast[data-orbit-wheel="flinging"] {
+  transition:
+    transform 160ms ease-out,
+    opacity 160ms ease-out;
+}
+
+[data-sonner-toaster] li.orbit-toast[data-orbit-wheel="flinging"] {
+  opacity: 0;
+}
+
+/* ── Variant accent ──
+ * `--toast-accent` is set per type by the `success`/`error`/`warning`/`info`
+ * entries in the Toaster's `classNames`. `data-type="default"` (the dozen
+ * `toast.message` call sites) sets none, and gets neither chip nor rail — that
+ * is the quiet variant, and it should stay quiet. */
+[data-sonner-toaster] li.orbit-toast .orbit-toast-icon {
+  color: var(--toast-accent, var(--muted-foreground));
+  background: color-mix(
+    in oklab,
+    var(--toast-accent, transparent) var(--toast-chip-strength),
+    transparent
+  );
+}
+
+/* ── Elevation, hairline and accent rail: one box-shadow ──
+ *
+ * All three want `box-shadow`, and so does Tailwind's `ring-1`. Since this
+ * unlayered rule beats any utility, a `shadow-md ring-1` class pair here would
+ * be silently erased rather than merged — so the toast carries no shadow or ring
+ * classes at all and the whole stack is composed here, each layer behind its own
+ * variable so hover and dark mode can swap one without restating the others.
+ *
+ * The rail runs down the left edge rather than across the top because in a
+ * collapsed stack the toasts behind are clipped to the front one's height: their
+ * icons are hidden, their left edge is not. That is what makes an error sitting
+ * behind a success readable at a glance. `data-type="default"` (the dozen
+ * `toast.message` call sites) never sets `--toast-accent`, so its rail resolves
+ * to transparent and the quiet variant stays quiet. */
+[data-sonner-toaster] li.orbit-toast {
+  --orbit-toast-rail: inset 2px 0 0 0 var(--toast-accent, transparent);
+  --orbit-toast-hairline: 0 0 0 1px color-mix(in oklab, var(--foreground) 10%, transparent);
+  --orbit-toast-elevation:
+    0 4px 12px -2px rgb(26 28 26 / 0.12), 0 2px 6px -2px rgb(26 28 26 / 0.08);
+  box-shadow:
+    var(--orbit-toast-rail), var(--orbit-toast-hairline),
+    var(--orbit-toast-elevation);
+}
+
+/* A drop shadow barely registers on #212c42 — the same reason `Card` swaps to an
+   inset top highlight for its dark interactive state. */
+.dark [data-sonner-toaster] li.orbit-toast {
+  --orbit-toast-hairline: 0 0 0 1px color-mix(in oklab, #ffffff 12%, transparent);
+  --orbit-toast-elevation:
+    inset 0 1px 0 0 rgb(255 255 255 / 0.07), 0 8px 24px -8px rgb(0 0 0 / 0.6);
+}
+
+/* Hover lifts by shadow and hairline only, never by transform — `transform`
+   belongs to `--y`. Gated on a real pointer so a tap does not leave the hover
+   state stuck on a touch device. */
+@media (hover: hover) {
+  [data-sonner-toaster] li.orbit-toast:hover {
+    --orbit-toast-hairline: 0 0 0 1px color-mix(in oklab, var(--foreground) 16%, transparent);
+    --orbit-toast-elevation:
+      0 10px 24px -4px rgb(26 28 26 / 0.16), 0 4px 10px -2px rgb(26 28 26 / 0.1);
+  }
+
+  .dark [data-sonner-toaster] li.orbit-toast:hover {
+    --orbit-toast-hairline: 0 0 0 1px color-mix(in oklab, #ffffff 18%, transparent);
+    --orbit-toast-elevation:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.1), 0 14px 34px -8px rgb(0 0 0 / 0.7);
+  }
+}
+
+/* Sonner's own `:focus-visible` sets a black box-shadow that would erase all
+   three layers above. Keep the stack and add an outline, which composes. */
+[data-sonner-toaster] li.orbit-toast:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* `unstyled` also drops the rule that hides the content of toasts stacked behind
+   the front one, so their text would show through the collapsed stack. Put it
+   back. */
+[data-sonner-toaster]
+  li.orbit-toast[data-expanded="false"][data-front="false"]
+  > * {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The global 0.01ms clamp above already lands the toast on its mounted state.
+     Belt and braces for the horizontal travel: with motion reduced the toast
+     should appear where it belongs and fade, not skate in from the edge. */
+  [data-sonner-toaster] li.orbit-toast[data-mounted="false"] {
+    --y: translateX(0);
+  }
 }
 
 /* The plan-celebration handoff: the app's own logo mark (sidebar or mobile
@@ -1762,4 +2249,115 @@ html[data-celebration-handoff] [data-app-logo] {
   [data-app-logo] {
     transition: none;
   }
+}
+
+/* ── Forced-colors focus fallback ──
+ * Tailwind's `ring-*` compiles to a `box-shadow`, and Windows High Contrast
+ * Mode strips box-shadows outright — so a `focus-visible:outline-none` +
+ * `focus-visible:ring-*` pair, which is this repo's standard focus treatment
+ * (`ui/button.tsx`, `contacts/contacts-list.tsx`), leaves a keyboard user with
+ * NO visible focus indicator there. The `focus-visible:bg-*` half is overridden
+ * by the forced palette too, so nothing survives.
+ *
+ * Restoring a real outline is the fix. `outline` is honoured in forced-colors
+ * mode and, given no colour, is painted in the system's own Highlight colour —
+ * which is the correct thing to defer to.
+ *
+ * Unlayered on purpose: Tailwind's utilities live in `@layer utilities`, and
+ * unlayered CSS outranks any layer regardless of source order. That is what
+ * lets this beat `focus-visible:outline-none` without `!important` and without
+ * depending on which rule Tailwind happens to emit last. Same mechanism the
+ * `.liquid-glass` block above relies on.
+ *
+ * Applied via `ROW_HOVER` / `ROW_HOVER_INSET` in `src/lib/interaction.ts`. */
+@media (forced-colors: active) {
+  .focus-ring-fallback:focus-visible {
+    outline: 2px solid;
+    /* Inset to match `focus-visible:ring-inset`, so the indicator lands in the
+       same place in both modes rather than jumping outside the row. */
+    outline-offset: -2px;
+  }
+}
+
+/* ── Navigation pending hint ──
+ * Driven by `useLinkStatus` via `components/layout/nav-pending-dot.tsx`.
+ *
+ * Absolutely positioned and ALWAYS rendered, toggling visibility rather than
+ * mounting — the Next docs call out inline pending indicators as an easy source of
+ * layout shift, and this has to sit inside a nav item that is icon-only at one
+ * breakpoint and icon+label at another.
+ *
+ * The 100ms animation-delay is the documented anti-flash: a navigation that
+ * resolves faster than that never paints the dot, so quick moves stay silent and
+ * only a genuinely slow one gets acknowledged.
+ *
+ * Under reduced motion the global clamp zeroes both the delay and the durations,
+ * which degrades exactly the right way: the dot appears instantly and holds a
+ * steady opacity instead of pulsing. Feedback kept, movement dropped. */
+.nav-pending-dot {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  z-index: 20;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 9999px;
+  background: currentColor;
+  opacity: 0;
+  /* Reserves nothing and shows nothing until a navigation is actually in flight. */
+  visibility: hidden;
+}
+
+.nav-pending-dot[data-pending] {
+  visibility: visible;
+  animation:
+    var(--transition-duration-base) var(--ease-house) 100ms both nav-pending-in,
+    1.2s ease-in-out 100ms infinite nav-pending-pulse;
+}
+
+@keyframes nav-pending-in {
+  to {
+    opacity: 0.65;
+  }
+}
+
+@keyframes nav-pending-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* --- Per-event theming ------------------------------------------------------------------
+   Each event carries a colour derived from its own page (see src/lib/events/theme.ts). The
+   detail page sets the six *-light / *-dark variables inline; these two rules pick between
+   them.
+
+   Why both values ship at once: an inline style attribute cannot be theme-conditional, and
+   next-themes can flip `.dark` after render with no round trip. Choosing in CSS keeps the
+   swap free and flash-free — the same reason `.reveal-mount` stays pure CSS.
+
+   Every accent here is already contrast-clamped by `eventThemeVars`; there is no unclamped
+   path out of that module, so nothing below needs to re-check legibility. */
+.event-theme {
+  --event-accent: var(--event-accent-light);
+  --event-tint: var(--event-tint-light);
+  --event-ring: var(--event-ring-light);
+}
+
+.dark .event-theme {
+  --event-accent: var(--event-accent-dark);
+  --event-tint: var(--event-tint-dark);
+  --event-ring: var(--event-ring-dark);
+}
+
+/* The scrim over a cover image. Without it, light cover art and white heading text collide;
+   the gradient guarantees the bottom third is dark enough to read against regardless of
+   what the host chose as their graphic. */
+.event-hero-scrim {
+  background-image: linear-gradient(
+    to top,
+    color-mix(in oklab, black 72%, transparent) 0%,
+    color-mix(in oklab, black 28%, transparent) 45%,
+    transparent 100%
+  );
 }

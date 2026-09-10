@@ -17,6 +17,12 @@ import {
 } from "@/lib/chat-retrieval";
 import { findOrgRosters, type OrgRoster } from "@/lib/chat-roster";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
+import { getCareerLines, getContactProfile } from "@/lib/contact-profile";
+import {
+  formatExperienceDates,
+  sanitizeProfileLine,
+  sanitizeProfileText,
+} from "@/lib/contact-profile-format";
 import { getQueryEmbedding } from "@/lib/embedding-cache";
 import { hybridSearchContacts, type RankedContact } from "@/lib/hybrid-search";
 import { isRecruiterIntent } from "@/lib/recruiters";
@@ -74,6 +80,14 @@ export type ChatContext = {
   }>;
   /** Drop recommendations pointing at people the user does not actually have. */
   filterRecommendations: (raw: ChatRecommendation[]) => ChatRecommendation[];
+  /**
+   * The focused contact's whole LinkedIn profile, already rendered as text.
+   *
+   * Deliberately outside `budgetContactsContext`: it is one contact, asked about directly
+   * on their own page, and the tiered trimming exists to ration space across many
+   * retrieved people. Rationing the subject of the question is the wrong trade.
+   */
+  focusProfile: string | null;
 };
 
 async function loadKnowledgeSnippets(
@@ -141,6 +155,112 @@ async function retrieveRankedContacts(
     limit: CANDIDATE_POOL,
   });
   return rerankCandidates(userId, q, candidates);
+}
+
+// Every field below is written by the profile's owner, so it is exactly as
+// attacker-controlled as the scraped page text `untrustedPageBlock` sanitizes — same
+// treatment here, applied at render time so the write path (`saveContactProfile`) does not
+// have to know which of its callers eventually reach a model prompt.
+/** A value that must render on one line — headings, org/title/field names. */
+function focusLine(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const clean = sanitizeProfileLine(value);
+  return clean || null;
+}
+/** A value that may be prose spanning multiple lines — About, a role's description. */
+function focusProse(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const clean = sanitizeProfileText(value);
+  return clean || null;
+}
+
+// Generous but real ceilings: `saveContactProfile` bounds each individual field's length
+// but not the number of experience rows, and `about` alone can already be 8000 chars. A
+// pathological profile (dozens of roles, max-length text everywhere) must not be able to
+// blow the prompt out to hundreds of KB or a provider's context limit for one contact — so
+// this block gets its own cap even though it deliberately sits outside the shared budget in
+// `budgetContactsContext`.
+const FOCUS_PROFILE_MAX_ROLES = 20;
+const FOCUS_PROFILE_MAX_SCHOOLS = 10;
+const FOCUS_PROFILE_MAX_CHARS = 12_000;
+
+/**
+ * The focused contact's profile as plain text — one section per heading, no JSON.
+ * Exported so a smoke test can drive it directly with a hostile profile and inspect the
+ * sanitized output, without going through the DB-backed `prepareChatContext`.
+ */
+export function renderFocusProfile(profile: Awaited<ReturnType<typeof getContactProfile>>): string | null {
+  if (!profile) return null;
+  const lines: string[] = [];
+  const headline = focusLine(profile.headline);
+  if (headline) lines.push(headline);
+  const about = focusProse(profile.about);
+  if (about) lines.push(`About: ${about}`);
+
+  const roles = profile.experiences.filter((e) => e.kind === "role");
+  if (roles.length) {
+    lines.push("Experience:");
+    for (const role of roles.slice(0, FOCUS_PROFILE_MAX_ROLES)) {
+      const dates = formatExperienceDates(role);
+      const head = [focusLine(role.title), focusLine(role.organization)]
+        .filter(Boolean)
+        .join(" at ");
+      lines.push(`- ${head}${dates ? ` (${dates})` : ""}`);
+      const description = focusProse(role.description);
+      if (description) lines.push(`  ${description}`);
+    }
+    if (roles.length > FOCUS_PROFILE_MAX_ROLES) {
+      lines.push(`  (+${roles.length - FOCUS_PROFILE_MAX_ROLES} more roles omitted)`);
+    }
+  }
+
+  const schools = profile.experiences.filter((e) => e.kind === "education");
+  if (schools.length) {
+    lines.push("Education:");
+    for (const school of schools.slice(0, FOCUS_PROFILE_MAX_SCHOOLS)) {
+      const detail = [focusLine(school.title), focusLine(school.fieldOfStudy)]
+        .filter(Boolean)
+        .join(", ");
+      const dates = formatExperienceDates(school);
+      const organization = focusLine(school.organization) ?? "";
+      lines.push(`- ${organization}${detail ? ` — ${detail}` : ""}${dates ? ` (${dates})` : ""}`);
+    }
+    if (schools.length > FOCUS_PROFILE_MAX_SCHOOLS) {
+      lines.push(`  (+${schools.length - FOCUS_PROFILE_MAX_SCHOOLS} more schools omitted)`);
+    }
+  }
+
+  if (profile.skills.length) {
+    const names = profile.skills.map((s) => focusLine(s.name)).filter(Boolean);
+    if (names.length) lines.push(`Skills: ${names.join(", ")}`);
+  }
+  if (profile.certifications.length) {
+    const items = profile.certifications
+      .map((c) => [focusLine(c.name), focusLine(c.issuer)].filter(Boolean).join(" — "))
+      .filter(Boolean);
+    if (items.length) lines.push(`Certifications: ${items.join("; ")}`);
+  }
+  if (profile.volunteering.length) {
+    const items = profile.volunteering
+      .map((v) => [focusLine(v.role), focusLine(v.organization)].filter(Boolean).join(" at "))
+      .filter(Boolean);
+    if (items.length) lines.push(`Volunteering: ${items.join("; ")}`);
+  }
+  if (profile.publications.length) {
+    const titles = profile.publications.map((p) => focusLine(p.title)).filter(Boolean);
+    if (titles.length) lines.push(`Publications: ${titles.join("; ")}`);
+  }
+
+  // Provenance, so the model does not present an Apollo guess as the person's own words.
+  lines.push(
+    profile.source === "extension"
+      ? "(Captured from their LinkedIn profile page.)"
+      : "(From a third-party data provider, not their LinkedIn page directly.)"
+  );
+
+  const rendered = lines.join("\n");
+  if (rendered.length <= FOCUS_PROFILE_MAX_CHARS) return rendered;
+  return `${rendered.slice(0, FOCUS_PROFILE_MAX_CHARS)}\n(profile truncated at ${FOCUS_PROFILE_MAX_CHARS} characters)`;
 }
 
 export async function prepareChatContext(
@@ -227,9 +347,15 @@ export async function prepareChatContext(
   }
 
   // Depends on the retrieval above, so it runs after — with the pinned contact's own
-  // interactions alongside, since those are independent of the search.
-  const [snippets, focusMsgs] = await Promise.all([
-    loadKnowledgeSnippets(userId, retrieved.map((c) => c.id)),
+  // interactions, the retrieved page's career lines, and the pinned contact's own full
+  // profile alongside, since all four are independent of each other and of the search.
+  // `getContactProfile` does not depend on `focused` above — it is scoped by userId and
+  // contactId and simply returns null for a contact the user does not own — so it belongs
+  // in this parallel batch rather than a serial await gated on that lookup.
+  const retrievedIds = retrieved.map((c) => c.id);
+  const [snippets, careerLines, focusMsgs, focusProfileData] = await Promise.all([
+    loadKnowledgeSnippets(userId, retrievedIds),
+    getCareerLines(userId, retrievedIds).catch(() => new Map<string, string>()),
     focusContactId
       ? db.query.interactions.findMany({
           where: and(eq(interactions.userId, userId), eq(interactions.contactId, focusContactId)),
@@ -237,7 +363,11 @@ export async function prepareChatContext(
           limit: 16,
         })
       : Promise.resolve([]),
+    focusContactId
+      ? getContactProfile(userId, focusContactId).catch(() => null)
+      : Promise.resolve(null),
   ]);
+  const focusProfile = renderFocusProfile(focusProfileData);
   if (focusContactId) {
     snippets.set(focusContactId, {
       recentMessages: focusMsgs
@@ -255,7 +385,7 @@ export async function prepareChatContext(
   // Sized by rank under a total char budget — a later, cheaper contact must not be
   // appended out of rank order once the budget runs dry, so this can be a strict prefix
   // of `retrieved`.
-  const modelContacts = budgetContactsContext(retrieved, snippets);
+  const modelContacts = budgetContactsContext(retrieved, snippets, careerLines);
 
   // Roster and attention contacts are as legitimate a recommendation as retrieved ones —
   // they came from the same user's own rows — so they must not be filtered out for being
@@ -284,6 +414,7 @@ export async function prepareChatContext(
     allowedContacts,
     allowedRecruiters,
     modelContacts,
+    focusProfile,
     modelRecruiters: recruitersForChat.map((r) => ({
       id: r.id,
       fullName: r.fullName,

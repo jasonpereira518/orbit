@@ -81,10 +81,24 @@ async function seed() {
 
   await db.insert(schema.userGoals).values({ userId: USER, text: "meet more people" });
 
-  await db.insert(schema.feedback).values({
+  const [feedbackRow] = await db
+    .insert(schema.feedback)
+    .values({
+      userId: USER,
+      kind: "churn_reason",
+      text: "their own words about Orbit",
+    })
+    .returning();
+
+  // Carries `user_id` of its own rather than relying on the cascade from `feedback` —
+  // which is exactly why `userScopedTables()` finds it, and why it needs a row here.
+  await db.insert(schema.feedbackScreenshots).values({
+    feedbackId: feedbackRow.id,
     userId: USER,
-    kind: "churn_reason",
-    text: "their own words about Orbit",
+    storage: "inline",
+    inlineData: "aGVsbG8=",
+    contentType: "image/webp",
+    byteSize: 5,
   });
 
   await db.insert(schema.gateEvents).values({
@@ -148,6 +162,27 @@ async function seed() {
     userId: USER,
     contactId: contact.id,
     standing: "a generated summary of a real relationship",
+  });
+
+  // Cascade-covered (from `contacts`), seeded anyway: the cascade is the thing under test,
+  // and an unseeded table proves nothing about it. Holds the prose half of a captured
+  // LinkedIn profile — headline, about, skills — for a real named person.
+  await db.insert(schema.contactProfiles).values({
+    userId: USER,
+    contactId: contact.id,
+    headline: "Computer Scientist at Acme",
+    source: "extension",
+  });
+
+  // Cascade-covered (from `contacts`), seeded anyway, same reasoning as `contactProfiles`
+  // above. Holds one role/school entry from that same captured profile.
+  await db.insert(schema.contactExperiences).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "role",
+    organization: "Acme",
+    organizationNormalized: "acme",
+    source: "extension",
   });
 
   await db.insert(schema.actionItems).values({
@@ -248,6 +283,58 @@ async function seed() {
     body: "prose the user wrote about a real person",
   });
 
+  // Duplicate-prevention rows. `contact_merges` is the one that matters most here: it has
+  // no foreign key to either contact (the losing contact's row is deleted by design), so
+  // nothing cascades it — and `loser_snapshot` is a whole archived contact, every field of
+  // a person the user knew, which would otherwise outlive the account.
+  await db.insert(schema.contactIdentities).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "email",
+    value: "ada@analytical.io",
+  });
+  const [otherContact] = await db
+    .insert(schema.contacts)
+    .values({ userId: USER, fullName: "Ada Lovelace (dup)" })
+    .returning();
+  await db.insert(schema.duplicateSuggestions).values({
+    userId: USER,
+    contactAId: contact.id < otherContact.id ? contact.id : otherContact.id,
+    contactBId: contact.id < otherContact.id ? otherContact.id : contact.id,
+    reason: "Same full name",
+    confidence: 0.6,
+  });
+  await db.insert(schema.contactMerges).values({
+    userId: USER,
+    winnerContactId: contact.id,
+    loserContactId: otherContact.id,
+    loserSnapshot: { full_name: "Ada Lovelace (dup)", email: "ada@analytical.io" },
+    status: "done",
+  });
+
+  // An event, its roster, and a stored provider credential. The roster row deliberately
+  // points at `contact` so the purge also has to survive the `ON DELETE SET NULL` FK — the
+  // ordering bug that would otherwise rewrite every attendee on the way to deleting it.
+  const [eventRow] = await db
+    .insert(schema.events)
+    .values({ userId: USER, title: "Deep Learning Summit", venue: "Moscone" })
+    .returning();
+  await db.insert(schema.eventAttendees).values({
+    eventId: eventRow.id,
+    userId: USER,
+    fullName: "Ada Lovelace",
+    email: "ada@analytical.io",
+    contactId: contact.id,
+    identityKey: "em:ada@analytical.io",
+  });
+  // Same class of secret as the Gmail/Outlook rows below.
+  await db.insert(schema.eventProviderConnections).values({
+    userId: USER,
+    provider: "luma",
+    authKind: "api_key",
+    apiKeyEncrypted: "ciphertext-luma-key",
+  });
+
   for (const table of [schema.gmailConnections, schema.outlookConnections]) {
     await db.insert(table).values({
       userId: USER,
@@ -289,6 +376,40 @@ async function seed() {
   // fourth user-scoped table to ship unpurged (found the first time this suite ran on a
   // fresh database instead of one that happened to hold a leftover row).
   await db.insert(schema.extensionUsage).values({ userId: USER, requestCount: 3, aiCount: 1 });
+
+  // The connector platform. `api_keys` is the one that would matter most if it survived a
+  // deletion: a credential with no owning account still works.
+  await db.insert(schema.apiKeys).values({
+    userId: USER,
+    name: "purge fixture",
+    prefix: "orb_live_deadbeef",
+    keyHash: "0".repeat(64),
+    scopes: ["read"],
+  });
+  await db.insert(schema.apiIdempotencyKeys).values({
+    userId: USER,
+    idempotencyKey: "purge-fixture",
+    requestHash: "abc",
+    statusCode: 200,
+    responseBody: {},
+  });
+  const [endpoint] = await db
+    .insert(schema.webhookEndpoints)
+    .values({
+      userId: USER,
+      url: "https://example.com/hook",
+      secretEncrypted: "enc",
+      eventTypes: ["contact.created"],
+      status: "active",
+    })
+    .returning();
+  await db.insert(schema.outboundWebhookDeliveries).values({
+    userId: USER,
+    endpointId: endpoint.id,
+    eventId: "evt_purge_fixture",
+    eventType: "contact.created",
+    payload: {},
+  });
 
   return { recruiterId: recruiter.id };
 }

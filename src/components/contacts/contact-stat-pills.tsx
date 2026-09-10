@@ -1,4 +1,5 @@
 import { formatDistanceToNow } from "date-fns";
+import { ConstellationPinButton } from "@/components/contacts/constellation-pin-button";
 import { Badge } from "@/components/ui/badge";
 import {
   closenessTierChipClass,
@@ -10,6 +11,7 @@ export function ContactStatPills({
   closeness,
   lastTouchAt,
   hasLoggedInteraction,
+  constellation,
 }: {
   closeness: ClosenessBreakdown;
   lastTouchAt: Date | string | null;
@@ -20,6 +22,15 @@ export function ContactStatPills({
    * happened, right next to a timeline that says "no interactions yet".
    */
   hasLoggedInteraction: boolean;
+  /**
+   * Omitted when the constellation filter is off globally — a control with no effect is
+   * worse than no control. Any stored pin is preserved either way.
+   */
+  constellation?: {
+    contactId: string;
+    pin: "in" | "out" | null;
+    substantive: boolean;
+  };
 }) {
   const pct = Math.round(closeness.closeness * 100);
   const since = lastTouchAt
@@ -32,7 +43,9 @@ export function ContactStatPills({
       : `Connected ${since}`;
 
   return (
-    <div className="flex flex-wrap gap-2">
+    // `items-center` so the constellation button sits on the same baseline as the badges —
+    // it is a real button and slightly taller than they are.
+    <div className="flex flex-wrap items-center gap-2">
       <Badge
         variant="secondary"
         className={cn(
@@ -54,6 +67,13 @@ export function ContactStatPills({
       >
         {lastLabel}
       </Badge>
+      {constellation && (
+        <ConstellationPinButton
+          contactId={constellation.contactId}
+          pin={constellation.pin}
+          substantive={constellation.substantive}
+        />
+      )}
     </div>
   );
 }

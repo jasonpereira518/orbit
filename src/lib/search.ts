@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { eq, and, inArray, sql } from "drizzle-orm";
 import { getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import { contactEmbeddings, contacts } from "@/db/schema";
+import { careerLine, type ExperienceEntry } from "@/lib/contact-profile-format";
 import { metContextLabel } from "@/lib/met-context";
 import { createEmbedding, createEmbeddingsBatch } from "@/lib/ai";
 import { formatVectorLiteral } from "@/lib/pgvector";
@@ -60,7 +61,12 @@ export async function upsertContactEmbedding(
   contactId: string,
   sourceType: string,
   content: string,
-  sourceId?: string
+  sourceId?: string,
+  // Injectable the same way `rebuildContactEmbeddingsBatch`'s `embedFn` is: every real
+  // caller gets the default (the live provider call), and a smoke test can inject a
+  // deterministic stub to exercise this function's DB effects — the upsert, the
+  // `RETURNING` mapping, `persistEmbeddingVectors` — without a live AI key.
+  embed: typeof createEmbedding = createEmbedding
 ): Promise<boolean> {
   if (!content.trim()) return false;
 
@@ -82,7 +88,7 @@ export async function upsertContactEmbedding(
     // Unchanged content: the stored embedding is still correct — skip the API call.
     if (existing?.contentHash === contentHash) return false;
 
-    const embedding = await createEmbedding(userId, content);
+    const embedding = await embed(userId, content);
 
     if (existing) {
       await db
@@ -194,6 +200,13 @@ type ContactEmbeddingSource = {
   keyFacts?: string[] | null;
   opportunities?: string[] | null;
   contactTags?: { tag: { name: string } }[];
+  /**
+   * A captured LinkedIn profile, when the contact has one. Its `about` and the career
+   * line are what make "who came out of a hardware company" work semantically, rather
+   * than only through the keyword arm's exists-subquery.
+   */
+  profile?: { about?: string | null; headline?: string | null } | null;
+  experiences?: ExperienceEntry[];
 };
 
 /**
@@ -205,11 +218,21 @@ type ContactEmbeddingSource = {
  *    directly with their own `sourceType`/`sourceId` ("linkedin_message", "meeting") and
  *    never flow through here — no split needed on that front.
  * 2. This function's own output CAN exceed the 8,000-char truncation in
- *    `createEmbedding`/`createEmbeddingsBatch` (`src/lib/ai.ts:1165`) when `notes` is long,
- *    since `notes` is the one open-ended free-text field folded in below. `notes` is split
- *    into its own `sourceType: "notes"` row by `rebuildContactEmbedding` /
- *    `rebuildContactEmbeddingsBatch` whenever the combined content would overflow — see
- *    `PROFILE_CONTENT_TRUNCATION_LIMIT` below.
+ *    `createEmbedding`/`createEmbeddingsBatch` (`src/lib/ai.ts:1165`) when `notes` or
+ *    `profile.about` is long — those are the two open-ended free-text fields folded in
+ *    below. `notes` is split into its own `sourceType: "notes"` row by
+ *    `rebuildContactEmbedding` / `rebuildContactEmbeddingsBatch` whenever the combined
+ *    content would overflow — see `PROFILE_CONTENT_TRUNCATION_LIMIT` below. `profile.about`
+ *    has NO equivalent split (see the recommendation left in the Task 5 fix report); the
+ *    field ordering below is what protects the career line and headline from it, by placing
+ *    them ahead of `about` so a truncation eats prose rather than an employer name.
+ * 3. That `notes` split is NOT universal, which is why the career line now sits ahead of
+ *    `notes` as well. `runEmbeddingBackfill` — the path bulk imports and the daily cron
+ *    take — calls this function directly, with no `splitProfileEmbeddingContent`, so for
+ *    those contacts `notes` is folded in inline and a contact with more than 8,000
+ *    characters of notes lost the career line, the headline, and About off the tail
+ *    entirely. Short, high-signal and irreplaceable beats long and open-ended, so every
+ *    profile-derived field is ordered ahead of the free text that can crowd it out.
  */
 export function buildContactEmbeddingContent(
   contact: ContactEmbeddingSource,
@@ -227,12 +250,22 @@ export function buildContactEmbeddingContent(
     contact.linkedinUrl,
     contact.website,
     contact.aiSummary,
+    // Ahead of `notes`, not only ahead of `about` — see note 3 in the audit above: on the
+    // backfill path `notes` is inline and unsplit, and can be long enough on its own to
+    // push everything after it past the 8,000-char truncation.
+    careerLine(contact.experiences ?? []),
+    contact.profile?.headline,
     includeNotes ? contact.notes : null,
     metContextLabel(contact.metContext),
     contact.dateMet
       ? new Date(contact.dateMet).toLocaleDateString()
       : null,
     contact.howMet,
+    // `about` stays down here: it is long, open-ended prose with no overflow split of its
+    // own (unlike `notes`), so if the combined content is going to lose its tail to the
+    // 8,000-char embedding truncation, it must be `about`'s tail that goes — never the
+    // headline or the career line, which are now above `notes`.
+    contact.profile?.about,
     ...(contact.keyFacts || []),
     ...(contact.opportunities || []),
     ...(contact.contactTags?.map((ct) => ct.tag.name) || []),
@@ -263,19 +296,35 @@ function splitProfileEmbeddingContent(
   };
 }
 
-/** True only when a row was actually written; see `upsertContactEmbedding`. */
-export async function rebuildContactEmbedding(userId: string, contactId: string): Promise<boolean> {
+/**
+ * True only when a row was actually written; see `upsertContactEmbedding`.
+ *
+ * `embed` defaults to the real provider call and is forwarded to `upsertContactEmbedding`
+ * unchanged — the same injectable-seam pattern `rebuildContactEmbeddingsBatch` uses for
+ * `embedFn`, added so this, the OTHER immediate-rebuild entry point (called from
+ * `contact-writes.ts`, `extension/writes.ts`, `contact-brief.ts`, `actions/graph.ts`), can
+ * be smoke-tested end to end without a live AI key.
+ */
+export async function rebuildContactEmbedding(
+  userId: string,
+  contactId: string,
+  embed: typeof createEmbedding = createEmbedding
+): Promise<boolean> {
   const db = await getDb();
   const contact = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-    with: { contactTags: { with: { tag: true } } },
+    with: {
+      contactTags: { with: { tag: true } },
+      profile: true,
+      experiences: true,
+    },
   });
   if (!contact) return false;
 
   const { profile, notes } = splitProfileEmbeddingContent(contact);
-  const profileWritten = await upsertContactEmbedding(userId, contactId, "profile", profile, contactId);
+  const profileWritten = await upsertContactEmbedding(userId, contactId, "profile", profile, contactId, embed);
   if (notes) {
-    const notesWritten = await upsertContactEmbedding(userId, contactId, "notes", notes, contactId);
+    const notesWritten = await upsertContactEmbedding(userId, contactId, "notes", notes, contactId, embed);
     return profileWritten || notesWritten;
   }
   // Content shrank back under the split threshold — drop the now-stale "notes" row so it
@@ -307,7 +356,11 @@ export async function rebuildContactEmbeddingsBatch(
   const db = await getDb();
   const rows = await db.query.contacts.findMany({
     where: and(eq(contacts.userId, userId), inArray(contacts.id, ids)),
-    with: { contactTags: { with: { tag: true } } },
+    with: {
+      contactTags: { with: { tag: true } },
+      profile: true,
+      experiences: true,
+    },
   });
 
   const existing = await db.query.contactEmbeddings.findMany({

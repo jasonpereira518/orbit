@@ -44,6 +44,8 @@ import { sql } from "drizzle-orm";
   "error_events",
   "app_surface_flags",
   "interest_list_signups",
+  "feedback",
+  "feedback_screenshots",
   "broadcasts",
   "broadcast_recipients",
 ] as const;

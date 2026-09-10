@@ -5,6 +5,7 @@ import type {
   ClosenessCohortSnapshot,
   StoredClosenessBreakdown,
 } from "@/db/schema";
+import { isCoveredByConnectedSource } from "@/lib/closeness-evidence";
 import {
   applyClosenessCohort,
   computeRawCloseness,
@@ -82,6 +83,8 @@ export function buildSnapshot(
     maxSchool: number;
     userDomain: string | null;
     mailConnected: boolean;
+    /** Optional to match the persisted type — see `ClosenessCohortSnapshot.calendarConnected`. */
+    calendarConnected?: boolean;
   }
 ): ClosenessCohortSnapshot {
   return {
@@ -125,6 +128,7 @@ const EMPTY_SNAPSHOT: ClosenessCohortSnapshot = {
   maxSchool: 1,
   userDomain: null,
   mailConnected: false,
+  calendarConnected: false,
 };
 
 export function isUsableSnapshot(
@@ -392,7 +396,7 @@ export async function rescoreContact(
       schoolConcentration: contact.school
         ? Number(schoolRows[0]?.n ?? 0) / Math.max(1, snapshot.maxSchool)
         : 0,
-      coveredByConnectedSource: snapshot.mailConnected && !!contact.email,
+      coveredByConnectedSource: isCoveredByConnectedSource(snapshot, contact),
     },
     goalRows.map((g) => g.text),
     recent

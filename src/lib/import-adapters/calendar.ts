@@ -2,6 +2,7 @@ import type { CalendarEventRowPayload } from "@/db/schema";
 import type { ContactInput } from "@/lib/contact-writes";
 import { daysAgo } from "@/lib/duplicates";
 import type { ImportAdapter, InteractionInsert, ReminderInsert } from "@/lib/import-engine";
+import { calendarExternalIdBase, interactionExternalId } from "@/lib/ingest/external-id";
 
 /**
  * The two `imports.import_type` values a calendar upload can carry, depending on the file
@@ -30,7 +31,7 @@ export const CALENDAR_CSV_IMPORT_TYPE = "calendar_csv";
  * pair is unique per attendee, so neither happens.
  */
 export function calendarMeetingExternalId(eventUid: string, contactId: string) {
-  return `cal:${eventUid}:${contactId}`;
+  return interactionExternalId(calendarExternalIdBase(eventUid), contactId);
 }
 
 function eventDateOf(payload: CalendarEventRowPayload): Date {
@@ -44,12 +45,15 @@ function eventDateOf(payload: CalendarEventRowPayload): Date {
  * cannot push a free user over their contact limit, because it adds nobody.
  *
  * Matching uses a 0.6 confidence floor — the weakest tier `findDuplicateCandidatesIndexed`
- * produces (a bare full-name hit), well below the 0.85 `DUPLICATE_MERGE_CONFIDENCE` floor
- * every contact-*creating* adapter uses to decide "these two rows are the same person, merge
- * them." Calendar isn't making that call: logging a meeting against a same-named contact is a
- * much smaller mistake than silently merging two different people, so it can accept a weaker
- * match than a create-or-merge decision could. See `matchConfidence` below and its doc
- * comment on `ImportAdapter` for where that floor is actually enforced.
+ * produces (a bare full-name hit). That is only acceptable because `createsContacts` is
+ * false: this adapter annotates existing contacts and never decides that two rows are the
+ * same person. Logging a meeting against a same-named contact is visible and fixable;
+ * merging two different people was not.
+ *
+ * Sources that DO create contacts use the default 0.85 instead, which name+company and
+ * name+title clear and a bare full-name match does not — those become a
+ * `duplicate_suggestions` row for a human. `src/lib/calendar-sync.ts` and
+ * `src/lib/sync-scheduler.ts` used to copy the 0.6 from here, which was the bug.
  */
 export const calendarAdapter: ImportAdapter<CalendarEventRowPayload> = {
   createsContacts: false,

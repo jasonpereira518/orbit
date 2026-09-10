@@ -120,7 +120,8 @@ async function main() {
   const dashboardScans = contactScans(capturedQueries());
   console.log(`  statements: ${dashboardCount}`);
   if (process.env.DEBUG_QUERIES) for (const q of capturedQueries()) console.log("    ·", q.replace(/\s+/g, " ").slice(0, 110));
-  check("dashboard issues ≤ 12 statements", dashboardCount <= 12, `got ${dashboardCount}`);
+  // 13 for the same one reason as the graph's 9 — see the note there.
+  check("dashboard issues ≤ 13 statements", dashboardCount <= 13, `got ${dashboardCount}`);
   check("dashboard scans contacts at least once", dashboardScans.length >= 1);
   check(
     "dashboard contacts scan does not pull notes",
@@ -155,7 +156,11 @@ async function main() {
   const graphCount = stopQueryCount();
   const graphScans = contactScans(capturedQueries());
   console.log(`  statements: ${graphCount}`);
-  check("graph issues ≤ 8 statements", graphCount <= 8, `got ${graphCount}`);
+  // 9, not 8: the constellation filter reads its singleton `constellation_settings` row.
+  // That is the ONLY statement the feature adds — its per-contact eligibility tallies ride
+  // on the `group by contact_id` the closeness cohort already issues, so they cost nothing.
+  // If this number moves again, something started scanning `interactions` a second time.
+  check("graph issues ≤ 9 statements", graphCount <= 9, `got ${graphCount}`);
   check("graph contacts scan does not pull notes", graphScans.every((s) => !selectsBare(s, "notes")));
   check(
     "graph contacts scan does not pull profile_image_url as a bare column",
@@ -167,7 +172,47 @@ async function main() {
   // The constellation ships every contact to the client by design (~700 bytes each once
   // notes and avatars are out), so this is a base64-regression tripwire, not a target.
   check("graph payload under 3 MB", graphJson.length < 3_000_000, `${(graphJson.length / 1024).toFixed(0)} KB`);
+  // Unfiltered on purpose, and now load-bearing: the constellation filter hides stars but
+  // must never change what Orbit says the network *is*. This is the guard on that.
   check("graph reports every contact", graph.summary.total === N + 5, `got ${graph.summary.total}`);
+  // The whole point of filtering server-side: the default view must not carry the people it
+  // is not drawing. At ~741 bytes a contact, shipping them anyway is megabytes per visit.
+  check(
+    "graph ships only the contacts it draws",
+    graph.contacts.length === graph.summary.constellationFilter.shown &&
+      graph.contacts.length < graph.summary.total,
+    `${graph.contacts.length} shipped of ${graph.summary.total}`
+  );
+  check(
+    "and reports the full network as available behind the 'show all' control",
+    graph.summary.constellationFilter.available === graph.summary.total
+  );
+
+  console.log("\nConstellation, show-all scope (loadGraphData scope:all)…");
+  startQueryCount();
+  const graphAll = await loadGraphData(USER, {
+    profile: Promise.resolve(null),
+    scope: "all",
+  });
+  const graphAllCount = stopQueryCount();
+  console.log(`  statements: ${graphAllCount}`);
+  check("show-all issues ≤ 9 statements", graphAllCount <= 9, `got ${graphAllCount}`);
+  check(
+    "show-all carries the whole network",
+    graphAll.contacts.length === N + 5,
+    `${graphAll.contacts.length}`
+  );
+  const engagedBytes = JSON.stringify(graph.contacts).length;
+  const allBytes = JSON.stringify(graphAll.contacts).length;
+  check(
+    "and the default view is materially lighter than it",
+    engagedBytes < allBytes,
+    `engaged ${(engagedBytes / 1024).toFixed(0)} KB vs all ${(allBytes / 1024).toFixed(0)} KB`
+  );
+  console.log(
+    `  engaged ${(engagedBytes / 1024).toFixed(0)} KB · all ${(allBytes / 1024).toFixed(0)} KB` +
+      ` (${((1 - engagedBytes / allBytes) * 100).toFixed(0)}% smaller)`
+  );
   check("graph still resolves an inline avatar to the avatar route", graphJson.includes("/api/avatars/"));
 
   // ---- Notifications panel -----------------------------------------------------------

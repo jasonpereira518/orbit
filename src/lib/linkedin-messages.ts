@@ -210,40 +210,132 @@ function allProfileUrlsInMessage(m: ParsedLinkedInMessage): string[] {
   ];
 }
 
-/** The account owner's profile usually appears most often across the export. */
+export type SelfIdentity = {
+  /** Best guess at the account owner's profile URL, or "" if none could be formed. */
+  url: string;
+  slug: string;
+  /**
+   * Whether the guess is trustworthy enough to label messages with.
+   *
+   * Participant selection can live with a wrong guess — it picks a slightly worse
+   * counterpart. Direction cannot: mistaking the owner for the other person inverts "you
+   * said" and "they said" for every message in the export. So when the file cannot identify
+   * an owner, `messageDirection` returns null and the whole import stays undirected rather
+   * than confidently backwards.
+   */
+  confident: boolean;
+};
+
+/**
+ * Who owns this export.
+ *
+ * Ranked by how many distinct CONVERSATIONS a profile appears in, not how many messages.
+ * The owner is a participant in every conversation by definition, while any one counterpart
+ * appears in only their own — so conversation count separates them cleanly where message
+ * count does not.
+ *
+ * Message count was the original heuristic and is provably wrong on a common shape: in a 1:1
+ * thread, every message names both the sender and the recipient, so both sides score exactly
+ * the same. The counts tie, `>` never fires for the runner-up, and the winner is whichever
+ * slug the Map saw first — i.e. whoever happened to message first. An export dominated by
+ * one thread inverted every message in it. Message count is kept only as a tiebreak.
+ */
+export function resolveSelfIdentity(
+  messages: ParsedLinkedInMessage[],
+  explicit?: string | null
+): SelfIdentity {
+  const explicitSlug = explicit ? linkedinSlug(explicit) : "";
+  // The user told us who they are in settings. Nothing in a CSV beats that.
+  if (explicit && explicitSlug) {
+    return { url: explicit, slug: explicitSlug, confident: true };
+  }
+
+  const conversations = new Map<string, Set<string>>();
+  const messageCounts = new Map<string, number>();
+  const allConversations = new Set<string>();
+
+  for (const m of messages) {
+    if (m.conversationId) allConversations.add(m.conversationId);
+    for (const url of allProfileUrlsInMessage(m)) {
+      const slug = linkedinSlug(url);
+      if (!slug) continue;
+      messageCounts.set(slug, (messageCounts.get(slug) || 0) + 1);
+      if (!m.conversationId) continue;
+      let seen = conversations.get(slug);
+      if (!seen) {
+        seen = new Set<string>();
+        conversations.set(slug, seen);
+      }
+      seen.add(m.conversationId);
+    }
+  }
+
+  const ranked = [...messageCounts.keys()]
+    .map((slug) => ({
+      slug,
+      threads: conversations.get(slug)?.size ?? 0,
+      messages: messageCounts.get(slug) || 0,
+    }))
+    .sort((a, b) => b.threads - a.threads || b.messages - a.messages);
+
+  const best = ranked[0];
+  if (!best) return { url: "", slug: "", confident: false };
+
+  const runnerUp = ranked[1];
+  const totalThreads = allConversations.size;
+  const confident =
+    // A single-conversation export genuinely cannot say which side owns it.
+    totalThreads >= 2 &&
+    best.threads >= 2 &&
+    // A clear winner, not a coin flip between two people who look alike.
+    (!runnerUp || best.threads > runnerUp.threads) &&
+    // And an owner should turn up across the file, not in one corner of it.
+    best.threads * 3 >= totalThreads;
+
+  // Prefer a canonical URL as it appears in the file over a synthesised one.
+  for (const m of messages) {
+    for (const url of allProfileUrlsInMessage(m)) {
+      if (linkedinSlug(url) === best.slug) {
+        return { url, slug: best.slug, confident };
+      }
+    }
+  }
+  return {
+    url: `https://www.linkedin.com/in/${best.slug}`,
+    slug: best.slug,
+    confident,
+  };
+}
+
+/**
+ * The account owner's profile URL, or "" if none could be formed.
+ *
+ * Thin wrapper kept for the participant-resolution callers, which want a URL and have no use
+ * for the confidence flag. Anything labelling messages must use `resolveSelfIdentity`.
+ */
 export function inferSelfLinkedInUrl(
   messages: ParsedLinkedInMessage[],
   explicit?: string | null
 ): string {
-  if (explicit && linkedinSlug(explicit)) return explicit;
+  return resolveSelfIdentity(messages, explicit).url;
+}
 
-  const counts = new Map<string, number>();
-  for (const m of messages) {
-    for (const url of allProfileUrlsInMessage(m)) {
-      const slug = linkedinSlug(url);
-      if (!slug) continue;
-      counts.set(slug, (counts.get(slug) || 0) + 1);
-    }
-  }
-
-  let bestSlug = "";
-  let bestCount = 0;
-  for (const [slug, count] of counts) {
-    if (count > bestCount) {
-      bestSlug = slug;
-      bestCount = count;
-    }
-  }
-
-  if (!bestSlug) return "";
-
-  // Return a canonical URL from the file matching that slug
-  for (const m of messages) {
-    for (const url of allProfileUrlsInMessage(m)) {
-      if (linkedinSlug(url) === bestSlug) return url;
-    }
-  }
-  return `https://www.linkedin.com/in/${bestSlug}`;
+/**
+ * Who sent one message: `"out"` from the account owner, `"in"` from the other party.
+ *
+ * Returns null — never a guess — when the sender cannot be established: no self identity, an
+ * unconfident one, or a row whose SENDER PROFILE URL is blank, which real exports do produce.
+ * Null flows through to `interactions.direction` and readers treat it as "unknown", which is
+ * the honest answer and a distinct case from a one-sided thread.
+ */
+export function messageDirection(
+  m: ParsedLinkedInMessage,
+  self: SelfIdentity
+): "in" | "out" | null {
+  if (!self.confident || !self.slug) return null;
+  const senderSlug = linkedinSlug(m.senderProfileUrl);
+  if (!senderSlug) return null;
+  return senderSlug === self.slug ? "out" : "in";
 }
 
 function buildUrlNameMap(messages: ParsedLinkedInMessage[]) {
