@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { Camera, Check, Images, X } from "lucide-react";
 import { ScanChip } from "@/components/scan/scan-controls";
 import { Button } from "@/components/ui/button";
+import { OFFLINE_MESSAGE, friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
 import { SPRING_PILL } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
@@ -50,15 +51,15 @@ export function ScanPhoneCapture({ token }: { token: string }) {
           // Safari decodes HEIC natively, so this is rare on the device this page is for.
           toast.error(
             err instanceof ScanError && err.reason === "heic-undecodable"
-              ? "That photo is in a format this browser can't open."
-              : `Could not read ${file.name}.`
+              ? "This browser can’t open that photo — try a different one?"
+              : `Couldn’t read ${file.name} — try a different one?`
           );
         }
       }
       setPages((prev) => {
         const room = Math.max(0, MAX_SCAN_PAGES - prev.length);
         if (added.length > room) {
-          toast.error(`That's the ${MAX_SCAN_PAGES}-page limit for one scan.`);
+          toast.error(`That’s the ${MAX_SCAN_PAGES}-page limit for one scan`);
           for (const extra of added.slice(room)) releaseScanPage(extra);
         }
         return [...prev, ...added.slice(0, room)];
@@ -102,16 +103,18 @@ export function ScanPhoneCapture({ token }: { token: string }) {
         toast.error(
           body.error ??
             (res.status === 404
-              ? "This link has expired. Generate a new QR code on your computer."
-              : "Could not send those pages.")
+              ? "This link has expired — make a new QR code on your computer"
+              : "Those pages didn’t send — try again?")
         );
         return;
       }
       for (const page of pages) releaseScanPage(page);
       setPages([]);
       setSent(true);
-    } catch {
-      toast.error("Could not reach Orbit. Check your connection and try again.");
+    } catch (err) {
+      // A throw from `fetch` is a connection that never reached Orbit, which #150 already
+      // words as OFFLINE_MESSAGE; `friendlyError` also tells a timeout apart from it.
+      toast.error(friendlyError(err, OFFLINE_MESSAGE));
     } finally {
       setBusy(false);
     }

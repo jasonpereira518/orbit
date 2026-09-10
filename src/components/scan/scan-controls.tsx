@@ -83,17 +83,17 @@ export async function sortAndNormalizeScanFiles(
         // Only Safari decodes HEIC. Naming the fix matters, because the person has a
         // button for it a few pixels away.
         toast.error(
-          `${file.name} is an iPhone HEIC, which this browser can't open. Send it with "Use your phone", or export it as JPEG.`
+          `${file.name} is an iPhone photo this browser can’t open — send it with "Use your phone", or export it as JPEG`
         );
       } else {
-        toast.error(`Could not read ${file.name}.`);
+        toast.error(`Couldn’t read ${file.name} — try a different one?`);
       }
     }
   }
 
   if (droppedPages > 0) {
     toast.error(
-      `Only the first ${MAX_SCAN_PAGES} pages were kept — send the rest in a second scan.`
+      `Only the first ${MAX_SCAN_PAGES} pages were kept — send the rest in a second scan`
     );
   }
   return { pages, raw };

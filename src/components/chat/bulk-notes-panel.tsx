@@ -39,11 +39,7 @@ import type {
   ParsedNote,
   SharedNoteContext,
 } from "@/lib/ai";
-import {
-  MISSING_AI_API_KEY_MESSAGE,
-  isMissingAiApiKeyError,
-  toUserFacingError,
-} from "@/lib/errors";
+import { friendlyError, isMissingAiApiKeyError, MISSING_AI_API_KEY_MESSAGE } from "@/lib/errors";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -52,6 +48,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 type Decision = "pending" | "accepted" | "discarded";
 
@@ -293,7 +290,7 @@ export function BulkNotesPanel({
         }));
         const checkedSuggestions = suggestions.filter((s) => s.checked);
         if (!payload.length && !checkedSuggestions.length) {
-          toast.error("Nothing to save — accept a person or a date");
+          toast.error("Nothing to save — accept a person or a date first");
           return;
         }
         const res = await confirmBulkCapture(payload, {
@@ -346,7 +343,7 @@ export function BulkNotesPanel({
           router.push(`/capture/${res.batchId}`);
         }
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Save failed");
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
       }
     });
   }
@@ -364,7 +361,7 @@ export function BulkNotesPanel({
     const totalBytes = pages.reduce((sum, page) => sum + page.bytes, 0);
     if (totalBytes > CAPTURE_MAX_UPLOAD_BYTES) {
       toast.error(
-        `Those pages come to ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}. Try fewer at a time.`
+        `Those pages total ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}, so try fewer at a time`
       );
       return;
     }
@@ -415,7 +412,7 @@ export function BulkNotesPanel({
         setFileName(pages.length === 1 ? pages[0]!.filename : `${pages.length} pages`);
         if (wasEmpty && hasApiKey) runParse(res.text);
       } catch (err) {
-        const message = toUserFacingError(err, "Could not read those pages").message;
+        const message = friendlyError(err, "Couldn’t read those pages — try again?");
         finishBackgroundJob(jobId, { status: "failed", error: message });
         toast.error(message);
       } finally {
@@ -438,8 +435,8 @@ export function BulkNotesPanel({
     if (totalBytes > CAPTURE_MAX_UPLOAD_BYTES) {
       toast.error(
         files.length === 1
-          ? `${files[0]!.name} is ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} per upload.`
-          : `Those ${files.length} files total ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} per upload. Try adding them in smaller batches.`
+          ? `${files[0]!.name} is ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} per upload`
+          : `Those ${files.length} files total ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} per upload, so try smaller batches`
       );
       return;
     }
@@ -471,10 +468,10 @@ export function BulkNotesPanel({
             ? files[0]!.name
             : `${files.length} files ingested`
         );
-        toast.success("Input ready — review the text, then extract people");
+        toast.success("Ready — check the text, then extract people");
       } catch (err) {
         toast.error(
-          toUserFacingError(err, "Could not read that file").message
+          friendlyError(err, TOAST_COPY.fileReadFailed)
         );
       }
     });
@@ -592,11 +589,11 @@ export function BulkNotesPanel({
           : "";
         toast.success(`Found ${peopleLabel}${dateLabel}`);
       } catch (err) {
-        const message = toUserFacingError(
-          err,
-          MISSING_AI_API_KEY_MESSAGE
-        ).message;
-        if (isMissingAiApiKeyError(message)) setHasApiKey(false);
+        // Only unexpected throws reach here — a missing key comes back as
+        // `res.ok === false` above — so the key message is no longer the
+        // fallback. `friendlyError` still names a genuine missing key.
+        const message = friendlyError(err, TOAST_COPY.notesReadFailed);
+        if (message === MISSING_AI_API_KEY_MESSAGE) setHasApiKey(false);
         toast.error(message);
       }
 });

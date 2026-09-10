@@ -2,7 +2,7 @@
 
 import QRCode from "qrcode";
 import { requireUserId } from "@/lib/auth";
-import { toUserFacingError } from "@/lib/errors";
+import { friendlyError } from "@/lib/errors";
 import {
   cancelScanHandoff,
   claimScanHandoff,
@@ -58,7 +58,7 @@ export async function mintScanHandoffAction() {
       } satisfies MintedScanHandoff,
     };
   } catch (err) {
-    return { ok: false as const, error: toUserFacingError(err).message };
+    return { ok: false as const, error: friendlyError(err, "Couldn’t make a QR code — try again?") };
   }
 }
 
@@ -69,7 +69,7 @@ export async function pollScanHandoffAction(token: string) {
     const claim: HandoffClaim = await claimScanHandoff(userId, token);
     return { ok: true as const, claim };
   } catch (err) {
-    return { ok: false as const, error: toUserFacingError(err).message };
+    return { ok: false as const, error: friendlyError(err, "Couldn’t check on your phone — try again?") };
   }
 }
 
@@ -80,6 +80,6 @@ export async function cancelScanHandoffAction(token: string) {
     await cancelScanHandoff(userId, token);
     return { ok: true as const };
   } catch (err) {
-    return { ok: false as const, error: toUserFacingError(err).message };
+    return { ok: false as const, error: friendlyError(err, "Couldn’t cancel that code — try again?") };
   }
 }

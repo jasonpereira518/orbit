@@ -2085,7 +2085,12 @@ html [data-sonner-toaster] {
    travel reads; the box-shadow tier is the interaction one, for the hover lift. */
 [data-sonner-toaster] li.orbit-toast {
   transition:
-    transform var(--transition-duration-slow) var(--ease-house),
+    /* Arrival settles rather than snaps. `--ease-house` (0.22, 1, 0.36, 1) has y1 = 1,
+       so it leaves at full speed and then drifts — right for a panel you asked for,
+       abrupt for something that arrives unasked. This drawer curve starts gentler and
+       decelerates into place, at the same duration. The exit, below, stays brisk:
+       leaving fast reads as responsive; arriving fast reads as urgent. */
+    transform var(--transition-duration-slow) cubic-bezier(0.32, 0.72, 0, 1),
     opacity var(--transition-duration-base) ease,
     height var(--transition-duration-base) var(--ease-house),
     box-shadow var(--transition-duration-fast) ease,

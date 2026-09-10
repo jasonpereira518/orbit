@@ -9,6 +9,7 @@ import {
   pageUnreadableMarker,
   scanSourceLabel,
 } from "@/lib/scan-image";
+import { UserFacingError } from "@/lib/errors";
 
 export type CaptureMediaFile = {
   filename: string;
@@ -412,11 +413,15 @@ export async function normalizeCaptureInput(
     // "could not be read" actually true.
     if (!succeeded) {
       const cause = pages.find((page) => page.error)?.error;
-      throw new Error(
+      // A UserFacingError, not a plain Error: `ingestCaptureMedia` returns
+      // `friendlyError(err, …)`, which flattens anything else to its generic file copy —
+      // and this copy says something more useful than that. `cause` is already safe to
+      // show: it only ever holds what `friendlyError` chose to pass (see transcribeImagePages).
+      throw new UserFacingError(
         cause ??
           (images.length === 1
-            ? "That photo could not be read. Try a clearer, better-lit shot."
-            : "None of those photos could be read. Try clearer, better-lit shots.")
+            ? "Couldn’t read that photo — try a clearer, better-lit shot"
+            : "Couldn’t read any of those photos — try clearer, better-lit shots")
       );
     }
 

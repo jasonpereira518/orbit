@@ -5,11 +5,12 @@ import { chatWithNetworkStream } from "@/lib/ai";
 import { prepareChatContext } from "@/lib/chat-context";
 import { persistAssistantTurn } from "@/lib/chat-persist";
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
-import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
+import { friendlyError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
 import { isPaywallError } from "@/lib/entitlements";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -29,7 +30,7 @@ export async function POST(request: Request) {
     userId = await requireUserForSurface("page.chat");
   } catch (err) {
     const status = isPaywallError(err) ? 403 : 401;
-    return NextResponse.json({ error: toUserFacingError(err, "Sign in to chat").message }, { status });
+    return NextResponse.json({ error: friendlyError(err, "Sign in to chat") }, { status });
   }
 
   try {
@@ -61,7 +62,7 @@ export async function POST(request: Request) {
     }
   } catch (err) {
     return NextResponse.json(
-      { error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message },
+      { error: friendlyError(err, TOAST_COPY.chatFailed) },
       { status: 400 }
     );
   }
@@ -110,7 +111,7 @@ export async function POST(request: Request) {
           })),
         });
       } catch (err) {
-        send({ type: "error", message: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message });
+        send({ type: "error", message: friendlyError(err, TOAST_COPY.chatFailed) });
       } finally {
         controller.close();
       }

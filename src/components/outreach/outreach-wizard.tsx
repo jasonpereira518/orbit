@@ -26,6 +26,7 @@ import {
   type OutreachReplyCta,
   type SequenceStep,
 } from "@/lib/outreach-types";
+import { friendlyError } from "@/lib/errors";
 
 const STEPS = ["Audience", "Prospects", "Message", "Review"] as const;
 
@@ -76,7 +77,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
           setCampaignId(campaign.id);
           setFilters((campaign.audienceFilters as AudienceFilters) || {});
           setStep(1);
-          toast.success("Campaign created — confirm filters before searching");
+          toast.success("Campaign created — check the filters before you search");
         } else {
           const updated = await updateCampaign(campaignId, {
             name,
@@ -88,7 +89,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
           setStep(1);
         }
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Failed to save audience");
+        toast.error(friendlyError(err, "Couldn’t save that audience — try again?"));
       }
     });
   }
@@ -117,7 +118,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
         }
         setStep(2);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Search failed");
+        toast.error(friendlyError(err, "That search didn’t work — try again?"));
       }
     });
   }
@@ -139,10 +140,10 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
           templateSeed: templateSeed || undefined,
           excludeLowSignal: true,
         });
-        toast.success("Drafts generated — review before sending");
+        toast.success("Drafts ready — read them before you send");
         goToCampaign(campaignId);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Draft generation failed");
+        toast.error(friendlyError(err, "Couldn’t write those drafts — try again?"));
       }
     });
   }

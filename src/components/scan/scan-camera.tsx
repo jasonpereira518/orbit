@@ -107,7 +107,7 @@ export function ScanCamera({
   const shoot = useCallback(async () => {
     if (!videoRef.current || busy) return;
     if (pages.length >= MAX_SCAN_PAGES) {
-      toast.error(`That is the ${MAX_SCAN_PAGES}-page limit for one scan.`);
+      toast.error(`That’s the ${MAX_SCAN_PAGES}-page limit for one scan`);
       return;
     }
     setBusy(true);
@@ -119,7 +119,7 @@ export function ScanCamera({
         window.setTimeout(() => setFlash(false), 90);
       }
     } catch {
-      toast.error("That shot didn't come out. Try again.");
+      toast.error("That shot didn’t come out — try again");
     } finally {
       setBusy(false);
     }

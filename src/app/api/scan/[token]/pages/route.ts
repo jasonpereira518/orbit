@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { normalizeCaptureInput, type CaptureMediaFile } from "@/lib/capture-ingest";
 import { CAPTURE_MAX_UPLOAD_BYTES, formatUploadSize } from "@/lib/capture-limits";
-import { toUserFacingError } from "@/lib/errors";
+import { friendlyError } from "@/lib/errors";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { MAX_SCAN_PAGES, estimateDecodedBytes } from "@/lib/scan-image";
 import {
@@ -50,11 +50,11 @@ export async function POST(
   }
 
   if (!files.length) {
-    return NextResponse.json({ error: "Add at least one photo first" }, { status: 400 });
+    return NextResponse.json({ error: "Add a photo first" }, { status: 400 });
   }
   if (files.length > MAX_SCAN_PAGES) {
     return NextResponse.json(
-      { error: `That is more than ${MAX_SCAN_PAGES} pages. Send them in two goes.` },
+      { error: `That’s more than ${MAX_SCAN_PAGES} pages — send them in two goes` },
       { status: 400 }
     );
   }
@@ -69,7 +69,7 @@ export async function POST(
       {
         error: `That upload is ${formatUploadSize(uploadBytes)} — the limit is ${formatUploadSize(
           CAPTURE_MAX_UPLOAD_BYTES
-        )}.`,
+        )}, so try fewer pages`,
       },
       { status: 413 }
     );
@@ -103,7 +103,9 @@ export async function POST(
     // Recorded rather than only returned, so the desktop stops waiting and says why. The
     // grant stays redeemable: the usual cause is one bad photo, and walking back to the
     // laptop for a fresh QR code just to retake it would be a poor trade.
-    const message = toUserFacingError(err).message;
+    // `friendlyError`, never `err.message`: this reaches the phone verbatim, and a raw
+    // provider body is no more readable there than it is anywhere else.
+    const message = friendlyError(err, "Couldn’t read those pages — try again?");
     await recordHandoffError(handoff.id, message).catch(() => {});
     return NextResponse.json({ error: message }, { status: 422 });
   }

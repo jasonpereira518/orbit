@@ -14,7 +14,12 @@ import {
   tokensFromAnthropic,
   type TokenCounts,
 } from "@/lib/usage-events";
-import { aiProviderErrorMessage, toUserFacingError } from "@/lib/errors";
+import {
+  AI_INCOMPLETE_MESSAGE,
+  aiProviderErrorMessage,
+  aiProviderLabel,
+  friendlyError,
+} from "@/lib/errors";
 import {
   RECOMMENDATIONS_MARKER,
   createAnswerSplitter,
@@ -623,15 +628,9 @@ export async function completeJson(
           err instanceof Error &&
           err.message.startsWith("Failed to parse AI JSON")
         ) {
-          throw new Error("AI returned an incomplete response. Try again.");
+          throw new Error(AI_INCOMPLETE_MESSAGE);
         }
-        const label =
-          provider === "gemini"
-            ? "Gemini"
-            : provider === "openai"
-              ? "OpenAI"
-              : "Anthropic";
-        throw new Error(aiProviderErrorMessage(err, label));
+        throw new Error(aiProviderErrorMessage(err, aiProviderLabel(provider)));
       }
     },
   );
@@ -810,15 +809,9 @@ async function completeMultimodalJsonInner(
       err instanceof Error &&
       err.message.startsWith("Failed to parse AI JSON")
     ) {
-      throw new Error("AI returned an incomplete response. Try again.");
+      throw new Error(AI_INCOMPLETE_MESSAGE);
     }
-    const label =
-      provider === "gemini"
-        ? "Gemini"
-        : provider === "openai"
-          ? "OpenAI"
-          : "Anthropic";
-    throw new Error(aiProviderErrorMessage(err, label));
+    throw new Error(aiProviderErrorMessage(err, aiProviderLabel(provider)));
   }
 }
 
@@ -1019,14 +1012,19 @@ export async function transcribeImagePages(
         results[i] = { pageNumber, text, ok: true };
       } catch (err) {
         // One bad photo must not cost the person the other seven — but the REASON is kept
-        // and handed back, because "could not be read" is a lie when the real answer is
-        // "there is no API key" or "the provider is down". Told to retake the photo, a
-        // person will retake it forever.
+        // and handed back, because "couldn’t read it" is a lie when the real answer is
+        // "there is no API key" or "the provider is rate-limiting you". Told to retake the
+        // photo, a person will retake it forever.
+        //
+        // `friendlyError`, never `err.message`: it passes through only what is worth
+        // naming — a missing key, a provider-failure template, a timeout, offline — and
+        // never a raw provider body. The empty fallback means "nothing more specific to
+        // say", and the caller supplies the "couldn’t read it" copy itself.
         results[i] = {
           pageNumber,
           text: "",
           ok: false,
-          error: toUserFacingError(err).message,
+          error: friendlyError(err, "") || undefined,
         };
       }
     }
