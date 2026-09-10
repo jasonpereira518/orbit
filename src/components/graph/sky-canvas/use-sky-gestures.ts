@@ -81,6 +81,13 @@ export type SkyGestureHandlers = {
   onSettled: (camera: Camera) => void;
   /** Under reduced motion there is no flick coast. */
   reducedMotion: boolean;
+  /**
+   * False turns the sky into a picture you can tap but not move: no pan, no pinch, no
+   * double-tap zoom, no coast. For the dashboard preview, which sits inside a scrolling
+   * page — a card that captured every drag would stop the page scrolling wherever a
+   * finger happened to land on it.
+   */
+  movable: boolean;
   /** True while a camera tween owns the camera; a touch must cancel it. */
   cancelTween: () => void;
 };
@@ -207,11 +214,11 @@ export function useSkyGestures(
         samples.push({ dx, dy, dt: at - lastMoveAt, t: at });
         lastMoveAt = at;
         if (samples.length > 8) samples.shift();
-        commit(panBy(handlers.cameraRef.current, dx, dy));
+        if (handlers.movable) commit(panBy(handlers.cameraRef.current, dx, dy));
         return;
       }
 
-      if (pointers.size === 2 && pinchMid) {
+      if (pointers.size === 2 && pinchMid && handlers.movable) {
         const [a, b] = [...pointers.values()];
         const distance = Math.hypot(b.x - a.x, b.y - a.y);
         const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
@@ -269,7 +276,7 @@ export function useSkyGestures(
           lastTapPoint !== null &&
           Math.hypot(point.x - lastTapPoint.x, point.y - lastTapPoint.y) < DOUBLE_TAP_SLOP_PX;
 
-        if (isDouble) {
+        if (isDouble && handlers.movable) {
           lastTapAt = 0;
           lastTapPoint = null;
           commit(zoomAt(handlers.cameraRef.current, point, DOUBLE_TAP_FACTOR));
@@ -280,7 +287,7 @@ export function useSkyGestures(
           handlers.onTap(point);
         }
       } else if (!cancelled) {
-        startInertia();
+        if (handlers.movable) startInertia();
       }
 
       if (!wasTap && cancelled) handlers.onSettled(handlers.cameraRef.current);

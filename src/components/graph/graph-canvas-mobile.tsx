@@ -38,6 +38,7 @@ import type { GraphNodeData } from "@/lib/graph-layout";
 import { markGraphViewportReady } from "@/lib/graph/intro-signal";
 import { CAMERA_MS } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
+import { cn } from "@/lib/utils";
 
 /**
  * The constellation as one canvas.
@@ -452,9 +453,10 @@ export function GraphCanvasMobile(props: GraphChartProps) {
       // accessible summary below reports what is in view.
       onSettled: () => setSettledCamera((n) => n + 1),
       reducedMotion: prefersReducedMotion,
+      movable: !compact,
       cancelTween,
     }),
-    [requestDraw, handleTap, prefersReducedMotion, cancelTween]
+    [requestDraw, handleTap, prefersReducedMotion, cancelTween, compact]
   );
   useSkyGestures(containerRef, gestureHandlers);
 
@@ -468,8 +470,17 @@ export function GraphCanvasMobile(props: GraphChartProps) {
        * `touch-action` is consulted when a gesture STARTS, so it has to be here rather
        * than set from a handler. Without it every pan scrolls the app shell's `main`
        * instead, which reads as the map simply refusing to move.
+       *
+       * The dashboard preview is the exception, and wants the opposite. It is a card in a
+       * scrolling page, so vertical drags must reach the page — with `touch-none` here,
+       * a swipe that began on the card panned the sky and the dashboard stopped
+       * scrolling under the finger. It cannot be panned anyway (`movable` is off), so it
+       * only needs to claim taps.
        */
-      className="absolute inset-0 touch-none overscroll-none select-none [-webkit-tap-highlight-color:transparent] [-webkit-touch-callout:none]"
+      className={cn(
+        "absolute inset-0 select-none [-webkit-tap-highlight-color:transparent] [-webkit-touch-callout:none]",
+        compact ? "touch-pan-y" : "touch-none overscroll-none"
+      )}
       role="application"
       aria-label="Constellation star chart"
     >
