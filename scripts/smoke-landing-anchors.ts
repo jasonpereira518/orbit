@@ -45,13 +45,15 @@ function main() {
   }
   const sectionIds = new Set<string>(LANDING_SECTIONS.map((s) => `#${s.id}`));
   const marginSelectors = marginRules.flatMap((r) => r.selectors);
+  // Only this page's rules are ours to judge: globals.css is app-wide.
   const orphans = marginSelectors
+    .filter((sel) => sel.startsWith(".landing-root "))
     .map((sel) => sel.replace(/^\.landing-root\s+/, ""))
     .filter((sel) => /^#[\w-]+$/.test(sel) && !sectionIds.has(sel));
-  check("no scroll-margin rule targets an id outside LANDING_SECTIONS", orphans.length === 0, orphans.join(", "));
-  // A bare #id rule would also hit same-named ids elsewhere in the app (the dashboard's
-  // reminders card) and override their own margins.
-  const bare = marginSelectors.filter((sel) => /^#[\w-]+$/.test(sel));
+  check("no .landing-root scroll-margin rule targets an id outside LANDING_SECTIONS", orphans.length === 0, orphans.join(", "));
+  // A bare section-id rule would also hit same-named ids elsewhere in the app (the
+  // dashboard's reminders card) and override their own margins.
+  const bare = marginSelectors.filter((sel) => sectionIds.has(sel));
   check("every section scroll-margin rule is scoped to .landing-root", bare.length === 0, bare.join(", "));
 
   console.log("\nThe page ends at its footer:");
