@@ -432,6 +432,34 @@ async function main() {
     }
   }
 
+  // Row count is one half of "unbounded"; the SQL is the other, and it is the half that
+  // cannot be faked. `contactById.size` measures what the loader RETAINS — so trimming the
+  // Map while the scan still reads the whole table would make the numbers above improve
+  // with nothing fixed. This asserts the scan itself.
+  //
+  // Phase B flips both together: the contacts scan gets an ORDER BY … LIMIT, this check
+  // inverts, and the surfaces above get real bounds.
+  // The WIDE scan specifically — the one that reads contact detail. The dashboard issues
+  // three statements against `contacts`; the other two are a `count(*)` and the closeness
+  // materialiser's own bounded batch, and both are already the right shape.
+  const networkScan = dashboardScans.find((q) => selectsBare(q, "full_name"));
+  check("the dashboard's network scan is identifiable", Boolean(networkScan));
+  // Anchored to the END of the statement on purpose. A bare /limit/ matches the `limit $1`
+  // inside the tags lateral join, which bounds tags per contact and says nothing about how
+  // many contacts come back. An OUTER limit is the last clause of the statement.
+  const outerLimit = /\blimit\s+\$?\d*\s*(offset\s+\$?\d*\s*)?$/i;
+  check(
+    "the dashboard's network scan still has no outer LIMIT (unbounded — Phase B)",
+    Boolean(networkScan) && !outerLimit.test(networkScan!.trim()),
+    "an outer LIMIT appeared: the scan is bounded now, so invert this check and give the " +
+      "dashboard surface a real bound above"
+  );
+  check(
+    "…and it is ordered, so adding one is a one-line change",
+    Boolean(networkScan) && /order by/i.test(networkScan!),
+    networkScan?.slice(-120)
+  );
+
   // The dashboard's real size.
   //
   // The "dashboard payload under 1.5 MB" check above cannot see this: `contactById` is a
