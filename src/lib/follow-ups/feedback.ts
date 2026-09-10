@@ -115,7 +115,7 @@ export async function acceptSuggestion(
     });
   }
 
-  return { reminderId: reminder.id };
+  return { reminderId: reminder.id, contactId: suggestion.contactId };
 }
 
 export async function snoozeSuggestion(
@@ -126,7 +126,7 @@ export async function snoozeSuggestion(
 ) {
   const now = options.now ?? new Date();
   const db = await getDb();
-  await loadOwned(userId, suggestionId);
+  const suggestion = await loadOwned(userId, suggestionId);
   // Same 1..90 clamp as `snoozeReminder` in `src/lib/reminders.ts`. Two paths that
   // both defer a follow-up must not disagree about what a day count means.
   const clamped = Math.max(1, Math.min(90, days));
@@ -134,6 +134,7 @@ export async function snoozeSuggestion(
     .update(followUpSuggestions)
     .set({ status: "snoozed", snoozedUntil: daysFromNow(clamped, now) })
     .where(eq(followUpSuggestions.id, suggestionId));
+  return { contactId: suggestion.contactId };
 }
 
 export async function dismissSuggestion(
@@ -156,7 +157,7 @@ export async function dismissSuggestion(
   if (reason === "stop_this_kind") {
     // An explicit "never again" is a permanent kind-wide mute, not a timed suppression.
     await muteKind(userId, suggestion.primaryKind);
-    return;
+    return { contactId: suggestion.contactId };
   }
 
   await suppress(userId, {
@@ -167,6 +168,8 @@ export async function dismissSuggestion(
     until: daysFromNow(DISMISS_SUPPRESSION_DAYS, now),
     reason: "dismissed",
   });
+
+  return { contactId: suggestion.contactId };
 }
 
 /** Permanent, contact-wide. `until = null` is what makes it a mute rather than a snooze. */
@@ -222,6 +225,8 @@ export async function markSuggestionSent(
     .where(eq(followUpSuggestions.id, suggestionId));
 
   await bumpWeight(userId, suggestion.primaryKind, { accepted: 1 });
+
+  return { contactId: suggestion.contactId };
 }
 
 async function suppress(

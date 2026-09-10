@@ -14,6 +14,7 @@ import {
   snoozeSuggestion,
 } from "@/lib/follow-ups/feedback";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
+import { isoDay, startOfDay } from "@/lib/follow-ups/time";
 import { revalidateReminderPaths } from "@/lib/reminder-paths";
 
 export type TodaySuggestion = {
@@ -33,7 +34,11 @@ export async function listTodaySuggestions(): Promise<TodaySuggestion[]> {
   const userId = await requireUserId();
   const db = await getDb();
   const now = new Date();
-  const today = now.toISOString().slice(0, 10);
+  // LOCAL day basis, matching how every `dueOn` was written — see `isoDay`'s doc
+  // comment in `time.ts`. `now.toISOString().slice(0, 10)` (UTC) diverges from this
+  // the moment the process's local date differs from `now`'s UTC date, which
+  // over-includes suggestions genuinely dated tomorrow.
+  const today = isoDay(startOfDay(now));
 
   const rows = await db
     .select({
@@ -86,14 +91,14 @@ export async function listTodaySuggestions(): Promise<TodaySuggestion[]> {
 export async function acceptSuggestionAction(id: string) {
   const userId = await requireUserId();
   const result = await acceptSuggestion(userId, id);
-  revalidateReminderPaths();
+  revalidateReminderPaths(result.contactId);
   return result;
 }
 
 export async function snoozeSuggestionAction(id: string, days: number) {
   const userId = await requireUserId();
-  await snoozeSuggestion(userId, id, days);
-  revalidateReminderPaths();
+  const { contactId } = await snoozeSuggestion(userId, id, days);
+  revalidateReminderPaths(contactId);
 }
 
 export async function dismissSuggestionAction(
@@ -101,8 +106,8 @@ export async function dismissSuggestionAction(
   reason: "not_now" | "wrong_reason" | "stop_this_kind"
 ) {
   const userId = await requireUserId();
-  await dismissSuggestion(userId, id, reason);
-  revalidateReminderPaths();
+  const { contactId } = await dismissSuggestion(userId, id, reason);
+  revalidateReminderPaths(contactId);
 }
 
 export async function muteSuggestionContactAction(id: string) {
@@ -114,13 +119,13 @@ export async function muteSuggestionContactAction(id: string) {
   });
   if (!row) throw new Error("Suggestion not found");
   await muteContact(userId, row.contactId);
-  revalidateReminderPaths();
+  revalidateReminderPaths(row.contactId);
 }
 
 export async function markSentAction(id: string) {
   const userId = await requireUserId();
-  await markSuggestionSent(userId, id);
-  revalidateReminderPaths();
+  const { contactId } = await markSuggestionSent(userId, id);
+  revalidateReminderPaths(contactId);
 }
 
 /**

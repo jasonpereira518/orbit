@@ -16,7 +16,11 @@ export const dormantSource: SignalSource = {
         kind: "dormant",
         contactId: c.id,
         dueOn: startOfDay(ctx.now),
-        evidence: `No contact in ${idle} days (${c.closenessTier ?? "unclassified"} tier fires at ${threshold})`,
+        // User-facing copy: `reasonFor` in `pass.ts` pipes this straight through to the
+        // Today card, so it must read as plain language, not engine internals. Closeness
+        // tiers and thresholds are implementation vocabulary the product never names
+        // anywhere else — say what happened, not why the rule fired.
+        evidence: `No contact in ${idle} days`,
       });
     }
     return out;

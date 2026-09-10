@@ -17,6 +17,7 @@
  * Run: npx tsx scripts/smoke-follow-up-scheduler.ts
  */
 import { nextPassAt, PASS_HOUR_LOCAL } from "../src/lib/follow-ups/scheduler";
+import { isoDay, startOfDay } from "../src/lib/follow-ups/time";
 
 let count = 0;
 function check(label: string, condition: boolean, detail?: string) {
@@ -118,6 +119,46 @@ function main() {
     "07:00-local does NOT schedule for right now (the `?? 24` regression this guards against)",
     atTarget.getTime() !== NOW_UTC7.getTime()
   );
+
+  console.log("\nisoDay day-basis (regression — this exact bug has recurred once already)...");
+
+  // `isoDay(d)` slices `d`'s UTC calendar day. `isoDay(startOfDay(d))` locks in `d`'s
+  // LOCAL calendar day instead — the basis every `dueOn` in this feature is written in
+  // (see `isoDay`'s doc comment in `time.ts`). The two diverge whenever the local and
+  // UTC calendar dates differ, which happens for hours around local midnight in any
+  // zone offset from UTC. `listTodaySuggestions` fell into exactly this gap by computing
+  // its `today` from the UTC basis while comparing against LOCAL-basis `dueOn` values.
+  //
+  // This can't be pinned against whatever zone happens to run this script — CI may well
+  // run in UTC, where the two bases never diverge. So it borrows `nextPassAt`'s trick
+  // above and pins the process to a fixed, DST-free offset (`Etc/GMT+5`, always UTC-5)
+  // for the duration of the check, then restores it.
+  const originalTz = process.env.TZ;
+  process.env.TZ = "Etc/GMT+5";
+  try {
+    // 22:00 local on Sep 10 is 03:00 UTC on Sep 11 — local and UTC calendar days differ.
+    const eveningLocal = new Date("2026-09-10T22:00:00-05:00");
+    const localBasis = isoDay(startOfDay(eveningLocal));
+    const utcBasis = isoDay(eveningLocal);
+    check(
+      "isoDay(startOfDay(d)) (LOCAL day) diverges from isoDay(d) (UTC day) in the evening, west of UTC",
+      localBasis !== utcBasis,
+      `local=${localBasis} utc=${utcBasis}`
+    );
+    check(
+      "the LOCAL basis is the actual local calendar day",
+      localBasis === "2026-09-10",
+      localBasis
+    );
+    check(
+      "the UTC basis has already rolled to the next day",
+      utcBasis === "2026-09-11",
+      utcBasis
+    );
+  } finally {
+    if (originalTz === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTz;
+  }
 
   console.log(`\nAll ${count} follow-up scheduler checks passed.`);
 }
