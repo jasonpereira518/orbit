@@ -11,7 +11,14 @@ export default async function ChatPage() {
   const settings = await getSettings();
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+    // Phones bound the whole page — heading, the no-key notice, and the chat card — and
+    // the card takes what is left. The card used to carry its own fixed height, which
+    // assumed only the heading sat above it: with the notice showing, the card was
+    // pushed down past the nav and its input sat under the raised Capture button. The
+    // offset stops the page just above that button (measured: page top 89px, button
+    // top 735px at 375x812). The flex chain can't do this unaided, because the route
+    // template's wrapper breaks it — hence a height here rather than `flex-1`.
+    <div className="flex h-[calc(100dvh-11rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-4 overflow-hidden md:h-auto md:flex-1">
       <div className="shrink-0">
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
           Chat with your network

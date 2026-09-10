@@ -380,12 +380,13 @@ export function ChatPanel() {
   return (
     <>
       {/*
-        Explicit viewport height so the card is always bounded.
-        Internal message list is the only scroller (flex 1 1 0 + overflow-y-auto).
-        Mobile offsets: top header + page title + padding + bottom nav.
-        Desktop offsets: page title + vertical padding.
+        Always bounded; the internal message list is the only scroller (flex 1 1 0 +
+        overflow-y-auto). On phones the chat page bounds itself and this card fills
+        what is left (so the no-key notice comes out of the card, not out from under
+        the nav). From md up it keeps an explicit viewport height: page title +
+        vertical padding.
       */}
-      <div className="flex h-[calc(100dvh-16.5rem)] w-full max-h-[calc(100dvh-16.5rem)] flex-col overflow-hidden rounded-2xl border border-border/70 bg-card md:h-[calc(100dvh-11rem)] md:max-h-[calc(100dvh-11rem)]">
+      <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-2xl border border-border/70 bg-card md:h-[calc(100dvh-11rem)] md:max-h-[calc(100dvh-11rem)] md:flex-none">
         <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2.5 sm:px-4">
           <DropdownMenu open={historyOpen} onOpenChange={setHistoryOpen}>
             <DropdownMenuTrigger
@@ -586,13 +587,17 @@ export function ChatPanel() {
                   )}
                 </Button>
               </div>
-              <div className="flex flex-wrap gap-1.5">
+              {/* One sideways-scrolling row on phones. Wrapped, the four chips took three
+                  rows there — more than the composer had room for once the no-key notice
+                  sat above the card, so the card's edge cut the second chip in half and
+                  hid the last two outright. */}
+              <div className="flex gap-1.5 overflow-x-auto [scrollbar-width:none] sm:flex-wrap sm:overflow-visible">
                 {SUGGESTION_CHIPS.map((chip) => (
                   <button
                     key={chip}
                     type="button"
                     disabled={busy || loadingThread}
-                    className="rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                    className="shrink-0 whitespace-nowrap rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
                     onClick={() => sendQuestion(chip)}
                   >
                     {chip}

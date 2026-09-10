@@ -11,7 +11,7 @@ const ChatPanel = dynamic(
   {
     ssr: false,
     loading: () => (
-      <ChatPanelSkeleton className="h-[calc(100dvh-16.5rem)] w-full md:h-[calc(100dvh-11rem)]" />
+      <ChatPanelSkeleton className="min-h-0 w-full flex-1 md:h-[calc(100dvh-11rem)] md:flex-none" />
     ),
   }
 );

@@ -440,7 +440,7 @@ export function FloatingAskBar() {
         // "Ask your network" item in the More sheet opens it. Desktop keeps
         // the persistent collapsed pill.
         open ? "flex" : "hidden md:flex",
-        "bottom-[calc(7.5rem+env(safe-area-inset-bottom))] md:bottom-5",
+        "bottom-[calc(6.5rem+env(safe-area-inset-bottom))] md:bottom-5",
         !visible && "pointer-events-none"
       )}
       aria-hidden={!visible}
@@ -707,7 +707,10 @@ export function FloatingAskBar() {
             disabled={chatPending}
             autoComplete="off"
             className={cn(
-              "h-full min-w-0 flex-1 bg-transparent text-sm outline-none",
+              // 16px on phones: iOS Safari zooms the page into any focused input with
+              // smaller text, which panned the whole dashboard sideways and cut its
+              // edges off the moment the bar opened. Same rule as ui/input.tsx.
+              "h-full min-w-0 flex-1 bg-transparent text-base outline-none md:text-sm",
               "placeholder:text-muted-foreground disabled:opacity-60"
             )}
             onFocus={() => setOpen(true)}

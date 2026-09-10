@@ -314,7 +314,8 @@ export function CapturePageSkeleton() {
 
 export function ChatPageSkeleton() {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-5">
+    // Same phone height as the chat page itself, so the load doesn't jump.
+    <div className="flex h-[calc(100dvh-11rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-5 md:h-auto md:flex-1">
       <div className="shrink-0 space-y-2">
         <Skeleton className="h-9 w-64" />
         <Skeleton className="h-4 w-80 max-w-full" />
