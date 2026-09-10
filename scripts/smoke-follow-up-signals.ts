@@ -10,6 +10,7 @@ import { DAILY_SOURCES } from "../src/lib/follow-ups/sources";
 import { commitmentDueSource } from "../src/lib/follow-ups/sources/commitment-due";
 import { dormantSource } from "../src/lib/follow-ups/sources/dormant";
 import { neverContactedSource } from "../src/lib/follow-ups/sources/never-contacted";
+import { looksLikeOpenAsk, openLoopSource } from "../src/lib/follow-ups/sources/open-loop";
 import { postEventSource } from "../src/lib/follow-ups/sources/post-event";
 import { scheduledFollowUpSource } from "../src/lib/follow-ups/sources/scheduled-follow-up";
 import { threadQuietSource } from "../src/lib/follow-ups/sources/thread-quiet";
@@ -320,6 +321,77 @@ console.log("\npost_event");
     "having spoken since the event suppresses it",
     postEventSource.detect(ctx({ contacts: [spokenSince], eventsByContact: events2 })).length === 0
   );
+}
+
+console.log("\nopen_loop");
+{
+  const c = contact({ id: "ol" });
+
+  const inboundQuestion = new Map([
+    ["ol", [msg({ contactId: "ol", direction: "in", text: "Any chance you could intro me to Dana?", interactionDate: ago(12) })]],
+  ]);
+  const found = openLoopSource.detect(ctx({ contacts: [c], interactionsByContact: inboundQuestion }));
+  check("an inbound ask 12 days old fires", found.length === 1);
+
+  const outbound = new Map([
+    ["ol", [msg({ contactId: "ol", direction: "out", text: "Any chance you could intro me to Dana?", interactionDate: ago(12) })]],
+  ]);
+  check(
+    "the same text sent BY the user is not an open loop",
+    openLoopSource.detect(ctx({ contacts: [c], interactionsByContact: outbound })).length === 0
+  );
+
+  const chitchat = new Map([
+    ["ol", [msg({ contactId: "ol", direction: "in", text: "great seeing you", interactionDate: ago(12) })]],
+  ]);
+  check(
+    "an inbound message with no ask does not fire",
+    openLoopSource.detect(ctx({ contacts: [c], interactionsByContact: chitchat })).length === 0
+  );
+
+  const tooRecent = new Map([
+    ["ol", [msg({ contactId: "ol", direction: "in", text: "can you send that over?", interactionDate: ago(2) })]],
+  ]);
+  check(
+    "an ask from 2 days ago is inside the grace window",
+    openLoopSource.detect(ctx({ contacts: [c], interactionsByContact: tooRecent })).length === 0
+  );
+
+  // The legacy-import case. This is the one that must not guess.
+  const legacyNoItems = new Map([
+    ["ol", [msg({ contactId: "ol", direction: null, text: "can you send that over?", interactionDate: ago(12) })]],
+  ]);
+  check(
+    "all-null directions with no action items does NOT fire on a question mark alone",
+    openLoopSource.detect(ctx({ contacts: [c], interactionsByContact: legacyNoItems })).length === 0
+  );
+
+  const legacyWithItems = new Map([
+    ["ol", [msg({ contactId: "ol", direction: null, text: "we talked", actionItems: ["Send Priya the deck"], interactionDate: ago(12) })]],
+  ]);
+  const legacyFound = openLoopSource.detect(ctx({ contacts: [c], interactionsByContact: legacyWithItems }));
+  check("all-null directions WITH an action item fires", legacyFound.length === 1);
+  check("the fallback evidence quotes the item", legacyFound[0].evidence.includes("Send Priya the deck"));
+
+  // A thread with SOME direction data uses the precise path, not the fallback.
+  const mixed = new Map([
+    ["ol", [
+      msg({ contactId: "ol", direction: "out", text: "here you go", interactionDate: ago(12) }),
+      msg({ contactId: "ol", direction: null, text: "?", actionItems: ["x"], interactionDate: ago(40) }),
+    ]],
+  ]);
+  check(
+    "a partially-directioned thread uses the precise path and stays silent",
+    openLoopSource.detect(ctx({ contacts: [c], interactionsByContact: mixed })).length === 0
+  );
+}
+
+console.log("\nlooksLikeOpenAsk");
+{
+  check("a question mark counts", looksLikeOpenAsk("thoughts?"));
+  check("a soft ask phrase counts", looksLikeOpenAsk("let me know when you have a minute"));
+  check("a statement does not", !looksLikeOpenAsk("Congrats on the launch"));
+  check("empty text does not", !looksLikeOpenAsk("   "));
 }
 
 console.log("\nAll follow-up signal checks passed.\n");
