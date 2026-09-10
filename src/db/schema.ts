@@ -9,6 +9,8 @@ import {
   uuid,
   index,
   uniqueIndex,
+  date,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 
@@ -91,6 +93,15 @@ export const userSettings = pgTable("user_settings", {
   wizardStep: text("wizard_step"),
   wizardCompletedAt: timestamp("wizard_completed_at", { withTimezone: true }),
   theme: text("theme").$type<"light" | "dark" | "system">(),
+  /** IANA zone, captured from the browser. Null falls back to UTC in the scheduler. */
+  timezone: text("timezone"),
+  followUpDigest: text("follow_up_digest")
+    .$type<"daily" | "weekly" | "off">()
+    .default("daily")
+    .notNull(),
+  followUpDailyCap: integer("follow_up_daily_cap").default(3).notNull(),
+  /** The scheduler's claim column, mirroring calendar sync's `next_sync_at`. */
+  followUpNextPassAt: timestamp("follow_up_next_pass_at", { withTimezone: true }),
   ycModeEnabled: boolean("yc_mode_enabled").default(false),
   /**
    * Manual estimate feeding the Unit Economics LTV calculation. Orbit's subscriber count
@@ -654,6 +665,147 @@ export const suggestedReminders = pgTable(
     uniqueIndex("suggested_reminders_user_item_uidx").on(t.userId, t.itemHash),
   ]
 );
+
+/**
+ * Personal dates a human or an import asserted.
+ *
+ * Deliberately excludes work and "met" anniversaries: both are derivable from
+ * `contacts.date_met` / `first_interaction_at` and `contact_experiences.start_year`,
+ * and a stored copy goes stale the moment either source changes. Those are computed
+ * at detect time by their signal sources instead.
+ */
+export const contactDates = pgTable(
+  "contact_dates",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    label: text("label"),
+    labelNormalized: text("label_normalized").default("").notNull(),
+    month: integer("month").notNull(),
+    day: integer("day").notNull(),
+    /** Nullable: Google People returns year-less birthdays constantly. */
+    year: integer("year"),
+    recurs: boolean("recurs").default(true).notNull(),
+    source: text("source").notNull(),
+    /** The sentence a note-extracted date came from, so it stays auditable. */
+    sourceExcerpt: text("source_excerpt"),
+    confidence: integer("confidence"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("contact_dates_uidx").on(t.userId, t.contactId, t.kind, t.labelNormalized),
+    index("contact_dates_monthday_idx").on(t.userId, t.month, t.day),
+  ]
+);
+
+export type SuggestionStatus =
+  | "pending"
+  | "accepted"
+  | "snoozed"
+  | "dismissed"
+  | "expired";
+
+/**
+ * The engine's output.
+ *
+ * NEVER a `reminders` row. `listDueNotificationItems` fires desktop notifications off
+ * `reminders`, and unconfirmed machine output must not reach it — the same rule
+ * `suggested_reminders` exists to enforce. Accepting a suggestion is what creates the
+ * `reminders` row, and `reminder_id` links the two.
+ */
+export const followUpSuggestions = pgTable(
+  "follow_up_suggestions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    /** The user-local calendar day this surfaces on. A date, not a timestamp. */
+    dueOn: date("due_on").notNull(),
+    primaryKind: text("primary_kind").notNull(),
+    /** [{ kind, score, evidence }] — every contributing signal, for "why did this surface". */
+    signals: jsonb("signals")
+      .$type<{ kind: string; score: number; evidence: string }[]>()
+      .default([])
+      .notNull(),
+    score: real("score").notNull(),
+    reason: text("reason").notNull(),
+    hook: text("hook"),
+    /** False until the phase-2 LLM judge exists. */
+    judged: boolean("judged").default(false).notNull(),
+    status: text("status").$type<SuggestionStatus>().default("pending").notNull(),
+    snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
+    dismissedReason: text("dismissed_reason"),
+    reminderId: uuid("reminder_id").references(() => reminders.id, {
+      onDelete: "set null",
+    }),
+    digestSentAt: timestamp("digest_sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [
+    // Makes a re-run idempotent. `ops.yml` states its schedule is a floor, not a
+    // promise, so a pass CAN fire twice for the same user on the same day.
+    uniqueIndex("follow_up_suggestions_uidx").on(
+      t.userId,
+      t.contactId,
+      t.primaryKind,
+      t.dueOn
+    ),
+    index("follow_up_suggestions_user_status_idx").on(t.userId, t.status, t.dueOn),
+  ]
+);
+
+/**
+ * One table for both halves of adaptation: a dismissal writes `until = now + 60d`,
+ * an explicit mute writes `until = null`. Implicit learning and explicit control end
+ * up as the same mechanism.
+ */
+export const followUpSuppressions = pgTable(
+  "follow_up_suppressions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** Null means "every contact". */
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }),
+    /** Null means "every kind". */
+    kind: text("kind"),
+    /** Null means permanent. */
+    until: timestamp("until", { withTimezone: true }),
+    reason: text("reason").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("follow_up_suppressions_contact_idx").on(t.userId, t.contactId),
+    index("follow_up_suppressions_kind_idx").on(t.userId, t.kind),
+  ]
+);
+
+/** The learned per-kind multiplier, stored with the counters that justify it. */
+export const followUpWeights = pgTable(
+  "follow_up_weights",
+  {
+    userId: text("user_id").notNull(),
+    kind: text("kind").notNull(),
+    weight: real("weight").default(1).notNull(),
+    shown: integer("shown").default(0).notNull(),
+    accepted: integer("accepted").default(0).notNull(),
+    dismissed: integer("dismissed").default(0).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.kind] })]
+);
+
+export type ContactDate = typeof contactDates.$inferSelect;
+export type FollowUpSuggestion = typeof followUpSuggestions.$inferSelect;
+export type FollowUpSuppression = typeof followUpSuppressions.$inferSelect;
+export type FollowUpWeight = typeof followUpWeights.$inferSelect;
 
 export type ReminderDateBasis = "absolute" | "relative" | "vague" | "window";
 

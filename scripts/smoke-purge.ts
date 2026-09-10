@@ -232,6 +232,36 @@ async function seed() {
     itemHash: "hash-b",
   });
 
+  // The follow-up engine's four tables. `follow_up_suggestions.reminder_id` is left null
+  // here deliberately — that FK is `on delete set null`, and the purge ordering under test
+  // (this table before `reminders`) does not depend on the link being populated.
+  await db.insert(schema.contactDates).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "birthday",
+    month: 8,
+    day: 15,
+    source: "manual",
+  });
+  await db.insert(schema.followUpSuggestions).values({
+    userId: USER,
+    contactId: contact.id,
+    dueOn: "2026-09-09",
+    primaryKind: "birthday",
+    score: 0.5,
+    reason: "their birthday is coming up",
+  });
+  await db.insert(schema.followUpSuppressions).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "birthday",
+    reason: "dismissed by the user",
+  });
+  await db.insert(schema.followUpWeights).values({
+    userId: USER,
+    kind: "birthday",
+  });
+
   const [importJob] = await db
     .insert(schema.imports)
     .values({ userId: USER, importType: "linkedin_connections" })

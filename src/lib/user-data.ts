@@ -8,10 +8,14 @@ import {
   chatThreads,
   closenessCohorts,
   companies,
+  contactDates,
   contactEmbeddings,
   contacts,
   contactTags,
   errorEvents,
+  followUpSuggestions,
+  followUpSuppressions,
+  followUpWeights,
   apiIdempotencyKeys,
   apiKeys,
   extensionUsage,
@@ -131,6 +135,14 @@ export async function purgeUserData(
   // Before `reminders` and `contacts`: its FKs are `set null`, so deleting those first
   // would rewrite these rows on the way to deleting them anyway.
   await db.delete(suggestedReminders).where(eq(suggestedReminders.userId, userId));
+  // The follow-up engine's four tables. `follow_up_suggestions` goes before `reminders`
+  // and `contacts`: its `reminder_id` FK is `set null`, so deleting those first would
+  // rewrite every row on the way to deleting it. Weights and suppressions carry no FK to
+  // cascade from at all — `follow_up_weights` has no `id` column, only (user_id, kind).
+  await db.delete(followUpSuggestions).where(eq(followUpSuggestions.userId, userId));
+  await db.delete(followUpSuppressions).where(eq(followUpSuppressions.userId, userId));
+  await db.delete(followUpWeights).where(eq(followUpWeights.userId, userId));
+  await db.delete(contactDates).where(eq(contactDates.userId, userId));
   await db.delete(reminders).where(eq(reminders.userId, userId));
   await db.delete(reminderLists).where(eq(reminderLists.userId, userId));
   await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, userId));

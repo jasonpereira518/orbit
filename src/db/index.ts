@@ -980,6 +980,77 @@ CREATE TABLE IF NOT EXISTS event_provider_connections (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS contact_dates (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  label text,
+  label_normalized text NOT NULL DEFAULT '',
+  month integer NOT NULL,
+  day integer NOT NULL,
+  year integer,
+  recurs boolean NOT NULL DEFAULT true,
+  source text NOT NULL,
+  source_excerpt text,
+  confidence integer,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS contact_dates_uidx
+  ON contact_dates (user_id, contact_id, kind, label_normalized);
+CREATE INDEX IF NOT EXISTS contact_dates_monthday_idx
+  ON contact_dates (user_id, month, day);
+
+CREATE TABLE IF NOT EXISTS follow_up_suggestions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  due_on date NOT NULL,
+  primary_kind text NOT NULL,
+  signals jsonb NOT NULL DEFAULT '[]'::jsonb,
+  score real NOT NULL,
+  reason text NOT NULL,
+  hook text,
+  judged boolean NOT NULL DEFAULT false,
+  status text NOT NULL DEFAULT 'pending',
+  snoozed_until timestamptz,
+  dismissed_reason text,
+  reminder_id uuid REFERENCES reminders(id) ON DELETE SET NULL,
+  digest_sent_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  resolved_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS follow_up_suggestions_uidx
+  ON follow_up_suggestions (user_id, contact_id, primary_kind, due_on);
+CREATE INDEX IF NOT EXISTS follow_up_suggestions_user_status_idx
+  ON follow_up_suggestions (user_id, status, due_on);
+
+CREATE TABLE IF NOT EXISTS follow_up_suppressions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text,
+  until timestamptz,
+  reason text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS follow_up_suppressions_contact_idx
+  ON follow_up_suppressions (user_id, contact_id);
+CREATE INDEX IF NOT EXISTS follow_up_suppressions_kind_idx
+  ON follow_up_suppressions (user_id, kind);
+
+CREATE TABLE IF NOT EXISTS follow_up_weights (
+  user_id text NOT NULL,
+  kind text NOT NULL,
+  weight real NOT NULL DEFAULT 1,
+  shown integer NOT NULL DEFAULT 0,
+  accepted integer NOT NULL DEFAULT 0,
+  dismissed integer NOT NULL DEFAULT 0,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, kind)
+);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -1037,8 +1108,11 @@ CREATE TABLE IF NOT EXISTS event_provider_connections (
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
  * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
+ *
+ * v33 = the follow-up engine: contact_dates, follow_up_suggestions,
+ * follow_up_suppressions, follow_up_weights.
  */
-export const SCHEMA_VERSION = 32;
+export const SCHEMA_VERSION = 33;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1227,6 +1301,16 @@ export const SCALE_DDL: string[] = [
   // every backtick pair between these brackets as a DDL statement.
   `CREATE INDEX IF NOT EXISTS contact_experiences_org_idx
      ON contact_experiences(user_id, organization_normalized)`,
+
+  // --- Follow-up engine: user_settings columns --------------------------------------
+  //
+  // The four contact_dates/follow_up_* tables live in the DDL template above (fresh
+  // databases get them via CREATE TABLE); these are columns on the pre-existing
+  // user_settings table, which CREATE TABLE IF NOT EXISTS never touches.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS timezone text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS follow_up_digest text NOT NULL DEFAULT 'daily'`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS follow_up_daily_cap integer NOT NULL DEFAULT 3`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS follow_up_next_pass_at timestamptz`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
