@@ -1,10 +1,48 @@
-/** Shown whenever AI features fail because the user has no provider key. */
+/**
+ * Shown whenever AI features fail because the user has no provider key.
+ *
+ * Must keep matching `isMissingAiApiKeyError` (`/api key/i`): several call sites run
+ * that test on text a server action handed back, and that text can be this constant.
+ */
 export const MISSING_AI_API_KEY_MESSAGE =
-  "Add your AI API key in Settings to use this feature.";
+  "Add your AI API key in Settings to use this";
+
+/** A fetch that never reached Orbit. Said plainly, because the caller's own fallback
+ *  ("That didn't save") would blame the wrong thing. */
+export const OFFLINE_MESSAGE =
+  "Couldn’t reach Orbit — check your connection and try again";
+
+/** An abort or a timeout, from the browser or from a provider. */
+export const TIMEOUT_MESSAGE = "That took too long — try again in a moment";
+
+/** A provider stream that ended mid-answer. Thrown from `lib/ai.ts`. */
+export const AI_INCOMPLETE_MESSAGE = "The AI’s answer got cut off — try again";
+
+/** The labels `lib/ai.ts` passes to `aiProviderErrorMessage`. */
+export const AI_PROVIDER_LABELS = ["Gemini", "OpenAI", "Anthropic"] as const;
+export type AiProviderLabel = (typeof AI_PROVIDER_LABELS)[number];
+
+export function aiProviderLabel(
+  provider: "gemini" | "openai" | "anthropic"
+): AiProviderLabel {
+  return provider === "gemini"
+    ? "Gemini"
+    : provider === "openai"
+      ? "OpenAI"
+      : "Anthropic";
+}
 
 export function isMissingAiApiKeyError(message: string | null | undefined) {
   if (!message) return false;
   return /api key/i.test(message);
+}
+
+/** Next.js's production stand-in for a thrown Server Action message. */
+function isNextDigest(message: string) {
+  return (
+    /specific message is omitted in production/i.test(message) ||
+    /an error occurred in the server components render/i.test(message)
+  );
 }
 
 /**
@@ -19,11 +57,7 @@ export function toUserFacingError(
   if (err instanceof Error) {
     const msg = err.message?.trim();
     // Next.js digest wrapper — recover anything useful from cause/name
-    if (
-      !msg ||
-      /specific message is omitted in production/i.test(msg) ||
-      /an error occurred in the server components render/i.test(msg)
-    ) {
+    if (!msg || isNextDigest(msg)) {
       const cause = (err as Error & { cause?: unknown }).cause;
       if (cause instanceof Error && cause.message.trim()) {
         return new Error(
@@ -65,23 +99,120 @@ export function toUserFacingError(
   return new Error(fallback);
 }
 
+/**
+ * What a person reads when an AI provider fails — one template per failure kind.
+ *
+ * Every template KEEPS the word `classifyAiError` keys on ("API key", "rate limit",
+ * "timed out", "model"). That is load-bearing, not incidental: `lib/ai.ts` throws the
+ * output of `aiProviderErrorMessage`, and `withUsage` in `lib/usage-events.ts`
+ * classifies that already-rewritten error for `usage_events.error_kind`. Reword a
+ * template without its trigger and that kind silently becomes "other" in telemetry.
+ * `other` must, for the same reason, match none of them.
+ */
+const AI_FAILURE_COPY = {
+  auth: (p: string) => `${p} didn’t accept your API key — check it in Settings`,
+  rate_limit: (p: string) =>
+    `${p} hit its rate limit — give it a moment and try again`,
+  timeout: (p: string) => `${p} timed out — try again, or ask something shorter`,
+  model_unavailable: (p: string) =>
+    `That ${p} model isn’t available — pick another in Settings`,
+  other: (p: string) => `${p} couldn’t answer that — try again in a moment`,
+} as const;
+
 export function aiProviderErrorMessage(err: unknown, provider: string): string {
   const base = toUserFacingError(err, `${provider} request failed`).message;
 
   if (/api key|unauthorized|401|invalid.*key/i.test(base)) {
-    return `Invalid ${provider} API key. Update it in Settings or check your server env key.`;
+    return AI_FAILURE_COPY.auth(provider);
   }
   if (/rate limit|429|quota|resource.?exhausted/i.test(base)) {
-    return `${provider} rate limit hit. Wait a moment and try again.`;
+    return AI_FAILURE_COPY.rate_limit(provider);
   }
   if (/timeout|timed out|ETIMEDOUT|AbortError/i.test(base)) {
-    return `${provider} timed out. Try a shorter question or try again.`;
+    return AI_FAILURE_COPY.timeout(provider);
   }
   if (/model|not found|404/i.test(base)) {
-    return `${provider} model is unavailable. Pick a different model in Settings.`;
+    return AI_FAILURE_COPY.model_unavailable(provider);
   }
 
-  return base.length > 240 ? `${base.slice(0, 237)}…` : base;
+  // This used to return up to 237 characters of whatever the provider said, which put
+  // raw JSON error bodies — and on a bad day request ids — in front of the person.
+  return AI_FAILURE_COPY.other(provider);
+}
+
+/**
+ * Every message Orbit wrote on purpose to be read by a person, so `friendlyError` can
+ * pass it through. Exact strings rather than patterns: a template for a label outside
+ * `AI_PROVIDER_LABELS` simply falls back to the caller's copy, which fails safe.
+ */
+const OWN_WORDS = new Set<string>([
+  MISSING_AI_API_KEY_MESSAGE,
+  OFFLINE_MESSAGE,
+  TIMEOUT_MESSAGE,
+  AI_INCOMPLETE_MESSAGE,
+  ...AI_PROVIDER_LABELS.flatMap((label) =>
+    Object.values(AI_FAILURE_COPY).map((template) => template(label))
+  ),
+]);
+
+function rawMessage(err: unknown): string {
+  if (err instanceof Error) return err.message?.trim() ?? "";
+  if (typeof err === "string") return err.trim();
+  if (err && typeof err === "object") {
+    const record = err as Record<string, unknown>;
+    if (typeof record.message === "string") return record.message.trim();
+    if (typeof record.error === "string") return record.error.trim();
+  }
+  return "";
+}
+
+/**
+ * The message a person should see for a failure. Never the raw `err.message`.
+ *
+ * `err instanceof Error ? err.message : fallback` — the shape at ~100 toast sites — is
+ * wrong in both environments. In production Next.js replaces a thrown Server Action
+ * message with a digest, so the person reads a paragraph about Server Components
+ * renders and the fallback is dead code. In development the same line shows them raw
+ * provider bodies and internal ids. `toUserFacingError` is not the fix: it keeps
+ * `err.message` whenever it is non-empty, which is the leak.
+ *
+ * So this inverts the default. The caller's `fallback` IS the message, and the only
+ * things that override it are the few worth saying more specifically: Orbit's own
+ * words (`OWN_WORDS`), a missing AI key, a dead connection, a timeout.
+ */
+export function friendlyError(err: unknown, fallback: string): string {
+  const raw = rawMessage(err);
+
+  // A digest can still carry the real error as its cause; run that through the same
+  // filter rather than trusting it.
+  if (raw && isNextDigest(raw)) {
+    const cause = (err as { cause?: unknown } | null)?.cause;
+    return cause ? friendlyError(cause, fallback) : fallback;
+  }
+
+  if (raw && OWN_WORDS.has(raw)) return raw;
+  if (raw && isMissingAiApiKeyError(raw)) return MISSING_AI_API_KEY_MESSAGE;
+
+  // Only a TypeError counts: that is what fetch throws for a network failure, and a
+  // server message that happens to say "Load failed" must not be mistaken for one.
+  if (
+    (err instanceof TypeError &&
+      /failed to fetch|networkerror|load failed|network error/i.test(raw)) ||
+    (typeof navigator !== "undefined" && navigator.onLine === false)
+  ) {
+    return OFFLINE_MESSAGE;
+  }
+
+  const name = err instanceof Error ? err.name : "";
+  if (
+    name === "AbortError" ||
+    name === "TimeoutError" ||
+    /timed out|ETIMEDOUT/i.test(raw)
+  ) {
+    return TIMEOUT_MESSAGE;
+  }
+
+  return fallback;
 }
 
 /**
