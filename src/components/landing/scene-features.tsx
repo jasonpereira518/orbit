@@ -6,6 +6,7 @@ import {
   ImportsVisual,
   RemindersVisual,
 } from "@/components/landing/feature-visuals";
+import { GlassCard } from "@/components/landing/glass-card";
 import { Reveal } from "@/components/motion/reveal";
 import { cn } from "@/lib/utils";
 
@@ -86,7 +87,7 @@ export function SceneFeatures() {
         <div className="mt-12 space-y-6">
           {FEATURES.map((feature, i) => (
             <Reveal key={feature.kicker} className="reveal-celestial">
-              <div className="landing-glass rounded-3xl p-5 md:p-8 lg:p-10">
+              <GlassCard className="rounded-3xl p-5 md:p-8 lg:p-10">
                 <div className="grid items-center gap-8 lg:grid-cols-2 lg:gap-12">
                   <div className={cn(i % 2 === 1 && "lg:order-2")}>
                     <p className={KICKER}>{feature.kicker}</p>
@@ -102,7 +103,7 @@ export function SceneFeatures() {
                     {feature.visual}
                   </div>
                 </div>
-              </div>
+              </GlassCard>
             </Reveal>
           ))}
         </div>

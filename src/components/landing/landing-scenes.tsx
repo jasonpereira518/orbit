@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { CometStreak } from "@/components/landing/comet-streak";
 import { ConstellationFigure } from "@/components/landing/constellation-figure";
+import { GlassCard } from "@/components/landing/glass-card";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
 import { WaitlistForm } from "@/components/landing/waitlist-form";
 import { Reveal } from "@/components/motion/reveal";
@@ -76,7 +77,7 @@ export function SceneComets() {
           {/* landing-glass, not liquid-glass: liquid-glass's light variant
            * has no `.dark` ancestor to invert against on this page, so it
            * rendered as a washed-out white panel instead of a card. */}
-          <div className="landing-glass mt-10 max-w-sm rounded-2xl p-5">
+          <GlassCard className="mt-10 max-w-sm rounded-2xl p-5">
             {/* Below md the pill drops to its own line: on a phone the name
              * block was squeezed to ~97px, wrapping the subtitle to three
              * lines beside a shrink-0 badge. */}
@@ -96,7 +97,7 @@ export function SceneComets() {
                 Follow up today
               </span>
             </div>
-          </div>
+          </GlassCard>
         </Reveal>
       </div>
     </section>
@@ -169,7 +170,7 @@ export function SceneFinale({
           className="reveal-celestial mx-auto w-full max-w-lg lg:mx-0 lg:justify-self-end"
           delay={160}
         >
-          <div className="landing-glass rounded-3xl p-6 text-left md:p-8">
+          <GlassCard className="rounded-3xl p-6 text-left md:p-8">
             {/* Secondary path only. The app is live, so this is a mailing
              * list — not a waitlist — and must not compete with the CTA. */}
             <p className={KICKER}>Interest list</p>
@@ -185,7 +186,7 @@ export function SceneFinale({
             <p className="mt-3 text-xs text-[#6d807c]">
               No commitments. Interest list only.
             </p>
-          </div>
+          </GlassCard>
         </Reveal>
       </div>
 
