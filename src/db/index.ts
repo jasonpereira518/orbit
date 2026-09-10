@@ -980,6 +980,39 @@ CREATE TABLE IF NOT EXISTS event_provider_connections (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS contact_identities (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  value text NOT NULL,
+  source text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS contact_merges (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  winner_contact_id uuid NOT NULL,
+  loser_contact_id uuid NOT NULL,
+  loser_snapshot jsonb NOT NULL,
+  repointed jsonb NOT NULL DEFAULT '{}'::jsonb,
+  deleted jsonb NOT NULL DEFAULT '{}'::jsonb,
+  status text NOT NULL DEFAULT 'in_progress',
+  reason text,
+  confidence real,
+  merged_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS duplicate_suggestions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_a_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  contact_b_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  reason text NOT NULL,
+  confidence real NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  resolved_at timestamptz
+);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -1033,12 +1066,16 @@ CREATE TABLE IF NOT EXISTS event_provider_connections (
  * v31 = the connector platform: api_keys, api_idempotency_keys, webhook_endpoints,
  * outbound_webhook_deliveries.
  * v32 = the events feature: events, event_attendees, event_provider_connections.
+ * v33 = duplicate prevention: contact_identities (the unique index that actually stops
+ * duplicates being created), contact_merges (a merged contact archived whole, so the
+ * loser's row can be deleted rather than flagged), duplicate_suggestions (name-tier
+ * matches, which no longer auto-merge).
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
  * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
  */
-export const SCHEMA_VERSION = 32;
+export const SCHEMA_VERSION = 33;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1227,6 +1264,49 @@ export const SCALE_DDL: string[] = [
   // every backtick pair between these brackets as a DDL statement.
   `CREATE INDEX IF NOT EXISTS contact_experiences_org_idx
      ON contact_experiences(user_id, organization_normalized)`,
+
+  // --- Duplicate prevention --------------------------------------------------------
+  //
+  // This unique index is the feature. Every other piece of duplicate handling is advisory;
+  // this is the only thing that can stop two concurrent writers both creating a contact
+  // for the same person, because it is the only check that is not a check-then-insert.
+  //
+  // It is safe to create unconditionally, which is worth spelling out because the obvious
+  // reading says otherwise. An existing account can absolutely have two contacts sharing an
+  // email, so a unique index over a table backfilled from contacts would fail -- the trap
+  // contact_tags_pair_uidx hit, which had to delete rows before it could claim its
+  // constraint. It does not apply here because contact_identities starts EMPTY on every
+  // database, new or upgrading. The backfill runs afterwards, in TypeScript, and claims
+  // identities oldest-contact-first with ON CONFLICT DO NOTHING; the contacts that lose a
+  // claim are precisely the pre-existing duplicates, and they are surfaced for review
+  // rather than deleted to make an index creatable. See backfillContactIdentities in
+  // src/lib/contact-identity.ts.
+  `CREATE UNIQUE INDEX IF NOT EXISTS contact_identities_user_kind_value_uidx
+     ON contact_identities(user_id, kind, value)`,
+  // The anti-join the backfill pages through, and the FK index that stops a contact
+  // delete from scanning this table (the omission contacts_company_id_idx was added for).
+  `CREATE INDEX IF NOT EXISTS contact_identities_contact_idx
+     ON contact_identities(contact_id)`,
+
+  // Alias lookup: a stale contact id in, the surviving contact id out. Unique because a
+  // contact can only be merged away once -- attempting it twice is a bug, not a no-op.
+  `CREATE UNIQUE INDEX IF NOT EXISTS contact_merges_loser_uidx
+     ON contact_merges(loser_contact_id)`,
+  // The undo list, newest first.
+  `CREATE INDEX IF NOT EXISTS contact_merges_user_idx
+     ON contact_merges(user_id, merged_at DESC)`,
+  // Path compression rewrites winner_contact_id on every subsequent merge in a chain.
+  `CREATE INDEX IF NOT EXISTS contact_merges_winner_idx
+     ON contact_merges(user_id, winner_contact_id)`,
+
+  `CREATE UNIQUE INDEX IF NOT EXISTS duplicate_suggestions_pair_uidx
+     ON duplicate_suggestions(user_id, contact_a_id, contact_b_id)`,
+  // Partial: the review page only ever reads pending pairs, and dismissed ones accumulate
+  // forever by design (a dismissal has to outlive the suggestion or the page re-proposes
+  // a pair the user already rejected).
+  `CREATE INDEX IF NOT EXISTS duplicate_suggestions_pending_idx
+     ON duplicate_suggestions(user_id, confidence DESC)
+     WHERE status = 'pending'`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
