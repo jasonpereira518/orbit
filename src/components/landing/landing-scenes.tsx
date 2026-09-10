@@ -3,8 +3,8 @@ import { CometStreak } from "@/components/landing/comet-streak";
 import { ConstellationFigure } from "@/components/landing/constellation-figure";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
 import { WaitlistForm } from "@/components/landing/waitlist-form";
+import { MarketingFooter } from "@/components/marketing/marketing-footer";
 import { Reveal } from "@/components/motion/reveal";
-import { OrbitLogo } from "@/components/orbit-logo";
 import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
 
 // All narrative copy is server-rendered here so it ships in the document;
@@ -194,7 +194,7 @@ export function SceneFinale({
         className="relative z-10 mx-auto mt-24 h-px w-full max-w-4xl bg-[#e8f3f1]/[0.14]"
       />
 
-      <footer className="relative z-10 mx-auto flex w-full max-w-4xl flex-wrap items-center justify-between gap-x-6 gap-y-4 py-12">
+      <MarketingFooter className="max-w-4xl">
         {/* Anchored on the footer's own box rather than offset from the
          * section above — a negative-offset sibling glow faded out before it
          * reached this text. */}
@@ -206,51 +206,7 @@ export function SceneFinale({
               "radial-gradient(circle, rgba(242,193,78,0.14), transparent 62%)",
           }}
         />
-        <Link
-          href="/"
-          className="flex items-center gap-2.5"
-          aria-label="Orbit home"
-        >
-          <OrbitLogo size="sm" />
-          <span className="font-[family-name:var(--font-display)] text-[17px] tracking-tight text-[#e8f3f1]">
-            Orbit
-          </span>
-        </Link>
-        <div className="flex items-center gap-6">
-          <Link
-            href="/pricing"
-            className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
-          >
-            Pricing
-          </Link>
-          <Link
-            href="/interest"
-            className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
-          >
-            Interest list
-          </Link>
-          <Link
-            href="/privacy"
-            className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
-          >
-            Privacy
-          </Link>
-          <Link
-            href="/contact"
-            className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
-          >
-            Contact
-          </Link>
-        </div>
-        <a
-          href="https://jasonpereira.live/"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="landing-credit-shimmer text-sm"
-        >
-          By Jason Pereira
-        </a>
-      </footer>
+      </MarketingFooter>
     </section>
   );
 }
