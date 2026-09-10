@@ -266,7 +266,21 @@ bounded.
    expression against the JavaScript it replaces.
 3. **Bound the lists.** Every card on the dashboard renders a handful of rows —
    `.slice(0, 5)` appears at `reminders.ts:650`. `ORDER BY … LIMIT` those in the query
-   instead of sorting the whole network to show five.
+   instead of sorting the whole network to show five. **In progress**: the two that read
+   the stored breakdown are done in SQL (`getDashboardTierCounts`,
+   `getGoalAlignedContactIds`) but are not wired in yet. `recentContacts` (6),
+   `dueFollowUps` (12) and the three lookup Maps still come off the full scan.
+
+   The width half is done: the five widest columns (`aiSummary`, `keyFacts`,
+   `sharedInterests`, `howMet`, `metContext`) are off the network scan and fetched by id
+   for the only two sets that need them — the 750-contact metrics sample and the 150-contact
+   preview. **983 → 863 bytes a contact** on the 3,000 fixture, verified behaviour-identical
+   by capturing the whole dashboard payload before and after. The fixture writes a one-line
+   `aiSummary`; a real account's is a paragraph, so this understates the production cut.
+
+   Found on the way: `getNetworkStats` declared five columns in its input type and read
+   none of them, and the dashboard donates its scan to that call — so those columns were
+   selected for every contact purely to satisfy a signature.
 4. **Materialise what cannot be bounded.** The constellation preview and the network-depth
    chart genuinely need the whole graph. Those belong in a per-user precomputed row,
    refreshed by the existing deferred-work path, not recomputed on every page view.
