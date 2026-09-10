@@ -54,7 +54,7 @@ import {
   downloadAndPersistAvatar,
   fetchGravatarPhotoUrl,
   fetchLinkedInPhotoUrl,
-  MicrolinkRateLimitError,
+  AvatarSourceRateLimitError,
 } from "@/lib/contact-avatar";
 import { contactsListSelection } from "@/lib/contact-avatar-sql";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
@@ -1209,7 +1209,7 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
             contact.linkedinUrl
           );
         } catch (err) {
-          if (err instanceof MicrolinkRateLimitError) {
+          if (err instanceof AvatarSourceRateLimitError) {
             rateLimited = true;
             unmatched += 1;
             continue;

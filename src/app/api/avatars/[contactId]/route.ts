@@ -10,7 +10,7 @@ import {
   fetchLinkedInPhotoUrl,
   isDurableAvatarUrl,
   isUnusableAvatarUrl,
-  MicrolinkRateLimitError,
+  AvatarSourceRateLimitError,
   parseImageDataUrl,
 } from "@/lib/contact-avatar";
 
@@ -155,7 +155,7 @@ export async function GET(_req: Request, { params }: Params) {
       }
     } catch (err) {
       if (isRateLimitedError(err)) return retryLater(err.retryAfterSec);
-      if (err instanceof MicrolinkRateLimitError) {
+      if (err instanceof AvatarSourceRateLimitError) {
         return retryLater(
           Math.max(1, Math.ceil((err.resetAt - Date.now()) / 1000))
         );

@@ -44,8 +44,8 @@ export const RATE_LIMITS = {
    * Sized for the contacts list, where every photoless row visible resolves itself —
    * 30/min was sized for the old behaviour (one profile page at a time) and 429s within
    * a couple of scrolls. This bucket is a runaway-loop guard, not the quota guard:
-   * metered Microlink is protected by its own process-wide cooldown
-   * (`MicrolinkRateLimitError`), and the tiers ahead of it are free.
+   * each upstream source (Unavatar and Microlink are both ~25 lookups a day) is
+   * protected by its own process-wide cooldown via `AvatarSourceRateLimitError`.
    */
   avatarResolve: { limit: 120, windowSec: 60 },
   /**

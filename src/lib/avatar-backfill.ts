@@ -1,7 +1,7 @@
 import { and, asc, eq, notInArray, or, sql } from "drizzle-orm";
 import type { getDb } from "@/db";
 import { contacts } from "@/db/schema";
-import { AvatarStorageError, MicrolinkRateLimitError } from "@/lib/contact-avatar";
+import { AvatarSourceRateLimitError, AvatarStorageError } from "@/lib/contact-avatar";
 import { deadlineReached } from "@/lib/time-budget";
 
 type Db = Awaited<ReturnType<typeof getDb>>;
@@ -160,9 +160,10 @@ export async function runAvatarBackfillBatch(
     if (deadlineReached(deps.deadline, now)) break;
     try {
       let photoUrl: string | null = null;
-      // Set when only the metered tier was exhausted. Such a contact stays retryable
-      // (kept out of failedIds) so it gets another look once the cooldown expires.
-      let microlinkDeferred = false;
+      // Set when a source refused us for quota rather than answering. Such a contact
+      // stays retryable (kept out of failedIds, never cooldown-stamped) so it gets a
+      // real look once the source's quota resets.
+      let quotaDeferred = false;
 
       if (contact.remoteUrl) {
         photoUrl = await deps.persistRemote(contact.id, contact.remoteUrl);
@@ -172,11 +173,11 @@ export async function runAvatarBackfillBatch(
         try {
           photoUrl = await deps.resolveLinkedIn(contact.id, contact.linkedinUrl);
         } catch (err) {
-          if (err instanceof MicrolinkRateLimitError) {
+          if (err instanceof AvatarSourceRateLimitError) {
             rateLimitedUntil = err.resetAt;
-            // Unavatar was already tried inside the resolver, but Gravatar is still
-            // free — fall through rather than abandoning the contact here.
-            microlinkDeferred = true;
+            // A quota'd tier (Unavatar or Microlink) never got a real look. Gravatar is a
+            // different service, so still try it — but keep the contact retryable.
+            quotaDeferred = true;
           } else {
             throw err;
           }
@@ -189,9 +190,9 @@ export async function runAvatarBackfillBatch(
 
       if (!photoUrl) {
         failed += 1;
-        // A quota-deferred contact is not a real miss — do not start its cooldown,
-        // or an exhausted afternoon would mute it for a month.
-        if (!microlinkDeferred) {
+        // A quota-deferred contact is not a real miss — do not start its cooldown, or
+        // Unavatar's 25-a-day limit would write off everyone past the 25th for a month.
+        if (!quotaDeferred) {
           failedIds.push(contact.id);
           await deps.markChecked(contact.id);
         }
@@ -202,7 +203,7 @@ export async function runAvatarBackfillBatch(
       saved += 1;
       savedIds.push(contact.id);
     } catch (err) {
-      if (err instanceof MicrolinkRateLimitError) {
+      if (err instanceof AvatarSourceRateLimitError) {
         rateLimitedUntil = err.resetAt;
         break;
       }

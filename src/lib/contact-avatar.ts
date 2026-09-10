@@ -61,15 +61,41 @@ function warnMissingBlobOnce() {
   );
 }
 
-/** Thrown when Microlink quota is exhausted. */
-export class MicrolinkRateLimitError extends Error {
+/**
+ * A photo source refused us for quota. This is a DEFERRAL, never a "no photo".
+ *
+ * Both free tiers are quota'd too, not just Microlink: unavatar.io's anonymous limit is
+ * 25 lookups a day (`x-rate-limit-limit: 25`, `retry-after` ~86,400s). Before this class
+ * existed, a 429 from Unavatar came back from `downloadImageBytes` as a plain null, the
+ * backfill recorded the contact as having no photo, and `profile_image_checked_at` then
+ * muted it for 30 days — so after the first 25 lookups of a day, the rest of the network
+ * was written off for a month, even though ~70% of LinkedIn profiles DO resolve there.
+ */
+export class AvatarSourceRateLimitError extends Error {
   readonly resetAt: number;
+  readonly source: string;
 
-  constructor(resetAt: number) {
-    super("LinkedIn photo lookup rate limit hit");
-    this.name = "MicrolinkRateLimitError";
+  constructor(resetAt: number, source: string, message = `${source} rate limit hit`) {
+    super(message);
+    this.name = "AvatarSourceRateLimitError";
     this.resetAt = resetAt;
+    this.source = source;
   }
+}
+
+/** Thrown when Microlink quota is exhausted. */
+export class MicrolinkRateLimitError extends AvatarSourceRateLimitError {
+  constructor(resetAt: number) {
+    super(resetAt, "microlink", "LinkedIn photo lookup rate limit hit");
+    this.name = "MicrolinkRateLimitError";
+  }
+}
+
+/** Process-local Unavatar cooldown (ms since epoch). Same shape as Microlink's. */
+let unavatarCooldownUntil = 0;
+
+function noteUnavatarRateLimit(resetAtMs: number) {
+  unavatarCooldownUntil = Math.max(unavatarCooldownUntil, resetAtMs, Date.now() + 60_000);
 }
 
 /** Process-local Microlink cooldown (ms since epoch). */
@@ -118,7 +144,11 @@ function parseRateLimitReset(res: Response): number {
 }
 
 function noteMicrolinkHeaders(res: Response) {
-  const remaining = Number(res.headers.get("x-rate-limit-remaining"));
+  // An absent header is not "zero remaining": `Number(null)` is 0, which used to trip a
+  // cooldown on every Microlink response that simply omitted the header.
+  const raw = res.headers.get("x-rate-limit-remaining");
+  if (raw === null || raw.trim() === "") return;
+  const remaining = Number(raw);
   if (Number.isFinite(remaining) && remaining <= 0) {
     noteMicrolinkRateLimit(parseRateLimitReset(res));
   }
@@ -141,13 +171,14 @@ export function parseImageDataUrl(
 /**
  * Resolve a LinkedIn profile photo and return a durable URL.
  *
- * Unavatar runs FIRST because it is free and unmetered for us; Microlink's free
- * tier is ~25 lookups/day, so spending it before trying Unavatar capped the whole
- * pipeline at ~25 contacts/day. Quota is now only ever spent on profiles Unavatar
- * could not resolve.
+ * Unavatar runs first: it costs nothing and, measured against 25 real LinkedIn
+ * profiles, returned a genuine headshot for 18 of them (a generated SVG silhouette for
+ * the rest, which `downloadImageBytes` rejects). It is NOT unmetered — the anonymous
+ * limit is 25 lookups a day — so both tiers are quota'd, and together they give roughly
+ * 50 lookups a day rather than 25.
  *
- * Throws {@link MicrolinkRateLimitError} only when Unavatar has already failed and
- * Microlink is cooled down, so callers still surface quota exhaustion honestly.
+ * Throws {@link AvatarSourceRateLimitError} whenever a quota'd tier refused us and no
+ * photo was found, so callers defer the contact instead of recording it as photoless.
  */
 export async function fetchLinkedInPhotoUrl(
   contactId: string,
@@ -156,10 +187,22 @@ export async function fetchLinkedInPhotoUrl(
   const slug = linkedinSlug(linkedinUrl);
   if (!slug) return null;
 
-  // Free tier. Nothing stores this URL — `persistAvatar` returns inline/Blob bytes.
-  const unavatarUrl = `https://unavatar.io/linkedin/${encodeURIComponent(slug)}?fallback=false`;
-  const fromUnavatar = await downloadAndPersistAvatar(contactId, unavatarUrl);
-  if (fromUnavatar) return fromUnavatar;
+  // Free tier, but quota'd: 25 anonymous lookups a day. Nothing stores this URL —
+  // `persistAvatar` returns inline/Blob bytes.
+  let deferred: AvatarSourceRateLimitError | null = null;
+  if (Date.now() < unavatarCooldownUntil) {
+    deferred = new AvatarSourceRateLimitError(unavatarCooldownUntil, "unavatar.io");
+  } else {
+    const unavatarUrl = `https://unavatar.io/linkedin/${encodeURIComponent(slug)}?fallback=false`;
+    try {
+      const fromUnavatar = await downloadAndPersistAvatar(contactId, unavatarUrl);
+      if (fromUnavatar) return fromUnavatar;
+    } catch (err) {
+      if (!(err instanceof AvatarSourceRateLimitError)) throw err;
+      noteUnavatarRateLimit(err.resetAt);
+      deferred = err;
+    }
+  }
 
   // Metered tier. Report exhaustion rather than silently returning "no photo".
   if (isMicrolinkRateLimited()) {
@@ -179,9 +222,11 @@ export async function fetchLinkedInPhotoUrl(
   } catch (err) {
     // A broken photo store, or exhausted quota, are both worth surfacing.
     if (err instanceof AvatarStorageError) throw err;
-    if (err instanceof MicrolinkRateLimitError) throw err;
+    if (err instanceof AvatarSourceRateLimitError) throw err;
   }
 
+  // Microlink found nothing, but Unavatar never got a real look: defer, don't fail.
+  if (deferred) throw deferred;
   return null;
 }
 
@@ -263,6 +308,9 @@ export async function downloadImageBytes(
       signal: AbortSignal.timeout(8_000),
       redirect: "follow",
     });
+    if (res.status === 429) {
+      throw new AvatarSourceRateLimitError(parseRateLimitReset(res), new URL(res.url || imageUrl).host);
+    }
     if (!res.ok) return null;
 
     const contentType = (res.headers.get("content-type") || "image/jpeg")
@@ -276,7 +324,9 @@ export async function downloadImageBytes(
     // Sniff too: a placeholder served as image/png that is really SVG still counts.
     if (looksLikeSvg(buf)) return null;
     return { buf, contentType };
-  } catch {
+  } catch (err) {
+    // Quota is not a missing image — let callers defer instead of writing the contact off.
+    if (err instanceof AvatarSourceRateLimitError) throw err;
     return null;
   }
 }

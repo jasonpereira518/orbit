@@ -17,7 +17,9 @@
  * are deterministic and the suite stays offline.
  */
 import { createHash } from "node:crypto";
+import { runAvatarBackfillBatch } from "../src/lib/avatar-backfill";
 import {
+  AvatarSourceRateLimitError,
   downloadAndPersistAvatar,
   fetchGravatarPhotoUrl,
   fetchLinkedInPhotoUrl,
@@ -243,6 +245,94 @@ async function main() {
       check("a malformed address is not looked up", noAt === null);
     }
   );
+
+  // ---- Quota is a deferral, never a miss --------------------------------------
+  // unavatar.io allows 25 anonymous lookups a day (measured: x-rate-limit-limit: 25,
+  // retry-after ~86,400s). Its 429 used to come back as a plain null, the backfill
+  // cooldown-stamped the contact, and everyone past the 25th was muted for a month
+  // even though ~70% of them had a real photo waiting. Runs LAST: the Unavatar
+  // cooldown it trips is process-wide and would starve any Unavatar test after it.
+  await withFetch(
+    (url) => {
+      if (url.includes("unavatar.io")) {
+        return new Response('{"message":"Too Many Requests"}', {
+          status: 429,
+          headers: { "retry-after": "86400", "x-rate-limit-limit": "25" },
+        });
+      }
+      // Microlink answers, but has no image — so nothing is found anywhere.
+      return Response.json({ status: "success", data: {} });
+    },
+    async (calls) => {
+      let thrown: unknown = null;
+      let stored: string | null = null;
+      try {
+        stored = await fetchLinkedInPhotoUrl("quota-1", LINKEDIN_URL);
+      } catch (err) {
+        thrown = err;
+      }
+      check(
+        "an Unavatar 429 is reported as a quota deferral, not as 'no photo'",
+        thrown instanceof AvatarSourceRateLimitError && stored === null,
+        `threw=${String(thrown)} stored=${String(stored)}`
+      );
+
+      const before = calls.filter((u) => u.includes("unavatar.io")).length;
+      try {
+        await fetchLinkedInPhotoUrl("quota-2", LINKEDIN_URL);
+      } catch {
+        // expected: still deferred
+      }
+      const after = calls.filter((u) => u.includes("unavatar.io")).length;
+      check(
+        "an exhausted Unavatar is not hammered again inside its cooldown",
+        after === before,
+        `unavatar calls before=${before} after=${after}`
+      );
+    }
+  );
+
+  // The batch must keep a deferred contact retryable: no cooldown stamp, no skipId.
+  const marked: string[] = [];
+  const batch = await runAvatarBackfillBatch(
+    [{ id: "deferred-1", linkedinUrl: LINKEDIN_URL, email: null, remoteUrl: null }],
+    {
+      deadline: Date.now() + 5_000,
+      persistRemote: async () => null,
+      resolveLinkedIn: async () => {
+        throw new AvatarSourceRateLimitError(Date.now() + 86_400_000, "unavatar.io");
+      },
+      resolveGravatar: async () => null,
+      save: async () => {},
+      markChecked: async (id) => void marked.push(id),
+    }
+  );
+  check(
+    "a quota-deferred contact is NOT cooldown-stamped",
+    marked.length === 0,
+    `markChecked called for ${marked.join(",")}`
+  );
+  check(
+    "a quota-deferred contact is not handed back as a skipId",
+    batch.failedIds.length === 0,
+    batch.failedIds.join(",")
+  );
+  check("the batch reports when the quota resets", batch.rateLimitedUntil !== null);
+
+  // …whereas a genuine miss IS stamped, so the cooldown still does its job.
+  const marked2: string[] = [];
+  await runAvatarBackfillBatch(
+    [{ id: "miss-1", linkedinUrl: LINKEDIN_URL, email: null, remoteUrl: null }],
+    {
+      deadline: Date.now() + 5_000,
+      persistRemote: async () => null,
+      resolveLinkedIn: async () => null,
+      resolveGravatar: async () => null,
+      save: async () => {},
+      markChecked: async (id) => void marked2.push(id),
+    }
+  );
+  check("a genuine miss IS cooldown-stamped", marked2.includes("miss-1"));
 
   if (failures > 0) {
     console.error(`\n${failures} avatar tier check(s) failed`);
