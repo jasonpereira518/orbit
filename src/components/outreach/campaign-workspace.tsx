@@ -201,6 +201,10 @@ export function CampaignWorkspace({
           reparseAudience: false,
         });
         const result = await searchProspects(campaign.id);
+        if ("error" in result) {
+          toast.error(result.error);
+          return;
+        }
         if (result.source === "demo") {
           toast.success(
             `Demo search: ${result.matched} matched` +

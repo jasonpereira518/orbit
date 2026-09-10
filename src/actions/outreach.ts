@@ -38,6 +38,7 @@ import {
   type OutreachChannel,
   type OutreachMessageOutcome,
   type OutreachMessageStatus,
+  type OutreachSearchSource,
   type SequenceStep,
 } from "@/lib/outreach-types";
 
@@ -316,13 +317,34 @@ export async function updateCampaign(
   return updated;
 }
 
-export async function searchProspects(campaignId: string, page = 1) {
+/**
+ * Prospect search hits Apollo's live API, so it fails for reasons a user can act on
+ * (an expired key, a rate limit, a bad filter) — the kind of message `searchPeople`
+ * already throws. A thrown Error loses its message in a production build: Next.js
+ * redacts every Server Action error to a generic "omitted in production builds" string
+ * before it reaches the client, no matter what the message said. Catching the search
+ * call here and returning `{ error }` as plain data sidesteps that — the caller checks
+ * for `"error" in result` instead of relying on try/catch to surface the real reason.
+ */
+export async function searchProspects(
+  campaignId: string,
+  page = 1
+): Promise<
+  | { imported: number; matched: number; mismatched: number; total: number; source: OutreachSearchSource }
+  | { error: string }
+> {
   const userId = await requireOutreachUser();
   const campaign = await requireCampaign(userId, campaignId);
   const db = await getDb();
 
   const filters = (campaign.audienceFilters ?? {}) as AudienceFilters;
-  const { prospects, total, source } = await searchPeople(userId, filters, page);
+  let searchResult: Awaited<ReturnType<typeof searchPeople>>;
+  try {
+    searchResult = await searchPeople(userId, filters, page);
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Prospect search failed" };
+  }
+  const { prospects, total, source } = searchResult;
 
   let matched = 0;
   let mismatched = 0;
