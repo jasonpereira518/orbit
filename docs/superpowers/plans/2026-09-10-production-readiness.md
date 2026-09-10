@@ -202,10 +202,27 @@ dashboard regressions is structurally blind to the one that is actually happenin
 
 **Do, in this order.**
 
-1. **Extend the budget script to assert rows and bytes**, not just statements. Run it at
-   3,000 contacts (it already builds that fixture) *and* at 25,000, and fail on a row count
-   that scales linearly with account size. Do this first: it makes the problem visible and
-   then proves the fix.
+1. ~~**Extend the budget script to assert rows and bytes**, not just statements.~~ **Done**
+   (`scripts/smoke-page-budgets.ts`, "Payload scaling"). It runs the loaders at 750 and
+   3,000 contacts and reports growth. Measured:
+
+   | Surface | 750 contacts | 3,000 contacts | Growth |
+   |---|---|---|---|
+   | dashboard | 755 rows | 3,005 rows | 4.0× |
+   | graph (show all) | 755 rows | 3,005 rows | 4.0× |
+   | notifications panel | 34 rows | 100 rows | 2.9×, bounded at 235 |
+
+   Two corrections to what this document said before the measurement existed:
+
+   - **The notifications panel is not a problem.** Its items come from four LIMITed queries
+     (80 + 100 + 30 + 25), so it is bounded at 235 rows however large the account is. It is
+     the shape the other two should end up in, not another instance of the defect.
+   - **The dashboard's existing byte budget could not see the payload.** `contactById` is a
+     `Map`, and `JSON.stringify` renders a Map as `{}` — so "dashboard payload under 1.5 MB"
+     was weighing the bounded card lists while one row per contact passed through unweighed.
+     Measured properly: **2.9 MB at 3,000 contacts, 983 bytes a contact, ~9.6 MB at 10,000** —
+     moved over the HTTP driver and aggregated in a lambda on every visit. That is the
+     60-second wall in numbers.
 2. **Push the aggregates into SQL.** Counts, tier distributions, "dormant since", and
    follow-ups due are `COUNT`/`GROUP BY`/`WHERE`, not array filters. Each one removed from
    JS removes its rows from the payload too.
@@ -341,7 +358,7 @@ in place (`src/lib/toast.tsx`); this is about what happens *before* the toast.
 
 | Phase | Items | Gate |
 |---|---|---|
-| **A** — one afternoon | 0.1 (verify), 0.2, 0.3.1, 0.4, 1.5 | Config checks and small guards. No product risk. |
+| **A** — one afternoon | ~~0.2, 0.3.1, 1.5~~ **done**; 0.1 (verify in Vercel), 0.4 (needs production `error_events`) | Config checks and small guards. No product risk. |
 | **B** — the real work | 1.1 in full | Ends with `maxDuration` reverted to 60 and the row-count budget green at 25,000 contacts. |
 | **C** — trust the deploy | 0.6, 1.7 | Playwright green on preview; bundle budgets in CI. |
 | **D** — survive growth | 1.2, 0.5, 1.4 | Sync lag alerting live; deletion resumable; billing writes atomic. |
