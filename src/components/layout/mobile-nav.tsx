@@ -47,6 +47,18 @@ export function MobileNav({
   const pathname = usePathname();
   const router = useRouter();
   const [moreOpen, setMoreOpen] = useState(false);
+  /**
+   * Where focus lands when the More panel opens.
+   *
+   * Base UI focuses the popup itself on a touch open and the first row on a keyboard
+   * open — but only when it opens the dialog through its own trigger. This one opens
+   * from controlled state, so it never learns the interaction and always took the first
+   * row, lighting "Ask your network" with a focus ring on every tap. The panel is asked
+   * to be quiet; that ring was the loudest thing in it. Keyboard opens keep the
+   * first-row default, because that is where a keyboard user wants to be.
+   */
+  const morePanelRef = useRef<HTMLDivElement | null>(null);
+  const moreOpenedByKeyboard = useRef(false);
   const reducedMotion = useReducedMotion();
   const pillTransition = reducedMotion ? { duration: 0 } : SPRING_PILL;
 
@@ -88,6 +100,25 @@ export function MobileNav({
       }
     }
     return entries;
+  }, [bottomNav]);
+
+  /**
+   * For each item in `bottomNav`, its index in `draggableEntries` — or -1 for Capture.
+   *
+   * The two lists are different lengths: Capture renders in the bar but is not a
+   * draggable entry. Rendering used to compare the raw `bottomNav` index against
+   * `highlightIndex`, which is an index into `draggableEntries`, so everything after
+   * Capture was off by one. Every More route (Events, Reminders, Constellation, Outreach)
+   * lit up Chat, and Chat's own page put the highlight on Capture. Drags inherited it
+   * too, since item refs were stored by the same raw index: dropping on Chat opened the
+   * More sheet, and dropping on More read past the end of the array and threw. Anything
+   * that indexes the bar goes through this map.
+   */
+  const navEntryIndex = useMemo(() => {
+    let next = 0;
+    return bottomNav.map((item) =>
+      !("id" in item) && item.href === "/capture" ? -1 : next++
+    );
   }, [bottomNav]);
 
   const activeEntryIndex = draggableEntries.findIndex((entry) =>
@@ -179,9 +210,10 @@ export function MobileNav({
         suppressNextClickRef.current = false;
       }, 500);
       const entry = draggableEntries[idx];
-      if (entry.type === "more") {
+      if (entry?.type === "more") {
+        moreOpenedByKeyboard.current = false;
         setMoreOpen(true);
-      } else {
+      } else if (entry) {
         router.push(entry.href);
       }
     }
@@ -255,8 +287,12 @@ export function MobileNav({
             onClickCapture={handleClickCapture}
             onDragStart={(e) => e.preventDefault()}
           >
-            {/* Every item renders exactly one entry, so the map index is the entry index. */}
-            {bottomNav.map((item, myIndex) => {
+            {/*
+              `myIndex` is the entry index (see `navEntryIndex`), not the map index — the
+              two differ by one after Capture.
+            */}
+            {bottomNav.map((item, navIndex) => {
+              const myIndex = navEntryIndex[navIndex];
               if ("id" in item && item.id === "more") {
                 const displayActive = myIndex === highlightIndex;
                 const Icon = item.icon;
@@ -267,7 +303,12 @@ export function MobileNav({
                       ref={(el) => {
                         itemRefs.current[myIndex] = el;
                       }}
-                      onClick={() => setMoreOpen(true)}
+                      onClick={(e) => {
+                        // A keyboard activation synthesises a click with no pointer
+                        // behind it, and reports `detail` 0.
+                        moreOpenedByKeyboard.current = e.detail === 0;
+                        setMoreOpen(true);
+                      }}
                       className={cn(
                         "flex w-full items-center justify-center py-1 text-[10px] font-medium transition-colors",
                         displayActive
@@ -377,8 +418,15 @@ export function MobileNav({
 
       <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
         <SheetContent
+          ref={morePanelRef}
           side="bottom"
-          className="gap-0 pb-[max(0.5rem,env(safe-area-inset-bottom))]"
+          initialFocus={() =>
+            moreOpenedByKeyboard.current ? true : morePanelRef.current
+          }
+          // The container takes focus on touch opens (see `initialFocus`); an outline
+          // around a non-interactive dialog frame conveys nothing, so it has none. The
+          // rows inside keep their own focus styles.
+          className="gap-0 pb-[max(0.5rem,env(safe-area-inset-bottom))] outline-none"
         >
           {/* A grabber, not a title bar.
            *
@@ -387,7 +435,10 @@ export function MobileNav({
            * thing the heading was there to say — this is a panel that came up — in a
            * quarter of the height and none of the voice. The accessible name stays; a
            * dialog still has to announce itself. */}
-          <div className="flex justify-center pt-2.5 pb-1" aria-hidden="true">
+          {/* The band is as tall as the sheet's close button (pinned `top-3`, 32px): with
+           * only the grabber's own height here, the first row rose into that corner and
+           * the close button sat on top of "Ask your network". */}
+          <div className="flex h-11 shrink-0 justify-center pt-3" aria-hidden="true">
             <div className="h-1 w-9 rounded-full bg-foreground/15" />
           </div>
           <SheetHeader className="sr-only">
