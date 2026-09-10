@@ -66,19 +66,25 @@ function input(over: Partial<Parameters<typeof scoreCandidates>[0]> = {}) {
 
 console.log("\ncontactWeight");
 {
-  check("an outer, unprioritized contact sits at the floor", contactWeight(contact({ closenessTier: "outer" })) === 0.8);
-  check("inner tier lifts it", contactWeight(contact({ closenessTier: "inner" })) === 1.1);
+  check(
+    "an outer, unprioritized contact sits at the floor",
+    Math.abs(contactWeight(contact({ closenessTier: "outer" })) - 0.8) < 1e-9
+  );
+  check("inner tier lifts it", Math.abs(contactWeight(contact({ closenessTier: "inner" })) - 1.1) < 1e-9);
   check(
     "priority is capped at 3 so it cannot dominate",
-    contactWeight(contact({ closenessTier: "inner", priorityLevel: 9 })) === 1.4
+    Math.abs(contactWeight(contact({ closenessTier: "inner", priorityLevel: 9 })) - 1.4) < 1e-9
   );
 }
 
 console.log("\nrecencyFit");
 {
   check("date-triggered kinds ignore idleness", recencyFit("birthday", 0) === 1);
-  check("a fresh staleness signal is discounted", recencyFit("dormant", 0) === 0.7);
-  check("it saturates rather than growing without bound", recencyFit("dormant", 10_000) === recencyFit("dormant", 180));
+  check("a fresh staleness signal is discounted", Math.abs(recencyFit("dormant", 0) - 0.7) < 1e-9);
+  check(
+    "it saturates rather than growing without bound",
+    Math.abs(recencyFit("dormant", 10_000) - recencyFit("dormant", 180)) < 1e-9
+  );
 }
 
 console.log("\nuserWeight");
@@ -95,9 +101,9 @@ console.log("\nuserWeight");
 
 console.log("\nfuse");
 {
-  check("one signal fuses to itself", fuse([80]) === 80);
+  check("one signal fuses to itself", Math.abs(fuse([80]) - 80) < 1e-9);
   check("a second signal adds 15% of it", Math.abs(fuse([80, 40]) - 86) < 1e-9);
-  check("fusion cannot exceed 1.5x the strongest", fuse([80, 80, 80, 80, 80, 80]) === 120);
+  check("fusion cannot exceed 1.5x the strongest", Math.abs(fuse([80, 80, 80, 80, 80, 80]) - 120) < 1e-9);
   check("no signals is zero", fuse([]) === 0);
 }
 
