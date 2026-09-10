@@ -65,6 +65,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-graph-scope": "pure",
   "smoke-ics-feed": "pure",
   "smoke-import-progress-card": "pure",
+  "smoke-landing-anchors": "pure",
   "smoke-lifetime-pricing": "pure",
   "smoke-locked-participant": "pure",
   "smoke-marketing-footer": "pure",

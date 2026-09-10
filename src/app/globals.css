@@ -1281,11 +1281,11 @@
   z-index: 1;
 }
 
-#landing-groups,
-#landing-reminders,
-#landing-how,
-#landing-features,
-#landing-cta {
+#groups,
+#reminders,
+#how,
+#features,
+#cta {
   scroll-margin-top: 6rem;
 }
 
