@@ -39,6 +39,7 @@ export type OpsSnapshot = {
   cron: {
     processStalled: { lastStartedAt: Date | null; lastState: CronRunState | null };
     syncRun: { lastStartedAt: Date | null; lastState: CronRunState | null };
+    followUpsRun: { lastStartedAt: Date | null; lastState: CronRunState | null };
   };
   /** Most recent delivery outcomes per source, newest first. */
   webhooks: { clerk: WebhookOutcome[]; stripe: WebhookOutcome[]; resend: WebhookOutcome[] };
@@ -83,6 +84,18 @@ const isRejected = (o: WebhookOutcome) => o === "invalid" || o === "error";
  * without a commit on a public repo, and it is the second failure this needs to catch.
  */
 const SYNC_SCHEDULE_SILENT_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * How long the follow-up scheduler may be silent before it is treated as dead.
+ *
+ * Its schedule (`23 * * * *` in ops.yml) is hourly, and — as this file's own header notes
+ * for the connector sync — GitHub Actions schedules lag 5-30 minutes under load, so a
+ * single missed tick is unremarkable. Three consecutive misses is not: three hours is well
+ * past any plausible lag, and ops.yml's header also records GitHub disabling a schedule
+ * entirely after 60 days with no commits on the repo — the silent failure this predicate
+ * exists to catch.
+ */
+const FOLLOW_UPS_SCHEDULE_SILENT_MS = 3 * 60 * 60 * 1000;
 
 export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[] {
   const out: OpsCondition[] = [];
@@ -177,6 +190,32 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: `Connector sync ${sync.lastState === "stale" ? "was killed" : "failed"}`,
       detail: `Last run ${sync.lastStartedAt?.toISOString() ?? "unknown"} ended ${sync.lastState}.`,
+      href: "/admin/health",
+    });
+  }
+
+  // The follow-up engine's freshness, mirroring the connector-sync block above but with its
+  // own threshold — the schedule itself is hourly rather than every 15 minutes.
+  const followUps = s.cron.followUpsRun;
+  const followUpsSilentFor = followUps.lastStartedAt
+    ? now.getTime() - followUps.lastStartedAt.getTime()
+    : null;
+  if (followUpsSilentFor === null || followUpsSilentFor > FOLLOW_UPS_SCHEDULE_SILENT_MS) {
+    out.push({
+      id: "followups.schedule_missed",
+      severity: "warning",
+      title: "Follow-up engine has stopped running",
+      detail: followUps.lastStartedAt
+        ? `Last started ${followUps.lastStartedAt.toISOString()}; users are not getting follow-up suggestions.`
+        : "No run has ever been recorded; users are not getting follow-up suggestions.",
+      href: "/admin/health",
+    });
+  } else if (followUps.lastState === "failed" || followUps.lastState === "stale") {
+    out.push({
+      id: "followups.run_failed",
+      severity: "warning",
+      title: `Follow-up engine ${followUps.lastState === "stale" ? "was killed" : "failed"}`,
+      detail: `Last run ${followUps.lastStartedAt?.toISOString() ?? "unknown"} ended ${followUps.lastState}.`,
       href: "/admin/health",
     });
   }

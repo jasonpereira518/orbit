@@ -34,6 +34,7 @@ const HEALTHY: OpsSnapshot = {
   cron: {
     processStalled: { lastStartedAt: hoursAgo(2), lastState: "ok" },
     syncRun: { lastStartedAt: hoursAgo(1), lastState: "ok" },
+    followUpsRun: { lastStartedAt: hoursAgo(1), lastState: "ok" },
   },
   webhooks: { clerk: ["handled", "handled", "ignored"], stripe: ["handled"], resend: [] },
   stripeCheckoutErrorsLastHour: 0,
@@ -82,6 +83,18 @@ function main() {
     find({ ...HEALTHY, wedgedSyncs: 2 }, "sync.wedged")?.severity === "warning");
   check("a disarmed connection → sync.failing",
     find({ ...HEALTHY, failingSyncs: 1 }, "sync.failing")?.severity === "warning");
+
+  // Follow-up engine. Own threshold (3h) since its schedule is hourly, not every 15 minutes.
+  check("follow-ups never ran → followups.schedule_missed",
+    Boolean(find({ ...HEALTHY, cron: { ...HEALTHY.cron, followUpsRun: { lastStartedAt: null, lastState: null } } }, "followups.schedule_missed")));
+  check("follow-ups silent for 4h → followups.schedule_missed",
+    Boolean(find({ ...HEALTHY, cron: { ...HEALTHY.cron, followUpsRun: { lastStartedAt: hoursAgo(4), lastState: "ok" } } }, "followups.schedule_missed")));
+  check("follow-ups silent for 2h is still within tolerance",
+    !find({ ...HEALTHY, cron: { ...HEALTHY.cron, followUpsRun: { lastStartedAt: hoursAgo(2), lastState: "ok" } } }, "followups.schedule_missed"));
+  check("follow-ups last run failed → followups.run_failed",
+    Boolean(find({ ...HEALTHY, cron: { ...HEALTHY.cron, followUpsRun: { lastStartedAt: hoursAgo(1), lastState: "failed" } } }, "followups.run_failed")));
+  check("follow-ups last run stale (killed) → followups.run_failed",
+    Boolean(find({ ...HEALTHY, cron: { ...HEALTHY.cron, followUpsRun: { lastStartedAt: hoursAgo(1), lastState: "stale" } } }, "followups.run_failed")));
 
   check("three invalid Clerk deliveries in a row → critical",
     find({ ...HEALTHY, webhooks: { ...HEALTHY.webhooks, clerk: ["invalid", "invalid", "invalid"] } }, "webhook.invalid_streak:clerk")?.severity === "critical");

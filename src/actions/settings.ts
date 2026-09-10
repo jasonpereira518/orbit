@@ -151,7 +151,7 @@ export async function captureTimezone(zone: string) {
   const db = await getDb();
   await db
     .update(userSettings)
-    .set({ timezone: trimmed })
+    .set({ timezone: trimmed, updatedAt: new Date() })
     .where(eq(userSettings.userId, userId));
 }
 

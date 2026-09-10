@@ -20,7 +20,7 @@ export function TimezoneCapture({ current }: { current: string | null }) {
       return;
     }
     if (!zone || zone === current) return;
-    void captureTimezone(zone);
+    captureTimezone(zone).catch(() => {});
   }, [current]);
 
   return null;
