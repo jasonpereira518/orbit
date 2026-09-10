@@ -1281,11 +1281,13 @@
   z-index: 1;
 }
 
-#groups,
-#reminders,
-#how,
-#features,
-#cta {
+/* Scoped to .landing-root: the dashboard's reminders card also carries id="reminders"
+ * with its own, smaller scroll margin, and a bare id selector would override it. */
+.landing-root #groups,
+.landing-root #reminders,
+.landing-root #how,
+.landing-root #features,
+.landing-root #cta {
   scroll-margin-top: 6rem;
 }
 
