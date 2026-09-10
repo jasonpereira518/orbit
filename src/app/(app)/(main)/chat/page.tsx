@@ -23,13 +23,15 @@ export default async function ChatPage() {
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
           Chat with your network
         </h1>
-        <p className="mt-1 text-muted-foreground">
+        {/* Hidden on phones: the empty chat card says the same thing, and every line here
+            comes out of the message area. */}
+        <p className="mt-1 hidden text-muted-foreground sm:block">
           Ask who can help, who to follow up with, or who knows what.
         </p>
       </div>
       {!settings.hasApiKey && (
         <div className="shrink-0">
-          <AiKeyNotice feature="chat" />
+          <AiKeyNotice feature="chat" compact />
         </div>
       )}
       <ChatPanelLazy />
