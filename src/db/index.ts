@@ -1039,7 +1039,7 @@ CREATE TABLE IF NOT EXISTS event_provider_connections (
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
  * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
  */
-export const SCHEMA_VERSION = 33;
+export const SCHEMA_VERSION = 36;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
