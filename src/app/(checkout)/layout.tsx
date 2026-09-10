@@ -30,11 +30,18 @@ export default async function CheckoutLayout({
   children: React.ReactNode;
 }) {
   const clerkOn = isClerkConfigured();
-  const userId = clerkOn
-    ? (await auth()).userId
-    : isDemoMode()
-      ? "demo-user"
-      : null;
+  // See `(app)/layout.tsx` for why this is guarded: an unverifiable session (e.g. the
+  // account was just deleted) can make `auth()` throw instead of resolving to `null`, which
+  // would otherwise crash this layout instead of redirecting to sign-in.
+  let clerkUserId: string | null = null;
+  if (clerkOn) {
+    try {
+      ({ userId: clerkUserId } = await auth());
+    } catch {
+      clerkUserId = null;
+    }
+  }
+  const userId = clerkOn ? clerkUserId : isDemoMode() ? "demo-user" : null;
 
   if (clerkOn && !userId) redirect("/sign-in");
   if (!userId) redirect("/");

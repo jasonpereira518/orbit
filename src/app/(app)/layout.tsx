@@ -35,11 +35,22 @@ export default async function AppLayout({
 }) {
   const clerkOn = isClerkConfigured();
   const demoMode = isDemoMode();
-  const userId = clerkOn
-    ? (await auth()).userId
-    : isDemoMode()
-      ? "demo-user"
-      : null;
+  // `auth()` is called unguarded here rather than through `requireUserId()` because this
+  // layout also needs `clerkOn`/`demoMode` for rendering, not just a user id. But it needs
+  // the same guard `requireUserId()` documents: a session whose account was just deleted
+  // (e.g. via the Clerk account portal's own "Delete account") can fail verification with a
+  // thrown error rather than a clean `null`, and an unhandled throw here crashes every page
+  // under this layout with a generic Server Components render error instead of the sign-in
+  // redirect a merely-signed-out visitor gets.
+  let clerkUserId: string | null = null;
+  if (clerkOn) {
+    try {
+      ({ userId: clerkUserId } = await auth());
+    } catch {
+      clerkUserId = null;
+    }
+  }
+  const userId = clerkOn ? clerkUserId : isDemoMode() ? "demo-user" : null;
 
   if (clerkOn && !userId) {
     redirect("/sign-in");
