@@ -11,6 +11,15 @@
  * it is asserted here on the SQL the functions actually issue, against a 3,000-contact
  * network with a realistic share of inline avatars.
  *
+ * What none of that measured is ROW COUNT, and that turned out to be the omission that
+ * mattered. `getDashboardData` runs `findMany({ where: userId })` with no limit and then
+ * filters, sorts and aggregates the result in JavaScript; `loadGraphData` does the same.
+ * Statement count is bounded, row count is not — so the budget built to catch dashboard
+ * regressions was structurally blind to the one actually happening, and the `maxDuration`
+ * on `(app)/(main)/layout.tsx` was raised to 300 s to convert the resulting timeouts into
+ * slow successes. The "Payload scaling" section at the end of this file measures the same
+ * loaders at two account sizes so that growth is a number rather than an assumption.
+ *
  * Also covers the avatar backfill, which is mounted on every page and used to load the
  * base64 for every contact just to decide which ones still needed a photo, then resolved
  * them sequentially with 15–20s network timeouts — the most likely producer of the
@@ -36,6 +45,9 @@ import { scaleContactRows } from "./lib/scale-fixture";
 
 const USER = "smoke-page-budgets-user";
 const N = 3000;
+/** The comparison account for the scaling section: a quarter of the size, same shape. */
+const SCALE_USER = "smoke-page-budgets-scale-user";
+const SCALE_N = 750;
 /** Row index whose follow-up is due — deliberately past any "first 300 rows" cut. */
 const DUE_ROW = 2900;
 
@@ -61,6 +73,31 @@ function selectsBare(statement: string, column: string) {
 async function reset() {
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, USER));
+}
+
+/** A second, smaller account. Its only job is to give the scaling section a comparison. */
+async function seedScaleUser() {
+  const db = await getDb();
+  await resetScaleUser();
+  const rows = scaleContactRows(SCALE_USER, SCALE_N, {
+    inlineAvatarShare: 0.3,
+    longNotesShare: 0.5,
+    dueFollowUpRows: [Math.floor(SCALE_N * 0.9)],
+  });
+  for (let start = 0; start < rows.length; start += 250) {
+    await db.insert(contacts).values(rows.slice(start, start + 250));
+  }
+  // Five more, to match the hand-shaped avatar rows the main fixture adds, so the two
+  // accounts differ only in size.
+  for (let i = 0; i < 5; i++) {
+    await db.insert(contacts).values({ userId: SCALE_USER, fullName: `Special ${i}` });
+  }
+  await db.execute(sql`ANALYZE contacts`);
+}
+
+async function resetScaleUser() {
+  const db = await getDb();
+  await db.delete(contacts).where(eq(contacts.userId, SCALE_USER));
 }
 
 async function seed() {
@@ -317,6 +354,116 @@ async function main() {
   check("a call over the threshold is recorded once", recorded.length === 1 && recorded[0].kind === "slow.thing");
   await traced("fast.thing", async () => 1, { thresholdMs: 10_000, now: clock, record: async (e) => void recorded.push(e) });
   check("a call under the threshold is not recorded", recorded.length === 1);
+
+  // ---- Payload scaling ---------------------------------------------------------------
+  //
+  // Everything above runs at ONE account size, so it can prove a payload is narrow but not
+  // that it is BOUNDED. This runs the same loaders at a quarter of the size and compares.
+  // A bounded surface returns at most its SQL limit either way; an unbounded one returns
+  // the account.
+  console.log("\nPayload scaling (the same loaders at two account sizes)…");
+  await seedScaleUser();
+
+  const smallDashboard = await getDashboardData(SCALE_USER);
+  const smallGraph = await loadGraphData(SCALE_USER, { profile: Promise.resolve(null), scope: "all" });
+  const smallPanel = await loadNotificationPanel(SCALE_USER, new Date(), { withAlerts: false });
+
+  type Surface = {
+    name: string;
+    small: number;
+    large: number;
+    /**
+     * The most rows this surface may ever return, or null when it has no bound at all.
+     * A number here must be traceable to a LIMIT in SQL — not to what today's fixture
+     * happens to produce.
+     */
+    bound: number | null;
+  };
+
+  const surfaces: Surface[] = [
+    // UNBOUNDED. `findMany({ where: userId })` with no limit, then filtered, sorted and
+    // aggregated in JavaScript — see src/lib/reminders.ts:414.
+    { name: "dashboard", small: smallDashboard.contactById.size, large: dashboard.contactById.size, bound: null },
+    // Unbounded BY DESIGN — "show all" means all. The default (engaged-only) view above is
+    // the bounded one users actually get, and the assertions there cover it.
+    { name: "graph (show all)", small: smallGraph.contacts.length, large: graphAll.contacts.length, bound: null },
+    // Bounded in SQL: four limited queries (80 + 100 + 30 + 25) feed `items`. This is the
+    // shape the other two should end up in.
+    { name: "notifications panel", small: smallPanel.items.length, large: panel.items.length, bound: 235 },
+  ];
+  const sizeRatio = (N + 5) / (SCALE_N + 5);
+
+  for (const s of surfaces) {
+    const growth = s.small === 0 ? 0 : s.large / s.small;
+    console.log(
+      `  ${s.name.padEnd(20)} ${String(s.small).padStart(5)} rows at ${SCALE_N}` +
+        ` → ${String(s.large).padStart(5)} rows at ${N}` +
+        `  (${growth.toFixed(1)}× for a ${sizeRatio.toFixed(1)}× account)`
+    );
+  }
+
+  for (const s of surfaces) {
+    if (s.bound !== null) {
+      check(
+        `${s.name} stays within its SQL bound of ${s.bound} rows`,
+        s.large <= s.bound,
+        `${s.large} rows`
+      );
+      check(
+        `${s.name} does not return the whole account`,
+        s.large < N,
+        `${s.large} rows for a ${N + 5}-contact account`
+      );
+    } else {
+      // Characterisation, not approval. These two return the entire network on every visit;
+      // pinning it means the number is in CI output rather than in someone's memory, and a
+      // FOURTH surface joining them has to change this file to do it.
+      //
+      // Phase B of docs/superpowers/plans/2026-09-10-production-readiness.md is what fixes
+      // the dashboard: aggregates into SQL, lists bounded with ORDER BY … LIMIT, and the
+      // whole-graph pieces materialised. When it lands this entry gets a real `bound` and
+      // `maxDuration` in (app)/(main)/layout.tsx goes back to 60.
+      check(
+        `${s.name} still returns the whole account (unbounded — Phase B)`,
+        s.large === N + 5,
+        `${s.large} rows for a ${N + 5}-contact account — if this DROPPED, the fix landed: ` +
+          `give this surface its real bound instead of null`
+      );
+    }
+  }
+
+  // The dashboard's real size.
+  //
+  // The "dashboard payload under 1.5 MB" check above cannot see this: `contactById` is a
+  // Map, and `JSON.stringify` renders a Map as `{}`. So the byte budget has been measuring
+  // the bounded card lists while the largest object on the page — one row per contact —
+  // passed through it unweighed. Measured properly here, from the Map's values.
+  const rowBytes = (d: { contactById: Map<string, unknown> }) =>
+    JSON.stringify([...d.contactById.values()]).length;
+  const smallBytes = rowBytes(smallDashboard);
+  const largeBytes = rowBytes(dashboard);
+  console.log(
+    `  dashboard contact rows  ${(smallBytes / 1024).toFixed(0)} KB at ${SCALE_N}` +
+      ` → ${(largeBytes / 1024).toFixed(0)} KB at ${N}` +
+      `  (${(largeBytes / smallBytes).toFixed(1)}×, ` +
+      `${(largeBytes / (dashboard.contactById.size || 1)).toFixed(0)} bytes a contact)`
+  );
+  // A ceiling on the rows the dashboard moves per contact. Row COUNT is Phase B's problem;
+  // row WIDTH is this file's original one, and this is the guard that keeps a re-added
+  // `notes` or base64 avatar from hiding inside an already-large payload.
+  //
+  // Currently ~983 bytes, so the headroom is deliberately thin: one more column on the
+  // dashboard scan trips it. That is the intent. If a new field genuinely belongs there,
+  // raise this WITH the measurement in the commit message — the thing that must not happen
+  // silently is the per-contact cost drifting, because it multiplies by the account size
+  // this section just showed is unbounded (2.9 MB at 3,000 contacts, ~9.6 MB at 10,000).
+  check(
+    "dashboard moves under 1 KB per contact",
+    largeBytes / (dashboard.contactById.size || 1) < 1024,
+    `${(largeBytes / (dashboard.contactById.size || 1)).toFixed(0)} bytes a contact`
+  );
+
+  await resetScaleUser();
 
   await reset();
   if (failures > 0) {
