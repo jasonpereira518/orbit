@@ -4,7 +4,7 @@
 
 **Goal:** Fix the marketing landing page's production-visible defects on phones: blank planets, a header that text ghosts through, and undersized tap targets. Then prove the result in real Chromium and real WebKit.
 
-**Architecture:** Three independent fixes shipped as two PRs. PR A is the existing PR #134 (proxy matcher + guard), rebased and merged. PR B is this branch: it restores the glass blur by cherry-picking the already-verified commit `aec733b` and adds a guard against regression, then replaces three copy-pasted footers with one `MarketingFooter` that has 44px targets and gives the header buttons a 44px hit area. Every fix ships with a `scripts/smoke-*.ts` guard that fails on the old code.
+**Architecture:** Three independent fixes shipped as two PRs. PR A is the existing PR #134 (proxy matcher + guard), rebased and merged. PR B is this branch: it restores the glass blur by cherry-picking the already-verified commit `aec733b` and adds a guard against regression, then replaces three copy-pasted footers with one `MarketingFooter` that has 44px targets and gives the header buttons a 44px hit area, and (Task 5, added during execution) ends the page at its footer and lands fragment links below the header. Every fix ships with a `scripts/smoke-*.ts` guard that fails on the old code.
 
 **Tech Stack:** Next.js 16.2 (Turbopack), Tailwind v4 (Lightning CSS), Clerk middleware in `src/proxy.ts`, `tsx` smoke scripts run by `scripts/run-smoke.ts`.
 
@@ -36,7 +36,7 @@
 
 **Existing work this plan reuses rather than redoes:**
 - PR #134 (`claude/fix-avif-auth-redirect`): the matcher fix plus a guard that scans every extension in `public/`. It is 1 commit, 127 behind main, and merges cleanly.
-- Commit `aec733b` (inside PR #154, `claude/mobile-constellation-crash-f6a19d`) deletes the four `-webkit-backdrop-filter` twins and moves `viewTransitionName` off the mobile nav's glass ancestor. It cherry-picks cleanly onto main. PR #154 is a +5405/−1690 `/graph` rewrite that shouldn't gate a landing fix. The cherry-picked commit is byte-identical, so #154 still merges cleanly afterward.
+- Commit `aec733b` (inside PR #154, `claude/mobile-constellation-crash-f6a19d`) deletes the four `-webkit-backdrop-filter` twins and moves `viewTransitionName` off the mobile nav's glass ancestor. **Amended in review:** only its `globals.css` half ships here. The `mobile-nav.tsx` half was restored to main, because #154's later commit `c889a9f` edits the adjacent lines, so taking it made #154 conflict, and it changes the signed-in app's nav scrim. With the CSS half alone, this branch merges cleanly with #154 (checked with `git merge-tree`), and the app's nav looks exactly as it does on main until #154 lands.
 
 ## File Map
 
@@ -46,14 +46,17 @@
 | `scripts/smoke-public-routes.ts` | Guard for public asset extensions (already in #134); fix failure wording | 1 |
 | `scripts/smoke-backdrop-filter.ts` | **Create.** Fails on any hand-written `-webkit-backdrop-filter` declaration, or a glass class without a standard blur | 2 |
 | `src/app/globals.css` | Four twin lines deleted (via `aec733b`) | 2 |
-| `src/components/layout/mobile-nav.tsx` | `viewTransitionName` moved to `<ul>` (via `aec733b`) | 2 |
+| `src/components/layout/mobile-nav.tsx` | ~~`viewTransitionName` moved to `<ul>` (via `aec733b`)~~ Restored to main in review; left to #154 | 2 |
 | `src/components/marketing/marketing-footer.tsx` | **Create.** The one marketing footer: 44px links, wrapping row, `nav` landmark | 3 |
 | `src/components/landing/landing-scenes.tsx` | Lines 197–253: inline footer → `<MarketingFooter>`; drop the now-unused `OrbitLogo` import | 3 |
 | `src/app/(marketing)/pricing/page.tsx` | Lines 205–246: inline footer → `<MarketingFooter>` | 3 |
 | `src/app/(marketing)/interest/page.tsx` | Lines 235–264: inline footer → `<MarketingFooter>`; delete `FOOTER_LINK` (line 23) | 3 |
 | `src/components/landing/landing-auth-controls.tsx` | Lines 8–11: `ghostClass` and `solidClass` gain a 44px `::after` hit area | 3 |
 | `scripts/smoke-marketing-footer.ts` | **Create.** Render checks + one-footer structural checks + header hit-area checks | 3 |
-| `scripts/run-smoke.ts` | Register the two new smoke scripts in `MANIFEST` | 2, 3 |
+| `scripts/smoke-landing-anchors.ts` | **Create.** Section ids have a `.landing-root`-scoped scroll margin equal to `LANDING_HEADER_SCROLL_OFFSET`; the landing root clips both axes | 5 |
+| `src/components/landing/landing-page.tsx` | Line 30: `overflow-x-clip` → `overflow-clip` | 5 |
+| `src/components/landing/hero-pin.tsx` | A comment that named the old horizontal-only clip | 5 (review) |
+| `scripts/run-smoke.ts` | Register the three new smoke scripts in `MANIFEST` | 2, 3, 5 |
 
 ---
 
@@ -153,6 +156,8 @@ Expected: the two SHAs match, and all nine lines read `200 image/avif`.
 ---
 
 ### Task 2: Glass surfaces blur in Chromium (restore + guard)
+
+> **Amended in review:** the cherry-picked commit's `mobile-nav.tsx` half was later restored to main (see "Existing work" above). Only the four-line `globals.css` deletion ships.
 
 **Files:**
 - Create: `scripts/smoke-backdrop-filter.ts`
@@ -660,6 +665,8 @@ Rotate the SE to landscape (in Simulator: `osascript -e 'tell application "Syste
 If criterion 3 or landscape fails, **don't tune `HeroPin` in this PR**. It is unrelated to Tasks 2–3, and its fit math is shared across every width. Attach the screenshot to the PR as a known issue and open a follow-up. Any failure of criteria 1, 2, 4, or 5 blocks the PR: fix it on this branch and rerun the step.
 
 - [ ] **Step 5: Open PR B**
+
+> **Superseded:** the PR was opened with a body rewritten to cover Task 5, the review amendments, and how each check was actually run (landscape in Chromium). The body below is the original draft.
 
 ```bash
 git push -u origin claude/orbit-mobile-flow-testing-63d27f
