@@ -303,12 +303,52 @@ bounded.
    250 sharing each. `ORDER BY updated_at DESC LIMIT 6` over a 250-way tie returns an
    arbitrary six, so no list here could be bounded in SQL until the order was total. Both
    `recentContacts` and `dueFollowUps` now break ties on `id`.
-5. **Materialise what cannot be bounded.** The constellation preview and the network-depth
-   chart genuinely need the whole graph. Those belong in a per-user precomputed row,
-   refreshed by the existing deferred-work path, not recomputed on every page view.
-   `closeness_cohorts` and `closeness-materialize.ts` are the pattern already in the repo.
-6. **Then revert `maxDuration` to 60** in `(app)/(main)/layout.tsx` and delete the stopgap
-   comment. That revert is the definition of done for this item.
+5. ~~**Materialise what cannot be bounded.**~~ Not needed — see the correction above. The
+   two whole-network questions that remain (clustering, constellation eligibility) are
+   answered from a narrow scan of nine columns, and everything else is bounded or aggregate.
+
+6. ~~**Then revert `maxDuration` to 60.**~~ **Done.**
+
+**Phase B is complete.** Measured on the 3,000-contact fixture:
+
+| | before | after |
+|---|---|---|
+| rows retained | 3,005 | 762 |
+| growth for a 4× account | 4.0× | 1.0× |
+| bytes a contact | 983 | 141 |
+| dashboard payload | 2.9 MB | 105 KB |
+| statements | 12 | 15 |
+| `maxDuration` | 300 | 60 |
+
+Statement count went up on purpose: fixed round trips bought a payload that no longer grows
+with the account. `scripts/smoke-page-budgets.ts` now fails if the dashboard starts growing
+again, if a display column reappears on the network scan, or if per-contact bytes pass 250.
+
+Four things the A/B harness caught that review would not have, recorded because each is a
+class of bug rather than a one-off:
+
+- **Saturating scores make tiebreakers load-bearing.** Goal relevance tops out at 1.0, so
+  with one active goal the top five are all ties and the tiebreaker alone decides who
+  appears. The same is true of the preview's "closest 150" — orbit scores are integers 1–5.
+  In both cases the old behaviour came from a stable sort over the scan's order, so
+  `updated_at` had to stay in the scan as an *ordering* key even though nothing renders it.
+- **Filter before you decide what to fetch.** Hydrating the first twenty pending reminders
+  and then rendering a different twenty leaves the card unable to name its own subjects.
+- **A bounded lookup map is not a membership test.** The suggestion filter used
+  `contactById.has()` to mean "this contact still exists", which held only while that map
+  was everyone.
+- **A hand-written correlated subquery in drizzle's `extras` returned zero for every row**
+  rather than failing, quietly making every tag-qualified contact ineligible for the
+  constellation. Declared relations build the correlation; hand-written SQL there did not.
+
+**What is still O(N) on this page**, and honestly so:
+
+- The network scan itself — nine narrow columns, ~141 bytes a contact. Clustering and
+  eligibility are whole-network questions and a sample cannot answer them.
+- `readStoredCohortResult` selects `{id, breakdown}` for every contact
+  (`closeness-cohort.ts:226`), ~334 bytes each. Shared with other surfaces, so bounding it
+  is its own change — and it is now the larger of the two.
+- `/graph`'s "show all" scope, which means all by design and has a toggle for it.
 
 ### 1.2 Continuous sync saturates at roughly ten connections
 
