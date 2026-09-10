@@ -364,7 +364,7 @@ Expected: PASS. If `--write` is not a supported flag, open `scripts/smoke-schema
 - [ ] **Step 8: Prove the DDL actually executes against a real database**
 
 ```bash
-rm -rf /tmp/follow-up-ddl-check && DATABASE_URL= PGLITE_DATA_DIR=/tmp/follow-up-ddl-check npx tsx scripts/setup-db.ts
+rm -rf /tmp/follow-up-ddl-check && DATABASE_URL= ORBIT_PGLITE_DIR=/tmp/follow-up-ddl-check npx tsx scripts/setup-db.ts
 ```
 
 Expected: completes with no error. A syntax error or bad reference in Step 4 fails here and nowhere else.
@@ -2340,7 +2340,7 @@ Create `scripts/smoke-follow-up-context.ts`:
  *
  * Run: npx tsx scripts/smoke-follow-up-context.ts
  */
-import "./smoke/_env";
+import { run } from "./smoke/_env";
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
@@ -2452,16 +2452,12 @@ async function main() {
   console.log("\nAll follow-up context checks passed.\n");
 }
 
-main().then(
-  () => process.exit(0),
-  (err) => {
-    console.error(err);
-    process.exit(1);
-  }
-);
+// `run` is the repo's own preamble helper: tsx will not exit on its own while PGlite's
+// workers are alive, and every db-tier script in this repo ends this way.
+run(main);
 ```
 
-The explicit `process.exit(0)` is required — `tsx` scripts in this repo hang without it.
+`run(main)` is required rather than a bare call: `tsx` will not exit while PGlite's workers are alive, and `scripts/run-smoke.ts` rejects any db-tier script that does not import `./smoke/_env` at the top.
 
 - [ ] **Step 3: Register and run**
 
@@ -2690,7 +2686,7 @@ Create `scripts/smoke-follow-up-pass.ts`:
  *
  * Run: npx tsx scripts/smoke-follow-up-pass.ts
  */
-import "./smoke/_env";
+import { run } from "./smoke/_env";
 
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
@@ -2803,7 +2799,10 @@ async function main() {
     where: eq(followUpSuggestions.userId, USER),
   });
   check("re-running the same day does not duplicate rows", afterRows.length === 3, `got ${afterRows.length}`);
-  check("the second pass wrote no NEW contacts", second.written === 0 || afterRows.length === 3);
+  // Exactly zero, not "zero or unchanged": filter 5 (contactsWithPendingSuggestion)
+  // removes these contacts before scoring, so a same-day re-run must write nothing. A
+  // disjunction here would pass even with that filter broken.
+  check("the second pass writes nothing at all", second.written === 0, `wrote ${second.written}`);
 
   console.log("\ndismissed rows survive a re-run");
   await db
@@ -2823,13 +2822,9 @@ async function main() {
   console.log("\nAll follow-up pass checks passed.\n");
 }
 
-main().then(
-  () => process.exit(0),
-  (err) => {
-    console.error(err);
-    process.exit(1);
-  }
-);
+// `run` is the repo's own preamble helper: tsx will not exit on its own while PGlite's
+// workers are alive, and every db-tier script in this repo ends this way.
+run(main);
 ```
 
 - [ ] **Step 3: Register and run**
@@ -3149,7 +3144,7 @@ Create `scripts/smoke-follow-up-feedback.ts`:
  *
  * Run: npx tsx scripts/smoke-follow-up-feedback.ts
  */
-import "./smoke/_env";
+import { run } from "./smoke/_env";
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
@@ -3325,13 +3320,9 @@ async function main() {
   console.log("\nAll follow-up feedback checks passed.\n");
 }
 
-main().then(
-  () => process.exit(0),
-  (err) => {
-    console.error(err);
-    process.exit(1);
-  }
-);
+// `run` is the repo's own preamble helper: tsx will not exit on its own while PGlite's
+// workers are alive, and every db-tier script in this repo ends this way.
+run(main);
 ```
 
 - [ ] **Step 3: Register, run, commit**
@@ -3667,7 +3658,13 @@ Update the comment block at the top of the file to describe four schedules rathe
 
 - [ ] **Step 8: Verify the route rejects an unauthenticated call**
 
-Start the dev server (`npm run dev`), then:
+This worktree has no `.env`, so create a throwaway one for this check only:
+
+```bash
+printf 'CRON_SECRET=local-check-secret\n' > .env.local
+```
+
+`.env.local` is gitignored. Start the dev server (`npm run dev`), then:
 
 ```bash
 curl -sS -o /dev/null -w '%{http_code}\n' -X POST http://localhost:3000/api/follow-ups/run
@@ -3680,6 +3677,13 @@ curl -sS -X POST -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/a
 ```
 
 Expected: `200` with a JSON stats body. Confirm a `cron_runs` row was written for `followups.run`.
+
+Then remove the throwaway file and confirm it is gone — leaving it behind would point later
+pglite smoke runs at whatever else it accumulates:
+
+```bash
+rm -f .env.local && ls .env.local 2>/dev/null || echo "removed"
+```
 
 - [ ] **Step 9: Validate the workflow YAML**
 
@@ -3769,7 +3773,8 @@ export async function listTodaySuggestions(): Promise<TodaySuggestion[]> {
       preferredName: contacts.preferredName,
       title: contacts.title,
       company: contacts.company,
-      avatarUrl: clientAvatarUrlSql(),
+      // A `sql` template constant, not a function — do not call it.
+      avatarUrl: clientAvatarUrlSql,
     })
     .from(followUpSuggestions)
     .innerJoin(contacts, eq(followUpSuggestions.contactId, contacts.id))
