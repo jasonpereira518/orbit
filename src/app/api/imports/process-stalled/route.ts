@@ -3,6 +3,10 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { imports, usageEvents } from "@/db/schema";
 import { runLinkedInImportJob } from "@/lib/import-job-processor";
+import { pruneOperationalEvents } from "@/lib/operational-events";
+import { pruneResolvedAdminIssues } from "@/lib/admin-issues";
+import { pruneProviderSnapshots } from "@/lib/admin-providers";
+import { pruneExpiredGrants } from "@/lib/admin-reveal";
 
 export const maxDuration = 300;
 
@@ -43,6 +47,12 @@ export async function GET(request: Request) {
 
   // Housekeeping rides along on the only scheduled invocation Orbit has.
   let usageEventsPruned = false;
+  let adminHousekeeping = null as null | {
+    operationalEvents: number;
+    issues: number;
+    providerSnapshots: number;
+    revealGrants: number;
+  };
   try {
     const cutoff = new Date(
       Date.now() - USAGE_EVENT_RETENTION_DAYS * 24 * 60 * 60 * 1000
@@ -53,5 +63,27 @@ export async function GET(request: Request) {
     // Never let housekeeping fail the job-resumption backstop this route exists for.
   }
 
-  return NextResponse.json({ resumed: stalled.length, usageEventsPruned });
+  try {
+    const [operationalEvents, issues, providerSnapshots, revealGrants] =
+      await Promise.all([
+        pruneOperationalEvents(),
+        pruneResolvedAdminIssues(),
+        pruneProviderSnapshots(),
+        pruneExpiredGrants(),
+      ]);
+    adminHousekeeping = {
+      operationalEvents,
+      issues,
+      providerSnapshots,
+      revealGrants,
+    };
+  } catch {
+    // The stalled-import backstop remains the primary responsibility of this route.
+  }
+
+  return NextResponse.json({
+    resumed: stalled.length,
+    usageEventsPruned,
+    adminHousekeeping,
+  });
 }

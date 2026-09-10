@@ -1,5 +1,12 @@
 import type { LucideIcon } from "lucide-react";
-import { Activity, Gauge, ScrollText, TrendingUp, Users, Wallet } from "lucide-react";
+import {
+  ChartNoAxesCombined,
+  FileClock,
+  LayoutDashboard,
+  ServerCog,
+  ShieldCheck,
+  Users,
+} from "lucide-react";
 
 export type AdminNavItem = {
   href: string;
@@ -15,17 +22,12 @@ export type AdminNavItem = {
  * the real boundary, but advertising the console's existence buys nothing.
  */
 export const ADMIN_NAV: AdminNavItem[] = [
-  { href: "/admin", label: "Overview", icon: Gauge },
+  { href: "/admin", label: "Command Center", icon: LayoutDashboard },
+  { href: "/admin/metrics", label: "Metrics", icon: ChartNoAxesCombined },
+  { href: "/admin/logs", label: "Logs", icon: FileClock },
   { href: "/admin/users", label: "Users", icon: Users },
-  // "What is broken across everyone, right now" — the cross-account view of signals the
-  // inspector only ever showed one account at a time.
-  { href: "/admin/health", label: "Health", icon: Activity },
-  // Trends live here rather than on the overview, which stays triage-only by design.
-  { href: "/admin/growth", label: "Growth", icon: TrendingUp },
-  // Route is /admin/billing, but the screen covers money in AND money out — "Billing"
-  // alone reads as revenue-only.
-  { href: "/admin/billing", label: "Money", icon: Wallet },
-  { href: "/admin/audit", label: "Audit", icon: ScrollText },
+  { href: "/admin/systems", label: "Systems", icon: ServerCog },
+  { href: "/admin/audit", label: "Audit", icon: ShieldCheck },
 ];
 
 export function isAdminNavActive(pathname: string, href: string) {

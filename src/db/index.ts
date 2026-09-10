@@ -47,6 +47,19 @@ CREATE TABLE IF NOT EXISTS user_settings (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS plan_upgrade_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  plan text NOT NULL,
+  source text NOT NULL,
+  event_key text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  claimed_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS plan_upgrade_events_claim_idx
+  ON plan_upgrade_events(user_id, claimed_at, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS plan_upgrade_events_pending_uidx
+  ON plan_upgrade_events(user_id, plan) WHERE claimed_at IS NULL;
 CREATE TABLE IF NOT EXISTS companies (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -421,6 +434,49 @@ CREATE TABLE IF NOT EXISTS usage_events (
 CREATE INDEX IF NOT EXISTS usage_events_user_created_idx ON usage_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS usage_events_created_idx ON usage_events(created_at);
 CREATE INDEX IF NOT EXISTS usage_events_model_idx ON usage_events(provider, model);
+CREATE TABLE IF NOT EXISTS operational_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  severity text NOT NULL,
+  source text NOT NULL,
+  event_type text NOT NULL,
+  message text NOT NULL,
+  success integer,
+  user_id text,
+  resource_type text,
+  resource_id text,
+  correlation_id text,
+  duration_ms integer,
+  dedupe_key text UNIQUE,
+  metadata jsonb DEFAULT '{}',
+  occurred_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS admin_issues (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  fingerprint text NOT NULL UNIQUE,
+  source text NOT NULL,
+  severity text NOT NULL,
+  state text NOT NULL DEFAULT 'open',
+  title text NOT NULL,
+  message text NOT NULL,
+  target_user_id text,
+  resource_type text,
+  resource_id text,
+  occurrence_count integer NOT NULL DEFAULT 1,
+  first_seen_at timestamptz NOT NULL DEFAULT now(),
+  last_seen_at timestamptz NOT NULL DEFAULT now(),
+  acknowledged_at timestamptz,
+  acknowledged_by text,
+  snoozed_until timestamptz,
+  resolved_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS admin_provider_snapshots (
+  provider text PRIMARY KEY,
+  status text NOT NULL,
+  summary jsonb DEFAULT '{}',
+  error_kind text,
+  checked_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL
+);
 CREATE TABLE IF NOT EXISTS admin_audit_log (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   admin_user_id text NOT NULL,
@@ -477,7 +533,23 @@ async function ensureColumn(
 }
 
 async function migratePglite(client: PGlite) {
-  await client.exec(DDL);
+  // Run the bootstrap one statement at a time, matching Neon below. Older local databases
+  // can have a table without a column that a later DDL index references (for example
+  // `reminders.list_id`); one failing index must not roll back unrelated new tables before
+  // the incremental column pass gets a chance to repair that drift.
+  const statements = DDL.split(";")
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+  for (const statement of statements) {
+    try {
+      await client.exec(statement);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/already exists/i.test(message)) {
+        console.error(`[db] DDL statement failed: ${statement}\n`, message);
+      }
+    }
+  }
 
   // Older local DBs used an OpenAI key column name
   if (await columnExists(client, "user_settings", "openai_api_key_encrypted")) {
@@ -709,6 +781,14 @@ const ADMIN_V2_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS user_settings_email_idx ON user_settings(email)`,
   `CREATE INDEX IF NOT EXISTS user_settings_last_active_idx ON user_settings(last_active_at)`,
   `CREATE INDEX IF NOT EXISTS usage_events_failures_idx ON usage_events(user_id, created_at) WHERE success = 0`,
+  `CREATE INDEX IF NOT EXISTS operational_events_occurred_idx ON operational_events(occurred_at)`,
+  `CREATE INDEX IF NOT EXISTS operational_events_source_idx ON operational_events(source, occurred_at)`,
+  `CREATE INDEX IF NOT EXISTS operational_events_severity_idx ON operational_events(severity, occurred_at)`,
+  `CREATE INDEX IF NOT EXISTS operational_events_user_idx ON operational_events(user_id, occurred_at)`,
+  `CREATE INDEX IF NOT EXISTS operational_events_type_idx ON operational_events(event_type, occurred_at)`,
+  `CREATE INDEX IF NOT EXISTS admin_issues_state_idx ON admin_issues(state, severity, last_seen_at)`,
+  `CREATE INDEX IF NOT EXISTS admin_issues_target_idx ON admin_issues(target_user_id, last_seen_at)`,
+  `CREATE INDEX IF NOT EXISTS admin_provider_snapshots_expires_idx ON admin_provider_snapshots(expires_at)`,
 ];
 
 /**

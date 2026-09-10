@@ -16,6 +16,7 @@ import {
 } from "@/lib/admin-reveal";
 import { runLinkedInImportJob } from "@/lib/import-job-processor";
 import { purgeUserData } from "@/lib/user-data";
+import { recordOperationalEvent } from "@/lib/operational-events";
 
 /**
  * The operator write operations, as plain functions taking an explicit `adminUserId`.
@@ -59,6 +60,17 @@ export async function recordAdminAction(input: {
     resourceId: input.resourceId ?? null,
     detail: input.detail ?? {},
     reason: input.reason?.trim() || null,
+  });
+  await recordOperationalEvent({
+    severity: "info",
+    source: "admin",
+    eventType: `admin.${input.action}`,
+    message: "Privileged admin operation completed.",
+    success: true,
+    userId: input.targetUserId ?? null,
+    resourceType: input.resourceType ?? null,
+    resourceId: input.resourceId ?? null,
+    metadata: { actor_id: input.adminUserId },
   });
 }
 

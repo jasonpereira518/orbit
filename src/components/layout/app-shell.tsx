@@ -3,18 +3,21 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import { MotionConfig } from "motion/react";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { MobileNav } from "@/components/layout/mobile-nav";
-import { OrbitLogo } from "@/components/orbit-logo";
+import { PlanOrbitLogo } from "@/components/plan-orbit-logo";
 import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
 import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
 import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar";
 import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
 import { ThemeSync } from "@/components/theme-sync";
+import { PlanUpgradeCelebration } from "@/components/plan-upgrade/plan-upgrade-celebration";
 import { cn } from "@/lib/utils";
 import type { ThemePreference } from "@/lib/theme";
+import type { Plan } from "@/lib/plan-limits";
 
 const FloatingAskBar = dynamic(
   () =>
@@ -29,11 +32,13 @@ export function AppShell({
   clerkOn,
   demoMode,
   theme,
+  plan,
 }: {
   children: React.ReactNode;
   clerkOn: boolean;
   demoMode: boolean;
   theme: ThemePreference | null;
+  plan: Plan;
 }) {
   const pathname = usePathname();
   const isOnboarding = pathname === "/onboarding";
@@ -45,6 +50,17 @@ export function AppShell({
   const isViewportLocked = isChat || isConstellation;
   const showAskBar =
     !isOnboarding && !isChat && !isSettings && !isConstellation;
+  const [logoPresentation, setLogoPresentation] = useState({
+    plan,
+    hidden: false,
+  });
+  const previousPlan = useRef(plan);
+
+  useEffect(() => {
+    if (previousPlan.current === plan) return;
+    previousPlan.current = plan;
+    setLogoPresentation({ plan, hidden: false });
+  }, [plan]);
 
   if (isOnboarding) {
     return (
@@ -66,6 +82,7 @@ export function AppShell({
         )}
       >
         <ThemeSync theme={theme} />
+        <PlanUpgradeCelebration onLogoPresentationChange={setLogoPresentation} />
         <AvatarBackfill />
         <DueNotificationsWatcher />
         <ImportJobWatcher />
@@ -78,6 +95,8 @@ export function AppShell({
             pathname={pathname}
             clerkOn={clerkOn}
             demoMode={demoMode}
+            plan={logoPresentation.plan}
+            hideLogo={logoPresentation.hidden}
           />
         </div>
         <main
@@ -97,7 +116,11 @@ export function AppShell({
               className="flex items-center gap-2.5"
               title="Back to landing page"
             >
-              <OrbitLogo size="md" />
+              <PlanOrbitLogo
+                plan={logoPresentation.plan}
+                hidden={logoPresentation.hidden}
+                target
+              />
               <span className="font-[family-name:var(--font-display)] text-lg leading-none text-primary">
                 Orbit
               </span>

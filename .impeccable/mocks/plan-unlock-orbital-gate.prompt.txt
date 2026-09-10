@@ -1,0 +1,13 @@
+Use case: ui-mockup
+Asset type: high-fidelity desktop web app full-screen subscription unlock overlay composition study
+Primary request: Create composition option 2, “Orbital Gate,” for Orbit’s full-screen Orbit Lifetime plan unlock reveal at the exact main impact moment around 3.2 seconds.
+Input image: reference image is Orbit’s existing logo and connected-star geometry; translate it into a gold solar seal, not a pasted PNG.
+Surface structure, in order: no navigation and no visible underlying app; a full-bleed saturated amber-gold viewport; a gigantic tilted orbital ring crosses the screen from lower-left to upper-right and is cropped by all four viewport edges, creating a spatial gateway; the connected-star solar seal sits at the ring’s center-left intersection and occupies about 30% of viewport height; the text block is aligned on the right half with small tracked “PLAN UNLOCKED”, then enormous stacked “ORBIT” and “LIFETIME”, then a strong “UNLOCKED” line; three benefit phrases follow in one vertical constellation-like list; a compact rounded “ENTER ORBIT” button sits below. The hierarchy must read as a designed responsive web interface, not a poster or cinematic scene.
+Style/medium: polished product UI mockup, semantic-layout realism, precise vector celestial geometry with engraved solar-ring character, controlled luminous depth, recognizably Orbit, premium and rewarding with Fortnite Battle Pass scale but no Fortnite assets.
+Composition/framing: desktop landscape 16:10 at 1440×900, asymmetric diagonal composition, dramatic scale, clear UI alignment and generous safe margins.
+Lighting/mood: weighty ceremonial sunlight, one radiant gold flare at the seal, slow permanent-feeling orbital mass rather than fast streaks.
+Color palette: gold only—deep bronze #5B3000, amber #B96E00, Orbit gold #F2C14E, pale gold #FFF1AE. No blue, purple, neutral black, multicolor confetti, or white screen.
+Typography: elegant high-contrast display serif character for the large plan name, clean rounded sans-serif for labels and benefits.
+Text (verbatim): “PLAN UNLOCKED”; “ORBIT”; “LIFETIME”; “UNLOCKED”; “Unlimited contacts”; “Sync + recruiter tools”; “Permanent access”; “ENTER ORBIT”.
+Constraints: the entire screen must remain visibly gold or amber-tinted; one hero seal; no cards, no panels, no dashboard chrome, no characters, no weapons, no trophies, no coins, no confetti, no product screenshots, no pricing, no fake metrics, no watermark. This must look like a real full-screen web state, not wall art.
+Avoid: generic game HUD, casino luxury, black-and-gold branding, glass cards, busy stars, centered-poster composition, tiny headline, illegible text.

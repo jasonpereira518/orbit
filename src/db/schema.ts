@@ -8,7 +8,7 @@ import {
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 
 export const userSettings = pgTable("user_settings", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -117,6 +117,34 @@ export const userSettings = pgTable("user_settings", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+/**
+ * Durable, one-shot celebrations created only when the resolved plan moves upward.
+ *
+ * `event_key` makes provider retries idempotent. The partial pending index prevents two
+ * concurrent webhook deliveries from queuing duplicate celebrations for the same plan,
+ * while still allowing a later downgrade and re-upgrade after the first row is claimed.
+ */
+export const planUpgradeEvents = pgTable(
+  "plan_upgrade_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    plan: text("plan").$type<"orbit" | "lifetime">().notNull(),
+    source: text("source")
+      .$type<"subscription" | "lifetime" | "comp">()
+      .notNull(),
+    eventKey: text("event_key").notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("plan_upgrade_events_claim_idx").on(t.userId, t.claimedAt, t.createdAt),
+    uniqueIndex("plan_upgrade_events_pending_uidx")
+      .on(t.userId, t.plan)
+      .where(sql`${t.claimedAt} is null`),
+  ]
+);
 
 export const companies = pgTable(
   "companies",
@@ -804,6 +832,86 @@ export const usageEvents = pgTable(
 );
 
 /**
+ * Redacted operational telemetry for the admin console.
+ *
+ * This is intentionally not a general-purpose log sink. Callers provide stable event
+ * names and an allowlisted metadata object; request bodies, provider payloads, stack
+ * traces, contact content, and credentials never belong here.
+ */
+export const operationalEvents = pgTable(
+  "operational_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    severity: text("severity").$type<"info" | "warn" | "error">().notNull(),
+    source: text("source")
+      .$type<"app" | "job" | "webhook" | "integration" | "provider" | "admin">()
+      .notNull(),
+    eventType: text("event_type").notNull(),
+    message: text("message").notNull(),
+    success: integer("success"),
+    userId: text("user_id"),
+    resourceType: text("resource_type"),
+    resourceId: text("resource_id"),
+    correlationId: text("correlation_id"),
+    durationMs: integer("duration_ms"),
+    dedupeKey: text("dedupe_key").unique(),
+    metadata: jsonb("metadata").$type<Record<string, string | number | boolean | null>>().default({}),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("operational_events_occurred_idx").on(t.occurredAt),
+    index("operational_events_source_idx").on(t.source, t.occurredAt),
+    index("operational_events_severity_idx").on(t.severity, t.occurredAt),
+    index("operational_events_user_idx").on(t.userId, t.occurredAt),
+    index("operational_events_type_idx").on(t.eventType, t.occurredAt),
+  ]
+);
+
+/** Operator-owned lifecycle around actionable, repeatedly detected health conditions. */
+export const adminIssues = pgTable(
+  "admin_issues",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    fingerprint: text("fingerprint").notNull().unique(),
+    source: text("source").notNull(),
+    severity: text("severity").$type<"warn" | "error">().notNull(),
+    state: text("state").$type<"open" | "acknowledged" | "resolved">().notNull().default("open"),
+    title: text("title").notNull(),
+    message: text("message").notNull(),
+    targetUserId: text("target_user_id"),
+    resourceType: text("resource_type"),
+    resourceId: text("resource_id"),
+    occurrenceCount: integer("occurrence_count").notNull().default(1),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).defaultNow().notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
+    acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+    acknowledgedBy: text("acknowledged_by"),
+    snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("admin_issues_state_idx").on(t.state, t.severity, t.lastSeenAt),
+    index("admin_issues_target_idx").on(t.targetUserId, t.lastSeenAt),
+  ]
+);
+
+/** Last safe summary from each external provider, used when a live check times out. */
+export const adminProviderSnapshots = pgTable(
+  "admin_provider_snapshots",
+  {
+    provider: text("provider").primaryKey(),
+    status: text("status")
+      .$type<"healthy" | "degraded" | "unavailable" | "unconfigured">()
+      .notNull(),
+    summary: jsonb("summary").$type<Record<string, string | number | boolean | null>>().default({}),
+    errorKind: text("error_kind"),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [index("admin_provider_snapshots_expires_idx").on(t.expiresAt)]
+);
+
+/**
  * Privileged admin actions. Small by construction — the admin console performs exactly two
  * kinds of write: comping a plan, and revealing one redacted record.
  *
@@ -1021,5 +1129,9 @@ export type UserRecruiterLink = typeof userRecruiterLinks.$inferSelect;
 export type GmailConnection = typeof gmailConnections.$inferSelect;
 export type UsageEvent = typeof usageEvents.$inferSelect;
 export type NewUsageEvent = typeof usageEvents.$inferInsert;
+export type OperationalEventRow = typeof operationalEvents.$inferSelect;
+export type NewOperationalEvent = typeof operationalEvents.$inferInsert;
+export type AdminIssueRow = typeof adminIssues.$inferSelect;
+export type AdminProviderSnapshotRow = typeof adminProviderSnapshots.$inferSelect;
 export type AdminAuditEntry = typeof adminAuditLog.$inferSelect;
 export type AdminRevealGrantRow = typeof adminRevealGrants.$inferSelect;

@@ -10,6 +10,18 @@ import * as ops from "@/lib/admin-operations";
 import { recordAdminAction } from "@/lib/admin-operations";
 import { resolvePlan } from "@/lib/entitlements";
 import { setCompedPlan } from "@/lib/user-settings";
+import {
+  acknowledgeIssue,
+  snoozeIssue,
+  unsnoozeIssue,
+} from "@/lib/admin-issues";
+import {
+  previewClerkReconciliation,
+  previewStripeLifetimeReconciliation,
+  reconcileClerkAccount,
+  reconcileStripeLifetime,
+} from "@/lib/admin-reconciliation";
+import { loadProviderStatuses } from "@/lib/admin-providers";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -299,4 +311,104 @@ export async function deleteAccountAction(input: {
 export async function getActiveRevealGrant(targetUserId: string) {
   const adminUserId = await requireAdminUserId();
   return ops.getActiveRevealGrantFor(adminUserId, targetUserId);
+}
+
+/* -------------------------------------------------------------------- command center */
+
+export async function acknowledgeIssueAction(input: {
+  issueId: string;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  const issue = await acknowledgeIssue(input.issueId, adminUserId);
+  await recordAdminAction({
+    adminUserId,
+    action: "issue.acknowledge",
+    targetUserId: issue.targetUserId,
+    resourceType: "admin-issue",
+    resourceId: issue.id,
+    detail: { fingerprint: issue.fingerprint },
+  });
+  revalidatePath("/admin");
+  return { ok: true };
+}
+
+export async function snoozeIssueAction(input: {
+  issueId: string;
+  hours: 1 | 24 | 168;
+}): Promise<{ ok: true; until: string }> {
+  const adminUserId = await requireAdminUserId();
+  if (![1, 24, 168].includes(input.hours)) throw new Error("Invalid snooze window.");
+  const until = new Date(Date.now() + input.hours * 60 * 60 * 1000);
+  const issue = await snoozeIssue(input.issueId, adminUserId, until);
+  await recordAdminAction({
+    adminUserId,
+    action: "issue.snooze",
+    targetUserId: issue.targetUserId,
+    resourceType: "admin-issue",
+    resourceId: issue.id,
+    detail: { fingerprint: issue.fingerprint, until: until.toISOString() },
+  });
+  revalidatePath("/admin");
+  return { ok: true, until: until.toISOString() };
+}
+
+export async function unsnoozeIssueAction(input: {
+  issueId: string;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  const issue = await unsnoozeIssue(input.issueId);
+  await recordAdminAction({
+    adminUserId,
+    action: "issue.unsnooze",
+    targetUserId: issue.targetUserId,
+    resourceType: "admin-issue",
+    resourceId: issue.id,
+    detail: { fingerprint: issue.fingerprint },
+  });
+  revalidatePath("/admin");
+  return { ok: true };
+}
+
+export async function refreshProvidersAction(): Promise<{ ok: true }> {
+  await requireAdminUserId();
+  await loadProviderStatuses({ force: true });
+  revalidatePath("/admin");
+  revalidatePath("/admin/systems");
+  return { ok: true };
+}
+
+/* --------------------------------------------------------------------- reconciliation */
+
+export async function previewClerkReconciliationAction(targetUserId: string) {
+  await requireAdminUserId();
+  return previewClerkReconciliation(targetUserId);
+}
+
+export async function reconcileClerkAction(input: {
+  targetUserId: string;
+  reason: string;
+}) {
+  const adminUserId = await requireAdminUserId();
+  const result = await reconcileClerkAccount(adminUserId, input);
+  revalidateAdmin(input.targetUserId);
+  return { ok: true as const, changes: result.changes };
+}
+
+export async function previewStripeLifetimeAction(input: {
+  targetUserId: string;
+  sessionId: string;
+}) {
+  await requireAdminUserId();
+  return previewStripeLifetimeReconciliation(input.targetUserId, input.sessionId);
+}
+
+export async function reconcileStripeLifetimeAction(input: {
+  targetUserId: string;
+  sessionId: string;
+  reason: string;
+}) {
+  const adminUserId = await requireAdminUserId();
+  const result = await reconcileStripeLifetime(adminUserId, input);
+  revalidateAdmin(input.targetUserId);
+  return { ok: true as const, sessionId: result.sessionId };
 }

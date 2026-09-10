@@ -11,6 +11,11 @@ import {
 import { getAdminHealth } from "@/lib/admin-health";
 import { loadAuditLog } from "@/lib/admin-operations";
 import { formatCostMicros } from "@/lib/ai-pricing";
+import {
+  loadOperationalEvents,
+  type OperationalSeverity,
+  type OperationalSource,
+} from "@/lib/operational-events";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -33,7 +38,7 @@ export const runtime = "nodejs";
  * extract a spreadsheet of other people's phone numbers that outlives it.
  */
 
-const DATASETS = ["roster", "health", "audit"] as const;
+const DATASETS = ["roster", "health", "audit", "events"] as const;
 type Dataset = (typeof DATASETS)[number];
 
 function isDataset(value: string | null): value is Dataset {
@@ -67,6 +72,11 @@ export async function GET(request: NextRequest) {
     plan: (url.searchParams.get("plan") ?? "all") as RosterPlanFilter,
     state: (url.searchParams.get("state") ?? "all") as RosterStateFilter,
     sort: (url.searchParams.get("sort") ?? "signup") as RosterSort,
+    severity: url.searchParams.get("severity") ?? undefined,
+    source: url.searchParams.get("source") ?? undefined,
+    eventType: url.searchParams.get("type") ?? undefined,
+    userId: url.searchParams.get("user") ?? undefined,
+    window: url.searchParams.get("window") ?? undefined,
   };
 
   const { rows, count } = await buildDataset(dataset, filters);
@@ -103,6 +113,11 @@ async function buildDataset(
     plan: RosterPlanFilter;
     state: RosterStateFilter;
     sort: RosterSort;
+    severity?: string;
+    source?: string;
+    eventType?: string;
+    userId?: string;
+    window?: string;
   }
 ): Promise<{ rows: Array<Record<string, unknown>>; count: number }> {
   if (dataset === "roster") {
@@ -177,6 +192,44 @@ async function buildDataset(
         at: iso(g.lastAt),
       })),
     ];
+    return { rows, count: rows.length };
+  }
+
+  if (dataset === "events") {
+    const severity = ["info", "warn", "error"].includes(filters.severity ?? "")
+      ? (filters.severity as OperationalSeverity)
+      : undefined;
+    const source = ["app", "job", "webhook", "integration", "provider", "admin"].includes(
+      filters.source ?? ""
+    )
+      ? (filters.source as OperationalSource)
+      : undefined;
+    const days = { "1d": 1, "7d": 7, "30d": 30, "90d": 90 }[
+      filters.window as "1d" | "7d" | "30d" | "90d"
+    ] ?? 7;
+    const events = await loadOperationalEvents({
+      severity,
+      source,
+      eventType: filters.eventType?.slice(0, 120),
+      userId: filters.userId?.slice(0, 200),
+      q: filters.q,
+      since: new Date(Date.now() - days * 24 * 60 * 60 * 1000),
+      limit: 5_000,
+    });
+    const rows = events.rows.map((event) => ({
+      occurred_at: iso(event.occurredAt),
+      severity: event.severity,
+      source: event.source,
+      event_type: event.eventType,
+      message: event.message,
+      success: event.success == null ? "" : event.success === 1,
+      user_id: event.userId ?? "",
+      resource_type: event.resourceType ?? "",
+      resource_id: event.resourceId ?? "",
+      correlation_id: event.correlationId ?? "",
+      duration_ms: event.durationMs ?? "",
+      metadata: JSON.stringify(event.metadata ?? {}),
+    }));
     return { rows, count: rows.length };
   }
 

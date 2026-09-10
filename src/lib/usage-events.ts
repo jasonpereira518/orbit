@@ -4,6 +4,7 @@ import { usageEvents } from "@/db/schema";
 import { estimateCostMicros } from "@/lib/ai-pricing";
 import { classifyAiError } from "@/lib/errors";
 import type { AiProvider } from "@/lib/ai-providers";
+import { recordOperationalEvent } from "@/lib/operational-events";
 
 export type UsageKind =
   | "completion"
@@ -72,6 +73,23 @@ export function recordUsage(rec: UsageRecord): void {
         errorKind: rec.errorKind ?? null,
         durationMs: rec.durationMs ?? null,
       });
+      if (!rec.success) {
+        await recordOperationalEvent({
+          severity: "error",
+          source: "app",
+          eventType: "ai.request_failed",
+          message: "An AI provider request failed.",
+          success: false,
+          userId: rec.userId,
+          durationMs: rec.durationMs,
+          metadata: {
+            operation: rec.operation,
+            provider: rec.provider,
+            model: rec.model,
+            error_kind: rec.errorKind ?? "unknown",
+          },
+        });
+      }
     } catch {
       // Telemetry must never surface as a user-visible failure.
     }

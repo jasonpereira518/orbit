@@ -20,6 +20,7 @@ import {
 } from "@/lib/duplicates";
 import { parseConnectedOn } from "@/lib/linkedin-connections";
 import { rebuildContactEmbeddingsBatch } from "@/lib/search";
+import { recordOperationalEvent } from "@/lib/operational-events";
 
 /** Rows pulled from the DB per processing loop iteration. */
 const CHUNK_SIZE = 40;
@@ -90,8 +91,8 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
     });
     duplicateIndex = buildDuplicateIndex(existingContacts);
     companyResolve = await createCompanyResolver(userId);
-  } catch (err) {
-    await failImport(importId, err);
+  } catch {
+    await failImport(importId, userId);
     return;
   }
 
@@ -107,6 +108,17 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
     while (true) {
       if (Date.now() - jobStart > TIME_BUDGET_MS) {
         await scheduleContinuation(importId);
+        await recordOperationalEvent({
+          severity: "info",
+          source: "job",
+          eventType: "import.continued",
+          message: "A LinkedIn import reached its time budget and scheduled continuation.",
+          success: true,
+          userId,
+          resourceType: "import",
+          resourceId: importId,
+          durationMs: Date.now() - jobStart,
+        });
         return;
       }
 
@@ -284,8 +296,8 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
         })
         .where(eq(imports.id, importId));
     }
-  } catch (err) {
-    await failImport(importId, err);
+  } catch {
+    await failImport(importId, userId);
     return;
   }
 
@@ -301,13 +313,48 @@ export async function runLinkedInImportJob(importId: string): Promise<void> {
   revalidatePath("/knowledge");
   revalidatePath("/chat");
   for (const id of allTouchedContactIds) revalidatePath(`/contacts/${id}`);
+
+  await recordOperationalEvent({
+    severity: "info",
+    source: "job",
+    eventType: "import.completed",
+    message: "A LinkedIn import completed.",
+    success: true,
+    userId,
+    resourceType: "import",
+    resourceId: importId,
+    durationMs: Date.now() - jobStart,
+    dedupeKey: `import:${importId}:completed`,
+    metadata: {
+      rows_processed: rowsProcessed,
+      contacts_created: contactsCreated,
+      contacts_updated: contactsUpdated,
+      duplicates_found: duplicatesFound,
+      skipped: skippedTotal,
+      blocked_by_plan: blockedByPlanTotal,
+    },
+  });
 }
 
-async function failImport(importId: string, err: unknown) {
-  const message = err instanceof Error ? err.message : "Import failed";
+async function failImport(importId: string, userId: string) {
   const db = await getDb();
   await db
     .update(imports)
-    .set({ status: "failed", errorMessage: message.slice(0, 500), updatedAt: new Date() })
+    .set({
+      status: "failed",
+      errorMessage: "Import processing failed. Retry the import or upload it again.",
+      updatedAt: new Date(),
+    })
     .where(eq(imports.id, importId));
+  await recordOperationalEvent({
+    severity: "error",
+    source: "job",
+    eventType: "import.failed",
+    message: "A LinkedIn import failed during processing.",
+    success: false,
+    userId,
+    resourceType: "import",
+    resourceId: importId,
+    dedupeKey: `import:${importId}:failed`,
+  });
 }

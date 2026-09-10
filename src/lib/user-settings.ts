@@ -1,7 +1,9 @@
 import { cache } from "react";
+import { randomUUID } from "node:crypto";
 import { and, count, eq, isNotNull, isNull, lt, or } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
+import { queuePlanUpgradeTransition } from "@/lib/plan-upgrade-events";
 
 /**
  * How stale `last_active_at` must be before a request refreshes it.
@@ -129,11 +131,12 @@ export type SubscriptionMirror = {
  */
 export async function setSubscriptionState(
   userId: string,
-  mirror: SubscriptionMirror
+  mirror: SubscriptionMirror,
+  opts: { eventKey?: string } = {}
 ) {
-  await ensureUserSettings(userId);
+  const existing = await ensureUserSettings(userId);
   const db = await getDb();
-  await db
+  const [updated] = await db
     .update(userSettings)
     .set({
       subscriptionPlan: mirror.plan,
@@ -141,7 +144,21 @@ export async function setSubscriptionState(
       subscriptionPeriodEnd: epochToDate(mirror.periodEnd),
       updatedAt: new Date(),
     })
-    .where(eq(userSettings.userId, userId));
+    .where(eq(userSettings.userId, userId))
+    .returning();
+
+  if (updated) {
+    await queuePlanUpgradeTransition({
+      userId,
+      before: existing,
+      after: updated,
+      eventKey:
+        opts.eventKey ??
+        `subscription:${userId}:${mirror.status ?? "none"}:${mirror.periodEnd ?? "none"}`,
+    });
+  }
+
+  return updated;
 }
 
 /**
@@ -150,20 +167,36 @@ export async function setSubscriptionState(
  */
 export async function setLifetimePurchase(
   userId: string,
-  opts: { purchasedAt?: Date; stripeCustomerId?: string | null } = {}
+  opts: {
+    purchasedAt?: Date;
+    stripeCustomerId?: string | null;
+    eventKey?: string;
+  } = {}
 ) {
   const existing = await ensureUserSettings(userId);
   if (existing?.lifetimePurchasedAt) return;
 
   const db = await getDb();
-  await db
+  const [updated] = await db
     .update(userSettings)
     .set({
       lifetimePurchasedAt: opts.purchasedAt ?? new Date(),
       stripeCustomerId: opts.stripeCustomerId ?? existing?.stripeCustomerId ?? null,
       updatedAt: new Date(),
     })
-    .where(eq(userSettings.userId, userId));
+    .where(eq(userSettings.userId, userId))
+    .returning();
+
+  if (updated) {
+    await queuePlanUpgradeTransition({
+      userId,
+      before: existing,
+      after: updated,
+      eventKey: opts.eventKey ?? `lifetime:${userId}:${updated.lifetimePurchasedAt?.toISOString()}`,
+    });
+  }
+
+  return updated;
 }
 
 /** How many Lifetime seats have been sold, for the early-adopter cap. */
@@ -193,7 +226,7 @@ export async function setCompedPlan(
   plan: "orbit" | "lifetime" | null,
   opts: { note?: string | null; adminUserId?: string | null } = {}
 ) {
-  await ensureUserSettings(userId);
+  const existing = await ensureUserSettings(userId);
   const db = await getDb();
 
   const [row] = await db
@@ -209,6 +242,15 @@ export async function setCompedPlan(
     })
     .where(eq(userSettings.userId, userId))
     .returning();
+
+  if (row) {
+    await queuePlanUpgradeTransition({
+      userId,
+      before: existing,
+      after: row,
+      eventKey: `comp:${userId}:${randomUUID()}`,
+    });
+  }
 
   return row;
 }

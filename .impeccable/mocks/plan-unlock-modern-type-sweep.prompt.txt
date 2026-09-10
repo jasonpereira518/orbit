@@ -1,0 +1,12 @@
+Use case: ui-mockup
+Asset type: revised high-fidelity desktop web app full-screen subscription unlock overlay composition study
+Primary request: Create modern composition option C, “Type Sweep,” for Orbit Pro’s main unlock reveal. It should feel like premium kinetic brand motion and a major software milestone, not an astral or fantasy scene.
+Input image: Orbit logo is a brand reference only. Use a tiny simplified connected-path mark as a signature, not as a large celestial emblem.
+Surface structure: no app chrome; full-screen saturated blue; one oversized cropped “ORBIT” word runs nearly edge-to-edge across the center; “PRO” sits as an equally bold compact block overlapping its lower-right edge; a wide pale-blue rectangular sweep crosses behind the typography and clearly implies it just slid in; top left has the tiny Orbit path mark and “PLAN UNLOCKED”; directly below the hero type is “UNLOCKED” with the source line “Your network is fully unlocked.”; three concise benefit labels sit along the bottom-left baseline; a solid “ENTER ORBIT” button is bottom right; a quiet “SKIP” control is top right. Everything follows a strict modern grid.
+Style/medium: contemporary kinetic identity system, premium software launch, sports-broadcast clarity without sports imagery, crisp flat vector UI, editorial scale, restrained tonal depth.
+Composition/framing: desktop landscape 16:10 at 1440×900, asymmetric type-led composition, huge cropped typography, clear safe areas, real responsive web interface.
+Color palette: blue only—deep blue #082B70, saturated blue #185ED3, Orbit blue #599DE7, pale blue #DCEBFF. White text allowed. No gold, purple, black field, or multicolor.
+Typography: bold wide modern geometric sans-serif, heavy weight, crisp flat fill; no serif, no condensed game font, no bevel, no chrome.
+Text verbatim: “PLAN UNLOCKED”; “ORBIT”; “PRO”; “UNLOCKED”; “Your network is fully unlocked.”; “Unlimited contacts”; “Hosted outreach”; “Sync everywhere”; “ENTER ORBIT”; “SKIP”.
+Constraints: entire screen visibly blue; typography is the hero; no starfield, stars, sparkles, lens flare, galaxy, planets, glowing seals, ornate rings, constellations, confetti, game HUD, cards, glass panels, characters, trophies, pricing, fake metrics, watermark.
+Avoid: poster that lacks UI controls, fantasy, sci-fi, celestial wallpaper, tiny type, serif display, excessive glow, generic centered badge.

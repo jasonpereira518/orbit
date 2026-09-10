@@ -7,6 +7,11 @@ import {
   PLAN_LABELS,
   type Plan,
 } from "@/lib/plan-limits";
+import {
+  resolvePlan,
+  subscriptionIsLive,
+  type PlanSource,
+} from "@/lib/plan-resolution";
 
 // Re-exported so server code keeps importing plan identity from this module, while
 // client components can reach `plan-limits` directly without pulling in the database.
@@ -17,12 +22,7 @@ export {
   PLAN_LABELS,
   type Plan,
 };
-
-/**
- * Where a user's plan came from. Purely informational for UI ("Comped", "Orbit Lifetime"),
- * but also the tiebreaker documented in `resolvePlan` below.
- */
-export type PlanSource = "comp" | "lifetime" | "subscription" | "free";
+export { resolvePlan, type PlanSource } from "@/lib/plan-resolution";
 
 export type Entitlements = {
   plan: Plan;
@@ -73,47 +73,6 @@ export function isPaywallError(err: unknown): err is PaywallError {
   return err instanceof Error && err.name === "PaywallError";
 }
 
-type BillingColumns = {
-  compedPlan?: "orbit" | "lifetime" | null;
-  lifetimePurchasedAt?: Date | null;
-  subscriptionPlan?: "orbit" | null;
-  subscriptionStatus?: "active" | "past_due" | "canceled" | null;
-  subscriptionPeriodEnd?: Date | null;
-};
-
-/**
- * A canceled subscription keeps working until the period the user already paid for runs
- * out. `past_due` is also honoured until then — dunning is Clerk's job, and yanking access
- * on a transient card failure is the wrong response for a tool holding personal data.
- */
-function subscriptionIsLive(row: BillingColumns, now: Date) {
-  if (row.subscriptionPlan !== "orbit") return false;
-  if (row.subscriptionStatus === "active") return true;
-  if (!row.subscriptionPeriodEnd) return false;
-  return row.subscriptionPeriodEnd.getTime() > now.getTime();
-}
-
-/**
- * Precedence: comp > lifetime > subscription > free.
- *
- * Comp wins outright so a manually granted account is never downgraded by stale billing
- * state. Lifetime outranks subscription so that someone who bought Lifetime and later also
- * subscribed does not silently lose the Lifetime grant if the subscription lapses — the two
- * are additive in practice (see `getEntitlements`, which unions hosted sends back in).
- */
-export function resolvePlan(
-  row: BillingColumns | null | undefined,
-  now = new Date()
-): { plan: Plan; source: PlanSource } {
-  if (!row) return { plan: "free", source: "free" };
-  if (row.compedPlan === "lifetime") return { plan: "lifetime", source: "comp" };
-  if (row.compedPlan === "orbit") return { plan: "orbit", source: "comp" };
-  if (row.lifetimePurchasedAt) return { plan: "lifetime", source: "lifetime" };
-  if (subscriptionIsLive(row, now)) {
-    return { plan: "orbit", source: "subscription" };
-  }
-  return { plan: "free", source: "free" };
-}
 
 export function entitlementsForPlan(
   plan: Plan,

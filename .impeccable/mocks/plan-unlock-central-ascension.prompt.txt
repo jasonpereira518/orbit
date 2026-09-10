@@ -1,0 +1,13 @@
+Use case: ui-mockup
+Asset type: high-fidelity desktop web app full-screen subscription unlock overlay composition study
+Primary request: Create composition option 1, “Central Ascension,” for Orbit’s full-screen Orbit Pro plan unlock reveal at the exact main impact moment around 3.2 seconds.
+Input image: reference image is Orbit’s existing logo and constellation geometry; preserve its connected-star identity but translate it into a monochrome blue energized orbital seal rather than pasting the PNG.
+Surface structure, in order: no navigation and no visible underlying app; a full-bleed saturated blue viewport; sparse radial star streaks converging from every edge; a single enormous luminous orbital seal centered slightly above the midpoint and occupying about 38% of viewport height; directly below it a small tracked label “PLAN UNLOCKED”; then the dominant two-line headline “ORBIT PRO” and “UNLOCKED”; beneath that, one restrained horizontal row of three tiny benefit markers reading “Unlimited contacts”, “Hosted outreach”, and “Sync everywhere”; a small rounded “ENTER ORBIT” button low center. The hierarchy must read as a designed responsive web interface, not a poster or cinematic scene.
+Style/medium: polished product UI mockup, semantic-layout realism, precise vector geometry, flat celestial graphics with controlled luminous depth, recognizably Orbit, premium and rewarding with Fortnite Battle Pass scale but no Fortnite assets.
+Composition/framing: desktop landscape 16:10 at 1440×900, centered axial composition, generous negative space, all interface elements aligned to a single central grid.
+Lighting/mood: one controlled white-blue impact halo behind the seal, deep cobalt edges, electric blue core, rewarding and confident.
+Color palette: blue only—deep cobalt #08265C, Orbit blue #599DE7, pale blue-white #D9ECFF. No gold, orange, purple, neutral black, or multicolor confetti.
+Typography: preserve Orbit’s editorial/product pairing: elegant high-contrast display serif character for the large plan name, clean rounded sans-serif for labels and benefits.
+Text (verbatim): “PLAN UNLOCKED”; “ORBIT PRO”; “UNLOCKED”; “Unlimited contacts”; “Hosted outreach”; “Sync everywhere”; “ENTER ORBIT”.
+Constraints: the entire screen must remain visibly blue-tinted; one hero emblem only; no cards, no panels, no dashboard chrome, no characters, no weapons, no trophies, no coins, no confetti, no product screenshots, no pricing, no fake metrics, no watermark. This must look like a real full-screen web state, not wall art.
+Avoid: generic game HUD, neon cyberpunk, glass cards, busy starfield, split-screen layout, tiny headline, illegible text.

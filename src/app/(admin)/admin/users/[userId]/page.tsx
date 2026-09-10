@@ -21,6 +21,7 @@ import {
 } from "@/components/admin/reveal-grant";
 import { AccountDangerZone } from "@/components/admin/account-actions";
 import { Pager } from "@/components/admin/pager";
+import { ReconciliationActions } from "@/components/admin/reconciliation-actions";
 import { getAuditTrail } from "@/actions/admin";
 import { requireAdminUserId } from "@/lib/admin";
 import {
@@ -358,6 +359,18 @@ export default async function AdminUserDetailPage({
                     Resend/Twilio credits.
                   </p>
                 )}
+              </div>
+              <div className="mt-3 border-t border-border/60 pt-3">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Provider reconciliation
+                </div>
+                <div className="mt-2">
+                  <ReconciliationActions targetUserId={identity.userId} />
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                  Each operation previews canonical provider state, requires a reason,
+                  and records the exact applied diff in the audit log.
+                </p>
               </div>
             </AdminPanel>
           </section>

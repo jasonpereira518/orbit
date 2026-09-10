@@ -44,8 +44,11 @@
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
   --color-landing-accent: #f2c14e;
+  --color-brand-pro: #599de7;
   --color-landing-button-surface: #eef7f4;
   --color-landing-button-label: #0f2e28;
+  --color-tier-lifetime: var(--tier-lifetime);
+  --color-tier-pro: var(--tier-pro);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -98,6 +101,8 @@
   --import-connections: #5b5fc7;
   --import-messages: #c2694a;
   --import-calendar: #b8873a;
+  --tier-lifetime: #8a6423;
+  --tier-pro: #2f68b0;
   --radius: 0.625rem;
   --sidebar: #f7f8f6;
   --sidebar-foreground: #1a1c1a;
@@ -128,6 +133,8 @@
   --foreground: #f0f0f0;
   --card: #303030;
   --card-foreground: #f0f0f0;
+  --tier-lifetime: #f2c14e;
+  --tier-pro: #599de7;
   --popover: #303030;
   --popover-foreground: #f0f0f0;
   --primary: #599de7;

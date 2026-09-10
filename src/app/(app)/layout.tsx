@@ -7,6 +7,7 @@ import {
   isDemoMode,
 } from "@/lib/auth";
 import { resolveThemePreference } from "@/lib/theme";
+import { resolvePlan } from "@/lib/plan-resolution";
 
 /**
  * No route in this group can be statically prerendered: every one of them resolves a
@@ -47,9 +48,10 @@ export default async function AppLayout({
   if (settings.suspendedAt) redirect("/suspended");
 
   const theme = resolveThemePreference(settings.theme);
+  const plan = resolvePlan(settings).plan;
 
   return (
-    <AppShell clerkOn={clerkOn} demoMode={demoMode} theme={theme}>
+    <AppShell clerkOn={clerkOn} demoMode={demoMode} theme={theme} plan={plan}>
       {children}
     </AppShell>
   );

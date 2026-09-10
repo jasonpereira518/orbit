@@ -9,6 +9,7 @@
  * Run: npx tsx scripts/smoke-admin-gate.ts
  */
 import { config } from "dotenv";
+import { readFileSync } from "node:fs";
 config({ path: ".env.local" });
 config();
 
@@ -124,6 +125,40 @@ async function main() {
       mod.isAdminUser("demo-user") === false
     );
     restore();
+  }
+
+  console.log("\nNew operations surfaces");
+  const layoutSource = readFileSync("src/app/(admin)/layout.tsx", "utf8");
+  check(
+    "all new admin pages inherit the concealed layout gate",
+    layoutSource.includes("requireAdminPage()")
+  );
+  const exportSource = readFileSync("src/app/api/admin/export/route.ts", "utf8");
+  check(
+    "the event export rechecks authorization and conceals denial as 404",
+    exportSource.includes("requireAdminUserId()") &&
+      exportSource.includes('new NextResponse("Not found", { status: 404 })') &&
+      exportSource.includes('"events"')
+  );
+  const actionsSource = readFileSync("src/actions/admin.ts", "utf8");
+  const newActions = [
+    "acknowledgeIssueAction",
+    "snoozeIssueAction",
+    "unsnoozeIssueAction",
+    "refreshProvidersAction",
+    "previewClerkReconciliationAction",
+    "reconcileClerkAction",
+    "previewStripeLifetimeAction",
+    "reconcileStripeLifetimeAction",
+  ];
+  for (const name of newActions) {
+    const start = actionsSource.indexOf(`export async function ${name}`);
+    const next = actionsSource.indexOf("export async function", start + 1);
+    const body = actionsSource.slice(start, next < 0 ? undefined : next);
+    check(
+      `${name} rechecks the admin gate`,
+      start >= 0 && body.includes("requireAdminUserId()")
+    );
   }
 
   console.log("\nAll admin gate checks passed.");
