@@ -4,6 +4,7 @@ import { listSuggestedReminders } from "@/actions/suggested-reminders";
 import { RemindersHeader } from "@/components/reminders/reminders-header";
 import { RemindersView } from "@/components/reminders/reminders-view";
 import { SuggestedRemindersPanel } from "@/components/reminders/suggested-reminders-panel";
+import { TodaySection } from "@/components/reminders/today-section";
 import { RemindersViewSkeleton } from "@/components/loading/page-skeletons";
 
 export default function RemindersPage({
@@ -15,6 +16,9 @@ export default function RemindersPage({
     <div className="mx-auto max-w-5xl space-y-6">
       <RemindersHeader />
       {/* Its own boundary so an extra query never delays the reminders list. */}
+      <Suspense fallback={null}>
+        <TodaySection />
+      </Suspense>
       <Suspense fallback={null}>
         <SuggestedRemindersSection />
       </Suspense>
