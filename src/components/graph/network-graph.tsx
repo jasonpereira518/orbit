@@ -32,6 +32,7 @@ import {
   refreshConstellationBatch,
 } from "@/actions/graph";
 import { toast } from "sonner";
+import { useCornerClearance } from "@/lib/corner-clearance";
 import { searchDashboardContacts } from "@/actions/search";
 import {
   Select,
@@ -1690,6 +1691,11 @@ export function NetworkGraph({
   const refreshJobIdRef = useRef<string | null>(null);
 
   const fullscreenActive = isFullscreen || cssFullscreen;
+  // In full screen the graph's own Fullscreen/Home pair is the only thing in the
+  // bottom-right corner, and toasts are interactive now — lift the corner clear
+  // of them. Embedded, those controls are absolute inside the card rather than
+  // at the viewport corner, so nothing is needed. See lib/corner-clearance.ts.
+  useCornerClearance(fullscreenActive ? 56 : null);
   const showIntroBehind = introBehind && !compact && !fullscreenActive;
 
   // ⌘/Ctrl+F → constellation search (instead of browser find)

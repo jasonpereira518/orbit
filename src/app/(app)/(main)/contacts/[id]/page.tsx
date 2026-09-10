@@ -32,7 +32,8 @@ import { listContactMentions } from "@/lib/contact-mentions";
 import { getContactProfile } from "@/lib/contact-profile";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { getSettings } from "@/actions/settings";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { resolveContactId } from "@/lib/contact-merge";
 
 export default async function ContactDetailPage({
   params,
@@ -87,7 +88,17 @@ export default async function ContactDetailPage({
     cohortPromise,
     getConstellationConfig(),
   ]);
-  if (!contact) notFound();
+  if (!contact) {
+    // Before 404ing: this may be a contact that was merged into another one. A merge deletes
+    // the losing row (so ~100 unfiltered read sites cannot leak it), which would turn every
+    // link, bookmark and stored id pointing at it into a dead end. `contact_merges` doubles
+    // as an alias table, so the id still resolves — redirect to whoever survives.
+    const survivorId = await requireUserId()
+      .then((userId) => resolveContactId(userId, id))
+      .catch(() => id);
+    if (survivorId !== id) redirect(`/contacts/${survivorId}`);
+    notFound();
+  }
 
   const brief = await briefPromise;
   const briefStale = isBriefStale(brief, contact.lastInteractionAt);

@@ -76,6 +76,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-scale-schema": "pure", // own in-memory PGlite
   "smoke-schema-ddl": "pure",
   "smoke-security-headers": "pure",
+  "smoke-sky-figures": "pure",
   "smoke-timeline-vocabulary": "pure",
   "smoke-webhook-signing": "pure",
   "smoke-warp-chrono": "pure",
@@ -97,6 +98,9 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-broadcasts": "pglite",
   "smoke-chat-context": "pglite",
   "smoke-contact-brief": "pglite",
+  "smoke-contact-merge": "pglite",
+  "smoke-contact-resolve": "pglite",
+  "smoke-duplicate-review": "pglite",
   "smoke-event-roster": "pglite",
   "smoke-constellation-admin": "pglite",
   "smoke-constellation-payload-leak": "pglite",
