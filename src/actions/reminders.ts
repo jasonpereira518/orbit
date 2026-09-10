@@ -83,13 +83,10 @@ export async function fetchDashboard() {
       company: c.company,
       title: c.title,
       industry: c.industry,
-      howMet: c.howMet,
-      // The dashboard scan no longer pulls notes (see getDashboardData); the stats
-      // input declares the field but has never read it.
-      notes: null,
-      aiSummary: c.aiSummary,
-      keyFacts: c.keyFacts,
-      sharedInterests: c.sharedInterests,
+      // notes, howMet, aiSummary, keyFacts and sharedInterests are gone from both sides.
+      // The comment that used to sit here noted `notes` was declared and never read; the
+      // other four were the same, and between them they were the widest columns the
+      // dashboard's scan carried. See getDashboardData.
       nextFollowUpAt: c.nextFollowUpAt,
       contactTags:
         (

@@ -12,14 +12,17 @@
  */
 import "./smoke/_env";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contactTags, contacts, tags } from "../src/db/schema";
 import { isCometContact } from "../src/lib/comet";
 import {
   getDashboardCounts,
+  getDashboardTierCounts,
   getDashboardVocabularies,
+  getGoalAlignedContactIds,
 } from "../src/lib/dashboard-aggregates";
+import { closenessTier } from "../src/lib/closeness";
 import { startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 
 const USER = "smoke-dashboard-aggregates-user";
@@ -98,6 +101,70 @@ async function seed() {
   await db.insert(contactTags).values({ contactId: first.id, tagId: used.id });
 }
 
+/**
+ * Tier counts and goal relevance both read `closeness_breakdown`, which is deliberately
+ * absent from the Drizzle schema — so the fixture writes it with raw SQL, exactly as the
+ * production writer does, and the reference values are computed with the real
+ * `closenessTier` rather than a copy of its thresholds.
+ */
+async function breakdownChecks() {
+  const db = await getDb();
+  const user = `${USER}-breakdowns`;
+  await db.delete(contacts).where(eq(contacts.userId, user));
+
+  // raw either side of both cutoffs (0.6 inner, 0.4 mid), exactly ON both, and one
+  // contact with no breakdown at all.
+  const planted = [
+    { name: "Well inside inner", raw: 0.92, goal: 0.8 },
+    { name: "Exactly on the inner cutoff", raw: 0.6, goal: 0.0 },
+    { name: "Just under inner", raw: 0.599, goal: 0.55 },
+    { name: "Exactly on the mid cutoff", raw: 0.4, goal: 0.2 },
+    { name: "Just under mid", raw: 0.399, goal: 0.95 },
+    { name: "Far out", raw: 0.01, goal: 0 },
+  ];
+
+  for (const p of planted) {
+    const [row] = await db.insert(contacts).values({ userId: user, fullName: p.name }).returning();
+    await db.execute(sql`
+      update contacts
+         set closeness_breakdown = ${JSON.stringify({ raw: p.raw, goalRelevance: p.goal })}::jsonb,
+             closeness_tier = 'outer'
+       where id = ${row.id}
+    `);
+  }
+  // Unscored: skipped by the JS (`if (!breakdown) continue`), so it must not be counted.
+  await db.insert(contacts).values({ userId: user, fullName: "Never scored" });
+
+  console.log("\nTier counts (SQL vs closenessTier)…");
+  const tiers = await getDashboardTierCounts(user);
+  const expected = { inner: 0, mid: 0, outer: 0 };
+  for (const p of planted) expected[closenessTier(p.raw)] += 1;
+
+  check("tier counts match closenessTier bucket for bucket",
+    tiers.inner === expected.inner && tiers.mid === expected.mid && tiers.outer === expected.outer,
+    `sql ${JSON.stringify(tiers)} vs js ${JSON.stringify(expected)}`);
+  check("a contact exactly on a cutoff counts as the higher tier", expected.inner === 2 && tiers.inner === 2,
+    `inner ${tiers.inner}`);
+  check("an unscored contact is not counted anywhere",
+    tiers.inner + tiers.mid + tiers.outer === planted.length,
+    `${tiers.inner + tiers.mid + tiers.outer} counted of ${planted.length} scored (7 rows exist)`);
+
+  console.log("\nGoal-aligned contacts…");
+  const aligned = await getGoalAlignedContactIds(user, 5);
+  const jsAligned = planted.filter((p) => p.goal > 0).sort((a, b) => b.goal - a.goal).slice(0, 5);
+  check("ordered by stored goal relevance, descending",
+    JSON.stringify(aligned.map((a) => a.goalRelevance)) === JSON.stringify(jsAligned.map((p) => p.goal)),
+    `sql ${JSON.stringify(aligned.map((a) => a.goalRelevance))} vs js ${JSON.stringify(jsAligned.map((p) => p.goal))}`);
+  check("a zero-relevance contact is excluded, matching .filter(goalRelevance > 0)",
+    aligned.every((a) => a.goalRelevance > 0) && aligned.length === jsAligned.length,
+    `${aligned.length} vs ${jsAligned.length}`);
+
+  const limited = await getGoalAlignedContactIds(user, 2);
+  check("the limit is applied in SQL", limited.length === 2, `${limited.length}`);
+
+  await db.delete(contacts).where(eq(contacts.userId, user));
+}
+
 async function main() {
   await seed();
   const db = await getDb();
@@ -170,6 +237,8 @@ async function main() {
   const vocabStatements = stopQueryCount();
   check("companies and schools share a statement, tags take one more",
     vocabStatements === 2, `got ${vocabStatements}`);
+
+  await breakdownChecks();
 
   await db.delete(contacts).where(eq(contacts.userId, USER));
   if (failures > 0) {

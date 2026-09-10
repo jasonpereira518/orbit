@@ -15,7 +15,7 @@ import {
   buildConstellationClusters,
   toNamedGraphClusters,
 } from "@/lib/constellation-clusters";
-import { computeNetworkMetrics } from "@/lib/network-metrics";
+import { computeNetworkMetrics, selectMetricsSample } from "@/lib/network-metrics";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { contactHasNotesSql } from "@/lib/contact-notes-sql";
@@ -411,6 +411,55 @@ export async function maybeRefreshOutreachSuggestions(userId: string) {
   await refreshOutreachSuggestions(userId);
 }
 
+/** The columns `getDashboardData` deliberately leaves out of its network scan. */
+type WideContactColumns = {
+  aiSummary: string | null;
+  keyFacts: string[] | null;
+  sharedInterests: string[] | null;
+  howMet: string | null;
+  metContext: string | null;
+};
+
+/**
+ * Fetch the wide text columns for a bounded set of contacts.
+ *
+ * One statement, or none at all when the set is empty — which is the common case for a new
+ * account and must not cost a round trip. The `inArray` is bounded by construction: every
+ * caller passes either the metrics sample (at most `METRICS_MAX_CONTACTS`) or the preview
+ * payload (at most `GRAPH_PREVIEW_CONTACT_CAP`).
+ */
+async function hydrateWideColumns(
+  userId: string,
+  ids: string[]
+): Promise<Map<string, WideContactColumns>> {
+  const out = new Map<string, WideContactColumns>();
+  if (ids.length === 0) return out;
+
+  const db = await getDb();
+  const rows = await db.query.contacts.findMany({
+    where: and(eq(contacts.userId, userId), inArray(contacts.id, ids)),
+    columns: {
+      id: true,
+      aiSummary: true,
+      keyFacts: true,
+      sharedInterests: true,
+      howMet: true,
+      metContext: true,
+    },
+  });
+
+  for (const r of rows) {
+    out.set(r.id, {
+      aiSummary: r.aiSummary ?? null,
+      keyFacts: r.keyFacts ?? null,
+      sharedInterests: r.sharedInterests ?? null,
+      howMet: r.howMet ?? null,
+      metContext: r.metContext ?? null,
+    });
+  }
+  return out;
+}
+
 export async function getDashboardData(
   userId: string,
   // userName may be a promise so the Clerk profile fetch can run concurrently
@@ -454,12 +503,16 @@ export async function getDashboardData(
         constellationPin: true,
         source: true,
         industry: true,
-        metContext: true,
         dateMet: true,
-        howMet: true,
-        keyFacts: true,
-        sharedInterests: true,
-        aiSummary: true,
+        // metContext, howMet, keyFacts, sharedInterests and aiSummary are NOT here.
+        //
+        // They are the widest columns on the row — `aiSummary` alone is a paragraph — and
+        // nothing needs them for the whole network. Two things read them: the all-pairs
+        // link analysis, which runs over at most METRICS_MAX_CONTACTS (750) contacts, and
+        // the graph preview payload, which is capped at GRAPH_PREVIEW_CONTACT_CAP (150).
+        // Both are bounded sets, both are known before the data is needed, and both are
+        // fetched by id below (`hydrateWideColumns`). Selecting them here meant reading
+        // them for every contact in the account to use them for at most 750.
         firstInteractionAt: true,
         lastInteractionAt: true,
         nextFollowUpAt: true,
@@ -510,8 +563,14 @@ export async function getDashboardData(
       orderBy: (g, { desc }) => [desc(g.createdAt)],
     }),
     listActiveGoalTextsForUser(userId),
-    // Donates the scan above rather than repeating it.
-    getClosenessCohort(userId, contactRowsPromise),
+    // No longer donates the scan above: that scan is now narrow, and the cohort builder
+    // needs the wide text columns to score goal relevance. The donation only ever mattered
+    // on the REBUILD path — the normal path reads each contact's stored breakdown and never
+    // looks at these rows at all — so what this gives up is one scan on the rare render that
+    // also has to recalibrate, in exchange for every other render carrying five fewer
+    // columns per contact. `ClosenessCohortRow` is typed precisely so this trade has to be
+    // made deliberately rather than discovered.
+    getClosenessCohort(userId),
     getConstellationConfig(),
   ]);
 
@@ -524,9 +583,20 @@ export async function getDashboardData(
     return { ...c, tags };
   });
 
+  // The wide text columns, for the only two sets that need them.
+  //
+  // `selectMetricsSample` is the same function `computeNetworkMetrics` samples with, so
+  // these are exactly the contacts the link analysis will read — not a query that resembles
+  // that set. The preview payload is capped further and hydrated after it is chosen, so its
+  // ids are a subset of nothing in particular and are fetched on their own.
+  const metricsSampleIds = selectMetricsSample(enrichedContacts, closenessCohort.byId).map(
+    (c) => c.id
+  );
+  const wide = await hydrateWideColumns(userId, metricsSampleIds);
+
   const { metrics: networkMetrics, contactsWithNetwork } =
     computeNetworkMetrics(
-      enrichedContacts,
+      enrichedContacts.map((c) => ({ ...c, ...(wide.get(c.id) ?? {}) })),
       goalTexts,
       closenessCohort.byId
     );
@@ -562,13 +632,15 @@ export async function getDashboardData(
           : new Date(c.nextFollowUpAt)
         : null,
       tags: c.tags ?? [],
-      aiSummary: c.aiSummary ?? null,
-      keyFacts: c.keyFacts ?? null,
-      howMet: c.howMet ?? null,
-      metContext: c.metContext ?? null,
+      // Null for everyone outside the two bounded sets that need them; filled in by
+      // `hydrateWideColumns` below for the metrics sample and the preview payload.
+      aiSummary: wide.get(c.id)?.aiSummary ?? null,
+      keyFacts: wide.get(c.id)?.keyFacts ?? null,
+      howMet: wide.get(c.id)?.howMet ?? null,
+      metContext: wide.get(c.id)?.metContext ?? null,
       dateMet: c.dateMet ?? null,
       notes: null as string | null,
-      sharedInterests: c.sharedInterests ?? null,
+      sharedInterests: wide.get(c.id)?.sharedInterests ?? null,
       email: c.email ?? null,
       phone: c.phone ?? null,
       linkedinUrl: c.linkedinUrl ?? null,
@@ -711,7 +783,7 @@ export async function getDashboardData(
 
   // Filter FIRST, then cap. Capping first would spend the budget on contacts that are about
   // to be hidden and render far fewer than the cap allows.
-  const graphPreviewContacts =
+  const graphPreviewCandidates =
     previewVisible.length > GRAPH_PREVIEW_CONTACT_CAP
       ? [...previewVisible]
           .sort(
@@ -721,6 +793,29 @@ export async function getDashboardData(
           )
           .slice(0, GRAPH_PREVIEW_CONTACT_CAP)
       : previewVisible;
+
+  // The preview is capped by orbit score; the metrics sample was taken by closeness. Those
+  // orders are correlated but not identical, so a preview contact can sit outside the 750
+  // already hydrated and would otherwise ship to the client with a blank summary. Fetch the
+  // difference — usually nothing, never more than the cap.
+  const missingPreviewIds = graphPreviewCandidates
+    .map((c) => c.id)
+    .filter((id) => !wide.has(id));
+  const previewWide = await hydrateWideColumns(userId, missingPreviewIds);
+
+  const graphPreviewContacts = graphPreviewCandidates.map((c) => {
+    const extra = previewWide.get(c.id);
+    return extra
+      ? {
+          ...c,
+          aiSummary: extra.aiSummary,
+          keyFacts: extra.keyFacts,
+          sharedInterests: extra.sharedInterests,
+          howMet: extra.howMet,
+          metContext: extra.metContext,
+        }
+      : c;
+  });
 
   return {
     stats: {

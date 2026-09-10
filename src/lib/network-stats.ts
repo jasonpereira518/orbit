@@ -84,11 +84,10 @@ export async function getNetworkStats(
       company: string | null;
       title: string | null;
       industry: string | null;
-      howMet: string | null;
-      notes: string | null;
-      aiSummary: string | null;
-      keyFacts: string[] | null;
-      sharedInterests: string[] | null;
+      // howMet, notes, aiSummary, keyFacts and sharedInterests were declared here and read
+      // nowhere in this function. An over-specified input type is not free: the dashboard
+      // donates its scan to this call, so five columns nothing here touches had to be
+      // selected for every contact in the account to satisfy a signature.
       nextFollowUpAt: Date | string | null;
       contactTags: Array<{ tag: { name: string } }>;
     }>;

@@ -333,6 +333,35 @@ function peerDegreeMap(edges: PeerEdge[]) {
   return degrees;
 }
 
+/**
+ * The contacts the all-pairs link analysis will actually run over: the closest
+ * `METRICS_MAX_CONTACTS`, in the caller's order when there are no more than that.
+ *
+ * Exported because the dashboard needs to know this set BEFORE calling
+ * `computeNetworkMetrics`. The link analysis reads each contact's text (summary, key facts,
+ * shared interests) to find what pairs of people have in common — and those columns are the
+ * widest on the row, so fetching them for the whole network to use 750 of them is most of
+ * what made the dashboard scan expensive. Knowing the sample up front turns that into a
+ * bounded fetch by id.
+ *
+ * Both callers must select the same set or the metrics change, so there is one function
+ * rather than one function and a query that resembles it. Deliberately NOT expressible as
+ * SQL: at the boundary, ties in `closeness` would be broken by Postgres's ordering and by
+ * `Array.prototype.sort` differently, and a sample that differs by a contact produces
+ * different peer-link numbers for no reason anyone could later explain.
+ */
+export function selectMetricsSample<T extends { id: string }>(
+  contacts: T[],
+  scores: Map<string, { closeness: number }>
+): T[] {
+  if (contacts.length <= METRICS_MAX_CONTACTS) return contacts;
+  return [...contacts]
+    .sort(
+      (a, b) => (scores.get(b.id)?.closeness ?? 0) - (scores.get(a.id)?.closeness ?? 0)
+    )
+    .slice(0, METRICS_MAX_CONTACTS);
+}
+
 export function computeNetworkMetrics(
   contacts: Array<
     ClosenessContact & {
@@ -379,15 +408,7 @@ export function computeNetworkMetrics(
 
   // Only the closest `METRICS_MAX_CONTACTS` take part in the all-pairs link analysis.
   // Sorting by the already-computed score is O(n log n); comparing every pair is O(n²).
-  const sampled =
-    graphContacts.length <= METRICS_MAX_CONTACTS
-      ? graphContacts
-      : [...graphContacts]
-          .sort(
-            (a, b) =>
-              (scores.get(b.id)?.closeness ?? 0) - (scores.get(a.id)?.closeness ?? 0)
-          )
-          .slice(0, METRICS_MAX_CONTACTS);
+  const sampled = selectMetricsSample(graphContacts, scores);
   const sampledIds = new Set(sampled.map((c) => c.id));
 
   const peerEdges = buildPeerEdges(sampled, { metrics: true });
