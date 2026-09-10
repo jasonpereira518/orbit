@@ -18,7 +18,8 @@ export type CronJobName =
   | "imports.process-stalled"
   | "ops.sweep"
   | "sync.run"
-  | "webhooks.drain";
+  | "webhooks.drain"
+  | "followups.run";
 
 export type CronRunStatus = "ok" | "partial" | "failed";
 

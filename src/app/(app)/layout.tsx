@@ -7,6 +7,7 @@ import { FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { AppShell } from "@/components/layout/app-shell";
 import { SectionFlash } from "@/components/layout/section-flash";
 import { PresenceHeartbeat } from "@/components/layout/presence-heartbeat";
+import { TimezoneCapture } from "@/components/settings/timezone-capture";
 import { captureAttribution } from "@/lib/attribution-capture";
 import {
   bootstrapAuthenticatedUser,
@@ -111,6 +112,10 @@ export default async function AppLayout({
       {/* Renders nothing; keeps `last_active_at` fresh enough for the admin roster to
           answer "active now". One per tab, not one per route. */}
       <PresenceHeartbeat />
+
+      {/* Also renders nothing. Reports the browser's IANA zone so the follow-up
+          scheduler can aim its daily pass at 07:00 local. */}
+      <TimezoneCapture current={settings.timezone} />
 
       {/* Also renders nothing. Glows whatever `#id` the URL names, so any link that points
           at a card — every account alert does — lands with that card called out. Mounted

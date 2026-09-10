@@ -130,6 +130,31 @@ export async function getSettings() {
   };
 }
 
+/**
+ * Store the user's IANA timezone, captured from the browser.
+ *
+ * The scheduler needs a local 07:00 to aim at. Same source as `feedback-report.ts`
+ * already uses. Write-once-ish: it updates whenever the browser reports something
+ * different, so a permanent move is picked up without a settings screen.
+ */
+export async function captureTimezone(zone: string) {
+  const userId = await requireUserId();
+  const trimmed = zone.trim();
+  // Validate rather than trust: an invalid zone would make `nextPassAt` fall back to
+  // UTC forever, silently.
+  if (!trimmed || trimmed.length > 80) return;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: trimmed });
+  } catch {
+    return;
+  }
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({ timezone: trimmed })
+    .where(eq(userSettings.userId, userId));
+}
+
 export async function saveThemePreference(theme: ThemePreference) {
   const userId = await requireUserId();
   const db = await getDb();
