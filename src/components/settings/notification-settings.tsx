@@ -30,29 +30,31 @@ import {
  * The copy says "Sample" on everything except the first, which is the genuine
  * result of the send that just happened.
  */
-const TEST_TOASTS: ((t: typeof toast) => void)[] = [
-  (t) =>
-    t.success("Test notification sent", {
+// Each calls `toast` directly rather than taking it as a parameter, so
+// scripts/smoke-toast-copy.ts — which looks for `toast.*(` — checks this copy too.
+const TEST_TOASTS: (() => void)[] = [
+  () =>
+    toast.success("Test notification sent", {
       description:
-        "If nothing pops up, check Notification Center — and System Settings → Notifications for this browser (Focus / alert style).",
+        "If nothing pops up, check Notification Center — and System Settings → Notifications for this browser (Focus / alert style)",
       duration: 8000,
       keep: false,
     }),
-  (t) =>
-    t.error("Sample error — nothing actually failed", {
+  () =>
+    toast.error("Sample error — nothing actually went wrong", {
       description:
-        "Errors run for ten seconds rather than four, and hovering pauses that. A description longer than three lines is clamped, which is what this sentence is here to demonstrate: the rest of it is cut off with an ellipsis rather than growing the toast.",
+        "Errors stay for ten seconds and hovering pauses them — anything past three lines tucks behind See more, and opening it grows the toast to fit, which is what this long sentence is here to show",
       keep: false,
     }),
-  (t) => t.warning("Sample warning — two contacts look alike", { keep: false }),
-  (t) =>
-    t.info("Sample notice — calendar sync finished", {
-      description: "Info and warning have almost no real call sites yet.",
+  () => toast.warning("Sample warning — two contacts look alike", { keep: false }),
+  () =>
+    toast.info("Sample notice — calendar sync finished", {
+      description: "Info and warning have almost no real call sites yet",
       keep: false,
     }),
-  (t) =>
-    t.message("Sample message with an action", {
-      description: "A plain message takes no accent rail and no icon.",
+  () =>
+    toast.message("Sample message with an action", {
+      description: "A plain message takes no accent rail and no icon",
       action: { label: "Undo", onClick: () => {} },
       keep: false,
     }),
@@ -147,9 +149,7 @@ export function NotificationSettings() {
                   : res.permission
               );
               if (res.ok) {
-                TEST_TOASTS[testToastIndex.current % TEST_TOASTS.length](
-                  toast
-                );
+                TEST_TOASTS[testToastIndex.current % TEST_TOASTS.length]();
                 testToastIndex.current += 1;
               } else if (res.permission === "denied") {
                 // Genuine failures report themselves and do not advance the

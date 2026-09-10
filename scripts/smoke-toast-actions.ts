@@ -35,6 +35,8 @@ type RecordedData = {
   action?: { label: string; onClick: () => void };
   className?: string;
   onDismiss?: unknown;
+  id?: string | number;
+  description?: { props?: { text?: string; onLayoutChange?: () => void } };
 };
 const calls: { variant: string; message: unknown; data: RecordedData }[] = [];
 const patchable = sonnerToast as unknown as Record<string, unknown>;
@@ -126,6 +128,38 @@ async function main() {
   calls.length = 0;
   await runToastAction({ run: async () => ({ remindersClosed: 2 }), success: (r) => `Cleared — ${r.remindersClosed} closed`, failure: "x" });
   check("uses the result", text(calls[0].message) === "Cleared — 2 closed", text(calls[0].message));
+
+  console.log("an expander that changes height makes sonner re-measure the toast");
+  // Sonner measures once and locks a hovered toast to that height, so See more used to
+  // expand text inside a box that stayed short. Re-sending the same id with fresh
+  // elements is what makes it measure again.
+  const { toast } = await import("../src/lib/toast");
+  calls.length = 0;
+  const LONG = "A description long enough to need its own See more control inside a toast.";
+  const id = toast.error("Couldn’t sync that calendar", { description: LONG, keep: false });
+  const first = calls[0];
+  const hook = first?.data.description?.props?.onLayoutChange;
+  check("the description is told how to report a height change", typeof hook === "function");
+  hook?.();
+  const second = calls[1];
+  check("…and reporting one re-sends the toast", calls.length === 2, calls.length);
+  check("…under the SAME id, so it updates rather than stacking a copy", second?.data.id === id, `${String(second?.data.id)} vs ${String(id)}`);
+  check("…with a NEW description element — the identity change is what triggers sonner", second?.data.description !== first?.data.description);
+  check("…carrying the same text", second?.data.description?.props?.text === LONG);
+  check("…and keeping the error duration", (second?.data as { duration?: number })?.duration === 10_000);
+
+  calls.length = 0;
+  const LONG_TITLE = "A title long enough to get its own See more control, which also changes the height of the toast it sits in.";
+  toast.success(LONG_TITLE);
+  const titled = calls[0];
+  const titleHook = (titled?.message as { props?: { onLayoutChange?: () => void } })?.props?.onLayoutChange;
+  check("a long TITLE's expander reports height changes too", typeof titleHook === "function");
+  titleHook?.();
+  check("…and re-sends under the same id", calls.length === 2 && calls[1]?.data.id !== undefined);
+
+  calls.length = 0;
+  toast.success("Short and sweet");
+  check("a short toast has nothing to re-measure — sent once, as plain text", calls.length === 1 && typeof calls[0]?.message === "string");
 
   console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
   process.exit(failures === 0 ? 0 : 1);

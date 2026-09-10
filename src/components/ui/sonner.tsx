@@ -284,9 +284,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
           // Feeds the icon chip and the left rail in globals.css. `default`
           // (the `toast.message` call sites) deliberately sets none.
           success: "[--toast-accent:var(--success)]",
-          // Not `--destructive`: that is the delete-button red, out of gamut and the
-          // loudest colour on the page. See `--toast-error` in globals.css.
-          error: "[--toast-accent:var(--toast-error)]",
+          error: "[--toast-accent:var(--destructive)]",
           warning: "[--toast-accent:var(--warning)]",
           info: "[--toast-accent:var(--info)]",
         },
