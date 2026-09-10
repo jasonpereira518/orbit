@@ -710,6 +710,8 @@ Expected: the SHAs match, and each rule lists a standard `backdrop-filter:blur(.
 
 ### Task 5: The page ends at its footer, and fragment links clear the header (added during execution)
 
+> **Amended in review:** the shipped selectors are scoped to `.landing-root #groups` … `.landing-root #cta`, and the guard also fails on any bare `#id` scroll-margin rule. The dashboard's reminders card carries `id="reminders"` with its own `scroll-mt-8`, and a bare `#reminders` rule overrode it (an id selector outranks a class). The code blocks below show the original, unscoped version.
+
 Found by Task 4's real-Safari pass on the iPhone SE (375×667), and measured in Chromium and on production:
 
 - **An empty band after the footer.** The landing footer's decorative glow is a 560px circle centered on a ~200px footer, so it hangs about 280px below the footer's midpoint. `.landing-root` clips only the x axis, so that overhang extends the scrollable page. Production at 375×667: `document.scrollHeight` 8132 vs the landing root's bottom at 7950, a **182px** empty band where the lighter app starfield shows through (158px on this branch, because Task 3's footer is taller).
