@@ -148,8 +148,12 @@ export function SceneFeatures() {
                 <GlassCard className="flex h-full flex-col rounded-2xl p-5 md:p-6">
                   {/* A floor under the preview so both titles start on the same
                     * line — the two previews are very different heights, and
-                    * without it the pair reads as misaligned rather than as a set. */}
-                  <div className="flex min-h-40 items-center justify-center">
+                    * without it the pair reads as misaligned rather than as a set.
+                    * It has to clear the TALLER preview: the Ask stack measures
+                    * 175px in Chrome, and a floor under that let it push its title
+                    * 15px below its neighbour's. The extra headroom absorbs line-height
+                    * differences between browsers rather than aligning to the pixel. */}
+                  <div className="flex min-h-48 items-center justify-center">
                     {feature.visual}
                   </div>
                   <div className="mt-6">
