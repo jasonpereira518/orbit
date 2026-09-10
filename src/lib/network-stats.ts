@@ -76,20 +76,23 @@ function pickHeadline(input: {
 export async function getNetworkStats(
   userId: string,
   preloaded?: {
+    /**
+     * Exactly the four fields the loop below reads, and no more.
+     *
+     * This type used to name eleven — relationshipScore, company, title, industry, howMet,
+     * notes, aiSummary, keyFacts, sharedInterests and contactTags among them — none of
+     * which this function ever touched. An over-specified input type is not free here: the
+     * dashboard donates its contact scan to this call, so every one of those was selected
+     * for every contact in the account to satisfy a signature nothing read.
+     *
+     * If this function grows to need another field, add it here AND check what that costs
+     * the callers donating rows to it.
+     */
     contacts: Array<{
       id: string;
-      relationshipScore: number | null;
       lastInteractionAt: Date | string | null;
-      createdAt: Date | string;
-      company: string | null;
-      title: string | null;
-      industry: string | null;
-      // howMet, notes, aiSummary, keyFacts and sharedInterests were declared here and read
-      // nowhere in this function. An over-specified input type is not free: the dashboard
-      // donates its scan to this call, so five columns nothing here touches had to be
-      // selected for every contact in the account to satisfy a signature.
       nextFollowUpAt: Date | string | null;
-      contactTags: Array<{ tag: { name: string } }>;
+      createdAt: Date | string;
     }>;
     interactionCount?: number;
     companyCount?: number;

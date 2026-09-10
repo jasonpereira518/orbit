@@ -75,30 +75,13 @@ export async function fetchDashboard() {
   const { getNetworkStats } = await import("@/lib/network-stats");
   const contactRows = [...data.contactById.values()];
   const networkStats = await getNetworkStats(userId, {
+    // Only the four fields getNetworkStats reads. It used to ask for eleven; see the note
+    // on its `preloaded.contacts` type for why that mattered.
     contacts: contactRows.map((c) => ({
       id: c.id,
-      relationshipScore: c.relationshipScore,
       lastInteractionAt: c.lastInteractionAt,
-      createdAt: c.createdAt,
-      company: c.company,
-      title: c.title,
-      industry: c.industry,
-      // notes, howMet, aiSummary, keyFacts and sharedInterests are gone from both sides.
-      // The comment that used to sit here noted `notes` was declared and never read; the
-      // other four were the same, and between them they were the widest columns the
-      // dashboard's scan carried. See getDashboardData.
       nextFollowUpAt: c.nextFollowUpAt,
-      contactTags:
-        (
-          c as {
-            contactTags?: Array<{ tag: { name: string } }>;
-          }
-        ).contactTags ??
-        (Array.isArray((c as { tags?: string[] }).tags)
-          ? ((c as { tags?: string[] }).tags || []).map((name) => ({
-              tag: { name },
-            }))
-          : []),
+      createdAt: c.createdAt,
     })),
   });
 

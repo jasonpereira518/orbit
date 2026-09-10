@@ -483,14 +483,10 @@ export async function getDashboardData(
       // the ordering. `scripts/smoke-page-budgets.ts` asserts this shape.
       columns: {
         id: true,
-        userId: true,
         fullName: true,
-        firstName: true,
-        lastName: true,
         preferredName: true,
         company: true,
         title: true,
-        location: true,
         school: true,
         email: true,
         phone: true,
@@ -501,8 +497,6 @@ export async function getDashboardData(
         statedCloseness: true,
         priorityLevel: true,
         constellationPin: true,
-        source: true,
-        industry: true,
         dateMet: true,
         // metContext, howMet, keyFacts, sharedInterests and aiSummary are NOT here.
         //
@@ -513,13 +507,8 @@ export async function getDashboardData(
         // Both are bounded sets, both are known before the data is needed, and both are
         // fetched by id below (`hydrateWideColumns`). Selecting them here meant reading
         // them for every contact in the account to use them for at most 750.
-        firstInteractionAt: true,
         lastInteractionAt: true,
         nextFollowUpAt: true,
-        followUpStatus: true,
-        closeness: true,
-        closenessTier: true,
-        orbitScore: true,
         createdAt: true,
         updatedAt: true,
         notes: false,
@@ -529,7 +518,12 @@ export async function getDashboardData(
         // Computed, never the column — see contact-notes-sql.ts and the budget smoke.
         hasNotes: contactHasNotesSql.as("has_notes"),
       },
-      orderBy: (c, { desc }) => [desc(c.updatedAt)],
+      // `id` is not decoration: `updated_at` alone is not a total order, and after a bulk
+      // import every contact carries the same one. Postgres is then free to return ties in
+      // any order, so "Recently updated" showed an arbitrary six that changed between
+      // refreshes with nothing having changed. It also makes an ORDER BY … LIMIT here
+      // meaningless, which is what the row-count work needs it to be.
+      orderBy: (c, { desc }) => [desc(c.updatedAt), desc(c.id)],
       with: { contactTags: { with: { tag: true } } },
     })
   );
@@ -748,7 +742,12 @@ export async function getDashboardData(
       const bTier = closenessById.get(b.id)?.tier ?? "outer";
       const tierDiff = tierRank[aTier] - tierRank[bTier];
       if (tierDiff !== 0) return tierDiff;
-      return (b.priorityLevel || 0) - (a.priorityLevel || 0);
+      const priorityDiff = (b.priorityLevel || 0) - (a.priorityLevel || 0);
+      if (priorityDiff !== 0) return priorityDiff;
+      // Same reason as the scan's `desc(c.id)` above: without a final tiebreaker two
+      // contacts due the same day, in the same tier, at the same priority order
+      // arbitrarily, and the list this is sliced to twelve from reshuffles on every load.
+      return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
     });
 
   const filteredReminders = pendingReminders.filter((r) => {
