@@ -25,9 +25,21 @@ import { cn } from "@/lib/utils";
  * ever triggered by a click, never on mount.
  */
 export function ScanCamera({
+  active = true,
   onDone,
   onCancel,
 }: {
+  /**
+   * Whether the camera should be running. Goes false the instant the host starts closing.
+   *
+   * Unmounting is not soon enough on its own. This renders inside a dialog, and a dialog
+   * unmounts its content only after its exit animation finishes — which, in a tab the
+   * person has just switched away from, may not be for a very long time, because a hidden
+   * tab does not advance animations. The camera indicator would stay lit the whole while,
+   * which people reasonably read as the app still watching them. Keying the stream on
+   * this flag turns the camera off on the click, not on the unmount.
+   */
+  active?: boolean;
   /** Called with the captured pages. The caller owns releasing their object URLs. */
   onDone: (pages: ScanPage[]) => void;
   onCancel: () => void;
@@ -42,6 +54,9 @@ export function ScanCamera({
   const reduced = usePrefersReducedMotion();
 
   useEffect(() => {
+    // Closed or closing: open nothing. The previous run's cleanup has already stopped the
+    // stream — that is the whole point of depending on `active`.
+    if (!active) return;
     let cancelled = false;
     (async () => {
       try {
@@ -68,12 +83,14 @@ export function ScanCamera({
       }
     })();
     return () => {
+      // Runs when `active` goes false AND on unmount — every exit path. `cancelled` also
+      // catches a permission prompt still pending when the dialog closed: its stream is
+      // stopped the moment it resolves instead of being attached to a closing viewfinder.
       cancelled = true;
-      // Every exit path: a leaked track leaves the camera indicator lit.
       stopCameraStream(streamRef.current);
       streamRef.current = null;
     };
-  }, []);
+  }, [active]);
 
   /**
    * Pages the person shot and then cancelled out of would otherwise leak their blobs.
@@ -118,10 +135,10 @@ export function ScanCamera({
 
   if (denied) {
     return (
-      <div className="space-y-3 rounded-xl border border-border/60 p-4">
+      <div className="space-y-3">
         <p className="text-sm text-muted-foreground">{denied}</p>
         <Button size="sm" variant="outline" onClick={onCancel}>
-          Back
+          Close
         </Button>
       </div>
     );

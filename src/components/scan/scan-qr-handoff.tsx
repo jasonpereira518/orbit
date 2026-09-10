@@ -30,9 +30,18 @@ function formatRemaining(ms: number) {
  * the code is single-use and expires in ten minutes; see `src/lib/scan-handoff.ts`.
  */
 export function ScanQrHandoff({
+  active = true,
   onTranscript,
   onCancel,
 }: {
+  /**
+   * Whether the code should be live. Goes false the instant the host starts closing.
+   *
+   * Same reasoning as `ScanCamera`'s `active`: this renders in a dialog, and a dialog only
+   * unmounts after its exit animation, which a hidden tab never advances. Cancelling on
+   * unmount would leave a code "closed" on screen but still redeemable, and still polled.
+   */
+  active?: boolean;
   onTranscript: (result: { transcript: string; sources: string[] }) => void;
   onCancel: () => void;
 }) {
@@ -48,10 +57,17 @@ export function ScanQrHandoff({
   const doneRef = useRef(false);
 
   useEffect(() => {
+    if (!active) return;
     let cancelled = false;
     (async () => {
       const res = await mintScanHandoffAction();
-      if (cancelled) return;
+      if (cancelled) {
+        // Closed before the code came back: nobody will ever scan this one, so it must
+        // not sit redeemable for ten minutes. (Also what stops a dev-mode StrictMode
+        // double-mount from leaking a live grant.)
+        if (res.ok) void cancelScanHandoffAction(res.handoff.token);
+        return;
+      }
       if (!res.ok) {
         setError(res.error);
         return;
@@ -60,13 +76,16 @@ export function ScanQrHandoff({
       setHandoff(res.handoff);
     })();
     return () => {
+      // Runs when `active` goes false AND on unmount. A code left on a closed card must
+      // not stay redeemable — and clearing the ref is what stops the poll, which bails
+      // without a token.
       cancelled = true;
-      // A code left on a closed card must not stay redeemable.
       if (!doneRef.current && tokenRef.current) {
         void cancelScanHandoffAction(tokenRef.current);
       }
+      tokenRef.current = null;
     };
-  }, []);
+  }, [active]);
 
   // Expiry countdown. Its own interval, not the poll's, so the clock stays smooth even if
   // a poll is slow.
@@ -124,19 +143,20 @@ export function ScanQrHandoff({
 
   if (error || expired) {
     return (
-      <div className="space-y-3 rounded-xl border border-border/60 p-4 text-center">
+      <div className="space-y-3 text-center">
         <p className="text-sm text-muted-foreground">
           {error ?? "That code expired."}
         </p>
         <Button size="sm" variant="outline" onClick={onCancel}>
-          Back
+          Close
         </Button>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col items-center gap-3 rounded-xl border border-border/60 p-4 text-center">
+    // No border of its own: this renders inside a dialog, which is already the frame.
+    <div className="flex flex-col items-center gap-3 text-center">
       {handoff ? (
         <div
           // The SVG's fill is `currentColor`, so the code follows the theme instead of
@@ -151,9 +171,6 @@ export function ScanQrHandoff({
       )}
 
       <div className="space-y-1">
-        <p className="text-sm font-medium text-ink">
-          Scan this with your phone&apos;s camera
-        </p>
         {/*
           A live region, and a crossfade rather than a layout change: the line sits under
           the person's eye while they look at their phone, and a jump would pull it back.

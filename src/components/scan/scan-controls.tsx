@@ -1,16 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
 import { Camera, ScanLine, Smartphone, Upload } from "lucide-react";
 import { ScanCameraLazy } from "@/components/scan/scan-camera-lazy";
 import { ScanQrHandoff } from "@/components/scan/scan-qr-handoff";
 import { Button } from "@/components/ui/button";
-import { DUR, EASE_HOUSE } from "@/lib/motion";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "@/lib/toast";
 import { MAX_SCAN_PAGES, ScanError, classifyScanFile } from "@/lib/scan-image";
 import type { ScanPage } from "@/lib/scan-capture";
-import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { cn } from "@/lib/utils";
 
 type Mode = "idle" | "camera" | "qr";
@@ -116,7 +120,6 @@ export function ScanControls({
   const [normalizing, setNormalizing] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const nativeCameraRef = useRef<HTMLInputElement>(null);
-  const reduced = usePrefersReducedMotion();
 
   const acceptFiles = useCallback(
     async (files: File[]) => {
@@ -205,46 +208,80 @@ export function ScanControls({
           Upload notes / media
         </Button>
         <Button type="button" variant="outline" disabled={busy}
-          onClick={() => setMode(mode === "camera" ? "idle" : "camera")}>
+          onClick={() => setMode("camera")}>
           <Camera className="size-4" />
           Webcam
         </Button>
         <Button type="button" variant="outline" disabled={busy}
-          onClick={() => setMode(mode === "qr" ? "idle" : "qr")}>
+          onClick={() => setMode("qr")}>
           <Smartphone className="size-4" />
           Use your phone
         </Button>
       </div>
 
-      <AnimatePresence initial={false} mode="wait">
-        {mode !== "idle" && (
-          <motion.div
-            key={mode}
-            initial={reduced ? false : { opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={reduced ? undefined : { opacity: 0, y: 4 }}
-            transition={{ duration: DUR.base, ease: EASE_HOUSE }}
-          >
-            {mode === "camera" ? (
-              <ScanCameraLazy
-                onDone={(pages) => {
-                  setMode("idle");
-                  onPages(pages);
-                }}
-                onCancel={() => setMode("idle")}
-              />
-            ) : (
-              <ScanQrHandoff
-                onTranscript={({ transcript, sources }) => {
-                  setMode("idle");
-                  onTranscript(transcript, sources);
-                }}
-                onCancel={() => setMode("idle")}
-              />
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/*
+        Popups, not inline panels. Expanding in place pushed "Extract people" and the rest
+        of the card down the page by a viewfinder's height; a dialog keeps the notes card
+        exactly where it was, and puts the camera where the person is already looking.
+
+        Base UI unmounts a closed popup's content (`keepMounted` defaults to false), which
+        is what turns the camera off: `ScanCamera`'s cleanup stops every track on unmount,
+        and `ScanQrHandoff`'s cancels a grant nobody redeemed. Escape and the backdrop both
+        close, and closing means cancelling — neither dialog has a state worth keeping.
+      */}
+      <Dialog
+        open={mode === "camera"}
+        onOpenChange={(open) => {
+          if (!open) setMode("idle");
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Scan with your webcam</DialogTitle>
+            <DialogDescription>
+              Hold each page inside the frame and take a photo. Add as many pages as you
+              need, then read them.
+            </DialogDescription>
+          </DialogHeader>
+          <ScanCameraLazy
+            // Stops the camera on the click that closes the dialog, not on the unmount
+            // after its exit animation — see `active` in scan-camera.tsx.
+            active={mode === "camera"}
+            onDone={(pages) => {
+              setMode("idle");
+              onPages(pages);
+            }}
+            onCancel={() => setMode("idle")}
+          />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={mode === "qr"}
+        onOpenChange={(open) => {
+          if (!open) setMode("idle");
+        }}
+      >
+        <DialogContent>
+          {/* Centered to sit over the centered code, rather than left-aligned above it. */}
+          <DialogHeader className="items-center text-center">
+            <DialogTitle>Use your phone</DialogTitle>
+            <DialogDescription>
+              Scan this code with your phone&apos;s camera. It opens a page that sends your
+              photos straight here — no sign-in.
+            </DialogDescription>
+          </DialogHeader>
+          <ScanQrHandoff
+            // Cancels the code on the click that closes the dialog, not on the unmount.
+            active={mode === "qr"}
+            onTranscript={({ transcript, sources }) => {
+              setMode("idle");
+              onTranscript(transcript, sources);
+            }}
+            onCancel={() => setMode("idle")}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
