@@ -73,7 +73,7 @@ export function CampaignEditor({
   function save() {
     start(async () => {
       try {
-        await updateCampaign(campaign.id, {
+        const result = await updateCampaign(campaign.id, {
           name: name.trim() || "Untitled campaign",
           audienceQuery: audienceQuery.trim(),
           messageIntent: messageIntent.trim() || null,
@@ -81,6 +81,10 @@ export function CampaignEditor({
           defaultChannel: channel,
           status,
         });
+        if ("error" in result) {
+          toast.error(result.error);
+          return;
+        }
         toast.success("Campaign updated");
         setOpen(false);
         router.refresh();

@@ -58,7 +58,11 @@ export function OutreachActions({
         : body;
     navigator.clipboard.writeText(text);
     start(async () => {
-      await markMessageAction({ messageId, status: "copied" });
+      const result = await markMessageAction({ messageId, status: "copied" });
+      if ("error" in result) {
+        toast.error(result.error);
+        return;
+      }
       toast.success("Copied to clipboard");
       refresh();
     });
@@ -79,7 +83,11 @@ export function OutreachActions({
     }
 
     start(async () => {
-      await markMessageAction({ messageId, status: "opened" });
+      const result = await markMessageAction({ messageId, status: "opened" });
+      if ("error" in result) {
+        toast.error(result.error);
+        return;
+      }
       refresh();
     });
   }
@@ -87,7 +95,11 @@ export function OutreachActions({
   function handleSend() {
     start(async () => {
       try {
-        await sendOutreachMessageAction(messageId);
+        const result = await sendOutreachMessageAction(messageId);
+        if ("error" in result) {
+          toast.error(result.error);
+          return;
+        }
         toast.success(`${channelLabel(channel)} sent`);
         setDangerOpen(false);
         refresh();

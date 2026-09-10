@@ -42,6 +42,23 @@ import {
   type SequenceStep,
 } from "@/lib/outreach-types";
 
+/**
+ * Every action below can throw for a reason a user should see (a stale reference, a quality
+ * gate, a real external-API failure — Apollo, the AI provider, Resend/Twilio). A thrown
+ * Error loses its message in a production build: Next.js redacts every Server Action error
+ * to a generic "omitted in production builds" string before it reaches the client, keeping
+ * only `.digest`. Catching here and returning `{ error }` as plain data sidesteps that — the
+ * message survives because it was never thrown across the client/server boundary. Callers
+ * check `"error" in result` instead of relying on try/catch to see the real reason.
+ */
+async function toActionResult<T>(fn: () => Promise<T>): Promise<T | { error: string }> {
+  try {
+    return await fn();
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Something went wrong" };
+  }
+}
+
 async function requireCampaign(userId: string, campaignId: string) {
   const db = await getDb();
   const campaign = await db.query.outreachCampaigns.findFirst({
@@ -243,30 +260,32 @@ export async function createCampaign(input: {
   replyCta?: string | null;
   sequenceSteps?: SequenceStep[];
 }) {
-  const userId = await requireOutreachUser();
-  const db = await getDb();
+  return toActionResult(async () => {
+    const userId = await requireOutreachUser();
+    const db = await getDb();
 
-  const filters =
-    input.audienceFilters ??
-    (input.audienceQuery.trim()
-      ? await parseAudienceToFilters(userId, input.audienceQuery)
-      : {});
+    const filters =
+      input.audienceFilters ??
+      (input.audienceQuery.trim()
+        ? await parseAudienceToFilters(userId, input.audienceQuery)
+        : {});
 
-  const [campaign] = await db
-    .insert(outreachCampaigns)
-    .values({
-      userId,
-      name: input.name.trim() || "Untitled campaign",
-      audienceQuery: input.audienceQuery.trim(),
-      audienceFilters: filters,
-      replyCta: input.replyCta ?? null,
-      sequenceSteps: (input.sequenceSteps ?? []) as OutreachSequenceStep[],
-      status: "draft",
-    })
-    .returning();
+    const [campaign] = await db
+      .insert(outreachCampaigns)
+      .values({
+        userId,
+        name: input.name.trim() || "Untitled campaign",
+        audienceQuery: input.audienceQuery.trim(),
+        audienceFilters: filters,
+        replyCta: input.replyCta ?? null,
+        sequenceSteps: (input.sequenceSteps ?? []) as OutreachSequenceStep[],
+        status: "draft",
+      })
+      .returning();
 
-  revalidatePath("/outreach");
-  return campaign;
+    revalidatePath("/outreach");
+    return campaign;
+  });
 }
 
 export async function updateCampaign(
@@ -284,37 +303,39 @@ export async function updateCampaign(
     reparseAudience?: boolean;
   }
 ) {
-  const userId = await requireOutreachUser();
-  await requireCampaign(userId, campaignId);
-  const db = await getDb();
+  return toActionResult(async () => {
+    const userId = await requireOutreachUser();
+    await requireCampaign(userId, campaignId);
+    const db = await getDb();
 
-  const { reparseAudience, sequenceSteps, audienceFilters, ...fields } = input;
-  const patch: Record<string, unknown> = {
-    ...fields,
-    updatedAt: new Date(),
-  };
+    const { reparseAudience, sequenceSteps, audienceFilters, ...fields } = input;
+    const patch: Record<string, unknown> = {
+      ...fields,
+      updatedAt: new Date(),
+    };
 
-  if (sequenceSteps !== undefined) {
-    patch.sequenceSteps = sequenceSteps as OutreachSequenceStep[];
-  }
+    if (sequenceSteps !== undefined) {
+      patch.sequenceSteps = sequenceSteps as OutreachSequenceStep[];
+    }
 
-  if (audienceFilters !== undefined) {
-    patch.audienceFilters = audienceFilters;
-  } else if (fields.audienceQuery !== undefined && reparseAudience !== false) {
-    patch.audienceFilters = fields.audienceQuery.trim()
-      ? await parseAudienceToFilters(userId, fields.audienceQuery)
-      : {};
-  }
+    if (audienceFilters !== undefined) {
+      patch.audienceFilters = audienceFilters;
+    } else if (fields.audienceQuery !== undefined && reparseAudience !== false) {
+      patch.audienceFilters = fields.audienceQuery.trim()
+        ? await parseAudienceToFilters(userId, fields.audienceQuery)
+        : {};
+    }
 
-  const [updated] = await db
-    .update(outreachCampaigns)
-    .set(patch)
-    .where(eq(outreachCampaigns.id, campaignId))
-    .returning();
+    const [updated] = await db
+      .update(outreachCampaigns)
+      .set(patch)
+      .where(eq(outreachCampaigns.id, campaignId))
+      .returning();
 
-  revalidatePath("/outreach");
-  revalidatePath(`/outreach/${campaignId}`);
-  return updated;
+    revalidatePath("/outreach");
+    revalidatePath(`/outreach/${campaignId}`);
+    return updated;
+  });
 }
 
 /**
@@ -427,22 +448,24 @@ export async function updateProspectSelection(input: {
   prospectIds: string[];
   status: "selected" | "excluded" | "suggested";
 }) {
-  const userId = await requireOutreachUser();
-  await requireCampaign(userId, input.campaignId);
-  const db = await getDb();
+  return toActionResult(async () => {
+    const userId = await requireOutreachUser();
+    await requireCampaign(userId, input.campaignId);
+    const db = await getDb();
 
-  await db
-    .update(outreachProspects)
-    .set({ status: input.status, updatedAt: new Date() })
-    .where(
-      and(
-        eq(outreachProspects.campaignId, input.campaignId),
-        inArray(outreachProspects.id, input.prospectIds)
-      )
-    );
+    await db
+      .update(outreachProspects)
+      .set({ status: input.status, updatedAt: new Date() })
+      .where(
+        and(
+          eq(outreachProspects.campaignId, input.campaignId),
+          inArray(outreachProspects.id, input.prospectIds)
+        )
+      );
 
-  revalidatePath(`/outreach/${input.campaignId}`);
-  return { ok: true };
+    revalidatePath(`/outreach/${input.campaignId}`);
+    return { ok: true };
+  });
 }
 
 async function upsertMessageForProspect(
@@ -523,46 +546,120 @@ export async function generateOutreachDrafts(input: {
   templateSeed?: string;
   excludeLowSignal?: boolean;
 }) {
-  const userId = await requireOutreachUser();
-  const campaign = await requireCampaign(userId, input.campaignId);
-  const db = await getDb();
-  const goals = await listActiveGoalTexts();
+  return toActionResult(async () => {
+    const userId = await requireOutreachUser();
+    const campaign = await requireCampaign(userId, input.campaignId);
+    const db = await getDb();
+    const goals = await listActiveGoalTexts();
 
-  const channel = (input.channel ||
-    campaign.defaultChannel ||
-    "email") as OutreachChannel;
+    const channel = (input.channel ||
+      campaign.defaultChannel ||
+      "email") as OutreachChannel;
 
-  const prospects = await db.query.outreachProspects.findMany({
-    where: and(
-      eq(outreachProspects.campaignId, input.campaignId),
-      input.prospectIds?.length
-        ? inArray(outreachProspects.id, input.prospectIds)
-        : eq(outreachProspects.status, "selected")
-    ),
-  });
+    const prospects = await db.query.outreachProspects.findMany({
+      where: and(
+        eq(outreachProspects.campaignId, input.campaignId),
+        input.prospectIds?.length
+          ? inArray(outreachProspects.id, input.prospectIds)
+          : eq(outreachProspects.status, "selected")
+      ),
+    });
 
-  let targetProspects = prospects.length
-    ? prospects
-    : await db.query.outreachProspects.findMany({
-        where: and(
-          eq(outreachProspects.campaignId, input.campaignId),
-          inArray(outreachProspects.status, ["selected", "suggested"])
-        ),
-      });
+    let targetProspects = prospects.length
+      ? prospects
+      : await db.query.outreachProspects.findMany({
+          where: and(
+            eq(outreachProspects.campaignId, input.campaignId),
+            inArray(outreachProspects.status, ["selected", "suggested"])
+          ),
+        });
 
-  if (input.excludeLowSignal !== false) {
-    const strong = targetProspects.filter(
-      (p) => !isLowSignalProspect(p, channel)
+    if (input.excludeLowSignal !== false) {
+      const strong = targetProspects.filter(
+        (p) => !isLowSignalProspect(p, channel)
+      );
+      if (strong.length) targetProspects = strong;
+    }
+
+    if (!targetProspects.length) {
+      throw new Error("No prospects selected for draft generation.");
+    }
+
+    const draftInputs = await Promise.all(
+      targetProspects.map(async (prospect, index) => ({
+        channel,
+        tone: campaign.tone || "professional",
+        messageIntent:
+          campaign.messageIntent || campaign.audienceQuery || "Introduce myself",
+        audienceQuery: campaign.audienceQuery,
+        replyCta: campaign.replyCta,
+        userGoals: goals,
+        prospect: {
+          fullName: prospect.fullName,
+          title: prospect.title,
+          company: prospect.company,
+          location: prospect.location,
+          enrichmentSummary: enrichmentSummary(prospect.enrichment),
+          priorNotes: await priorNotesForContact(prospect.contactId),
+        },
+        templateSeed: input.templateSeed,
+        variationHint: `Variant ${index + 1} of ${targetProspects.length}`,
+      }))
     );
-    if (strong.length) targetProspects = strong;
-  }
 
-  if (!targetProspects.length) {
-    throw new Error("No prospects selected for draft generation.");
-  }
+    const drafts = await generateOutreachDraftsBatch(userId, draftInputs);
 
-  const draftInputs = await Promise.all(
-    targetProspects.map(async (prospect, index) => ({
+    const messages = [];
+    for (let i = 0; i < targetProspects.length; i++) {
+      messages.push(
+        await upsertMessageForProspect(targetProspects[i].id, channel, drafts[i])
+      );
+    }
+
+    await db
+      .update(outreachCampaigns)
+      .set({ defaultChannel: channel, updatedAt: new Date() })
+      .where(eq(outreachCampaigns.id, input.campaignId));
+
+    revalidatePath(`/outreach/${input.campaignId}`);
+    return { generated: messages.length };
+  });
+}
+
+export async function regenerateOutreachDraft(input: {
+  campaignId: string;
+  prospectId: string;
+  channel?: OutreachChannel;
+  stepIndex?: number;
+}) {
+  return toActionResult(async () => {
+    const userId = await requireOutreachUser();
+    const campaign = await requireCampaign(userId, input.campaignId);
+    const db = await getDb();
+    const goals = await listActiveGoalTexts();
+
+    const prospect = await db.query.outreachProspects.findFirst({
+      where: and(
+        eq(outreachProspects.id, input.prospectId),
+        eq(outreachProspects.campaignId, input.campaignId)
+      ),
+      with: {
+        messages: {
+          orderBy: [desc(outreachMessages.stepIndex)],
+        },
+      },
+    });
+    if (!prospect) throw new Error("Prospect not found");
+
+    const channel = (input.channel ||
+      campaign.defaultChannel ||
+      "email") as OutreachChannel;
+    const stepIndex = input.stepIndex ?? 0;
+    const previous = prospect.messages.find(
+      (m) => (m.stepIndex ?? 0) === stepIndex - 1
+    );
+
+    const draft = await generateOutreachDraft(userId, {
       channel,
       tone: campaign.tone || "professional",
       messageIntent:
@@ -578,87 +675,17 @@ export async function generateOutreachDrafts(input: {
         enrichmentSummary: enrichmentSummary(prospect.enrichment),
         priorNotes: await priorNotesForContact(prospect.contactId),
       },
-      templateSeed: input.templateSeed,
-      variationHint: `Variant ${index + 1} of ${targetProspects.length}`,
-    }))
-  );
+      stepIndex,
+      previousBody: previous?.body,
+    });
 
-  const drafts = await generateOutreachDraftsBatch(userId, draftInputs);
-
-  const messages = [];
-  for (let i = 0; i < targetProspects.length; i++) {
-    messages.push(
-      await upsertMessageForProspect(targetProspects[i].id, channel, drafts[i])
-    );
-  }
-
-  await db
-    .update(outreachCampaigns)
-    .set({ defaultChannel: channel, updatedAt: new Date() })
-    .where(eq(outreachCampaigns.id, input.campaignId));
-
-  revalidatePath(`/outreach/${input.campaignId}`);
-  return { generated: messages.length };
-}
-
-export async function regenerateOutreachDraft(input: {
-  campaignId: string;
-  prospectId: string;
-  channel?: OutreachChannel;
-  stepIndex?: number;
-}) {
-  const userId = await requireOutreachUser();
-  const campaign = await requireCampaign(userId, input.campaignId);
-  const db = await getDb();
-  const goals = await listActiveGoalTexts();
-
-  const prospect = await db.query.outreachProspects.findFirst({
-    where: and(
-      eq(outreachProspects.id, input.prospectId),
-      eq(outreachProspects.campaignId, input.campaignId)
-    ),
-    with: {
-      messages: {
-        orderBy: [desc(outreachMessages.stepIndex)],
-      },
-    },
+    const message = await upsertMessageForProspect(prospect.id, channel, draft, {
+      stepIndex,
+      parentMessageId: previous?.id ?? null,
+    });
+    revalidatePath(`/outreach/${input.campaignId}`);
+    return message;
   });
-  if (!prospect) throw new Error("Prospect not found");
-
-  const channel = (input.channel ||
-    campaign.defaultChannel ||
-    "email") as OutreachChannel;
-  const stepIndex = input.stepIndex ?? 0;
-  const previous = prospect.messages.find(
-    (m) => (m.stepIndex ?? 0) === stepIndex - 1
-  );
-
-  const draft = await generateOutreachDraft(userId, {
-    channel,
-    tone: campaign.tone || "professional",
-    messageIntent:
-      campaign.messageIntent || campaign.audienceQuery || "Introduce myself",
-    audienceQuery: campaign.audienceQuery,
-    replyCta: campaign.replyCta,
-    userGoals: goals,
-    prospect: {
-      fullName: prospect.fullName,
-      title: prospect.title,
-      company: prospect.company,
-      location: prospect.location,
-      enrichmentSummary: enrichmentSummary(prospect.enrichment),
-      priorNotes: await priorNotesForContact(prospect.contactId),
-    },
-    stepIndex,
-    previousBody: previous?.body,
-  });
-
-  const message = await upsertMessageForProspect(prospect.id, channel, draft, {
-    stepIndex,
-    parentMessageId: previous?.id ?? null,
-  });
-  revalidatePath(`/outreach/${input.campaignId}`);
-  return message;
 }
 
 export async function updateOutreachMessage(input: {
@@ -666,34 +693,36 @@ export async function updateOutreachMessage(input: {
   subject?: string | null;
   body?: string;
 }) {
-  const userId = await requireOutreachUser();
-  const db = await getDb();
+  return toActionResult(async () => {
+    const userId = await requireOutreachUser();
+    const db = await getDb();
 
-  const message = await db.query.outreachMessages.findFirst({
-    where: eq(outreachMessages.id, input.messageId),
-    with: {
-      prospect: {
-        with: { campaign: true },
+    const message = await db.query.outreachMessages.findFirst({
+      where: eq(outreachMessages.id, input.messageId),
+      with: {
+        prospect: {
+          with: { campaign: true },
+        },
       },
-    },
+    });
+
+    if (!message || message.prospect.campaign.userId !== userId) {
+      throw new Error("Message not found");
+    }
+
+    const [updated] = await db
+      .update(outreachMessages)
+      .set({
+        subject: input.subject ?? message.subject,
+        body: input.body ?? message.body,
+        updatedAt: new Date(),
+      })
+      .where(eq(outreachMessages.id, input.messageId))
+      .returning();
+
+    revalidatePath(`/outreach/${message.prospect.campaignId}`);
+    return updated;
   });
-
-  if (!message || message.prospect.campaign.userId !== userId) {
-    throw new Error("Message not found");
-  }
-
-  const [updated] = await db
-    .update(outreachMessages)
-    .set({
-      subject: input.subject ?? message.subject,
-      body: input.body ?? message.body,
-      updatedAt: new Date(),
-    })
-    .where(eq(outreachMessages.id, input.messageId))
-    .returning();
-
-  revalidatePath(`/outreach/${message.prospect.campaignId}`);
-  return updated;
 }
 
 async function maybeLogOutreachInteraction(
@@ -720,60 +749,62 @@ export async function markMessageAction(input: {
   messageId: string;
   status: Extract<OutreachMessageStatus, "copied" | "opened">;
 }) {
-  const userId = await requireOutreachUser();
-  const db = await getDb();
+  return toActionResult(async () => {
+    const userId = await requireOutreachUser();
+    const db = await getDb();
 
-  const message = await db.query.outreachMessages.findFirst({
-    where: eq(outreachMessages.id, input.messageId),
-    with: {
-      prospect: {
-        with: { campaign: true },
+    const message = await db.query.outreachMessages.findFirst({
+      where: eq(outreachMessages.id, input.messageId),
+      with: {
+        prospect: {
+          with: { campaign: true },
+        },
       },
-    },
-  });
-
-  if (!message || message.prospect.campaign.userId !== userId) {
-    throw new Error("Message not found");
-  }
-
-  const now = new Date();
-  const [updated] = await db
-    .update(outreachMessages)
-    .set({
-      status: input.status,
-      lastActionAt: now,
-      updatedAt: now,
-      ...(input.status === "opened" && !message.sentAt ? { sentAt: now } : {}),
-    })
-    .where(eq(outreachMessages.id, input.messageId))
-    .returning();
-
-  if (input.status === "opened") {
-    await db
-      .update(outreachProspects)
-      .set({ status: "contacted", updatedAt: now })
-      .where(eq(outreachProspects.id, message.prospectId));
-
-    await maybeLogOutreachInteraction(
-      {
-        contactId: message.prospect.contactId,
-        campaignId: message.prospect.campaignId,
-      },
-      message.channel as OutreachChannel,
-      message.body,
-      input.status
-    );
-
-    await scheduleNextFollowUpIfNeeded({
-      campaignId: message.prospect.campaignId,
-      prospectId: message.prospectId,
-      parentMessage: updated,
     });
-  }
 
-  revalidatePath(`/outreach/${message.prospect.campaignId}`);
-  revalidatePath("/outreach");
-  return updated;
+    if (!message || message.prospect.campaign.userId !== userId) {
+      throw new Error("Message not found");
+    }
+
+    const now = new Date();
+    const [updated] = await db
+      .update(outreachMessages)
+      .set({
+        status: input.status,
+        lastActionAt: now,
+        updatedAt: now,
+        ...(input.status === "opened" && !message.sentAt ? { sentAt: now } : {}),
+      })
+      .where(eq(outreachMessages.id, input.messageId))
+      .returning();
+
+    if (input.status === "opened") {
+      await db
+        .update(outreachProspects)
+        .set({ status: "contacted", updatedAt: now })
+        .where(eq(outreachProspects.id, message.prospectId));
+
+      await maybeLogOutreachInteraction(
+        {
+          contactId: message.prospect.contactId,
+          campaignId: message.prospect.campaignId,
+        },
+        message.channel as OutreachChannel,
+        message.body,
+        input.status
+      );
+
+      await scheduleNextFollowUpIfNeeded({
+        campaignId: message.prospect.campaignId,
+        prospectId: message.prospectId,
+        parentMessage: updated,
+      });
+    }
+
+    revalidatePath(`/outreach/${message.prospect.campaignId}`);
+    revalidatePath("/outreach");
+    return updated;
+  });
 }
 
 export async function logMessageOutcome(input: {
@@ -781,81 +812,83 @@ export async function logMessageOutcome(input: {
   outcome: OutreachMessageOutcome;
   notes?: string | null;
 }) {
-  const userId = await requireOutreachUser();
-  const db = await getDb();
+  return toActionResult(async () => {
+    const userId = await requireOutreachUser();
+    const db = await getDb();
 
-  const message = await db.query.outreachMessages.findFirst({
-    where: eq(outreachMessages.id, input.messageId),
-    with: {
-      prospect: {
-        with: { campaign: true },
+    const message = await db.query.outreachMessages.findFirst({
+      where: eq(outreachMessages.id, input.messageId),
+      with: {
+        prospect: {
+          with: { campaign: true },
+        },
       },
-    },
-  });
+    });
 
-  if (!message || message.prospect.campaign.userId !== userId) {
-    throw new Error("Message not found");
-  }
+    if (!message || message.prospect.campaign.userId !== userId) {
+      throw new Error("Message not found");
+    }
 
-  const now = new Date();
-  const [updated] = await db
-    .update(outreachMessages)
-    .set({
-      outcome: input.outcome,
-      outcomeNotes: input.notes?.trim() || null,
-      repliedAt: now,
-      lastActionAt: now,
-      updatedAt: now,
-    })
-    .where(eq(outreachMessages.id, input.messageId))
-    .returning();
-
-  let prospectStatus: string = message.prospect.status;
-  if (input.outcome === "positive_reply") {
-    prospectStatus = "interested";
-  } else if (
-    input.outcome === "negative_reply" ||
-    input.outcome === "unsubscribed"
-  ) {
-    prospectStatus = "not_interested";
-  } else if (input.outcome === "neutral_reply") {
-    prospectStatus = "replied";
-  } else if (input.outcome === "bounced") {
-    prospectStatus = message.prospect.status;
-  }
-
-  await db
-    .update(outreachProspects)
-    .set({ status: prospectStatus, updatedAt: now })
-    .where(eq(outreachProspects.id, message.prospectId));
-
-  // Cancel pending follow-ups once we have a reply or bounce/unsubscribe
-  if (input.outcome !== "bounced") {
-    await db
+    const now = new Date();
+    const [updated] = await db
       .update(outreachMessages)
-      .set({ status: "skipped", updatedAt: now })
-      .where(
-        and(
-          eq(outreachMessages.prospectId, message.prospectId),
-          eq(outreachMessages.status, "scheduled")
-        )
-      );
-  }
+      .set({
+        outcome: input.outcome,
+        outcomeNotes: input.notes?.trim() || null,
+        repliedAt: now,
+        lastActionAt: now,
+        updatedAt: now,
+      })
+      .where(eq(outreachMessages.id, input.messageId))
+      .returning();
 
-  await maybeLogOutreachInteraction(
-    {
-      contactId: message.prospect.contactId,
-      campaignId: message.prospect.campaignId,
-    },
-    message.channel as OutreachChannel,
-    input.notes?.trim() || `Outcome: ${input.outcome}`,
-    input.outcome
-  );
+    let prospectStatus: string = message.prospect.status;
+    if (input.outcome === "positive_reply") {
+      prospectStatus = "interested";
+    } else if (
+      input.outcome === "negative_reply" ||
+      input.outcome === "unsubscribed"
+    ) {
+      prospectStatus = "not_interested";
+    } else if (input.outcome === "neutral_reply") {
+      prospectStatus = "replied";
+    } else if (input.outcome === "bounced") {
+      prospectStatus = message.prospect.status;
+    }
 
-  revalidatePath(`/outreach/${message.prospect.campaignId}`);
-  revalidatePath("/outreach");
-  revalidatePath("/dashboard");
-  return updated;
+    await db
+      .update(outreachProspects)
+      .set({ status: prospectStatus, updatedAt: now })
+      .where(eq(outreachProspects.id, message.prospectId));
+
+    // Cancel pending follow-ups once we have a reply or bounce/unsubscribe
+    if (input.outcome !== "bounced") {
+      await db
+        .update(outreachMessages)
+        .set({ status: "skipped", updatedAt: now })
+        .where(
+          and(
+            eq(outreachMessages.prospectId, message.prospectId),
+            eq(outreachMessages.status, "scheduled")
+          )
+        );
+    }
+
+    await maybeLogOutreachInteraction(
+      {
+        contactId: message.prospect.contactId,
+        campaignId: message.prospect.campaignId,
+      },
+      message.channel as OutreachChannel,
+      input.notes?.trim() || `Outcome: ${input.outcome}`,
+      input.outcome
+    );
+
+    revalidatePath(`/outreach/${message.prospect.campaignId}`);
+    revalidatePath("/outreach");
+    revalidatePath("/dashboard");
+    return updated;
+  });
 }
 
 async function scheduleNextFollowUpIfNeeded(input: {
@@ -909,98 +942,102 @@ async function scheduleNextFollowUpIfNeeded(input: {
 }
 
 export async function generateDueFollowUps(campaignId: string) {
-  const userId = await requireOutreachUser();
-  const campaign = await requireCampaign(userId, campaignId);
-  const db = await getDb();
-  const goals = await listActiveGoalTexts();
-  const now = new Date();
+  return toActionResult(async () => {
+    const userId = await requireOutreachUser();
+    const campaign = await requireCampaign(userId, campaignId);
+    const db = await getDb();
+    const goals = await listActiveGoalTexts();
+    const now = new Date();
 
-  const due = await db.query.outreachMessages.findMany({
-    where: and(
-      eq(outreachMessages.status, "scheduled"),
-      lte(outreachMessages.scheduledFor, now)
-    ),
-    with: {
-      prospect: true,
-    },
-  });
-
-  const dueForCampaign = due.filter((m) => m.prospect.campaignId === campaignId);
-  let generated = 0;
-
-  for (const message of dueForCampaign) {
-    if (message.prospect.status === "interested" || message.prospect.status === "not_interested" || message.prospect.status === "replied") {
-      await db
-        .update(outreachMessages)
-        .set({ status: "skipped", updatedAt: now })
-        .where(eq(outreachMessages.id, message.id));
-      continue;
-    }
-
-    const replied = await db.query.outreachMessages.findFirst({
+    const due = await db.query.outreachMessages.findMany({
       where: and(
-        eq(outreachMessages.prospectId, message.prospectId),
-        sql`${outreachMessages.outcome} is not null`
+        eq(outreachMessages.status, "scheduled"),
+        lte(outreachMessages.scheduledFor, now)
       ),
+      with: {
+        prospect: true,
+      },
     });
-    if (replied) {
+
+    const dueForCampaign = due.filter((m) => m.prospect.campaignId === campaignId);
+    let generated = 0;
+
+    for (const message of dueForCampaign) {
+      if (message.prospect.status === "interested" || message.prospect.status === "not_interested" || message.prospect.status === "replied") {
+        await db
+          .update(outreachMessages)
+          .set({ status: "skipped", updatedAt: now })
+          .where(eq(outreachMessages.id, message.id));
+        continue;
+      }
+
+      const replied = await db.query.outreachMessages.findFirst({
+        where: and(
+          eq(outreachMessages.prospectId, message.prospectId),
+          sql`${outreachMessages.outcome} is not null`
+        ),
+      });
+      if (replied) {
+        await db
+          .update(outreachMessages)
+          .set({ status: "skipped", updatedAt: now })
+          .where(eq(outreachMessages.id, message.id));
+        continue;
+      }
+
+      const parent = message.parentMessageId
+        ? await db.query.outreachMessages.findFirst({
+            where: eq(outreachMessages.id, message.parentMessageId),
+          })
+        : null;
+
+      const steps = (campaign.sequenceSteps ?? []) as SequenceStep[];
+      const step = steps[(message.stepIndex ?? 1) - 1];
+      const channel = message.channel as OutreachChannel;
+
+      const draft = await generateOutreachDraft(userId, {
+        channel,
+        tone: campaign.tone || "professional",
+        messageIntent:
+          step?.intent ||
+          campaign.messageIntent ||
+          campaign.audienceQuery ||
+          "Follow up",
+        audienceQuery: campaign.audienceQuery,
+        replyCta: campaign.replyCta,
+        userGoals: goals,
+        prospect: {
+          fullName: message.prospect.fullName,
+          title: message.prospect.title,
+          company: message.prospect.company,
+          location: message.prospect.location,
+          enrichmentSummary: enrichmentSummary(message.prospect.enrichment),
+          priorNotes: await priorNotesForContact(message.prospect.contactId),
+        },
+        stepIndex: message.stepIndex ?? 1,
+        previousBody: parent?.body,
+      });
+
       await db
         .update(outreachMessages)
-        .set({ status: "skipped", updatedAt: now })
+        .set({
+          subject: draft.subject,
+          body: draft.body,
+          status: "generated",
+          updatedAt: now,
+        })
         .where(eq(outreachMessages.id, message.id));
-      continue;
+      generated += 1;
     }
 
-    const parent = message.parentMessageId
-      ? await db.query.outreachMessages.findFirst({
-          where: eq(outreachMessages.id, message.parentMessageId),
-        })
-      : null;
-
-    const steps = (campaign.sequenceSteps ?? []) as SequenceStep[];
-    const step = steps[(message.stepIndex ?? 1) - 1];
-    const channel = message.channel as OutreachChannel;
-
-    const draft = await generateOutreachDraft(userId, {
-      channel,
-      tone: campaign.tone || "professional",
-      messageIntent:
-        step?.intent ||
-        campaign.messageIntent ||
-        campaign.audienceQuery ||
-        "Follow up",
-      audienceQuery: campaign.audienceQuery,
-      replyCta: campaign.replyCta,
-      userGoals: goals,
-      prospect: {
-        fullName: message.prospect.fullName,
-        title: message.prospect.title,
-        company: message.prospect.company,
-        location: message.prospect.location,
-        enrichmentSummary: enrichmentSummary(message.prospect.enrichment),
-        priorNotes: await priorNotesForContact(message.prospect.contactId),
-      },
-      stepIndex: message.stepIndex ?? 1,
-      previousBody: parent?.body,
-    });
-
-    await db
-      .update(outreachMessages)
-      .set({
-        subject: draft.subject,
-        body: draft.body,
-        status: "generated",
-        updatedAt: now,
-      })
-      .where(eq(outreachMessages.id, message.id));
-    generated += 1;
-  }
-
-  revalidatePath(`/outreach/${campaignId}`);
-  return { generated };
+    revalidatePath(`/outreach/${campaignId}`);
+    return { generated };
+  });
 }
 
-export async function sendOutreachMessageAction(messageId: string) {
+/** Throwing implementation — used directly by `bulkSendOutreach`, which already tracks
+ * a per-message error string itself and would just have to unwrap `{ error }` again. */
+async function sendOutreachMessageActionImpl(messageId: string) {
   const userId = await requireOutreachUser();
   const db = await getDb();
 
@@ -1096,7 +1133,13 @@ export async function sendOutreachMessageAction(messageId: string) {
   }
 }
 
-export async function previewBulkSendQuality(input: {
+export async function sendOutreachMessageAction(messageId: string) {
+  return toActionResult(() => sendOutreachMessageActionImpl(messageId));
+}
+
+/** Throwing implementation — used directly by `bulkSendOutreach`, which already surfaces
+ * `quality.blocking`/`quality.warnings` as data and would just have to unwrap `{ error }`. */
+async function previewBulkSendQualityImpl(input: {
   campaignId: string;
   messageIds: string[];
 }) {
@@ -1121,160 +1164,173 @@ export async function previewBulkSendQuality(input: {
   );
 }
 
+export async function previewBulkSendQuality(input: {
+  campaignId: string;
+  messageIds: string[];
+}) {
+  return toActionResult(() => previewBulkSendQualityImpl(input));
+}
+
 export async function bulkSendOutreach(input: {
   campaignId: string;
   messageIds: string[];
   ignoreWarnings?: boolean;
 }) {
-  const userId = await requireOutreachUser();
-  await requireCampaign(userId, input.campaignId);
+  return toActionResult(async () => {
+    const userId = await requireOutreachUser();
+    await requireCampaign(userId, input.campaignId);
 
-  const quality = await previewBulkSendQuality({
-    campaignId: input.campaignId,
-    messageIds: input.messageIds,
-  });
-  if (quality.blocking.length) {
-    throw new Error(
-      `Cannot send: ${quality.blocking[0].message}${
-        quality.blocking.length > 1
-          ? ` (+${quality.blocking.length - 1} more)`
-          : ""
-      }`
-    );
-  }
-  if (!input.ignoreWarnings && quality.warnings.length) {
-    throw new Error(
-      `Quality warnings: ${quality.warnings[0].message}. Confirm to send anyway.`
-    );
-  }
-
-  const ids = input.messageIds.slice(0, BULK_SEND_LIMIT);
-  const results: Array<{ messageId: string; ok: boolean; error?: string }> = [];
-
-  for (const messageId of ids) {
-    try {
-      await sendOutreachMessageAction(messageId);
-      results.push({ messageId, ok: true });
-    } catch (err) {
-      results.push({
-        messageId,
-        ok: false,
-        error: err instanceof Error ? err.message : "Send failed",
-      });
+    const quality = await previewBulkSendQualityImpl({
+      campaignId: input.campaignId,
+      messageIds: input.messageIds,
+    });
+    if (quality.blocking.length) {
+      throw new Error(
+        `Cannot send: ${quality.blocking[0].message}${
+          quality.blocking.length > 1
+            ? ` (+${quality.blocking.length - 1} more)`
+            : ""
+        }`
+      );
     }
-  }
+    if (!input.ignoreWarnings && quality.warnings.length) {
+      throw new Error(
+        `Quality warnings: ${quality.warnings[0].message}. Confirm to send anyway.`
+      );
+    }
 
-  revalidatePath(`/outreach/${input.campaignId}`);
-  revalidatePath("/outreach");
-  return {
-    sent: results.filter((r) => r.ok).length,
-    failed: results.filter((r) => !r.ok).length,
-    results,
-    quality,
-  };
+    const ids = input.messageIds.slice(0, BULK_SEND_LIMIT);
+    const results: Array<{ messageId: string; ok: boolean; error?: string }> = [];
+
+    for (const messageId of ids) {
+      try {
+        await sendOutreachMessageActionImpl(messageId);
+        results.push({ messageId, ok: true });
+      } catch (err) {
+        results.push({
+          messageId,
+          ok: false,
+          error: err instanceof Error ? err.message : "Send failed",
+        });
+      }
+    }
+
+    revalidatePath(`/outreach/${input.campaignId}`);
+    revalidatePath("/outreach");
+    return {
+      sent: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok).length,
+      results,
+      quality,
+    };
+  });
 }
 
 export async function saveProspectAsContact(input: {
   campaignId: string;
   prospectId: string;
 }) {
-  const userId = await requireOutreachUser();
-  await requireCampaign(userId, input.campaignId);
-  const db = await getDb();
+  return toActionResult(async () => {
+    const userId = await requireOutreachUser();
+    await requireCampaign(userId, input.campaignId);
+    const db = await getDb();
 
-  const prospect = await db.query.outreachProspects.findFirst({
-    where: and(
-      eq(outreachProspects.id, input.prospectId),
-      eq(outreachProspects.campaignId, input.campaignId)
-    ),
-  });
-  if (!prospect) throw new Error("Prospect not found");
-  if (prospect.contactId) return { contactId: prospect.contactId, created: false };
-
-  let email = prospect.email;
-  let phone = prospect.phone;
-
-  if (!email || !phone) {
-    const enriched = await enrichPerson(userId, prospect.externalId, {
-      email: prospect.email ?? undefined,
-      linkedinUrl: prospect.linkedinUrl ?? undefined,
-      fullName: prospect.fullName,
+    const prospect = await db.query.outreachProspects.findFirst({
+      where: and(
+        eq(outreachProspects.id, input.prospectId),
+        eq(outreachProspects.campaignId, input.campaignId)
+      ),
     });
-    if (enriched) {
-      email = email || enriched.email;
-      phone = phone || enriched.phone;
+    if (!prospect) throw new Error("Prospect not found");
+    if (prospect.contactId) return { contactId: prospect.contactId, created: false };
+
+    let email = prospect.email;
+    let phone = prospect.phone;
+
+    if (!email || !phone) {
+      const enriched = await enrichPerson(userId, prospect.externalId, {
+        email: prospect.email ?? undefined,
+        linkedinUrl: prospect.linkedinUrl ?? undefined,
+        fullName: prospect.fullName,
+      });
+      if (enriched) {
+        email = email || enriched.email;
+        phone = phone || enriched.phone;
+      }
     }
-  }
 
-  const contact = await createContact(
-    {
-      fullName: prospect.fullName,
-      title: prospect.title ?? undefined,
-      company: prospect.company ?? undefined,
-      location: prospect.location ?? undefined,
-      email: email ?? undefined,
-      phone: phone ?? undefined,
-      linkedinUrl: prospect.linkedinUrl ?? undefined,
-      source: "outreach",
-      notes: `Added from outreach campaign ${input.campaignId}`,
-    },
-    { skipRevalidate: true }
-  );
+    const contact = await createContact(
+      {
+        fullName: prospect.fullName,
+        title: prospect.title ?? undefined,
+        company: prospect.company ?? undefined,
+        location: prospect.location ?? undefined,
+        email: email ?? undefined,
+        phone: phone ?? undefined,
+        linkedinUrl: prospect.linkedinUrl ?? undefined,
+        source: "outreach",
+        notes: `Added from outreach campaign ${input.campaignId}`,
+      },
+      { skipRevalidate: true }
+    );
 
-  await db
-    .update(outreachProspects)
-    .set({
-      contactId: contact.id,
-      email: email ?? prospect.email,
-      phone: phone ?? prospect.phone,
-      updatedAt: new Date(),
-    })
-    .where(eq(outreachProspects.id, prospect.id));
+    await db
+      .update(outreachProspects)
+      .set({
+        contactId: contact.id,
+        email: email ?? prospect.email,
+        phone: phone ?? prospect.phone,
+        updatedAt: new Date(),
+      })
+      .where(eq(outreachProspects.id, prospect.id));
 
-  revalidatePath(`/outreach/${input.campaignId}`);
-  revalidatePath("/contacts");
-  return { contactId: contact.id, created: true };
+    revalidatePath(`/outreach/${input.campaignId}`);
+    revalidatePath("/contacts");
+    return { contactId: contact.id, created: true };
+  });
 }
 
 export async function enrichProspect(input: {
   campaignId: string;
   prospectId: string;
 }) {
-  const userId = await requireOutreachUser();
-  await requireCampaign(userId, input.campaignId);
-  const db = await getDb();
+  return toActionResult(async () => {
+    const userId = await requireOutreachUser();
+    await requireCampaign(userId, input.campaignId);
+    const db = await getDb();
 
-  const prospect = await db.query.outreachProspects.findFirst({
-    where: and(
-      eq(outreachProspects.id, input.prospectId),
-      eq(outreachProspects.campaignId, input.campaignId)
-    ),
+    const prospect = await db.query.outreachProspects.findFirst({
+      where: and(
+        eq(outreachProspects.id, input.prospectId),
+        eq(outreachProspects.campaignId, input.campaignId)
+      ),
+    });
+    if (!prospect) throw new Error("Prospect not found");
+
+    const enriched = await enrichPerson(userId, prospect.externalId, {
+      email: prospect.email ?? undefined,
+      linkedinUrl: prospect.linkedinUrl ?? undefined,
+      fullName: prospect.fullName,
+    });
+
+    if (!enriched) return prospect;
+
+    const [updated] = await db
+      .update(outreachProspects)
+      .set({
+        email: enriched.email ?? prospect.email,
+        phone: enriched.phone ?? prospect.phone,
+        linkedinUrl: enriched.linkedinUrl ?? prospect.linkedinUrl,
+        title: enriched.title ?? prospect.title,
+        company: enriched.company ?? prospect.company,
+        location: enriched.location ?? prospect.location,
+        enrichment: enriched.enrichment,
+        updatedAt: new Date(),
+      })
+      .where(eq(outreachProspects.id, prospect.id))
+      .returning();
+
+    revalidatePath(`/outreach/${input.campaignId}`);
+    return updated;
   });
-  if (!prospect) throw new Error("Prospect not found");
-
-  const enriched = await enrichPerson(userId, prospect.externalId, {
-    email: prospect.email ?? undefined,
-    linkedinUrl: prospect.linkedinUrl ?? undefined,
-    fullName: prospect.fullName,
-  });
-
-  if (!enriched) return prospect;
-
-  const [updated] = await db
-    .update(outreachProspects)
-    .set({
-      email: enriched.email ?? prospect.email,
-      phone: enriched.phone ?? prospect.phone,
-      linkedinUrl: enriched.linkedinUrl ?? prospect.linkedinUrl,
-      title: enriched.title ?? prospect.title,
-      company: enriched.company ?? prospect.company,
-      location: enriched.location ?? prospect.location,
-      enrichment: enriched.enrichment,
-      updatedAt: new Date(),
-    })
-    .where(eq(outreachProspects.id, prospect.id))
-    .returning();
-
-  revalidatePath(`/outreach/${input.campaignId}`);
-  return updated;
 }
