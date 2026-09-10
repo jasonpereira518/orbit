@@ -123,6 +123,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-linkedin-timeline-backfill": "pglite",
   "smoke-interaction-delete": "pglite",
   "smoke-mcp-server": "pglite",
+  "smoke-migration-guards": "pglite", // the pure half is here too: both guards belong in one place
   "smoke-note-batch": "pglite",
   "smoke-ops-sweep": "pglite",
   "smoke-page-budgets": "pglite",

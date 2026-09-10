@@ -55,7 +55,7 @@ additive and idempotent, so old code runs fine on a newer schema. Then fix forwa
 
 ## Restore the database
 
-Weekly encrypted dumps: GitHub → Actions → `backup` → artifacts (90 days). Take a fresh one
+Daily encrypted dumps: GitHub → Actions → `backup` → artifacts (90 days). Take a fresh one
 first with **Run workflow** if the database is still readable.
 
 ```bash
@@ -70,5 +70,7 @@ branch in Neon (or set `DATABASE_URL` to it) once it looks right.
 ## Neon one-time settings
 
 - `ALTER ROLE <app role> SET statement_timeout = '20s';` — bounds a runaway query; the
-  HTTP driver cannot set this per session.
+  HTTP driver cannot set this per session. **Verify it**: `GET /api/health?token=$HEALTH_TOKEN`
+  reports `config.statementTimeout`. `"0"` means unbounded — the ALTER ROLE never ran, or ran
+  on the wrong role.
 - Verify the restore window under Project → Settings.
