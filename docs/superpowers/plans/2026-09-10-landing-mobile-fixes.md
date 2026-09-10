@@ -708,7 +708,192 @@ Expected: the SHAs match, and each rule lists a standard `backdrop-filter:blur(.
 
 ---
 
-## Optional follow-up: fragment links land under the header
+### Task 5: The page ends at its footer, and fragment links clear the header (added during execution)
+
+Found by Task 4's real-Safari pass on the iPhone SE (375×667), and measured in Chromium and on production:
+
+- **An empty band after the footer.** The landing footer's decorative glow is a 560px circle centered on a ~200px footer, so it hangs about 280px below the footer's midpoint. `.landing-root` clips only the x axis, so that overhang extends the scrollable page. Production at 375×667: `document.scrollHeight` 8132 vs the landing root's bottom at 7950, a **182px** empty band where the lighter app starfield shows through (158px on this branch, because Task 3's footer is taller).
+- **Fragment links land under the header.** `globals.css` gives `scroll-margin-top: 6rem` to `#landing-groups` … `#landing-cta`, ids that don't exist; the real ids in `LANDING_SECTIONS` are `groups`, `reminders`, `how`, `features` and `cta`. In SE Safari, `/#features` lands with the heading's first line under the header pill. Section-nav taps are unaffected, because they subtract `LANDING_HEADER_SCROLL_OFFSET` (96px, which equals 6rem) in JS.
+
+**Files:**
+- Create: `scripts/smoke-landing-anchors.ts`
+- Modify: `scripts/run-smoke.ts` (`MANIFEST`)
+- Modify: `src/components/landing/landing-page.tsx:29-30`
+- Modify: `src/app/globals.css:1284-1290`
+
+**Interfaces:**
+- Consumes: `LANDING_HEADER_SCROLL_OFFSET` and `LANDING_SECTIONS` from `src/components/landing/landing-sections.ts` (a pure module).
+- Produces: nothing other tasks import.
+
+- [ ] **Step 1: Write the failing guard**
+
+Create `scripts/smoke-landing-anchors.ts`:
+
+```ts
+/**
+ * The landing page's scroll geometry, pinned where no browser is needed.
+ *
+ * 1. A fragment link (/#how, /#features, a shared URL) must land BELOW the fixed header.
+ *    The section nav subtracts LANDING_HEADER_SCROLL_OFFSET in JS, but a typed or shared
+ *    link only has CSS scroll-margin to go on, and that rule used to target ids that never
+ *    existed, so every heading landed under the header.
+ * 2. The page must end at its footer. The footer's glow is a circle far taller than the
+ *    footer, centered on it; without vertical clipping it hung below the page and added an
+ *    empty band after the footer on short phones.
+ */
+import { readFileSync } from "node:fs";
+import {
+  LANDING_HEADER_SCROLL_OFFSET,
+  LANDING_SECTIONS,
+} from "../src/components/landing/landing-sections";
+
+let failures = 0;
+function check(label: string, ok: boolean, detail = "") {
+  console.log(`  ${ok ? "ok  " : "FAIL"} ${label}${detail ? ` — ${detail}` : ""}`);
+  if (!ok) failures++;
+}
+
+function main() {
+  const css = readFileSync("src/app/globals.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, " ");
+  // Innermost rules only, as { selectors, body }: rules nested in @media still match.
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+    selectors: m[1].split(",").map((sel) => sel.trim()),
+    body: m[2],
+  }));
+  const marginRules = rules.filter((r) => /scroll-margin-top\s*:/.test(r.body));
+
+  console.log("Fragment links clear the fixed header:");
+  for (const { id } of LANDING_SECTIONS) {
+    const rule = marginRules.find((r) => r.selectors.includes(`#${id}`));
+    const rem = rule ? /scroll-margin-top\s*:\s*([\d.]+)rem/.exec(rule.body)?.[1] : undefined;
+    check(`#${id} has a scroll-margin-top`, Boolean(rule));
+    check(
+      `#${id}'s margin equals LANDING_HEADER_SCROLL_OFFSET (${LANDING_HEADER_SCROLL_OFFSET}px)`,
+      rem !== undefined && Number(rem) * 16 === LANDING_HEADER_SCROLL_OFFSET,
+      rem ? `${rem}rem` : "no rem value"
+    );
+  }
+  const sectionIds = new Set<string>(LANDING_SECTIONS.map((s) => `#${s.id}`));
+  const orphans = marginRules
+    .flatMap((r) => r.selectors)
+    .filter((sel) => /^#[\w-]+$/.test(sel) && !sectionIds.has(sel));
+  check("no scroll-margin rule targets an id outside LANDING_SECTIONS", orphans.length === 0, orphans.join(", "));
+
+  console.log("\nThe page ends at its footer:");
+  const page = readFileSync("src/components/landing/landing-page.tsx", "utf8");
+  const root = /className="(landing-root[^"]*)"/.exec(page)?.[1] ?? "";
+  const classes = root.split(/\s+/);
+  check(
+    "landing-root clips overflow on both axes",
+    classes.includes("overflow-clip") && !classes.includes("overflow-x-clip"),
+    root || "landing-root not found"
+  );
+
+  if (failures > 0) {
+    console.error(`\nFAILED: ${failures} check(s).`);
+    process.exit(1);
+  }
+  console.log("\nFragment links clear the header, and the page ends at its footer.");
+  process.exit(0);
+}
+
+main();
+```
+
+- [ ] **Step 2: Register it and watch it fail**
+
+In `scripts/run-smoke.ts`, in `MANIFEST`'s `pure` block, insert between `"smoke-import-progress-card": "pure",` and `"smoke-lifetime-pricing": "pure",`:
+
+```ts
+  "smoke-landing-anchors": "pure",
+```
+
+```bash
+npx tsx scripts/smoke-landing-anchors.ts; echo "exit=$?"
+```
+
+Expected: all ten `#<id>` checks `FAIL` (no rule targets the real ids); `FAIL no scroll-margin rule targets an id outside LANDING_SECTIONS — #landing-groups, #landing-reminders, #landing-how, #landing-features, #landing-cta`; `FAIL landing-root clips overflow on both axes — landing-root relative overflow-x-clip …`; `exit=1`.
+
+- [ ] **Step 3: Point the scroll margin at the real ids**
+
+In `src/app/globals.css`, replace (lines 1284–1290):
+
+```css
+#landing-groups,
+#landing-reminders,
+#landing-how,
+#landing-features,
+#landing-cta {
+  scroll-margin-top: 6rem;
+}
+```
+
+with:
+
+```css
+#groups,
+#reminders,
+#how,
+#features,
+#cta {
+  scroll-margin-top: 6rem;
+}
+```
+
+Leave the comment immediately above the block (if any) as it is, unless it names the old ids. If it does, update those names to match.
+
+- [ ] **Step 4: Clip the landing root on both axes**
+
+In `src/components/landing/landing-page.tsx`, replace lines 29–30:
+
+```tsx
+  return (
+    <div className="landing-root relative overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
+```
+
+with:
+
+```tsx
+  // Clipped on both axes: the footer's glow is taller than the footer and would otherwise
+  // extend the page into an empty band below it. `clip`, unlike `hidden`, creates no scroll
+  // container, so the sticky frames inside keep working.
+  return (
+    <div className="landing-root relative overflow-clip bg-[#03050c] text-[#e8f3f1]">
+```
+
+Only the landing page changes. `/pricing` and `/interest` have their own `landing-root` without the glow, so leave them alone.
+
+- [ ] **Step 5: Run everything**
+
+```bash
+npx tsx scripts/smoke-landing-anchors.ts; echo "exit=$?"
+npm run test:check
+npm run typecheck
+npm run lint 2>&1 | tail -3
+```
+
+Expected: every check `ok`, then `Fragment links clear the header, and the page ends at its footer.` and `exit=0`; `test:check` passes; typecheck clean; lint `0 errors`.
+
+- [ ] **Step 6: Measure (controller)**
+
+At 375×667 in the Chromium pane (with `.landing-scene` forced to `content-visibility: visible` for measurement), `document.documentElement.scrollHeight` must equal the landing root's bottom (it was 158px taller on this branch, 182px on production). Loading `/#features` must put the `#features` heading below the header pill's bottom edge (74px). Then re-check both in iPhone SE Safari.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add scripts/smoke-landing-anchors.ts scripts/run-smoke.ts src/app/globals.css src/components/landing/landing-page.tsx
+git commit -m "End the landing page at its footer, and land fragment links below the header
+
+The footer glow overhung the page by 158-182px on short phones, adding an
+empty band after the footer; the landing root now clips both axes. The
+header's scroll margin targeted #landing-* ids that never existed, so
+/#features and friends landed under the header; it now names the real
+LANDING_SECTIONS ids, and a guard keeps the two in step.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+```
+
+## Optional follow-up: fragment links land under the header (promoted to Task 5)
 
 `globals.css:1288-1294` gives `scroll-margin-top: 6rem` to `#landing-groups`, `#landing-reminders`, `#landing-how`, `#landing-features` and `#landing-cta`. **None of those ids exist.** The real ids (`src/components/landing/landing-sections.ts`) are `groups`, `reminders`, `how`, `features` and `cta`. Section-nav taps are unaffected because `scrollToSection` subtracts `LANDING_HEADER_SCROLL_OFFSET` (96px, which equals 6rem) in JS. A direct or shared link such as `/#how` gets no margin, though, and lands with its heading under the fixed header. Nothing in the app links to these fragments today, so this is low-impact.
 
