@@ -207,10 +207,10 @@ export function AppShell({
                 "pr-[calc(1rem+var(--content-rail-gutter,0px))]",
                 "md:pr-[calc(2.5rem+var(--content-rail-gutter,0px))]",
                 isViewportLocked
-                  ? "min-h-0 flex-1 overflow-hidden pb-[calc(5.25rem+env(safe-area-inset-bottom))] md:pb-8"
+                  ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.25rem+env(safe-area-inset-bottom))] md:pb-8"
                   : isSettings
-                    ? "flex-1 pb-[calc(5.25rem+env(safe-area-inset-bottom))] md:pb-8"
-                    : "flex-1 pb-[calc(10.25rem+env(safe-area-inset-bottom))] md:pb-24",
+                    ? "flex-1 pb-[calc(4.25rem+env(safe-area-inset-bottom))] md:pb-8"
+                    : "flex-1 pb-[calc(9.25rem+env(safe-area-inset-bottom))] md:pb-24",
                 isConstellation && "py-4 md:py-5",
               )}
             >

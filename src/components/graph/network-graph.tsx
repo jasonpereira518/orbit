@@ -759,7 +759,7 @@ export function NetworkGraph({
           "flex items-center justify-center rounded-2xl border border-white/10 bg-[#05070c] text-white/50",
           compact
             ? "h-[300px]"
-            : "h-[calc(100dvh-19.5rem)] md:h-[calc(100dvh-10.5rem)]"
+            : "h-[calc(100dvh-18.5rem)] md:h-[calc(100dvh-10.5rem)]"
         )}
       >
         Loading constellation…
@@ -786,10 +786,11 @@ export function NetworkGraph({
           showIntroBehind ? `bg-transparent ${STAGE_CHART_LAYER}` : STAGE_GROUND,
           compact
             ? "h-[300px] rounded-2xl"
-            : // 19.5rem, not 15rem: below md the app's floating bottom nav is a fixed pill
-            // ~5rem tall, and the old height ran the canvas (and its Key / full-screen /
-            // home buttons) underneath it, where they could not be tapped at all.
-            "h-[calc(100dvh-19.5rem)] max-h-[calc(100dvh-19.5rem)] rounded-2xl md:h-[calc(100dvh-10.5rem)] md:max-h-[calc(100dvh-10.5rem)]",
+            : // 18.5rem, not 15rem: below md the app's floating bottom nav is a fixed pill
+            // ~4rem tall, and the old height ran the canvas (and its Key / full-screen /
+            // home buttons) underneath it, where they could not be tapped at all. Keep
+            // this in step with the nav's height (layout/mobile-nav.tsx).
+            "h-[calc(100dvh-18.5rem)] max-h-[calc(100dvh-18.5rem)] rounded-2xl md:h-[calc(100dvh-10.5rem)] md:max-h-[calc(100dvh-10.5rem)]",
           fullscreenActive &&
             "rounded-none border-0 !h-dvh !max-h-none",
           cssFullscreen && "!fixed inset-0 z-[100] w-screen"

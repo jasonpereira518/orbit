@@ -288,8 +288,8 @@
  * so a toast painted straight over a running job card.
  *
  * The mobile baseline clears the fixed nav pill: `layout/mobile-nav.tsx` is
- * `bottom-0` with `pb-[calc(0.75rem+env(safe-area-inset-bottom))]` around a
- * ~60px pill, so ~5.25rem is the occupied band.
+ * `bottom-0` with `pb-[calc(0.5rem+env(safe-area-inset-bottom))]` around a
+ * ~55px pill, so ~4.25rem is the occupied band.
  *
  * The breakpoint is 48rem (Tailwind's `md`, where `md:hidden` takes the nav
  * away) and NOT sonner's own 600px mobile breakpoint — otherwise toasts in the
@@ -304,7 +304,7 @@
  * to go in the block above, and `check:tokens` will not tell you otherwise. */
 :root {
   --orbit-corner-bottom: calc(
-    5.25rem + env(safe-area-inset-bottom) + var(--orbit-corner-lift)
+    4.25rem + env(safe-area-inset-bottom) + var(--orbit-corner-lift)
   );
   --orbit-corner-right: 0.75rem;
 

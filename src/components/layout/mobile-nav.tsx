@@ -244,7 +244,7 @@ export function MobileNav({
   return (
     <>
       <nav
-        className="fixed inset-x-0 bottom-0 z-40 flex justify-center px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] md:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 flex justify-center px-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))] md:hidden"
         aria-label="Main navigation"
       >
         {/* Scrim behind the now-transparent pill — grounds it against
@@ -279,7 +279,7 @@ export function MobileNav({
           */}
           <ul
             style={{ viewTransitionName: "app-mobile-nav" }}
-            className="relative z-10 flex touch-none items-stretch justify-around gap-0.5 px-1.5 pt-1 pb-1.5"
+            className="relative z-10 flex touch-none items-stretch justify-around gap-0.5 px-1.5 pt-0.5 pb-1"
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
@@ -310,13 +310,13 @@ export function MobileNav({
                         setMoreOpen(true);
                       }}
                       className={cn(
-                        "flex w-full items-center justify-center py-1 text-[10px] font-medium transition-colors",
+                        "flex w-full items-center justify-center py-0.5 text-[10px] font-medium transition-colors",
                         displayActive
                           ? "text-primary dark:text-white"
                           : "text-muted-foreground hover:text-foreground dark:text-white/75"
                       )}
                     >
-                      <span className="relative flex w-[66px] flex-col items-center gap-0.5 rounded-full px-0.5 py-1.5">
+                      <span className="relative flex w-[66px] flex-col items-center gap-0.5 rounded-full px-0.5 py-1">
                         {displayActive && (
                           <motion.span
                             layoutId="mobile-nav-pill"
@@ -352,12 +352,12 @@ export function MobileNav({
                     <Link
                       href={navItem.href}
                       draggable={false}
-                      className="relative flex w-full translate-y-1.5 flex-col items-center gap-0.5 px-1 py-1.5 text-[10px] font-medium text-primary"
+                      className="relative flex w-full translate-y-1 flex-col items-center gap-0.5 px-1 py-1 text-[10px] font-medium text-primary"
                     >
                       <span className="h-5 w-5" aria-hidden />
                       <motion.span
                         aria-hidden
-                        className="absolute -top-6 left-1/2 flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg"
+                        className="absolute -top-5 left-1/2 flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg"
                         whileTap={reducedMotion ? undefined : { scale: 0.88 }}
                         transition={reducedMotion ? { duration: 0 } : SPRING_TAP}
                       >
@@ -380,13 +380,13 @@ export function MobileNav({
                     }}
                     draggable={false}
                     className={cn(
-                      "flex w-full items-center justify-center py-1 text-[10px] font-medium transition-colors",
+                      "flex w-full items-center justify-center py-0.5 text-[10px] font-medium transition-colors",
                       displayActive
                         ? "text-primary dark:text-white"
                         : "text-muted-foreground hover:text-foreground dark:text-white/75"
                     )}
                   >
-                    <span className="relative flex w-[66px] flex-col items-center gap-0.5 rounded-full px-0.5 py-1.5">
+                    <span className="relative flex w-[66px] flex-col items-center gap-0.5 rounded-full px-0.5 py-1">
                       {displayActive && (
                         <motion.span
                           layoutId="mobile-nav-pill"
