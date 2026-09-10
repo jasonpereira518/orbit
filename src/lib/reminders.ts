@@ -1,15 +1,12 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   actionItems,
-  aiSuggestions,
   contacts,
-  interactions,
   reminders,
   userGoals,
 } from "@/db/schema";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
-import { daysAgo } from "@/lib/duplicates";
 import { isCometContact } from "@/lib/comet";
 import {
   buildConstellationClusters,
@@ -22,14 +19,6 @@ import { contactHasNotesSql } from "@/lib/contact-notes-sql";
 import { getConstellationConfig } from "@/lib/constellation-config";
 import { constellationEligibility } from "@/lib/constellation-eligibility";
 
-const AUTO_SUGGESTION_TYPES = [
-  "dormant_high_value",
-  "post_event",
-  "linkedin_thread_quiet",
-] as const;
-
-const MAX_AUTO_SUGGESTIONS = 12;
-
 /**
  * The dashboard's "Constellation preview" card is a decorative, non-interactive
  * glance at the network (no search/filter UI) — it doesn't need every contact,
@@ -39,377 +28,6 @@ const MAX_AUTO_SUGGESTIONS = 12;
  * matching the card's own "closer ties sit nearer the center" framing.
  */
 const GRAPH_PREVIEW_CONTACT_CAP = 150;
-
-const AUTO_TYPE_PRIORITY: Record<(typeof AUTO_SUGGESTION_TYPES)[number], number> = {
-  post_event: 3,
-  linkedin_thread_quiet: 2,
-  dormant_high_value: 1,
-};
-
-function contactDisplayName(c: {
-  fullName: string;
-  preferredName?: string | null;
-}) {
-  return (c.preferredName || "").trim() || c.fullName;
-}
-
-/** Contacts without a scheduled follow-up are eligible for discovery suggestions. */
-/**
- * Whether a contact can be suggested for outreach at all.
- *
- * An existing follow-up already covers them — and a contact pinned off the constellation is
- * one the user has explicitly said not to show them. Nagging "reach out to X, gone quiet"
- * about somebody they deliberately removed from their own chart is the most annoying way
- * this could leak, and it is the one place the pin has to reach beyond `/graph`.
- */
-function isDiscoveryEligible(c: {
-  nextFollowUpAt: Date | string | null;
-  constellationPin: "in" | "out" | null;
-}) {
-  return !c.nextFollowUpAt && c.constellationPin !== "out";
-}
-
-/**
- * One rebuild per user at a time.
- *
- * `buildOutreachSuggestions` clears the pending auto suggestions and re-inserts them, so
- * two overlapping runs interleave as delete/delete/insert/insert and every suggestion
- * lands twice. That is not hypothetical: four concurrent cold dashboard loads produced
- * exactly four copies of every row, and a cold load is easy to hit twice at once —
- * Next prefetches the dashboard on link hover and then renders it on click.
- *
- * A second caller joins the first run's promise rather than starting its own, which is
- * also the semantics callers want: they await "the queue is current", not "I rebuilt it".
- * Per-process, so it does not cover two server instances racing; `filteredSuggestions`
- * in `getDashboardData` de-duplicates on read for that case (and for rows already
- * written by one).
- */
-const suggestionRefreshInFlight = new Map<string, Promise<void>>();
-
-export function refreshOutreachSuggestions(userId: string): Promise<void> {
-  const existing = suggestionRefreshInFlight.get(userId);
-  if (existing) return existing;
-
-  // Result discarded on purpose: no caller reads the inserted rows, and a shared promise
-  // must not hand two callers the same mutable array.
-  const run = buildOutreachSuggestions(userId)
-    .then(() => undefined)
-    .finally(() => {
-      suggestionRefreshInFlight.delete(userId);
-    });
-  suggestionRefreshInFlight.set(userId, run);
-  return run;
-}
-
-async function buildOutreachSuggestions(userId: string) {
-  const db = await getDb();
-  // Only what the candidate predicates below read. This ran unprojected — every column,
-  // notes and inline avatars included — on a first dashboard visit.
-  const all = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    columns: {
-      id: true,
-      fullName: true,
-      preferredName: true,
-      priorityLevel: true,
-      relationshipScore: true,
-      lastInteractionAt: true,
-      firstInteractionAt: true,
-      nextFollowUpAt: true,
-      // Read by `isDiscoveryEligible`. Required, not optional, on that predicate's parameter:
-      // an optional field here would let a caller forget the column and quietly never
-      // suppress anything, with nothing failing to say so.
-      constellationPin: true,
-    },
-  });
-
-  // Clear pending auto suggestions so we regenerate fresh ones
-  // (preserve user-facing AI suggestions like score_bump from enrichment)
-  await db
-    .delete(aiSuggestions)
-    .where(
-      and(
-        eq(aiSuggestions.userId, userId),
-        eq(aiSuggestions.status, "pending"),
-        inArray(aiSuggestions.suggestionType, [...AUTO_SUGGESTION_TYPES])
-      )
-    );
-
-  type Candidate = {
-    suggestionType: (typeof AUTO_SUGGESTION_TYPES)[number];
-    title: string;
-    description: string;
-    relatedContactIds: string[];
-    confidenceScore: number;
-  };
-
-  const candidateByContact = new Map<string, Candidate>();
-
-  function upsertCandidate(contactId: string, candidate: Candidate) {
-    const existing = candidateByContact.get(contactId);
-    if (!existing) {
-      candidateByContact.set(contactId, candidate);
-      return;
-    }
-    const existingPri =
-      AUTO_TYPE_PRIORITY[existing.suggestionType as keyof typeof AUTO_TYPE_PRIORITY] ?? 0;
-    const nextPri =
-      AUTO_TYPE_PRIORITY[candidate.suggestionType] ?? 0;
-    if (
-      nextPri > existingPri ||
-      (nextPri === existingPri &&
-        candidate.confidenceScore > existing.confidenceScore)
-    ) {
-      candidateByContact.set(contactId, candidate);
-    }
-  }
-
-  const dormantHighValue = all.filter(
-    (c) =>
-      isDiscoveryEligible(c) &&
-      (c.priorityLevel >= 2 || c.relationshipScore >= 4) &&
-      daysAgo(c.lastInteractionAt) >= 30
-  );
-  for (const c of dormantHighValue) {
-    const idle = daysAgo(c.lastInteractionAt);
-    upsertCandidate(c.id, {
-      suggestionType: "dormant_high_value",
-      title: `Reach out to ${contactDisplayName(c)}`,
-      description: `Gone quiet — last touch ${idle} day${idle === 1 ? "" : "s"} ago`,
-      relatedContactIds: [c.id],
-      confidenceScore: 80,
-    });
-  }
-
-  const withMessageHistory = await db.query.interactions.findMany({
-    where: and(
-      eq(interactions.userId, userId),
-      eq(interactions.interactionType, "linkedin_message")
-    ),
-  });
-  const messageStats = new Map<
-    string,
-    { count: number; last: Date; first: Date }
-  >();
-  for (const m of withMessageHistory) {
-    const d = m.interactionDate || m.createdAt;
-    const prev = messageStats.get(m.contactId);
-    if (!prev) {
-      messageStats.set(m.contactId, { count: 1, last: d, first: d });
-    } else {
-      prev.count += 1;
-      if (d > prev.last) prev.last = d;
-      if (d < prev.first) prev.first = d;
-    }
-  }
-
-  for (const c of all) {
-    if (!isDiscoveryEligible(c)) continue;
-    const stats = messageStats.get(c.id);
-    if (!stats || stats.count < 2) continue;
-    const daysSinceLast = daysAgo(stats.last);
-    if (daysSinceLast < 14 || daysSinceLast > 90) continue;
-    upsertCandidate(c.id, {
-      suggestionType: "linkedin_thread_quiet",
-      title: `Reach out to ${contactDisplayName(c)}`,
-      description: `LinkedIn thread went quiet — last activity ${daysSinceLast} days ago`,
-      relatedContactIds: [c.id],
-      confidenceScore: 78,
-    });
-  }
-
-  for (const c of all) {
-    if (!isDiscoveryEligible(c)) continue;
-    if (!c.firstInteractionAt) continue;
-    const days = daysAgo(c.firstInteractionAt);
-    if (days < 7 || days > 21) continue;
-    if (
-      c.lastInteractionAt &&
-      c.lastInteractionAt.getTime() !== c.firstInteractionAt.getTime()
-    ) {
-      continue;
-    }
-    upsertCandidate(c.id, {
-      suggestionType: "post_event",
-      title: `Reach out to ${contactDisplayName(c)}`,
-      description: `Recent intro ${days} day${days === 1 ? "" : "s"} ago — no follow-up logged yet`,
-      relatedContactIds: [c.id],
-      confidenceScore: 85,
-    });
-  }
-
-  const suggestions = [...candidateByContact.values()]
-    .sort((a, b) => b.confidenceScore - a.confidenceScore)
-    .slice(0, MAX_AUTO_SUGGESTIONS);
-
-  if (suggestions.length) {
-    await db.insert(aiSuggestions).values(
-      suggestions.map((s) => ({
-        userId,
-        ...s,
-        status: "pending",
-      }))
-    );
-  }
-
-  return suggestions;
-}
-
-function followUpCandidateScore(contact: {
-  priorityLevel: number;
-  relationshipScore: number;
-  lastInteractionAt: Date | string | null;
-  nextFollowUpAt: Date | string | null;
-}) {
-  const idleDays = Math.min(daysAgo(contact.lastInteractionAt), 365);
-  const idleScore = Number.isFinite(idleDays) ? idleDays / 30 : 2;
-  return (
-    (contact.priorityLevel || 0) * 4 +
-    (contact.relationshipScore || 0) * 2 +
-    idleScore -
-    (contact.nextFollowUpAt ? 1 : 0)
-  );
-}
-
-/**
- * Schedule additional due follow-ups from contacts that are not already due —
- * prefers high priority / strong / dormant people.
- */
-export async function generateDueFollowUps(userId: string, limit = 8) {
-  const db = await getDb();
-  const now = new Date();
-  const all = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-  });
-
-  const alreadyDueIds = new Set(
-    all
-      .filter((c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now)
-      .map((c) => c.id)
-  );
-
-  const candidates = all
-    .filter((c) => !alreadyDueIds.has(c.id))
-    .filter((c) => {
-      // Skip people with a future follow-up still more than a day away
-      if (c.nextFollowUpAt && new Date(c.nextFollowUpAt) > now) {
-        const ms = new Date(c.nextFollowUpAt).getTime() - now.getTime();
-        if (ms > 24 * 60 * 60 * 1000) return false;
-      }
-      // Prefer people who have gone quiet or have no follow-up yet
-      const idle = daysAgo(c.lastInteractionAt);
-      return (
-        !c.nextFollowUpAt ||
-        idle >= 14 ||
-        (c.priorityLevel || 0) >= 2 ||
-        (c.relationshipScore || 0) >= 4
-      );
-    })
-    .sort((a, b) => followUpCandidateScore(b) - followUpCandidateScore(a))
-    .slice(0, Math.max(1, Math.min(24, limit)));
-
-  let created = 0;
-  for (const contact of candidates) {
-    const name = contact.preferredName || contact.fullName;
-    const title = `Follow up with ${name}`;
-
-    const existing = await db.query.reminders.findFirst({
-      where: and(
-        eq(reminders.userId, userId),
-        eq(reminders.contactId, contact.id),
-        eq(reminders.status, "pending")
-      ),
-    });
-
-    if (existing) {
-      await db
-        .update(reminders)
-        .set({
-          title,
-          dueDate: now,
-          reminderType: "generated",
-          actionKind: "follow_up",
-          createdBy: "system",
-        })
-        .where(eq(reminders.id, existing.id));
-    } else {
-      await db.insert(reminders).values({
-        userId,
-        contactId: contact.id,
-        title,
-        description: "Generated from dashboard outreach queue",
-        dueDate: now,
-        reminderType: "generated",
-        actionKind: "follow_up",
-        createdBy: "system",
-        status: "pending",
-      });
-    }
-
-    await db
-      .update(contacts)
-      .set({
-        nextFollowUpAt: now,
-        followUpStatus: "pending",
-        updatedAt: now,
-      })
-      .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
-
-    created += 1;
-  }
-
-  await refreshOutreachSuggestions(userId);
-  return { created, contactIds: candidates.map((c) => c.id) };
-}
-
-const SUGGESTION_REFRESH_TTL_MS = 30 * 60 * 1000;
-
-/**
- * Cold-start build of the outreach queue.
- *
- * `maybeRefreshOutreachSuggestions` is stale-while-revalidate, which is right once a
- * queue exists but wrong the very first time: there is nothing to be stale, so the
- * dashboard renders "No outreach opportunities" to someone whose network is full of
- * dormant contacts, and only the *second* visit shows the truth. Anyone demoing the
- * product, or seeing it for the first time, is looking at exactly that first load.
- *
- * So the first build blocks; every later one is deferred as before. Status-agnostic on
- * purpose — a user who dismissed every suggestion has a queue, just an empty one, and
- * must not have it rebuilt under them on the next page view.
- */
-export async function ensureOutreachSuggestions(userId: string) {
-  const db = await getDb();
-  const existing = await db.query.aiSuggestions.findFirst({
-    where: and(
-      eq(aiSuggestions.userId, userId),
-      inArray(aiSuggestions.suggestionType, [...AUTO_SUGGESTION_TYPES])
-    ),
-    columns: { id: true },
-  });
-  if (existing) return false;
-  await refreshOutreachSuggestions(userId);
-  return true;
-}
-
-export async function maybeRefreshOutreachSuggestions(userId: string) {
-  const db = await getDb();
-  const latest = await db.query.aiSuggestions.findFirst({
-    where: and(
-      eq(aiSuggestions.userId, userId),
-      inArray(aiSuggestions.suggestionType, [...AUTO_SUGGESTION_TYPES])
-    ),
-    orderBy: (s, { desc }) => [desc(s.createdAt)],
-    columns: { createdAt: true },
-  });
-
-  const age = latest
-    ? Date.now() - new Date(latest.createdAt).getTime()
-    : Number.POSITIVE_INFINITY;
-
-  // Skip the expensive delete/rebuild on every dashboard hit.
-  if (age < SUGGESTION_REFRESH_TTL_MS) return;
-  await refreshOutreachSuggestions(userId);
-}
 
 export async function getDashboardData(
   userId: string,
@@ -484,7 +102,6 @@ export async function getDashboardData(
   const [
     scannedRows,
     pendingReminders,
-    suggestions,
     goals,
     goalTexts,
     closenessCohort,
@@ -497,13 +114,6 @@ export async function getDashboardData(
         eq(reminders.status, "pending")
       ),
       orderBy: (r, { asc }) => [asc(r.dueDate)],
-    }),
-    db.query.aiSuggestions.findMany({
-      where: and(
-        eq(aiSuggestions.userId, userId),
-        eq(aiSuggestions.status, "pending")
-      ),
-      orderBy: (s, { desc }) => [desc(s.confidenceScore)],
     }),
     db.query.userGoals.findMany({
       where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
@@ -649,10 +259,6 @@ export async function getDashboardData(
     .sort((a, b) => b.goalRelevance - a.goalRelevance)
     .slice(0, 5);
 
-  const contactNameById = new Map(
-    allContactRows.map((c) => [c.id, c.preferredName || c.fullName])
-  );
-
   const now = new Date();
   const dueFollowUpIds = new Set(
     allContactRows
@@ -687,25 +293,6 @@ export async function getDashboardData(
 
   const contactById = new Map(allContactRows.map((c) => [c.id, c]));
 
-  // Belt and braces against a cross-instance rebuild race writing the same suggestion
-  // twice (see refreshOutreachSuggestions): one row per contact and type, whatever the
-  // table holds. Also repairs rows a previous race already wrote, with no migration.
-  const seenSuggestionKeys = new Set<string>();
-
-  const filteredSuggestions = suggestions.filter((s) => {
-    const contactId = s.relatedContactIds?.[0];
-    const key = `${s.suggestionType}:${contactId ?? s.id}`;
-    if (seenSuggestionKeys.has(key)) return false;
-    seenSuggestionKeys.add(key);
-    if (!contactId) return true;
-    // `related_contact_ids` is a jsonb array, so deleting a contact does not cascade to
-    // its suggestions. Left in, the card renders a row headed "Contact" with a real-looking
-    // "gone quiet 105 days ago" under it — a ghost of someone the user removed. The
-    // rebuild clears them on its own TTL; this stops them being shown in the meantime.
-    if (!contactById.has(contactId)) return false;
-    return !dueFollowUpIds.has(contactId);
-  });
-
   const strongTies =
     networkMetrics.tierCounts.inner + networkMetrics.tierCounts.mid;
 
@@ -733,13 +320,10 @@ export async function getDashboardData(
     recentContacts: allContactRows.slice(0, 6),
     dueFollowUps: dueFollowUps.slice(0, 12),
     reminders: filteredReminders.slice(0, 20),
-    suggestions: filteredSuggestions.slice(0, 40),
-    totalSuggestions: filteredSuggestions.length,
     goals,
     networkMetrics,
     goalAlignedContacts,
     closenessById,
-    contactNameById,
     contactById,
     // Layout (nodes/edges) is computed client-side in NetworkGraph from contacts.
     graphPreview: {

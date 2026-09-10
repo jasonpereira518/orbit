@@ -1,9 +1,9 @@
 /**
  * Who to follow up with.
  *
- * Reads through `getDashboardData`, deliberately NOT `generateDueFollowUps` — that one
- * *creates* reminders as a side effect, and a GET that writes is exactly how a polling
- * integration silently fills someone's reminder list.
+ * Reads through `getDashboardData` only — a read, never a write. A GET that creates
+ * reminders as a side effect is exactly how a polling integration silently fills
+ * someone's reminder list.
  *
  * Returns the people, not reminder rows: "who has gone cold" is the question an integration
  * wants to act on, and it is the same list the dashboard shows.

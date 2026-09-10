@@ -1,19 +1,17 @@
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
-import { Bell, Sparkles, Users } from "lucide-react";
+import { ArrowRight, Bell, Sparkles, Users } from "lucide-react";
 import type { getOutreachPerformanceSummary } from "@/actions/outreach";
 import type { fetchDashboard } from "@/actions/reminders";
+import { listTodaySuggestions } from "@/actions/follow-ups";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { DashboardGraphPreview } from "@/components/dashboard/dashboard-graph-preview";
-import { DueFollowUpRow } from "@/components/dashboard/due-follow-up-row";
-import { GenerateFollowUpsButton } from "@/components/dashboard/generate-follow-ups-button";
 import { GoalsSummary } from "@/components/dashboard/goals-summary";
 import { NetworkDepthChart } from "@/components/dashboard/network-depth-chart";
 import { NetworkStatsCard } from "@/components/dashboard/network-stats-card";
 import { PlanLaunchCard } from "@/components/dashboard/plan-launch-card";
-import { RemindersDashboardCard } from "@/components/dashboard/reminders-dashboard-card";
-import { SuggestedOutreachCard } from "@/components/dashboard/suggested-outreach-card";
 import { OutreachPerformanceCard } from "@/components/outreach/outreach-performance-card";
 import { buttonVariants } from "@/components/ui/button";
 import { CARD_HOVER, PRESS, ROW_HOVER_INSET } from "@/lib/interaction";
@@ -37,22 +35,6 @@ type BundleData = Awaited<DashboardBundle>["data"];
 
 function tierForContact(data: BundleData, id: string) {
   return data.closenessById.get(id)?.tier;
-}
-
-function contactMeta(data: BundleData, contactId: string | null | undefined) {
-  if (!contactId) {
-    return {
-      name: "Unknown contact",
-      title: null as string | null,
-      company: null as string | null,
-    };
-  }
-  const c = data.contactById.get(contactId);
-  return {
-    name: data.contactNameById.get(contactId) || c?.fullName || "Contact",
-    title: c?.title ?? null,
-    company: c?.company ?? null,
-  };
 }
 
 /**
@@ -184,35 +166,63 @@ export async function ChartsSection({ bundle }: { bundle: DashboardBundle }) {
   );
 }
 
-export async function SuggestedOutreachSection({
-  bundle,
-}: {
-  bundle: DashboardBundle;
-}) {
-  const { data } = await bundle;
+/**
+ * The dashboard's single follow-up glance card — the engine's top picks for today,
+ * with just enough to act on and a link into the full `/reminders` Today section for
+ * everything else (drafting, snoozing, dismissing). Replaces the old dashboard's two
+ * competing sections (Suggested outreach + Reminders/Due follow-ups): now there is one
+ * producer of system-generated follow-ups, so there is one card that shows its picks.
+ */
+const TODAY_GLANCE_PREVIEW_COUNT = 3;
+
+export async function TodayGlanceSection() {
+  const suggestions = await listTodaySuggestions();
+  const preview = suggestions.slice(0, TODAY_GLANCE_PREVIEW_COUNT);
   return (
     <div
       className="reveal-mount h-full min-w-0 lg:flex-1 [&>*]:h-full"
       style={revealDelay(0)}
     >
-      <SuggestedOutreachCard
-        networkIsEmpty={data.stats.totalContacts === 0}
-        dueFollowUpCount={data.stats.dueFollowUps}
-        items={data.suggestions.map((s) => {
-          const contactId = s.relatedContactIds?.[0] ?? null;
-          const meta = contactMeta(data, contactId);
-          return {
-            id: s.id,
-            suggestionType: s.suggestionType,
-            description: s.description,
-            contactId,
-            contactName: meta.name,
-            contactTitle: meta.title,
-            contactCompany: meta.company,
-            tier: contactId ? tierForContact(data, contactId) : undefined,
-          };
-        })}
-      />
+      <Card className="flex h-full flex-col border-border/70 shadow-none">
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+          <CardTitle as="h2" className="text-base">Today</CardTitle>
+          <Link
+            href="/reminders"
+            className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+          >
+            View all <ArrowRight className="ml-1 h-3.5 w-3.5" />
+          </Link>
+        </CardHeader>
+        <CardContent className="flex flex-1 flex-col space-y-2">
+          {preview.length === 0 ? (
+            <p className="rounded-xl border border-dashed border-border/70 px-4 py-8 text-center text-sm text-muted-foreground">
+              Nobody&apos;s due for outreach today.
+            </p>
+          ) : (
+            preview.map((s) => (
+              <Link
+                key={s.id}
+                href={`/contacts/${s.contactId}`}
+                className={cn(
+                  "flex items-center gap-3 rounded-xl border border-border/60 bg-card p-3",
+                  ROW_HOVER_INSET,
+                  PRESS
+                )}
+              >
+                <ContactAvatar
+                  fullName={s.contactName}
+                  profileImageUrl={s.avatarUrl}
+                  size="sm"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium text-ink">{s.contactName}</p>
+                  <p className="truncate text-xs text-muted-foreground">{s.reason}</p>
+                </div>
+              </Link>
+            ))
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -245,75 +255,6 @@ export async function OutreachPerformanceSection({
         campaigns={outreachPerformance.topCampaigns}
       />
     </div>
-  );
-}
-
-export async function RemindersAndFollowUpsSection({
-  bundle,
-}: {
-  bundle: DashboardBundle;
-}) {
-  const { data } = await bundle;
-  return (
-    <>
-      <div className="reveal-mount min-w-0" style={revealDelay(0)}>
-        <RemindersDashboardCard
-          items={data.reminders.map((r) => ({
-            id: r.id,
-            title: r.title,
-            description: r.description,
-            dueDate: r.dueDate,
-            reminderType: r.reminderType,
-            actionKind: r.actionKind,
-            contactId: r.contactId,
-            contactName: r.contactId
-              ? data.contactNameById.get(r.contactId) ?? null
-              : null,
-            noteBatchId: r.noteBatchId,
-          }))}
-        />
-      </div>
-
-      <div className="reveal-mount min-w-0" style={revealDelay(40)}>
-        <Card id="due-follow-ups" className="border-border/70 shadow-none scroll-mt-8">
-          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-            <CardTitle as="h2" className="text-base">Due follow-ups</CardTitle>
-            {data.dueFollowUps.length > 0 && (
-              <div className="flex items-center gap-1.5">
-                <GenerateFollowUpsButton limit={8} />
-                <Link
-                  href="/contacts?followUp=due"
-                  className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
-                >
-                  View all
-                </Link>
-              </div>
-            )}
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {data.dueFollowUps.length === 0 ? (
-              <div className="space-y-3">
-                <Empty hint="You're caught up." />
-                <GenerateFollowUpsButton limit={8} label="Generate follow-ups" />
-              </div>
-            ) : (
-              data.dueFollowUps.map((c) => (
-                <DueFollowUpRow
-                  key={c.id}
-                  id={c.id}
-                  fullName={c.fullName}
-                  title={c.title}
-                  company={c.company}
-                  tier={tierForContact(data, c.id)}
-                  nextFollowUpAt={c.nextFollowUpAt}
-                  lastInteractionAt={c.lastInteractionAt}
-                />
-              ))
-            )}
-          </CardContent>
-        </Card>
-      </div>
-    </>
   );
 }
 

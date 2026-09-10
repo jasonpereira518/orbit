@@ -32,25 +32,15 @@ import {
 } from "@/lib/reminder-lists";
 import {
   completeReminder,
-  ensureOutreachSuggestions,
-  generateDueFollowUps,
   getDashboardData,
-  maybeRefreshOutreachSuggestions,
   snoozeReminder,
 } from "@/lib/reminders";
 
 export async function fetchDashboard() {
   const userId = await requireUserId();
-  // One exception to the deferred rebuild below: an account that has never had a queue
-  // built has nothing to render, so deferring would show an empty card on the first
-  // visit and the real one only on the second. Builds once, then never again.
-  await ensureOutreachSuggestions(userId).catch(() => {});
-  // Calendar sync and the suggestion rebuild are slow; run both after the
-  // response instead of on the dashboard's critical path. Suggestions are
-  // stale-while-revalidate: this load renders whatever exists, the next
-  // load sees the refresh (30-min TTL inside maybeRefresh…).
+  // Calendar sync is slow; run it after the response instead of on the
+  // dashboard's critical path.
   after(() => {
-    void maybeRefreshOutreachSuggestions(userId).catch(() => {});
     void import("@/lib/calendar-sync")
       .then(({ syncDueCalendarSubscriptions }) =>
         syncDueCalendarSubscriptions(userId)
@@ -782,77 +772,3 @@ export async function dismissSuggestion(id: string) {
   revalidatePath("/dashboard");
 }
 
-export async function scheduleFromSuggestion(suggestionId: string, days = 7) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const { aiSuggestions } = await import("@/db/schema");
-
-  const suggestion = await db.query.aiSuggestions.findFirst({
-    where: and(
-      eq(aiSuggestions.id, suggestionId),
-      eq(aiSuggestions.userId, userId)
-    ),
-  });
-  if (!suggestion) throw new Error("Suggestion not found");
-
-  const contactId = suggestion.relatedContactIds?.[0];
-  if (!contactId) throw new Error("No contact linked to this suggestion");
-
-  const result = await scheduleContactFollowUp(contactId, days);
-  await dismissSuggestion(suggestionId);
-  return result;
-}
-
-export async function acceptScoreBump(suggestionId: string) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const { aiSuggestions } = await import("@/db/schema");
-
-  const suggestion = await db.query.aiSuggestions.findFirst({
-    where: and(
-      eq(aiSuggestions.id, suggestionId),
-      eq(aiSuggestions.userId, userId)
-    ),
-  });
-  if (!suggestion || suggestion.suggestionType !== "score_bump") {
-    throw new Error("Invalid score suggestion");
-  }
-
-  const contactId = suggestion.relatedContactIds?.[0];
-  if (!contactId) throw new Error("No contact linked to this suggestion");
-
-  const match = suggestion.description?.match(/relationship score (\d+)/i);
-  const newScore = match ? Number(match[1]) : NaN;
-  if (!Number.isFinite(newScore) || newScore < 1 || newScore > 5) {
-    throw new Error("Could not parse suggested score");
-  }
-
-  // Accepting a suggested score bump is a genuine user rating, same as moving
-  // the slider on the contact form — mirror into statedCloseness so this
-  // write agrees with contact-writes.ts's updateContactForUser.
-  await db
-    .update(contacts)
-    .set({
-      relationshipScore: newScore,
-      statedCloseness: newScore,
-      updatedAt: new Date(),
-    })
-    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
-
-  await dismissSuggestion(suggestionId);
-
-  revalidatePathIfRequestScoped("/contacts");
-  revalidatePath(`/contacts/${contactId}`);
-  revalidatePath("/graph");
-  return { contactId, newScore };
-}
-
-/** Generate more due follow-ups from dormant / high-value contacts. */
-export async function generateDueFollowUpsAction(limit = 8) {
-  const userId = await requireUserId();
-  const result = await generateDueFollowUps(userId, limit);
-  revalidateReminderPaths();
-  revalidatePathIfRequestScoped("/contacts");
-  revalidatePath("/graph");
-  return result;
-}

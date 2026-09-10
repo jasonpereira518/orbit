@@ -210,9 +210,9 @@ export function buildOrbitMcpServer(userId: string, opts: { scopes: ApiKeyScope[
       title: "Who to follow up with",
       description: "People the user owes a follow-up, or whose relationship is going cold.",
       inputSchema: { limit: z.number().int().min(1).max(25).default(10) },
-      // Read-only BY CONSTRUCTION: it reads getDashboardData, not generateDueFollowUps,
-      // which creates reminders. A tool named like a reader that writes is how an agent
-      // surprises the person it is working for.
+      // Read-only BY CONSTRUCTION: it reads getDashboardData and nothing else. A tool
+      // named like a reader that writes is how an agent surprises the person it is
+      // working for.
       annotations: { readOnlyHint: true },
     },
     async ({ limit }) => {

@@ -20,7 +20,6 @@ import {
 import { internalFetch } from "@/lib/internal-auth";
 import { createCompanyResolver } from "@/lib/companies";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
-import { refreshOutreachSuggestions } from "@/lib/reminders";
 import {
   DUPLICATE_MERGE_CONFIDENCE,
   addToDuplicateIndex,
@@ -132,8 +131,8 @@ export type ImportAdapter<P> = {
    * Optional once-per-job finalization step, called after the chunk loop completes with
    * every contact id this job touched (created or merged) across every chunk. Non-fatal —
    * the engine wraps the call in `.catch(() => null)`, the same ignorable-failure treatment
-   * `refreshOutreachSuggestions` and `recalibrateCloseness` already get, so a bug here can
-   * never fail an otherwise-successful import.
+   * `recalibrateCloseness` already gets, so a bug here can never fail an otherwise-successful
+   * import.
    *
    * This is the seam for work that has to run once over the whole touched set rather than
    * per row or per chunk — e.g. the LinkedIn messages adapter's AI enrichment pass, which
@@ -894,17 +893,6 @@ export async function runImportJob(importId: string): Promise<void> {
         updatedAt: new Date(),
       })
       .where(eq(imports.id, importId));
-
-    // The per-row confirm actions this engine replaced (Google/Outlook contacts, and before
-    // them LinkedIn connections) each refreshed outreach suggestions once the import finished,
-    // non-fatally — a stray suggestion-generation bug was never worth failing an otherwise-
-    // successful import over. This is that same finalization step, now owned by the engine
-    // instead of duplicated per import type. It incidentally gives LinkedIn CSV imports (which
-    // never called it, in either the old per-row path or here until now) the same refresh
-    // Google/Outlook contacts and every other import type already had — a deliberate
-    // improvement, not scope creep: it's the one finalization step every import type is
-    // supposed to get, not something specific to this task's two new adapters.
-    await refreshOutreachSuggestions(importRow.userId).catch(() => null);
 
     // Adapter-specific once-per-job finalization (see `ImportAdapter.finalize`) — e.g. the
     // LinkedIn messages adapter's AI enrichment pass. Runs over every contact this job

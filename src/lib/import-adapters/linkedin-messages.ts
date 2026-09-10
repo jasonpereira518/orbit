@@ -156,7 +156,7 @@ export const linkedinMessagesAdapter: ImportAdapter<LinkedInMessageThreadRowPayl
    * each contact's `interactions` rows itself (see `src/lib/message-enrichment.ts` — it
    * queries by `contactId` + `interactionType: "linkedin_message"`, nothing from this job's
    * payloads), so it fits the engine's once-per-job finalization seam exactly, the same
-   * shape as `recalibrateCloseness`/`refreshOutreachSuggestions`. Kept off the per-chunk
+   * shape as `recalibrateCloseness`. Kept off the per-chunk
    * path deliberately: it makes one AI provider call per contact, and running it per chunk
    * instead of once per job would reintroduce a per-row provider round trip — exactly what
    * Phase 2 removed from the embedding path.

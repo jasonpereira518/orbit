@@ -6,10 +6,9 @@ import {
   ChartsSection,
   OutreachPerformanceSection,
   RecentlyUpdatedSection,
-  RemindersAndFollowUpsSection,
   StatsSection,
-  SuggestedOutreachSection,
   TailSection,
+  TodayGlanceSection,
 } from "@/components/dashboard/dashboard-sections";
 import {
   DashboardCardSkeleton,
@@ -38,7 +37,7 @@ export default async function DashboardPage() {
 
   // Each row is guarded as well as each card: a `grid` whose children are all hidden still
   // renders, and its `gap` would leave an unexplained band of empty page behind.
-  const showSuggestedRow = show("dashboard.suggested-outreach") || outreachSummary;
+  const showTodayRow = show("dashboard.reminders") || outreachSummary;
 
   return (
     <div className="space-y-8">
@@ -70,15 +69,15 @@ export default async function DashboardPage() {
 
       {/* Flex, not a 2-column grid: the outreach card removes itself when the account has
           never sent anything (see OutreachPerformanceSection), and a grid would leave its
-          empty column behind, stranding Suggested outreach at half width next to a hole.
+          empty column behind, stranding Today's glance at half width next to a hole.
           A Suspense boundary renders no DOM node, so with flex the survivor just fills. */}
-      {showSuggestedRow && (
+      {showTodayRow && (
         <div className="flex flex-col items-stretch gap-6 lg:flex-row">
-          {show("dashboard.suggested-outreach") && (
+          {show("dashboard.reminders") && (
             <Suspense
               fallback={<DashboardCardSkeleton className="h-64 min-w-0 lg:flex-1" />}
             >
-              <SuggestedOutreachSection bundle={bundle} />
+              <TodayGlanceSection />
             </Suspense>
           )}
           {outreachSummary && (
@@ -88,27 +87,6 @@ export default async function DashboardPage() {
               <OutreachPerformanceSection summary={outreachSummary} />
             </Suspense>
           )}
-        </div>
-      )}
-
-      {/* One section, TWO cards — so this grid always holds exactly two children,
-          and `dashboard.reminders` hides both together. Recently updated used to
-          share this row, which put THREE children in a two-column grid and left a
-          visible empty cell beside the third; hiding Reminders left the same hole
-          on the other side. It owns the row below instead, where its own column
-          count can adapt. */}
-      {show("dashboard.reminders") && (
-        <div className="grid items-start gap-6 lg:grid-cols-2">
-          <Suspense
-            fallback={
-              <>
-                <DashboardCardSkeleton className="h-64" />
-                <DashboardCardSkeleton className="h-64" />
-              </>
-            }
-          >
-            <RemindersAndFollowUpsSection bundle={bundle} />
-          </Suspense>
         </div>
       )}
 

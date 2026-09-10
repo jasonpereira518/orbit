@@ -145,12 +145,6 @@ const DASHBOARD_CARDS: Surface[] = [
     description: "Network depth chart and the constellation preview.",
   },
   {
-    key: "dashboard.suggested-outreach",
-    kind: "dashboard",
-    label: "Suggested outreach",
-    description: "AI-suggested people to reach out to.",
-  },
-  {
     key: "dashboard.outreach-performance",
     kind: "dashboard",
     label: "Outreach performance",
@@ -159,8 +153,8 @@ const DASHBOARD_CARDS: Surface[] = [
   {
     key: "dashboard.reminders",
     kind: "dashboard",
-    label: "Reminders and follow-ups",
-    description: "What is due, and drafted follow-ups.",
+    label: "Today glance",
+    description: "The engine's top follow-up picks for today, linking to Reminders.",
   },
   {
     key: "dashboard.recently-updated",
