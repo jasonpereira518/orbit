@@ -155,6 +155,49 @@ const OWN_WORDS = new Set<string>([
   ),
 ]);
 
+/**
+ * A message written on purpose to be read by a person — "Give it a title first",
+ * "Connect Gmail before sending". Safe to show verbatim, which `friendlyError` does.
+ *
+ * Throwing one from a Server Action is NOT enough on its own: Next.js reduces any throw
+ * across that boundary to a digest in production, class and all. Wrap the action body in
+ * `asActionResult` so it comes back as data instead. Where it is caught on the same side
+ * — a loop inside an action, or a client-side throw — `friendlyError` lets it through.
+ */
+export class UserFacingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UserFacingError";
+  }
+}
+
+function isUserFacingError(err: unknown): err is Error {
+  // `name` as well as `instanceof`: a second module instance (a test runner, a
+  // separately bundled chunk) would otherwise fail the prototype check.
+  return err instanceof UserFacingError || (err instanceof Error && err.name === "UserFacingError");
+}
+
+export type ActionResult<T> = { ok: true; value: T } | { ok: false; error: string };
+
+/**
+ * Run a Server Action body so that a `UserFacingError` reaches the person.
+ *
+ * A thrown message is replaced by a digest in production; a returned value is not. So a
+ * `UserFacingError` becomes `{ ok: false, error }`. Anything else is rethrown untouched,
+ * so a genuine fault still surfaces as an error and still gets the caller's friendly
+ * fallback — this only rescues the messages that were written to be read.
+ */
+export async function asActionResult<T>(
+  fn: () => Promise<T>
+): Promise<ActionResult<T>> {
+  try {
+    return { ok: true, value: await fn() };
+  } catch (err) {
+    if (isUserFacingError(err)) return { ok: false, error: err.message };
+    throw err;
+  }
+}
+
 function rawMessage(err: unknown): string {
   if (err instanceof Error) return err.message?.trim() ?? "";
   if (typeof err === "string") return err.trim();
@@ -181,6 +224,7 @@ function rawMessage(err: unknown): string {
  * words (`OWN_WORDS`), a missing AI key, a dead connection, a timeout.
  */
 export function friendlyError(err: unknown, fallback: string): string {
+  if (isUserFacingError(err)) return err.message;
   const raw = rawMessage(err);
 
   // A digest can still carry the real error as its cause; run that through the same
@@ -262,4 +306,32 @@ export class ReauthRequiredError extends Error {
 export function isRefreshRejection(status: number, body: string): boolean {
   if (status !== 400 && status !== 401) return false;
   return /invalid_grant|invalid_client|unauthorized_client/i.test(body);
+}
+
+/**
+ * What to show when an OAuth connection comes back from the provider without working.
+ *
+ * The callback routes put a `reason` in the redirect URL. Two very different things
+ * arrive there: an OAuth protocol code from the provider — `access_denied` means the
+ * person clicked Cancel on the consent screen — and, before this change, raw
+ * `err.message` from a failed token exchange, which then reached a toast verbatim.
+ *
+ * A cancellation is not a failure. It gets a quiet message rather than a red error, and
+ * so is also not filed under "Missed" in the notification center as though something
+ * had broken. Everything else goes through `friendlyError`.
+ */
+export function describeOAuthReason(
+  reason: string | null | undefined,
+  provider: string
+): { cancelled: boolean; message: string } {
+  if (reason === "access_denied") {
+    return {
+      cancelled: true,
+      message: `${provider} connection cancelled — connect again whenever you’re ready`,
+    };
+  }
+  return {
+    cancelled: false,
+    message: friendlyError(reason, `Couldn’t connect ${provider} — try again?`),
+  };
 }

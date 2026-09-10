@@ -13,6 +13,8 @@ import { persistAssistantTurn } from "@/lib/chat-persist";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { traced } from "@/lib/perf-trace";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 
 
@@ -65,8 +67,7 @@ export async function createChatThread() {
       updatedAt: row.updatedAt.toISOString(),
     };
   } catch (err) {
-    const { toUserFacingError } = await import("@/lib/errors");
-    throw toUserFacingError(err, "Could not start a new chat");
+    throw new Error(friendlyError(err, TOAST_COPY.chatStartFailed));
   }
 }
 
@@ -150,12 +151,13 @@ async function askNetworkInner(
       focusedContactId: options?.contactId?.trim() || null,
     };
   } catch (err) {
-    const { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } = await import(
-      "@/lib/errors"
-    );
+    // Returned as data, so unlike a throw it is never stripped in production — which
+    // made `toUserFacingError` (it keeps `err.message`) a leak that reached users. On the
+    // server the real error is still in hand, so `friendlyError` can recognise a genuine
+    // missing key; the key message is no longer the fallback for every other failure.
     return {
       ok: false as const,
-      error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message,
+      error: friendlyError(err, TOAST_COPY.chatFailed),
     };
   }
 }

@@ -12,6 +12,7 @@ import {
 } from "@/db/schema";
 import { listActiveGoalTexts } from "@/actions/goals";
 import { requireUserId, getCurrentUserProfile } from "@/lib/auth";
+import { asActionResult, UserFacingError } from "@/lib/errors";
 import { generateFollowUpDraft } from "@/lib/follow-up-drafts";
 import {
   inferReminderActionKind,
@@ -418,100 +419,111 @@ export async function moveReminderToList(id: string, listId: string) {
   return updateReminder(id, { listId });
 }
 
+/*
+ * The three list actions return their validation as data (`asActionResult`) rather than
+ * throwing it: a thrown message becomes a digest in production, so "You already have a
+ * list with that name" used to arrive as a paragraph about Server Components renders.
+ */
 export async function createReminderList(name: string) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  await ensureReminderLists(userId);
+  return asActionResult(async () => {
+    const userId = await requireUserId();
+    const db = await getDb();
+    await ensureReminderLists(userId);
 
-  const display = displayListName(name);
-  if (!display) throw new Error("List name is required");
-  const normalized = normalizeListName(display);
-  if (normalized === "inbox") {
-    throw new Error("Inbox already exists");
-  }
+    const display = displayListName(name);
+    if (!display) throw new UserFacingError("Give the list a name first");
+    const normalized = normalizeListName(display);
+    if (normalized === "inbox") {
+      throw new UserFacingError("You already have an Inbox — pick another name");
+    }
 
-  const existing = await db.query.reminderLists.findFirst({
-    where: and(
-      eq(reminderLists.userId, userId),
-      eq(reminderLists.nameNormalized, normalized)
-    ),
+    const existing = await db.query.reminderLists.findFirst({
+      where: and(
+        eq(reminderLists.userId, userId),
+        eq(reminderLists.nameNormalized, normalized)
+      ),
+    });
+    if (existing) throw new UserFacingError("You already have a list with that name");
+
+    const maxPos = await db.query.reminderLists.findMany({
+      where: eq(reminderLists.userId, userId),
+      columns: { position: true },
+    });
+    const nextPos = maxPos.reduce((m, l) => Math.max(m, l.position), 0) + 1;
+
+    const [row] = await db
+      .insert(reminderLists)
+      .values({
+        userId,
+        name: display,
+        nameNormalized: normalized,
+        position: nextPos,
+        isInbox: 0,
+      })
+      .returning();
+
+    revalidatePath("/reminders");
+    return row;
   });
-  if (existing) throw new Error("A list with that name already exists");
-
-  const maxPos = await db.query.reminderLists.findMany({
-    where: eq(reminderLists.userId, userId),
-    columns: { position: true },
-  });
-  const nextPos = maxPos.reduce((m, l) => Math.max(m, l.position), 0) + 1;
-
-  const [row] = await db
-    .insert(reminderLists)
-    .values({
-      userId,
-      name: display,
-      nameNormalized: normalized,
-      position: nextPos,
-      isInbox: 0,
-    })
-    .returning();
-
-  revalidatePath("/reminders");
-  return row;
 }
 
 export async function renameReminderList(id: string, name: string) {
-  const userId = await requireUserId();
-  const db = await getDb();
+  return asActionResult(async () => {
+    const userId = await requireUserId();
+    const db = await getDb();
 
-  const list = await findReminderListForUser(userId, id);
-  if (!list) throw new Error("List not found");
-  if (list.isInbox === 1) throw new Error("Cannot rename Inbox");
+    const list = await findReminderListForUser(userId, id);
+    if (!list) throw new Error("List not found");
+    if (list.isInbox === 1) throw new UserFacingError("The Inbox can’t be renamed");
 
-  const display = displayListName(name);
-  if (!display) throw new Error("List name is required");
-  const normalized = normalizeListName(display);
-  if (normalized === "inbox") throw new Error("Cannot rename to Inbox");
+    const display = displayListName(name);
+    if (!display) throw new UserFacingError("Give the list a name first");
+    const normalized = normalizeListName(display);
+    if (normalized === "inbox") throw new UserFacingError("Inbox is taken — pick another name");
 
-  const clash = await db.query.reminderLists.findFirst({
-    where: and(
-      eq(reminderLists.userId, userId),
-      eq(reminderLists.nameNormalized, normalized)
-    ),
+    const clash = await db.query.reminderLists.findFirst({
+      where: and(
+        eq(reminderLists.userId, userId),
+        eq(reminderLists.nameNormalized, normalized)
+      ),
+    });
+    if (clash && clash.id !== id) {
+      throw new UserFacingError("You already have a list with that name");
+    }
+
+    const [row] = await db
+      .update(reminderLists)
+      .set({ name: display, nameNormalized: normalized })
+      .where(and(eq(reminderLists.id, id), eq(reminderLists.userId, userId)))
+      .returning();
+
+    revalidatePath("/reminders");
+    return row;
   });
-  if (clash && clash.id !== id) {
-    throw new Error("A list with that name already exists");
-  }
-
-  const [row] = await db
-    .update(reminderLists)
-    .set({ name: display, nameNormalized: normalized })
-    .where(and(eq(reminderLists.id, id), eq(reminderLists.userId, userId)))
-    .returning();
-
-  revalidatePath("/reminders");
-  return row;
 }
 
 export async function deleteReminderList(id: string) {
-  const userId = await requireUserId();
-  const db = await getDb();
+  return asActionResult(async () => {
+    const userId = await requireUserId();
+    const db = await getDb();
 
-  const list = await findReminderListForUser(userId, id);
-  if (!list) throw new Error("List not found");
-  if (list.isInbox === 1) throw new Error("Cannot delete Inbox");
+    const list = await findReminderListForUser(userId, id);
+    if (!list) throw new Error("List not found");
+    if (list.isInbox === 1) throw new UserFacingError("The Inbox can’t be deleted");
 
-  const inboxId = await getInboxListId(userId);
-  await db
-    .update(reminders)
-    .set({ listId: inboxId })
-    .where(and(eq(reminders.userId, userId), eq(reminders.listId, id)));
+    const inboxId = await getInboxListId(userId);
+    await db
+      .update(reminders)
+      .set({ listId: inboxId })
+      .where(and(eq(reminders.userId, userId), eq(reminders.listId, id)));
 
-  await db
-    .delete(reminderLists)
-    .where(and(eq(reminderLists.id, id), eq(reminderLists.userId, userId)));
+    await db
+      .delete(reminderLists)
+      .where(and(eq(reminderLists.id, id), eq(reminderLists.userId, userId)));
 
-  revalidatePath("/reminders");
-  return { ok: true, inboxId };
+    revalidatePath("/reminders");
+    return { inboxId };
+  });
 }
 
 export async function scheduleContactFollowUp(

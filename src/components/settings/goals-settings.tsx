@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
 import type { UserGoal } from "@/db/schema";
+import { friendlyError } from "@/lib/errors";
 
 export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
   const router = useRouter();
@@ -91,13 +92,17 @@ export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
           if (!trimmed) return;
           start(async () => {
             try {
-              const row = await addGoal(trimmed);
-              setGoals((prev) => [row, ...prev]);
+              const res = await addGoal(trimmed);
+              if (!res.ok) {
+                toast.error(res.error);
+                return;
+              }
+              setGoals((prev) => [res.value, ...prev]);
               setText("");
               toast.success("Goal added");
               router.refresh();
             } catch (err) {
-              toast.error(err instanceof Error ? err.message : "Could not add goal");
+              toast.error(friendlyError(err, "Couldn’t add that goal — try again?"));
             }
           });
         }}

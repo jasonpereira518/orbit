@@ -25,6 +25,8 @@ import { ReminderFormDialog } from "@/components/reminders/reminder-form-dialog"
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ExpandableText } from "@/components/ui/expandable-text";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 const TYPE_LABELS: Record<string, string> = {
   manual: "Task",
@@ -116,7 +118,7 @@ export function ReminderCard({
         setDraft(result.body);
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not draft follow-up"
+          friendlyError(err, TOAST_COPY.draftFollowUpFailed)
         );
       }
     });
@@ -325,7 +327,7 @@ export function ReminderCard({
               className="h-7 px-2 text-xs"
               onClick={() => {
                 void navigator.clipboard.writeText(draft);
-                toast.success("Copied to clipboard");
+                toast.success(TOAST_COPY.copied);
               }}
             >
               <Copy className="mr-1 h-3 w-3" />

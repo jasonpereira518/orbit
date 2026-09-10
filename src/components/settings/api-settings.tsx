@@ -25,6 +25,8 @@ import {
 } from "@/actions/api-keys";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 const LOAD_TIMEOUT_MS = 12_000;
 const TIMED_OUT = "orbit:timed-out";
@@ -50,7 +52,7 @@ async function copy(value: string, what: string) {
     await navigator.clipboard.writeText(value);
     toast.success(`${what} copied`);
   } catch {
-    toast.error("Could not copy — select and copy it manually");
+    toast.error(TOAST_COPY.copyFailed);
   }
 }
 
@@ -105,7 +107,7 @@ export function ApiSettings() {
         load();
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not create the key."
+          friendlyError(err, "Couldn’t create the key — try again?")
         );
       }
     });
@@ -119,7 +121,7 @@ export function ApiSettings() {
         toast.success("Key revoked");
         load();
       } catch {
-        toast.error("Could not revoke that key.");
+        toast.error("Couldn’t revoke that key — try again?");
       }
     });
   }

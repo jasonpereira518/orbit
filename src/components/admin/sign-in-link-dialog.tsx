@@ -14,6 +14,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { mintSignInLinkAction } from "@/actions/admin";
 import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 /**
  * Mints a one-click sign-in link for this account and hands it to the operator to open.
@@ -46,7 +48,7 @@ export function SignInLinkButton({
     mintSignInLinkAction({ targetUserId })
       .then((result) => setLink(result))
       .catch((err) => {
-        toast.error(err instanceof Error ? err.message : "Could not create a sign-in link.");
+        toast.error(friendlyError(err, "Couldn’t create a sign-in link — try again?"));
         setOpen(false);
       })
       .finally(() => setPending(false));
@@ -90,7 +92,7 @@ export function SignInLinkButton({
                   aria-label="Copy link"
                   onClick={() => {
                     void navigator.clipboard.writeText(link.url);
-                    toast.success("Copied.");
+                    toast.success(TOAST_COPY.copied);
                   }}
                 >
                   <Copy className="size-4" aria-hidden />

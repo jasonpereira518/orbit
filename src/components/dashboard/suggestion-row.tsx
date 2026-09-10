@@ -14,6 +14,7 @@ import {
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
 
 const REASON_LABELS: Record<string, string> = {
   dormant_high_value: "Dormant",
@@ -102,7 +103,7 @@ export function SuggestionRow({
                       router.refresh();
                     } catch (err) {
                       toast.error(
-                        err instanceof Error ? err.message : "Could not accept"
+                        friendlyError(err, "Couldn’t accept that — try again?")
                       );
                     }
                   })
@@ -121,13 +122,11 @@ export function SuggestionRow({
                   start(async () => {
                     try {
                       await scheduleFromSuggestion(id, 7);
-                      toast.success("Follow-up scheduled in 7 days");
+                      toast.success("Follow-up set for a week from now");
                       router.refresh();
                     } catch (err) {
                       toast.error(
-                        err instanceof Error
-                          ? err.message
-                          : "Could not schedule follow-up"
+                        friendlyError(err, "Couldn’t schedule that follow-up — try again?")
                       );
                     }
                   })

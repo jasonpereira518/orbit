@@ -114,7 +114,7 @@ export function NotificationSettings() {
               const next = await ensureNotificationPermission();
               setPermission(next);
               if (next === "granted") {
-                toast.success("Desktop notifications enabled");
+                toast.success("Desktop notifications are on");
                 await showDesktopNotification(
                   {
                     id: `orbit-welcome-${Date.now()}`,
@@ -125,9 +125,9 @@ export function NotificationSettings() {
                   { force: true }
                 );
               } else if (next === "denied") {
-                toast.error("Notifications blocked in browser settings");
+                toast.error("Notifications are blocked — allow them in your browser’s settings");
               } else {
-                toast.message("Permission still pending");
+                toast.message("Still waiting on permission");
               }
             })
           }
@@ -155,11 +155,11 @@ export function NotificationSettings() {
                 // Genuine failures report themselves and do not advance the
                 // cycle: you need to know the send failed, and every click
                 // will keep failing until the permission changes.
-                toast.error("Notifications blocked in browser settings", {
+                toast.error("Notifications are blocked — allow them in your browser’s settings", {
                   keep: false,
                 });
               } else if (res.permission === "unsupported") {
-                toast.error("Notifications not supported in this browser", {
+                toast.error("This browser doesn’t support notifications", {
                   keep: false,
                 });
               } else {

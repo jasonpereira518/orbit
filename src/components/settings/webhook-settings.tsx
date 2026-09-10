@@ -24,6 +24,7 @@ import {
 } from "@/actions/webhook-endpoints";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 const LOAD_TIMEOUT_MS = 12_000;
 const TIMED_OUT = "orbit:timed-out";
@@ -160,7 +161,7 @@ export function WebhookSettings() {
                   await navigator.clipboard.writeText(revealedSecret);
                   toast.success("Secret copied");
                 } catch {
-                  toast.error("Could not copy — select and copy it manually");
+                  toast.error(TOAST_COPY.copyFailed);
                 }
               }}
             >

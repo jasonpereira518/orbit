@@ -1,12 +1,12 @@
 "use server";
 
 import { and, desc, eq } from "drizzle-orm";
-import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { userGoals } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
+import { asActionResult, UserFacingError } from "@/lib/errors";
 
 export async function listGoals() {
   const userId = await requireUserId();
@@ -21,27 +21,29 @@ export async function listActiveGoalTexts() {
   return listActiveGoalTextsForUser(await requireUserId());
 }
 
+/** Validation comes back as data — see `asActionResult` in lib/errors.ts. */
 export async function addGoal(text: string) {
-  const userId = await requireUserId();
-  const trimmed = text.trim();
-  if (!trimmed) throw new Error("Goal text is required");
-  if (trimmed.length > 200) throw new Error("Goal must be under 200 characters");
+  return asActionResult(async () => {
+    const userId = await requireUserId();
+    const trimmed = text.trim();
+    if (!trimmed) throw new UserFacingError("Write the goal first");
+    if (trimmed.length > 200) {
+      throw new UserFacingError("Keep the goal under 200 characters");
+    }
 
-  const db = await getDb();
-  const [row] = await db
-    .insert(userGoals)
-    .values({
-      userId,
-      text: trimmed,
-      active: 1,
-    })
-    .returning();
+    const db = await getDb();
+    const [row] = await db
+      .insert(userGoals)
+      .values({
+        userId,
+        text: trimmed,
+        active: 1,
+      })
+      .returning();
 
-  revalidatePath("/settings");
-  revalidatePath("/graph");
-  revalidatePath("/contacts");
-  revalidatePath("/dashboard");
-  return row;
+    revalidateGoalPaths();
+    return row;
+  });
 }
 
 function revalidateGoalPaths() {
