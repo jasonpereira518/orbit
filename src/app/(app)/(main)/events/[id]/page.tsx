@@ -1,20 +1,54 @@
 import { Suspense } from "react";
+import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EventHero } from "@/components/events/event-hero";
-import { AttendeeRoster } from "@/components/events/attendee-roster";
+import { AttendeeRoster, type RosterMatch } from "@/components/events/attendee-roster";
 import { RosterImportPanel } from "@/components/events/roster-import-panel";
-import { getEvent, getRoster } from "@/actions/events";
+import { getEvent, getRoster, matchRosterToNetwork } from "@/actions/events";
+
+type RosterResult =
+  | { ok: true; rows: Awaited<ReturnType<typeof getRoster>> }
+  | { ok: false };
 
 async function Roster({
   eventId,
   rosterPromise,
+  matchesPromise,
 }: {
   eventId: string;
-  rosterPromise: Promise<Awaited<ReturnType<typeof getRoster>>>;
+  rosterPromise: Promise<RosterResult>;
+  matchesPromise: Promise<Awaited<ReturnType<typeof matchRosterToNetwork>>>;
 }) {
-  const rows = await rosterPromise;
-  return <AttendeeRoster eventId={eventId} rows={rows} />;
+  const result = await rosterPromise;
+
+  // A failed read used to fall through to the roster's "No attendees yet" empty state, which
+  // told the user their guest list was empty when in fact it could not be loaded. Those are
+  // opposite facts and must not share a screen.
+  if (!result.ok) {
+    return (
+      <p className="rounded-xl border border-border/70 bg-card px-4 py-3 text-sm text-muted-foreground">
+        The guest list could not be loaded just now. Refresh to try again — nothing has been
+        lost.
+      </p>
+    );
+  }
+
+  const preview = await matchesPromise;
+  const matches: RosterMatch[] = preview.flatMap((row) =>
+    row.outcome === "match" && row.matchedContactId
+      ? [
+          {
+            attendeeId: row.attendeeId,
+            contactId: row.matchedContactId,
+            contactName: row.matchedContactName,
+          },
+        ]
+      : []
+  );
+
+  return <AttendeeRoster eventId={eventId} rows={result.rows} matches={matches} />;
 }
 
 export default async function EventDetailPage({
@@ -24,9 +58,16 @@ export default async function EventDetailPage({
 }) {
   const { id } = await params;
 
-  // Started before the first await and `.catch()`-guarded, so the roster is already in
-  // flight while the event row loads and an eager rejection cannot go unhandled.
-  const rosterPromise = getRoster(id).catch(() => []);
+  // Both started before the first await and settled to a value, so they are already in flight
+  // while the event row loads and an eager rejection cannot go unhandled.
+  //
+  // The roster's failure is kept as a distinct state rather than collapsed to `[]`; the match
+  // lookup's is not, because a missing badge degrades to "we did not say", which is honest.
+  const rosterPromise: Promise<RosterResult> = getRoster(id).then(
+    (rows) => ({ ok: true as const, rows }),
+    () => ({ ok: false as const })
+  );
+  const matchesPromise = matchRosterToNetwork(id).catch(() => []);
 
   const event = await getEvent(id);
   // Before any Suspense boundary, so the route returns a real 404 rather than streaming a
@@ -35,6 +76,15 @@ export default async function EventDetailPage({
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 pb-8">
+      {/* A static destination rather than `router.back()`: an event page is a deep link
+          people reach from a fresh tab or a search result, where going back leaves the app. */}
+      <Link
+        href="/events"
+        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
+      >
+        <ArrowLeft className="size-3" aria-hidden /> Back to events
+      </Link>
+
       <EventHero event={event} />
 
       {event.enrichError ? (
@@ -52,7 +102,11 @@ export default async function EventDetailPage({
           Who was there
         </h2>
         <Suspense fallback={<Skeleton className="h-64 w-full rounded-2xl" />}>
-          <Roster eventId={event.id} rosterPromise={rosterPromise} />
+          <Roster
+            eventId={event.id}
+            rosterPromise={rosterPromise}
+            matchesPromise={matchesPromise}
+          />
         </Suspense>
       </div>
     </div>

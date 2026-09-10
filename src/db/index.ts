@@ -924,6 +924,9 @@ CREATE TABLE IF NOT EXISTS events (
   provider text,
   provider_event_id text,
   description text,
+  organizer_name text,
+  organizer_url text,
+  attendance_mode text,
   cover_image_url text,
   cover_source_url text,
   theme_color text,
@@ -1038,7 +1041,7 @@ CREATE TABLE IF NOT EXISTS event_provider_connections (
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
  * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
  */
-export const SCHEMA_VERSION = 32;
+export const SCHEMA_VERSION = 33;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1906,6 +1909,12 @@ async function migratePgvector(run: StatementRunner) {
 const alters = [
   // Deliberately not backfilled from `committed_at` — see the column's comment in schema.ts.
   `ALTER TABLE fundraising_investors ADD COLUMN IF NOT EXISTS received_at timestamptz`,
+  // The events feature landed whole at v32, so these are its first incremental columns.
+  // CREATE TABLE IF NOT EXISTS above is a no-op on a database that already has the table,
+  // which is why every new column has to appear in both places.
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_name text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_url text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS attendance_mode text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_step text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,

@@ -2769,6 +2769,18 @@ export const events = pgTable(
     provider: text("provider").$type<"luma" | "eventbrite">(),
     providerEventId: text("provider_event_id"),
     description: text("description"),
+    /**
+     * Who ran it, from the page's `organizer`. Inert by design: displayed on the event and
+     * never folded into contacts, so reading a page still creates no people.
+     */
+    organizerName: text("organizer_name"),
+    organizerUrl: text("organizer_url"),
+    /**
+     * `eventAttendanceMode`. Earns a column because it changes what an interaction MEANS —
+     * "met them there" reads differently for a Zoom room — and because it explains a blank
+     * venue on an online event instead of leaving it looking like failed enrichment.
+     */
+    attendanceMode: text("attendance_mode").$type<"offline" | "online" | "mixed">(),
     /** Durable Blob URL once persisted; falls back to the remote URL without Blob storage. */
     coverImageUrl: text("cover_image_url"),
     coverSourceUrl: text("cover_source_url"),
@@ -2819,7 +2831,7 @@ export const eventAttendees = pgTable(
     attendeeRole: text("attendee_role").$type<"attendee" | "host" | "speaker">(),
     /** Which acquisition path produced this row. Rendered as a badge, so it must be honest. */
     source: text("source")
-      .$type<"paste" | "csv" | "screenshot" | "luma" | "eventbrite">()
+      .$type<"paste" | "csv" | "screenshot" | "page" | "luma" | "eventbrite">()
       .default("paste")
       .notNull(),
     /** The provider's own guest id, where there is one. */
