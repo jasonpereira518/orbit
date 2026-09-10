@@ -1,9 +1,10 @@
-import { and, eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { followUpSuggestions, followUpWeights } from "@/db/schema";
 import { loadScoringInputs, loadSignalContext } from "./context";
 import { scoreCandidates, type ScoredSuggestion } from "./score";
 import { DAILY_SOURCES } from "./sources";
+import { isoDay } from "./time";
 import type { SignalCandidate, SignalKind } from "./types";
 
 export type PassResult = {
@@ -50,10 +51,6 @@ export function reasonFor(kind: SignalKind, evidence: string): string {
   }
 }
 
-function isoDay(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
 /**
  * One user's daily pass: load, detect, score, cap, write.
  *
@@ -66,12 +63,10 @@ export async function runFollowUpPass(
   options: { now?: Date } = {}
 ): Promise<PassResult> {
   const now = options.now ?? new Date();
-  const today = isoDay(now);
 
-  const [ctx, scoringInputs, alreadySurfacedToday] = await Promise.all([
+  const [ctx, scoringInputs] = await Promise.all([
     loadSignalContext(userId, now),
     loadScoringInputs(userId, now),
-    countSuggestionsForDay(userId, today),
   ]);
 
   const candidates: SignalCandidate[] = [];
@@ -106,8 +101,13 @@ export async function runFollowUpPass(
   // (`contactsWithPendingSuggestion`), but that only stops the SAME contact from being
   // suggested twice — it does nothing to stop a different, lower-scoring contact from
   // filling the newly-reopened top of the shortlist. Subtracting what is already on the
-  // books for `today` closes that gap.
-  const remainingCapToday = Math.max(0, scoringInputs.dailyCap - alreadySurfacedToday);
+  // books for `today` closes that gap. `suggestionsWrittenToday` is counted inside
+  // `loadScoringInputs` — see `context.ts` — using the same `isoDay(startOfDay(now))`
+  // day basis every `dueOn` below is written in, so the two cannot drift apart.
+  const remainingCapToday = Math.max(
+    0,
+    scoringInputs.dailyCap - scoringInputs.suggestionsWrittenToday
+  );
   const selected = shortlist.slice(0, remainingCapToday);
 
   await writeSuggestions(userId, selected);
@@ -118,22 +118,6 @@ export async function runFollowUpPass(
     shortlisted: shortlist.length,
     written: selected.length,
   };
-}
-
-/**
- * How many suggestions already exist for this user on this calendar day, of any
- * status. Deliberately status-agnostic: a suggestion the user dismissed minutes after
- * an earlier run still spent that day's budget, and re-surfacing a replacement for the
- * slot it vacated is exactly the resurrection-adjacent behavior the cap exists to
- * prevent.
- */
-async function countSuggestionsForDay(userId: string, dueOn: string): Promise<number> {
-  const db = await getDb();
-  const rows = await db
-    .select({ id: followUpSuggestions.id })
-    .from(followUpSuggestions)
-    .where(and(eq(followUpSuggestions.userId, userId), eq(followUpSuggestions.dueOn, dueOn)));
-  return rows.length;
 }
 
 async function writeSuggestions(userId: string, selected: ScoredSuggestion[]) {

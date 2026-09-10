@@ -23,3 +23,19 @@ export function startOfDay(d: Date): Date {
   out.setHours(0, 0, 0, 0);
   return out;
 }
+
+/**
+ * A Date as YYYY-MM-DD, exactly as written to `follow_up_suggestions.due_on`.
+ *
+ * Every source computes its candidate's `dueOn` from `startOfDay(ctx.now)` — LOCAL
+ * midnight — and `pass.ts` writes that straight through as `isoDay(candidate.dueOn)`.
+ * Anywhere else that needs "today" in this SAME day basis (the daily-cap count query,
+ * in particular) MUST call `isoDay(startOfDay(now))`, not `isoDay(now)` directly:
+ * `now` is an instant, and slicing its UTC ISO string diverges from the LOCAL-anchored
+ * value the moment the process's local date differs from `now`'s UTC date. That gap
+ * makes the count query match nothing, silently reopening the over-surfacing bug the
+ * cap exists to close.
+ */
+export function isoDay(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}

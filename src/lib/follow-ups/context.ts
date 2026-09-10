@@ -14,6 +14,7 @@ import {
   userSettings,
 } from "@/db/schema";
 import type { Suppression, WeightRow } from "./score";
+import { isoDay, startOfDay } from "./time";
 import type {
   ContactDateSnapshot,
   ContactSnapshot,
@@ -206,41 +207,61 @@ export async function loadSignalContext(
   };
 }
 
-/** The scoring-side inputs: suppressions, learned weights, and the user's cap. */
+/**
+ * The scoring-side inputs: suppressions, learned weights, the user's cap, and how much
+ * of today's cap is already spent.
+ */
 export async function loadScoringInputs(userId: string, now: Date) {
   const db = await getDb();
+  // Same day basis every `dueOn` is written in — see `isoDay`'s doc comment. Must stay
+  // in lockstep with `pass.ts`'s `isoDay(candidate.dueOn)`, or the count below silently
+  // stops matching the rows it is meant to count.
+  const today = isoDay(startOfDay(now));
 
-  const [suppressionRows, weightRows, pendingSuggestionRows, settings] = await Promise.all([
-    db.query.followUpSuppressions.findMany({
-      where: and(
-        eq(followUpSuppressions.userId, userId),
-        or(
-          sql`${followUpSuppressions.until} IS NULL`,
-          gte(followUpSuppressions.until, now)
-        )
-      ),
-      columns: { contactId: true, kind: true, until: true },
-    }),
-    db.query.followUpWeights.findMany({
-      where: eq(followUpWeights.userId, userId),
-    }),
-    db.query.followUpSuggestions.findMany({
-      where: and(
-        eq(followUpSuggestions.userId, userId),
-        inArray(followUpSuggestions.status, ["pending", "snoozed"])
-      ),
-      columns: { contactId: true },
-    }),
-    db.query.userSettings.findFirst({
-      where: eq(userSettings.userId, userId),
-      columns: { followUpDailyCap: true },
-    }),
-  ]);
+  const [suppressionRows, weightRows, pendingSuggestionRows, settings, todayRows] =
+    await Promise.all([
+      db.query.followUpSuppressions.findMany({
+        where: and(
+          eq(followUpSuppressions.userId, userId),
+          or(
+            sql`${followUpSuppressions.until} IS NULL`,
+            gte(followUpSuppressions.until, now)
+          )
+        ),
+        columns: { contactId: true, kind: true, until: true },
+      }),
+      db.query.followUpWeights.findMany({
+        where: eq(followUpWeights.userId, userId),
+      }),
+      db.query.followUpSuggestions.findMany({
+        where: and(
+          eq(followUpSuggestions.userId, userId),
+          inArray(followUpSuggestions.status, ["pending", "snoozed"])
+        ),
+        columns: { contactId: true },
+      }),
+      db.query.userSettings.findFirst({
+        where: eq(userSettings.userId, userId),
+        columns: { followUpDailyCap: true },
+      }),
+      // Status-agnostic on purpose: a suggestion the user dismissed minutes after an
+      // earlier run today still spent that day's budget, and re-surfacing a
+      // replacement for the slot it vacated is exactly the over-surfacing the daily
+      // cap (as opposed to a per-invocation one) exists to prevent.
+      db.query.followUpSuggestions.findMany({
+        where: and(
+          eq(followUpSuggestions.userId, userId),
+          eq(followUpSuggestions.dueOn, today)
+        ),
+        columns: { id: true },
+      }),
+    ]);
 
   return {
     suppressions: suppressionRows as Suppression[],
     weightsByKind: new Map(weightRows.map((r) => [r.kind, r as WeightRow])),
     contactsWithPendingSuggestion: new Set(pendingSuggestionRows.map((r) => r.contactId)),
     dailyCap: settings?.followUpDailyCap ?? 3,
+    suggestionsWrittenToday: todayRows.length,
   };
 }
