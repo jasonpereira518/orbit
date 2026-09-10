@@ -120,9 +120,22 @@ export default configured
       return withPathname(req);
     };
 
+/**
+ * The first entry's extension list is the ONLY thing keeping `public/` out of the
+ * middleware, and anything it misses is served by `auth.protect()` rather than by the
+ * static handler — which 404s the asset for every signed-out visitor while signed-in
+ * ones (and every local dev run, where Clerk is unconfigured) see it load fine. That is
+ * exactly how `.avif` broke every planet on the landing page: `<picture>` offers avif
+ * first, browsers take it, and a failed `<source>` does not fall back to the next one.
+ *
+ * So: every file extension under `public/` must appear here. `scripts/smoke-static-assets.ts`
+ * asserts that against the filesystem — it has to, because the values below cannot be
+ * imported from a shared constant. Next statically analyses `matcher` at build time and
+ * silently ignores anything that is not a literal.
+ */
 export const config = {
   matcher: [
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|avif|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
     "/(api|trpc)(.*)",
     "/__clerk/:path*",
   ],

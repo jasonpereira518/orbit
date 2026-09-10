@@ -16,7 +16,14 @@ const buttonClass =
  * dependency means demo mode can hit the real action against local PGlite like everything
  * else in demo mode does, rather than needing a separate no-op stub.
  */
-export function WaitlistForm() {
+export function WaitlistForm({
+  variant = "stacked",
+}: {
+  /** "inline" puts the field and button on one row — for the finale, where the
+   * interest list is a footnote under the CTA rather than a card beside it. */
+  variant?: "stacked" | "inline";
+} = {}) {
+  const inline = variant === "inline";
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
 
@@ -53,7 +60,10 @@ export function WaitlistForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3">
+    <form
+      onSubmit={handleSubmit}
+      className={inline ? "flex flex-col gap-2 sm:flex-row" : "space-y-3"}
+    >
       <label htmlFor="waitlist-email" className="sr-only">
         Email address
       </label>
@@ -64,7 +74,7 @@ export function WaitlistForm() {
         placeholder="you@company.com"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
-        className={inputClass}
+        className={inline ? `${inputClass} sm:flex-1 py-2.5 text-sm` : inputClass}
       />
       {/* Honeypot. Off-screen rather than display:none — some bots skip hidden fields but
           happily fill one that is merely positioned away. */}
@@ -72,7 +82,15 @@ export function WaitlistForm() {
         <label htmlFor="waitlist-website">Website</label>
         <input id="waitlist-website" name="website" tabIndex={-1} autoComplete="off" />
       </div>
-      <button type="submit" disabled={status === "loading"} className={buttonClass}>
+      <button
+        type="submit"
+        disabled={status === "loading"}
+        className={
+          inline
+            ? `${buttonClass} sm:w-auto sm:shrink-0 py-2.5 text-sm`
+            : buttonClass
+        }
+      >
         {status === "loading" ? "Signing up…" : "Get updates"}
       </button>
       {status === "error" && (

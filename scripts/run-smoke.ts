@@ -48,6 +48,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-dashboard-search": "pure",
   "smoke-date-commitments": "pure",
   "smoke-duplicate-index": "pure",
+  "smoke-earth-camera": "pure",
   "smoke-embedding-cache": "pure",
   "smoke-env": "pure",
   "smoke-fast-model": "pure",
@@ -60,6 +61,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-graph-scope": "pure",
   "smoke-ics-feed": "pure",
   "smoke-import-progress-card": "pure",
+  "smoke-landing-cards": "pure",
   "smoke-lifetime-pricing": "pure",
   "smoke-locked-participant": "pure",
   "smoke-mention-resolution": "pure",
@@ -72,6 +74,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-scale-schema": "pure", // own in-memory PGlite
   "smoke-schema-ddl": "pure",
   "smoke-security-headers": "pure",
+  "smoke-static-assets": "pure",
   "smoke-timeline-vocabulary": "pure",
   "smoke-webhook-signing": "pure",
   "smoke-warp-chrono": "pure",
