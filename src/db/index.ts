@@ -1301,16 +1301,6 @@ export const SCALE_DDL: string[] = [
   // every backtick pair between these brackets as a DDL statement.
   `CREATE INDEX IF NOT EXISTS contact_experiences_org_idx
      ON contact_experiences(user_id, organization_normalized)`,
-
-  // --- Follow-up engine: user_settings columns --------------------------------------
-  //
-  // The four contact_dates/follow_up_* tables live in the DDL template above (fresh
-  // databases get them via CREATE TABLE); these are columns on the pre-existing
-  // user_settings table, which CREATE TABLE IF NOT EXISTS never touches.
-  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS timezone text`,
-  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS follow_up_digest text NOT NULL DEFAULT 'daily'`,
-  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS follow_up_daily_cap integer NOT NULL DEFAULT 3`,
-  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS follow_up_next_pass_at timestamptz`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
@@ -1822,6 +1812,14 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "feedback", "status_changed_by", "text");
   await ensureColumn(client, "feedback", "resolution_note", "text");
 
+  // Schema v33: the follow-up engine's four user_settings columns. Mirrors the
+  // `alters` entries of the same name — a local database built before this feature
+  // has the table but none of them.
+  await ensureColumn(client, "user_settings", "timezone", "text");
+  await ensureColumn(client, "user_settings", "follow_up_digest", "text NOT NULL DEFAULT 'daily'");
+  await ensureColumn(client, "user_settings", "follow_up_daily_cap", "integer NOT NULL DEFAULT 3");
+  await ensureColumn(client, "user_settings", "follow_up_next_pass_at", "timestamptz");
+
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
   // list above via `applySchema` — not here. `ADMIN_V2_STATEMENTS` is spread into that
@@ -2228,6 +2226,14 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS event_attendees_contact_idx ON event_attendees(contact_id) WHERE contact_id IS NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS event_provider_connections_user_uidx ON event_provider_connections(user_id, provider)`,
   `CREATE INDEX IF NOT EXISTS event_provider_connections_due_idx ON event_provider_connections(next_sync_at) WHERE next_sync_at IS NOT NULL`,
+  // Schema v33: the follow-up engine. The four contact_dates/follow_up_* tables live in
+  // the DDL template above (fresh databases get them via CREATE TABLE); these four columns
+  // repair the pre-existing user_settings table, which CREATE TABLE IF NOT EXISTS never
+  // touches.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS timezone text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS follow_up_digest text NOT NULL DEFAULT 'daily'`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS follow_up_daily_cap integer NOT NULL DEFAULT 3`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS follow_up_next_pass_at timestamptz`,
 ];
 
 /**
