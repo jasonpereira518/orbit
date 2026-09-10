@@ -8,12 +8,23 @@ import {
   interactions,
   reminders,
 } from "@/db/schema";
+import { SIGNAL_TRIGGER } from "./registry";
 import { WEIGHT_MAX, WEIGHT_MIN, WEIGHT_MIN_SHOWN } from "./score";
 
 /** Acting on a suggestion means this person was just contacted. */
 export const ACCEPT_SUPPRESSION_DAYS = 30;
 /** Long enough that a rejected reason does not come back next week. */
 export const DISMISS_SUPPRESSION_DAYS = 60;
+
+/**
+ * The kinds that treat absence-of-contact as their evidence — the same set
+ * `refutedByRecentContact` in `score.ts` reads off `SIGNAL_TRIGGER`. Derived rather
+ * than hardcoded so a kind added to the registry is classified once and both
+ * mechanisms follow automatically.
+ */
+const STALENESS_KINDS = Object.entries(SIGNAL_TRIGGER)
+  .filter(([, trigger]) => trigger === "staleness")
+  .map(([kind]) => kind);
 
 function daysFromNow(days: number, now: Date) {
   return new Date(now.getTime() + days * 86_400_000);
@@ -83,12 +94,26 @@ export async function acceptSuggestion(
     .where(and(eq(contacts.id, suggestion.contactId), eq(contacts.userId, userId)));
 
   await bumpWeight(userId, suggestion.primaryKind, { accepted: 1 });
-  await suppress(userId, {
-    contactId: suggestion.contactId,
-    kind: null,
-    until: daysFromNow(ACCEPT_SUPPRESSION_DAYS, now),
-    reason: "acted",
-  });
+
+  // Acceptance means "you just contacted this person, so stop telling me they have
+  // gone quiet" — it silences only the staleness-triggered kinds, one suppression row
+  // per kind. It deliberately does NOT touch date-triggered kinds: talking to someone
+  // yesterday does not make it any less their birthday, matching the split
+  // `refutedByRecentContact` already draws. (A contact-wide `kind: null` suppression
+  // would have silenced those too, which is the bug this loop fixes.)
+  //
+  // Note: a contact with an open accepted follow-up is already excluded by filter 4
+  // (`contactsWithPendingReminder`) for as long as that reminder is pending, so this
+  // suppression's real job only starts once the reminder is completed and the contact
+  // becomes eligible for staleness signals again.
+  for (const kind of STALENESS_KINDS) {
+    await suppress(userId, {
+      contactId: suggestion.contactId,
+      kind,
+      until: daysFromNow(ACCEPT_SUPPRESSION_DAYS, now),
+      reason: "acted",
+    });
+  }
 
   return { reminderId: reminder.id };
 }
@@ -146,6 +171,12 @@ export async function dismissSuggestion(
 
 /** Permanent, contact-wide. `until = null` is what makes it a mute rather than a snooze. */
 export async function muteContact(userId: string, contactId: string) {
+  const db = await getDb();
+  const contact = await db.query.contacts.findFirst({
+    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+    columns: { id: true },
+  });
+  if (!contact) throw new Error("Contact not found");
   await suppress(userId, { contactId, kind: null, until: null, reason: "muted_contact" });
 }
 
