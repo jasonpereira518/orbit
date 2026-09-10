@@ -8,6 +8,7 @@ import {
 import { cn } from "@/lib/utils";
 import { ExpandableText } from "@/components/ui/expandable-text";
 import { keepNotification } from "@/lib/kept-notifications";
+import { friendlyError } from "@/lib/errors";
 
 const EXPAND_THRESHOLD = 100;
 
@@ -242,3 +243,92 @@ export const toast = {
     );
   },
 };
+
+/**
+ * Whether an inverse reported that it could not restore — `{ restored: false }`, which
+ * the inverses in this PR return when the row changed in the meantime. Anything else
+ * (a plain row, nothing at all) counts as restored. `unknown` rather than a declared
+ * shape, because some inverses are ordinary actions — moving a reminder back is just
+ * `moveReminderToList` — and return whatever they return.
+ */
+function reportedNotRestored(result: unknown): boolean {
+  return (
+    typeof result === "object" &&
+    result !== null &&
+    "restored" in result &&
+    (result as { restored: unknown }).restored === false
+  );
+}
+
+/**
+ * Run a server action, confirm it with a toast, and offer Undo where the action has a
+ * real inverse.
+ *
+ * This replaces three hand-rolled copies of the same try / toast / refresh helper —
+ * `runAction` in the notifications panel, `run` in the suggested-reminders panel, and
+ * a bare pair in `reminder-done-snooze` — so the Undo behaviour is decided once.
+ *
+ * Three things it gets right that the copies could not:
+ *
+ * - Failure copy goes through `friendlyError`, never `err.message`.
+ * - An Undo toast is `keep: false`. Undo is a courtesy for the next few seconds, not
+ *   something to file in the notification center — and after a reload its callback
+ *   would be gone anyway, leaving a row with a dead button.
+ * - When an inverse reports `restored: false` (the row changed in the meantime), it
+ *   says so. Announcing "Undone" over a state that was not restored is worse than
+ *   offering no Undo at all.
+ */
+export async function runToastAction<T>(opts: {
+  run: () => Promise<T>;
+  success: string | ((result: T) => string);
+  /** Shown if `run` throws — passed to `friendlyError` as the fallback. */
+  failure: string;
+  /** Re-read whatever the action changed. Called after the action and after an Undo. */
+  refresh?: () => unknown;
+  /** Return the inverse for this result, or nothing to offer no Undo. */
+  undo?: (result: T) => (() => Promise<unknown>) | null | undefined;
+  undone?: string;
+}): Promise<T | undefined> {
+  let result: T;
+  try {
+    result = await opts.run();
+  } catch (err) {
+    toast.error(friendlyError(err, opts.failure));
+    return undefined;
+  }
+
+  const message =
+    typeof opts.success === "function" ? opts.success(result) : opts.success;
+  const inverse = opts.undo?.(result);
+
+  if (inverse) {
+    toast.success(message, {
+      keep: false,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          void (async () => {
+            try {
+              const undone = await inverse();
+              if (reportedNotRestored(undone)) {
+                toast.message("That’s changed since — nothing to undo", { keep: false });
+              } else {
+                toast.success(opts.undone ?? "Undone", { keep: false });
+              }
+              await opts.refresh?.();
+            } catch (err) {
+              toast.error(friendlyError(err, "Couldn’t undo that — try again?"), {
+                keep: false,
+              });
+            }
+          })();
+        },
+      },
+    });
+  } else {
+    toast.success(message);
+  }
+
+  await opts.refresh?.();
+  return result;
+}

@@ -4,10 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { X } from "lucide-react";
-import { toast } from "@/lib/toast";
+import { runToastAction, toast } from "@/lib/toast";
 import {
   acceptScoreBump,
   dismissSuggestion,
+  restoreSuggestion,
   scheduleFromSuggestion,
 } from "@/actions/reminders";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
@@ -151,11 +152,15 @@ export function SuggestionRow({
           disabled={pending}
           className="shrink-0"
           onClick={() =>
-            start(async () => {
-              await dismissSuggestion(id);
-              toast.success("Dismissed");
-              router.refresh();
-            })
+            start(() =>
+              runToastAction({
+                run: () => dismissSuggestion(id),
+                success: "Dismissed",
+                failure: "Couldn’t dismiss that — try again?",
+                refresh: () => router.refresh(),
+                undo: () => () => restoreSuggestion(id),
+              }).then(() => undefined)
+            )
           }
         >
           <X className="h-4 w-4" />

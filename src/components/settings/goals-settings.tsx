@@ -3,8 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { Trash2 } from "lucide-react";
-import { toast } from "@/lib/toast";
-import { addGoal, deleteGoal } from "@/actions/goals";
+import { runToastAction, toast } from "@/lib/toast";
+import { addGoal, deleteGoal, restoreGoal } from "@/actions/goals";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
@@ -42,18 +42,38 @@ export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
                 variant="ghost"
                 disabled={pending}
                 onClick={() =>
-                  start(async () => {
-                    try {
-                      await deleteGoal(g.id);
-                      setGoals((prev) => prev.filter((x) => x.id !== g.id));
-                      toast.success("Goal removed");
-                      router.refresh();
-                    } catch (err) {
-                      toast.error(
-                        err instanceof Error ? err.message : "Could not delete goal"
-                      );
-                    }
-                  })
+                  start(() =>
+                    runToastAction({
+                      run: async () => {
+                        const snapshot = await deleteGoal(g.id);
+                        setGoals((prev) => prev.filter((x) => x.id !== g.id));
+                        return snapshot;
+                      },
+                      success: "Goal removed",
+                      failure: "Couldn’t remove that goal — try again?",
+                      refresh: () => router.refresh(),
+                      undo: (snapshot) =>
+                        snapshot
+                          ? async () => {
+                              const result = await restoreGoal(snapshot);
+                              // `goals` is useState(initialGoals), which ignores new
+                              // props after mount — so a refresh alone could never
+                              // bring the row back. Re-add it here, in createdAt
+                              // order to match `listGoals`, so it returns to its place.
+                              if (result.restored) {
+                                setGoals((prev) =>
+                                  [...prev.filter((x) => x.id !== g.id), g].sort(
+                                    (a, b) =>
+                                      new Date(b.createdAt).getTime() -
+                                      new Date(a.createdAt).getTime()
+                                  )
+                                );
+                              }
+                              return result;
+                            }
+                          : null,
+                    }).then(() => undefined)
+                  )
                 }
               >
                 <Trash2 className="h-4 w-4" />

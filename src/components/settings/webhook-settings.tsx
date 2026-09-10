@@ -79,6 +79,19 @@ export function WebhookSettings() {
     setSelected((prev) => (prev.includes(id) ? prev.filter((e) => e !== id) : [...prev, id]));
   }
 
+  /**
+   * Why a verification ping failed, in words a person configuring their own endpoint can
+   * act on. The HTTP status is worth keeping — "answered HTTP 404" tells them exactly
+   * what to fix. `verifyEndpoint`'s other path is a raw fetch error sliced to 200
+   * characters (undici internals, resolver codes), which is not.
+   */
+  function describeVerification(error: string | null | undefined) {
+    const status = error?.match(/^Endpoint answered HTTP (\d{3})$/)?.[1];
+    return status
+      ? `your endpoint answered HTTP ${status}`
+      : "your endpoint didn’t respond";
+  }
+
   function onCreate() {
     startTransition(async () => {
       const result = await createWebhookEndpoint(url.trim(), selected);
@@ -91,12 +104,14 @@ export function WebhookSettings() {
       setRevealedSecret(result.secret);
       setUrl("");
       if (result.verified) {
-        toast.success("Webhook verified and active");
+        toast.success("Webhook verified — it’s live");
       } else {
+        // This used to tell the person to retry and give them no button, while
+        // `retryWebhookEndpoint` already existed for exactly this.
+        const endpointId = result.endpoint.id;
         toast.error(
-          result.verificationError
-            ? `Saved, but not verified: ${result.verificationError}`
-            : "Saved, but the endpoint did not respond. Retry once it is reachable."
+          `Saved, but ${describeVerification(result.verificationError)} — retry once it’s reachable`,
+          { action: { label: "Retry", onClick: () => onRetry(endpointId) } }
         );
       }
       load();
@@ -115,8 +130,11 @@ export function WebhookSettings() {
   function onRetry(id: string) {
     startTransition(async () => {
       const result = await retryWebhookEndpoint(id);
-      if (result.ok) toast.success("Verified — the webhook is active");
-      else toast.error(result.error ?? "Still unreachable");
+      if (result.ok) toast.success("Verified — the webhook is live");
+      else {
+        const reason = describeVerification(result.error);
+        toast.error(`Still no luck — ${reason}`);
+      }
       load();
     });
   }

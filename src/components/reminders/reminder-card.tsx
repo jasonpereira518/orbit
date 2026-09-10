@@ -13,7 +13,7 @@ import {
   NotebookPen,
   Coffee,
 } from "lucide-react";
-import { toast } from "@/lib/toast";
+import { runToastAction, toast } from "@/lib/toast";
 import {
   draftFollowUpResponse,
   moveReminderToList,
@@ -255,17 +255,20 @@ export function ReminderCard({
                 onChange={(e) => {
                   const next = e.target.value;
                   if (!next || next === listId) return;
-                  startMove(async () => {
-                    try {
-                      await moveReminderToList(id, next);
-                      toast.success("Moved");
-                      router.refresh();
-                    } catch (err) {
-                      toast.error(
-                        err instanceof Error ? err.message : "Could not move"
-                      );
-                    }
-                  });
+                  const previous = listId;
+                  const nextName = lists.find((l) => l.id === next)?.name;
+                  startMove(() =>
+                    runToastAction({
+                      run: () => moveReminderToList(id, next),
+                      success: nextName ? `Moved to ${nextName}` : "Moved",
+                      failure: "Couldn’t move that reminder — try again?",
+                      refresh: () => router.refresh(),
+                      // The prior list is already on the card, so the inverse is just
+                      // a move back. Offered only when there was a list to return to.
+                      undo: () =>
+                        previous ? () => moveReminderToList(id, previous) : null,
+                    }).then(() => undefined)
+                  );
                 }}
               >
                 {lists.map((l) => (

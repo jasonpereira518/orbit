@@ -22,16 +22,20 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { toast } from "@/lib/toast";
+import { runToastAction } from "@/lib/toast";
 import {
   clearContactFollowUp,
   dismissSuggestion,
   markReminderDone,
+  reopenReminderAction,
+  restoreSuggestion,
   snoozeReminderAction,
+  unsnoozeReminderAction,
 } from "@/actions/reminders";
 import {
   confirmSuggestedReminder,
   discardSuggestedReminder,
+  restoreSuggestedReminder,
 } from "@/actions/suggested-reminders";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -130,16 +134,81 @@ export function NotificationsPanelButton({
   const hasAnything =
     (data?.totalCount ?? 0) > 0 || jobs.length > 0 || kept.length > 0;
 
-  function runAction(label: string, action: () => Promise<unknown>) {
-    start(async () => {
-      try {
-        await action();
-        toast.success(label);
-        await refreshPanel(true);
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Action failed");
-      }
-    });
+  const refresh = () => refreshPanel(true);
+
+  function markDone(reminderId: string) {
+    start(() =>
+      runToastAction({
+        run: () => markReminderDone(reminderId),
+        success: "Marked done",
+        failure: "Couldn’t mark that done — try again?",
+        refresh,
+        undo: (snap) => (snap ? () => reopenReminderAction(snap) : null),
+      }).then(() => undefined)
+    );
+  }
+
+  function snooze(reminderId: string) {
+    start(() =>
+      runToastAction({
+        run: () => snoozeReminderAction(reminderId, 7),
+        success: "Snoozed for a week",
+        failure: "Couldn’t snooze that — try again?",
+        refresh,
+        undo: (snap) => (snap ? () => unsnoozeReminderAction(snap) : null),
+      }).then(() => undefined)
+    );
+  }
+
+  // No Undo: this closes an unbounded set of the contact's reminders and returns only
+  // how many, not which. It can say the count honestly, which it could not before.
+  function clearFollowUp(contactId: string) {
+    start(() =>
+      runToastAction({
+        run: () => clearContactFollowUp(contactId),
+        success: (res) =>
+          res.remindersClosed > 0
+            ? `Follow-up cleared — ${res.remindersClosed} ${res.remindersClosed === 1 ? "reminder" : "reminders"} closed too`
+            : "Follow-up cleared",
+        failure: "Couldn’t clear that follow-up — try again?",
+        refresh,
+      }).then(() => undefined)
+    );
+  }
+
+  function dismiss(suggestionId: string) {
+    start(() =>
+      runToastAction({
+        run: () => dismissSuggestion(suggestionId),
+        success: "Dismissed",
+        failure: "Couldn’t dismiss that — try again?",
+        refresh,
+        undo: () => () => restoreSuggestion(suggestionId),
+      }).then(() => undefined)
+    );
+  }
+
+  function discardSuggested(suggestedReminderId: string) {
+    start(() =>
+      runToastAction({
+        run: () => discardSuggestedReminder(suggestedReminderId),
+        success: "Dismissed",
+        failure: "Couldn’t dismiss that — try again?",
+        refresh,
+        undo: () => () => restoreSuggestedReminder(suggestedReminderId),
+      }).then(() => undefined)
+    );
+  }
+
+  function confirmSuggested(suggestedReminderId: string) {
+    start(() =>
+      runToastAction({
+        run: () => confirmSuggestedReminder(suggestedReminderId),
+        success: "Reminder added",
+        failure: "Couldn’t add that reminder — try again?",
+        refresh,
+      }).then(() => undefined)
+    );
   }
 
   const button = (
@@ -249,30 +318,22 @@ export function NotificationsPanelButton({
                       pending={pending}
                       onDone={() => {
                         if (item.kind === "reminder" && item.reminderId) {
-                          runAction("Marked done", () =>
-                            markReminderDone(item.reminderId!)
-                          );
+                          markDone(item.reminderId);
                         } else if (
                           item.kind === "follow_up" &&
                           item.contactId
                         ) {
-                          runAction("Follow-up cleared", () =>
-                            clearContactFollowUp(item.contactId!)
-                          );
+                          clearFollowUp(item.contactId);
                         }
                       }}
                       onSnooze={() => {
                         if (item.kind === "reminder" && item.reminderId) {
-                          runAction("Snoozed 7 days", () =>
-                            snoozeReminderAction(item.reminderId!, 7)
-                          );
+                          snooze(item.reminderId);
                         }
                       }}
                       onDismiss={() => {
                         if (item.kind === "suggestion" && item.suggestionId) {
-                          runAction("Dismissed", () =>
-                            dismissSuggestion(item.suggestionId!)
-                          );
+                          dismiss(item.suggestionId);
                         }
                       }}
                       onNavigate={() => setOpen(false)}
@@ -288,23 +349,17 @@ export function NotificationsPanelButton({
                       pending={pending}
                       onDone={() => {
                         if (item.kind === "reminder" && item.reminderId) {
-                          runAction("Marked done", () =>
-                            markReminderDone(item.reminderId!)
-                          );
+                          markDone(item.reminderId);
                         } else if (
                           item.kind === "follow_up" &&
                           item.contactId
                         ) {
-                          runAction("Follow-up cleared", () =>
-                            clearContactFollowUp(item.contactId!)
-                          );
+                          clearFollowUp(item.contactId);
                         }
                       }}
                       onSnooze={() => {
                         if (item.kind === "reminder" && item.reminderId) {
-                          runAction("Snoozed 7 days", () =>
-                            snoozeReminderAction(item.reminderId!, 7)
-                          );
+                          snooze(item.reminderId);
                         }
                       }}
                       onNavigate={() => setOpen(false)}
@@ -320,22 +375,16 @@ export function NotificationsPanelButton({
                       pending={pending}
                       onDone={() => {
                         if (item.suggestedReminderId) {
-                          runAction("Reminder added", () =>
-                            confirmSuggestedReminder(item.suggestedReminderId!)
-                          );
+                          confirmSuggested(item.suggestedReminderId);
                         }
                       }}
                       onDismiss={() => {
                         if (item.suggestedReminderId) {
-                          runAction("Dismissed", () =>
-                            discardSuggestedReminder(item.suggestedReminderId!)
-                          );
+                          discardSuggested(item.suggestedReminderId);
                           return;
                         }
                         if (item.suggestionId) {
-                          runAction("Dismissed", () =>
-                            dismissSuggestion(item.suggestionId!)
-                          );
+                          dismiss(item.suggestionId);
                         }
                       }}
                       onNavigate={() => setOpen(false)}
