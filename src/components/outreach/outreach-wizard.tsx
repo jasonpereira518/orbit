@@ -73,6 +73,10 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
             replyCta,
             sequenceSteps: enableSequence ? sequenceSteps : [],
           });
+          if ("error" in campaign) {
+            toast.error(campaign.error);
+            return;
+          }
           setCampaignId(campaign.id);
           setFilters((campaign.audienceFilters as AudienceFilters) || {});
           setStep(1);
@@ -84,6 +88,10 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
             replyCta,
             sequenceSteps: enableSequence ? sequenceSteps : [],
           });
+          if ("error" in updated) {
+            toast.error(updated.error);
+            return;
+          }
           setFilters((updated.audienceFilters as AudienceFilters) || {});
           setStep(1);
         }
@@ -97,11 +105,19 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
     if (!campaignId) return;
     start(async () => {
       try {
-        await updateCampaign(campaignId, {
+        const saved = await updateCampaign(campaignId, {
           audienceFilters: filters,
           reparseAudience: false,
         });
+        if ("error" in saved) {
+          toast.error(saved.error);
+          return;
+        }
         const result = await searchProspects(campaignId);
+        if ("error" in result) {
+          toast.error(result.error);
+          return;
+        }
         setSearchTotal(result.total);
         setLastSearchSource(result.source);
         if (result.source === "demo") {
@@ -126,19 +142,27 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
     if (!campaignId) return;
     start(async () => {
       try {
-        await updateCampaign(campaignId, {
+        const saved = await updateCampaign(campaignId, {
           messageIntent,
           replyCta,
           tone,
           defaultChannel: channel,
           sequenceSteps: enableSequence ? sequenceSteps : [],
         });
-        await generateOutreachDrafts({
+        if ("error" in saved) {
+          toast.error(saved.error);
+          return;
+        }
+        const drafts = await generateOutreachDrafts({
           campaignId,
           channel,
           templateSeed: templateSeed || undefined,
           excludeLowSignal: true,
         });
+        if ("error" in drafts) {
+          toast.error(drafts.error);
+          return;
+        }
         toast.success("Drafts generated — review before sending");
         goToCampaign(campaignId);
       } catch (err) {

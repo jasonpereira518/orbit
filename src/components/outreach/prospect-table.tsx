@@ -66,11 +66,15 @@ export function ProspectTable({
 
   function toggleSelection(prospectId: string, checked: boolean) {
     start(async () => {
-      await updateProspectSelection({
+      const result = await updateProspectSelection({
         campaignId,
         prospectIds: [prospectId],
         status: checked ? "selected" : "suggested",
       });
+      if ("error" in result) {
+        toast.error(result.error);
+        return;
+      }
       onUpdated?.();
     });
   }
@@ -79,6 +83,10 @@ export function ProspectTable({
     start(async () => {
       try {
         const result = await saveProspectAsContact({ campaignId, prospectId });
+        if ("error" in result) {
+          toast.error(result.error);
+          return;
+        }
         toast.success(result.created ? "Saved to contacts" : "Already in contacts");
         onUpdated?.();
       } catch (err) {
@@ -91,6 +99,10 @@ export function ProspectTable({
     start(async () => {
       try {
         const updated = await enrichProspect({ campaignId, prospectId });
+        if ("error" in updated) {
+          toast.error(updated.error);
+          return;
+        }
         if (updated.linkedinUrl) {
           toast.success("LinkedIn profile enriched");
         } else {

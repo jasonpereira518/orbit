@@ -33,11 +33,15 @@ export function OutcomeControls({
   function log(outcome: OutreachMessageOutcome) {
     start(async () => {
       try {
-        await logMessageOutcome({
+        const result = await logMessageOutcome({
           messageId,
           outcome,
           notes: notes.trim() || null,
         });
+        if ("error" in result) {
+          toast.error(result.error);
+          return;
+        }
         toast.success(OUTCOME_LABELS[outcome]);
         setNotes("");
         setShowNotes(false);

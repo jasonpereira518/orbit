@@ -61,11 +61,15 @@ export function BulkActionBar({
 
   function handleSelectAll() {
     start(async () => {
-      await updateProspectSelection({
+      const result = await updateProspectSelection({
         campaignId,
         prospectIds: rows.map((r) => r.prospectId),
         status: "selected",
       });
+      if ("error" in result) {
+        toast.error(result.error);
+        return;
+      }
       refresh();
     });
   }
@@ -83,7 +87,11 @@ export function BulkActionBar({
     navigator.clipboard.writeText(text);
     start(async () => {
       for (const row of activeRows) {
-        await markMessageAction({ messageId: row.messageId, status: "copied" });
+        const result = await markMessageAction({ messageId: row.messageId, status: "copied" });
+        if ("error" in result) {
+          toast.error(result.error);
+          return;
+        }
       }
       toast.success(`Copied ${activeRows.length} drafts`);
       refresh();
@@ -107,7 +115,11 @@ export function BulkActionBar({
     start(async () => {
       for (const row of activeRows) {
         if (canOpenInApp(row.channel, row)) {
-          await markMessageAction({ messageId: row.messageId, status: "opened" });
+          const result = await markMessageAction({ messageId: row.messageId, status: "opened" });
+          if ("error" in result) {
+            toast.error(result.error);
+            return;
+          }
         }
       }
       toast.success(`Opened ${activeRows.length} apps`);
@@ -122,6 +134,10 @@ export function BulkActionBar({
           campaignId,
           messageIds: sendable.map((r) => r.messageId),
         });
+        if ("error" in quality) {
+          toast.error(quality.error);
+          return;
+        }
         if (quality.blocking.length) {
           toast.error(quality.blocking[0].message);
           return;
@@ -152,18 +168,21 @@ export function BulkActionBar({
           messageIds: sendable.map((r) => r.messageId),
           ignoreWarnings: ignoreWarnings || !qualityNote,
         });
+        if ("error" in result) {
+          if (result.error.startsWith("Quality warnings:")) {
+            setQualityNote(result.error);
+            setIgnoreWarnings(true);
+            toast.error("Review warnings, then confirm send again");
+            return;
+          }
+          toast.error(result.error);
+          return;
+        }
         toast.success(`Sent ${result.sent}, failed ${result.failed}`);
         setDangerOpen(false);
         refresh();
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Bulk send failed";
-        if (message.startsWith("Quality warnings:")) {
-          setQualityNote(message);
-          setIgnoreWarnings(true);
-          toast.error("Review warnings, then confirm send again");
-          return;
-        }
-        toast.error(message);
+        toast.error(err instanceof Error ? err.message : "Bulk send failed");
       }
     });
   }

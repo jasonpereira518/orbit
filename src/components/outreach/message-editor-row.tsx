@@ -36,11 +36,15 @@ export function MessageEditorRow({
   function save() {
     start(async () => {
       try {
-        await updateOutreachMessage({
+        const result = await updateOutreachMessage({
           messageId,
           subject: channel === "email" ? localSubject : null,
           body: localBody,
         });
+        if ("error" in result) {
+          toast.error(result.error);
+          return;
+        }
         toast.success("Draft saved");
         onUpdated?.();
       } catch (err) {
@@ -57,6 +61,10 @@ export function MessageEditorRow({
           prospectId,
           channel,
         });
+        if ("error" in updated) {
+          toast.error(updated.error);
+          return;
+        }
         setLocalSubject(updated.subject || "");
         setLocalBody(updated.body);
         toast.success("Draft regenerated");

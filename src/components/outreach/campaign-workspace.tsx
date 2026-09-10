@@ -196,11 +196,19 @@ export function CampaignWorkspace({
   function rerunSearch() {
     start(async () => {
       try {
-        await updateCampaign(campaign.id, {
+        const saved = await updateCampaign(campaign.id, {
           audienceFilters: filters,
           reparseAudience: false,
         });
+        if ("error" in saved) {
+          toast.error(saved.error);
+          return;
+        }
         const result = await searchProspects(campaign.id);
+        if ("error" in result) {
+          toast.error(result.error);
+          return;
+        }
         if (result.source === "demo") {
           toast.success(
             `Demo search: ${result.matched} matched` +
@@ -223,12 +231,16 @@ export function CampaignWorkspace({
   function regenerateSelected() {
     start(async () => {
       try {
-        await generateOutreachDrafts({
+        const result = await generateOutreachDrafts({
           campaignId: campaign.id,
           prospectIds: selectedIds,
           channel: defaultChannel,
           excludeLowSignal: true,
         });
+        if ("error" in result) {
+          toast.error(result.error);
+          return;
+        }
         toast.success("Drafts regenerated");
         refresh();
       } catch (err) {
@@ -241,6 +253,10 @@ export function CampaignWorkspace({
     start(async () => {
       try {
         const result = await generateDueFollowUps(campaign.id);
+        if ("error" in result) {
+          toast.error(result.error);
+          return;
+        }
         toast.success(
           result.generated
             ? `Generated ${result.generated} follow-up drafts`
