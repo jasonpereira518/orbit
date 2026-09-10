@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/sheet";
 import { ContactForm } from "@/components/contacts/contact-form";
 import { DeleteContactButton } from "@/components/contacts/delete-contact-button";
+import { MergeContactButton } from "@/components/contacts/merge-contact-button";
 import type { ContactInput } from "@/actions/contacts";
 
 export function ContactEditSheet({
@@ -54,7 +55,8 @@ export function ContactEditSheet({
               className="rounded-none border-0 bg-transparent p-0 shadow-none"
               onSuccess={() => setOpen(false)}
             />
-            <div className="border-t border-border/60 pt-4">
+            <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-4">
+              <MergeContactButton id={contactId} name={name} />
               <DeleteContactButton id={contactId} name={name} />
             </div>
           </div>

@@ -136,8 +136,12 @@ async function syncGoogleCalendar(
     // network. This is the same choice the ICS subscription already makes, and the opposite
     // of the one-shot file import, which is annotate-only.
     createsContacts: true,
-    // `calendarAdapter`'s figure: an attendee list makes a name-only match strong evidence.
-    matchConfidence: 0.6,
+    // No `matchConfidence` override: this source CREATES contacts, so it takes the default
+    // DUPLICATE_MERGE_CONFIDENCE (0.85). It used to pass 0.6 — the bare-full-name tier —
+    // which meant two different people who happened to share a full name were merged into
+    // one contact by the next sync, silently and permanently. Name+company and name+title
+    // still fold; a name on its own now becomes a review suggestion instead.
+    // `calendarAdapter` keeps 0.6 because it only annotates and never creates or merges.
   });
 
   let cursor = conn.syncCursor?.calendar ?? null;

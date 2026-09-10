@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { Plus } from "lucide-react";
+import { Copy, Plus } from "lucide-react";
 import { listContactLetters, listContactsPage } from "@/actions/contacts";
 import { CONTACTS_PAGE_SIZE, type ContactSort } from "@/lib/contacts-page";
 import { getPlanOverview } from "@/actions/settings";
+import { countDuplicates } from "@/actions/duplicates";
 import { buttonVariants } from "@/components/ui/button";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import { ContactsFilters } from "@/components/contacts/contacts-filters";
@@ -39,12 +40,14 @@ export default async function ContactsPage({
     letter: params.letter,
   };
 
-  const [page, letters, planOverview] = await Promise.all([
+  const [page, letters, planOverview, duplicateCount] = await Promise.all([
     // One page, not the whole network. Filtering, searching and ordering all happen in
     // Postgres now, so this costs the same whether the user knows 50 people or 50,000.
     listContactsPage({ ...filters, limit: CONTACTS_PAGE_SIZE }),
     listContactLetters(),
     getPlanOverview(),
+    // Cheap and capped; decides whether the review entry point appears at all.
+    countDuplicates(),
   ]);
 
   return (
@@ -58,6 +61,15 @@ export default async function ContactsPage({
       }
       actions={
         <>
+          {duplicateCount > 0 ? (
+            <Link
+              href="/contacts/duplicates"
+              className={cn(buttonVariants({ variant: "outline" }))}
+            >
+              <Copy className="mr-1 h-4 w-4" aria-hidden />
+              {duplicateCount >= 99 ? "99+ duplicates" : `${duplicateCount} duplicate${duplicateCount === 1 ? "" : "s"}`}
+            </Link>
+          ) : null}
           <RefreshContactsButton />
           <Link
             href="/capture"
