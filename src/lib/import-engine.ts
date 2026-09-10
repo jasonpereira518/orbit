@@ -19,6 +19,7 @@ import {
 } from "@/lib/contact-writes";
 import { internalFetch } from "@/lib/internal-auth";
 import { createCompanyResolver } from "@/lib/companies";
+import { recordDuplicateSuggestion } from "@/lib/contact-merge";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { refreshOutreachSuggestions } from "@/lib/reminders";
 import {
@@ -506,7 +507,12 @@ export async function runImportJob(importId: string): Promise<void> {
 
         if (pendingRows.length === 0) break;
 
-        const toCreate: { row: PendingRow; input: ContactInput }[] = [];
+        const toCreate: {
+          row: PendingRow;
+          input: ContactInput;
+          /** A name-tier match this import declined to fold; queued for review after insert. */
+          lookalike?: { contactId: string; reason: string; confidence: number };
+        }[] = [];
         const toUpdate: { row: PendingRow; contactId: string; input: Partial<ContactInput> }[] = [];
         const toSkip: PendingRow[] = [];
 
@@ -523,14 +529,32 @@ export async function runImportJob(importId: string): Promise<void> {
 
           const dups = findDuplicateCandidatesIndexed(duplicateIndex, probe);
 
-          if (dups[0] && dups[0].confidence >= matchConfidence) {
+          // Same rule as ingest (`canFold` in `src/lib/ingest/events.ts`): fold when the
+          // match clears the confidence floor, otherwise create and queue the pair for
+          // review rather than discarding it.
+          const best = dups[0];
+          const canFold = best ? best.confidence >= matchConfidence : false;
+
+          if (best && canFold) {
             toUpdate.push({
               row,
-              contactId: dups[0].contact.id,
-              input: adapter.toMerge(payload, dups[0].contact),
+              contactId: best.contact.id,
+              input: adapter.toMerge(payload, best.contact),
             });
           } else if (createsContacts) {
-            toCreate.push({ row, input: adapter.toCreate(payload) });
+            toCreate.push({
+              row,
+              input: adapter.toCreate(payload),
+              // A match too weak to fold — a bare "Same full name" hit, typically. Recorded
+              // rather than dropped: it is the likeliest duplicate this row produced.
+              lookalike: best && !best.strong && !canFold
+                ? {
+                    contactId: best.contact.id,
+                    reason: best.reason,
+                    confidence: best.confidence,
+                  }
+                : undefined,
+            });
           } else {
             // An annotate-only import (calendar) has nobody to attach this row to. It still
             // has to reach a terminal status: the loop re-queries pending rows every pass, so
@@ -599,11 +623,25 @@ export async function runImportJob(importId: string): Promise<void> {
               // Only reached once the insert has actually succeeded — a batch whose insert
               // throws is caught by `writeWithNarrowing`, which retries smaller slices of the
               // same `batch`, so nothing here may run for a batch that didn't really write.
+              const suggestions: Array<[string, string, string, number]> = [];
               created.forEach((contact, i) => {
                 addToDuplicateIndex(duplicateIndex, contact);
                 contactIdByRowId.set(batch[i].row.id, contact.id);
                 touchedContactIds.push(contact.id);
+                const lookalike = batch[i].lookalike;
+                if (lookalike) {
+                  suggestions.push([
+                    contact.id,
+                    lookalike.contactId,
+                    lookalike.reason,
+                    lookalike.confidence,
+                  ]);
+                }
               });
+              // After the insert, so both sides of the pair exist for the foreign keys.
+              for (const [a, b, reason, confidence] of suggestions) {
+                await recordDuplicateSuggestion(userId, a, b, reason, confidence);
+              }
               contactsCreated += created.length;
               if (headroom !== null) headroom = Math.max(0, headroom - created.length);
 
