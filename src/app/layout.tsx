@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Fraunces, Outfit } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
-import { AuthProvider } from "@/components/auth-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 import { WarpProvider } from "@/components/warp/warp-provider";
 import { Analytics } from "@vercel/analytics/next";
@@ -54,13 +53,14 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <AuthProvider>
-            {/* Owns the app <-> /pricing lift-off. Must sit at the ROOT: those
-                two live in different route groups, so anything lower unmounts
-                mid-flight when the group swaps. */}
-            <WarpProvider>{children}</WarpProvider>
-            <Toaster />
-          </AuthProvider>
+          {/* No ClerkProvider here: it lives in (clerk)/layout.tsx, so the
+              pages in (site) — the landing page, /interest and the docs — ship
+              no Clerk JS at all. */}
+          {/* Owns the app <-> /pricing lift-off. Must sit at the ROOT: those
+              two live in different route groups, so anything lower unmounts
+              mid-flight when the group swaps. */}
+          <WarpProvider>{children}</WarpProvider>
+          <Toaster />
         </ThemeProvider>
         <Analytics />
         <SpeedInsights />

@@ -1,5 +1,9 @@
 /**
- * Asserts that every page under `src/app/(marketing)/` is reachable without signing in.
+ * Asserts that every marketing page is reachable without signing in. Marketing pages live in
+ * two places since Clerk was taken off the top of the funnel: `src/app/(site)/` (the landing
+ * page, /interest and the docs, which load no Clerk) and `src/app/(clerk)/(marketing)/`
+ * (/pricing, which does). Both are scanned — dropping either would silently stop checking
+ * the pages in it, and the failure only shows in production.
  *
  * This exists because the failure mode is invisible in development: `proxy.ts` only calls
  * `auth.protect()` when Clerk is configured, so locally (no keys) every route returns 200
@@ -13,10 +17,10 @@ import { join } from "node:path";
 import { createRouteMatcher } from "@clerk/nextjs/server";
 import { PUBLIC_ROUTES } from "../src/lib/public-routes";
 
-const MARKETING_DIR = "src/app/(marketing)";
+const MARKETING_DIRS = ["src/app/(site)", "src/app/(clerk)/(marketing)"];
 
 /** Every route a `page.tsx` under the marketing group serves, as a URL path. */
-function marketingRoutes(dir = MARKETING_DIR, prefix = ""): string[] {
+function marketingRoutes(dir: string, prefix = ""): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
@@ -39,7 +43,7 @@ const check = (path: string) =>
   isPublic({ nextUrl: { pathname: path } } as Parameters<typeof isPublic>[0]);
 
 function main() {
-  const routes = marketingRoutes().sort();
+  const routes = MARKETING_DIRS.flatMap((dir) => marketingRoutes(dir)).sort();
   console.log(`Marketing routes found: ${routes.join(", ")}\n`);
 
   const missing: string[] = [];
