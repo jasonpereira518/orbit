@@ -30,6 +30,8 @@ import { searchContactsForPicker } from "@/actions/contacts";
 import { mergeDuplicatePair } from "@/actions/duplicates";
 import type { ContactPickerOption } from "@/lib/contacts-page";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export function MergeContactButton({ id, name }: { id: string; name: string }) {
   const router = useRouter();
@@ -59,13 +61,11 @@ export function MergeContactButton({ id, name }: { id: string; name: string }) {
         await mergeDuplicatePair(target.id, id, "Merged by hand");
         setOpen(false);
         toast.success(`Merged into ${target.fullName}`, {
-          description: "Undo it any time from Contacts → Duplicates.",
+          description: "Undo it any time from Contacts → Duplicates",
         });
         router.push(`/contacts/${target.id}`);
       } catch (err) {
-        toast.error("Could not merge", {
-          description: err instanceof Error ? err.message : "Please try again.",
-        });
+        toast.error(friendlyError(err, TOAST_COPY.mergeFailed));
       }
     });
 

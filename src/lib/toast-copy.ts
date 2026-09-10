@@ -25,6 +25,7 @@ export const TOAST_COPY = {
   sendFailed: "That didn’t send — try again?",
   deleteFailed: "Couldn’t delete that — try again?",
   undoFailed: "Couldn’t undo that — try again?",
+  mergeFailed: "Couldn’t merge those — try again?",
   importFailed: "That import didn’t finish — try again?",
   previewFailed: "Couldn’t preview that file — check it and try again",
   connectFailed: "Couldn’t connect your account — try again?",
