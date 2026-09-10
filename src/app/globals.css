@@ -2029,3 +2029,13 @@ html[data-celebration-handoff] [data-app-logo] {
     transparent 100%
   );
 }
+
+/* The contacts A-Z rail hides itself on short viewports (a landscape phone), so the
+ * page must stop reserving room for it at the same height. The rail publishes the
+ * gutter as an inline style on the root element, which only an important declaration
+ * can override. Keep the 500px threshold in step with the rail's own. */
+@media (max-height: 500px) {
+  :root {
+    --content-rail-gutter: 0px !important;
+  }
+}

@@ -197,7 +197,10 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 >
                   {i + 1}. {label}
                 </span>
-                <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                {/* Hidden on phones: four steps share 370px there, and the figure cost each
+                    label enough to truncate it ("1. Audien…"). The bar below says the same
+                    thing, and carries the value for assistive tech. */}
+                <span className="hidden shrink-0 text-[10px] tabular-nums text-muted-foreground sm:inline">
                   {Math.round(value * 100)}%
                 </span>
               </div>

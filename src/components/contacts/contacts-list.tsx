@@ -769,6 +769,11 @@ function AlphabetScrubber({
     <div
       className={cn(
         "pointer-events-none fixed top-1/2 right-2 z-40 -translate-y-1/2 sm:right-4",
+        // Gone on short viewports — a landscape phone. Centred at 70% of a ~330pt
+        // viewport it rose into the header and covered the notification bell, and its
+        // 27 letters had about 6pt each between the header and the nav. The gutter it
+        // reserves is dropped at the same height in globals.css.
+        "[@media(max-height:500px)]:hidden",
         "pb-[env(safe-area-inset-bottom)]"
       )}
     >
