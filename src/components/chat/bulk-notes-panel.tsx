@@ -167,17 +167,19 @@ export function BulkNotesPanel({
   } | null>(null);
   const [mentions, setMentions] = useState<PreviewMention[]>([]);
   const [hasApiKey, setHasApiKey] = useState(hasApiKeyProp ?? true);
+  /** Whether to mention a fallback at all — see `ingestPayloads`. */
+  const [wisprConfigured, setWisprConfigured] = useState(false);
   const [pending, start] = useTransition();
 
   useEffect(() => {
-    if (hasApiKeyProp !== undefined) {
-      setHasApiKey(hasApiKeyProp);
-      return;
-    }
     let cancelled = false;
     getSettings()
       .then((settings) => {
-        if (!cancelled) setHasApiKey(settings.hasApiKey);
+        if (cancelled) return;
+        // `hasApiKeyProp` is the server's answer and stays authoritative when given; only
+        // the Wispr flag needs this round-trip.
+        if (hasApiKeyProp === undefined) setHasApiKey(settings.hasApiKey);
+        setWisprConfigured(Boolean(settings.hasWisprKey));
       })
       .catch(() => {
         // Keep extract enabled; the action returns a clear error if needed.
@@ -185,6 +187,10 @@ export function BulkNotesPanel({
     return () => {
       cancelled = true;
     };
+  }, [hasApiKeyProp]);
+
+  useEffect(() => {
+    if (hasApiKeyProp !== undefined) setHasApiKey(hasApiKeyProp);
   }, [hasApiKeyProp]);
 
   const accepted = items.filter((i) => i.decision === "accepted");
@@ -399,6 +405,18 @@ export function BulkNotesPanel({
     setIngestSources(res.sources || []);
     setFileName(label);
     toast.success(successMessage);
+
+    // A silent downgrade is the failure mode worth naming. Someone who configured Wispr
+    // and got Whisper — because the key was rejected, or the service was down — would
+    // otherwise notice only that the names came back spelled wrong, with no reason given.
+    // Said once, quietly, and only when a Wispr key exists to have been used.
+    if (res.transcriptionEngine && res.transcriptionEngine !== "wispr" && wisprConfigured) {
+      toast.info(
+        res.transcriptionEngine === "whisper"
+          ? "Transcribed with Whisper — Wispr didn’t answer"
+          : "Transcribed with Gemini — Wispr didn’t answer"
+      );
+    }
   }
 
   /**
