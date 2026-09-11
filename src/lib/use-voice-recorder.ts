@@ -87,9 +87,24 @@ export type VoiceRecorderHandle = {
   /** Rounded to `TICK_MS`; drives the running clock only. */
   elapsedMs: number;
   recording: boolean;
+  /**
+   * Build the AudioContext now, inside the gesture, without touching the microphone.
+   *
+   * For a caller that decides to record only after the gesture has ended — a long-press
+   * whose timer fires 350ms after the finger went down. `start()` adopts the primed
+   * context; `cancel()` closes it if the press turns out to be a tap.
+   */
+  prime: () => void;
   start: () => void;
   stop: () => void;
+  /** Abandon the session — also mid-permission-prompt, and a primed-but-unused context. */
   cancel: () => void;
+  /**
+   * Retry a context the browser handed back suspended. Call it from a pointerup, which is
+   * a user activation on every platform even where the pointerdown that started the
+   * recording was not.
+   */
+  resumeAudio: () => void;
   /** Clear a settled error back to idle, without touching the device. */
   reset: () => void;
 };
@@ -135,6 +150,8 @@ export function useVoiceRecorder(
 
   const streamRef = useRef<MediaStream | null>(null);
   const ctxRef = useRef<AudioContext | null>(null);
+  /** Built by `prime()`, waiting for a `start()` to adopt it. */
+  const primedCtxRef = useRef<AudioContext | null>(null);
   const nodeRef = useRef<AudioWorkletNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const chunksRef = useRef<Int16Array[]>([]);
@@ -180,9 +197,11 @@ export function useVoiceRecorder(
     for (const track of streamRef.current?.getTracks() ?? []) track.stop();
     streamRef.current = null;
 
-    const ctx = ctxRef.current;
-    ctxRef.current = null;
-    if (ctx && ctx.state !== "closed") void ctx.close().catch(() => {});
+    for (const ref of [ctxRef, primedCtxRef]) {
+      const ctx = ref.current;
+      ref.current = null;
+      if (ctx && ctx.state !== "closed") void ctx.close().catch(() => {});
+    }
 
     level.set(0);
   }, [level]);
@@ -256,18 +275,51 @@ export function useVoiceRecorder(
   }, [finish]);
 
   const cancel = useCallback(() => {
-    if (nodeRef.current === null) return;
-    endReasonRef.current = "cancel";
-    finish("cancel");
-  }, [finish]);
+    if (nodeRef.current !== null) {
+      endReasonRef.current = "cancel";
+      finish("cancel");
+      return;
+    }
+    // Nothing recorded yet: either a start still waiting on the permission prompt, or a
+    // context primed for a press that turned out to be a tap. Bumping the session makes
+    // the in-flight start stop whatever stream it is eventually handed.
+    const wasRequesting = ctxRef.current !== null;
+    sessionRef.current++;
+    teardown();
+    if (wasRequesting) {
+      setState("idle");
+      setElapsedMs(0);
+      cb.current.onSessionEnd?.("cancel");
+    }
+  }, [finish, teardown]);
 
   const reset = useCallback(() => {
     setState((s) => (s === "error" ? "idle" : s));
     setError(null);
   }, []);
 
+  const prime = useCallback(() => {
+    if (nodeRef.current || ctxRef.current || primedCtxRef.current) return;
+    if (!isVoiceRecordingSupported()) return;
+    const Ctor = getAudioContextCtor();
+    if (!Ctor) return;
+    const ctx = new Ctor({ sampleRate: TARGET_SAMPLE_RATE });
+    primedCtxRef.current = ctx;
+    // Asked now because this is the last gesture there will be before the hold timer fires.
+    // Browsers that do not count a touch pointerdown as activation leave it suspended, and
+    // `resumeAudio` gets another go on release.
+    if (ctx.state === "suspended") void ctx.resume().catch(() => {});
+  }, []);
+
+  const resumeAudio = useCallback(() => {
+    const ctx = ctxRef.current ?? primedCtxRef.current;
+    if (ctx && ctx.state === "suspended") void ctx.resume().catch(() => {});
+  }, []);
+
   const start = useCallback(() => {
-    if (nodeRef.current !== null) return;
+    // `ctxRef` is set from the first line of a start until teardown, so this also turns
+    // away a second press while the permission prompt is still up.
+    if (nodeRef.current !== null || ctxRef.current !== null) return;
     if (!isVoiceRecordingSupported()) {
       // An insecure origin is the one unsupported case a developer can fix, so it is worth
       // naming separately from a browser that simply has no worklet.
@@ -298,8 +350,14 @@ export function useVoiceRecorder(
     }
     // Asking for 16 kHz saves the resample when it is honoured. Safari and several Android
     // builds ignore it and give the hardware rate, which is why every consumer reads
-    // `ctx.sampleRate` back rather than assuming.
-    const ctx = new Ctor({ sampleRate: TARGET_SAMPLE_RATE });
+    // `ctx.sampleRate` back rather than assuming. A context `prime()` built earlier, inside
+    // the gesture that led here, is the better one to use when there is one.
+    const primed = primedCtxRef.current;
+    primedCtxRef.current = null;
+    const ctx =
+      primed && primed.state !== "closed"
+        ? primed
+        : new Ctor({ sampleRate: TARGET_SAMPLE_RATE });
     ctxRef.current = ctx;
 
     void (async () => {
@@ -321,7 +379,11 @@ export function useVoiceRecorder(
         streamRef.current = stream;
 
         // Autoplay policy can hand back a suspended context even inside a click handler.
-        if (ctx.state === "suspended") await ctx.resume();
+        // Not awaited: without an activation Chrome's `resume()` stays pending until the
+        // next gesture, and a press-to-talk start would sit on "requesting" until the
+        // finger lifted. The graph is built either way and frames flow once it runs;
+        // `resumeAudio` retries on release.
+        if (ctx.state === "suspended") void ctx.resume().catch(() => {});
 
         await ctx.audioWorklet.addModule(WORKLET_URL);
         if (session !== sessionRef.current) return;
@@ -401,9 +463,11 @@ export function useVoiceRecorder(
     level,
     elapsedMs,
     recording: state === "recording",
+    prime,
     start,
     stop,
     cancel,
+    resumeAudio,
     reset,
   };
 }
