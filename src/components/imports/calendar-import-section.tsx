@@ -14,6 +14,8 @@ import {
   ImportProgress,
 } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 type CalendarPreview = Awaited<ReturnType<typeof previewCalendarImport>>;
 
@@ -134,7 +136,7 @@ export function CalendarImportSection({
                   );
                 } catch (err) {
                   toast.error(
-                    err instanceof Error ? err.message : "Preview failed",
+                    friendlyError(err, TOAST_COPY.previewFailed),
                   );
                 }
               })
@@ -160,7 +162,7 @@ export function CalendarImportSection({
                 setCalendarText("");
                 setCalendarFileName(null);
               } catch (err) {
-                toast.error(err instanceof Error ? err.message : "Import failed");
+                toast.error(friendlyError(err, TOAST_COPY.importFailed));
               }
             }}
           >

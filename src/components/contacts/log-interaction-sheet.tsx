@@ -25,8 +25,9 @@ import {
 } from "@/lib/interaction-types";
 import { requestInteractionFlight } from "@/components/contacts/interaction-flight";
 import { pickLockedParticipant, withLockedSeedPerson } from "@/lib/note-batches";
-import { isMissingAiApiKeyError } from "@/lib/errors";
+import { friendlyError, isMissingAiApiKeyError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 function todayYmd() {
   return format(new Date(), "yyyy-MM-dd");
@@ -101,7 +102,7 @@ export function LogInteractionSheet({
       // summarized.
       parseDateFromNotes: !date,
     });
-    toast.success(reason ? `Logged — ${reason}` : "Interaction logged");
+    toast.success(reason ? `Logged — ${reason}` : "Logged");
     onOpenChange(false);
     reset();
     router.refresh();
@@ -226,7 +227,7 @@ export function LogInteractionSheet({
                     toast.success("Undone");
                     router.refresh();
                   })
-                  .catch(() => toast.error("Could not undo"));
+                  .catch(() => toast.error(TOAST_COPY.undoFailed));
               },
             },
           }
@@ -239,7 +240,7 @@ export function LogInteractionSheet({
         }
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not log interaction"
+          friendlyError(err, "Couldn’t log that — try again?")
         );
       } finally {
         setStage("idle");
