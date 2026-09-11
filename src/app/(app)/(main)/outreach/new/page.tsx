@@ -1,6 +1,12 @@
 import { OutreachWizard } from "@/components/outreach/outreach-wizard";
+import { requireUserId } from "@/lib/auth";
+import { getEntitlements } from "@/lib/entitlements";
+import { OutreachLocked } from "@/components/locked-feature";
 
-export default function NewOutreachPage() {
+export default async function NewOutreachPage() {
+  const { canUseOutreach } = await getEntitlements(await requireUserId());
+  if (!canUseOutreach) return <OutreachLocked />;
+
   return (
     <div className="space-y-6">
       <div>

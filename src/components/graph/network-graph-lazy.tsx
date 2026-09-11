@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import type { getGraphData } from "@/actions/graph";
 import { predictSlowIntro } from "@/lib/graph/intro-choreography";
 import { beginIntro } from "@/lib/graph/intro-signal";
+import { SMALL_SKY_QUERY } from "@/components/graph/use-small-sky";
 import {
   ConstellationLoading,
   CONSTELLATION_STAGE_HEIGHT,
@@ -48,6 +49,16 @@ const NetworkGraphCompact = dynamic(
  * would have nowhere to draw. The bus refuses it anyway; this just avoids asking.
  */
 function decideFromPayload(contactCount: number | null) {
+  // The canvas renderer has no mount cost worth covering, and `ConstellationIntro` has
+  // already suppressed the run for these devices. Asking again would be harmless but
+  // misleading — this is the second of the two decision points, and both must agree.
+  if (
+    typeof window !== "undefined" &&
+    window.matchMedia(SMALL_SKY_QUERY).matches
+  ) {
+    return;
+  }
+
   const reduced =
     typeof window !== "undefined" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;

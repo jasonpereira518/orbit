@@ -380,6 +380,10 @@ export function ChatPanel() {
   }, []);
 
   useEffect(() => {
+    // The empty state reads top-down, like a page. Pinning it to the bottom on mount —
+    // on a phone, where the no-key notice leaves the pane ~150px tall — scrolled its
+    // heading out of view and cut its first line in half under the chat header.
+    if (messages.length === 0 && !busy) return;
     if (!stickToBottomRef.current && !isNearBottom()) return;
     // Defer so DOM has laid out new messages
     requestAnimationFrame(() => scrollToBottom(true));
@@ -844,10 +848,11 @@ export function ChatPanel() {
   return (
     <>
       {/*
-        Explicit viewport height so the card is always bounded.
-        Internal message list is the only scroller (flex 1 1 0 + overflow-y-auto).
-        Mobile offsets: top header + page title + padding + bottom nav.
-        Desktop offsets: page title + vertical padding.
+        Always bounded; the internal message list is the only scroller (flex 1 1 0 +
+        overflow-y-auto). On phones the chat page bounds itself and this card fills
+        what is left (so the no-key notice comes out of the card, not out from under
+        the nav). From md up it keeps an explicit viewport height: page title +
+        vertical padding.
       */}
       {/* Sized by the flex column it sits in, NOT a viewport calc. The old
           `h-[calc(100dvh-16.5rem)]` hardcoded an assumption about how much chrome was above
@@ -973,7 +978,7 @@ export function ChatPanel() {
               ) : (
                 <>
                   {messages.length === 0 && !busy && (
-                    <div className="flex flex-1 flex-col items-center justify-center gap-3 py-16 text-center">
+                    <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center sm:py-16">
                       <p className="font-[family-name:var(--font-display)] text-xl text-ink sm:text-2xl">
                         Ask your network
                       </p>

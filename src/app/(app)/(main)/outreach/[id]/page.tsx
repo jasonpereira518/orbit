@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCampaign } from "@/actions/outreach";
+import { requireUserId } from "@/lib/auth";
+import { getEntitlements } from "@/lib/entitlements";
+import { OutreachLocked } from "@/components/locked-feature";
 import { CampaignEditor } from "@/components/outreach/campaign-editor";
 import { CampaignWorkspace } from "@/components/outreach/campaign-workspace";
 import { buttonVariants } from "@/components/ui/button";
@@ -14,6 +17,8 @@ export default async function OutreachCampaignPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const { canUseOutreach } = await getEntitlements(await requireUserId());
+  if (!canUseOutreach) return <OutreachLocked />;
 
   let campaign;
   try {
