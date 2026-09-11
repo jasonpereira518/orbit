@@ -14,7 +14,11 @@ import {
   tokensFromAnthropic,
   type TokenCounts,
 } from "@/lib/usage-events";
-import { aiProviderErrorMessage } from "@/lib/errors";
+import {
+  AI_INCOMPLETE_MESSAGE,
+  aiProviderErrorMessage,
+  aiProviderLabel,
+} from "@/lib/errors";
 import {
   RECOMMENDATIONS_MARKER,
   createAnswerSplitter,
@@ -596,15 +600,9 @@ export async function completeJson(
           err instanceof Error &&
           err.message.startsWith("Failed to parse AI JSON")
         ) {
-          throw new Error("AI returned an incomplete response. Try again.");
+          throw new Error(AI_INCOMPLETE_MESSAGE);
         }
-        const label =
-          provider === "gemini"
-            ? "Gemini"
-            : provider === "openai"
-              ? "OpenAI"
-              : "Anthropic";
-        throw new Error(aiProviderErrorMessage(err, label));
+        throw new Error(aiProviderErrorMessage(err, aiProviderLabel(provider)));
       }
     },
   );
@@ -774,15 +772,9 @@ async function completeMultimodalJsonInner(
       err instanceof Error &&
       err.message.startsWith("Failed to parse AI JSON")
     ) {
-      throw new Error("AI returned an incomplete response. Try again.");
+      throw new Error(AI_INCOMPLETE_MESSAGE);
     }
-    const label =
-      provider === "gemini"
-        ? "Gemini"
-        : provider === "openai"
-          ? "OpenAI"
-          : "Anthropic";
-    throw new Error(aiProviderErrorMessage(err, label));
+    throw new Error(aiProviderErrorMessage(err, aiProviderLabel(provider)));
   }
 }
 

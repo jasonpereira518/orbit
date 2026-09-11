@@ -1,6 +1,8 @@
 import { cache } from "react";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
+import { isClerkConfigured, isDemoMode } from "@/lib/demo-account";
+import { ensureLocalDemoData } from "@/lib/demo-data/ensure";
 import { needsOnboarding } from "@/lib/onboarding";
 import { ensureUserSettings } from "@/lib/user-settings";
 
@@ -25,18 +27,17 @@ export class AccountSuspendedError extends Error {
   }
 }
 
-export function isClerkConfigured() {
-  return Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
-}
+export { isClerkConfigured, isDemoMode };
 
-/** Local dev without Clerk keys — shared demo-user data. */
-export function isDemoMode() {
-  return !isClerkConfigured() && process.env.NODE_ENV === "development";
-}
-
-/** Idempotent per-request bootstrap so layouts + pages don't repeat DB work. */
+/**
+ * Idempotent per-request bootstrap so layouts + pages don't repeat DB work. On localhost it
+ * also fills an empty account with the demo workspace (see `ensureLocalDemoData`), before
+ * anything downstream — the onboarding gate included — reads the account.
+ */
 export const bootstrapAuthenticatedUser = cache(async (userId: string) => {
-  return ensureUserSettings(userId);
+  const settings = await ensureUserSettings(userId);
+  await ensureLocalDemoData(userId);
+  return settings;
 });
 
 export async function getPostAuthRedirectPath(userId: string) {

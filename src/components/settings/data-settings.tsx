@@ -67,7 +67,7 @@ export function DataSettings() {
                 String(Date.now())
               );
               await deleteAllData();
-              toast.success("All data deleted");
+              toast.success("All your data is deleted");
             });
           }}
         >

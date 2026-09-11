@@ -22,7 +22,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
+import { friendlyError } from "@/lib/errors";
 import {
   askNetwork,
   createChatThread,
@@ -87,6 +87,7 @@ import {
   uniqueMentionName,
 } from "@/lib/chat-mentions";
 import { ANCHOR_INTERFERENCE, shiftAnchor, spliceSpan } from "@/lib/dictation";
+import { TOAST_COPY } from "@/lib/toast-copy";
 import { useDictation } from "@/lib/use-dictation";
 
 type ChatResult = Extract<
@@ -288,13 +289,13 @@ export function ChatPanel() {
       // same message, not stack identical copies.
       if (effect === "toast-denied") {
         toast.error(
-          "Orbit needs microphone access to dictate. Enable it in your browser's site settings.",
+          "Orbit needs microphone access to dictate — allow it in your browser’s site settings",
           { id: "dictation-denied" },
         );
       } else if (effect === "toast-no-microphone") {
-        toast.error("No microphone found.", { id: "dictation-no-mic" });
+        toast.error("No microphone found", { id: "dictation-no-mic" });
       } else if (effect === "toast-network") {
-        toast.error("Dictation needs a connection right now.", {
+        toast.error("Dictation needs a connection right now", {
           id: "dictation-network",
         });
       }
@@ -436,7 +437,7 @@ export function ChatPanel() {
       clearComposer();
       requestAnimationFrame(() => scrollToBottom(false));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to load chat");
+      toast.error(friendlyError(err, "Couldn’t load that chat — try again?"));
     } finally {
       setLoadingThread(false);
     }
@@ -462,7 +463,7 @@ export function ChatPanel() {
         ]);
         requestAnimationFrame(() => textareaRef.current?.focus());
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not start chat");
+        toast.error(friendlyError(err, "Couldn’t start a chat — try again?"));
       }
     });
   }, [clearComposer]);
@@ -481,7 +482,7 @@ export function ChatPanel() {
           }
           toast.success("Chat deleted");
         } catch (err) {
-          toast.error(err instanceof Error ? err.message : "Delete failed");
+          toast.error(friendlyError(err, TOAST_COPY.deleteFailed));
         }
       });
     },
@@ -522,7 +523,9 @@ export function ChatPanel() {
         try {
           activeId = await ensureThread();
         } catch (err) {
-          toast.error(toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message);
+          // Creating a thread only inserts a row — it never needs an AI key, so the key
+          // message was the wrong fallback here.
+          toast.error(friendlyError(err, TOAST_COPY.chatStartFailed));
           setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
           resetQuestion(q);
           setStreaming(false);
@@ -1295,7 +1298,7 @@ function RecommendationCard({
                     Date.now() + 3 * 24 * 60 * 60 * 1000
                   ).toISOString(),
                 });
-                toast.success("Reminder created");
+                toast.success(TOAST_COPY.reminderSet);
               })
             }
           >

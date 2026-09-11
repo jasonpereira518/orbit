@@ -12,6 +12,7 @@ import { ContactNextSteps, type OpenActionItem } from "@/components/contacts/con
 import { flashSection } from "@/components/layout/section-flash";
 import { requestInteractionReveal } from "@/components/contacts/reveal-interaction";
 import type { RecentDiscussion } from "@/lib/contact-brief";
+import { friendlyError } from "@/lib/errors";
 
 /**
  * Scrolls the timeline to the interaction a "recent discussion" line came from and glows it.
@@ -44,7 +45,7 @@ export function ContactBriefCard({ contactId, standing, recentDiscussions, nextS
           <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 text-xs text-muted-foreground" disabled={pending}
             onClick={() => start(async () => {
               try { await regenerateContactSummary(contactId); router.refresh(); }
-              catch (err) { toast.error(err instanceof Error ? err.message : "Could not refresh"); }
+              catch (err) { toast.error(friendlyError(err, "Couldn’t refresh that — try again?")); }
             })}>
             <RefreshCw className="size-3.5" /> {stale ? "Updating…" : "Refresh"}
           </Button>

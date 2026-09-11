@@ -15,6 +15,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { SELECTABLE_INTERACTION_TYPES } from "@/lib/interaction-types";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 type CaptureMode = "messy" | "structured";
 
@@ -86,7 +88,7 @@ export function CaptureForm({
         );
       })
       .catch(() => {
-        if (!cancelled) toast.error("Could not load contacts");
+        if (!cancelled) toast.error(TOAST_COPY.loadContactsFailed);
       })
       .finally(() => {
         if (!cancelled) setContactsLoading(false);
@@ -236,7 +238,7 @@ export function CaptureForm({
               start(async () => {
                 const contactId = initialContactId || structuredContactId;
                 if (!contactId) {
-                  toast.error("Choose a contact");
+                  toast.error("Pick a contact first");
                   return;
                 }
                 try {
@@ -257,12 +259,12 @@ export function CaptureForm({
                       structuredFollowUpDays
                     );
                   }
-                  toast.success("Interaction logged");
+                  toast.success("Logged");
                   router.push(`/contacts/${contactId}`);
                   router.refresh();
                 } catch (err) {
                   toast.error(
-                    err instanceof Error ? err.message : "Could not save"
+                    friendlyError(err, TOAST_COPY.saveFailed)
                   );
                 }
               })

@@ -16,7 +16,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { ArrowUp, Loader2, RotateCcw, Search, Sparkles, X } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
+import { friendlyError } from "@/lib/errors";
 import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
 import { useFeedbackPanelState } from "@/lib/feedback-events";
 import { askNetwork, createChatThread } from "@/actions/chat";
@@ -35,6 +35,7 @@ import {
   type KeywordSearchHit,
 } from "@/lib/keyword-search";
 import { cn } from "@/lib/utils";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 /**
  * Split out of the shell's chunk.
@@ -350,7 +351,9 @@ export function FloatingAskBar() {
         try {
           threadId = await ensureChatThread();
         } catch (err) {
-          toast.error(toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message);
+          // Creating a thread only inserts a row — it never needs an AI key, so the key
+          // message was the wrong fallback here.
+          toast.error(friendlyError(err, TOAST_COPY.chatStartFailed));
           setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
           setQuery(q);
           setChatPending(false);
@@ -857,7 +860,7 @@ function MiniRecommendation({
                     Date.now() + 3 * 24 * 60 * 60 * 1000
                   ).toISOString(),
                 });
-                toast.success("Reminder created");
+                toast.success(TOAST_COPY.reminderSet);
               })
             }
           >

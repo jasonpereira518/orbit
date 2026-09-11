@@ -12,6 +12,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 type Settings = Awaited<ReturnType<typeof getSettings>>;
 
@@ -161,12 +163,12 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
                 setSettings(await getSettings());
                 toast.success(
                   res.embeddingReset
-                    ? "Settings saved. Search embeddings reset for the new provider."
+                    ? "Saved — search will re-index for the new provider"
                     : "AI settings saved"
                 );
               } catch (err) {
                 toast.error(
-                  err instanceof Error ? err.message : "Failed to save"
+                  friendlyError(err, TOAST_COPY.saveFailed)
                 );
               }
             })

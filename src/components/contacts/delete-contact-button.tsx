@@ -43,7 +43,7 @@ export function DeleteContactButton({
           router.refresh();
         } catch {
           setLeaving(false);
-          toast.error("Could not delete contact");
+          toast.error("Couldn’t delete that contact — try again?");
         }
       });
     }, 280);

@@ -38,7 +38,7 @@ import {
   buildDuplicateIndex,
   findDuplicateCandidatesIndexed,
 } from "@/lib/duplicates";
-import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
+import { friendlyError } from "@/lib/errors";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { resolveMentions, type MentionCandidate } from "@/lib/mention-resolution";
 import type { PreviewMention } from "@/lib/note-batches";
@@ -49,6 +49,7 @@ import {
   type NoteBatchParticipantInput,
 } from "@/lib/note-batch-save";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export type BulkNoteDuplicate = {
   id: string;
@@ -167,7 +168,7 @@ export async function ingestCaptureMedia(input: {
     if (uploadBytes > CAPTURE_MAX_UPLOAD_BYTES) {
       return {
         ok: false as const,
-        error: `That upload is ${formatUploadSize(uploadBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}. Try fewer or smaller files.`,
+        error: `That upload is ${formatUploadSize(uploadBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}, so try fewer or smaller files`,
       };
     }
 
@@ -183,9 +184,10 @@ export async function ingestCaptureMedia(input: {
       sources: normalized.sources,
     };
   } catch (err) {
+    // Data, not a throw — so never stripped in production. See `friendlyError`.
     return {
       ok: false as const,
-      error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message,
+      error: friendlyError(err, TOAST_COPY.fileReadFailed),
     };
   }
 }
@@ -378,10 +380,11 @@ export async function parseBulkCaptureNotes(
       mentions,
     };
   } catch (err) {
-    const { toUserFacingError } = await import("@/lib/errors");
+    // Data, not a throw — so never stripped in production, and `toUserFacingError` put
+    // raw text such as "Failed to parse AI JSON: {…" in front of the person verbatim.
     return {
       ok: false as const,
-      error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message,
+      error: friendlyError(err, TOAST_COPY.notesReadFailed),
     };
   }
 }

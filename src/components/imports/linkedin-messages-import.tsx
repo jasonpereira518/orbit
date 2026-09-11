@@ -13,6 +13,8 @@ import {
   readCsvOrZipMessages,
 } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 type MessagesPreview = Awaited<ReturnType<typeof previewLinkedInMessagesCsv>>;
 type MessagePerson = MessagesPreview["people"][number];
@@ -96,7 +98,7 @@ export function LinkedInMessagesImport() {
               setSelected(new Set());
               setMeta(null);
               toast.error(
-                err instanceof Error ? err.message : "Could not read file",
+                friendlyError(err, "Couldn’t read that file — is it the right export?"),
               );
             }
           });
@@ -117,7 +119,7 @@ export function LinkedInMessagesImport() {
                 toast.success(`Loaded ${res.totalConversations} people`);
               } catch (err) {
                 toast.error(
-                  err instanceof Error ? err.message : "Preview failed",
+                  friendlyError(err, TOAST_COPY.previewFailed),
                 );
               }
             })
@@ -144,7 +146,7 @@ export function LinkedInMessagesImport() {
               setMessagesText("");
               setFileName(null);
             } catch (err) {
-              toast.error(err instanceof Error ? err.message : "Import failed");
+              toast.error(friendlyError(err, TOAST_COPY.importFailed));
             }
           }}
         >
