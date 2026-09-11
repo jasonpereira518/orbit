@@ -82,6 +82,11 @@ export const userSettings = pgTable("user_settings", {
   geminiApiKeyEncrypted: text("gemini_api_key_encrypted"),
   openaiApiKeyEncrypted: text("openai_api_key_encrypted"),
   anthropicApiKeyEncrypted: text("anthropic_api_key_encrypted"),
+  /**
+   * Wispr Flow transcription. Not an `AiProvider`: Wispr transcribes and does not
+   * complete, so it never participates in provider/model selection. See `src/lib/wispr.ts`.
+   */
+  wisprApiKeyEncrypted: text("wispr_api_key_encrypted"),
   aiModel: text("ai_model").default("gemini-3.5-flash"),
   onboardingCompletedAt: timestamp("onboarding_completed_at", {
     withTimezone: true,
@@ -1797,7 +1802,7 @@ export const usageEvents = pgTable(
     userId: text("user_id").notNull(),
     /** Dotted call-site id, e.g. "capture.parse", "chat.answer", "search.embed". */
     operation: text("operation").notNull(),
-    provider: text("provider").$type<"gemini" | "openai" | "anthropic">().notNull(),
+    provider: text("provider").$type<"gemini" | "openai" | "anthropic" | "wispr">().notNull(),
     model: text("model").notNull(),
     kind: text("kind")
       .$type<"completion" | "multimodal" | "embedding" | "transcription">()

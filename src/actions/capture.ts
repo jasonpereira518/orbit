@@ -182,6 +182,7 @@ export async function ingestCaptureMedia(input: {
       text: normalized.text,
       hints: normalized.hints,
       sources: normalized.sources,
+      transcriptionEngine: normalized.transcriptionEngine ?? null,
     };
   } catch (err) {
     // Data, not a throw — so never stripped in production. See `friendlyError`.

@@ -19,6 +19,9 @@ import {
   CAPTURE_MAX_UPLOAD_BYTES,
   formatUploadSize,
 } from "@/lib/capture-limits";
+import { MAX_RECORDING_MS, formatElapsed } from "@/lib/voice-recording";
+import type { VoiceRecording } from "@/lib/use-voice-recorder";
+import { VoiceRecorder } from "@/components/capture/voice-recorder";
 import { getSettings } from "@/actions/settings";
 import { BusyHint } from "@/components/imports/import-utils";
 import {
@@ -125,6 +128,7 @@ function IngestMeta({
 
 export function BulkNotesPanel({
   compact = false,
+  showRecorder = false,
   preferredContactId = null,
   preferredContactName = null,
   lockedParticipantId = null,
@@ -134,6 +138,14 @@ export function BulkNotesPanel({
   onSaved,
 }: {
   compact?: boolean;
+  /**
+   * Put a microphone above the textarea and let a recording drive the ingest.
+   *
+   * A flag rather than a separate panel: recording only changes where the text comes
+   * from, and the paste/review/done machine below is identical either way. Forking it
+   * would mean two copies of the parse, the review carousel and the save.
+   */
+  showRecorder?: boolean;
   preferredContactId?: string | null;
   preferredContactName?: string | null;
   /**
@@ -183,17 +195,19 @@ export function BulkNotesPanel({
   } | null>(null);
   const [mentions, setMentions] = useState<PreviewMention[]>([]);
   const [hasApiKey, setHasApiKey] = useState(hasApiKeyProp ?? true);
+  /** Whether to mention a fallback at all — see `ingestPayloads`. */
+  const [wisprConfigured, setWisprConfigured] = useState(false);
   const [pending, start] = useTransition();
 
   useEffect(() => {
-    if (hasApiKeyProp !== undefined) {
-      setHasApiKey(hasApiKeyProp);
-      return;
-    }
     let cancelled = false;
     getSettings()
       .then((settings) => {
-        if (!cancelled) setHasApiKey(settings.hasApiKey);
+        if (cancelled) return;
+        // `hasApiKeyProp` is the server's answer and stays authoritative when given; only
+        // the Wispr flag needs this round-trip.
+        if (hasApiKeyProp === undefined) setHasApiKey(settings.hasApiKey);
+        setWisprConfigured(Boolean(settings.hasWisprKey));
       })
       .catch(() => {
         // Keep extract enabled; the action returns a clear error if needed.
@@ -201,6 +215,10 @@ export function BulkNotesPanel({
     return () => {
       cancelled = true;
     };
+  }, [hasApiKeyProp]);
+
+  useEffect(() => {
+    if (hasApiKeyProp !== undefined) setHasApiKey(hasApiKeyProp);
   }, [hasApiKeyProp]);
 
   const accepted = items.filter((i) => i.decision === "accepted");
@@ -450,25 +468,11 @@ export function BulkNotesPanel({
             base64: await fileToBase64(file),
           }))
         );
-        const res = await ingestCaptureMedia({
-          text: notes,
-          files: payloads,
-        });
-        if (!res.ok) {
-          const missingKey = isMissingAiApiKeyError(res.error);
-          if (missingKey) setHasApiKey(false);
-          toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
-          return;
-        }
-        setNotes(res.text);
-        setCaptureHints(res.hints || null);
-        setIngestSources(res.sources || []);
-        setFileName(
-          files.length === 1
-            ? files[0]!.name
-            : `${files.length} files ingested`
+        await ingestPayloads(
+          payloads,
+          files.length === 1 ? files[0]!.name : `${files.length} files ingested`,
+          "Ready — check the text, then extract people"
         );
-        toast.success("Ready — check the text, then extract people");
       } catch (err) {
         toast.error(
           friendlyError(err, TOAST_COPY.fileReadFailed)
@@ -477,13 +481,6 @@ export function BulkNotesPanel({
     });
   }
 
-  /**
-   * Extract people from a block of notes.
-   *
-   * Takes the text as an argument rather than reading `notes`, because scanning calls
-   * this the instant a transcript lands and must not race the state update that put it
-   * there.
-   */
   /** A file dropped on the card takes the same path as one chosen from the picker. */
   async function acceptDroppedFiles(files: File[]) {
     if (!files.length) return;
@@ -506,6 +503,13 @@ export function BulkNotesPanel({
    */
   const scannedPhotos = ingestSources.some((s) => s.startsWith("photos"));
 
+  /**
+   * Extract people from a block of notes.
+   *
+   * Takes the text as an argument rather than reading `notes`, because scanning calls
+   * this the instant a transcript lands and must not race the state update that put it
+   * there.
+   */
   function runParse(text: string) {
     if (!text.trim()) return;
     start(async () => {
@@ -596,7 +600,80 @@ export function BulkNotesPanel({
         if (message === MISSING_AI_API_KEY_MESSAGE) setHasApiKey(false);
         toast.error(message);
       }
-});
+    });
+  }
+
+  /**
+   * The shared tail of every media ingest.
+   *
+   * Picked files and recorded audio differ only in how the bytes were obtained; from here
+   * down they are the same call, the same failure handling and the same "transcript lands
+   * in the textarea, editable" contract. Kept as one function so a fix to either never has
+   * to be made twice.
+   */
+  async function ingestPayloads(
+    payloads: Array<{ filename: string; mimeType: string; base64: string }>,
+    label: string,
+    successMessage: string
+  ) {
+    const res = await ingestCaptureMedia({ text: notes, files: payloads });
+    if (!res.ok) {
+      const missingKey = isMissingAiApiKeyError(res.error);
+      if (missingKey) setHasApiKey(false);
+      toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
+      return;
+    }
+    setNotes(res.text);
+    setCaptureHints(res.hints || null);
+    setIngestSources(res.sources || []);
+    setFileName(label);
+    toast.success(successMessage);
+
+    // A silent downgrade is the failure mode worth naming. Someone who configured Wispr
+    // and got Whisper — because the key was rejected, or the service was down — would
+    // otherwise notice only that the names came back spelled wrong, with no reason given.
+    // Said once, quietly, and only when a Wispr key exists to have been used.
+    if (res.transcriptionEngine && res.transcriptionEngine !== "wispr" && wisprConfigured) {
+      toast.info(
+        res.transcriptionEngine === "whisper"
+          ? "Transcribed with Whisper — Wispr didn’t answer"
+          : "Transcribed with Gemini — Wispr didn’t answer"
+      );
+    }
+  }
+
+  /**
+   * A finished recording, straight into the path a picked audio file already takes.
+   *
+   * The size check `handleFilesSelected` does is unnecessary here: the recorder's own
+   * six-minute cap bounds the WAV at ~11 MB, which `scripts/smoke-voice-recording.ts`
+   * pins below `CAPTURE_MAX_UPLOAD_BYTES`. Asserted rather than assumed, because the two
+   * limits live in different files and only the test currently ties them together.
+   */
+  function handleRecording(recording: VoiceRecording) {
+    if (recording.byteLength > CAPTURE_MAX_UPLOAD_BYTES) {
+      toast.error(
+        `That recording is ${formatUploadSize(recording.byteLength)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}`
+      );
+      return;
+    }
+    start(async () => {
+      try {
+        await ingestPayloads(
+          [
+            {
+              filename: recording.filename,
+              mimeType: recording.mimeType,
+              base64: recording.base64,
+            },
+          ],
+          `Voice note · ${formatElapsed(recording.durationMs)}`,
+          "Transcribed — check the text, then extract people"
+        );
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.fileReadFailed));
+      }
+    });
   }
 
   return (
@@ -637,9 +714,27 @@ export function BulkNotesPanel({
               extract and review everyone else.
             </p>
           )}
+          {showRecorder && (
+            <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+              <VoiceRecorder
+                onRecording={handleRecording}
+                busy={pending}
+                busyLabel="Transcribing…"
+                onCapReached={() =>
+                  toast.info(
+                    `Stopped at ${formatElapsed(MAX_RECORDING_MS)} — your recording was kept`
+                  )
+                }
+              />
+            </div>
+          )}
           <div>
             <Label htmlFor="bulk-notes">
-              {compact ? "Paste or upload notes" : "Paste, upload or photograph notes"}
+              {showRecorder
+                ? "Or type it out"
+                : compact
+                  ? "Paste or upload notes"
+                  : "Paste, upload or photograph notes"}
             </Label>
             {!compact && (
               <p className="mt-1 text-sm text-muted-foreground">

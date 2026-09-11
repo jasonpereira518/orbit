@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   gemini_api_key_encrypted text,
   openai_api_key_encrypted text,
   anthropic_api_key_encrypted text,
+  wispr_api_key_encrypted text,
   ai_model text DEFAULT 'gemini-3.5-flash',
   onboarding_completed_at timestamptz,
   first_name text,
@@ -1088,12 +1089,14 @@ CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expir
  * matches, which no longer auto-merge).
  * v34 = chat_messages.attached_contacts: the people attached to a chat question (#141).
  * v35 = the last-interaction index the chat composer's person pickers order on (#141).
+ * v36 = user_settings.wispr_api_key_encrypted: the voice-note transcription key (#161).
  * v38 = capture_handoffs: the phone-to-desktop scanning handoff (#143). Written as 33,
  * then 34, and moved each time another branch landed first with that number. It skips
- * 36 and 37 instead of taking the next free integer. #146's pre-merge preview builds
- * stamped 36 onto the production database with different DDL, and 37 is #146's own
- * claim. A number some database may already hold is the one choice that silently skips
- * this table, so the next free integer was not free.
+ * 37 instead of taking the next free integer, because 37 is #146's open claim. (36 was
+ * skipped too while it was unsafe: #146's pre-merge preview builds stamped it onto the
+ * production database with different DDL. #141's v35 deploy re-stamped that database
+ * before #161 took 36, so #161's DDL still ran.) A number some database may already hold
+ * is the one choice that silently skips this table, so the next free integer was not free.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
@@ -1103,7 +1106,7 @@ CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expir
 // be stamped with, not just one above main. A repeated version is the one real failure
 // mode this counter has. The alters are all `IF NOT EXISTS` and merge harmlessly, but a
 // collision means one branch's DDL never runs. The changelog above says which numbers are
-// taken and why 36 and 37 are skipped.
+// taken and why 37 is skipped.
 export const SCHEMA_VERSION = 38;
 
 /**
@@ -1574,6 +1577,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "timestamptz NOT NULL DEFAULT now()"
   );
   await ensureColumn(client, "imports", "total_rows", "integer");
+  await ensureColumn(client, "user_settings", "wispr_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "apollo_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "resend_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_account_sid_encrypted", "text");
@@ -2037,6 +2041,7 @@ const alters = [
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS stats jsonb DEFAULT '{}'`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS total_rows integer`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wispr_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS apollo_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS resend_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_account_sid_encrypted text`,
