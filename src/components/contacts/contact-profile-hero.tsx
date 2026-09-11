@@ -131,7 +131,6 @@ function StickyMiniBar({
   title,
   firstName,
   fullName,
-  linkedinUrl,
   profileImageUrl,
   channels,
   formInitial,
@@ -144,7 +143,6 @@ function StickyMiniBar({
   title?: string | null;
   firstName?: string | null;
   fullName: string;
-  linkedinUrl?: string | null;
   profileImageUrl?: string | null;
   channels: ChannelProps;
   formInitial: Partial<ContactInput> & { tagNames?: string[] };
@@ -176,9 +174,8 @@ function StickyMiniBar({
           contactId={contactId}
           firstName={firstName}
           fullName={fullName}
-          linkedinUrl={linkedinUrl}
           profileImageUrl={profileImageUrl}
-          resolveLinkedIn
+          resolveOnDemand
           size="sm"
           className="size-9 shrink-0"
         />
@@ -336,7 +333,6 @@ export function ContactProfileHero({
           title={title}
           firstName={firstName}
           fullName={fullName}
-          linkedinUrl={linkedinUrl}
           profileImageUrl={profileImageUrl}
           channels={channels}
           formInitial={formInitial}
@@ -393,9 +389,8 @@ export function ContactProfileHero({
               contactId={contactId}
               firstName={firstName}
               fullName={fullName}
-              linkedinUrl={linkedinUrl}
               profileImageUrl={profileImageUrl}
-              resolveLinkedIn
+              resolveOnDemand
               size="lg"
               className="size-24 sm:size-36"
             />

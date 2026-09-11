@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   x_handle text,
   website text,
   profile_image_url text,
+  profile_image_checked_at timestamp,
   relationship_score integer NOT NULL DEFAULT 2,
   priority_level integer NOT NULL DEFAULT 0,
   source text,
@@ -1104,14 +1105,20 @@ CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expir
  * built as 33 and moved when duplicate prevention landed first — the fifth collision, and
  * the same rule: re-using 33 would have left those columns unapplied on every database
  * main had already stamped.
- * v40 = v38 plus #161's v36 column, merged in from main. Builds of this branch from before
- * that merge (local databases, preview deploys) stamped 38 without the column, and a
- * reused 38 made them skip it: every user_settings read then failed. Merging another
- * branch's DDL is a DDL change, so it takes a new number. 39 was then events-feature-
- * revision's claim.
- * v41 = v40 plus #152's v39 event columns, merged in from main. Same rule as v40: a
- * build of this branch pushed at 40 without those columns may already have stamped a
- * database, and a reused 40 would skip them there.
+ * v40 = contact photo cooldown (#146): contacts.profile_image_checked_at. This PR has been
+ * 33, 36 and 37 in turn. 37 was reserved for it (#152 skipped past it to 39), but it can't
+ * be reused now: this branch's own preview stamped 37 onto the preview database with DDL
+ * that predates #152's columns, so a 37 carrying them would skip on that database. 38 is
+ * claimed by the scan-notes branch. Also worth knowing: until Sep 11 2026 Preview shared
+ * Production's DATABASE_URL, so preview builds stamped production directly. Previews now
+ * migrate their own Neon project.
+ * v41 and this branch's own 40 = capture_handoffs again, renumbered as main's DDL was
+ * merged in (#161's column, then #152's). Neither reached main, and this branch's 40 is not
+ * main's v40 above: two different DDL sets carried that number, so neither 40 nor 41 is
+ * safe to reuse. Merging another branch's DDL is a DDL change, so it takes a new number:
+ * a database a pre-merge build already stamped would otherwise skip the merged-in columns
+ * (this worktree's own did, and every user_settings read failed).
+ * v43 = capture_handoffs with #146's v40 column merged in. 42 is claimed by meeting-capture.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
@@ -1121,8 +1128,8 @@ CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expir
 // be stamped with, not just one above main. A repeated version is the one real failure
 // mode this counter has. The alters are all `IF NOT EXISTS` and merge harmlessly, but a
 // collision means one branch's DDL never runs. The changelog above says which numbers are
-// taken and why 37 is skipped.
-export const SCHEMA_VERSION = 41;
+// taken and why 42 is skipped.
+export const SCHEMA_VERSION = 43;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1611,6 +1618,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   );
   await ensureColumn(client, "contacts", "school", "text");
   await ensureColumn(client, "contacts", "profile_image_url", "text");
+  await ensureColumn(client, "contacts", "profile_image_checked_at", "timestamp");
   await ensureColumn(
     client,
     "user_settings",
@@ -2112,6 +2120,7 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS error_events_user_created_idx ON error_events(user_id, created_at)`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_checked_at timestamp`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS x_handle text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_linkedin_idx ON contacts(user_id, linkedin_url)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle)`,

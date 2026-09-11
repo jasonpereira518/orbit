@@ -48,8 +48,16 @@ export const RATE_LIMITS = {
    * token's ten-minute life.
    */
   captureHandoff: { limit: 12, windowSec: 300 },
-  /** On-demand LinkedIn photo resolution in `/api/avatars/[contactId]` (Microlink quota). */
-  avatarResolve: { limit: 30, windowSec: 60 },
+  /**
+   * On-demand photo resolution in `/api/avatars/[contactId]`.
+   *
+   * Sized for the contacts list, where every photoless row visible resolves itself —
+   * 30/min was sized for the old behaviour (one profile page at a time) and 429s within
+   * a couple of scrolls. This bucket is a runaway-loop guard, not the quota guard:
+   * each upstream source (Unavatar and Microlink are both ~25 lookups a day) is
+   * protected by its own process-wide cooldown via `AvatarSourceRateLimitError`.
+   */
+  avatarResolve: { limit: 120, windowSec: 60 },
   /**
    * `submitFeedback`: a form post carrying up to three screenshots. Generous per
    * submission, tight per window — this is the largest row a user can create directly,

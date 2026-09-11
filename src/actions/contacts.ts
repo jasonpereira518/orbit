@@ -52,11 +52,11 @@ import {
   AVATAR_BACKFILL_BATCH_SIZE,
   AVATAR_BACKFILL_BUDGET_MS,
   downloadAndPersistAvatar,
+  fetchGravatarPhotoUrl,
   fetchLinkedInPhotoUrl,
-  MicrolinkRateLimitError,
+  AvatarSourceRateLimitError,
 } from "@/lib/contact-avatar";
-import { clientContactAvatarUrl } from "@/lib/contact-avatar-url";
-import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
+import { clientAvatarUrlSql, contactsListSelection } from "@/lib/contact-avatar-sql";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
 import {
   countAvatarBackfillCandidates,
@@ -168,27 +168,7 @@ export async function listContactsPage(
   if (cursor) conditions.push(cursorCondition(cursor));
 
   const rows = await db
-    .select({
-      id: contacts.id,
-      fullName: contacts.fullName,
-      firstName: contacts.firstName,
-      lastName: contacts.lastName,
-      preferredName: contacts.preferredName,
-      title: contacts.title,
-      company: contacts.company,
-      school: contacts.school,
-      location: contacts.location,
-      linkedinUrl: contacts.linkedinUrl,
-      profileImageUrl: contacts.profileImageUrl,
-      relationshipScore: contacts.relationshipScore,
-      closeness: contacts.closeness,
-      closenessTier: contacts.closenessTier,
-      priorityLevel: contacts.priorityLevel,
-      nextFollowUpAt: contacts.nextFollowUpAt,
-      lastInteractionAt: contacts.lastInteractionAt,
-      sortKey: contacts.sortKey,
-      updatedAt: contacts.updatedAt,
-    })
+    .select(contactsListSelection)
     .from(contacts)
     .where(and(...conditions))
     .orderBy(...orderFor(sort))
@@ -215,8 +195,9 @@ export async function listContactsPage(
       school: row.school,
       location: row.location,
       linkedinUrl: row.linkedinUrl,
-      // Never ship base64 data URLs in list payloads.
-      profileImageUrl: clientContactAvatarUrl(row.id, row.profileImageUrl),
+      // Already browser-safe: `clientAvatarUrlSql` resolved this in Postgres.
+      profileImageUrl: row.profileImageUrl,
+      canResolveAvatar: Boolean(row.canResolveAvatar),
       relationshipScore: row.relationshipScore,
       closeness: (row.closeness ?? 0) / 100,
       closenessTier: row.closenessTier ?? "outer",
@@ -1099,10 +1080,19 @@ export async function backfillContactAvatars(
         deadline: Date.now() + AVATAR_BACKFILL_BUDGET_MS,
         persistRemote: downloadAndPersistAvatar,
         resolveLinkedIn: fetchLinkedInPhotoUrl,
+        resolveGravatar: fetchGravatarPhotoUrl,
         save: async (contactId, photoUrl) => {
           await db
             .update(contacts)
             .set({ profileImageUrl: photoUrl, updatedAt: new Date() })
+            .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+        },
+        markChecked: async (contactId) => {
+          // Deliberately does NOT touch updatedAt: a failed photo lookup is not a
+          // change to the contact, and bumping it would reorder the "recent" sort.
+          await db
+            .update(contacts)
+            .set({ profileImageCheckedAt: new Date() })
             .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
         },
       }),
@@ -1263,7 +1253,7 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
             contact.linkedinUrl
           );
         } catch (err) {
-          if (err instanceof MicrolinkRateLimitError) {
+          if (err instanceof AvatarSourceRateLimitError) {
             rateLimited = true;
             unmatched += 1;
             continue;
