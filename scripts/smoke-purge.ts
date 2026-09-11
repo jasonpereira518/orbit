@@ -265,6 +265,15 @@ async function seed() {
     icsUrl: "https://example.test/feed.ics",
   });
 
+  // A scan handoff in flight when the account is deleted: a live grant, and a transcript
+  // of the user's notes sitting behind it.
+  await db.insert(schema.captureHandoffs).values({
+    userId: USER,
+    tokenHash: "0".repeat(64),
+    expiresAt: new Date(Date.now() + 600_000),
+    transcript: "Ada Lovelace — Analytical Engines",
+  });
+
   await db.insert(schema.aiSuggestions).values({
     userId: USER,
     suggestionType: "reconnect",

@@ -2035,6 +2035,45 @@ export const apiKeys = pgTable(
 );
 
 /**
+ * One scanning session, handed from a signed-in desktop to a phone that is not signed in.
+ *
+ * WHY A TABLE AND NOT A SIGNED TOKEN. A stateless JWT would carry the grant without
+ * storage, but the phone has to hand something BACK, and the desktop has to notice — so
+ * there has to be a row for the transcript to land in and for polling to read. Given a row
+ * exists anyway, storing the hash buys single-use and revocation for free.
+ *
+ * `transcript` holds text only. The photos are transcribed inside the request that carries
+ * them and are never written anywhere — going via a phone must not silently upgrade
+ * ephemeral capture media into stored user imagery.
+ */
+export const captureHandoffs = pgTable(
+  "capture_handoffs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** SHA-256 of the token. The token itself exists only in the QR code. */
+    tokenHash: text("token_hash").notNull(),
+    status: text("status")
+      .$type<"pending" | "uploading" | "ready" | "claimed">()
+      .default("pending")
+      .notNull(),
+    transcript: text("transcript"),
+    pageCount: integer("page_count").default(0).notNull(),
+    /** The `photos:7/8` label, so the desktop can report partial success too. */
+    sources: text("sources"),
+    error: text("error"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    // Every request on the phone path is this one lookup.
+    uniqueIndex("capture_handoffs_token_uidx").on(t.tokenHash),
+    index("capture_handoffs_expiry_idx").on(t.expiresAt),
+  ]
+);
+
+/**
  * Replay protection for non-idempotent writes.
  *
  * `POST /v1/events` needs none — `ingestEvents` keys on `interactions.external_id`, so the

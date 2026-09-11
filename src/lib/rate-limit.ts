@@ -39,6 +39,16 @@ export const RATE_LIMITS = {
   /** Capture parsing, media ingestion and confirmation: each is a model call. */
   capture: { limit: 30, windowSec: 60 },
   /**
+   * Photos posted from a phone against a scan handoff token.
+   *
+   * Tighter than `capture`, and deliberately measured over five minutes rather than one:
+   * this is the only public write path that spends the account's AI budget, so the shape
+   * to bound is a token that leaked being used to run up a bill, not a person taking a
+   * burst of photos. A real scan session is a handful of pages and finishes inside the
+   * token's ten-minute life.
+   */
+  captureHandoff: { limit: 12, windowSec: 300 },
+  /**
    * One transcribed chunk of a live meeting (`/api/capture/meetings/[id]/chunks`). A
    * recording sends one about every minute; the headroom is for draining a backlog after the
    * connection comes back. Its own bucket so a long call can never starve capture's.
