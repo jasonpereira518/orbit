@@ -1,33 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { formatDistanceToNow } from "date-fns";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { cn } from "@/lib/utils";
-import { calendarDaysBetween } from "@/lib/dates";
+import { formatDueLabel } from "@/lib/dates";
 
+/** Delegates to the shared formatter; see `@/lib/dates`. */
 function followUpDueLabel(nextFollowUpAt?: Date | string | null) {
-  if (!nextFollowUpAt) return null;
-  const d = new Date(nextFollowUpAt);
-  if (Number.isNaN(d.getTime())) return null;
-  // Whole calendar days, so "due at 09:00 today" read at 17:00 is 0 days, not -1.
-  //
-  // The "Due today" branch below used to be unreachable: `d <= now` caught anything
-  // earlier today first, and `Math.max(1, ...)` then rounded a few seconds up to a full
-  // day. Pressing "Generate more" created eight follow-ups dated `now` and every one of
-  // them rendered "Overdue 1 day" immediately.
-  const days = calendarDaysBetween(new Date(), d);
-  if (days < 0) {
-    const n = Math.abs(days);
-    return { text: `Overdue ${n} day${n === 1 ? "" : "s"}`, overdue: true };
-  }
-  if (days === 0) return { text: "Due today", overdue: false };
-  if (days === 1) return { text: "Due tomorrow", overdue: false };
-  return {
-    text: `Due ${formatDistanceToNow(d, { addSuffix: true })}`,
-    overdue: false,
-  };
+  const due = formatDueLabel(nextFollowUpAt);
+  return due ? { text: due.text, overdue: due.tone === "overdue" } : null;
 }
 
 function lastTouchLabel(lastInteractionAt?: Date | string | null) {

@@ -9,6 +9,7 @@ import {
   useTransition,
 } from "react";
 import { formatDistanceToNow } from "date-fns";
+import { formatDueLabel } from "@/lib/dates";
 import {
   Bell,
   CalendarClock,
@@ -653,7 +654,8 @@ function NotificationRow({
           )}
           <p className="mt-1 text-xs text-muted-foreground">
             {item.dueAt
-              ? formatDistanceToNow(new Date(item.dueAt), { addSuffix: true })
+              ? (formatDueLabel(item.dueAt)?.text ??
+                formatDistanceToNow(new Date(item.dueAt), { addSuffix: true }))
               : item.kind === "suggestion"
                 ? "Outreach tip"
                 : item.kind === "suggested_reminder"

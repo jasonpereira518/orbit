@@ -2,6 +2,7 @@ import { and, eq, gte, sql } from "drizzle-orm";
 import { Resend } from "resend";
 import twilio from "twilio";
 import { getDb } from "@/db";
+import { isUnmailableAddress } from "@/lib/outreach-types";
 import {
   outreachCampaigns,
   outreachMessages,
@@ -92,6 +93,17 @@ export async function sendOutreachMessage(input: {
     throw new Error("LinkedIn automated send is not supported.");
   }
 
+  // The last line of defence, below every UI path and every bulk loop.
+  //
+  // `canAutoSend` hides the button, but a fabricated recipient must be impossible to
+  // mail even if some future caller forgets to ask. Reserved domains are checked
+  // directly rather than trusting a flag that has to be plumbed here.
+  if (input.toEmail && isUnmailableAddress(input.toEmail)) {
+    throw new Error(
+      "That prospect is a demo example, not a real person. Add an Apollo API key in Settings to search real prospects."
+    );
+  }
+
   const sentToday = await countSendsToday(input.userId);
   if (sentToday >= DAILY_SEND_LIMIT) {
     throw new Error(`Daily send limit of ${DAILY_SEND_LIMIT} reached.`);
@@ -135,3 +147,4 @@ export async function sendOutreachMessage(input: {
 
   return { deliveryId: message.sid };
 }
+

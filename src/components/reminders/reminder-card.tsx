@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { formatDistanceToNow } from "date-fns";
 import {
   Copy,
   Mail,
@@ -21,7 +20,7 @@ import {
 import type { ReminderActionKind } from "@/db/schema";
 import { ACTION_KIND_LABELS } from "@/lib/reminder-action-kind";
 import { ReminderDoneSnooze } from "@/components/reminders/reminder-done-snooze";
-import { calendarDaysBetween } from "@/lib/dates";
+import { formatAbsoluteDay, formatDueLabel } from "@/lib/dates";
 import { ReminderFormDialog } from "@/components/reminders/reminder-form-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ExpandableText } from "@/components/ui/expandable-text";
@@ -44,34 +43,6 @@ const TYPE_STYLES: Record<string, string> = {
   ai_suggested: "bg-violet-500/15 text-violet-800 dark:text-violet-200",
   extracted_date: "bg-amber-500/15 text-amber-800 dark:text-amber-200",
 };
-
-/**
- * Counts whole calendar days, not elapsed milliseconds.
- *
- * The old version did `overdue = d <= new Date()` and then floored the age up with
- * `Math.max(1, ...)`, so a reminder you set for *today* rendered "Overdue 1 day" the
- * moment you saved it — and eight follow-ups generated three seconds ago all claimed to
- * be a day late. There was no "Due today" branch at all, though the near-identical
- * `followUpDueLabel` in dashboard/due-follow-up-row.tsx has one.
- */
-function dueLabel(dueDate: Date | string | null | undefined) {
-  if (!dueDate) return null;
-  const d = new Date(dueDate);
-  if (Number.isNaN(d.getTime())) return null;
-
-  const days = calendarDaysBetween(new Date(), d);
-
-  if (days < 0) {
-    const n = Math.abs(days);
-    return { text: `Overdue ${n} day${n === 1 ? "" : "s"}`, overdue: true };
-  }
-  if (days === 0) return { text: "Due today", overdue: false };
-  if (days === 1) return { text: "Due tomorrow", overdue: false };
-  return {
-    text: `Due ${formatDistanceToNow(d, { addSuffix: true })}`,
-    overdue: false,
-  };
-}
 
 export type ReminderCardListOption = {
   id: string;
@@ -115,7 +86,7 @@ export function ReminderCard({
   /** Drives the reopen affordance and the completed styling. */
   status?: string;
 }) {
-  const due = dueLabel(dueDate);
+  const due = formatDueLabel(dueDate);
   const isDone = status === "done" || status === "completed";
   const typeLabel = noteBatchId ? "From notes" : TYPE_LABELS[reminderType] ?? "Task";
   const router = useRouter();
@@ -199,12 +170,17 @@ export function ReminderCard({
                 // same amber "Overdue 1 day" as a live one, so the Done tab was
                 // indistinguishable from the pending list except by which tab you were
                 // on.
-                due.overdue && !isDone
+                due.tone === "overdue" && !isDone
                   ? "font-medium text-amber-700 dark:text-amber-300"
                   : "text-muted-foreground"
               )}
             >
               {isDone ? "Completed" : due.text}
+              {/* The absolute day alongside the relative phrase: two reminders on the
+                  same date used to read "in about 4 hours" and "in about 24 hours". */}
+              {!isDone && formatAbsoluteDay(dueDate) && (
+                <span className="text-muted-foreground"> · {formatAbsoluteDay(dueDate)}</span>
+              )}
             </p>
           )}
 

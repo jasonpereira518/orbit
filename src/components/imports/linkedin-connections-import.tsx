@@ -13,7 +13,13 @@ import {
   ImportWarningBanner,
 } from "@/components/imports/import-utils";
 
+import {
+  MAX_IMPORT_PAYLOAD_BYTES,
+  formatImportSize,
+} from "@/lib/capture-limits";
+
 const LARGE_FILE_WARNING_BYTES = 15 * 1024 * 1024;
+
 import {
   startImportJob,
   useImportJob,
@@ -87,9 +93,17 @@ export function LinkedInConnectionsImport() {
         disabled={busy}
         fileName={fileName}
         onFile={(file) => {
+          // Checked before reading the file, so an oversized archive fails with a reason
+          // and a remedy instead of a JSON parser error from inside the framework.
+          if (file.size > MAX_IMPORT_PAYLOAD_BYTES) {
+            toast.error(
+              `That file is ${formatImportSize(file.size)}; the limit is ${formatImportSize(MAX_IMPORT_PAYLOAD_BYTES)}. LinkedIn archives arrive in parts — upload Connections.csv on its own, or split the file and import each half.`
+            );
+            return;
+          }
           if (file.size > LARGE_FILE_WARNING_BYTES) {
             toast.message(
-              `This is a large file (${(file.size / (1024 * 1024)).toFixed(1)}MB) — import may take a while.`
+              `This is a large file (${formatImportSize(file.size)}) — import may take a while.`
             );
           }
           start(async () => {

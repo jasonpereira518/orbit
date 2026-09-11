@@ -21,6 +21,9 @@
  * Pure: no network, no database. Run: npx tsx scripts/smoke-honest-reporting.ts
  */
 import { looksLikeCalendar, parseIcsEvents } from "../src/lib/calendar-import";
+import { isUnmailableAddress } from "../src/lib/outreach-types";
+import { canAutoSend, isDemoProspect } from "../src/lib/outreach-channels";
+import { formatDueLabel } from "../src/lib/dates";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -96,6 +99,73 @@ function main() {
     parseIcsEvents(VALID_ICS).length === 1,
     `got ${parseIcsEvents(VALID_ICS).length}`
   );
+
+  console.log("\nfabricated prospects are structurally un-sendable");
+
+  const demo = {
+    externalId: "demo-stripe-1",
+    email: "alex.chen@demo.orbit.invalid",
+    phone: "+14155551001",
+    enrichment: { demo: true },
+  };
+  const real = { externalId: "apollo-abc", email: "dana@stripe.com", phone: "+14155550123" };
+
+  check("a demo row is recognised by its id", isDemoProspect({ externalId: "demo-x-1" }));
+  check("and by its enrichment flag", isDemoProspect({ enrichment: { demo: true } }));
+  check("a real prospect is not", !isDemoProspect(real));
+
+  check("email send is refused for a demo prospect", !canAutoSend("email", demo));
+  check("sms send is refused for a demo prospect", !canAutoSend("sms", demo));
+  check("a real prospect can still be sent to", canAutoSend("email", real));
+  check("linkedin auto-send stays unsupported", !canAutoSend("linkedin", real));
+
+  // The UI rows that call canAutoSend carry `email` but not `externalId`/`enrichment`,
+  // so the address check is what actually protects them.
+  check(
+    "an unmailable address alone is enough to refuse",
+    !canAutoSend("email", { email: "alex.chen@demo.orbit.invalid" })
+  );
+
+  check("RFC 2606 example.com is unmailable", isUnmailableAddress("a@foo.example.com"));
+  check("RFC 6761 .invalid is unmailable", isUnmailableAddress("a@demo.orbit.invalid"));
+  check("bare example.com is unmailable", isUnmailableAddress("a@example.com"));
+  check(".test and .localhost are unmailable",
+    isUnmailableAddress("a@x.test") && isUnmailableAddress("a@x.localhost"));
+  check("an address with no domain is unmailable", isUnmailableAddress("nonsense"));
+  check("a real address is mailable", !isUnmailableAddress("dana@stripe.com"));
+  check(
+    "a domain merely CONTAINING 'test' is still mailable",
+    !isUnmailableAddress("dana@testing-labs.com"),
+    "the check is anchored to the TLD, not a substring"
+  );
+
+  console.log("\ndue labels say the same thing everywhere");
+
+  const noon = new Date(2026, 8, 10, 12, 0, 0);
+  const at = (y: number, m: number, d: number, h = 12) => new Date(y, m, d, h);
+
+  check(
+    "a reminder due this morning is 'Due today', not 'Overdue 1 day'",
+    formatDueLabel(at(2026, 8, 10, 9), noon)?.text === "Due today",
+    `got "${formatDueLabel(at(2026, 8, 10, 9), noon)?.text}"`
+  );
+  check(
+    "one created seconds ago is 'Due today'",
+    formatDueLabel(noon, noon)?.text === "Due today"
+  );
+  check("tomorrow reads as tomorrow", formatDueLabel(at(2026, 8, 11), noon)?.text === "Due tomorrow");
+  check(
+    "genuinely overdue keeps the word Overdue",
+    formatDueLabel(at(2026, 8, 3), noon)?.text === "Overdue 7 days"
+  );
+  check(
+    "one day overdue is singular",
+    formatDueLabel(at(2026, 8, 9), noon)?.text === "Overdue 1 day"
+  );
+  check("tone marks overdue", formatDueLabel(at(2026, 8, 3), noon)?.tone === "overdue");
+  check("tone marks today", formatDueLabel(noon, noon)?.tone === "today");
+  check("a null due date has no label", formatDueLabel(null) === null);
+  check("an unparseable date has no label", formatDueLabel("not-a-date") === null);
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

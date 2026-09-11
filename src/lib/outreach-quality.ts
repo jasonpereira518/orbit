@@ -1,4 +1,4 @@
-import type { OutreachChannel } from "@/lib/outreach-types";
+import { isUnmailableAddress, type OutreachChannel } from "@/lib/outreach-types";
 
 export type QualityGateRow = {
   messageId: string;
@@ -7,6 +7,10 @@ export type QualityGateRow = {
   channel: OutreachChannel;
   subject: string | null;
   body: string;
+  /** The recipient address, when the caller has it. Used for the demo-recipient gate. */
+  toEmail?: string | null;
+  /** True when this prospect was fabricated by the no-Apollo-key fallback. */
+  isDemo?: boolean;
 };
 
 export type QualityIssue = {
@@ -18,7 +22,8 @@ export type QualityIssue = {
     | "empty_subject"
     | "duplicate_body"
     | "missing_name"
-    | "too_generic";
+    | "too_generic"
+    | "demo_recipient";
   message: string;
 };
 
@@ -35,6 +40,17 @@ export function assessOutreachQuality(rows: QualityGateRow[]): {
   const bodyCounts = new Map<string, string[]>();
 
   for (const row of rows) {
+    if (row.isDemo || (row.toEmail && isUnmailableAddress(row.toEmail))) {
+      issues.push({
+        messageId: row.messageId,
+        prospectId: row.prospectId,
+        prospectName: row.prospectName,
+        code: "demo_recipient",
+        message:
+          "This is a demo example, not a real person. Add an Apollo API key in Settings to search real prospects.",
+      });
+    }
+
     const body = row.body?.trim() || "";
     if (!body) {
       issues.push({
@@ -104,7 +120,14 @@ export function assessOutreachQuality(rows: QualityGateRow[]): {
     }
   }
 
-  const blockingCodes = new Set(["empty_body", "empty_subject"]);
+  // Blocking, not a warning: a fabricated prospect is not a person, and no amount of
+  // "send anyway" should mail one. The gate previously stopped only on an empty body or
+  // subject, so demo rows sailed through it.
+  const blockingCodes = new Set([
+    "empty_body",
+    "empty_subject",
+    "demo_recipient",
+  ]);
   const blocking = issues.filter((i) => blockingCodes.has(i.code));
   const warnings = issues.filter((i) => !blockingCodes.has(i.code));
 

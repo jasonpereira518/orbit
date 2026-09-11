@@ -1,15 +1,54 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
 import { toast } from "@/lib/toast";
-import { deleteAllData, exportAllData } from "@/actions/settings";
+import {
+  deleteAllData,
+  exportAllData,
+  getDeletionFootprint,
+} from "@/actions/settings";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { AvatarSyncStatus } from "@/components/settings/avatar-sync-status";
 import { cancelImportJob } from "@/lib/import-job-runner";
 
+/** Typed exactly, so the gesture cannot be muscle memory. */
+const CONFIRM_PHRASE = "delete my data";
+
 export function DataSettings() {
   const [pending, start] = useTransition();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [footprint, setFootprint] = useState<{
+    contacts: number;
+    interactions: number;
+    reminders: number;
+    noteBatches: number;
+  } | null>(null);
+
+  function runDelete() {
+    start(async () => {
+      // Stop any in-flight background processes immediately.
+      // Import jobs stop after the current chunk.
+      cancelImportJob();
+      window.dispatchEvent(new Event("orbit:stop-operations"));
+      // Cross-tab best-effort: graph listeners can react via storage events.
+      localStorage.setItem("orbit:stop-operations", String(Date.now()));
+      await deleteAllData();
+      setConfirmOpen(false);
+      setTyped("");
+      toast.success("All data deleted");
+    });
+  }
 
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
@@ -53,27 +92,80 @@ export function DataSettings() {
           variant="outline"
           className="text-destructive"
           disabled={pending}
-          onClick={() => {
-            if (!confirm("Delete ALL your Orbit data? This cannot be undone."))
-              return;
+          onClick={() =>
             start(async () => {
-              // Stop any in-flight background processes immediately.
-              // Import jobs stop after the current chunk.
-              cancelImportJob();
-              window.dispatchEvent(new Event("orbit:stop-operations"));
-              // Cross-tab best-effort: graph listeners can react via storage events.
-              localStorage.setItem(
-                "orbit:stop-operations",
-                String(Date.now())
-              );
-              await deleteAllData();
-              toast.success("All data deleted");
-            });
-          }}
+              // Counts are fetched for the dialog: naming what is about to go is the
+              // difference between a confirmation and a formality.
+              setFootprint(await getDeletionFootprint().catch(() => null));
+              setTyped("");
+              setConfirmOpen(true);
+            })
+          }
         >
           Delete all data
         </Button>
       </div>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent className="sm:max-w-md" showCloseButton>
+          <DialogHeader>
+            <DialogTitle>Delete all your Orbit data?</DialogTitle>
+            <DialogDescription>
+              This permanently removes everything below. It cannot be undone, and
+              Orbit keeps no copy.
+            </DialogDescription>
+          </DialogHeader>
+
+          {footprint && (
+            <ul className="space-y-1 rounded-lg border border-border/70 bg-muted/40 px-3 py-2 text-sm text-ink">
+              <li>{footprint.contacts.toLocaleString()} contacts</li>
+              <li>{footprint.interactions.toLocaleString()} logged interactions</li>
+              <li>{footprint.reminders.toLocaleString()} reminders</li>
+              <li>{footprint.noteBatches.toLocaleString()} saved note pastes</li>
+              <li className="text-muted-foreground">
+                plus your chats, goals, imports, events and settings
+              </li>
+            </ul>
+          )}
+
+          <p className="text-sm text-muted-foreground">
+            Want a copy first? Close this and choose{" "}
+            <span className="font-medium text-ink">Export JSON</span>.
+          </p>
+
+          <div className="space-y-1.5">
+            <label htmlFor="confirm-delete" className="text-sm text-ink">
+              Type <span className="font-medium">{CONFIRM_PHRASE}</span> to confirm
+            </label>
+            <Input
+              id="confirm-delete"
+              value={typed}
+              autoComplete="off"
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder={CONFIRM_PHRASE}
+            />
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={pending}
+              onClick={() => setConfirmOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={
+                pending || typed.trim().toLowerCase() !== CONFIRM_PHRASE
+              }
+              onClick={runDelete}
+            >
+              {pending ? "Deleting…" : "Delete everything"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <AvatarSyncStatus />
     </section>
   );

@@ -13,6 +13,10 @@ import {
   readCsvOrZipMessages,
 } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
+import {
+  MAX_IMPORT_PAYLOAD_BYTES,
+  formatImportSize,
+} from "@/lib/capture-limits";
 
 type MessagesPreview = Awaited<ReturnType<typeof previewLinkedInMessagesCsv>>;
 type MessagePerson = MessagesPreview["people"][number];
@@ -84,6 +88,15 @@ export function LinkedInMessagesImport() {
           start(async () => {
             try {
               const { text, fileName: name } = await readCsvOrZipMessages(file);
+              // Measured on the extracted text, not the file: a messages export is
+              // usually a .zip, so a small archive can still expand past what a server
+              // action will carry — and Next truncates rather than rejecting.
+              const bytes = new Blob([text]).size;
+              if (bytes > MAX_IMPORT_PAYLOAD_BYTES) {
+                throw new Error(
+                  `That export holds ${formatImportSize(bytes)} of messages; the limit is ${formatImportSize(MAX_IMPORT_PAYLOAD_BYTES)}. Request a smaller date range from LinkedIn, or split the CSV.`
+                );
+              }
               setFileName(name);
               setMessagesText(text);
               const res = await previewLinkedInMessagesCsv(text);

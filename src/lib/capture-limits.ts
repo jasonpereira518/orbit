@@ -38,3 +38,20 @@ export const CAPTURE_MAX_UPLOAD_BYTES = 22 * 1024 * 1024;
 export function formatUploadSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/**
+ * The largest import payload the client will send to a server action.
+ *
+ * Next does NOT reject an oversized action body — it keeps the first N bytes, logs a
+ * warning server-side, and hands the action a truncated payload. A 44.7MB LinkedIn
+ * archive therefore died inside Next's own deserializer with "Unterminated string in
+ * JSON at position 33544733" and a 500, while the file picker still showed the file.
+ *
+ * Set below `CAPTURE_BODY_SIZE_LIMIT` (32MB) because CSV text is serialized into a JSON
+ * action payload, which adds escaping overhead on top of the raw bytes.
+ */
+export const MAX_IMPORT_PAYLOAD_BYTES = 24 * 1024 * 1024;
+
+export function formatImportSize(bytes: number) {
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}

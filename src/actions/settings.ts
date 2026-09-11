@@ -4,13 +4,29 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import {
+  actionItems,
   aiSuggestions,
+  calendarSubscriptions,
+  chatMessages,
+  chatThreads,
+  companies,
+  contactBriefs,
   contactEmbeddings,
+  contactExperiences,
+  contactProfiles,
   contacts,
+  eventAttendees,
+  events,
   imports,
   interactions,
+  noteBatches,
+  recruiterMessages,
+  reminderLists,
   reminders,
+  suggestedReminders,
   tags,
+  userGoals,
+  userRecruiterLinks,
   userSettings,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
@@ -366,13 +382,44 @@ export async function exportAllData() {
   const userId = await requireUserId();
   const db = await getDb();
 
+  // "Export everything" used to mean six tables — contacts, interactions, reminders,
+  // tags, imports and suggestions — while `purgeUserData` enumerates thirty-six. So the
+  // raw text of every pasted note, every chat, every profile and brief, goals, events and
+  // recruiter history all fell outside "everything", for a product whose pitch is "your
+  // network, your data".
+  //
+  // What is deliberately still excluded, and why:
+  //   - operational telemetry (usage_events, error_events, gate_events, extension_usage,
+  //     api_idempotency_keys, webhook deliveries) — Orbit's records about the account,
+  //     not the user's own content;
+  //   - secrets (api_keys, the encrypted provider keys and OAuth tokens on
+  //     user_settings / gmail_connections / outlook_connections) — a plaintext export is
+  //     the last place a credential should appear;
+  //   - contact_embeddings — derived vectors, regenerated from the content above.
   const [
     contactRows,
     interactionRows,
     reminderRows,
+    reminderListRows,
+    suggestedReminderRows,
     tagRows,
     importRows,
     suggestionRows,
+    noteBatchRows,
+    profileRows,
+    experienceRows,
+    briefRows,
+    actionItemRows,
+    companyRows,
+    eventRows,
+    eventAttendeeRows,
+    goalRows,
+    chatThreadRows,
+    chatMessageRows,
+    calendarSubscriptionRows,
+    recruiterMessageRows,
+    recruiterLinkRows,
+    settingsRow,
   ] = await Promise.all([
     db.query.contacts.findMany({
       where: eq(contacts.userId, userId),
@@ -380,11 +427,38 @@ export async function exportAllData() {
     }),
     db.query.interactions.findMany({ where: eq(interactions.userId, userId) }),
     db.query.reminders.findMany({ where: eq(reminders.userId, userId) }),
+    db.query.reminderLists.findMany({ where: eq(reminderLists.userId, userId) }),
+    db.query.suggestedReminders.findMany({
+      where: eq(suggestedReminders.userId, userId),
+    }),
     db.query.tags.findMany({ where: eq(tags.userId, userId) }),
     db.query.imports.findMany({ where: eq(imports.userId, userId) }),
     db.query.aiSuggestions.findMany({
       where: eq(aiSuggestions.userId, userId),
     }),
+    db.query.noteBatches.findMany({ where: eq(noteBatches.userId, userId) }),
+    db.query.contactProfiles.findMany({ where: eq(contactProfiles.userId, userId) }),
+    db.query.contactExperiences.findMany({
+      where: eq(contactExperiences.userId, userId),
+    }),
+    db.query.contactBriefs.findMany({ where: eq(contactBriefs.userId, userId) }),
+    db.query.actionItems.findMany({ where: eq(actionItems.userId, userId) }),
+    db.query.companies.findMany({ where: eq(companies.userId, userId) }),
+    db.query.events.findMany({ where: eq(events.userId, userId) }),
+    db.query.eventAttendees.findMany({ where: eq(eventAttendees.userId, userId) }),
+    db.query.userGoals.findMany({ where: eq(userGoals.userId, userId) }),
+    db.query.chatThreads.findMany({ where: eq(chatThreads.userId, userId) }),
+    db.query.chatMessages.findMany({ where: eq(chatMessages.userId, userId) }),
+    db.query.calendarSubscriptions.findMany({
+      where: eq(calendarSubscriptions.userId, userId),
+    }),
+    db.query.recruiterMessages.findMany({
+      where: eq(recruiterMessages.userId, userId),
+    }),
+    db.query.userRecruiterLinks.findMany({
+      where: eq(userRecruiterLinks.userId, userId),
+    }),
+    db.query.userSettings.findFirst({ where: eq(userSettings.userId, userId) }),
   ]);
 
   return {
@@ -392,9 +466,56 @@ export async function exportAllData() {
     contacts: contactRows,
     interactions: interactionRows,
     reminders: reminderRows,
+    reminderLists: reminderListRows,
+    suggestedReminders: suggestedReminderRows,
     tags: tagRows,
     imports: importRows,
     suggestions: suggestionRows,
+    noteBatches: noteBatchRows,
+    contactProfiles: profileRows,
+    contactExperiences: experienceRows,
+    contactBriefs: briefRows,
+    actionItems: actionItemRows,
+    companies: companyRows,
+    events: eventRows,
+    eventAttendees: eventAttendeeRows,
+    goals: goalRows,
+    chatThreads: chatThreadRows,
+    chatMessages: chatMessageRows,
+    // The outbound feed token is not here — it lives on `user_settings` and is redacted
+    // there; these rows only hold the URLs the user subscribed Orbit to.
+    calendarSubscriptions: calendarSubscriptionRows,
+    recruiterMessages: recruiterMessageRows,
+    recruiterLinks: recruiterLinkRows,
+    settings: settingsRow ? redactSettingsForExport(settingsRow) : null,
+  };
+}
+
+/**
+ * What is about to be destroyed, so the confirmation can name it.
+ *
+ * "Delete ALL your Orbit data? This cannot be undone." in a bare `window.confirm` was
+ * the entire guard in front of `purgeUserData` — a routine that deletes across
+ * thirty-six tables and is careful enough to document every one of them. The destruction
+ * was well built; only the door in front of it was flimsy.
+ */
+export async function getDeletionFootprint() {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const [contactRows, interactionRows, reminderRows, noteBatchRows] =
+    await Promise.all([
+      db.$count(contacts, eq(contacts.userId, userId)),
+      db.$count(interactions, eq(interactions.userId, userId)),
+      db.$count(reminders, eq(reminders.userId, userId)),
+      db.$count(noteBatches, eq(noteBatches.userId, userId)),
+    ]);
+
+  return {
+    contacts: contactRows,
+    interactions: interactionRows,
+    reminders: reminderRows,
+    noteBatches: noteBatchRows,
   };
 }
 
@@ -417,4 +538,25 @@ export async function getPlanOverview() {
   ]);
 
   return { entitlements, usage };
+}
+
+/**
+ * Strip every credential from a settings row before it leaves the building.
+ *
+ * Listed by name rather than picked by an allowlist on purpose: a new secret column
+ * added later should break this function's type, not quietly ride out in an export.
+ */
+function redactSettingsForExport<T extends Record<string, unknown>>(row: T) {
+  const {
+    geminiApiKeyEncrypted: _gemini,
+    openaiApiKeyEncrypted: _openai,
+    anthropicApiKeyEncrypted: _anthropic,
+    apolloApiKeyEncrypted: _apollo,
+    resendApiKeyEncrypted: _resend,
+    twilioAccountSidEncrypted: _twilioSid,
+    twilioAuthTokenEncrypted: _twilioToken,
+    calendarFeedToken: _calendarFeedToken,
+    ...safe
+  } = row as Record<string, unknown>;
+  return safe;
 }

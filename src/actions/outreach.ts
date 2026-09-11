@@ -33,6 +33,7 @@ import {
 } from "@/lib/outreach-drafts";
 import { assessOutreachQuality } from "@/lib/outreach-quality";
 import { sendOutreachMessage } from "@/lib/outreach-send";
+import { isDemoProspect } from "@/lib/outreach-channels";
 import {
   BULK_SEND_LIMIT,
   type OutreachChannel,
@@ -1003,6 +1004,8 @@ export async function sendOutreachMessageAction(messageId: string) {
       channel: message.channel as OutreachChannel,
       subject: message.subject,
       body: message.body,
+      toEmail: message.prospect.email,
+      isDemo: isDemoProspect(message.prospect),
     },
   ]);
   if (quality.blocking.length) {
@@ -1095,6 +1098,8 @@ export async function previewBulkSendQuality(input: {
       channel: m.channel as OutreachChannel,
       subject: m.subject,
       body: m.body,
+      toEmail: m.prospect.email,
+      isDemo: isDemoProspect(m.prospect),
     }))
   );
 }

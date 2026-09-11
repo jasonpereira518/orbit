@@ -298,19 +298,15 @@ function mockCompanyName(filters: AudienceFilters, index: number) {
   if (fromKeywords) {
     // Use a meaningful phrase, not the first token + "Labs"
     const cleaned = fromKeywords
-      .replace(/\b(recruiters?|for|or|and|the|a|an)\b/gi, " ")
+      // `at`, `in` and `with` matter as much as the rest: "recruiters at Stripe"
+      // otherwise produced prospects working at a company called "at Stripe", with
+      // addresses @atstripe.example.com.
+      .replace(/\b(recruiters?|for|or|and|the|a|an|at|in|with|from)\b/gi, " ")
       .replace(/\s+/g, " ")
       .trim();
     if (cleaned.length >= 3) return cleaned.split(" ").slice(0, 4).join(" ");
   }
   return `Demo Company ${index}`;
-}
-
-function mockDomain(filters: AudienceFilters, company: string) {
-  if (filters.organizationDomains?.[0]?.trim()) {
-    return filters.organizationDomains[0].trim().replace(/^www\./, "");
-  }
-  return `${company.toLowerCase().replace(/[^a-z0-9]+/g, "")}.example.com`;
 }
 
 function mockProspects(filters: AudienceFilters, page: number): NormalizedProspect[] {
@@ -348,14 +344,21 @@ function mockProspects(filters: AudienceFilters, page: number): NormalizedProspe
       "Martinez",
     ][i];
     const company = mockCompanyName(filters, n);
-    const domain = mockDomain(filters, company);
     const slug = `${first.toLowerCase()}-${last.toLowerCase()}-${n}`;
     return {
       externalId: `demo-${normalizeCompanyKey(company).replace(/\s+/g, "-")}-${n}`,
       fullName: `${first} ${last}`,
       title,
       company,
-      email: `${first.toLowerCase()}.${last.toLowerCase()}@${domain}`,
+      // `.invalid` is reserved by RFC 6761 and can never resolve.
+      //
+      // This replaced `mockDomain`, which was worse than it looked: it returned
+      // `<company>.example.com` normally, but the FILTER'S OWN DOMAIN whenever the
+      // audience named one — so searching a target company generated fabricated people
+      // at that company's real email domain. Nothing invented by Orbit may ever carry a
+      // routable address.
+      email: `${first.toLowerCase()}.${last.toLowerCase()}@demo.orbit.invalid`,
+      // The reserved 555 range, kept: it is the phone equivalent of `.invalid`.
       phone: n % 3 === 0 ? `+1415555${String(1000 + n).slice(-4)}` : null,
       linkedinUrl: `https://www.linkedin.com/in/${slug}`,
       location,
