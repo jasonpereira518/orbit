@@ -14,6 +14,7 @@ import {
   suppressIntro,
   type IntroRun,
 } from "@/lib/graph/intro-signal";
+import { SMALL_SKY_QUERY } from "@/components/graph/use-small-sky";
 import { cn } from "@/lib/utils";
 
 /**
@@ -71,7 +72,20 @@ export function ConstellationIntro() {
         typeof window !== "undefined" &&
         new URLSearchParams(window.location.search).get("warp");
 
-      if (forced === "off") {
+      /**
+       * Never on the canvas renderer.
+       *
+       * The intro exists to cover React Flow mounting N DOM nodes — `predictSlowIntro`
+       * is a model of exactly that cost. The canvas mount is `getContext("2d")` and one
+       * draw, so the minimum beat would now be ADDING time to a fast load, which is the
+       * failure `scripts/smoke-graph-intro.ts` already guards against. Suppressed rather
+       * than skipped, because suppression also kills the late fallback.
+       */
+      const smallSky =
+        typeof window !== "undefined" &&
+        window.matchMedia(SMALL_SKY_QUERY).matches;
+
+      if (forced === "off" || (smallSky && forced !== "force")) {
         // Must also kill the late fallback, or "off" only turns off the predictive triggers
         // and the safety net still fires 1.2s later.
         suppressIntro();

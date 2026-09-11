@@ -12,6 +12,7 @@ const AppStarfield = dynamic(
   { ssr: false }
 );
 import { MobileNav } from "@/components/layout/mobile-nav";
+import { useSmallSky } from "@/components/graph/use-small-sky";
 import { ViewAsUserBanner } from "@/components/layout/view-as-user-banner";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
@@ -72,6 +73,7 @@ export function AppShell({
   const isConstellation =
     pathname === "/graph" || pathname.startsWith("/graph/");
   const isViewportLocked = isChat || isConstellation;
+  const smallSky = useSmallSky();
   // The ask bar is not a link to /chat — it calls `askNetwork` inline, so it IS chat.
   // Hiding the Chat page while leaving the bar up would leave the feature fully reachable
   // from every screen, which is the whole thing hiding is supposed to prevent.
@@ -109,7 +111,14 @@ export function AppShell({
           className="flex min-h-0 flex-1 overflow-hidden bg-background dark:bg-transparent"
         >
           <ThemeSync theme={theme} />
-          <AppStarfield />
+          {/*
+            Not on the phone-sized constellation. That route already paints a full sky
+            into its own canvas, and a second full-viewport canvas running its own rAF
+            loop — 700 arcs a frame, some with `shadowBlur`, one of the most expensive
+            Canvas2D operations on iOS — is exactly the pressure that was taking the tab
+            down. It costs a flatter background around the stage card on those devices.
+          */}
+          {!(isConstellation && smallSky) && <AppStarfield />}
           <AvatarBackfill />
           <DueNotificationsWatcher />
           <PlanCelebrationWatcher plan={plan} />
@@ -179,11 +188,29 @@ export function AppShell({
             <div
               className={cn(
                 "mx-auto flex w-full max-w-6xl flex-col px-4 py-6 md:px-10 md:py-8",
+                // Gutter for a page that floats a fixed rail over the right edge — the
+                // contacts A-Z scrubber is the one that does. It is an opaque card, so
+                // whatever it covers is gone, not dimmed. It publishes the variable only
+                // while mounted, so every other route pays nothing. On the content column
+                // rather than <main>, which also wraps the app header: insetting the logo
+                // and bell on one route would make the header jump between pages.
+                // The base padding is carried inside the calc rather than left to the
+                // horizontal padding above: a right-padding utility set straight from the
+                // variable OVERRIDES that padding, so every route without a rail lost its
+                // right padding entirely and ran flush to the screen edge.
+                //
+                // Note the wording — no utility class is spelled out literally here. The
+                // Tailwind scanner regex-matches candidates across the raw file, comments
+                // included, so an example class written in prose is compiled for real. An
+                // illustrative arbitrary value in this very comment generated an invalid
+                // rule and took the entire stylesheet down with it.
+                "pr-[calc(1rem+var(--content-rail-gutter,0px))]",
+                "md:pr-[calc(2.5rem+var(--content-rail-gutter,0px))]",
                 isViewportLocked
-                  ? "min-h-0 flex-1 overflow-hidden pb-[calc(5.25rem+env(safe-area-inset-bottom))] md:pb-8"
+                  ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.25rem+env(safe-area-inset-bottom))] md:pb-8"
                   : isSettings
-                    ? "flex-1 pb-[calc(5.25rem+env(safe-area-inset-bottom))] md:pb-8"
-                    : "flex-1 pb-[calc(10.25rem+env(safe-area-inset-bottom))] md:pb-24",
+                    ? "flex-1 pb-[calc(4.25rem+env(safe-area-inset-bottom))] md:pb-8"
+                    : "flex-1 pb-[calc(9.25rem+env(safe-area-inset-bottom))] md:pb-24",
                 isConstellation && "py-4 md:py-5",
               )}
             >

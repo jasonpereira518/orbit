@@ -5,7 +5,10 @@ import { ChevronDown } from "lucide-react";
 import type { NetworkStatItem, NetworkStats } from "@/lib/network-stats";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
-const COUNT_MS = 800;
+// The `--transition-duration-celestial` tier (700ms) is the repo's set-piece beat, and
+// this is the one deliberately-slow number on the dashboard. 800 was off the scale
+// entirely; this keeps the count readable without being the slowest thing on screen.
+const COUNT_MS = 700;
 
 function easeOutCubic(t: number) {
   return 1 - Math.pow(1 - t, 3);
@@ -97,13 +100,25 @@ export function NetworkStatsCard({ stats }: { stats: NetworkStats }) {
       ref={detailsRef}
       className="group rounded-2xl border border-border/70 bg-card"
     >
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-6 [&::-webkit-details-marker]:hidden">
+      {/* The summary is this card's only control and had no hover state at all. */}
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl p-6 transition-colors duration-fast ease-house hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset focus-ring-fallback [&::-webkit-details-marker]:hidden">
         <div>
           <p className="text-sm font-medium text-ink">Your orbit in numbers</p>
           <p className="mt-0.5 text-sm text-muted-foreground">{stats.subheadline}</p>
         </div>
-        <ChevronDown className="h-5 w-5 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+        <ChevronDown className="h-5 w-5 shrink-0 text-muted-foreground transition-transform duration-slow ease-house group-open:rotate-180" />
       </summary>
+      {/* The chevron used to animate while the panel it points at teleported open —
+          animating the indicator but not the thing indicated is worse than animating
+          neither. `grid-rows` 0fr->1fr is the repo's height-collapse technique
+          (contacts-list.tsx:434); `group-open:` drives it straight off the native
+          <details> state, so no JS is involved in the motion.
+
+          `<details>` sets `content-visibility: hidden` on its collapsed content, which
+          would skip the transition, so the panel is force-shown and the grid row does
+          the hiding instead. */}
+      <div className="grid grid-rows-[0fr] transition-[grid-template-rows] duration-slow ease-house group-open:grid-rows-[1fr] [content-visibility:visible]">
+      <div className="overflow-hidden">
       <div className="border-t border-border/60 px-6 pb-6 pt-4">
         <dl className="grid auto-rows-fr gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {stats.items.map((item) => (
@@ -123,6 +138,8 @@ export function NetworkStatsCard({ stats }: { stats: NetworkStats }) {
             </div>
           ))}
         </dl>
+      </div>
+      </div>
       </div>
     </details>
   );

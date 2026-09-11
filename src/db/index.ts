@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   gemini_api_key_encrypted text,
   openai_api_key_encrypted text,
   anthropic_api_key_encrypted text,
+  wispr_api_key_encrypted text,
   ai_model text DEFAULT 'gemini-3.5-flash',
   onboarding_completed_at timestamptz,
   first_name text,
@@ -100,6 +101,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   x_handle text,
   website text,
   profile_image_url text,
+  profile_image_checked_at timestamp,
   relationship_score integer NOT NULL DEFAULT 2,
   priority_level integer NOT NULL DEFAULT 0,
   source text,
@@ -472,6 +474,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   role text NOT NULL,
   content text NOT NULL,
   recommendations jsonb,
+  attached_contacts jsonb DEFAULT '[]',
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages(thread_id);
@@ -924,6 +927,9 @@ CREATE TABLE IF NOT EXISTS events (
   provider text,
   provider_event_id text,
   description text,
+  organizer_name text,
+  organizer_url text,
+  attendance_mode text,
   cover_image_url text,
   cover_source_url text,
   theme_color text,
@@ -979,6 +985,39 @@ CREATE TABLE IF NOT EXISTS event_provider_connections (
   sync_failures integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS contact_identities (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  value text NOT NULL,
+  source text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS contact_merges (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  winner_contact_id uuid NOT NULL,
+  loser_contact_id uuid NOT NULL,
+  loser_snapshot jsonb NOT NULL,
+  repointed jsonb NOT NULL DEFAULT '{}'::jsonb,
+  deleted jsonb NOT NULL DEFAULT '{}'::jsonb,
+  status text NOT NULL DEFAULT 'in_progress',
+  reason text,
+  confidence real,
+  merged_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS duplicate_suggestions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_a_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  contact_b_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  reason text NOT NULL,
+  confidence real NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  resolved_at timestamptz
 );
 CREATE TABLE IF NOT EXISTS page_views (
   id uuid PRIMARY KEY,
@@ -1056,13 +1095,49 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
  * v31 = the connector platform: api_keys, api_idempotency_keys, webhook_endpoints,
  * outbound_webhook_deliveries.
  * v32 = the events feature: events, event_attendees, event_provider_connections.
- * v33 = page_views (first-party traffic analytics).
+ * v33 = duplicate prevention: contact_identities (the unique index that actually stops
+ * duplicates being created), contact_merges (a merged contact archived whole, so the
+ * loser's row can be deleted rather than flagged), duplicate_suggestions (name-tier
+ * matches, which no longer auto-merge).
+ * v39 = events revision: organizer_name, organizer_url, attendance_mode on events. Also
+ * built as 33 and moved when duplicate prevention landed first — the fifth collision, and
+ * the same rule: re-using 33 would have left those columns unapplied on every database
+ * main had already stamped.
+ * v40 = contact photo cooldown (#146): contacts.profile_image_checked_at. This PR has been
+ * 33, 36 and 37 in turn. 37 was reserved for it (#152 skipped past it to 39), but it can't
+ * be reused now: this branch's own preview stamped 37 onto the preview database with DDL
+ * that predates #152's columns, so a 37 carrying them would skip on that database. 38 is
+ * claimed by the scan-notes branch. Also worth knowing: until Sep 11 2026 Preview shared
+ * Production's DATABASE_URL, so preview builds stamped production directly. Previews now
+ * migrate their own Neon project.
+ * v44 = page_views (first-party traffic analytics). Built as 33 and moved at merge: 33 went
+ * to duplicate prevention, main reached 40, and 42 and 43 are claimed by open branches
+ * (meeting capture, scan notes) — so 44, above every number in flight.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
  * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
  */
-export const SCHEMA_VERSION = 33;
+// 34 and 35 are this branch's, above main's 33 (duplicate prevention, #148). 33 was
+// skipped here deliberately while it was still claimed by unmerged branches — a repeated
+// version is the one real failure mode this counter has, since the alters are all
+// `IF NOT EXISTS` and concatenate harmlessly on merge but a collision means one branch's
+// DDL never runs. That skip is why this merge resolved to a number rather than a clash.
+//
+// Two bumps on this branch because the guard requires one per DDL change: 34 added
+// `chat_messages.attached_contacts`, 35 the last-interaction index the composer's pickers
+// order on.
+//
+// 39 is the events revision (PR #152): organizer_name, organizer_url, attendance_mode on
+// events. Built as 33, moved to 34 when #148 took 33, and moved again here because while it
+// waited 34-36 landed on main and 37 and 38 were claimed by open branches. Every step was
+// the same rule — a shared number means one branch's DDL silently never runs.
+//
+// 40 is the contact photo cooldown (#146) — see the v40 entry above.
+//
+// 44 is traffic analytics (page_views) — see the v44 entry above. 41 is unclaimed, but a
+// number below branches already in flight is how the last five collisions started.
+export const SCHEMA_VERSION = 44;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1165,6 +1240,10 @@ export const SCALE_DDL: string[] = [
   // the same way, so the index has to be declared that way to serve it.
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_idx ON contacts(user_id, closeness DESC, id DESC)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
+  // For the composer's pickers, which open on "who have I actually spoken to lately"
+  // rather than whoever is alphabetically first. `updated_at` is the wrong column for
+  // that — editing a contact is not talking to them.
+  `CREATE INDEX IF NOT EXISTS contacts_user_last_interaction_idx ON contacts(user_id, last_interaction_at DESC NULLS LAST)`,
   `CREATE INDEX IF NOT EXISTS contacts_search_gin ON contacts USING gin(search_tsv)`,
   `CREATE INDEX IF NOT EXISTS contacts_slug_idx ON contacts(linkedin_slug) WHERE linkedin_slug IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS contacts_user_email_idx ON contacts(user_id, email) WHERE email IS NOT NULL`,
@@ -1251,6 +1330,49 @@ export const SCALE_DDL: string[] = [
   // every backtick pair between these brackets as a DDL statement.
   `CREATE INDEX IF NOT EXISTS contact_experiences_org_idx
      ON contact_experiences(user_id, organization_normalized)`,
+
+  // --- Duplicate prevention --------------------------------------------------------
+  //
+  // This unique index is the feature. Every other piece of duplicate handling is advisory;
+  // this is the only thing that can stop two concurrent writers both creating a contact
+  // for the same person, because it is the only check that is not a check-then-insert.
+  //
+  // It is safe to create unconditionally, which is worth spelling out because the obvious
+  // reading says otherwise. An existing account can absolutely have two contacts sharing an
+  // email, so a unique index over a table backfilled from contacts would fail -- the trap
+  // contact_tags_pair_uidx hit, which had to delete rows before it could claim its
+  // constraint. It does not apply here because contact_identities starts EMPTY on every
+  // database, new or upgrading. The backfill runs afterwards, in TypeScript, and claims
+  // identities oldest-contact-first with ON CONFLICT DO NOTHING; the contacts that lose a
+  // claim are precisely the pre-existing duplicates, and they are surfaced for review
+  // rather than deleted to make an index creatable. See backfillContactIdentities in
+  // src/lib/contact-identity.ts.
+  `CREATE UNIQUE INDEX IF NOT EXISTS contact_identities_user_kind_value_uidx
+     ON contact_identities(user_id, kind, value)`,
+  // The anti-join the backfill pages through, and the FK index that stops a contact
+  // delete from scanning this table (the omission contacts_company_id_idx was added for).
+  `CREATE INDEX IF NOT EXISTS contact_identities_contact_idx
+     ON contact_identities(contact_id)`,
+
+  // Alias lookup: a stale contact id in, the surviving contact id out. Unique because a
+  // contact can only be merged away once -- attempting it twice is a bug, not a no-op.
+  `CREATE UNIQUE INDEX IF NOT EXISTS contact_merges_loser_uidx
+     ON contact_merges(loser_contact_id)`,
+  // The undo list, newest first.
+  `CREATE INDEX IF NOT EXISTS contact_merges_user_idx
+     ON contact_merges(user_id, merged_at DESC)`,
+  // Path compression rewrites winner_contact_id on every subsequent merge in a chain.
+  `CREATE INDEX IF NOT EXISTS contact_merges_winner_idx
+     ON contact_merges(user_id, winner_contact_id)`,
+
+  `CREATE UNIQUE INDEX IF NOT EXISTS duplicate_suggestions_pair_uidx
+     ON duplicate_suggestions(user_id, contact_a_id, contact_b_id)`,
+  // Partial: the review page only ever reads pending pairs, and dismissed ones accumulate
+  // forever by design (a dismissal has to outlive the suggestion or the page re-proposes
+  // a pair the user already rejected).
+  `CREATE INDEX IF NOT EXISTS duplicate_suggestions_pending_idx
+     ON duplicate_suggestions(user_id, confidence DESC)
+     WHERE status = 'pending'`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */
@@ -1485,6 +1607,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "timestamptz NOT NULL DEFAULT now()"
   );
   await ensureColumn(client, "imports", "total_rows", "integer");
+  await ensureColumn(client, "user_settings", "wispr_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "apollo_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "resend_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_account_sid_encrypted", "text");
@@ -1503,6 +1626,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   );
   await ensureColumn(client, "contacts", "school", "text");
   await ensureColumn(client, "contacts", "profile_image_url", "text");
+  await ensureColumn(client, "contacts", "profile_image_checked_at", "timestamp");
   await ensureColumn(
     client,
     "user_settings",
@@ -1930,6 +2054,12 @@ async function migratePgvector(run: StatementRunner) {
 const alters = [
   // Deliberately not backfilled from `committed_at` — see the column's comment in schema.ts.
   `ALTER TABLE fundraising_investors ADD COLUMN IF NOT EXISTS received_at timestamptz`,
+  // The events feature landed whole at v32, so these are its first incremental columns.
+  // CREATE TABLE IF NOT EXISTS above is a no-op on a database that already has the table,
+  // which is why every new column has to appear in both places.
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_name text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_url text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS attendance_mode text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_step text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,
@@ -1948,6 +2078,7 @@ const alters = [
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS stats jsonb DEFAULT '{}'`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS total_rows integer`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wispr_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS apollo_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS resend_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_account_sid_encrypted text`,
@@ -1997,6 +2128,7 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS error_events_user_created_idx ON error_events(user_id, created_at)`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_checked_at timestamp`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS x_handle text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_linkedin_idx ON contacts(user_id, linkedin_url)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle)`,
@@ -2058,6 +2190,7 @@ const alters = [
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS ai_summary text`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS companies_mentioned jsonb DEFAULT '[]'`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS roles_discussed jsonb DEFAULT '[]'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attached_contacts jsonb DEFAULT '[]'`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS first_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS last_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email_count integer NOT NULL DEFAULT 0`,

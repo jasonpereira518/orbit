@@ -96,6 +96,14 @@ export function NetworkDepthChart({
               return (
                 <div
                   key={t.key}
+                  // `width`, deliberately, even though it animates on the layout thread.
+                  // These three segments TILE one track, so their sizes have to
+                  // participate in layout — `scaleX` does not change a flex item's
+                  // layout size, so a scaled segment would overlap its neighbours
+                  // instead of dividing the bar with them. The transition also only
+                  // runs when the underlying counts change (a data refresh, not an
+                  // interaction), so the layout cost is paid rarely and off the
+                  // interaction path.
                   className={cn(t.color, "transition-[width] duration-slow ease-house")}
                   style={{ width: `${width}%` }}
                   title={`${t.label}: ${tierCounts[t.key]}`}

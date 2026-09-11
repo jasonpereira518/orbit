@@ -49,6 +49,7 @@ export const ROUTE_PATTERNS: readonly string[] = [
   "/chat",
   "/contacts",
   "/contacts/new",
+  "/contacts/duplicates",
   "/contacts/[id]",
   "/events",
   "/events/[id]",

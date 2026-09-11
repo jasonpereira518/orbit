@@ -30,6 +30,8 @@ function check(label: string, ok: boolean, detail = "") {
 
 async function reset() {
   const db = await getDb();
+  await db.execute(sql`DELETE FROM duplicate_suggestions WHERE user_id = ${USER}`);
+  await db.execute(sql`DELETE FROM contact_merges WHERE user_id = ${USER}`);
   await db.execute(sql`DELETE FROM reminders WHERE user_id = ${USER}`);
   await db.execute(sql`DELETE FROM contact_embeddings WHERE user_id = ${USER}`);
   await db.execute(sql`DELETE FROM interactions WHERE user_id = ${USER}`);
@@ -60,10 +62,13 @@ function meeting(uid: string, at: Date, participants: NetworkEvent["participants
   };
 }
 
+// Mirrors production: `src/lib/calendar-sync.ts` and `src/lib/sync-scheduler.ts` pass no
+// `matchConfidence`, so it defaults to DUPLICATE_MERGE_CONFIDENCE (0.85). This fixture used
+// to pass 0.6 — the bare-full-name tier — which is precisely the setting that let two
+// different people who share a name become one contact on the next sync.
 const CALENDAR_OPTS = {
   source: "google_calendar",
   createsContacts: true,
-  matchConfidence: 0.6,
 };
 
 run(async () => {
@@ -107,16 +112,26 @@ run(async () => {
 
   // --- Two attendees of one event that resolve to the SAME contact --------------------------
   // The case that raises "ON CONFLICT DO UPDATE command cannot affect row a second time" if
-  // the intra-batch dedupe is missing. One entry is email-only and one name-only, so they
-  // survive participantIdentityKey but both match Ada through the duplicate index.
+  // the intra-batch dedupe is missing: two entries with DIFFERENT identity keys that both
+  // resolve to Ada through the duplicate index.
+  //
+  // Both entries carry an identifier. They used to be an email and a bare name, but a source
+  // that creates contacts no longer folds on a name alone (see `canFold` in
+  // src/lib/ingest/events.ts) — a name-only attendee would now become their own contact, and
+  // the collision this guards would not happen at all. Ada's LinkedIn URL is the second
+  // identifier, so the two entries still converge on one contact.
   {
+    await db.execute(sql`
+      UPDATE contacts SET linkedin_url = 'https://www.linkedin.com/in/adalovelace'
+       WHERE user_id = ${USER} AND email = 'ada@example.com'
+    `);
     const ctx = await openIngestContext(USER, CALENDAR_OPTS);
     let threw: string | null = null;
     try {
       await ingestEvents(ctx, [
         meeting("evt-collide", day1, [
           { email: "ada@example.com" },
-          { name: "Ada Lovelace" },
+          { name: "Ada Lovelace", linkedinUrl: "https://linkedin.com/in/AdaLovelace" },
         ]),
       ]);
     } catch (err) {
@@ -130,6 +145,36 @@ run(async () => {
     afterCollide.interactions === afterFirst.interactions + 1,
     `${afterCollide.interactions}`
   );
+  check(
+    "and creates no second contact",
+    afterCollide.contacts === afterFirst.contacts,
+    `${afterFirst.contacts} -> ${afterCollide.contacts}`
+  );
+
+  // --- A name-only attendee is NOT folded into a same-named contact -------------------------
+  // A bare full name scores 0.60, below the 0.85 the app needs to act on its own. Calendar
+  // sync creates contacts, so folding here would silently merge two different people who
+  // happen to share a name — the attendee becomes their own contact and the pair is queued
+  // for review instead. Everything the matcher IS confident about (an email, a LinkedIn
+  // profile, name + company, name + title) still folds without asking.
+  {
+    const before = await counts();
+    const ctx = await openIngestContext(USER, CALENDAR_OPTS);
+    await ingestEvents(ctx, [meeting("evt-nameonly", day1, [{ name: "Ada Lovelace" }])]);
+    const after = await counts();
+    check(
+      "a name-only attendee creates its own contact rather than folding",
+      after.contacts === before.contacts + 1,
+      `${before.contacts} -> ${after.contacts}`
+    );
+    const pending = rowsOf<{ v: number }>(
+      await db.execute(sql`
+        SELECT count(*)::int AS v FROM duplicate_suggestions
+         WHERE user_id = ${USER} AND status = 'pending'
+      `)
+    )[0]!.v;
+    check("and the pair is queued for review", pending >= 1, `${pending}`);
+  }
 
   // --- Interaction windows widen, never narrow ----------------------------------------------
   {

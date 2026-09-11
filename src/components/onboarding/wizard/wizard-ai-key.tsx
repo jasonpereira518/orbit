@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
 
 /**
  * The setup wizard's "connect your AI key" step, shown before the capture path when the
@@ -40,7 +41,7 @@ export function WizardAiKey({
         toast.success(`${meta?.label ?? "AI"} key saved`);
         onSaved();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not save the key");
+        toast.error(friendlyError(err, "That key didn’t save — try again?"));
       }
     });
   }

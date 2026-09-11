@@ -319,6 +319,7 @@ export function buildOrbitMcpServer(userId: string, opts: { scopes: ApiKeyScope[
             company: args.company ?? null,
             title: args.title ?? null,
           });
+          // Same line as /api/v1/contacts: confident tiers match, a bare full name does not.
           if (best && best.confidence >= DUPLICATE_MERGE_CONFIDENCE) {
             return textResult({
               created: false,

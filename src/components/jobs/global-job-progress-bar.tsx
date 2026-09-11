@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, type PanInfo } from "motion/react";
 import { CheckCircle2, Loader2, X, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,11 +28,42 @@ export function GlobalJobProgressBar() {
   const jobs = useBackgroundJobs().filter(
     (job) => job.kind !== "avatar-backfill" && !job.hiddenFromWidget
   );
+  const stackRef = useRef<HTMLDivElement | null>(null);
+
+  // Publish how much of the corner this widget occupies so the toast stack can
+  // sit above it instead of painting over it. On <html>, because the toaster is
+  // portalled to <body> and would never see a variable set on a wrapper here.
+  //
+  // Above the early return on purpose: the effect has to run on the render that
+  // drops the widget too, or the reserved band would outlive the last job and
+  // leave toasts floating in empty space.
+  useEffect(() => {
+    const root = document.documentElement;
+    const el = stackRef.current;
+    if (!el) {
+      root.style.setProperty("--orbit-job-stack-height", "0px");
+      return;
+    }
+    const observer = new ResizeObserver(([entry]) => {
+      // Plus the gap a toast should keep off this widget's top edge.
+      root.style.setProperty(
+        "--orbit-job-stack-height",
+        `${entry.contentRect.height + 8}px`
+      );
+    });
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      root.style.setProperty("--orbit-job-stack-height", "0px");
+    };
+  }, [jobs.length]);
+
   if (jobs.length === 0) return null;
 
   return (
     <div
-      className="fixed bottom-[calc(5.25rem+env(safe-area-inset-bottom))] right-3 z-40 flex w-[min(20rem,calc(100vw-1.5rem))] flex-col gap-2 md:bottom-5 md:right-5"
+      ref={stackRef}
+      className="fixed bottom-(--orbit-corner-bottom) right-(--orbit-corner-right) z-40 flex w-[min(20rem,calc(100vw-1.5rem))] flex-col gap-2"
       role="status"
       aria-live="polite"
     >

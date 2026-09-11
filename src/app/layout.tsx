@@ -35,6 +35,20 @@ export const metadata: Metadata = {
     ],
     apple: "/apple-icon.png",
   },
+  /**
+   * Stop iOS Safari rewriting the server HTML before React hydrates.
+   *
+   * Its data detectors wrap anything that looks like a phone number (and sometimes an
+   * address or email) in a link, so the markup React finds is not the markup it sent.
+   * Every page that shows one — a recruiter's contact card, say — failed hydration on
+   * an iPhone and had that tree thrown away and re-rendered on the client. Nothing is
+   * lost by switching it off: the link Safari added never survived that re-render.
+   */
+  formatDetection: {
+    telephone: false,
+    email: false,
+    address: false,
+  },
 };
 
 export default function RootLayout({

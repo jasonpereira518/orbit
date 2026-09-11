@@ -16,10 +16,12 @@
  * scheduler and smoke scripts both load this module. `revalidatePath` belongs to whichever
  * caller has a request.
  */
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { eventAttendees, events, type EventRecord } from "@/db/schema";
+import { attendeeIdentityKey } from "@/lib/events/identity";
 import type {
+  AttendeeRole,
   AttendeeSource,
   EventProviderId,
   EventRole,
@@ -155,6 +157,9 @@ export type CreateEventInput = {
   provider?: EventProviderId | null;
   providerEventId?: string | null;
   description?: string | null;
+  organizerName?: string | null;
+  organizerUrl?: string | null;
+  attendanceMode?: EventRecord["attendanceMode"];
   coverImageUrl?: string | null;
   coverSourceUrl?: string | null;
   themeColor?: string | null;
@@ -184,6 +189,9 @@ export async function createEventForUser(
       provider: input.provider ?? null,
       providerEventId: input.providerEventId ?? null,
       description: input.description ?? null,
+      organizerName: input.organizerName ?? null,
+      organizerUrl: input.organizerUrl ?? null,
+      attendanceMode: input.attendanceMode ?? null,
       coverImageUrl: input.coverImageUrl ?? null,
       coverSourceUrl: input.coverSourceUrl ?? null,
       themeColor: input.themeColor ?? null,
@@ -244,21 +252,23 @@ export async function upsertEventAttendees(
   const values = attendees.map(
     (a) =>
       sql`(${eventId}::uuid, ${userId}, ${a.fullName}, ${a.email}, ${a.company}, ${a.title},
-           ${a.linkedinUrl}, ${a.xHandle}, ${source}, ${a.identityKey})`
+           ${a.linkedinUrl}, ${a.xHandle}, ${a.attendeeRole ?? null}, ${source}, ${a.identityKey})`
   );
 
   await db.execute(sql`
     INSERT INTO event_attendees
-      (event_id, user_id, full_name, email, company, title, linkedin_url, x_handle, source, identity_key)
+      (event_id, user_id, full_name, email, company, title, linkedin_url, x_handle,
+       attendee_role, source, identity_key)
     VALUES ${sql.join(values, sql`, `)}
     ON CONFLICT (event_id, identity_key) DO UPDATE SET
-      full_name    = COALESCE(event_attendees.full_name, excluded.full_name),
-      email        = COALESCE(event_attendees.email, excluded.email),
-      company      = COALESCE(event_attendees.company, excluded.company),
-      title        = COALESCE(event_attendees.title, excluded.title),
-      linkedin_url = COALESCE(event_attendees.linkedin_url, excluded.linkedin_url),
-      x_handle     = COALESCE(event_attendees.x_handle, excluded.x_handle),
-      updated_at   = now()
+      full_name     = COALESCE(event_attendees.full_name, excluded.full_name),
+      email         = COALESCE(event_attendees.email, excluded.email),
+      company       = COALESCE(event_attendees.company, excluded.company),
+      title         = COALESCE(event_attendees.title, excluded.title),
+      linkedin_url  = COALESCE(event_attendees.linkedin_url, excluded.linkedin_url),
+      x_handle      = COALESCE(event_attendees.x_handle, excluded.x_handle),
+      attendee_role = COALESCE(event_attendees.attendee_role, excluded.attendee_role),
+      updated_at    = now()
   `);
 
   return attendees.length;
@@ -321,6 +331,113 @@ export async function linkAttendeesToContacts(
       FROM (VALUES ${sql.join(values, sql`, `)}) AS v(attendee_id, contact_id)
      WHERE a.id = v.attendee_id AND a.user_id = ${userId}
   `);
+}
+
+/**
+ * Correcting one attendee's details.
+ *
+ * The FIRST write in this module that overwrites a non-null attendee field. Everything else
+ * fills blanks: `upsertEventAttendees` COALESCEs on conflict, so a bad parse — a title
+ * swallowed into the name, an email on the wrong person — was permanent once stored.
+ *
+ * ## Why the identity key is recomputed rather than left alone
+ *
+ * `identity_key` is written once at parse time and is the ONLY thing that makes a re-import
+ * idempotent (`ON CONFLICT (event_id, identity_key)`). Leaving it stale after an edit means
+ * the next paste or provider sync computes a different key for the same human, misses the
+ * conflict target, and inserts a second row. So it is recomputed here from the row's new
+ * values, using the same `attendeeIdentityKey` every parser uses.
+ *
+ * Two edits are refused rather than guessed at, and both return a typed result instead of
+ * throwing, because both are things a user can act on:
+ *
+ * - **`empty`** — nothing identifying is left. `attendeeIdentityKey` returns null and the
+ *   column is NOT NULL, so there is no row to write.
+ * - **`collision`** — another row on this event already holds the new key. That is two rows
+ *   describing one person, and merging them is deliberately out of scope: folding two rows
+ *   silently is how a wrong merge becomes unrecoverable. The conflicting row's id and name
+ *   come back so the caller can name it and offer to delete one.
+ *
+ * The collision is detected with a SELECT rather than caught as a 23505, because an UPDATE
+ * has no `ON CONFLICT` to fall back on and the caller needs the other row's name either way.
+ * Both statements run inside one request; a racing insert would still raise, which is correct
+ * — it is the same person arriving twice.
+ */
+export type UpdateAttendeeResult =
+  | { ok: true }
+  | { ok: false; reason: "empty" }
+  | { ok: false; reason: "collision"; otherId: string; otherName: string | null }
+  | { ok: false; reason: "missing" };
+
+export type AttendeePatch = {
+  fullName: string | null;
+  email: string | null;
+  company: string | null;
+  title: string | null;
+  linkedinUrl: string | null;
+  xHandle: string | null;
+  attendeeRole: AttendeeRole | null;
+};
+
+export async function updateAttendeeForUser(
+  userId: string,
+  attendeeId: string,
+  patch: AttendeePatch
+): Promise<UpdateAttendeeResult> {
+  const db = await getDb();
+
+  const [existing] = await db
+    .select({ id: eventAttendees.id, eventId: eventAttendees.eventId })
+    .from(eventAttendees)
+    .where(and(eq(eventAttendees.userId, userId), eq(eventAttendees.id, attendeeId)))
+    .limit(1);
+  if (!existing) return { ok: false, reason: "missing" };
+
+  const identityKey = attendeeIdentityKey(patch);
+  if (!identityKey) return { ok: false, reason: "empty" };
+
+  const [clash] = await db
+    .select({ id: eventAttendees.id, fullName: eventAttendees.fullName })
+    .from(eventAttendees)
+    .where(
+      and(
+        eq(eventAttendees.eventId, existing.eventId),
+        eq(eventAttendees.identityKey, identityKey),
+        ne(eventAttendees.id, attendeeId)
+      )
+    )
+    .limit(1);
+  if (clash) {
+    return { ok: false, reason: "collision", otherId: clash.id, otherName: clash.fullName };
+  }
+
+  await db
+    .update(eventAttendees)
+    .set({ ...patch, identityKey, updatedAt: new Date() })
+    .where(and(eq(eventAttendees.userId, userId), eq(eventAttendees.id, attendeeId)));
+  return { ok: true };
+}
+
+/**
+ * Remove one attendee from a roster.
+ *
+ * The first single-row delete in this module — until now the only way to drop a row was to
+ * delete the whole event, which is why `parse-roster.ts` could describe junk rows as
+ * something "the user then has to delete by hand" while offering no way to do it.
+ *
+ * Deletes the ROSTER row only. A connected attendee's contact and its
+ * `evt:<event>:<contact>` interaction are left standing, exactly as `unlinkAttendeeForUser`
+ * leaves them — removing someone from a guest list is not a statement that you never met
+ * them. The UI has to say so; this function will not infer it.
+ */
+export async function deleteAttendeeForUser(
+  userId: string,
+  attendeeId: string
+): Promise<void> {
+  const db = await getDb();
+  await db
+    .delete(eventAttendees)
+    .where(and(eq(eventAttendees.userId, userId), eq(eventAttendees.id, attendeeId)));
 }
 
 /** Undo one connection. Clears the link but never deletes the contact — see the UI copy. */

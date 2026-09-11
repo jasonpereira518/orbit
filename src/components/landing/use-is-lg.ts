@@ -1,14 +1,8 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useMediaQuery } from "@/lib/use-media-query";
 
 const QUERY = "(min-width: 1024px)";
-
-function subscribe(cb: () => void) {
-  const mq = window.matchMedia(QUERY);
-  mq.addEventListener("change", cb);
-  return () => mq.removeEventListener("change", cb);
-}
 
 /**
  * Whether the viewport is at the `lg` breakpoint. Server-renders as false —
@@ -16,9 +10,5 @@ function subscribe(cb: () => void) {
  * first paint will disagree with the markup.
  */
 export function useIsLg() {
-  return useSyncExternalStore(
-    subscribe,
-    () => window.matchMedia(QUERY).matches,
-    () => false
-  );
+  return useMediaQuery(QUERY);
 }

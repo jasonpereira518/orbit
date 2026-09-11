@@ -87,10 +87,13 @@ for (const route of routes) {
     .replace(/\[\[?\.{3}[^\]]+\]?\]/g, "factor-one")
     .replace(/\[[^\]]+\]/g, randomUUID());
   const got = normalizeRoute(concrete);
+  // EXACT, not merely "not /unknown". A static page added beside a dynamic sibling —
+  // /contacts/duplicates next to /contacts/[id] — matches the dynamic pattern and would be
+  // counted as somebody's contact page forever. The weaker check passed on exactly that.
   check(
-    `${route} -> a known pattern`,
-    got !== UNKNOWN_ROUTE,
-    `normalizeRoute(${concrete}) = ${got}; add a pattern to ROUTE_PATTERNS`
+    `${route} -> its own pattern`,
+    got === route,
+    `normalizeRoute(${concrete}) = ${got}; add "${route}" to ROUTE_PATTERNS`
   );
 }
 
