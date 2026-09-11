@@ -6,7 +6,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EventHero } from "@/components/events/event-hero";
 import { AttendeeRoster, type RosterMatch } from "@/components/events/attendee-roster";
 import { RosterImportPanel } from "@/components/events/roster-import-panel";
-import { getEvent, getRoster, matchRosterToNetwork } from "@/actions/events";
+import {
+  getEvent,
+  getRoster,
+  getRosterHistory,
+  matchRosterToNetwork,
+} from "@/actions/events";
 
 type RosterResult =
   | { ok: true; rows: Awaited<ReturnType<typeof getRoster>> }
@@ -16,10 +21,12 @@ async function Roster({
   eventId,
   rosterPromise,
   matchesPromise,
+  historyPromise,
 }: {
   eventId: string;
   rosterPromise: Promise<RosterResult>;
   matchesPromise: Promise<Awaited<ReturnType<typeof matchRosterToNetwork>>>;
+  historyPromise: Promise<Awaited<ReturnType<typeof getRosterHistory>>>;
 }) {
   const result = await rosterPromise;
 
@@ -48,7 +55,17 @@ async function Roster({
       : []
   );
 
-  return <AttendeeRoster eventId={eventId} rows={result.rows} matches={matches} />;
+  // The history is an aggregate over the user's whole roster past; a failure there costs a
+  // badge, never the list, so it degrades to "we did not say" exactly as matches do.
+  const history = await historyPromise;
+  return (
+    <AttendeeRoster
+      eventId={eventId}
+      rows={result.rows}
+      matches={matches}
+      history={history}
+    />
+  );
 }
 
 export default async function EventDetailPage({
@@ -68,6 +85,7 @@ export default async function EventDetailPage({
     () => ({ ok: false as const })
   );
   const matchesPromise = matchRosterToNetwork(id).catch(() => []);
+  const historyPromise = getRosterHistory(id).catch(() => []);
 
   const event = await getEvent(id);
   // Before any Suspense boundary, so the route returns a real 404 rather than streaming a
@@ -106,6 +124,7 @@ export default async function EventDetailPage({
             eventId={event.id}
             rosterPromise={rosterPromise}
             matchesPromise={matchesPromise}
+            historyPromise={historyPromise}
           />
         </Suspense>
       </div>

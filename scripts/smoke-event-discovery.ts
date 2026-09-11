@@ -24,6 +24,7 @@ import {
   isRoleEmail,
 } from "../src/lib/events/discovery/from-calendar";
 import { classifyCalendarEvent } from "../src/lib/calendar-classify";
+import { isWeakKey, personKeyOf } from "../src/lib/events/people";
 import { parseIcsEvents } from "../src/lib/calendar-import";
 import type { ParsedCalendarEvent } from "../src/lib/calendar-import";
 import type { DiscoveryCandidate } from "../src/lib/events/discovery/types";
@@ -345,6 +346,48 @@ END:VCALENDAR`;
     check("it becomes a candidate", candidates.length === 1);
     check("with the provider id from its URL", candidates[0]?.providerEventId === "evt-6mLuOvNx");
     check("and a tentative RSVP", candidates[0]?.rsvpHint === "maybe", String(candidates[0]?.rsvpHint));
+  }
+
+  console.log("\ncross-event identity");
+  {
+    check(
+      "LinkedIn outranks everything",
+      personKeyOf({ linkedinUrl: "https://www.linkedin.com/in/ada/", email: "a@b.c" })?.kind ===
+        "linkedin_slug"
+    );
+    // The reason this key exists at all: `identity_key` keys on the raw string, so these two
+    // spellings are different keys there — and the same human here.
+    check(
+      "two spellings of one profile agree",
+      personKeyOf({ linkedinUrl: "https://linkedin.com/in/ada" })?.value ===
+        personKeyOf({ linkedinUrl: "https://www.linkedin.com/in/ada/" })?.value,
+      String(personKeyOf({ linkedinUrl: "https://linkedin.com/in/ada" })?.value)
+    );
+    check(
+      "email is next",
+      personKeyOf({ email: "Ada@Example.com", fullName: "Ada" })?.value === "ada@example.com"
+    );
+    // A shared inbox at four events is one mailbox, not somebody you keep meeting.
+    check("a role inbox is not a person", personKeyOf({ email: "events@acme.com" })?.kind !== "email");
+    check("then the handle", personKeyOf({ xHandle: "@adal", fullName: "Ada" })?.kind === "x_handle");
+    check(
+      "then a namespaced platform id",
+      personKeyOf({ externalRef: "luma:usr-1", fullName: "Ada Lovelace" })?.kind === "platform_user"
+    );
+    // A bare id is ambiguous across platforms, so it falls through to the name.
+    check(
+      "a bare id is not enough",
+      personKeyOf({ externalRef: "usr-1", fullName: "Ada Lovelace" })?.kind === "name"
+    );
+    check(
+      "a full name is the last resort",
+      personKeyOf({ fullName: "Ada Lovelace" })?.value === "ada lovelace"
+    );
+    // Partiful shows first names only. Keying on one would fold half a room into one person.
+    check("a first name alone is not an identity", personKeyOf({ fullName: "Ada" }) === null);
+    check("nothing identifiable is null", personKeyOf({}) === null);
+    check("the name tier is marked weak", isWeakKey(personKeyOf({ fullName: "Ada Lovelace" })?.kind));
+    check("a strong tier is not", !isWeakKey(personKeyOf({ email: "ada@x.io" })?.kind));
   }
 
   console.log(

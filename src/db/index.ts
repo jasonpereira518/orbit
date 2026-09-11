@@ -972,6 +972,8 @@ CREATE TABLE IF NOT EXISTS event_attendees (
   attendee_role text,
   source text NOT NULL DEFAULT 'paste',
   external_ref text,
+  person_key_kind text,
+  person_key_value text,
   spoke_to integer NOT NULL DEFAULT 0,
   contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
   converted_at timestamptz,
@@ -1120,7 +1122,10 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
 // enrich_due_at and enrich_attempts on events, plus the event_aliases table and its unique
 // index. If another branch lands 40 first, renumber to the next free value and regenerate
 // scripts/schema-ddl.lock.json rather than reusing it.
-export const SCHEMA_VERSION = 40;
+//
+// 41 = cross-event identity: person_key_kind/person_key_value on event_attendees and the
+// index the "people you keep seeing" aggregate groups on.
+export const SCHEMA_VERSION = 41;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2052,6 +2057,11 @@ const alters = [
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS dismissed_at timestamptz`,
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS enrich_due_at timestamptz`,
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS enrich_attempts integer NOT NULL DEFAULT 0`,
+  // v41, cross-event identity. `identity_key` cannot answer "same person at another event":
+  // it keys on the string it was given, so two spellings of one LinkedIn URL are two keys.
+  // Changing it would break the unique index every stored roster row depends on.
+  `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS person_key_kind text`,
+  `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS person_key_value text`,
   `CREATE TABLE IF NOT EXISTS event_aliases (
      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
      user_id text NOT NULL,
@@ -2315,6 +2325,9 @@ const alters = [
   // The enrichment queue's claim: a partial index, because the overwhelming majority of
   // events are not waiting to be read.
   `CREATE INDEX IF NOT EXISTS events_enrich_due_idx ON events(enrich_due_at) WHERE enrich_due_at IS NOT NULL`,
+  // Schema v41: "who do I keep running into". The aggregate groups a user's whole roster
+  // history by this, so it is the one index standing between that panel and a full scan.
+  `CREATE INDEX IF NOT EXISTS event_attendees_person_idx ON event_attendees(user_id, person_key_kind, person_key_value) WHERE person_key_value IS NOT NULL`,
 ];
 
 /**

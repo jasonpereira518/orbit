@@ -20,6 +20,7 @@ import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { eventAttendees, events, type EventRecord } from "@/db/schema";
 import { attendeeIdentityKey } from "@/lib/events/identity";
+import { personKeyOf } from "@/lib/events/people";
 import type {
   AttendeeRole,
   AttendeeSource,
@@ -271,17 +272,20 @@ export async function upsertEventAttendees(
   if (attendees.length === 0) return 0;
   const db = await getDb();
 
-  const values = attendees.map(
-    (a) =>
-      sql`(${eventId}::uuid, ${userId}, ${a.fullName}, ${a.email}, ${a.company}, ${a.title},
+  const values = attendees.map((a) => {
+    // Computed here rather than in each parser, so every acquisition path — paste, CSV,
+    // page, calendar, provider — produces the same cross-event identity for one person.
+    const personKey = personKeyOf(a);
+    return sql`(${eventId}::uuid, ${userId}, ${a.fullName}, ${a.email}, ${a.company}, ${a.title},
            ${a.linkedinUrl}, ${a.xHandle}, ${a.phone ?? null}, ${a.attendeeRole ?? null},
-           ${source}, ${a.externalRef ?? null}, ${a.identityKey})`
-  );
+           ${source}, ${a.externalRef ?? null}, ${personKey?.kind ?? null},
+           ${personKey?.value ?? null}, ${a.identityKey})`;
+  });
 
   await db.execute(sql`
     INSERT INTO event_attendees
       (event_id, user_id, full_name, email, company, title, linkedin_url, x_handle, phone,
-       attendee_role, source, external_ref, identity_key)
+       attendee_role, source, external_ref, person_key_kind, person_key_value, identity_key)
     VALUES ${sql.join(values, sql`, `)}
     ON CONFLICT (event_id, identity_key) DO UPDATE SET
       full_name     = COALESCE(event_attendees.full_name, excluded.full_name),
@@ -296,6 +300,19 @@ export async function upsertEventAttendees(
       -- an external ref and drop it, and a phone number only ever arrives from a provider.
       -- Both follow the fill-blanks rule, so a paste can never blank a provider's id.
       external_ref  = COALESCE(event_attendees.external_ref, excluded.external_ref),
+      -- The one field that UPGRADES rather than filling a blank. A row that arrived as a
+      -- name and later gains a LinkedIn URL should be recognised at the strong tier from
+      -- then on — that is the whole point of the second read filling in the first.
+      person_key_kind  = CASE WHEN excluded.person_key_kind IS NOT NULL
+                               AND (event_attendees.person_key_kind IS NULL
+                                    OR event_attendees.person_key_kind = 'name')
+                              THEN excluded.person_key_kind
+                              ELSE event_attendees.person_key_kind END,
+      person_key_value = CASE WHEN excluded.person_key_kind IS NOT NULL
+                               AND (event_attendees.person_key_kind IS NULL
+                                    OR event_attendees.person_key_kind = 'name')
+                              THEN excluded.person_key_value
+                              ELSE event_attendees.person_key_value END,
       updated_at    = now()
   `);
 
@@ -439,9 +456,19 @@ export async function updateAttendeeForUser(
     return { ok: false, reason: "collision", otherId: clash.id, otherName: clash.fullName };
   }
 
+  // Recomputed for the same reason `identityKey` is: a correction that adds an email or a
+  // LinkedIn URL changes who this row IS, and a stale cross-event key would keep the
+  // corrected person filed under the old one.
+  const personKey = personKeyOf(patch);
   await db
     .update(eventAttendees)
-    .set({ ...patch, identityKey, updatedAt: new Date() })
+    .set({
+      ...patch,
+      identityKey,
+      personKeyKind: personKey?.kind ?? null,
+      personKeyValue: personKey?.value ?? null,
+      updatedAt: new Date(),
+    })
     .where(and(eq(eventAttendees.userId, userId), eq(eventAttendees.id, attendeeId)));
   return { ok: true };
 }

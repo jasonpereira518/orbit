@@ -42,6 +42,7 @@ import { ReauthRequiredError } from "@/lib/errors";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 import { runEventSyncPass } from "@/lib/events/sync";
 import { runEnrichmentPass } from "@/lib/events/enrich-queue";
+import { backfillPersonKeys } from "@/lib/events/people-store";
 import { calendarEventsToCandidates } from "@/lib/events/discovery/from-calendar";
 import { recordDiscoveryCandidates } from "@/lib/events/discovery/record";
 
@@ -355,6 +356,10 @@ export async function runSyncPass(
   } else {
     stats.budgetExhausted = true;
   }
+
+  // Person keys for rows written before the column existed. A bounded slice per pass: it is
+  // pure catch-up work, and the panel it feeds is simply thinner until it finishes.
+  await backfillPersonKeys(2000).catch(() => 0);
 
   // Reading discovered events' public pages comes LAST of all, and deliberately so: every
   // pass above creates or updates data the user is waiting on, while this one makes rows that

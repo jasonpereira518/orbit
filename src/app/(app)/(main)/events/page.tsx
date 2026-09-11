@@ -3,8 +3,14 @@ import { EventsHeader } from "@/components/events/events-header";
 import { EventCard } from "@/components/events/event-card";
 import { AddEventDialog } from "@/components/events/add-event-dialog";
 import { EventConnectionsCard } from "@/components/events/event-connections-card";
+import { RepeatPeoplePanel } from "@/components/events/repeat-people-panel";
 import { EventsListSkeleton } from "@/components/loading/page-skeletons";
-import { getEventConnections, listEvents, listHiddenEvents } from "@/actions/events";
+import {
+  getEventConnections,
+  getRepeatCoAttendees,
+  listEvents,
+  listHiddenEvents,
+} from "@/actions/events";
 
 async function ConnectionsSection() {
   const { connections, eventbriteConfigured, googleConnected } = await getEventConnections();
@@ -15,6 +21,11 @@ async function ConnectionsSection() {
       googleConnected={googleConnected}
     />
   );
+}
+
+async function RepeatPeopleSection() {
+  const people = await getRepeatCoAttendees({ limit: 8 });
+  return <RepeatPeoplePanel people={people} />;
 }
 
 /**
@@ -82,6 +93,15 @@ export default function EventsPage() {
       <div className="reveal-mount" style={{ "--reveal-delay": "60ms" } as React.CSSProperties}>
         <Suspense fallback={null}>
           <ConnectionsSection />
+        </Suspense>
+      </div>
+
+      {/* Above the list: the point of keeping rosters is the pattern across them, and a
+          panel below four screens of events is a panel nobody reads. `fallback={null}`
+          because it renders nothing at all until there IS a pattern. */}
+      <div className="reveal-mount" style={{ "--reveal-delay": "90ms" } as React.CSSProperties}>
+        <Suspense fallback={null}>
+          <RepeatPeopleSection />
         </Suspense>
       </div>
 

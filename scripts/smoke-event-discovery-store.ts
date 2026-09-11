@@ -25,7 +25,19 @@ import {
   restoreEventForUser,
   tombstoneAliasesForEvent,
 } from "../src/lib/events/discovery/aliases";
-import { createEventForUser, listEventsForUser, listRosterForUser } from "../src/lib/events/store";
+import {
+  createEventForUser,
+  listEventsForUser,
+  listRosterForUser,
+  updateAttendeeForUser,
+  upsertEventAttendees,
+} from "../src/lib/events/store";
+import { parseRosterText } from "../src/lib/events/parse-roster";
+import {
+  backfillPersonKeys,
+  eventsTogetherForRoster,
+  listRepeatCoAttendees,
+} from "../src/lib/events/people-store";
 import { claimDueEnrichments, markEnrichResult } from "../src/lib/events/enrich-queue";
 import { IcsFeedGoneError, syncIcsFeed } from "../src/lib/events/discovery/from-ics-feed";
 import { scanGmailForEvents } from "../src/lib/events/discovery/from-gmail";
@@ -411,6 +423,88 @@ END:VCALENDAR`;
     });
     check("re-scanning creates nothing", again.stats.created === 0, JSON.stringify(again.stats));
     check("and the mailbox scan created no contacts", (await contactCount()) === 0);
+  }
+
+  console.log("\npeople you keep seeing");
+  {
+    await reset();
+    const db = await getDb();
+
+    // Three events. Ada is at all three, spelled differently every time — which is the
+    // entire problem: `identity_key` would call those three different people.
+    const one = await createEventForUser(USER, { title: "Meetup One", startsAt: new Date("2026-01-10T18:00:00Z") });
+    const two = await createEventForUser(USER, { title: "Meetup Two", startsAt: new Date("2026-02-10T18:00:00Z") });
+    const three = await createEventForUser(USER, { title: "Meetup Three", startsAt: new Date("2026-03-10T18:00:00Z") });
+
+    await upsertEventAttendees(USER, one.id, parseRosterText("Ada Lovelace https://linkedin.com/in/ada").attendees, "paste");
+    await upsertEventAttendees(USER, two.id, parseRosterText("Ada Lovelace https://www.linkedin.com/in/ada/").attendees, "paste");
+    await upsertEventAttendees(USER, three.id, parseRosterText("Ada Lovelace <ada@analytical.io>").attendees, "paste");
+    // Grace is at one event only: not a pattern.
+    await upsertEventAttendees(USER, one.id, parseRosterText("Grace Hopper <grace@navy.mil>").attendees, "paste");
+    // Two different people who happen to share a name, at two events. The whole reason the
+    // name tier is hidden by default — calling these "someone you keep seeing" is a lie.
+    await upsertEventAttendees(USER, one.id, parseRosterText("David Kim").attendees, "paste");
+    await upsertEventAttendees(USER, two.id, parseRosterText("David Kim").attendees, "paste");
+
+    const strong = await listRepeatCoAttendees(USER, { minEvents: 2 });
+    check("the repeat is found", strong.length === 1, JSON.stringify(strong.map((p) => p.name)));
+    check("across two spellings of one profile", strong[0]?.eventsTogether === 2, String(strong[0]?.eventsTogether));
+    check("and it is Ada", strong[0]?.name === "Ada Lovelace", String(strong[0]?.name));
+    check("a one-off is not a pattern", !strong.some((p) => p.name === "Grace Hopper"));
+    // The email row is a THIRD key for the same human, and nothing links it to the LinkedIn
+    // rows until she becomes a contact. Stated here rather than pretended away.
+    check("an unlinked third identity stays separate", strong[0]?.eventsTogether !== 3);
+    check("name-only clusters are excluded by default", !strong.some((p) => p.name === "David Kim"));
+
+    const withWeak = await listRepeatCoAttendees(USER, { minEvents: 2, includeWeak: true });
+    const david = withWeak.find((p) => p.name === "David Kim");
+    check("but can be asked for", david !== undefined);
+    check("and are flagged as weak", david?.weak === true);
+
+    // The user is on every one of their own rosters; without this they are the top result.
+    await upsertEventAttendees(USER, one.id, parseRosterText("Me Myself <me@example.com>").attendees, "paste");
+    await upsertEventAttendees(USER, two.id, parseRosterText("Me Myself <me@example.com>").attendees, "paste");
+    const excludingSelf = await listRepeatCoAttendees(USER, {
+      minEvents: 2,
+      selfKeys: ["email:me@example.com"],
+    });
+    check("the user is not someone they keep seeing", !excludingSelf.some((p) => p.name === "Me Myself"));
+
+    // Hiding an event removes it from the pattern too: "not mine" has to mean it everywhere.
+    await dismissEventForUser(USER, two.id);
+    const afterHide = await listRepeatCoAttendees(USER, { minEvents: 2 });
+    check("a hidden event stops counting", afterHide.length === 0, JSON.stringify(afterHide.map((p) => p.name)));
+    await restoreEventForUser(USER, two.id);
+
+    // The roster badge: how many events each row's person shares with the user.
+    const history = await eventsTogetherForRoster(USER, two.id);
+    const adaRow = (await listRosterForUser(USER, two.id)).find((r) => r.fullName === "Ada Lovelace");
+    check("the badge sees the second event", history.get(adaRow!.id)?.count === 2, String(history.get(adaRow!.id)?.count));
+
+    // Correcting a row must move its cross-event identity with it, or the corrected person
+    // stays filed under the old key forever.
+    const graceRow = (await listRosterForUser(USER, one.id)).find((r) => r.fullName === "Grace Hopper")!;
+    await updateAttendeeForUser(USER, graceRow.id, {
+      fullName: "Grace Hopper",
+      email: "grace@cobol.mil",
+      company: null,
+      title: null,
+      linkedinUrl: null,
+      xHandle: null,
+      attendeeRole: null,
+    });
+    const movedKey = rowsOf<{ person_key_value: string | null }>(
+      await db.execute(sql`SELECT person_key_value FROM event_attendees WHERE id = ${graceRow.id}`)
+    )[0]?.person_key_value;
+    check("an edit recomputes the person key", movedKey === "grace@cobol.mil", String(movedKey));
+
+    // The backfill, for rows written before the column existed.
+    await db.execute(sql`UPDATE event_attendees SET person_key_kind = NULL, person_key_value = NULL WHERE user_id = ${USER}`);
+    const filled = await backfillPersonKeys(500);
+    check("the backfill fills them", filled > 0, String(filled));
+    const rebuilt = await listRepeatCoAttendees(USER, { minEvents: 2 });
+    check("and the pattern comes back", rebuilt.some((p) => p.name === "Ada Lovelace"));
+    check("running it again finds nothing left", (await backfillPersonKeys(500)) === 0);
   }
 
   console.log("\nand after all of that");

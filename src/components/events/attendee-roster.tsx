@@ -51,6 +51,12 @@ import { EditAttendeeDialog } from "./edit-attendee-dialog";
 import { IngestResultCard } from "./ingest-result-card";
 import { friendlyError } from "@/lib/errors";
 
+/** "2nd", "3rd", "4th" — because "2 events together" reads as a count, not a streak. */
+function ordinalSuffix(value: number): string {
+  if (value % 100 >= 11 && value % 100 <= 13) return "th";
+  return ["th", "st", "nd", "rd"][value % 10] ?? "th";
+}
+
 /** One roster row already recognised as somebody in your network. */
 export type RosterMatch = {
   attendeeId: string;
@@ -83,10 +89,13 @@ export function AttendeeRoster({
   eventId,
   rows,
   matches = [],
+  history = [],
 }: {
   eventId: string;
   rows: RosterRow[];
   matches?: RosterMatch[];
+  /** How many events each person has shared with the user, where that is more than one. */
+  history?: Array<{ attendeeId: string; eventsTogether: number }>;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -101,6 +110,10 @@ export function AttendeeRoster({
   const matchById = useMemo(
     () => new Map(matches.map((m) => [m.attendeeId, m])),
     [matches]
+  );
+  const historyById = useMemo(
+    () => new Map(history.map((h) => [h.attendeeId, h.eventsTogether])),
+    [history]
   );
 
   const visible = useMemo(() => {
@@ -259,6 +272,7 @@ export function AttendeeRoster({
         {visible.map((row) => {
           const connected = row.contactId !== null;
           const match = matchById.get(row.id);
+          const seenBefore = historyById.get(row.id) ?? 0;
           const busy = busyRow === row.id;
           const who = row.fullName ?? row.email ?? "this guest";
           return (
@@ -299,6 +313,18 @@ export function AttendeeRoster({
                     Unlink
                   </Button>
                 </div>
+              ) : seenBefore ? (
+                // The strongest signal this roster carries: not "who is this" but "you have
+                // been in a room with them before and never said so". That belongs in front
+                // of the source badge, which is bookkeeping by comparison.
+                <span
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-ink"
+                  title={`You have been at ${seenBefore} events with ${who}`}
+                >
+                  <Users className="size-3" aria-hidden />
+                  {seenBefore}
+                  {ordinalSuffix(seenBefore)} event together
+                </span>
               ) : match ? (
                 // Known, but not yet attached to this event. Still selectable: connecting is
                 // what adds this event to the timeline you already have for them.

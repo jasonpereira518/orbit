@@ -26,6 +26,14 @@ import {
   tombstoneAliasesForEvent,
 } from "@/lib/events/discovery/aliases";
 import { claimEventAliases, keysForEvent } from "@/lib/events/discovery/record";
+import {
+  eventsTogetherForRoster,
+  listEventsTogetherForContact,
+  listRepeatCoAttendees,
+  type EventTogether,
+  type RepeatPerson,
+} from "@/lib/events/people-store";
+import { loadSelfIdentity } from "@/lib/events/self";
 import { diffEventAgainstPage, type EventFieldChange } from "@/lib/events/resync";
 import { resolveThemeColor } from "@/lib/events/theme";
 import { parseRosterCsv, parseRosterText } from "@/lib/events/parse-roster";
@@ -87,6 +95,32 @@ export async function listHiddenEvents(): Promise<EventListRow[]> {
   return listEventsForUser(userId, 100, { hidden: true });
 }
 
+/**
+ * The people the user keeps running into.
+ *
+ * Name-only clusters are excluded unless asked for: two different David Kims at two meetups
+ * are not a pattern, and a panel that claims they are is worse than an empty one.
+ */
+export async function getRepeatCoAttendees(options?: {
+  limit?: number;
+  includeWeak?: boolean;
+}): Promise<RepeatPerson[]> {
+  const userId = await requireUserForSurface(SURFACE);
+  const self = await loadSelfIdentity(userId);
+  return listRepeatCoAttendees(userId, {
+    limit: options?.limit ?? 8,
+    includeWeak: options?.includeWeak ?? false,
+    // The user is on every one of their own rosters; without this they are the top result.
+    selfKeys: self.keyStrings,
+  });
+}
+
+/** Every event a contact shares with the user. Rendered on the contact page. */
+export async function getEventsWithContact(contactId: string): Promise<EventTogether[]> {
+  const userId = await requireUserForSurface(SURFACE);
+  return listEventsTogetherForContact(userId, contactId);
+}
+
 export async function getEvent(eventId: string): Promise<EventRecord | null> {
   const userId = await requireUserForSurface(SURFACE);
   return getEventForUser(userId, eventId);
@@ -95,6 +129,22 @@ export async function getEvent(eventId: string): Promise<EventRecord | null> {
 export async function getRoster(eventId: string): Promise<RosterRow[]> {
   const userId = await requireUserForSurface(SURFACE);
   return listRosterForUser(userId, eventId);
+}
+
+/**
+ * How many events each person on this roster has shared with the user.
+ *
+ * A separate read from the roster itself so the badge can stream in without holding up the
+ * list — it is an aggregate over the user's whole history, and the names matter more.
+ */
+export async function getRosterHistory(
+  eventId: string
+): Promise<Array<{ attendeeId: string; eventsTogether: number }>> {
+  const userId = await requireUserForSurface(SURFACE);
+  const history = await eventsTogetherForRoster(userId, eventId);
+  return [...history.entries()]
+    .filter(([, value]) => value.count > 1)
+    .map(([attendeeId, value]) => ({ attendeeId, eventsTogether: value.count }));
 }
 
 export async function createEvent(input: {

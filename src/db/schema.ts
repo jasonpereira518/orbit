@@ -3107,6 +3107,21 @@ export const eventAttendees = pgTable(
       .notNull(),
     /** The provider's own guest id, where there is one. */
     externalRef: text("external_ref"),
+    /**
+     * The same person, across DIFFERENT events.
+     *
+     * `identityKey` below cannot do this: it keys on the string it was given, so two
+     * spellings of one LinkedIn URL are two keys. That is right for its job — making a
+     * re-paste idempotent against a unique index, where renormalising would break every
+     * stored row — and useless for "have I met them before".
+     *
+     * The kinds match `contact_identities.kind`, so the aggregate can join a roster row to a
+     * contact through that table's unique index rather than reimplementing the matching.
+     */
+    personKeyKind: text("person_key_kind").$type<
+      "linkedin_slug" | "email" | "x_handle" | "platform_user" | "name"
+    >(),
+    personKeyValue: text("person_key_value"),
     /** 0/1. Set by the human, never by a sync — see `contactId`. */
     spokeTo: integer("spoke_to").default(0).notNull(),
     /**
@@ -3138,6 +3153,10 @@ export const eventAttendees = pgTable(
      * added to fix exactly this omission — without it, deleting a contact scans this table.
      */
     index("event_attendees_contact_idx").on(t.contactId).where(sql`contact_id is not null`),
+    /** What "people you keep seeing" groups on, across a whole roster history. */
+    index("event_attendees_person_idx")
+      .on(t.userId, t.personKeyKind, t.personKeyValue)
+      .where(sql`person_key_value is not null`),
   ]
 );
 
