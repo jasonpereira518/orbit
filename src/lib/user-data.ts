@@ -21,6 +21,7 @@ import {
   contactIdentities,
   contactMerges,
   duplicateSuggestions,
+  eventAliases,
   eventAttendees,
   eventProviderConnections,
   events,
@@ -157,6 +158,11 @@ export async function purgeUserData(
   // carry their own `user_id` (which is why `smoke-purge` finds them), and a roster holds
   // names, emails and employers of people the user met.
   await db.delete(eventAttendees).where(eq(eventAttendees.userId, userId));
+  // Before `events`, and explicitly: an alias row survives its event by design (`ON DELETE
+  // SET NULL` is what makes a dismissal stick), so deleting events first would leave a
+  // tombstone per event behind — a list of every Luma link and calendar UID the user ever
+  // had, pointing at nothing, outliving the account.
+  await db.delete(eventAliases).where(eq(eventAliases.userId, userId));
   await db.delete(events).where(eq(events.userId, userId));
   // Holds an encrypted Luma API key or Eventbrite access token. Same class of secret as the
   // Gmail/Outlook rows below, and it must not outlive the account.

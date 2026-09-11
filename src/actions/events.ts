@@ -16,19 +16,18 @@ import { requireSyncUser, requireUserForSurface } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { fetchEventPage, EventPageError } from "@/lib/events/fetch-page";
 import { canonicalizeEventUrl } from "@/lib/events/canonical-url";
+import { enrichEvent } from "@/lib/events/enrich";
 import {
-  diffEventAgainstPage,
-  resolveField,
-  type EventFieldChange,
-} from "@/lib/events/resync";
-import { persistEventCover } from "@/lib/events/cover";
+  combineResolutions,
+  dismissEventForUser,
+  resolveAliases,
+  restoreEventForUser,
+  tombstoneAliasesForEvent,
+} from "@/lib/events/discovery/aliases";
+import { claimEventAliases, keysForEvent } from "@/lib/events/discovery/record";
+import { diffEventAgainstPage, type EventFieldChange } from "@/lib/events/resync";
 import { resolveThemeColor } from "@/lib/events/theme";
-import {
-  parseRosterCsv,
-  parseRosterText,
-  speakersNotOnRoster,
-  speakersToAttendees,
-} from "@/lib/events/parse-roster";
+import { parseRosterCsv, parseRosterText } from "@/lib/events/parse-roster";
 import {
   createEventForUser,
   deleteEventForUser,
@@ -58,7 +57,6 @@ import {
 } from "@/lib/events/connections";
 import { buildEventbriteAuthUrl, eventbriteOAuthConfig } from "@/lib/events/connectors/eventbrite-oauth";
 import { listCalendarEvents } from "@/lib/events/connectors/luma";
-import { resolveEventTitle } from "@/lib/events/types";
 import type { AttendeeRole, ConnectSummary, RosterRow } from "@/lib/events/types";
 import type { EventRecord } from "@/db/schema";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
@@ -74,6 +72,12 @@ function revalidateEvents(eventId?: string) {
 export async function listEvents(): Promise<EventListRow[]> {
   const userId = await requireUserForSurface(SURFACE);
   return listEventsForUser(userId);
+}
+
+/** Everything the user has said "not mine" to, so a mistake is one click from undone. */
+export async function listHiddenEvents(): Promise<EventListRow[]> {
+  const userId = await requireUserForSurface(SURFACE);
+  return listEventsForUser(userId, 100, { hidden: true });
 }
 
 export async function getEvent(eventId: string): Promise<EventRecord | null> {
@@ -94,7 +98,7 @@ export async function createEvent(input: {
   url?: string | null;
   role?: "attended" | "hosted";
   notes?: string | null;
-}): Promise<ActionResult<{ id: string }>> {
+}): Promise<ActionResult<{ id: string; existing?: boolean }>> {
   return asActionResult(async () => {
     const userId = await requireUserForSurface(SURFACE);
     const title = input.title.trim();
@@ -105,6 +109,21 @@ export async function createEvent(input: {
     // with the user's own Luma guest token in it, rendered back as a link on the event page.
     const outcome = input.url ? canonicalizeEventUrl(input.url) : null;
     const url = outcome?.kind === "ok" ? outcome.candidates[0]! : input.url ?? null;
+
+    // Already here? Discovery may have added this event days ago, and a user pasting its link
+    // means "show me this", not "make me a second one". Taking them to the row they already
+    // have is also how they find the roster they have already built on it.
+    const keys = keysForEvent({ url });
+    if (keys.length > 0) {
+      const known = combineResolutions(keys, await resolveAliases(userId, keys));
+      if (known.eventId) {
+        // A pasted link is an explicit statement and outranks a previous "not mine" — the
+        // dismissal was an answer about a suggestion, not about this.
+        if (known.dismissed) await restoreEventForUser(userId, known.eventId);
+        revalidateEvents(known.eventId);
+        return { id: known.eventId, existing: true };
+      }
+    }
 
     const event = await createEventForUser(userId, {
       title,
@@ -119,10 +138,14 @@ export async function createEvent(input: {
       ...seedTheme(url ?? title),
     });
 
+    // Claimed with `repoint`, which is what makes a paste override a tombstone: if this link
+    // was dismissed as a suggestion last week, asking for it by hand today wins.
+    if (keys.length > 0) await claimEventAliases(userId, event.id, keys, "manual");
+
     if (input.url) {
       // Off the request path: the user should land on their event, not wait on someone
       // else's web server. `enrich_status` on the row is how the UI shows this is in flight.
-      after(() => enrichEventInternal(userId, event.id, input.url!).catch(() => {}));
+      after(() => enrichEvent(userId, event.id, input.url!).catch(() => {}));
     }
     revalidateEvents();
     return { id: event.id };
@@ -154,99 +177,10 @@ export async function enrichEventFromUrl(
     }
     throw error;
   }
-  const result = await enrichEventInternal(userId, eventId, url);
+  const result = await enrichEvent(userId, eventId, url);
+  if (result.restamped > 0) revalidatePath("/contacts");
   revalidateEvents(eventId);
   return result;
-}
-
-/**
- * `fill` only completes blanks, which is right for a first read and useless afterwards.
- * `replace` lets the page win, which is what a resync is for — see `resync.ts`.
- */
-type EnrichMode = "fill" | "replace";
-
-async function enrichEventInternal(
-  userId: string,
-  eventId: string,
-  url: string,
-  mode: EnrichMode = "fill"
-): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const details = await fetchEventPage(url);
-    const theme = resolveThemeColor({
-      metaColor: details.themeColor,
-      seed: new URL(details.canonicalUrl ?? url).host,
-    });
-
-    let coverImageUrl: string | null = null;
-    let coverSourceUrl: string | null = null;
-    if (details.imageUrl) {
-      const cover = await persistEventCover(eventId, details.imageUrl);
-      coverImageUrl = cover?.url ?? null;
-      coverSourceUrl = cover?.sourceUrl ?? null;
-    }
-
-    const existing = await getEventForUser(userId, eventId);
-    // `fill` keeps whatever is already stored; `replace` lets the page win — but neither ever
-    // CLEARS a field the page simply did not mention, which is what `resolveField` encodes.
-    // A host reshuffling their markup must not blank the venue on every event it produced.
-    const take = <T>(fetched: T | null, current: T | null): T | null =>
-      mode === "replace" ? resolveField(fetched, current) : current ?? fetched;
-
-    await updateEventForUser(userId, eventId, {
-      // The untitled placeholder counts as blank in both modes. See `resolveEventTitle`.
-      title:
-        mode === "replace"
-          ? details.title?.trim() || resolveEventTitle(existing?.title, details.title)
-          : resolveEventTitle(existing?.title, details.title),
-      startsAt: take(details.startsAt, existing?.startsAt ?? null),
-      endsAt: take(details.endsAt, existing?.endsAt ?? null),
-      timezone: take(details.timezone, existing?.timezone ?? null),
-      venue: take(details.venue, existing?.venue ?? null),
-      city: take(details.city, existing?.city ?? null),
-      description: take(details.description, existing?.description ?? null),
-      organizerName: take(details.organizerName, existing?.organizerName ?? null),
-      organizerUrl: take(details.organizerUrl, existing?.organizerUrl ?? null),
-      attendanceMode: take(details.attendanceMode, existing?.attendanceMode ?? null),
-      url: details.canonicalUrl ?? url,
-      source: "page",
-      // Only overwrite the cover when this read actually produced one, or a page that briefly
-      // stops serving `og:image` would strip the artwork off the event.
-      ...(coverImageUrl ? { coverImageUrl, coverSourceUrl } : {}),
-      // A locked theme is the user's explicit choice and is never overwritten.
-      ...(existing?.themeLocked === 1
-        ? {}
-        : { themeColor: theme.color, themeSource: theme.source }),
-      enrichedAt: new Date(),
-      enrichError: null,
-    });
-
-    // Enrichment can change the title and date too — most visibly when it replaces the
-    // untitled placeholder — so the interactions written from this event follow along.
-    await restampFromEvent(userId, eventId, existing ?? null);
-
-    // The host's published line-up, as unconfirmed roster rows tagged `page`. Deliberately
-    // NOT ingested: `connectAttendees` is still the only path to a contact, and it still
-    // needs a human. This only puts names on the roster for the user to confirm or delete.
-    const speakers = speakersToAttendees(details.speakers);
-    if (speakers.length > 0) {
-      // Filtered against who is already listed, or refreshing would re-add a name-only row
-      // for every speaker whose roster entry the user has since corrected. See
-      // `speakersNotOnRoster` for why a name comparison is the right tool here specifically.
-      const roster = await listRosterForUser(userId, eventId);
-      const fresh = speakersNotOnRoster(speakers, roster.map((r) => r.fullName));
-      if (fresh.length > 0) await upsertEventAttendees(userId, eventId, fresh, "page");
-    }
-    return { ok: true };
-  } catch (error) {
-    const message =
-      error instanceof EventPageError ? error.message : "That page could not be read.";
-    await updateEventForUser(userId, eventId, {
-      enrichedAt: new Date(),
-      enrichError: message,
-    });
-    return { ok: false, error: message };
-  }
 }
 
 /**
@@ -356,7 +290,8 @@ export async function resyncEvent(eventId: string): Promise<{ ok: boolean; error
     throw error;
   }
 
-  const result = await enrichEventInternal(userId, eventId, event.url, "replace");
+  const result = await enrichEvent(userId, eventId, event.url, { mode: "replace" });
+  if (result.restamped > 0) revalidatePath("/contacts");
   revalidateEvents(eventId);
   return result;
 }
@@ -385,8 +320,31 @@ async function restampFromEvent(
 
 export async function deleteEvent(eventId: string): Promise<void> {
   const userId = await requireUserForSurface(SURFACE);
+  // Before the delete, not after: the FK would null these anyway, but a discovery pass
+  // running in the gap could otherwise re-create the event from the very keys we are about
+  // to orphan — and it would come back with the same link, minutes later, looking like a bug.
+  await tombstoneAliasesForEvent(userId, eventId).catch(() => {});
   await deleteEventForUser(userId, eventId);
   revalidateEvents();
+}
+
+/**
+ * "Not mine" — hide an event discovery added.
+ *
+ * Hidden rather than deleted, because the user may have connected people from it already and
+ * a mis-click must not take their work with it. The keys stay behind pointing at this row,
+ * which is what stops the next sync of the same calendar adding it straight back.
+ */
+export async function dismissEvent(eventId: string): Promise<void> {
+  const userId = await requireUserForSurface(SURFACE);
+  await dismissEventForUser(userId, eventId);
+  revalidateEvents(eventId);
+}
+
+export async function restoreEvent(eventId: string): Promise<void> {
+  const userId = await requireUserForSurface(SURFACE);
+  await restoreEventForUser(userId, eventId);
+  revalidateEvents(eventId);
 }
 
 /** The dominant cover colour, sampled in the browser. Ignored once the user picks their own. */

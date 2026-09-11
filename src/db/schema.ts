@@ -2963,6 +2963,40 @@ export const events = pgTable(
     /** As the host reports it. May legitimately exceed the number of roster rows we hold. */
     attendeeCount: integer("attendee_count"),
     notes: text("notes"),
+    /**
+     * Which discovery source put this event here, or null when the user added it themselves.
+     *
+     * Separate from `source` because enrichment overwrites that with `'page'` the moment it
+     * reads the event's own link. `source` therefore answers "what was this row last read
+     * from"; this answers "how did it get here", which is what the card's badge shows and
+     * what makes an auto-added event explainable rather than mysterious.
+     */
+    discoveredVia: text("discovered_via").$type<
+      "gcal" | "ics" | "luma_ics" | "partiful_ics" | "gmail"
+    >(),
+    /** What the user said they would do, where the source reported it. */
+    rsvpStatus: text("rsvp_status").$type<
+      "going" | "maybe" | "waitlist" | "invited" | "cancelled"
+    >(),
+    /**
+     * Whether `role` is the user's own statement or something we worked out.
+     *
+     * Discovery has to guess — a calendar invite does not say whether you are running the
+     * event — and a later signal (the host API listing it) is allowed to correct a guess.
+     * It is never allowed to correct the user, so an edit sets this to `'user'` and the
+     * promotion path skips those rows.
+     */
+    roleSource: text("role_source").$type<"user" | "inferred">(),
+    /**
+     * "Not mine" — a soft hide, so the undo is one click and the row keeps its roster.
+     *
+     * Hiding also has to be REMEMBERED, or the next sync of the same feed adds it straight
+     * back. That part is `event_aliases`: the keys stay, pointing at this dismissed row.
+     */
+    dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+    /** Queue + lease for background enrichment. Null means nothing is owed. */
+    enrichDueAt: timestamp("enrich_due_at", { withTimezone: true }),
+    enrichAttempts: integer("enrich_attempts").default(0).notNull(),
     enrichedAt: timestamp("enriched_at", { withTimezone: true }),
     enrichError: text("enrich_error"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -2976,10 +3010,67 @@ export const events = pgTable(
      * or repeat a row when two events share a start time.
      */
     index("events_user_starts_idx").on(t.userId, t.startsAt, t.id),
+    /** The enrichment queue's claim. Partial: almost no event is ever waiting to be read. */
+    index("events_enrich_due_idx").on(t.enrichDueAt).where(sql`enrich_due_at is not null`),
     /** Connector idempotency: re-syncing a provider updates the row rather than adding one. */
     uniqueIndex("events_provider_uidx")
       .on(t.userId, t.provider, t.providerEventId)
       .where(sql`provider_event_id is not null`),
+  ]
+);
+
+/**
+ * Every key any source has ever used to name an event, and what it resolved to.
+ *
+ * Three discovery sources can report the same event in one pass and none of them agrees with
+ * the others about its name: a Google Calendar invite knows an `iCalUID`, a Luma feed knows
+ * `evt-abc`, a confirmation email knows a message id and a link. Deduping on the event's URL
+ * alone fails on the first of those and on any link with a personal token in it.
+ *
+ * So every key is written here against one unique index, and the index — not application
+ * logic — decides the winner when two sources race inside the same pass.
+ *
+ * ## A null `event_id` is a tombstone, and that is the point
+ *
+ * "Not mine" would otherwise be the most frustrating button in the product: the next sync of
+ * the same calendar feed adds the event straight back, every fifteen minutes, forever. The
+ * keys survive the dismissal, so discovery can recognise a re-report and drop it.
+ *
+ * `ON DELETE SET NULL` rather than CASCADE is what extends that to a hard delete: deleting an
+ * event leaves its keys behind with nothing to point at, which reads as "this was deliberately
+ * removed" instead of "never seen". A user who pastes the link again by hand overrides it —
+ * that is an explicit statement, and it re-points the alias.
+ */
+export const eventAliases = pgTable(
+  "event_aliases",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /**
+     * `provider` — `luma:evt-abc`, the platform's own id, the strongest key there is.
+     * `url` — the canonical event URL, for sources that only ever saw a link.
+     * `source_ref` — the source's OWN id (`gcal:<iCalUID>`, `gmail:<messageId>`,
+     *   `ics:<UID>`), which is what makes re-reading the same feed idempotent even when the
+     *   event's public identity is still unknown.
+     */
+    kind: text("kind").$type<"provider" | "url" | "source_ref">().notNull(),
+    value: text("value").notNull(),
+    /** Null = tombstone: dismissed or deleted, and never to be re-added by a sync. */
+    eventId: uuid("event_id").references(() => events.id, { onDelete: "set null" }),
+    source: text("source").notNull(),
+    /**
+     * Why we believe this key names this event — a subject line, a sender domain, a calendar
+     * summary. Shown when the user asks "why is this here?", and deliberately never a message
+     * body: this table must not become a copy of the user's mail.
+     */
+    evidence: jsonb("evidence").$type<Record<string, unknown>>().default({}).notNull(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).defaultNow().notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("event_aliases_user_kind_value_uidx").on(t.userId, t.kind, t.value),
+    /** An index on the FK, for the same reason `event_attendees_contact_idx` exists. */
+    index("event_aliases_event_idx").on(t.eventId).where(sql`event_id is not null`),
   ]
 );
 
@@ -3002,7 +3093,7 @@ export const eventAttendees = pgTable(
     attendeeRole: text("attendee_role").$type<"attendee" | "host" | "speaker">(),
     /** Which acquisition path produced this row. Rendered as a badge, so it must be honest. */
     source: text("source")
-      .$type<"paste" | "csv" | "screenshot" | "page" | "luma" | "eventbrite">()
+      .$type<"paste" | "csv" | "screenshot" | "page" | "calendar" | "luma" | "eventbrite">()
       .default("paste")
       .notNull(),
     /** The provider's own guest id, where there is one. */
@@ -3126,6 +3217,7 @@ export type NewEventRecord = typeof events.$inferInsert;
 export type EventAttendeeRecord = typeof eventAttendees.$inferSelect;
 export type NewEventAttendeeRecord = typeof eventAttendees.$inferInsert;
 export type EventProviderConnection = typeof eventProviderConnections.$inferSelect;
+export type EventAlias = typeof eventAliases.$inferSelect;
 export type ContactIdentity = typeof contactIdentities.$inferSelect;
 export type NewContactIdentity = typeof contactIdentities.$inferInsert;
 export type ContactMerge = typeof contactMerges.$inferSelect;

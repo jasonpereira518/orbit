@@ -4,7 +4,7 @@ import { EventCard } from "@/components/events/event-card";
 import { AddEventDialog } from "@/components/events/add-event-dialog";
 import { EventConnectionsCard } from "@/components/events/event-connections-card";
 import { EventsListSkeleton } from "@/components/loading/page-skeletons";
-import { getEventConnections, listEvents } from "@/actions/events";
+import { getEventConnections, listEvents, listHiddenEvents } from "@/actions/events";
 
 async function ConnectionsSection() {
   const { connections, eventbriteConfigured } = await getEventConnections();
@@ -13,6 +13,35 @@ async function ConnectionsSection() {
       connections={connections}
       eventbriteConfigured={eventbriteConfigured}
     />
+  );
+}
+
+/**
+ * What the user hid, and nothing else.
+ *
+ * Rendered only when there IS something hidden — an empty "Hidden" heading on everybody
+ * else's page would be a permanent reminder of a feature they have not used. It exists
+ * because "not mine" is otherwise a trapdoor: a mis-click on a real event would be
+ * unrecoverable, and the user would have no way to know the event was ever there.
+ */
+async function HiddenList() {
+  const hidden = await listHiddenEvents();
+  if (hidden.length === 0) return null;
+
+  return (
+    <details className="rounded-xl border border-border/70 bg-card px-4 py-3">
+      <summary className="cursor-pointer text-sm text-muted-foreground">
+        Hidden events ({hidden.length})
+      </summary>
+      <p className="mt-2 text-xs text-muted-foreground">
+        Orbit found these and you said they weren’t yours, so no sync will add them back.
+      </p>
+      <div className="mt-3 grid gap-4 sm:grid-cols-2">
+        {hidden.map((event) => (
+          <EventCard key={event.id} event={event} hidden />
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -60,6 +89,12 @@ export default function EventsPage() {
           <EventsList />
         </Suspense>
       </div>
+
+      {/* fallback={null} and no skeleton: this section is usually absent entirely, and a
+          placeholder for something that will not appear is worse than a late arrival. */}
+      <Suspense fallback={null}>
+        <HiddenList />
+      </Suspense>
     </div>
   );
 }

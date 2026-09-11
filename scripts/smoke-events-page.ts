@@ -101,6 +101,8 @@ function main() {
       source: "manual" as const,
       coverImageUrl: null,
       themeColor: "#7c3aed",
+      discoveredVia: null,
+      rsvpStatus: null,
       attendeeCount: 40,
       connectedCount: 6,
     };

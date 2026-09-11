@@ -327,6 +327,19 @@ async function seed() {
     contactId: contact.id,
     identityKey: "em:ada@analytical.io",
   });
+  // Two aliases: one live, one a TOMBSTONE (`event_id` null), which is the row that would
+  // outlive the account if purge left it to the `ON DELETE SET NULL` cascade. It holds the
+  // user's calendar UIDs and event links.
+  await db.insert(schema.eventAliases).values([
+    {
+      userId: USER,
+      kind: "url",
+      value: "luma.com/deep-learning-summit",
+      eventId: eventRow.id,
+      source: "gcal",
+    },
+    { userId: USER, kind: "source_ref", value: "gcal:dismissed-uid", eventId: null, source: "gcal" },
+  ]);
   // Same class of secret as the Gmail/Outlook rows below.
   await db.insert(schema.eventProviderConnections).values({
     userId: USER,

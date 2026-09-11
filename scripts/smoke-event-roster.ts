@@ -31,6 +31,10 @@ import {
   speakersNotOnRoster,
   speakersToAttendees,
 } from "../src/lib/events/parse-roster";
+import {
+  upsertProviderAttendees,
+  upsertProviderEvent,
+} from "../src/lib/events/provider-writes";
 import { attendeeIdentityKey } from "../src/lib/events/identity";
 import { eventExternalIdBase } from "../src/lib/ingest/external-id";
 import { interactionExternalId } from "../src/lib/ingest/external-id";
@@ -530,6 +534,84 @@ run(async () => {
       typeof s.blockedByPlan === "number",
       String(s.blockedByPlan)
     );
+  }
+
+  // --- what a provider sync writes that nothing used to store -----------------------------------
+  {
+    const db = await getDb();
+    // A provider event that reached the table some other way first — which is what discovery
+    // will do routinely: the user's calendar shows the event long before the host API is
+    // connected. The row therefore starts as `attended`.
+    const seeded = await createEventForUser(USER, {
+      title: "Provider Promotion Summit",
+      role: "attended",
+      provider: "luma",
+      providerEventId: "evt-promote",
+      source: "manual",
+    });
+    const promotedId = await upsertProviderEvent(USER, "luma", {
+      providerEventId: "evt-promote",
+      title: "Provider Promotion Summit",
+      startsAt: new Date("2026-06-01T17:00:00.000Z"),
+      endsAt: null,
+      timezone: "America/Los_Angeles",
+      venue: null,
+      city: null,
+      url: "https://lu.ma/promote",
+      description: null,
+      coverImageUrl: null,
+      attendeeCount: 3,
+    });
+    check("the provider event upserts onto the existing row", promotedId === seeded.id);
+    const role = rowsOf<{ role: string }>(
+      await db.execute(sql`SELECT role FROM events WHERE id = ${promotedId}`)
+    )[0]?.role;
+    // Only a host-scoped credential can list an event at all, so the API listing it IS the
+    // evidence the user hosts it. Without the promotion the UI goes on asking for a pasted
+    // guest list for an event it is already syncing.
+    check("and is promoted to hosted", role === "hosted", String(role));
+
+    await upsertProviderAttendees(
+      USER,
+      promotedId,
+      [
+        {
+          externalRef: "guest-1",
+          fullName: "Ada Lovelace",
+          email: "ada@analytical.io",
+          company: null,
+          title: null,
+          linkedinUrl: null,
+          xHandle: null,
+          phone: "+15550101",
+          attendeeRole: "attendee",
+        },
+      ],
+      "luma"
+    );
+    const stored = rowsOf<{ external_ref: string | null; phone: string | null }>(
+      await db.execute(sql`
+        SELECT external_ref, phone FROM event_attendees WHERE event_id = ${promotedId}
+      `)
+    )[0]!;
+    // Both columns existed from day one and nothing ever wrote them: the connectors computed
+    // an external ref and it was dropped between the mapper and the insert.
+    check("the provider's guest id is stored", stored.external_ref === "guest-1", String(stored.external_ref));
+    check("and so is the phone number", stored.phone === "+15550101", String(stored.phone));
+
+    // Fill-blanks, like every other column: a later paste cannot erase the provider's id.
+    await upsertEventAttendees(
+      USER,
+      promotedId,
+      parseRosterText("Ada Lovelace <ada@analytical.io>").attendees,
+      "paste"
+    );
+    const after = rowsOf<{ external_ref: string | null }>(
+      await db.execute(sql`
+        SELECT external_ref FROM event_attendees WHERE event_id = ${promotedId}
+      `)
+    )[0]!;
+    check("and a later paste does not blank it", after.external_ref === "guest-1", String(after.external_ref));
   }
 
   // --- deleting an event cascades its roster ----------------------------------------------------

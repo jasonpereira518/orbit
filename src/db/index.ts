@@ -936,10 +936,27 @@ CREATE TABLE IF NOT EXISTS events (
   theme_locked integer NOT NULL DEFAULT 0,
   attendee_count integer,
   notes text,
+  discovered_via text,
+  rsvp_status text,
+  role_source text,
+  dismissed_at timestamptz,
+  enrich_due_at timestamptz,
+  enrich_attempts integer NOT NULL DEFAULT 0,
   enriched_at timestamptz,
   enrich_error text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS event_aliases (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  kind text NOT NULL,
+  value text NOT NULL,
+  event_id uuid REFERENCES events(id) ON DELETE SET NULL,
+  source text NOT NULL,
+  evidence jsonb NOT NULL DEFAULT '{}'::jsonb,
+  first_seen_at timestamptz NOT NULL DEFAULT now(),
+  last_seen_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS event_attendees (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1098,7 +1115,12 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
 // events. Built as 33, moved to 34 when #148 took 33, and moved again here because while it
 // waited 34-36 landed on main and 37 and 38 were claimed by open branches. Every step was
 // the same rule — a shared number means one branch's DDL silently never runs.
-export const SCHEMA_VERSION = 39;
+//
+// 40 = event discovery: discovered_via, rsvp_status, role_source, dismissed_at,
+// enrich_due_at and enrich_attempts on events, plus the event_aliases table and its unique
+// index. If another branch lands 40 first, renumber to the next free value and regenerate
+// scripts/schema-ddl.lock.json rather than reusing it.
+export const SCHEMA_VERSION = 40;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2020,6 +2042,27 @@ const alters = [
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_name text`,
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_url text`,
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS attendance_mode text`,
+  // v40, event discovery. `discovered_via` is separate from `source` because enrichment
+  // overwrites `source` with 'page' the moment it reads the event's own link — so `source`
+  // cannot answer "where did this event come from", which is exactly what the card's badge
+  // and the re-add rules need.
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS discovered_via text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS rsvp_status text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS role_source text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS dismissed_at timestamptz`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS enrich_due_at timestamptz`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS enrich_attempts integer NOT NULL DEFAULT 0`,
+  `CREATE TABLE IF NOT EXISTS event_aliases (
+     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+     user_id text NOT NULL,
+     kind text NOT NULL,
+     value text NOT NULL,
+     event_id uuid REFERENCES events(id) ON DELETE SET NULL,
+     source text NOT NULL,
+     evidence jsonb NOT NULL DEFAULT '{}'::jsonb,
+     first_seen_at timestamptz NOT NULL DEFAULT now(),
+     last_seen_at timestamptz NOT NULL DEFAULT now()
+   )`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_step text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,
@@ -2260,6 +2303,18 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS event_attendees_contact_idx ON event_attendees(contact_id) WHERE contact_id IS NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS event_provider_connections_user_uidx ON event_provider_connections(user_id, provider)`,
   `CREATE INDEX IF NOT EXISTS event_provider_connections_due_idx ON event_provider_connections(next_sync_at) WHERE next_sync_at IS NOT NULL`,
+  // Schema v40: event discovery.
+  //
+  // `event_aliases_user_kind_value_uidx` is the whole dedup story. Three sources can report
+  // the same event within one pass — a calendar invite, a Luma feed entry and a confirmation
+  // email — and each knows a different key for it. One unique index gives them a single
+  // winner even when they race, and a row whose `event_id` is NULL is a tombstone that says
+  // "this one was dismissed or deleted", which is what stops the next sync re-adding it.
+  `CREATE UNIQUE INDEX IF NOT EXISTS event_aliases_user_kind_value_uidx ON event_aliases(user_id, kind, value)`,
+  `CREATE INDEX IF NOT EXISTS event_aliases_event_idx ON event_aliases(event_id) WHERE event_id IS NOT NULL`,
+  // The enrichment queue's claim: a partial index, because the overwhelming majority of
+  // events are not waiting to be read.
+  `CREATE INDEX IF NOT EXISTS events_enrich_due_idx ON events(enrich_due_at) WHERE enrich_due_at IS NOT NULL`,
 ];
 
 /**

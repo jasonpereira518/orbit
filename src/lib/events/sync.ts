@@ -76,7 +76,8 @@ async function drain<T>(
 
 async function syncOne(
   conn: ClaimedEventConnection,
-  stats: EventSyncStats
+  stats: EventSyncStats,
+  passDeadline: number
 ): Promise<void> {
   if (!conn.secret) {
     // The credential could not be decrypted — a rotated ENCRYPTION_SECRET, or a row written
@@ -86,7 +87,8 @@ async function syncOne(
     return;
   }
 
-  const deadline = deadlineAfter(PER_CONNECTION_BUDGET_MS);
+  // One connection may have a minute, but never more of it than the pass itself has left.
+  const deadline = Math.min(deadlineAfter(PER_CONNECTION_BUDGET_MS), passDeadline);
   const events: ProviderEvent[] =
     conn.provider === "luma"
       ? await drain((c) => listCalendarEvents(conn.secret!, c), deadline)
@@ -123,7 +125,10 @@ async function syncOne(
   stats.synced++;
 }
 
-export async function runEventSyncPass(now: Date = new Date()): Promise<EventSyncStats> {
+export async function runEventSyncPass(
+  now: Date = new Date(),
+  options: { deadline?: number } = {}
+): Promise<EventSyncStats> {
   const stats: EventSyncStats = {
     claimed: 0,
     synced: 0,
@@ -131,7 +136,13 @@ export async function runEventSyncPass(now: Date = new Date()): Promise<EventSyn
     eventsUpserted: 0,
     attendeesUpserted: 0,
   };
-  const passDeadline = deadlineAfter(PASS_BUDGET_MS);
+  // The caller's deadline wins when it is tighter. `runSyncPass` runs this LAST, inside its
+  // own 4.5-minute budget, so a private 240s budget here could only ever overrun the function
+  // ceiling the outer pass is protecting — this pass would still be draining guest lists
+  // after the invocation that owns it was supposed to return.
+  const ownDeadline = deadlineAfter(PASS_BUDGET_MS);
+  const passDeadline =
+    options.deadline !== undefined ? Math.min(options.deadline, ownDeadline) : ownDeadline;
   const claimed = await claimDueEventConnections(CONNECTIONS_PER_RUN, now);
   stats.claimed = claimed.length;
 
@@ -140,7 +151,7 @@ export async function runEventSyncPass(now: Date = new Date()): Promise<EventSyn
     // done, where its lease has to expire before anyone touches it again.
     if (deadlineReached(passDeadline)) break;
     try {
-      await syncOne(conn, stats);
+      await syncOne(conn, stats, passDeadline);
     } catch (error) {
       stats.failed++;
       // An auth failure is a consent problem, not a transport one. Walking it up the backoff

@@ -28,6 +28,14 @@ export type ParsedAttendee = {
    * the database — `event_attendees.attendee_role` was NULL for every row ever written.
    */
   attendeeRole?: AttendeeRole | null;
+  /**
+   * The provider's own id for this guest (`evt-guest-…`, a Luma `usr-…`, an Eventbrite
+   * attendee id). Only a connector knows it. It is the most stable handle on a person a
+   * platform gives us — stable across a name change, a second registration, and a typo'd
+   * email — so it is stored even though nothing reads it yet.
+   */
+  externalRef?: string | null;
+  phone?: string | null;
   identityKey: string;
 };
 
@@ -179,14 +187,21 @@ export function parseRosterText(text: string): RosterParseResult {
  *
  * `attendeeRole` is omitted deliberately: a CSV's "role" column is a job title far more often
  * than it is host/speaker/attendee, and `title` already claims that header.
+ *
+ * `externalRef` is omitted for a different reason: a provider's guest id is only meaningful
+ * alongside the provider that issued it, and a CSV does not say which one that is.
  */
-const HEADERS: Record<keyof Omit<ParsedAttendee, "identityKey" | "attendeeRole">, string[]> = {
+const HEADERS: Record<
+  keyof Omit<ParsedAttendee, "identityKey" | "attendeeRole" | "externalRef">,
+  string[]
+> = {
   fullName: ["name", "full name", "attendee name", "guest name", "first name"],
   email: ["email", "email address", "e-mail", "attendee email"],
   company: ["company", "organization", "organisation", "employer", "company name"],
   title: ["title", "job title", "role", "position", "headline"],
   linkedinUrl: ["linkedin", "linkedin url", "linkedin profile", "profile url"],
   xHandle: ["x", "twitter", "x handle", "twitter handle"],
+  phone: ["phone", "phone number", "mobile", "cell phone", "telephone"],
 };
 
 function pick(row: Record<string, string>, keys: string[]): string | null {
@@ -227,6 +242,9 @@ export function parseRosterCsv(csvText: string): RosterParseResult {
       title: pick(row, HEADERS.title),
       linkedinUrl: pick(row, HEADERS.linkedinUrl),
       xHandle: pick(row, HEADERS.xHandle)?.replace(/^@/, "") ?? null,
+      // Never an identity key — a phone number is stored as a detail only, so a column of
+      // blank-ish values cannot silently key rows together.
+      phone: pick(row, HEADERS.phone),
     };
   });
 

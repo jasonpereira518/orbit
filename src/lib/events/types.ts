@@ -51,8 +51,18 @@ export function resolveEventTitle(
 export type EventProviderId = "luma" | "eventbrite";
 export type EventRole = "attended" | "hosted";
 export type EventSource = "manual" | "page" | EventProviderId;
-/** `page` is a speaker read from the event page's `performer` — never a guest list. */
-export type AttendeeSource = "paste" | "csv" | "screenshot" | "page" | EventProviderId;
+/**
+ * `page` is a speaker or published host read from the event page — never a guest list.
+ * `calendar` is a fellow guest on an invite the user was on, which is a different claim
+ * again: the host did not announce them, they were just in the same room.
+ */
+export type AttendeeSource =
+  | "paste"
+  | "csv"
+  | "screenshot"
+  | "page"
+  | "calendar"
+  | EventProviderId;
 export type AttendeeRole = "attendee" | "host" | "speaker";
 
 /** One event as a provider reports it. Producers map to this; nothing else touches their JSON. */
@@ -79,6 +89,7 @@ export type ProviderAttendee = {
   title: string | null;
   linkedinUrl: string | null;
   xHandle: string | null;
+  phone: string | null;
   attendeeRole: AttendeeRole | null;
 };
 

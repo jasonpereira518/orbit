@@ -72,6 +72,9 @@ const SOURCE_LABEL: Record<RosterRow["source"], string> = {
   csv: "CSV",
   screenshot: "Screenshot",
   page: "Event page",
+  // Not "the host published this person" but "you were both on the invite" — a weaker claim,
+  // and the badge has to make the difference visible.
+  calendar: "Calendar invite",
   luma: "Luma",
   eventbrite: "Eventbrite",
 };
