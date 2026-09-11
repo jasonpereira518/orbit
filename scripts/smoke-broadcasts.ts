@@ -145,7 +145,7 @@ async function main() {
   check("a sent broadcast cannot be deleted as a draft", (await deleteDraftBroadcast(draft.id)) === null);
 
   // --- page renders
-  const { default: Page } = await import("../src/app/(admin)/admin/growth/broadcasts/page");
+  const { default: Page } = await import("../src/app/(clerk)/(admin)/admin/growth/broadcasts/page");
   const tree = await Page();
   check("the broadcasts page renders", tree != null);
 

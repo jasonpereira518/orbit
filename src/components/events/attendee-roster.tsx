@@ -9,6 +9,18 @@
  * the only one who can resolve it. See `src/lib/events/connect.ts` for why the threshold is
  * 0.85 rather than the calendar path's 0.6.
  *
+ * ## Three states, not two
+ *
+ * A row is one of: LINKED (connected to a contact from this event), MATCHED (already someone
+ * in your network, but not yet attached to this event), or NEW. Before, matched and new were
+ * indistinguishable — someone you have known for a year looked exactly like a stranger until
+ * you connected them and found out. A matched row is still worth selecting: connecting it is
+ * what puts this event on their timeline.
+ *
+ * Matches arrive with the rows rather than streaming in behind them, because "Hide people I
+ * know" filters on them. Streaming would re-sort the list under the user a second after it
+ * painted, which is worse than showing the skeleton for that second.
+ *
  * Imports only pure modules from `@/lib/events/*` (types) plus the server actions. It must
  * never reach `store.ts` or anything touching `@/db` — `src/lib/surfaces.ts` records that a
  * client component transitively importing the database fails the build with a `node:fs`
@@ -17,10 +29,16 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Check, Loader2, Search, UserPlus } from "lucide-react";
+import { Check, Loader2, MoreHorizontal, Pencil, Search, UserPlus, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { toast } from "@/lib/toast";
 import {
   addSpokenToConnections,
@@ -29,13 +47,31 @@ import {
 } from "@/actions/events";
 import type { ConnectSummary, RosterRow } from "@/lib/events/types";
 import { ConnectPreviewDialog, type PreviewRow } from "./connect-preview-dialog";
+import { EditAttendeeDialog } from "./edit-attendee-dialog";
 import { IngestResultCard } from "./ingest-result-card";
 import { friendlyError } from "@/lib/errors";
+
+/** One roster row already recognised as somebody in your network. */
+export type RosterMatch = {
+  attendeeId: string;
+  contactId: string;
+  contactName: string | null;
+};
+
+/**
+ * Shown only for host and speaker. "Attendee" is the assumed case and badging it would put a
+ * label on nearly every row, which is how a badge stops carrying information.
+ */
+const ROLE_LABEL: Partial<Record<NonNullable<RosterRow["attendeeRole"]>, string>> = {
+  host: "Host",
+  speaker: "Speaker",
+};
 
 const SOURCE_LABEL: Record<RosterRow["source"], string> = {
   paste: "Pasted",
   csv: "CSV",
   screenshot: "Screenshot",
+  page: "Event page",
   luma: "Luma",
   eventbrite: "Eventbrite",
 };
@@ -43,33 +79,57 @@ const SOURCE_LABEL: Record<RosterRow["source"], string> = {
 export function AttendeeRoster({
   eventId,
   rows,
+  matches = [],
 }: {
   eventId: string;
   rows: RosterRow[];
+  matches?: RosterMatch[];
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const [busyRow, setBusyRow] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [hideConnected, setHideConnected] = useState(false);
+  const [hideKnown, setHideKnown] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [preview, setPreview] = useState<PreviewRow[] | null>(null);
+  const [editing, setEditing] = useState<RosterRow | null>(null);
   const [summary, setSummary] = useState<(ConnectSummary & { remaining: number }) | null>(null);
+
+  const matchById = useMemo(
+    () => new Map(matches.map((m) => [m.attendeeId, m])),
+    [matches]
+  );
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return rows.filter((row) => {
-      if (hideConnected && row.contactId) return false;
+      // "People I know" is both senses of known: linked to this event, and already a contact.
+      if (hideKnown && (row.contactId || matchById.has(row.id))) return false;
       if (!needle) return true;
-      return [row.fullName, row.email, row.company, row.title]
+      return [row.fullName, row.email, row.company, row.title, row.linkedinUrl, row.xHandle]
         .filter(Boolean)
         .some((field) => field!.toLowerCase().includes(needle));
     });
-  }, [rows, query, hideConnected]);
+  }, [rows, query, hideKnown, matchById]);
 
   // Already-connected people are excluded from every bulk action: connecting them again is a
-  // no-op, so offering it would be a button that claims to do something and does not.
+  // no-op, so offering it would be a button that claims to do something and does not. A
+  // MATCHED row is not excluded — connecting it is what puts this event on their timeline.
   const selectable = visible.filter((row) => !row.contactId);
   const allSelected = selectable.length > 0 && selectable.every((r) => selected.has(r.id));
+
+  /**
+   * Only ever act on rows the user can currently see.
+   *
+   * `selected` deliberately outlives filtering, so narrowing the search and widening it again
+   * does not silently drop a selection. But acting on the raw set would submit people who are
+   * off-screen — and the count beside the button would not match the ticks on screen. Both
+   * read from here instead.
+   */
+  const actionable = useMemo(
+    () => visible.filter((row) => !row.contactId && selected.has(row.id)).map((row) => row.id),
+    [visible, selected]
+  );
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -92,11 +152,12 @@ export function AttendeeRoster({
   }
 
   function openPreview() {
-    const ids = [...selected];
-    if (ids.length === 0) return;
+    if (actionable.length === 0) return;
+    // A result card describing the previous run must not sit above the next one.
+    setSummary(null);
     start(async () => {
       try {
-        setPreview(await previewConnectAttendees(eventId, ids));
+        setPreview(await previewConnectAttendees(eventId, actionable));
       } catch (error) {
         toast.error(friendlyError(error, "Couldn’t check those people — try again?"));
       }
@@ -104,12 +165,20 @@ export function AttendeeRoster({
   }
 
   function commit() {
-    const ids = [...selected];
+    const ids = actionable;
     start(async () => {
       try {
         const result = await addSpokenToConnections(eventId, ids);
         setPreview(null);
-        setSelected(new Set());
+        // Keep the selection when the run was cut short by the time budget. The result card
+        // tells the user "they stay selected, so you can continue" — clearing here made that
+        // sentence false and left them re-picking hundreds of people by hand.
+        if (result.remaining > 0) {
+          const done = new Set(ids.slice(0, ids.length - result.remaining));
+          setSelected((prev) => new Set([...prev].filter((id) => !done.has(id))));
+        } else {
+          setSelected(new Set());
+        }
         setSummary(result);
         // Truthful headline: "added N" would be a lie when the plan cap bit part-way.
         toast.success(
@@ -125,6 +194,10 @@ export function AttendeeRoster({
   }
 
   function disconnect(attendeeId: string) {
+    // Tracked per row: one shared flag disabled every other row's controls too, so unlinking
+    // one person froze the whole list with no indication of which row was working.
+    setBusyRow(attendeeId);
+    setSummary(null);
     start(async () => {
       try {
         await removeSpokenToConnection(eventId, attendeeId);
@@ -132,6 +205,8 @@ export function AttendeeRoster({
         router.refresh();
       } catch (error) {
         toast.error(friendlyError(error, "Couldn’t unlink that person — try again?"));
+      } finally {
+        setBusyRow(null);
       }
     });
   }
@@ -167,10 +242,10 @@ export function AttendeeRoster({
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => setHideConnected((v) => !v)}
-          aria-pressed={hideConnected}
+          onClick={() => setHideKnown((v) => !v)}
+          aria-pressed={hideKnown}
         >
-          {hideConnected ? "Show everyone" : "Hide people I know"}
+          {hideKnown ? "Show everyone" : "Hide people I know"}
         </Button>
         <Button variant="ghost" size="sm" onClick={toggleAll} disabled={selectable.length === 0}>
           {allSelected ? "Clear selection" : "Select all"}
@@ -180,17 +255,25 @@ export function AttendeeRoster({
       <ul className="divide-y divide-border/70 rounded-2xl border border-border/70 bg-card">
         {visible.map((row) => {
           const connected = row.contactId !== null;
+          const match = matchById.get(row.id);
+          const busy = busyRow === row.id;
+          const who = row.fullName ?? row.email ?? "this guest";
           return (
             <li key={row.id} className="flex items-center gap-3 px-4 py-3">
               <Checkbox
                 checked={selected.has(row.id)}
                 onCheckedChange={() => toggle(row.id)}
-                disabled={connected || pending}
-                aria-label={`I spoke to ${row.fullName ?? row.email ?? "this guest"}`}
+                disabled={connected || busy}
+                aria-label={`I spoke to ${who}`}
               />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-ink">
-                  {row.fullName ?? row.email ?? "Unnamed guest"}
+                <p className="flex items-center gap-1.5 truncate text-sm font-medium text-ink">
+                  <span className="truncate">{row.fullName ?? row.email ?? "Unnamed guest"}</span>
+                  {row.attendeeRole && ROLE_LABEL[row.attendeeRole] ? (
+                    <span className="shrink-0 rounded-full border border-border/70 px-1.5 py-px text-[10px] font-normal text-muted-foreground">
+                      {ROLE_LABEL[row.attendeeRole]}
+                    </span>
+                  ) : null}
                 </p>
                 <p className="truncate text-xs text-muted-foreground">
                   {[row.title, row.company].filter(Boolean).join(" · ") ||
@@ -198,6 +281,7 @@ export function AttendeeRoster({
                     SOURCE_LABEL[row.source]}
                 </p>
               </div>
+
               {connected ? (
                 <div className="flex shrink-0 items-center gap-2">
                   <Link
@@ -207,20 +291,43 @@ export function AttendeeRoster({
                     <Check className="size-3.5" aria-hidden />
                     In your network
                   </Link>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={() => disconnect(row.id)}
-                    disabled={pending}
-                  >
+                  <Button variant="ghost" size="xs" onClick={() => disconnect(row.id)} disabled={busy}>
+                    {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
                     Unlink
                   </Button>
                 </div>
+              ) : match ? (
+                // Known, but not yet attached to this event. Still selectable: connecting is
+                // what adds this event to the timeline you already have for them.
+                <Link
+                  href={`/contacts/${match.contactId}`}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/70 px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground"
+                  title={`${match.contactName ?? "This person"} is already in your contacts`}
+                >
+                  <Users className="size-3" aria-hidden />
+                  Already a contact
+                </Link>
               ) : (
                 <span className="shrink-0 rounded-full border border-border/70 px-2 py-0.5 text-[11px] text-muted-foreground">
                   {SOURCE_LABEL[row.source]}
                 </span>
               )}
+
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  type="button"
+                  aria-label={`Edit ${who}`}
+                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+                >
+                  <MoreHorizontal className="size-4" aria-hidden />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-[9rem]">
+                  <DropdownMenuItem onClick={() => setEditing(row)}>
+                    <Pencil className="size-4" aria-hidden />
+                    Edit details
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </li>
           );
         })}
@@ -230,10 +337,10 @@ export function AttendeeRoster({
         <p className="text-center text-sm text-muted-foreground">No one matches that search.</p>
       ) : null}
 
-      {selected.size > 0 ? (
+      {actionable.length > 0 ? (
         <div className="sticky bottom-4 flex items-center justify-between gap-3 rounded-2xl border border-border/70 bg-card p-3 shadow-lg">
           <p className="text-sm text-muted-foreground">
-            {selected.size} {selected.size === 1 ? "person" : "people"} selected
+            {actionable.length} {actionable.length === 1 ? "person" : "people"} selected
           </p>
           <Button onClick={openPreview} disabled={pending}>
             {pending ? (
@@ -244,6 +351,19 @@ export function AttendeeRoster({
             Add to connections
           </Button>
         </div>
+      ) : null}
+
+      {editing ? (
+        // Keyed by row, so opening a second person's dialog MOUNTS A NEW ONE. Without this,
+        // React reuses the instance and its state comes along: the previous person's typed
+        // values, and — the reason this is a bug and not a blemish — an already-armed delete
+        // confirmation, so one click could remove someone the user never confirmed.
+        <EditAttendeeDialog
+          key={editing.id}
+          eventId={eventId}
+          row={editing}
+          onClose={() => setEditing(null)}
+        />
       ) : null}
 
       {preview ? (

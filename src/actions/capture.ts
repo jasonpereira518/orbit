@@ -8,6 +8,10 @@ import { getDb } from "@/db";
 import { contacts, type ReminderActionKind } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import {
+  listUnresolvedMentionsFor,
+  type UnresolvedMention,
+} from "@/lib/unresolved-mentions";
+import {
   fetchRawCommitments,
   validateCommitments,
   emptyCommitmentResult,
@@ -178,6 +182,7 @@ export async function ingestCaptureMedia(input: {
       text: normalized.text,
       hints: normalized.hints,
       sources: normalized.sources,
+      transcriptionEngine: normalized.transcriptionEngine ?? null,
     };
   } catch (err) {
     // Data, not a throw — so never stripped in production. See `friendlyError`.
@@ -436,4 +441,16 @@ export async function confirmBulkCapture(
   revalidatePath("/graph");
   for (const id of out.contactIds) revalidatePath(`/contacts/${id}`);
   return out;
+}
+
+
+/**
+ * People named in your recent notes who are still not in your network.
+ *
+ * Thin wrapper; the work is in `@/lib/unresolved-mentions` so a smoke test can drive it
+ * with a real database and no auth, the same split `getChatSuggestions` uses.
+ */
+export async function listUnresolvedMentions(): Promise<UnresolvedMention[]> {
+  const userId = await requireUserId();
+  return listUnresolvedMentionsFor(userId);
 }

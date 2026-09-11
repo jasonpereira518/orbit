@@ -150,7 +150,19 @@ export async function rerankCandidates(
   userId: string,
   question: string,
   candidates: RankedContact[],
-  completeFn: typeof completeJson = completeJson
+  completeFn: typeof completeJson = completeJson,
+  /**
+   * `understandQuery`'s rewrite of the question as a description of the ideal matching
+   * contact.
+   *
+   * This is where it belongs. It was computed on every question and read by nothing — the
+   * embedding and the keyword search were both handed the raw question — so the half of
+   * the parser that writes it was paid for and thrown away. It cannot feed the embedding
+   * without serializing the parse ahead of it, which would put the parse's 2.5s timeout on
+   * the critical path of every question. The rerank already runs after the parse, so
+   * passing it here costs nothing and is exactly the judgement it describes.
+   */
+  semanticQuery?: string | null
 ): Promise<RankedContact[]> {
   if (candidates.length <= FINAL_CONTACT_COUNT) return candidates;
   try {
@@ -161,7 +173,17 @@ export async function rerankCandidates(
         temperature: 0,
         maxOutputTokens: 2048,
         system: RERANK_SYSTEM,
-        user: `Question: ${question}\n\nCandidates:\n${candidates.map(candidateCard).join("\n")}`,
+        user: [
+          `Question: ${question}`,
+          // Only when it says something the question does not already say.
+          semanticQuery?.trim() && semanticQuery.trim() !== question.trim()
+            ? `Looking for: ${semanticQuery.trim()}`
+            : "",
+          "",
+          `Candidates:\n${candidates.map(candidateCard).join("\n")}`,
+        ]
+          .filter(Boolean)
+          .join("\n"),
       }),
       RERANK_TIMEOUT_MS
     );
@@ -197,7 +219,7 @@ export type BudgetedContact = {
   aiSummary: string | null;
   notes: string | null;
   keyFacts: string[];
-  recentMessages: string[];
+  timeline: string[];
   tags: string[];
   relevance: number;
   /** Compact career summary — "Ramp, ex-Stripe · MIT". Null when no profile is stored. */
@@ -209,16 +231,21 @@ export type BudgetedContact = {
  * (~12k tokens at 4 chars/token). Reranked survivors earned richer detail than
  * the old flat 400-chars-of-notes: rank buys depth.
  */
+// `entries` counts timeline lines, which used to be LinkedIn messages only and were
+// therefore empty for most contacts. Now that every interaction type reaches the prompt,
+// almost every contact has some — so the counts came down. The budget below binds far more
+// often than it used to, and a contact serialized with eight timeline lines is a contact
+// somebody further down the ranking does not get serialized at all.
 const CONTEXT_TIERS = [
-  { upto: 4, notes: 1200, summary: 600, msgs: 8, msgChars: 320, facts: 8 },
-  { upto: 8, notes: 600, summary: 400, msgs: 4, msgChars: 280, facts: 6 },
-  { upto: Infinity, notes: 300, summary: 240, msgs: 2, msgChars: 240, facts: 4 },
+  { upto: 4, notes: 1200, summary: 600, entries: 6, entryChars: 240, facts: 8 },
+  { upto: 8, notes: 600, summary: 400, entries: 4, entryChars: 200, facts: 6 },
+  { upto: Infinity, notes: 300, summary: 240, entries: 2, entryChars: 160, facts: 4 },
 ] as const;
 const TOTAL_CONTEXT_CHAR_BUDGET = 48000;
 
 export function budgetContactsContext(
   contacts: RankedContact[],
-  snippets: Map<string, { recentMessages: string[] }>,
+  snippets: Map<string, { timeline: string[] }>,
   careerLines: Map<string, string> = new Map()
 ): BudgetedContact[] {
   const out: BudgetedContact[] = [];
@@ -229,15 +256,15 @@ export function budgetContactsContext(
     const notes = (c.notes || "").slice(0, tier.notes) || null;
     const aiSummary = (c.aiSummary || "").slice(0, tier.summary) || null;
     const keyFacts = c.keyFacts.slice(0, tier.facts);
-    const recentMessages = (snippets.get(c.id)?.recentMessages ?? [])
-      .slice(0, tier.msgs)
-      .map((m) => m.slice(0, tier.msgChars));
+    const timeline = (snippets.get(c.id)?.timeline ?? [])
+      .slice(0, tier.entries)
+      .map((m) => m.slice(0, tier.entryChars));
     const career = careerLines.get(c.id) ?? null;
 
     const cost =
       c.fullName.length + (c.company?.length ?? 0) + (c.title?.length ?? 0) +
       (notes?.length ?? 0) + (aiSummary?.length ?? 0) + (career?.length ?? 0) +
-      keyFacts.join("").length + recentMessages.join("").length +
+      keyFacts.join("").length + timeline.join("").length +
       c.tags.join("").length + 80; // formatting overhead
     // Budget exhaustion stops serialization entirely — a later, cheaper
     // contact must not be appended out of rank order once we've run dry.
@@ -253,7 +280,7 @@ export function budgetContactsContext(
       aiSummary,
       notes,
       keyFacts,
-      recentMessages,
+      timeline,
       tags: c.tags,
       relevance: c.relevance,
       career,

@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   gemini_api_key_encrypted text,
   openai_api_key_encrypted text,
   anthropic_api_key_encrypted text,
+  wispr_api_key_encrypted text,
   ai_model text DEFAULT 'gemini-3.5-flash',
   onboarding_completed_at timestamptz,
   first_name text,
@@ -100,6 +101,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   x_handle text,
   website text,
   profile_image_url text,
+  profile_image_checked_at timestamp,
   relationship_score integer NOT NULL DEFAULT 2,
   priority_level integer NOT NULL DEFAULT 0,
   source text,
@@ -472,6 +474,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   role text NOT NULL,
   content text NOT NULL,
   recommendations jsonb,
+  attached_contacts jsonb DEFAULT '[]',
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages(thread_id);
@@ -924,6 +927,9 @@ CREATE TABLE IF NOT EXISTS events (
   provider text,
   provider_event_id text,
   description text,
+  organizer_name text,
+  organizer_url text,
+  attendance_mode text,
   cover_image_url text,
   cover_source_url text,
   theme_color text,
@@ -1070,12 +1076,39 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * duplicates being created), contact_merges (a merged contact archived whole, so the
  * loser's row can be deleted rather than flagged), duplicate_suggestions (name-tier
  * matches, which no longer auto-merge).
+ * v39 = events revision: organizer_name, organizer_url, attendance_mode on events. Also
+ * built as 33 and moved when duplicate prevention landed first — the fifth collision, and
+ * the same rule: re-using 33 would have left those columns unapplied on every database
+ * main had already stamped.
+ * v40 = contact photo cooldown (#146): contacts.profile_image_checked_at. This PR has been
+ * 33, 36 and 37 in turn. 37 was reserved for it (#152 skipped past it to 39), but it can't
+ * be reused now: this branch's own preview stamped 37 onto the preview database with DDL
+ * that predates #152's columns, so a 37 carrying them would skip on that database. 38 is
+ * claimed by the scan-notes branch. Also worth knowing: until Sep 11 2026 Preview shared
+ * Production's DATABASE_URL, so preview builds stamped production directly. Previews now
+ * migrate their own Neon project.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
  * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
  */
-export const SCHEMA_VERSION = 33;
+// 34 and 35 are this branch's, above main's 33 (duplicate prevention, #148). 33 was
+// skipped here deliberately while it was still claimed by unmerged branches — a repeated
+// version is the one real failure mode this counter has, since the alters are all
+// `IF NOT EXISTS` and concatenate harmlessly on merge but a collision means one branch's
+// DDL never runs. That skip is why this merge resolved to a number rather than a clash.
+//
+// Two bumps on this branch because the guard requires one per DDL change: 34 added
+// `chat_messages.attached_contacts`, 35 the last-interaction index the composer's pickers
+// order on.
+//
+// 39 is the events revision (PR #152): organizer_name, organizer_url, attendance_mode on
+// events. Built as 33, moved to 34 when #148 took 33, and moved again here because while it
+// waited 34-36 landed on main and 37 and 38 were claimed by open branches. Every step was
+// the same rule — a shared number means one branch's DDL silently never runs.
+//
+// 40 is the contact photo cooldown (#146) — see the v40 entry above.
+export const SCHEMA_VERSION = 40;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1178,6 +1211,10 @@ export const SCALE_DDL: string[] = [
   // the same way, so the index has to be declared that way to serve it.
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_idx ON contacts(user_id, closeness DESC, id DESC)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
+  // For the composer's pickers, which open on "who have I actually spoken to lately"
+  // rather than whoever is alphabetically first. `updated_at` is the wrong column for
+  // that — editing a contact is not talking to them.
+  `CREATE INDEX IF NOT EXISTS contacts_user_last_interaction_idx ON contacts(user_id, last_interaction_at DESC NULLS LAST)`,
   `CREATE INDEX IF NOT EXISTS contacts_search_gin ON contacts USING gin(search_tsv)`,
   `CREATE INDEX IF NOT EXISTS contacts_slug_idx ON contacts(linkedin_slug) WHERE linkedin_slug IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS contacts_user_email_idx ON contacts(user_id, email) WHERE email IS NOT NULL`,
@@ -1541,6 +1578,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "timestamptz NOT NULL DEFAULT now()"
   );
   await ensureColumn(client, "imports", "total_rows", "integer");
+  await ensureColumn(client, "user_settings", "wispr_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "apollo_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "resend_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_account_sid_encrypted", "text");
@@ -1559,6 +1597,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   );
   await ensureColumn(client, "contacts", "school", "text");
   await ensureColumn(client, "contacts", "profile_image_url", "text");
+  await ensureColumn(client, "contacts", "profile_image_checked_at", "timestamp");
   await ensureColumn(
     client,
     "user_settings",
@@ -1986,6 +2025,12 @@ async function migratePgvector(run: StatementRunner) {
 const alters = [
   // Deliberately not backfilled from `committed_at` — see the column's comment in schema.ts.
   `ALTER TABLE fundraising_investors ADD COLUMN IF NOT EXISTS received_at timestamptz`,
+  // The events feature landed whole at v32, so these are its first incremental columns.
+  // CREATE TABLE IF NOT EXISTS above is a no-op on a database that already has the table,
+  // which is why every new column has to appear in both places.
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_name text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_url text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS attendance_mode text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_step text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,
@@ -2004,6 +2049,7 @@ const alters = [
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS stats jsonb DEFAULT '{}'`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS total_rows integer`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wispr_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS apollo_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS resend_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_account_sid_encrypted text`,
@@ -2053,6 +2099,7 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS error_events_user_created_idx ON error_events(user_id, created_at)`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS school text`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_url text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_checked_at timestamp`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS x_handle text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_linkedin_idx ON contacts(user_id, linkedin_url)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle)`,
@@ -2114,6 +2161,7 @@ const alters = [
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS ai_summary text`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS companies_mentioned jsonb DEFAULT '[]'`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS roles_discussed jsonb DEFAULT '[]'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attached_contacts jsonb DEFAULT '[]'`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS first_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS last_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email_count integer NOT NULL DEFAULT 0`,

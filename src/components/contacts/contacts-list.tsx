@@ -67,6 +67,8 @@ export type ContactListItem = {
   location: string | null;
   linkedinUrl: string | null;
   profileImageUrl?: string | null;
+  /** True when the avatar route has a LinkedIn URL or email it could still resolve from. */
+  canResolveAvatar?: boolean;
   relationshipScore: number;
   closeness?: number;
   closenessTier?: "inner" | "mid" | "outer";
@@ -450,9 +452,14 @@ export function ContactsList({
                               contactId={c.id}
                               firstName={c.firstName}
                               fullName={c.fullName}
-                              linkedinUrl={c.linkedinUrl}
                               profileImageUrl={c.profileImageUrl}
                               size="lg"
+                              // Rows you are actually looking at fill in first, instead of
+                              // waiting for the background backfill to reach them in id
+                              // order. `loading="lazy"` on the underlying <img> means only
+                              // near-viewport rows ever issue a request, and the route
+                              // caches its misses so scrolling back does not re-ask.
+                              resolveOnDemand={!c.profileImageUrl && c.canResolveAvatar}
                             />
                           </ContactAvatarPreview>
 
@@ -698,6 +705,34 @@ function AlphabetScrubber({
     setMounted(true);
   }, []);
 
+  /**
+   * Reserve the rail's width in the page, rather than floating over it.
+   *
+   * The rail is portalled to `<body>` and fixed to the right edge, so nothing in the
+   * page knows it is there. It is also an opaque card, so everything it covers is not
+   * dimmed but gone: the "Add contact" button, the Recruiters tab, the plan notice, and
+   * a row's own delete button were all being clipped by it on a phone.
+   *
+   * Publishing the footprint as a variable — rather than hard-coding padding on each
+   * page — keeps the gutter tied to the rail's actual presence: it is only paid while
+   * the rail is mounted, and it disappears with it.
+   */
+  useEffect(() => {
+    const root = document.documentElement;
+    /**
+     * The rail occupies 2.75rem of the right edge — `right-2` (0.5rem) plus its own
+     * `w-9` (2.25rem). The content column already carries 1rem of base padding, so the
+     * gutter only has to make up the difference plus a little air: 1 + 2.25 = 3.25rem
+     * total, which stops the content 0.5rem clear of the rail. Publishing the full
+     * 3.25rem here instead would double-count the padding and squeeze the header hard
+     * enough to change how its buttons wrap.
+     */
+    root.style.setProperty("--content-rail-gutter", "2.25rem");
+    return () => {
+      root.style.removeProperty("--content-rail-gutter");
+    };
+  }, []);
+
   function letterFromClientY(clientY: number) {
     const el = railRef.current;
     if (!el) return null;
@@ -741,6 +776,11 @@ function AlphabetScrubber({
     <div
       className={cn(
         "pointer-events-none fixed top-1/2 right-2 z-40 -translate-y-1/2 sm:right-4",
+        // Gone on short viewports — a landscape phone. Centred at 70% of a ~330pt
+        // viewport it rose into the header and covered the notification bell, and its
+        // 27 letters had about 6pt each between the header and the nav. The gutter it
+        // reserves is dropped at the same height in globals.css.
+        "[@media(max-height:500px)]:hidden",
         "pb-[env(safe-area-inset-bottom)]"
       )}
     >

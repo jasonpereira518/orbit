@@ -9,22 +9,63 @@
  * Every accent arriving here is already contrast-clamped; there is no unclamped path out of
  * `theme.ts`, so nothing below re-checks legibility.
  */
-import { CalendarDays, ExternalLink, MapPin } from "lucide-react";
+import { CalendarDays, ExternalLink, MapPin, Users, Video } from "lucide-react";
 import { eventGradient, eventThemeVars } from "@/lib/events/theme";
+import { offsetMinutes } from "@/lib/events/wall-clock";
 import { CoverPaletteProbe } from "./cover-palette-probe";
+import { EventActions } from "./event-actions";
 import type { EventRecord } from "@/db/schema";
 
-function formatRange(startsAt: Date | null, endsAt: Date | null): string {
+/**
+ * The event's date, in the VENUE's wall clock rather than the server's.
+ *
+ * This component renders on the server, so a bare `toLocaleTimeString()` formats in the
+ * runtime's zone — UTC on Vercel. A 6pm event in San Francisco was being shown as 2am the
+ * next day. `parse-page.ts` stores every instant as UTC and records the offset the host
+ * published, so shifting by that offset and formatting in UTC reproduces exactly the time
+ * the host wrote. When no offset was published the instant already IS the host's wall clock
+ * (see `parseDate`), so formatting in UTC is right for that case too — which is why there is
+ * no branch here, only a shift of zero.
+ *
+ * Passing the offset to `Intl` as a `timeZone` would be the obvious alternative; offset
+ * strings are not portable across runtimes there, and an IANA name is not something an
+ * event page gives us.
+ *
+ * `offsetMinutes` is imported rather than kept here because the edit dialog has to run this
+ * conversion BACKWARDS. Two copies would drift, and a drift between the reader and the
+ * writer is invisible: every edit would be stored at the wrong instant and rendered back
+ * wrongly in the same direction, so the screen would look right.
+ */
+function formatRange(startsAt: Date | null, endsAt: Date | null, timezone: string | null): string {
   if (!startsAt) return "Date not set";
-  const date = startsAt.toLocaleDateString(undefined, {
+  const shift = (offsetMinutes(timezone) ?? 0) * 60_000;
+  const at = (d: Date) => new Date(d.getTime() + shift);
+
+  const start = at(startsAt);
+  const date = start.toLocaleDateString(undefined, {
     weekday: "short",
     year: "numeric",
     month: "long",
     day: "numeric",
+    timeZone: "UTC",
   });
-  const time = startsAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  return endsAt && endsAt.getTime() !== startsAt.getTime() ? `${date} · ${time}` : `${date} · ${time}`;
+  const time = (d: Date) =>
+    d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
+
+  if (!endsAt || endsAt.getTime() <= startsAt.getTime()) return `${date} · ${time(start)}`;
+
+  const end = at(endsAt);
+  const sameDay = start.toISOString().slice(0, 10) === end.toISOString().slice(0, 10);
+  if (sameDay) return `${date} · ${time(start)} – ${time(end)}`;
+  const endDate = end.toLocaleDateString(undefined, {
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+  return `${date} · ${time(start)} – ${endDate}, ${time(end)}`;
 }
+
+const ATTENDANCE_LABEL = { online: "Online", mixed: "Hybrid" } as const;
 
 export function EventHero({ event }: { event: EventRecord }) {
   const accent = event.themeColor ?? "#6b7280";
@@ -62,6 +103,14 @@ export function EventHero({ event }: { event: EventRecord }) {
             <span className="rounded-full bg-black/45 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur">
               {event.role === "hosted" ? "You hosted this" : "You attended"}
             </span>
+            {/* Only when it is not the assumed case: badging every in-person event "In person"
+                would be noise on the majority and would not make the minority stand out. */}
+            {event.attendanceMode === "online" || event.attendanceMode === "mixed" ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-black/45 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur">
+                <Video className="size-3" aria-hidden />
+                {ATTENDANCE_LABEL[event.attendanceMode]}
+              </span>
+            ) : null}
           </div>
           <h1 className="mt-2 font-[family-name:var(--font-display)] text-3xl text-white drop-shadow-sm">
             {event.title}
@@ -75,8 +124,32 @@ export function EventHero({ event }: { event: EventRecord }) {
       >
         <span className="inline-flex items-center gap-1.5 text-muted-foreground">
           <CalendarDays className="size-4" style={{ color: "var(--event-accent)" }} aria-hidden />
-          {formatRange(event.startsAt, event.endsAt)}
+          {formatRange(event.startsAt, event.endsAt, event.timezone)}
+          {/* The host published a wall-clock time with no zone, so the time above is their
+              text taken at face value. Said plainly rather than shown as false precision. */}
+          {event.startsAt && !event.timezone ? (
+            <span className="text-xs opacity-70" title="The event page did not say which time zone this is in.">
+              (time zone not stated)
+            </span>
+          ) : null}
         </span>
+        {event.organizerName ? (
+          <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+            <Users className="size-4" style={{ color: "var(--event-accent)" }} aria-hidden />
+            {event.organizerUrl ? (
+              <a
+                href={event.organizerUrl}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="underline-offset-2 hover:underline"
+              >
+                {event.organizerName}
+              </a>
+            ) : (
+              event.organizerName
+            )}
+          </span>
+        ) : null}
         {place ? (
           <span className="inline-flex items-center gap-1.5 text-muted-foreground">
             <MapPin className="size-4" style={{ color: "var(--event-accent)" }} aria-hidden />
@@ -95,7 +168,34 @@ export function EventHero({ event }: { event: EventRecord }) {
             Event page
           </a>
         ) : null}
+
+        {/* Pushed to the end of the strip so the details read first and the controls sit
+            where the eye lands last. */}
+        <div className="ml-auto">
+          <EventActions
+            event={{
+              id: event.id,
+              title: event.title,
+              description: event.description,
+              startsAt: event.startsAt,
+              endsAt: event.endsAt,
+              timezone: event.timezone,
+              venue: event.venue,
+              city: event.city,
+              url: event.url,
+              organizerName: event.organizerName,
+              organizerUrl: event.organizerUrl,
+              attendanceMode: event.attendanceMode,
+            }}
+          />
+        </div>
       </div>
+
+      {event.description ? (
+        <p className="border-t border-border/70 px-5 py-3 text-sm leading-relaxed text-muted-foreground">
+          {event.description}
+        </p>
+      ) : null}
 
       {/* Only mounts when there is a cover and no user-chosen colour — see the component. */}
       <CoverPaletteProbe

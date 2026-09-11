@@ -2,9 +2,7 @@
 
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { useEffect, useState } from "react";
-import { UserButton, useAuth } from "@clerk/nextjs";
-import { clerkAppearance } from "@/lib/clerk-appearance";
+import { useClerkSessionHint } from "@/lib/clerk-session-hint";
 
 const ghostClass =
   "rounded-lg px-3 py-2 text-sm text-[#c5d4d1] transition-colors hover:text-white";
@@ -19,10 +17,15 @@ const ctaGhostClass =
 
 /**
  * The marketing pages are static and shared by every visitor, so who is signed in is
- * resolved HERE, in the browser, once Clerk has loaded — not on the server. Signed-out
- * visitors (the audience) see the right buttons from the first frame; the rare signed-in
- * visitor sees them swap to "Open app" a few hundred milliseconds in. `signedIn` remains
- * accepted as a server-known hint for any caller that has one.
+ * resolved HERE, in the browser — not on the server. It comes from Clerk's own
+ * `__client_uat` cookie (`useClerkSessionHint`), NOT from Clerk itself: the landing page,
+ * /interest and the docs mount no ClerkProvider, so that signed-out strangers download no
+ * Clerk JS. Signed-out visitors (the audience) see the right buttons from the first frame;
+ * a signed-in visitor sees them swap to "Open app" just after hydration.
+ *
+ * There is deliberately no avatar menu here any more: `UserButton` needs the provider
+ * these pages exist to avoid. The account menu lives in the app, one click away.
+ * `signedIn` remains accepted as a server-known hint for any caller that has one.
  */
 type Props = {
   clerkOn: boolean;
@@ -55,19 +58,13 @@ type Props = {
 };
 
 /**
- * Entry point. `useAuth()` throws outside a <ClerkProvider>, and the provider is only
- * mounted when Clerk is configured — including at build time, where these pages are now
- * prerendered — so the hook lives in a child that only exists when Clerk does.
+ * Entry point. Safe on any page, with or without a ClerkProvider above it — which is
+ * what lets it render in `(site)`, where there is none. Without Clerk configured there is
+ * no Clerk session to hint at, and demo mode keeps its own routing below.
  */
 export function LandingAuthControls(props: Props) {
-  if (!props.clerkOn) return <AuthControlsView {...props} isSignedIn={false} />;
-  return <ClerkAwareControls {...props} />;
-}
-
-function ClerkAwareControls(props: Props) {
-  const auth = useAuth();
-  // Clerk reports `undefined` until it has loaded; until then the server-known hint holds.
-  const isSignedIn = auth.isSignedIn !== undefined ? auth.isSignedIn : Boolean(props.signedIn);
+  const hinted = useClerkSessionHint();
+  const isSignedIn = props.clerkOn && (hinted || Boolean(props.signedIn));
   return <AuthControlsView {...props} isSignedIn={isSignedIn} />;
 }
 
@@ -81,11 +78,6 @@ function AuthControlsView({
   signInAs = "button",
   note,
 }: Props & { isSignedIn: boolean }) {
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => {
-    setHydrated(true);
-  }, []);
-
   const solid = variant === "header" ? solidClass : ctaSolidClass;
   const ghost = variant === "header" ? ghostClass : ctaGhostClass;
   const wrapClass =
@@ -135,23 +127,10 @@ function AuthControlsView({
 
   if (isSignedIn) {
     return (
-      <div
-        className={
-          variant === "hero"
-            ? "flex w-full items-center gap-3 sm:w-auto"
-            : wrapClass
-        }
-      >
+      <div className={wrapClass}>
         <Link href="/dashboard" className={solid}>
           Open app
         </Link>
-        <span className="inline-flex size-7 items-center justify-center">
-          {hydrated ? (
-            <UserButton appearance={clerkAppearance} />
-          ) : (
-            <span className="size-7 rounded-full bg-white/10" />
-          )}
-        </span>
       </div>
     );
   }
