@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { and, desc, eq, gt } from "drizzle-orm";
-import { SCHEMA_VERSION, getDb, isPgvectorAvailable, rowsOf } from "@/db";
+import { SCHEMA_VERSION, getDb, isPgvectorAvailable, rowsOf, schemaFingerprint } from "@/db";
 import { errorEvents, opsAlertState } from "@/db/schema";
 import { ERROR_SOURCES } from "@/lib/error-events";
 import { getEnvReport } from "@/lib/env";
@@ -32,7 +32,16 @@ export type HealthReport = {
   deploymentId: string | null;
   builtAt: string | null;
   env: string | null;
-  schema: { expected: number; recorded: number | null };
+  schema: {
+    expected: number;
+    recorded: number | null;
+    /**
+     * First 12 hex characters of each side, like `smoke-schema-ddl` prints — enough to tell
+     * two schemas apart at a glance without dumping a digest into a monitor payload.
+     */
+    expectedFingerprint: string;
+    recordedFingerprint: string | null;
+  };
   db: { ok: boolean; latencyMs: number | null; reason: HealthReason | null };
   cron?: {
     processStalled: { state: string | null; startedAt: string | null; missed: boolean };
@@ -64,12 +73,32 @@ function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
 }
 
-/** The recorded schema version, via one statement on the real database. */
-async function probeSchemaVersion(): Promise<{ recorded: number | null }> {
+type SchemaProbe = { recorded: number | null; fingerprint: string | null };
+
+/**
+ * The recorded schema version and fingerprint, via one statement on the real database.
+ *
+ * Health must apply the SAME predicate as `schemaIsCurrent`. If it compared only the version,
+ * it would report "ok" on exactly the failure the fingerprint exists to catch — a database
+ * stamped with our number by a branch whose DDL is different.
+ *
+ * A database from before the fingerprint column has no such column, so the probe falls back
+ * to reading the version alone and reports the fingerprint as unknown — which reads as a
+ * mismatch, correctly: that database has not yet been verified against this build.
+ */
+async function probeSchemaVersion(): Promise<SchemaProbe> {
   const db = await getDb();
-  const res = await db.execute(sql`SELECT version FROM schema_migrations WHERE id = 1`);
-  const row = rowsOf<{ version: number | string }>(res)[0];
-  return { recorded: row ? Number(row.version) : null };
+  try {
+    const res = await db.execute(
+      sql`SELECT version, fingerprint FROM schema_migrations WHERE id = 1`
+    );
+    const row = rowsOf<{ version: number | string; fingerprint: string | null }>(res)[0];
+    return { recorded: row ? Number(row.version) : null, fingerprint: row?.fingerprint ?? null };
+  } catch {
+    const res = await db.execute(sql`SELECT version FROM schema_migrations WHERE id = 1`);
+    const row = rowsOf<{ version: number | string }>(res)[0];
+    return { recorded: row ? Number(row.version) : null, fingerprint: null };
+  }
 }
 
 /** Best-effort: a failing section reads as null rather than failing the probe. */
@@ -85,7 +114,8 @@ export async function checkHealth(options: {
   deep: boolean;
   timeoutMs?: number;
   now?: Date;
-  probeDb?: () => Promise<{ recorded: number | null }>;
+  /** Required to report a fingerprint, so a fake probe cannot silently skip that half. */
+  probeDb?: () => Promise<SchemaProbe>;
 }): Promise<HealthReport> {
   const now = options.now ?? new Date();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -93,10 +123,14 @@ export async function checkHealth(options: {
 
   const started = Date.now();
   let recorded: number | null = null;
+  let recordedFingerprint: string | null = null;
+  const expectedFingerprint = schemaFingerprint();
   let reason: HealthReason | null = null;
   try {
-    ({ recorded } = await withTimeout(probe(), timeoutMs));
-    if (recorded !== SCHEMA_VERSION) reason = "schema_mismatch";
+    ({ recorded, fingerprint: recordedFingerprint } = await withTimeout(probe(), timeoutMs));
+    if (recorded !== SCHEMA_VERSION || recordedFingerprint !== expectedFingerprint) {
+      reason = "schema_mismatch";
+    }
   } catch (err) {
     reason = err instanceof TimeoutError ? "db_timeout" : "db_error";
   }
@@ -110,7 +144,12 @@ export async function checkHealth(options: {
     deploymentId: process.env.VERCEL_DEPLOYMENT_ID ?? null,
     builtAt: process.env.BUILD_TIME ?? null,
     env: process.env.VERCEL_ENV ?? null,
-    schema: { expected: SCHEMA_VERSION, recorded },
+    schema: {
+      expected: SCHEMA_VERSION,
+      recorded,
+      expectedFingerprint: expectedFingerprint.slice(0, 12),
+      recordedFingerprint: recordedFingerprint ? recordedFingerprint.slice(0, 12) : null,
+    },
     db: { ok: !reason || reason === "schema_mismatch", latencyMs, reason },
   };
 

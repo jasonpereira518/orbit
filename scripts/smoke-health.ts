@@ -11,7 +11,7 @@
  */
 import "./smoke/_env";
 
-import { SCHEMA_VERSION } from "../src/db";
+import { SCHEMA_VERSION, schemaFingerprint } from "../src/db";
 import { checkHealth } from "../src/lib/health";
 
 let failures = 0;
@@ -29,6 +29,12 @@ async function main() {
   check("healthy database → status ok, HTTP 200", shallow.status === "ok" && shallow.httpStatus === 200, JSON.stringify(shallow));
   check("reports the expected and recorded schema version",
     shallow.schema.expected === SCHEMA_VERSION && shallow.schema.recorded === SCHEMA_VERSION, JSON.stringify(shallow.schema));
+  check("and the fingerprint the database was migrated to matches this build",
+    shallow.schema.recordedFingerprint === shallow.schema.expectedFingerprint &&
+      shallow.schema.expectedFingerprint === schemaFingerprint().slice(0, 12),
+    JSON.stringify(shallow.schema));
+  check("fingerprints are reported abbreviated, not as full digests",
+    shallow.schema.expectedFingerprint.length === 12, shallow.schema.expectedFingerprint);
   check("reports database latency", typeof shallow.db.latencyMs === "number" && shallow.db.latencyMs >= 0);
   check("shallow body carries no env names or config", !("config" in shallow) && !("cron" in shallow) && !("alerts" in shallow));
   check("carries the deployed sha field (null off Vercel)", "sha" in shallow);
@@ -42,12 +48,40 @@ async function main() {
   const slow = await checkHealth({
     deep: false,
     timeoutMs: 50,
-    probeDb: () => new Promise((resolve) => setTimeout(() => resolve({ recorded: SCHEMA_VERSION }), 500)),
+    probeDb: () =>
+      new Promise((resolve) =>
+        setTimeout(() => resolve({ recorded: SCHEMA_VERSION, fingerprint: schemaFingerprint() }), 500)
+      ),
   });
   check("a hanging database probe times out into 503 with db_timeout", slow.status === "down" && slow.db.reason === "db_timeout", JSON.stringify(slow));
 
-  const behind = await checkHealth({ deep: false, probeDb: async () => ({ recorded: SCHEMA_VERSION - 1 }) });
+  const behind = await checkHealth({
+    deep: false,
+    probeDb: async () => ({ recorded: SCHEMA_VERSION - 1, fingerprint: schemaFingerprint() }),
+  });
   check("a schema behind the code → 503 with schema_mismatch", behind.status === "down" && behind.db.reason === "schema_mismatch", JSON.stringify(behind));
+
+  // THE case health used to miss. Another branch migrated this database under the same
+  // version number with different DDL. Comparing the integer alone, health said "ok" while
+  // this build's columns were absent — the preview failure on PR #152.
+  const collided = await checkHealth({
+    deep: false,
+    probeDb: async () => ({ recorded: SCHEMA_VERSION, fingerprint: "f".repeat(64) }),
+  });
+  check("same version, different DDL → 503 with schema_mismatch",
+    collided.status === "down" && collided.db.reason === "schema_mismatch", JSON.stringify(collided));
+  check("and the payload shows the two fingerprints disagree",
+    collided.schema.recordedFingerprint === "ffffffffffff" &&
+      collided.schema.expectedFingerprint !== collided.schema.recordedFingerprint,
+    JSON.stringify(collided.schema));
+
+  // A database from before the fingerprint column: not yet verified against this build.
+  const legacy = await checkHealth({
+    deep: false,
+    probeDb: async () => ({ recorded: SCHEMA_VERSION, fingerprint: null }),
+  });
+  check("a database with no recorded fingerprint reads as a mismatch, not as healthy",
+    legacy.db.reason === "schema_mismatch", JSON.stringify(legacy));
 
   console.log("\nDeep probe...");
   const deep = await checkHealth({ deep: true });

@@ -19,7 +19,7 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 config();
 
-import { SCHEMA_VERSION, reconcileSchema } from "../src/db";
+import { SCHEMA_VERSION, reconcileSchema, schemaFingerprint } from "../src/db";
 import { schemaCoverage } from "./lib/schema-coverage";
 import { backfillContactIdentities } from "../src/lib/contact-identity";
 import { mergeConfidentDuplicates } from "../src/lib/duplicate-sweep";
@@ -30,7 +30,11 @@ async function main() {
     console.error("migrate: DATABASE_URL is unset in a Vercel build — refusing to guess.");
     process.exit(1);
   }
-  console.log(`migrate: reconciling schema version ${SCHEMA_VERSION} on ${target}…`);
+  // The fingerprint is printed because the version alone cannot tell two schemas apart: the
+  // failure this gate now catches used to present as "version 34" on both sides of a
+  // collision, with nothing in the log to show the DDL differed.
+  const fingerprint = schemaFingerprint().slice(0, 12);
+  console.log(`migrate: reconciling schema version ${SCHEMA_VERSION} (${fingerprint}) on ${target}…`);
 
   const result = await reconcileSchema();
   if (result.failed.length > 0) {
@@ -78,7 +82,7 @@ async function main() {
   }
 
   console.log(
-    `migrate: schema version ${SCHEMA_VERSION} ${result.applied ? "applied" : "already current"}; ${target} matches schema.ts.`
+    `migrate: schema version ${SCHEMA_VERSION} (${fingerprint}) ${result.applied ? "applied" : "already current"}; ${target} matches schema.ts.`
   );
   process.exit(0);
 }

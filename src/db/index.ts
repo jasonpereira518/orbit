@@ -8,6 +8,7 @@ import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import * as schema from "./schema";
 import { formatVectorLiteral } from "@/lib/pgvector";
 import { noteQuery } from "@/lib/query-counter";
+import crypto from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -1071,6 +1072,12 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * loser's row can be deleted rather than flagged), duplicate_suggestions (name-tier
  * matches, which no longer auto-merge).
  *
+ * Since the DDL fingerprint joined the gate (see `schemaFingerprint`), a collision no longer
+ * SILENTLY skips a sweep: two builds that share a number but want different DDL each see a
+ * mismatch and each apply their own. Distinct numbers are still the convention — they are
+ * what `/api/health`, the logs and `schema-ddl.lock.json` show a human — but a clash now
+ * costs a merge conflict in the lock file, not columns missing in production.
+ *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
  * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
@@ -1106,7 +1113,10 @@ export const SCALE_DDL: string[] = [
   // earlier revision of this stopped at the first `/` only. That left the query string on the
   // slug, so the same person saved as `/in/ada` by one account and `/in/ada?trk=...` by
   // another would not match. Cheap to redo — the column is derived, so Postgres refills it,
-  // and this only runs when `SCHEMA_VERSION` changes.
+  // and this only runs on a full sweep: when `SCHEMA_VERSION` or the DDL fingerprint changes
+  // (see schemaFingerprint below). In production that is once per schema change. On a preview
+  // database shared by branches with different DDL it can run on each of their deploys, which
+  // is safe precisely because the column is derived — it costs a rewrite, never data.
   //
   // Must stay in step with `extractLinkedinSlug` in `src/actions/contacts.ts`, whose regex
   // this reproduces: everything after `/in/` up to a `/`, `?` or `#`.
@@ -1401,12 +1411,64 @@ export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFail
   }
 }
 
+let fingerprintMemo: string | null = null;
+
 /**
- * Whether the recorded schema version already matches this build.
+ * A hash of every DDL statement this build would run.
+ *
+ * ## Why the version number alone cannot be the gate
+ *
+ * `SCHEMA_VERSION` is a hand-assigned integer, and in a repo with dozens of branches in
+ * flight it is not unique: two branches routinely claim the same N with different DDL. The
+ * first one to migrate a database stamps N; the second reads N, concludes it is current, and
+ * skips its entire sweep — its columns never appear, and the build's coverage check fails
+ * with `column missing after migrate`. That happened on merge five times, and then on PREVIEW
+ * deploys, where unmerged branches share one database: PR #152 (v34) lost all three of its
+ * columns because another open branch had already stamped that database 34.
+ *
+ * The integer is a lossy name for the DDL. This is the DDL itself, so two builds that want
+ * different schemas can never agree they are current.
+ *
+ * ## What it covers
+ *
+ * The three data-driven sets `applySchema` and `applyScaleSchema` execute — the `DDL`
+ * template, `alters` (which spreads in `ADMIN_V2_STATEMENTS`), and `SCALE_DDL` — normalized
+ * and SORTED, so reformatting or reordering a statement does not force a sweep but changing
+ * one does. These are the same statement lists `scripts/smoke-schema-ddl.ts` hashes for the CI
+ * lock, but the two digests are NOT comparable and never will match: the lock is computed by
+ * scanning source text, so it also absorbs PGlite `ensureColumn` calls and any backtick-quoted
+ * span in a comment inside those arrays. This hashes the runtime values, which is the only
+ * thing a database can actually have applied. Different jobs — the lock forces a version bump
+ * in CI, this decides whether a sweep runs.
+ *
+ * Statements issued inline by the migrate functions are not hashed. That is why the gate
+ * still ALSO requires the version to match: a change to those is still covered by bumping
+ * `SCHEMA_VERSION`, exactly as before. Nothing the integer used to guarantee is given up.
+ *
+ * Memoized: sha256 over the DDL is sub-millisecond, but it is also constant for the life of
+ * the process, so there is no reason to do it per boot.
+ */
+export function schemaFingerprint(): string {
+  if (fingerprintMemo) return fingerprintMemo;
+  const statements = [...DDL.split(";"), ...alters, ...SCALE_DDL]
+    .map((statement) => statement.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .sort();
+  fingerprintMemo = crypto.createHash("sha256").update(statements.join("\n")).digest("hex");
+  return fingerprintMemo;
+}
+
+/**
+ * Whether the recorded schema already matches this build — by version AND by fingerprint.
  *
  * One SELECT standing in for the whole DDL sweep. Anything unexpected (no table yet, a
  * fresh database, a permissions problem) answers "no" and the caller does the full pass —
  * being wrong here costs a slow boot, never a wrong schema.
+ *
+ * That includes a database from before the fingerprint existed: selecting a column it does
+ * not have throws, which lands in the catch and takes the full pass once. `recordSchemaVersion`
+ * adds the column on the way out, so the next boot is back on the fast path. The fast path
+ * therefore stays at the same two statements it always was.
  */
 export async function schemaIsCurrent(run: StatementRunner): Promise<boolean> {
   try {
@@ -1414,15 +1476,16 @@ export async function schemaIsCurrent(run: StatementRunner): Promise<boolean> {
       `CREATE TABLE IF NOT EXISTS schema_migrations (
          id integer PRIMARY KEY DEFAULT 1,
          version integer NOT NULL,
+         fingerprint text,
          applied_at timestamptz NOT NULL DEFAULT now(),
          CONSTRAINT schema_migrations_single_row CHECK (id = 1)
        )`
     );
     const result = await run(
-      `SELECT version FROM schema_migrations WHERE id = 1`
+      `SELECT version, fingerprint FROM schema_migrations WHERE id = 1`
     );
-    const rows = rowsOf<{ version: number | string }>(result);
-    return Number(rows[0]?.version) === SCHEMA_VERSION;
+    const row = rowsOf<{ version: number | string; fingerprint: string | null }>(result)[0];
+    return Number(row?.version) === SCHEMA_VERSION && row?.fingerprint === schemaFingerprint();
   } catch {
     return false;
   }
@@ -1452,12 +1515,24 @@ async function detectExtensions(run: StatementRunner) {
 }
 
 export async function recordSchemaVersion(run: StatementRunner) {
+  const fingerprint = schemaFingerprint();
+  // Interpolated rather than bound because `StatementRunner` takes one string. Safe only
+  // because it is provably a hex digest — asserted rather than assumed.
+  if (!/^[0-9a-f]{64}$/.test(fingerprint)) {
+    throw new Error("schema fingerprint is not a sha256 hex digest");
+  }
   try {
+    // For a database from before the fingerprint: `CREATE TABLE IF NOT EXISTS` in
+    // `schemaIsCurrent` is a no-op on an existing table, so the column arrives here. This
+    // runs only on the full-pass path, never on a boot that found the schema current.
+    await run(`ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS fingerprint text`);
     await run(
-      `INSERT INTO schema_migrations (id, version, applied_at)
-       VALUES (1, ${SCHEMA_VERSION}, now())
+      `INSERT INTO schema_migrations (id, version, fingerprint, applied_at)
+       VALUES (1, ${SCHEMA_VERSION}, '${fingerprint}', now())
        ON CONFLICT (id) DO UPDATE
-         SET version = EXCLUDED.version, applied_at = EXCLUDED.applied_at`
+         SET version = EXCLUDED.version,
+             fingerprint = EXCLUDED.fingerprint,
+             applied_at = EXCLUDED.applied_at`
     );
   } catch (err) {
     // A boot that cannot record its version just re-runs the idempotent sweep next time.
