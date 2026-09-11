@@ -1,4 +1,4 @@
-import { and, eq, ilike, or } from "drizzle-orm";
+import { and, eq, ilike, or, sql } from "drizzle-orm";
 import { after } from "next/server";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
@@ -33,24 +33,39 @@ export const GET = extensionRoute<undefined, ContactSearchResponse>({
 
     const db = await getDb();
     const like = `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
-    const rows = await db.query.contacts.findMany({
-      where: and(
-        eq(contacts.userId, userId),
-        or(
-          ilike(contacts.fullName, like),
-          ilike(contacts.company, like),
-          ilike(contacts.email, like)
+    const rows = await db
+      .select({
+        id: contacts.id,
+        fullName: contacts.fullName,
+        company: contacts.company,
+        title: contacts.title,
+        // Only an absolute https photo is useful to the extension: it is a different
+        // origin (so `/api/avatars/{id}` would not resolve) and the wire contract
+        // requires https. Decided in SQL so an inline row's base64 — up to 120 KB per
+        // contact — never crosses the wire just to be dropped here.
+        photoUrl: sql<string | null>`CASE
+          WHEN ${contacts.profileImageUrl} IS NULL
+            OR btrim(${contacts.profileImageUrl}) = ''
+            OR ${contacts.profileImageUrl} LIKE 'data:%'
+            OR ${contacts.profileImageUrl} LIKE '%unavatar.io%'
+            OR ${contacts.profileImageUrl} LIKE '%static.licdn.com/aero%'
+            OR ${contacts.profileImageUrl} NOT LIKE 'https://%'
+          THEN NULL
+          ELSE btrim(${contacts.profileImageUrl})
+        END`,
+      })
+      .from(contacts)
+      .where(
+        and(
+          eq(contacts.userId, userId),
+          or(
+            ilike(contacts.fullName, like),
+            ilike(contacts.company, like),
+            ilike(contacts.email, like)
+          )
         )
-      ),
-      columns: {
-        id: true,
-        fullName: true,
-        company: true,
-        title: true,
-        profileImageUrl: true,
-      },
-      limit: SEARCH_LIMIT,
-    });
+      )
+      .limit(SEARCH_LIMIT);
 
     return {
       results: rows.map((row) => ({
@@ -58,7 +73,7 @@ export const GET = extensionRoute<undefined, ContactSearchResponse>({
         fullName: row.fullName,
         company: row.company,
         title: row.title,
-        photoUrl: row.profileImageUrl,
+        photoUrl: row.photoUrl,
       })),
     };
   },
