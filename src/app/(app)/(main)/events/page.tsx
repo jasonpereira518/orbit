@@ -7,11 +7,12 @@ import { EventsListSkeleton } from "@/components/loading/page-skeletons";
 import { getEventConnections, listEvents, listHiddenEvents } from "@/actions/events";
 
 async function ConnectionsSection() {
-  const { connections, eventbriteConfigured } = await getEventConnections();
+  const { connections, eventbriteConfigured, googleConnected } = await getEventConnections();
   return (
     <EventConnectionsCard
       connections={connections}
       eventbriteConfigured={eventbriteConfigured}
+      googleConnected={googleConnected}
     />
   );
 }

@@ -52,6 +52,7 @@ import {
 } from "@/lib/events/connect";
 import {
   deleteEventConnection,
+  findGmailGrant,
   listEventConnections,
   upsertEventConnection,
   type EventConnectionSummary,
@@ -522,11 +523,18 @@ export async function removeSpokenToConnection(
 export async function getEventConnections(): Promise<{
   connections: EventConnectionSummary[];
   eventbriteConfigured: boolean;
+  /** Whether the mailbox scan can be offered at all — it rides on an existing Google grant. */
+  googleConnected: boolean;
 }> {
   const userId = await requireUserForSurface(SURFACE);
+  const [connections, grant] = await Promise.all([
+    listEventConnections(userId),
+    findGmailGrant(userId),
+  ]);
   return {
-    connections: await listEventConnections(userId),
+    connections,
     eventbriteConfigured: eventbriteOAuthConfig().configured,
+    googleConnected: grant !== null,
   };
 }
 
@@ -610,6 +618,50 @@ export async function connectEventFeed(
     }
     return { ok: false, error: "That calendar link couldn’t be read — check it and try again?" };
   }
+}
+
+/**
+ * Turn the confirmation-email scan on or off.
+ *
+ * `gmail.readonly` is a Google RESTRICTED scope. The user granted it for calendar and contact
+ * history; reading their mail for event confirmations is a different purpose, so it gets its
+ * own explicit switch rather than riding along on a grant made for something else.
+ *
+ * The connection row IS the consent: no row, no scan. Turning it off deletes the row, which
+ * takes the stored scan position with it — there is nothing else to delete, because the scan
+ * keeps no message content anywhere.
+ */
+export async function setGmailEventScan(
+  enabled: boolean
+): Promise<{ ok: boolean; error?: string }> {
+  const userId = await requireSyncUser();
+
+  if (!enabled) {
+    await deleteEventConnection(userId, "gmail");
+    revalidateEvents();
+    return { ok: true };
+  }
+
+  // Requires the Gmail grant to exist already. This switch never asks for a new scope — if
+  // the user has not connected Google at all, the honest answer is to send them there.
+  const connection = await findGmailGrant(userId);
+  if (!connection) {
+    return {
+      ok: false,
+      error: "Connect Google first — Orbit scans the mailbox you have already connected.",
+    };
+  }
+
+  await upsertEventConnection(userId, {
+    provider: "gmail",
+    authKind: "google_grant",
+    // No secret: the token comes from the Gmail connection at scan time, so nothing is
+    // duplicated here and revoking Google revokes this too.
+    secret: "",
+    label: connection.emailAddress ?? "Gmail",
+  });
+  revalidateEvents();
+  return { ok: true };
 }
 
 export async function startEventbriteOAuth(): Promise<{ url: string }> {

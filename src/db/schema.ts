@@ -1610,6 +1610,15 @@ export type CalendarSyncCursor = {
 export type EventProviderSyncCursor = {
   cursor?: string | null;
   syncedThrough?: string | null;
+  /**
+   * The mailbox scan's own position: how far back has been covered, and Gmail's page token
+   * mid-listing.
+   *
+   * It lives here rather than on `gmail_connections.sync_cursor` because that column belongs
+   * to the calendar sync, which writes `{ calendar }` over the whole jsonb on every run — a
+   * second consumer there would have its position silently erased twice an hour.
+   */
+  gmail?: { after?: number; pageToken?: string | null } | null;
 };
 
 export type ProviderSyncCursor = {

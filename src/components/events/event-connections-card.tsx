@@ -20,7 +20,7 @@
  */
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarPlus, Loader2, Plug, Trash2 } from "lucide-react";
+import { CalendarPlus, Loader2, Mail, Plug, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/lib/toast";
@@ -28,6 +28,7 @@ import {
   connectEventFeed,
   connectLuma,
   disconnectEventProvider,
+  setGmailEventScan,
   startEventbriteOAuth,
 } from "@/actions/events";
 import type { EventConnectionSummary } from "@/lib/events/connections";
@@ -49,9 +50,11 @@ const FEED_HELP: Record<"luma_ics" | "partiful_ics", { name: string; where: stri
 export function EventConnectionsCard({
   connections,
   eventbriteConfigured,
+  googleConnected,
 }: {
   connections: EventConnectionSummary[];
   eventbriteConfigured: boolean;
+  googleConnected: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -64,6 +67,23 @@ export function EventConnectionsCard({
     connections.find((c) => c.provider === provider);
   const luma = byProvider("luma");
   const eventbrite = byProvider("eventbrite");
+  const gmail = byProvider("gmail");
+
+  function setGmailScan(enabled: boolean) {
+    start(async () => {
+      const result = await setGmailEventScan(enabled);
+      if (!result.ok) {
+        toast.error(result.error ?? "Couldn’t change that — try again?");
+        return;
+      }
+      toast.success(
+        enabled
+          ? "Scanning confirmation emails — events will appear over the next few syncs"
+          : "Stopped scanning your email"
+      );
+      router.refresh();
+    });
+  }
 
   function saveFeed(provider: "luma_ics" | "partiful_ics") {
     start(async () => {
@@ -188,6 +208,38 @@ export function EventConnectionsCard({
         </p>
         {feedRow("luma_ics")}
         {feedRow("partiful_ics")}
+
+        {/* The mailbox scan. Off unless asked for, and it says exactly what it reads —
+            `gmail.readonly` is a restricted scope the user granted for something else, and a
+            toggle that quietly widened its purpose would be a breach of that. */}
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 p-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-ink">Confirmation emails</p>
+            <p className="text-xs text-muted-foreground">
+              {gmail
+                ? "On — Orbit reads only mail from Luma, Partiful, Eventbrite, Meetup and Posh, and keeps the subject line, nothing else."
+                : googleConnected
+                  ? "Find events from “you’re registered” emails. Orbit opens only mail from those platforms, stores no message content, and never sends any of it to AI."
+                  : "Connect Google first — this reads the mailbox you have already connected."}
+            </p>
+          </div>
+          {gmail ? (
+            <Button variant="ghost" size="sm" onClick={() => setGmailScan(false)} disabled={pending}>
+              <Trash2 className="size-4" aria-hidden />
+              Turn off
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setGmailScan(true)}
+              disabled={pending || !googleConnected}
+            >
+              <Mail className="size-4" aria-hidden />
+              Turn on
+            </Button>
+          )}
+        </div>
 
         <p className="pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Events you host

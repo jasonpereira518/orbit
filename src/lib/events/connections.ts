@@ -115,7 +115,18 @@ export async function claimDueEventConnections(
 }
 
 export type EventSyncOutcome =
-  | { ok: true; cursor: EventProviderSyncCursor | null }
+  | {
+      ok: true;
+      cursor: EventProviderSyncCursor | null;
+      /**
+       * When to run again, for a source that knows it is mid-listing.
+       *
+       * The mailbox scan walks a year of mail 100 messages at a time; at the standard
+       * half-hour cadence that backlog would take days. Passing `now` means "immediately",
+       * the same lever `syncGoogleCalendar` pulls when it stops mid-chain.
+       */
+      nextSyncAt?: Date;
+    }
   | { ok: false; error: string; retryable: boolean };
 
 /** Record one run's result and schedule (or disarm) the next. Mirrors `markSyncResult`. */
@@ -134,7 +145,7 @@ export async function markEventSyncResult(
              sync_error = NULL,
              sync_failures = 0,
              sync_cursor = ${outcome.cursor === null ? null : JSON.stringify(outcome.cursor)}::jsonb,
-             next_sync_at = ${new Date(now.getTime() + EVENT_SYNC_INTERVAL_MS)},
+             next_sync_at = ${outcome.nextSyncAt ?? new Date(now.getTime() + EVENT_SYNC_INTERVAL_MS)},
              last_synced_at = ${now},
              updated_at = ${now}
        WHERE id = ${id}
@@ -296,6 +307,27 @@ export async function upsertEventConnection(
       next_sync_at = now(),
       updated_at = now()
   `);
+}
+
+/**
+ * Does this user have a Google grant the mailbox scan could ride on?
+ *
+ * The scan never asks for a new scope. It reuses the `gmail.readonly` grant already made for
+ * calendar and contact history, which is why the opt-in switch needs to know whether that
+ * grant exists before it offers itself at all.
+ */
+export async function findGmailGrant(
+  userId: string
+): Promise<{ emailAddress: string | null } | null> {
+  const db = await getDb();
+  const rows = rowsOf<{ email_address: string | null }>(
+    await db.execute(sql`
+      SELECT email_address FROM gmail_connections
+       WHERE user_id = ${userId} AND status = 'active'
+       LIMIT 1
+    `)
+  );
+  return rows[0] ? { emailAddress: rows[0].email_address } : null;
 }
 
 /** Disconnecting deletes the row — the same rule the Gmail/Outlook tables follow. */

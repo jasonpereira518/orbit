@@ -42,6 +42,12 @@ import {
 } from "@/lib/events/connectors/eventbrite";
 import { upsertProviderEvent, upsertProviderAttendees } from "@/lib/events/provider-writes";
 import { IcsFeedGoneError, syncIcsFeed } from "@/lib/events/discovery/from-ics-feed";
+import {
+  scanGmailForEvents,
+  type GmailScanCursor,
+} from "@/lib/events/discovery/from-gmail";
+import { getValidAccessToken } from "@/lib/gmail";
+import type { EventProviderSyncCursor } from "@/db/schema";
 import type { FetchPageDeps } from "@/lib/events/guarded-fetch";
 import type { ProviderAttendee, ProviderEvent, ProviderPage } from "@/lib/events/types";
 
@@ -97,6 +103,34 @@ async function syncFeed(
   const discovered = await syncIcsFeed(conn.userId, conn.secret, conn.provider, deps);
   stats.eventsUpserted += discovered.created + discovered.attached;
   await markEventSyncResult(conn.id, { ok: true, cursor: null });
+  stats.synced++;
+}
+
+/**
+ * The opt-in mailbox scan.
+ *
+ * Rides on the Gmail grant the user already has — this connection row stores no secret at
+ * all, it IS the opt-in — and keeps its own cursor here rather than in `gmail_connections`,
+ * whose `sync_cursor` belongs to the calendar sync and is replaced wholesale on every run.
+ */
+async function syncGmail(
+  conn: ClaimedEventConnection,
+  stats: EventSyncStats,
+  deps: { getAccessToken: (userId: string) => Promise<string>; scan: typeof scanGmailForEvents }
+): Promise<void> {
+  const accessToken = await deps.getAccessToken(conn.userId);
+  const cursor = (conn.cursor ?? null) as (EventProviderSyncCursor & { gmail?: GmailScanCursor }) | null;
+
+  const result = await deps.scan(conn.userId, accessToken, cursor?.gmail ?? null);
+  stats.eventsUpserted += result.stats.created + result.stats.attached;
+
+  await markEventSyncResult(conn.id, {
+    ok: true,
+    cursor: { ...(cursor ?? {}), gmail: result.cursor } as EventProviderSyncCursor,
+    // Mid-listing: come back immediately rather than waiting out the half-hour cadence, or a
+    // year of backlog would take days to walk at 100 messages per run.
+    nextSyncAt: result.cursor.pageToken ? new Date() : undefined,
+  });
   stats.synced++;
 }
 
@@ -158,6 +192,11 @@ export async function runEventSyncPass(
     deadline?: number;
     /** How a calendar feed is fetched. Injectable so a test never reaches the network. */
     feedDeps?: FetchPageDeps;
+    /** The mailbox scan's token minter and scanner. Injectable for the same reason. */
+    gmailDeps?: {
+      getAccessToken: (userId: string) => Promise<string>;
+      scan: typeof scanGmailForEvents;
+    };
   } = {}
 ): Promise<EventSyncStats> {
   const stats: EventSyncStats = {
@@ -186,7 +225,12 @@ export async function runEventSyncPass(
       // `luma` is a host API key and `luma_ics` a personal feed, and they share nothing but
       // a brand. `gmail` is handled in its own pass — see `from-gmail.ts`.
       if (conn.authKind === "ics") await syncFeed(conn, stats, options.feedDeps);
-      else if (conn.authKind === "api_key" || conn.authKind === "oauth") {
+      else if (conn.authKind === "google_grant") {
+        await syncGmail(conn, stats, {
+          getAccessToken: options.gmailDeps?.getAccessToken ?? getValidAccessToken,
+          scan: options.gmailDeps?.scan ?? scanGmailForEvents,
+        });
+      } else if (conn.authKind === "api_key" || conn.authKind === "oauth") {
         await syncHostApi(conn, stats, passDeadline);
       }
     } catch (error) {
