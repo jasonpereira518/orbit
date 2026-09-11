@@ -33,10 +33,12 @@ import {
 } from "@/lib/reminder-lists";
 import {
   completeReminder,
+  deleteReminder,
   ensureOutreachSuggestions,
   generateDueFollowUps,
   getDashboardData,
   maybeRefreshOutreachSuggestions,
+  reopenReminder,
   snoozeReminder,
 } from "@/lib/reminders";
 
@@ -703,6 +705,67 @@ export async function markReminderDone(id: string) {
   const userId = await requireUserId();
   await completeReminder(userId, id);
   revalidateReminderPaths();
+}
+
+/** Move a completed reminder back to pending, keeping its due date. */
+export async function reopenReminderAction(id: string) {
+  const userId = await requireUserId();
+  const row = await reopenReminder(userId, id);
+  if (!row) throw new Error("Reminder not found");
+  revalidateReminderPaths(row.contactId);
+  return { ok: true as const };
+}
+
+/**
+ * Delete a reminder, returning the fields needed to put it back.
+ *
+ * The snapshot is what makes the toast's Undo real rather than decorative — deleting
+ * something a user wrote is exactly where an undo has to exist.
+ */
+export async function deleteReminderAction(id: string) {
+  const userId = await requireUserId();
+  const row = await deleteReminder(userId, id);
+  if (!row) throw new Error("Reminder not found");
+  revalidateReminderPaths(row.contactId);
+  return {
+    ok: true as const,
+    snapshot: {
+      title: row.title,
+      description: row.description,
+      dueDate: row.dueDate ? row.dueDate.toISOString() : null,
+      contactId: row.contactId,
+      listId: row.listId,
+      actionKind: row.actionKind,
+      reminderType: row.reminderType,
+    },
+  };
+}
+
+/** Re-create a reminder from a delete snapshot. Backs the Undo on the delete toast. */
+export async function restoreReminderAction(snapshot: {
+  title: string;
+  description?: string | null;
+  dueDate?: string | null;
+  contactId?: string | null;
+  listId?: string | null;
+  actionKind?: string | null;
+}) {
+  const actionKind =
+    typeof snapshot.actionKind === "string" &&
+    isReminderActionKind(snapshot.actionKind)
+      ? snapshot.actionKind
+      : undefined;
+
+  return createReminder({
+    title: snapshot.title,
+    description: snapshot.description ?? undefined,
+    // Already an ISO timestamp from the snapshot, so it takes the timestamp branch of
+    // `parseDueDateInput` rather than the calendar-day one.
+    dueDate: snapshot.dueDate ?? undefined,
+    contactId: snapshot.contactId ?? undefined,
+    listId: snapshot.listId ?? undefined,
+    actionKind,
+  });
 }
 
 /** Draft a follow-up message grounded in the reminder contact's conversation history. */

@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "@/lib/toast";
 import {
-  createContact,
+  createContactDetailed,
   getContactFieldSuggestions,
   lookupLinkedInProfile,
   updateContact,
@@ -243,8 +243,18 @@ export function ContactForm({
               onSuccess?.({ id: contactId });
               if (redirectOnSuccess) router.push(`/contacts/${contactId}`);
             } else {
-              const c = await createContact(payload);
-              toast.success("Contact created");
+              const { contact: c, outcome } = await createContactDetailed(payload);
+              // "Contact created" was shown even when the submission had been folded
+              // into somebody who already existed — quietly overwriting their company
+              // and role while the contact count stayed put. Say which happened, and
+              // name the person, so an unintended merge is visible immediately.
+              const merged = outcome === "matched" || outcome === "merged";
+              const displayName = c.preferredName || c.fullName;
+              toast.success(
+                merged
+                  ? `Merged into your existing contact ${displayName}`
+                  : "Contact created"
+              );
               onSuccess?.({ id: c.id });
               if (redirectOnSuccess) router.push(`/contacts/${c.id}`);
             }

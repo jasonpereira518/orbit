@@ -9,7 +9,7 @@ import {
 } from "@/db/schema";
 import { chatWithNetwork } from "@/lib/ai";
 import { prepareChatContext } from "@/lib/chat-context";
-import { persistAssistantTurn } from "@/lib/chat-persist";
+import { discardEmptyThread, persistAssistantTurn } from "@/lib/chat-persist";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { traced } from "@/lib/perf-trace";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
@@ -97,11 +97,14 @@ async function askNetworkInner(
   question: string,
   options?: { threadId?: string; contactId?: string }
 ) {
+  // Hoisted so the catch can clean up a thread this turn was meant to fill. Null until
+  // auth succeeds, which is what keeps an auth failure from touching anything.
+  let userId: string | null = null;
+  const threadId = options?.threadId ?? null;
+
   try {
-    const userId = await requireUserForSurface("page.chat");
+    userId = await requireUserForSurface("page.chat");
     await consumeBucket("chat", userId, RATE_LIMITS.chat);
-    const db = await getDb();
-    const threadId = options?.threadId ?? null;
 
     // Everything the model is shown, with the independent lookups running side by side.
     // Shared with the streaming route so the two paths cannot drift.
@@ -110,9 +113,8 @@ async function askNetworkInner(
       focusContactId: options?.contactId,
     });
 
-    if (threadId) {
-      await db.insert(chatMessages).values({ threadId, userId, role: "user", content: ctx.q });
-    }
+    // The user's turn is persisted by `persistAssistantTurn` once the model has actually
+    // answered — writing it here left an orphan question behind on every failure.
 
     const result = await chatWithNetwork(
       userId,
@@ -150,6 +152,9 @@ async function askNetworkInner(
       focusedContactId: options?.contactId?.trim() || null,
     };
   } catch (err) {
+    // Same cleanup as the streaming route: don't leave an empty auto-created thread
+    // behind when the turn that created it never completed.
+    if (userId) await discardEmptyThread(userId, threadId).catch(() => {});
     const { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } = await import(
       "@/lib/errors"
     );

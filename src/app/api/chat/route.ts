@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
-import { chatMessages, type ChatRecommendation } from "@/db/schema";
-import { getDb } from "@/db";
+import { type ChatRecommendation } from "@/db/schema";
 import { chatWithNetworkStream } from "@/lib/ai";
 import { prepareChatContext } from "@/lib/chat-context";
-import { persistAssistantTurn } from "@/lib/chat-persist";
+import { discardEmptyThread, persistAssistantTurn } from "@/lib/chat-persist";
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
 import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
@@ -55,10 +54,8 @@ export async function POST(request: Request) {
   let ctx: Awaited<ReturnType<typeof prepareChatContext>>;
   try {
     ctx = await prepareChatContext(userId, question, { threadId, focusContactId: contactId });
-    if (threadId) {
-      const db = await getDb();
-      await db.insert(chatMessages).values({ threadId, userId, role: "user", content: ctx.q });
-    }
+    // The user's turn is persisted by `persistAssistantTurn` once the model has actually
+    // answered — writing it here left an orphan question behind on every failure.
   } catch (err) {
     return NextResponse.json(
       { error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message },
@@ -110,6 +107,9 @@ export async function POST(request: Request) {
           })),
         });
       } catch (err) {
+        // A thread the client auto-created for this send, which then failed, would
+        // otherwise sit in History forever as an untitled "New chat".
+        await discardEmptyThread(userId, threadId).catch(() => {});
         send({ type: "error", message: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message });
       } finally {
         controller.close();

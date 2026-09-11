@@ -122,6 +122,7 @@ export function RemindersView({
                 description={r.description}
                 dueDate={r.dueDate}
                 reminderType={r.reminderType}
+                status={r.status}
                 actionKind={r.actionKind}
                 contactId={r.contactId}
                 contactName={r.contactName}

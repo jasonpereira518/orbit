@@ -125,6 +125,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-interaction-delete": "pglite",
   "smoke-mcp-server": "pglite",
   "smoke-note-batch": "pglite",
+  "smoke-no-silent-data-loss": "pglite",
   "smoke-ops-sweep": "pglite",
   "smoke-page-budgets": "pglite",
   "smoke-pgvector-local": "pglite",

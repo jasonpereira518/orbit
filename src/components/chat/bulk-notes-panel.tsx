@@ -8,6 +8,12 @@ import { addDays, format } from "date-fns";
 import { toast } from "@/lib/toast";
 import { useCornerClearanceAbove } from "@/lib/corner-clearance";
 import {
+  captureDraftKey,
+  clearCaptureDraft,
+  readCaptureDraft,
+  writeCaptureDraft,
+} from "@/lib/capture-draft";
+import {
   confirmBulkCapture,
   ingestCaptureMedia,
   parseBulkCaptureNotes,
@@ -128,6 +134,47 @@ export function BulkNotesPanel({
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [notes, setNotes] = useState("");
+  const [draftRestored, setDraftRestored] = useState(false);
+
+  // Scoped per surface and per locked contact so a profile-scoped paste cannot reappear
+  // on /capture, or inside a different person's profile.
+  const draftKey = captureDraftKey({
+    entryPoint,
+    lockedParticipantId,
+  });
+
+  // Restore once on mount. Deliberately not in the render body: this reads from
+  // localStorage, which is unavailable during SSR and would desync hydration.
+  useEffect(() => {
+    const saved = readCaptureDraft(draftKey);
+    if (saved) {
+      setNotes(saved);
+      setDraftRestored(true);
+    }
+    // Keyed on the surface, not on `notes` — this must run once per panel, not per
+    // keystroke, or it would fight the user's own typing.
+  }, [draftKey]);
+
+  // Persist on a debounce. 400ms is short enough that navigating away mid-sentence keeps
+  // the sentence, long enough that a long paste is not re-serialized on every character.
+  useEffect(() => {
+    const t = setTimeout(() => writeCaptureDraft(draftKey, notes), 400);
+    return () => clearTimeout(t);
+  }, [draftKey, notes]);
+
+  // The last line of defence: a reload or a closed tab before the debounce fires.
+  useEffect(() => {
+    if (!notes.trim()) return;
+    const flush = () => writeCaptureDraft(draftKey, notes);
+    window.addEventListener("beforeunload", flush);
+    // `pagehide` is the one that actually fires on mobile Safari, where the tab is
+    // frozen rather than unloaded — which is exactly the "typed it on the train" case.
+    window.addEventListener("pagehide", flush);
+    return () => {
+      window.removeEventListener("beforeunload", flush);
+      window.removeEventListener("pagehide", flush);
+    };
+  }, [draftKey, notes]);
   const [fileName, setFileName] = useState<string | null>(null);
   const [captureHints, setCaptureHints] = useState<CaptureParseHints | null>(
     null
@@ -200,6 +247,9 @@ export function BulkNotesPanel({
 
   function resetToPaste() {
     setStep("paste");
+    // The notes have been turned into contacts, so the draft has served its purpose.
+    clearCaptureDraft(draftKey);
+    setDraftRestored(false);
     setNotes("");
     setFileName(null);
     setCaptureHints(null);
@@ -431,6 +481,25 @@ export function BulkNotesPanel({
                 extract → review → save.
               </p>
             )}
+            {draftRestored && (
+              // Restoring text silently would be its own small surprise — the user
+              // needs to know why there is already writing in the box, and needs one
+              // obvious way to get rid of it.
+              <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-muted/40 px-2.5 py-1.5 text-xs text-muted-foreground">
+                <span>Draft restored from last time.</span>
+                <button
+                  type="button"
+                  className="font-medium text-foreground underline underline-offset-2 hover:no-underline"
+                  onClick={() => {
+                    clearCaptureDraft(draftKey);
+                    setNotes("");
+                    setDraftRestored(false);
+                  }}
+                >
+                  Discard
+                </button>
+              </div>
+            )}
             <Textarea
               id="bulk-notes"
               className={cn("mt-2", compact ? "min-h-[140px]" : "min-h-[220px]")}
@@ -440,7 +509,11 @@ export function BulkNotesPanel({
                   : `AWS Summit afterparty — talked with a few people over drinks about AI tooling.\n\nMet Sarah Chen — she leads Codex partnerships at OpenAI...\n\nAlso caught up with Marcus Lee (Stripe, recruiting). He offered an intro to their AI infra team...\n\nQuick note on Priya Nair from the same night — still at Notion, exploring agent workflows.`
               }
               value={notes}
-              onChange={(e) => setNotes(e.target.value)}
+              onChange={(e) => {
+                setNotes(e.target.value);
+                // Once they have edited it, it is their current text, not a restoration.
+                if (draftRestored) setDraftRestored(false);
+              }}
             />
           </div>
 

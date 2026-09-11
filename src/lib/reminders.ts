@@ -322,15 +322,24 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
     });
 
     if (existing) {
+      // Never rewrite what a person wrote.
+      //
+      // This used to set `title`, `reminderType`, `actionKind` and `createdBy` on the
+      // existing row, so pressing "Generate more" turned a hand-written "Send the intro
+      // deck", due 30 Oct, into "Follow up with Chris Nowak" due now — title, note and
+      // date gone, with no undo, no confirmation and no toast. `scheduleContactFollowUp`
+      // in @/actions/reminders already carries the same fix and the same reasoning; this
+      // is its neighbour, which never got it.
+      //
+      // A user-authored reminder means this contact is already handled, so skip them
+      // entirely rather than bringing the date forward: the queue exists to surface
+      // people with nothing planned, and the user has plainly planned something.
+      if (existing.createdBy !== "system") continue;
+
+      // A previously generated row is ours to move — but only its due date.
       await db
         .update(reminders)
-        .set({
-          title,
-          dueDate: now,
-          reminderType: "generated",
-          actionKind: "follow_up",
-          createdBy: "system",
-        })
+        .set({ dueDate: now })
         .where(eq(reminders.id, existing.id));
     } else {
       await db.insert(reminders).values({
@@ -827,4 +836,61 @@ export async function completeReminder(userId: string, reminderId: string) {
     .update(actionItems)
     .set({ status: "done", completedAt: new Date() })
     .where(and(eq(actionItems.userId, userId), eq(actionItems.reminderId, reminderId)));
+}
+
+/**
+ * Put a completed reminder back on the pending list, keeping its due date.
+ *
+ * Until now the only way to un-complete something was to press the clock, whose tooltip
+ * reads "Snooze 7 days" — `snoozeReminder` sets `status: "pending"` as a side effect of
+ * rescheduling. So the sole route back from Done was an unlabelled one that also moved
+ * the date a week into the future. Reopening should say what it does and change nothing
+ * else.
+ */
+export async function reopenReminder(userId: string, reminderId: string) {
+  const db = await getDb();
+  const [row] = await db
+    .update(reminders)
+    .set({ status: "pending" })
+    .where(and(eq(reminders.id, reminderId), eq(reminders.userId, userId)))
+    .returning();
+  if (!row) return null;
+
+  // The action item completed alongside it comes back too, or the reminder would be
+  // open with its task still closed.
+  await db
+    .update(actionItems)
+    .set({ status: "open", completedAt: null })
+    .where(and(eq(actionItems.userId, userId), eq(actionItems.reminderId, reminderId)));
+
+  return row;
+}
+
+/**
+ * Delete a reminder outright, returning enough of it to offer an undo.
+ *
+ * There was no delete at all: the three controls on a card were edit, complete and
+ * snooze, and no `deleteReminder` existed anywhere. Completing was the only way to clear
+ * a row, which quietly conflates "I did this" with "this should never have been here" —
+ * and left the Done tab as a permanent record of both.
+ *
+ * A hard delete rather than a status flag, because `status: "dismissed"` already means
+ * something specific (a reminder killed by a note-batch undo) and the reminders page
+ * filters those out on purpose. Undo re-inserts from the returned snapshot.
+ */
+export async function deleteReminder(userId: string, reminderId: string) {
+  const db = await getDb();
+  const [row] = await db
+    .delete(reminders)
+    .where(and(eq(reminders.id, reminderId), eq(reminders.userId, userId)))
+    .returning();
+  if (!row) return null;
+
+  // Action items point at the reminder; orphaning them would leave a task nothing can
+  // complete or reopen.
+  await db
+    .delete(actionItems)
+    .where(and(eq(actionItems.userId, userId), eq(actionItems.reminderId, reminderId)));
+
+  return row;
 }

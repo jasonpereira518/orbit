@@ -210,29 +210,21 @@ export function ChatPanel() {
     }
   }, [scrollToBottom]);
 
+  /**
+   * Clears the panel without writing anything. `ensureThread` creates the row on the
+   * first successful send instead.
+   *
+   * This used to insert a thread per click, so pressing "New chat" four times left four
+   * identical "New chat" rows in History — the title is only ever set once an answer
+   * comes back, so an unused thread never gets one and never can.
+   */
   const startNewChat = useCallback(() => {
-    start(async () => {
-      try {
-        const created = await createChatThread();
-        setThreadId(created.id);
-        setThreadTitle(created.title);
-        setMessages([]);
-        setQuestion("");
-        setLastUserQuery("");
-        setThreads((prev) => [
-          {
-            id: created.id,
-            title: created.title,
-            createdAt: created.createdAt,
-            updatedAt: created.updatedAt,
-          },
-          ...prev.filter((t) => t.id !== created.id),
-        ]);
-        requestAnimationFrame(() => textareaRef.current?.focus());
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not start chat");
-      }
-    });
+    setThreadId(null);
+    setThreadTitle(null);
+    setMessages([]);
+    setQuestion("");
+    setLastUserQuery("");
+    requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
 
   const removeThread = useCallback(
