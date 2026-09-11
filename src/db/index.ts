@@ -947,6 +947,26 @@ CREATE TABLE IF NOT EXISTS events (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS event_companies (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  event_id uuid NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  role text NOT NULL,
+  source text NOT NULL,
+  evidence text,
+  dismissed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS target_companies (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  priority integer NOT NULL DEFAULT 2,
+  note text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS event_aliases (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1125,7 +1145,17 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
 //
 // 41 = cross-event identity: person_key_kind/person_key_value on event_attendees and the
 // index the "people you keep seeing" aggregate groups on.
-export const SCHEMA_VERSION = 41;
+//
+// 42 = companies at events: the event_companies and target_companies tables, events.kind,
+// user_settings.schools, and the generated company_key on event_attendees (in SCALE_DDL,
+// with the indexes, because a generated column must exist before an index can read it).
+//
+// 43 = the repair for a v40 mistake: the `event_aliases` entry in `alters` had three
+// CREATE TABLEs spliced into one string, which PGlite and Neon both reject as "multiple
+// commands" — so on any database that already existed, `event_aliases` was never created and
+// discovery would have failed on its first write. A version bump is the only thing that
+// re-runs the sweep on an instance already stamped 40, 41 or 42.
+export const SCHEMA_VERSION = 43;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1138,6 +1168,20 @@ export const SCHEMA_VERSION = 41;
  */
 export const SCALE_DDL: string[] = [
   // --- Generated columns -----------------------------------------------------------
+  //
+  // An attendee's employer, normalised. MUST stay byte-identical to `normalizeCompanyKey`
+  // in `src/lib/company-name.ts`: the company panel groups a roster by this column and then
+  // compares the result against keys computed in JavaScript, so a disagreement does not
+  // throw — it silently splits "Stripe" and "Stripe, Inc." into two companies on one page.
+  //
+  // Generated rather than written, because it derives from a column five different
+  // acquisition paths write, and one of them would eventually forget.
+  `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS company_key text
+     GENERATED ALWAYS AS (
+       nullif(trim(regexp_replace(regexp_replace(lower(company), '[^a-z0-9\\s]', ' ', 'g'), '\\s+', ' ', 'g')), '')
+     ) STORED`,
+  `CREATE INDEX IF NOT EXISTS event_attendees_company_key_idx
+     ON event_attendees(user_id, company_key) WHERE company_key IS NOT NULL`,
   //
   // Last-name sort key. This is the keyset-pagination ordering column, and it must agree
   // exactly with what the UI would have computed — `lastNameSortKey` in
@@ -1561,6 +1605,10 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "ai_provider", "text DEFAULT 'gemini'");
   await ensureColumn(client, "user_settings", "openai_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "anthropic_api_key_encrypted", "text");
+  // v42. Both also appear in `alters` above; `smoke-schema-ddl` requires them in BOTH places,
+  // because a local database created before either existed only ever sees this list.
+  await ensureColumn(client, "user_settings", "schools", "jsonb DEFAULT '[]'::jsonb");
+  await ensureColumn(client, "events", "kind", "text");
   await ensureColumn(client, "contacts", "preferred_name", "text");
   await ensureColumn(client, "contacts", "website", "text");
   await ensureColumn(client, "interactions", "external_id", "text");
@@ -2060,19 +2108,19 @@ const alters = [
   // v41, cross-event identity. `identity_key` cannot answer "same person at another event":
   // it keys on the string it was given, so two spellings of one LinkedIn URL are two keys.
   // Changing it would break the unique index every stored roster row depends on.
+  // v42, companies at events. `kind` is what makes a career fair rank recruiters above
+  // founders — the same person is a different opportunity at a different kind of event.
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS kind text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS schools jsonb DEFAULT '[]'::jsonb`,
+  // One line each, deliberately: PGlite runs every entry in this array through the extended
+  // query protocol, which rejects a statement it reads as more than one command — and a
+  // multi-line CREATE TABLE here trips that, while the identical text in the template above
+  // is fine because that path splits on ';' first.
+  `CREATE TABLE IF NOT EXISTS event_companies (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, event_id uuid NOT NULL REFERENCES events(id) ON DELETE CASCADE, company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE, role text NOT NULL, source text NOT NULL, evidence text, dismissed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE TABLE IF NOT EXISTS target_companies (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE, priority integer NOT NULL DEFAULT 2, note text, created_at timestamptz NOT NULL DEFAULT now())`,
   `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS person_key_kind text`,
   `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS person_key_value text`,
-  `CREATE TABLE IF NOT EXISTS event_aliases (
-     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-     user_id text NOT NULL,
-     kind text NOT NULL,
-     value text NOT NULL,
-     event_id uuid REFERENCES events(id) ON DELETE SET NULL,
-     source text NOT NULL,
-     evidence jsonb NOT NULL DEFAULT '{}'::jsonb,
-     first_seen_at timestamptz NOT NULL DEFAULT now(),
-     last_seen_at timestamptz NOT NULL DEFAULT now()
-   )`,
+  `CREATE TABLE IF NOT EXISTS event_aliases (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, kind text NOT NULL, value text NOT NULL, event_id uuid REFERENCES events(id) ON DELETE SET NULL, source text NOT NULL, evidence jsonb NOT NULL DEFAULT '{}'::jsonb, first_seen_at timestamptz NOT NULL DEFAULT now(), last_seen_at timestamptz NOT NULL DEFAULT now())`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_step text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,
@@ -2328,6 +2376,10 @@ const alters = [
   // Schema v41: "who do I keep running into". The aggregate groups a user's whole roster
   // history by this, so it is the one index standing between that panel and a full scan.
   `CREATE INDEX IF NOT EXISTS event_attendees_person_idx ON event_attendees(user_id, person_key_kind, person_key_value) WHERE person_key_value IS NOT NULL`,
+  // Schema v42: companies at events.
+  `CREATE UNIQUE INDEX IF NOT EXISTS event_companies_event_company_role_uidx ON event_companies(event_id, company_id, role)`,
+  `CREATE INDEX IF NOT EXISTS event_companies_user_company_idx ON event_companies(user_id, company_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS target_companies_user_company_uidx ON target_companies(user_id, company_id)`,
 ];
 
 /**

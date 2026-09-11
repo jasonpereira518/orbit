@@ -114,6 +114,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-contact-resolve": "pglite",
   "smoke-demo-data": "pglite",
   "smoke-duplicate-review": "pglite",
+  "smoke-event-companies": "pglite",
   "smoke-event-discovery-store": "pglite",
   "smoke-event-roster": "pglite",
   "smoke-constellation-admin": "pglite",

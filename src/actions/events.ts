@@ -34,6 +34,14 @@ import {
   type RepeatPerson,
 } from "@/lib/events/people-store";
 import { loadSelfIdentity } from "@/lib/events/self";
+import {
+  dismissEventCompany,
+  loadEventCompanyPanel,
+  upsertEventCompanies,
+  type EventCompanyRow,
+} from "@/lib/events/companies";
+import { parseCompanyList } from "@/lib/events/company-list-parse";
+import { addTargetCompany } from "@/lib/events/target-companies";
 import { diffEventAgainstPage, type EventFieldChange } from "@/lib/events/resync";
 import { resolveThemeColor } from "@/lib/events/theme";
 import { parseRosterCsv, parseRosterText } from "@/lib/events/parse-roster";
@@ -566,6 +574,58 @@ export async function removeSpokenToConnection(
   await unlinkAttendeeForUser(userId, attendeeId);
   revalidateEvents(eventId);
   revalidatePath("/contacts");
+}
+
+// --- Companies at an event ---------------------------------------------------------------
+
+/** Who was there as an organisation, and who you already know at each. */
+export async function getEventCompanies(eventId: string): Promise<EventCompanyRow[]> {
+  const userId = await requireUserForSurface(SURFACE);
+  return loadEventCompanyPanel(userId, eventId);
+}
+
+/**
+ * Add the employer list from a career fair.
+ *
+ * Pasted rather than fetched: a fair's exhibitor list is a PDF, a slide, or a page behind a
+ * university login as often as it is a web page, and the user already has it on screen.
+ */
+export async function importEventCompanies(
+  eventId: string,
+  text: string,
+  role: "exhibitor" | "sponsor" | "host" | "employer" = "employer"
+): Promise<{ added: number; skipped: number; deduped: number }> {
+  const userId = await requireUserForSurface(SURFACE);
+  const parsed = parseCompanyList(text);
+  const added = await upsertEventCompanies(
+    userId,
+    eventId,
+    parsed.names.map((name) => ({ name, role, source: "paste" as const }))
+  );
+  revalidateEvents(eventId);
+  return { added, skipped: parsed.skipped, deduped: parsed.deduped };
+}
+
+/** Wrong ones are hidden rather than deleted, so a bad paste is one click undone. */
+export async function dismissEventCompanyRow(
+  eventId: string,
+  id: string
+): Promise<void> {
+  const userId = await requireUserForSurface(SURFACE);
+  await dismissEventCompany(userId, id);
+  revalidateEvents(eventId);
+}
+
+/** Star a company from the event panel, where noticing it is most likely. */
+export async function addTargetCompanyFromEvent(
+  eventId: string,
+  name: string,
+  priority: 1 | 2 | 3 = 2
+): Promise<{ ok: boolean; error?: string }> {
+  const userId = await requireUserForSurface(SURFACE);
+  const result = await addTargetCompany(userId, name, priority);
+  revalidateEvents(eventId);
+  return result;
 }
 
 // --- Provider connections -------------------------------------------------------------------

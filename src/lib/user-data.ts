@@ -23,9 +23,11 @@ import {
   duplicateSuggestions,
   eventAliases,
   eventAttendees,
+  eventCompanies,
   eventProviderConnections,
   events,
   gmailConnections,
+  targetCompanies,
   imports,
   interactions,
   noteBatches,
@@ -158,6 +160,13 @@ export async function purgeUserData(
   // carry their own `user_id` (which is why `smoke-purge` finds them), and a roster holds
   // names, emails and employers of people the user met.
   await db.delete(eventAttendees).where(eq(eventAttendees.userId, userId));
+  // Both cascade from their parents, and both are deleted explicitly for the same reason
+  // `event_attendees` is: they carry their own `user_id`, so `smoke-purge` requires them, and
+  // leaving them to a cascade means a change to either FK silently strips them from account
+  // deletion. `target_companies` is also a statement of intent — where this person wants to
+  // work — which is not something to leave behind.
+  await db.delete(eventCompanies).where(eq(eventCompanies.userId, userId));
+  await db.delete(targetCompanies).where(eq(targetCompanies.userId, userId));
   // Before `events`, and explicitly: an alias row survives its event by design (`ON DELETE
   // SET NULL` is what makes a dismissal stick), so deleting events first would leave a
   // tombstone per event behind — a list of every Luma link and calendar UID the user ever

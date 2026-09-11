@@ -6,12 +6,19 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EventHero } from "@/components/events/event-hero";
 import { AttendeeRoster, type RosterMatch } from "@/components/events/attendee-roster";
 import { RosterImportPanel } from "@/components/events/roster-import-panel";
+import { EventCompaniesPanel } from "@/components/events/event-companies-panel";
 import {
   getEvent,
+  getEventCompanies,
   getRoster,
   getRosterHistory,
   matchRosterToNetwork,
 } from "@/actions/events";
+
+async function Companies({ eventId }: { eventId: string }) {
+  const rows = await getEventCompanies(eventId);
+  return <EventCompaniesPanel eventId={eventId} rows={rows} />;
+}
 
 type RosterResult =
   | { ok: true; rows: Awaited<ReturnType<typeof getRoster>> }
@@ -113,6 +120,14 @@ export default async function EventDetailPage({
 
       <div className="reveal-mount" style={{ "--reveal-delay": "60ms" } as React.CSSProperties}>
         <RosterImportPanel eventId={event.id} />
+      </div>
+
+      {/* Companies before the roster: at a career fair the booth list IS the event, and at a
+          conference it is the shape that makes four hundred names navigable. */}
+      <div className="reveal-mount" style={{ "--reveal-delay": "90ms" } as React.CSSProperties}>
+        <Suspense fallback={<Skeleton className="h-40 w-full rounded-2xl" />}>
+          <Companies eventId={event.id} />
+        </Suspense>
       </div>
 
       <div className="reveal-mount" style={{ "--reveal-delay": "120ms" } as React.CSSProperties}>

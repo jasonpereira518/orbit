@@ -111,6 +111,13 @@ export const userSettings = pgTable("user_settings", {
   desktopNotifiedIds: jsonb("desktop_notified_ids")
     .$type<string[]>()
     .default([]),
+  /**
+   * Schools the user attended, for the shared-alma-mater signal when ranking a roster.
+   *
+   * A plain list on this row rather than a table: nothing joins on it, it is read whole
+   * every time, and it is three strings.
+   */
+  schools: jsonb("schools").$type<string[]>().default([]),
   socialLinks: jsonb("social_links")
     .$type<{
       linkedin?: string;
@@ -3003,6 +3010,14 @@ export const events = pgTable(
      * back. That part is `event_aliases`: the keys stay, pointing at this dismissed row.
      */
     dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+    /**
+     * What kind of event this is, where we can tell.
+     *
+     * Earns a column because it changes who is worth talking to: a recruiter at a career
+     * fair is the single most useful person in the room, and the same recruiter at a party
+     * is just another guest.
+     */
+    kind: text("kind").$type<"career_fair" | "conference" | "meetup" | "party" | "other">(),
     /** Queue + lease for background enrichment. Null means nothing is owed. */
     enrichDueAt: timestamp("enrich_due_at", { withTimezone: true }),
     enrichAttempts: integer("enrich_attempts").default(0).notNull(),
@@ -3160,6 +3175,74 @@ export const eventAttendees = pgTable(
   ]
 );
 
+/**
+ * Which companies were at an event, and in what capacity.
+ *
+ * The question a career fair makes obvious: "Stripe was there" is more useful than thirty
+ * names, because it connects to everything Orbit already knows — who you know there, who used
+ * to work there, and whether it is somewhere you are trying to get.
+ *
+ * Only CURATED companies get rows here: hosts, sponsors, exhibitors, and the employer lists a
+ * user pastes from a fair. Attendee employers are NOT written — a 900-person conference would
+ * otherwise create hundreds of `companies` rows nobody asked for, one per typo'd job title.
+ * Those are grouped live from `event_attendees.company_key` instead.
+ */
+export const eventCompanies = pgTable(
+  "event_companies",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    /**
+     * `employer` is the career-fair case — the company was there to recruit — which reads
+     * very differently from sponsoring a conference, and changes who is worth talking to.
+     */
+    role: text("role").$type<"host" | "sponsor" | "exhibitor" | "employer">().notNull(),
+    source: text("source")
+      .$type<"page" | "paste" | "screenshot" | "ai" | "manual">()
+      .notNull(),
+    /** Where this came from, in the user's terms: "booth 12", "from the event page". */
+    evidence: text("evidence"),
+    /** Wrong ones are hidden rather than deleted, so an AI mistake is one click undone. */
+    dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("event_companies_event_company_role_uidx").on(t.eventId, t.companyId, t.role),
+    /** "Where else have I seen this company" — and an index on the FK, as ever. */
+    index("event_companies_user_company_idx").on(t.userId, t.companyId),
+  ]
+);
+
+/**
+ * The companies the user is actually trying to reach.
+ *
+ * A table rather than a jsonb list on `user_settings` because relevance scoring and the event
+ * company panel both JOIN on it — jsonb cannot be indexed for that, and the alternative is
+ * loading every target into memory on every scored roster row.
+ */
+export const targetCompanies = pgTable(
+  "target_companies",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    /** 1 dream, 2 target, 3 curious. Weighted differently when ranking who to talk to. */
+    priority: integer("priority").default(2).notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("target_companies_user_company_uidx").on(t.userId, t.companyId)]
+);
+
 export const eventProviderConnections = pgTable(
   "event_provider_connections",
   {
@@ -3261,6 +3344,8 @@ export type EventAttendeeRecord = typeof eventAttendees.$inferSelect;
 export type NewEventAttendeeRecord = typeof eventAttendees.$inferInsert;
 export type EventProviderConnection = typeof eventProviderConnections.$inferSelect;
 export type EventAlias = typeof eventAliases.$inferSelect;
+export type EventCompany = typeof eventCompanies.$inferSelect;
+export type TargetCompany = typeof targetCompanies.$inferSelect;
 export type ContactIdentity = typeof contactIdentities.$inferSelect;
 export type NewContactIdentity = typeof contactIdentities.$inferInsert;
 export type ContactMerge = typeof contactMerges.$inferSelect;

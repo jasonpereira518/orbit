@@ -340,6 +340,24 @@ async function seed() {
     },
     { userId: USER, kind: "source_ref", value: "gcal:dismissed-uid", eventId: null, source: "gcal" },
   ]);
+  // A company at the event, and the same company on the user's target list — a statement
+  // about where they want to work, which must not outlive the account.
+  const [exhibitor] = await db
+    .insert(schema.companies)
+    .values({ userId: USER, name: "Stripe", nameNormalized: "stripe" })
+    .returning();
+  await db.insert(schema.eventCompanies).values({
+    userId: USER,
+    eventId: eventRow.id,
+    companyId: exhibitor.id,
+    role: "exhibitor",
+    source: "paste",
+  });
+  await db.insert(schema.targetCompanies).values({
+    userId: USER,
+    companyId: exhibitor.id,
+    priority: 1,
+  });
   // Same class of secret as the Gmail/Outlook rows below.
   await db.insert(schema.eventProviderConnections).values({
     userId: USER,
