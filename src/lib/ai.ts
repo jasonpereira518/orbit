@@ -11,6 +11,7 @@ import {
   loadNetworkVocabulary,
   vocabularyToPromptLine,
   vocabularyToWhisperPrompt,
+  WHISPER_PROMPT_MAX_CHARS,
 } from "@/lib/transcription-vocabulary";
 import { z } from "zod";
 import {
@@ -841,6 +842,24 @@ export type TranscriptionEngine = "wispr" | "whisper" | "gemini";
 
 export type TranscriptionResult = { text: string; engine: TranscriptionEngine };
 
+export type TranscribeOptions = {
+  /**
+   * What came just before this audio — the previous meeting chunk's transcript. Only its
+   * tail is used, as continuation context for Whisper and Gemini; Wispr has no field for it.
+   */
+  contextText?: string | null;
+  /** Return `{ text: "" }` for silence instead of throwing "Empty transcription". */
+  allowEmpty?: boolean;
+  /** `usage_events.operation`. Defaults to `capture.transcribe.audio`. */
+  operation?: string;
+};
+
+/** How much of `contextText` to carry over. About two sentences. */
+const TRANSCRIBE_CONTEXT_CHARS = 200;
+
+/** Deadline for one transcription call — longer than a completion's, see the Whisper call. */
+const TRANSCRIBE_TIMEOUT_MS = 90_000;
+
 /**
  * Speech to text: Wispr, then OpenAI Whisper, then Gemini audio understanding.
  *
@@ -860,8 +879,19 @@ export type TranscriptionResult = { text: string; engine: TranscriptionEngine };
 export async function transcribeAudioWithAI(
   userId: string,
   input: { mimeType: string; base64: string; filename?: string },
+  opts: TranscribeOptions = {},
 ): Promise<TranscriptionResult> {
   const settings = await loadSettings(userId);
+  const operation = opts.operation ?? "capture.transcribe.audio";
+  // Only the tail matters: it is there so a word cut at a chunk boundary is decoded as the
+  // continuation of the sentence it belongs to, not as the start of a new one.
+  const context = opts.contextText?.trim().slice(-TRANSCRIBE_CONTEXT_CHARS) || "";
+  const empty = (engine: TranscriptionEngine): TranscriptionResult => {
+    // A silent stretch of a meeting is a normal chunk, not a failure — and throwing on it
+    // would have the recorder's retry loop resend the same silence forever.
+    if (opts.allowEmpty) return { text: "", engine };
+    throw new Error("Empty transcription");
+  };
 
   // One read, shared by every branch below. Never throws and returns [] on failure — a
   // transcript with misspelled names beats no transcript.
@@ -872,7 +902,7 @@ export async function transcribeAudioWithAI(
     const text = await withUsage(
       {
         userId,
-        operation: "capture.transcribe.audio",
+        operation,
         provider: "wispr",
         model: "flow",
         kind: "transcription",
@@ -909,26 +939,38 @@ export async function transcribeAudioWithAI(
     return withUsage(
       {
         userId,
-        operation: "capture.transcribe.audio",
+        operation,
         provider: "openai",
         model: "whisper-1",
         kind: "transcription",
         keyOwner: usingEnvKey("openai", settings) ? "orbit" : "user",
       },
       async () => {
-        const prompt = vocabularyToWhisperPrompt(vocabulary);
-        const result = await client.audio.transcriptions.create({
-          file,
-          model: "whisper-1",
-          // Whisper's decoding prior. Omitted rather than sent empty: a blank prompt is
-          // not the same request as no prompt.
-          ...(prompt ? { prompt } : {}),
-        });
+        // Whisper reads its prompt as the transcript that came before, so the previous
+        // chunk's tail goes LAST — the end of the prompt is what it conditions on most — and
+        // the names share what is left of the budget.
+        const names = vocabularyToWhisperPrompt(
+          vocabulary,
+          context ? WHISPER_PROMPT_MAX_CHARS - context.length - 1 : WHISPER_PROMPT_MAX_CHARS,
+        );
+        const prompt = [names, context].filter(Boolean).join(" ");
+        const result = await client.audio.transcriptions.create(
+          {
+            file,
+            model: "whisper-1",
+            // Whisper's decoding prior. Omitted rather than sent empty: a blank prompt is
+            // not the same request as no prompt.
+            ...(prompt ? { prompt } : {}),
+          },
+          // Longer than a completion's deadline: a six-minute voice note is a legitimate
+          // upload, and it has to be transcribed, not just answered.
+          { signal: aiSignal(TRANSCRIBE_TIMEOUT_MS) },
+        );
         // Whisper bills per second of audio and returns no usage object, so this row
         // stores null tokens and counts as volume only. A fabricated zero would be a lie
         // that got summed.
         const text = result.text?.trim();
-        if (!text) throw new Error("Empty transcription");
+        if (!text) return empty("whisper");
         return { text, engine: "whisper" as const };
       },
     );
@@ -941,7 +983,7 @@ export async function transcribeAudioWithAI(
     return withUsage(
       {
         userId,
-        operation: "capture.transcribe.audio",
+        operation,
         provider: "gemini",
         model,
         kind: "transcription",
@@ -958,6 +1000,9 @@ export async function transcribeAudioWithAI(
                   text: [
                     'Transcribe this audio verbatim. Return JSON: {"text": string}. If unintelligible, use an empty string.',
                     vocabularyToPromptLine(vocabulary),
+                    context
+                      ? `This audio continues a recording whose previous part ended: "${context}". Transcribe only this audio; do not repeat that text.`
+                      : "",
                   ]
                     .filter(Boolean)
                     .join(" "),
@@ -979,10 +1024,10 @@ export async function transcribeAudioWithAI(
         });
         report(tokensFromGemini(response));
         const raw = response.text;
-        if (!raw) throw new Error("Empty transcription");
+        if (!raw) return empty("gemini");
         const parsed = parseAiJson<{ text?: string }>(raw);
         const text = parsed.text?.trim();
-        if (!text) throw new Error("Empty transcription");
+        if (!text) return empty("gemini");
         return { text, engine: "gemini" as const };
       },
     );

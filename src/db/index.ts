@@ -1019,6 +1019,39 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
   created_at timestamptz NOT NULL DEFAULT now(),
   resolved_at timestamptz
 );
+CREATE TABLE IF NOT EXISTS meeting_sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  title text,
+  attendees jsonb NOT NULL DEFAULT '[]',
+  capture_surface text,
+  includes_mic integer NOT NULL DEFAULT 1,
+  recorder_id text,
+  status text NOT NULL DEFAULT 'recording',
+  started_at timestamptz NOT NULL DEFAULT now(),
+  ended_at timestamptz,
+  duration_ms integer NOT NULL DEFAULT 0,
+  last_seq integer NOT NULL DEFAULT -1,
+  digest jsonb,
+  digest_error text,
+  note_batch_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS meeting_transcript_segments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id uuid NOT NULL REFERENCES meeting_sessions(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  seq integer NOT NULL,
+  start_ms integer NOT NULL,
+  end_ms integer NOT NULL,
+  text text NOT NULL,
+  engine text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS meeting_sessions_user_status_idx ON meeting_sessions(user_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS meeting_segments_session_seq_uidx ON meeting_transcript_segments(session_id, seq);
+CREATE INDEX IF NOT EXISTS meeting_segments_user_idx ON meeting_transcript_segments(user_id);
 CREATE TABLE IF NOT EXISTS capture_handoffs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1118,7 +1151,10 @@ CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expir
  * safe to reuse. Merging another branch's DDL is a DDL change, so it takes a new number:
  * a database a pre-merge build already stamped would otherwise skip the merged-in columns
  * (this worktree's own did, and every user_settings read failed).
- * v43 = capture_handoffs with #146's v40 column merged in. 42 is claimed by meeting-capture.
+ * v42 = meeting capture (#163): meeting_sessions, meeting_transcript_segments.
+ * v43 = capture_handoffs with #146's v40 column merged in. Never reached main.
+ * v45 = capture_handoffs with #163's v42 tables merged in. Builds of this branch pushed at 43
+ * lack those tables, so 43 cannot carry them. 44 is claimed by admin-console-page-metrics.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
@@ -1128,8 +1164,8 @@ CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expir
 // be stamped with, not just one above main. A repeated version is the one real failure
 // mode this counter has. The alters are all `IF NOT EXISTS` and merge harmlessly, but a
 // collision means one branch's DDL never runs. The changelog above says which numbers are
-// taken and why 42 is skipped.
-export const SCHEMA_VERSION = 43;
+// taken and why 44 is skipped.
+export const SCHEMA_VERSION = 45;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2293,6 +2329,11 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS event_attendees_contact_idx ON event_attendees(contact_id) WHERE contact_id IS NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS event_provider_connections_user_uidx ON event_provider_connections(user_id, provider)`,
   `CREATE INDEX IF NOT EXISTS event_provider_connections_due_idx ON event_provider_connections(next_sync_at) WHERE next_sync_at IS NOT NULL`,
+  // Schema v42: meeting capture. Same rule as v31/v32 — every index in both places. The
+  // unique index is what makes a re-uploaded chunk a no-op rather than a repeated line.
+  `CREATE INDEX IF NOT EXISTS meeting_sessions_user_status_idx ON meeting_sessions(user_id, status)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS meeting_segments_session_seq_uidx ON meeting_transcript_segments(session_id, seq)`,
+  `CREATE INDEX IF NOT EXISTS meeting_segments_user_idx ON meeting_transcript_segments(user_id)`,
 ];
 
 /**

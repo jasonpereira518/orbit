@@ -94,6 +94,9 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-webhook-signing": "pure",
   "smoke-warp-chrono": "pure",
   "smoke-voice-recording": "pure",
+  "smoke-meeting-chunking": "pure",
+  "smoke-meeting-digest": "pure",
+  "smoke-meeting-upload-queue": "pure",
   "smoke-wispr": "pure",
   "smoke-warp-journeys": "pure",
   // pglite ----------------------------------------------------------------------------
@@ -144,6 +147,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-interaction-delete": "pglite",
   "smoke-mcp-server": "pglite",
   "smoke-note-batch": "pglite",
+  "smoke-meeting-sessions": "pglite",
   "smoke-ops-sweep": "pglite",
   "smoke-page-budgets": "pglite",
   "smoke-pgvector-local": "pglite",
