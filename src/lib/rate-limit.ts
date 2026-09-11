@@ -79,6 +79,14 @@ export const RATE_LIMITS = {
    * it.
    */
   eventHostFetch: { limit: 60, windowSec: 600 },
+  /**
+   * The optional "why should I talk to them" line (`explainAttendee`).
+   *
+   * One model call each, against the user's OWN key, so the limit is about protecting them
+   * from a stuck loop rather than protecting us from them — generous enough to explain every
+   * name on a normal roster, tight enough that a retry storm cannot run up their bill.
+   */
+  eventWhy: { limit: 30, windowSec: 3600 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**

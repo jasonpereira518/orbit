@@ -992,6 +992,7 @@ CREATE TABLE IF NOT EXISTS event_attendees (
   attendee_role text,
   source text NOT NULL DEFAULT 'paste',
   external_ref text,
+  ai_note jsonb,
   person_key_kind text,
   person_key_value text,
   spoke_to integer NOT NULL DEFAULT 0,
@@ -2118,6 +2119,8 @@ const alters = [
   // is fine because that path splits on ';' first.
   `CREATE TABLE IF NOT EXISTS event_companies (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, event_id uuid NOT NULL REFERENCES events(id) ON DELETE CASCADE, company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE, role text NOT NULL, source text NOT NULL, evidence text, dismissed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE TABLE IF NOT EXISTS target_companies (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE, priority integer NOT NULL DEFAULT 2, note text, created_at timestamptz NOT NULL DEFAULT now())`,
+  // v43 as well: the cached one-line "why" and opener, keyed by a hash of what produced it.
+  `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS ai_note jsonb`,
   `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS person_key_kind text`,
   `ALTER TABLE event_attendees ADD COLUMN IF NOT EXISTS person_key_value text`,
   `CREATE TABLE IF NOT EXISTS event_aliases (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, kind text NOT NULL, value text NOT NULL, event_id uuid REFERENCES events(id) ON DELETE SET NULL, source text NOT NULL, evidence jsonb NOT NULL DEFAULT '{}'::jsonb, first_seen_at timestamptz NOT NULL DEFAULT now(), last_seen_at timestamptz NOT NULL DEFAULT now())`,

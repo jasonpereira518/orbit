@@ -3133,6 +3133,19 @@ export const eventAttendees = pgTable(
      * The kinds match `contact_identities.kind`, so the aggregate can join a roster row to a
      * contact through that table's unique index rather than reimplementing the matching.
      */
+    /**
+     * The optional AI line: why this person is worth finding, and an opener.
+     *
+     * Cached with `inputsHash` — a fingerprint of the facts it was written from — so it is
+     * regenerated when those change and never on a re-render. Without that, every page load
+     * of a 200-person roster would be 200 model calls against the user's own key.
+     */
+    aiNote: jsonb("ai_note").$type<{
+      why: string;
+      opener: string;
+      inputsHash: string;
+      generatedAt: string;
+    }>(),
     personKeyKind: text("person_key_kind").$type<
       "linkedin_slug" | "email" | "x_handle" | "platform_user" | "name"
     >(),

@@ -7,13 +7,21 @@ import { EventHero } from "@/components/events/event-hero";
 import { AttendeeRoster, type RosterMatch } from "@/components/events/attendee-roster";
 import { RosterImportPanel } from "@/components/events/roster-import-panel";
 import { EventCompaniesPanel } from "@/components/events/event-companies-panel";
+import { WhoToTalkToCard } from "@/components/events/who-to-talk-to-card";
 import {
   getEvent,
   getEventCompanies,
   getRoster,
+  getWhoToTalkTo,
   getRosterHistory,
   matchRosterToNetwork,
 } from "@/actions/events";
+
+async function WhoToTalkTo({ eventId }: { eventId: string }) {
+  const data = await getWhoToTalkTo(eventId);
+  if (!data) return null;
+  return <WhoToTalkToCard eventId={eventId} data={data} aiAvailable={data.aiAvailable} />;
+}
 
 async function Companies({ eventId }: { eventId: string }) {
   const rows = await getEventCompanies(eventId);
@@ -120,6 +128,14 @@ export default async function EventDetailPage({
 
       <div className="reveal-mount" style={{ "--reveal-delay": "60ms" } as React.CSSProperties}>
         <RosterImportPanel eventId={event.id} />
+      </div>
+
+      {/* The shortlist first: it is the answer, and the roster below it is the evidence.
+          `fallback={null}` because it renders nothing when the facts single nobody out. */}
+      <div className="reveal-mount" style={{ "--reveal-delay": "70ms" } as React.CSSProperties}>
+        <Suspense fallback={null}>
+          <WhoToTalkTo eventId={event.id} />
+        </Suspense>
       </div>
 
       {/* Companies before the roster: at a career fair the booth list IS the event, and at a

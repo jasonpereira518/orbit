@@ -42,6 +42,9 @@ import {
 } from "@/lib/events/companies";
 import { parseCompanyList } from "@/lib/events/company-list-parse";
 import { addTargetCompany } from "@/lib/events/target-companies";
+import { whoToTalkTo, type WhoToTalkTo } from "@/lib/events/who-to-talk-to";
+import { explainAttendeeForUser } from "@/lib/events/explain";
+import { userHasAiKey } from "@/lib/ai";
 import { diffEventAgainstPage, type EventFieldChange } from "@/lib/events/resync";
 import { resolveThemeColor } from "@/lib/events/theme";
 import { parseRosterCsv, parseRosterText } from "@/lib/events/parse-roster";
@@ -574,6 +577,60 @@ export async function removeSpokenToConnection(
   await unlinkAttendeeForUser(userId, attendeeId);
   revalidateEvents(eventId);
   revalidatePath("/contacts");
+}
+
+// --- Who to talk to ------------------------------------------------------------------------
+
+/**
+ * The ranked shortlist for one event: a plan beforehand, a follow-up list afterwards.
+ *
+ * `aiAvailable` rides along so the card can hide a button that would only ever return "add a
+ * key in Settings" — an offer the product cannot keep is worse than no offer.
+ */
+export async function getWhoToTalkTo(
+  eventId: string
+): Promise<(WhoToTalkTo & { aiAvailable: boolean }) | null> {
+  const userId = await requireUserForSurface(SURFACE);
+  const event = await getEventForUser(userId, eventId);
+  if (!event) return null;
+  const [result, aiAvailable] = await Promise.all([
+    whoToTalkTo(userId, event, { limit: 5 }),
+    userHasAiKey(userId).catch(() => false),
+  ]);
+  return { ...result, aiAvailable };
+}
+
+/**
+ * One AI line about a person the SCORE already chose.
+ *
+ * On demand only, and never part of rendering: a 200-person roster would otherwise be 200
+ * model calls against the user's own key, every time the page loads. It also never changes
+ * the ranking — the order has to be stable and explainable without a model in the loop.
+ *
+ * What it is given is the roster row and the reasons already computed. Not the user's notes,
+ * not their mail, not anything from `event_aliases`.
+ */
+export async function explainAttendee(
+  eventId: string,
+  attendeeId: string
+): Promise<{ ok: boolean; why?: string; opener?: string; error?: string }> {
+  const userId = await requireUserForSurface(SURFACE);
+  if (!(await userHasAiKey(userId))) {
+    return { ok: false, error: "Add an AI key in Settings to use this." };
+  }
+
+  try {
+    await consumeBucket(userId, "eventWhy", RATE_LIMITS.eventWhy);
+  } catch (error) {
+    if (isRateLimitedError(error)) {
+      return { ok: false, error: "That's a lot of suggestions — try again in a bit." };
+    }
+    throw error;
+  }
+
+  const result = await explainAttendeeForUser(userId, eventId, attendeeId);
+  if (result.ok) revalidateEvents(eventId);
+  return result;
 }
 
 // --- Companies at an event ---------------------------------------------------------------

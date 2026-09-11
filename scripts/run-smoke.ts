@@ -46,6 +46,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-event-connectors": "pure",
   "smoke-event-discovery": "pure",
   "smoke-event-gmail-scan": "pure",
+  "smoke-event-relevance": "pure",
   "smoke-event-parse": "pure",
   "smoke-event-resync": "pure",
   "smoke-event-theme": "pure",
