@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { cn } from "@/lib/utils";
 import { useClerkSessionHint } from "@/lib/clerk-session-hint";
 
 const ghostClass =
@@ -38,23 +37,6 @@ type Props = {
    * stack full-width below sm — a real tap target instead of nothing.
    */
   mobileVisible?: boolean;
-  /**
-   * Label for the solid button. The page's ending says "Start free" — the closing ask
-   * leads with what it costs — while the hero and header keep "Get Started".
-   */
-  primaryLabel?: string;
-  /**
-   * "link" demotes Sign in from a pill beside the primary button to a quiet line under
-   * it. For the ending, where returning visitors already have the header's Sign in and a
-   * second pill only competes with the ask.
-   */
-  signInAs?: "button" | "link";
-  /**
-   * Shown under the primary button to signed-OUT visitors only: the reassurance that
-   * belongs at the decision point ("No card required"). A signed-in visitor has nothing
-   * left to decide, so it never renders for them.
-   */
-  note?: React.ReactNode;
 };
 
 /**
@@ -74,9 +56,6 @@ function AuthControlsView({
   isSignedIn,
   variant,
   mobileVisible = false,
-  primaryLabel = "Get Started",
-  signInAs = "button",
-  note,
 }: Props & { isSignedIn: boolean }) {
   const solid = variant === "header" ? solidClass : ctaSolidClass;
   const ghost = variant === "header" ? ghostClass : ctaGhostClass;
@@ -87,42 +66,18 @@ function AuthControlsView({
         : "hidden sm:flex sm:w-auto sm:flex-row sm:gap-3"
       : "flex items-center gap-2 sm:gap-3";
 
-  // Both signed-out paths render the same controls, so a local demo-mode run shows exactly
-  // what a stranger sees in production.
-  const signedOut = (signInHref: string, signUpHref: string) =>
-    signInAs === "link" ? (
-      <div className="flex w-full flex-col items-center sm:w-auto">
-        <Link href={signUpHref} className={cn(solid, "w-full px-8 text-base sm:w-auto")}>
-          {primaryLabel}
-        </Link>
-        {note}
-        <p className="mt-3 text-sm text-[#9aada8]">
-          Already have an account?{" "}
-          <Link
-            href={signInHref}
-            className="text-[#e8f3f1] underline underline-offset-4 transition-opacity hover:opacity-80"
-          >
-            Sign in
-          </Link>
-        </p>
-      </div>
-    ) : (
-      <>
-        <div className={wrapClass}>
-          <Link href={signInHref} className={ghost}>
-            Sign in
-          </Link>
-          <Link href={signUpHref} className={solid}>
-            {primaryLabel}
-          </Link>
-        </div>
-        {note}
-      </>
-    );
-
   if (!clerkOn) {
     const href = demoMode ? "/dashboard" : "/sign-in";
-    return signedOut(href, href);
+    return (
+      <div className={wrapClass}>
+        <Link href={href} className={ghost}>
+          Sign in
+        </Link>
+        <Link href={href} className={solid}>
+          Get Started
+        </Link>
+      </div>
+    );
   }
 
   if (isSignedIn) {
@@ -135,5 +90,14 @@ function AuthControlsView({
     );
   }
 
-  return signedOut("/sign-in", "/sign-up");
+  return (
+    <div className={wrapClass}>
+      <Link href="/sign-in" className={ghost}>
+        Sign in
+      </Link>
+      <Link href="/sign-up" className={solid}>
+        Get Started
+      </Link>
+    </div>
+  );
 }

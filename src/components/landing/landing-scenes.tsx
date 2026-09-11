@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { CometStreak } from "@/components/landing/comet-streak";
 import { ConstellationFigure } from "@/components/landing/constellation-figure";
-import { FinaleDrift } from "@/components/landing/finale-drift";
 import { GlassCard } from "@/components/landing/glass-card";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
 import { WaitlistForm } from "@/components/landing/waitlist-form";
@@ -136,12 +135,9 @@ export function SceneFinale({
        * secondary path the heavier object on the page. It is now a single line
        * below the questions. */}
       <div className="mx-auto flex w-full max-w-3xl -translate-y-4 flex-col items-center text-center md:-translate-y-6">
-        {/* The stakes, before the ask: Priya, whom the comets scene introduced three
-          * weeks past a referral call, drifting off her orbit as the reader arrives. */}
-        <FinaleDrift />
         <Reveal className="reveal-celestial">
           <h2 id="cta-heading" className={HEADING}>
-            Pull them back before they drift out of orbit.
+            Don&apos;t lose the person who gets you hired.
           </h2>
         </Reveal>
         <Reveal className="reveal-celestial" delay={100}>
@@ -150,13 +146,11 @@ export function SceneFinale({
             while you keep interviewing.
           </p>
         </Reveal>
-        {/* w-full below sm so the button fills the column — the parent's items-center
-          * would otherwise size it to its content. */}
+        {/* w-full below sm so the stacked buttons fill the column — the
+          * parent's items-center would otherwise size this to its content. */}
         <Reveal className="reveal-celestial w-full sm:w-auto" delay={200}>
-          {/* The small ask. One solid button that says what it costs, the reassurance
-            * directly under it, and Sign in demoted to a line — returning visitors have
-            * it in the header. Visible at every width: this is the page's closing ask,
-            * and the hero's copy of these buttons is hidden below md. */}
+          {/* Visible at every width — this is the page's closing ask, and
+            * the hero's copy of these buttons is hidden below md. */}
           <div className="mt-8 w-full sm:w-auto">
             <LandingAuthControls
               clerkOn={clerkOn}
@@ -164,26 +158,25 @@ export function SceneFinale({
               signedIn={signedIn}
               variant="hero"
               mobileVisible
-              primaryLabel="Start free"
-              signInAs="link"
-              note={
-                // Every claim here is checked against the code: sign-up never touches
-                // Stripe (its only Stripe reference is a redirect back to checkout for
-                // someone who signed up mid-purchase), and the amounts come from
-                // plan-limits / plan-copy, so they can't drift from /pricing or Stripe.
-                <p className="mt-4 text-sm text-[#9aada8]">
-                  No card required · free for your first {FREE_CONTACT_LIMIT} contacts,
-                  then ${MONTHLY_AMOUNT} a month ·{" "}
-                  <Link
-                    href="/pricing"
-                    className="underline underline-offset-4 transition-opacity hover:opacity-80"
-                  >
-                    See pricing
-                  </Link>
-                </p>
-              }
             />
           </div>
+        </Reveal>
+        {/* The price, in view at the moment of the decision. It used to be a
+          * clause mid-paragraph with the number behind a link, which put a
+          * navigation between the visitor and the one fact they weigh.
+          * Amounts come from plan-limits/plan-copy so this line cannot drift
+          * from the pricing page or from what Stripe actually charges. */}
+        <Reveal className="reveal-celestial" delay={260}>
+          <p className="mt-5 text-sm text-[#9aada8]">
+            Free for your first {FREE_CONTACT_LIMIT} contacts, then $
+            {MONTHLY_AMOUNT} a month.{" "}
+            <Link
+              href="/pricing"
+              className="underline underline-offset-4 transition-opacity hover:opacity-80"
+            >
+              See pricing
+            </Link>
+          </p>
         </Reveal>
       </div>
 
