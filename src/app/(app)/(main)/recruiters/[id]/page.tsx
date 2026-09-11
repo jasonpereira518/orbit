@@ -3,6 +3,9 @@ import { notFound } from "next/navigation";
 import { Lock, Mail, Phone, ExternalLink } from "lucide-react";
 import { getRecruiter, getRecruiterSharing } from "@/actions/recruiters";
 import { RecruiterLogForm } from "@/components/recruiters/recruiter-log-form";
+import { requireUserId } from "@/lib/auth";
+import { getEntitlements } from "@/lib/entitlements";
+import { RecruitersLocked } from "@/components/locked-feature";
 import { RecruiterLinkEditor } from "@/components/recruiters/recruiter-link-editor";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -19,6 +22,9 @@ export default async function RecruiterDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const { canUseRecruiters } = await getEntitlements(await requireUserId());
+  if (!canUseRecruiters) return <RecruitersLocked />;
+
   const [recruiter, { enabled: sharingEnabled }] = await Promise.all([
     getRecruiter(id),
     getRecruiterSharing(),

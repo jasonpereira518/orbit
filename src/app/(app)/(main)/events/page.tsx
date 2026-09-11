@@ -23,8 +23,8 @@ async function EventsList() {
     return (
       <div className="rounded-xl border border-dashed border-border/70 px-4 py-10 text-center">
         <p className="text-sm text-muted-foreground">
-          No events yet. Add one by pasting its link — a Luma, Eventbrite or Partiful page all
-          work — and Orbit will pull in the details.
+          No events yet. Add one by pasting its link — the event page or your ticket, from
+          Luma, Eventbrite, Partiful and the rest — and Orbit will pull in the details.
         </p>
       </div>
     );

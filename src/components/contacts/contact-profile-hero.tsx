@@ -342,15 +342,40 @@ export function ContactProfileHero({
         />
       ) : null}
 
-      <Link
-        href="/contacts"
-        className="text-sm text-muted-foreground hover:underline"
-      >
-        ← Contacts
-      </Link>
+      {/*
+        A grid, so the actions can change rows without being rendered twice (the edit
+        sheet holds state, and two copies would be two sheets).
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-5">
-        <div className="flex min-w-0 flex-1 items-center gap-5 sm:gap-6">
+        Below `sm` the actions ride on the back-link row, whose right side is otherwise
+        empty. Left beside the identity at phone width they took ~90px from a text column
+        that was already sharing 402pt with a 112px avatar — the name broke onto two
+        lines and "Product Manager ·" was orphaned from its company. From `sm` up there
+        is room again, and they return to the right of the identity.
+      */}
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-5">
+        <Link
+          href="/contacts"
+          className="col-start-1 row-start-1 justify-self-start text-sm text-muted-foreground hover:underline"
+        >
+          ← Contacts
+        </Link>
+
+        <div
+          className={cn(
+            "col-start-2 row-start-1 flex shrink-0 items-center gap-2 sm:row-start-2",
+            compact && "invisible"
+          )}
+          aria-hidden={compact}
+        >
+          <ContactChannelIcons {...channels} />
+          <ContactEditSheet
+            contactId={contactId}
+            name={displayName}
+            initial={formInitial}
+          />
+        </div>
+
+        <div className="col-span-2 col-start-1 row-start-2 mt-4 flex min-w-0 items-center gap-4 sm:col-span-1 sm:gap-6">
           <AvatarHoverPreview
             src={previewSrc}
             alt={displayName}
@@ -367,7 +392,7 @@ export function ContactProfileHero({
               profileImageUrl={profileImageUrl}
               resolveOnDemand
               size="lg"
-              className="size-28 sm:size-36"
+              className="size-24 sm:size-36"
             />
           </AvatarHoverPreview>
 
@@ -387,21 +412,6 @@ export function ContactProfileHero({
               </p>
             ) : null}
           </div>
-        </div>
-
-        <div
-          className={cn(
-            "flex shrink-0 items-center gap-2",
-            compact && "invisible"
-          )}
-          aria-hidden={compact}
-        >
-          <ContactChannelIcons {...channels} />
-          <ContactEditSheet
-            contactId={contactId}
-            name={displayName}
-            initial={formInitial}
-          />
         </div>
       </div>
     </div>

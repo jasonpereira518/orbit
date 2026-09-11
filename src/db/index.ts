@@ -927,6 +927,9 @@ CREATE TABLE IF NOT EXISTS events (
   provider text,
   provider_event_id text,
   description text,
+  organizer_name text,
+  organizer_url text,
+  attendance_mode text,
   cover_image_url text,
   cover_source_url text,
   theme_color text,
@@ -1073,12 +1076,17 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * duplicates being created), contact_merges (a merged contact archived whole, so the
  * loser's row can be deleted rather than flagged), duplicate_suggestions (name-tier
  * matches, which no longer auto-merge).
- * v37 = contact photo cooldown: contacts.profile_image_checked_at. Merged on top of main's
- * 34-36 (#141, #161). 36 is also the number this branch used BEFORE merging v33: its preview
- * builds stamped 36 onto the production database with the pre-merge DDL, back when Preview
- * shared Production's DATABASE_URL. 37 is still safe to reuse across this merge because no
- * database is currently stamped 37 — production was re-stamped 36 by #161's deploy, and
- * previews now migrate a separate Neon project. 38 is claimed by the scan-notes branch.
+ * v39 = events revision: organizer_name, organizer_url, attendance_mode on events. Also
+ * built as 33 and moved when duplicate prevention landed first — the fifth collision, and
+ * the same rule: re-using 33 would have left those columns unapplied on every database
+ * main had already stamped.
+ * v40 = contact photo cooldown (#146): contacts.profile_image_checked_at. This PR has been
+ * 33, 36 and 37 in turn. 37 was reserved for it (#152 skipped past it to 39), but it can't
+ * be reused now: this branch's own preview stamped 37 onto the preview database with DDL
+ * that predates #152's columns, so a 37 carrying them would skip on that database. 38 is
+ * claimed by the scan-notes branch. Also worth knowing: until Sep 11 2026 Preview shared
+ * Production's DATABASE_URL, so preview builds stamped production directly. Previews now
+ * migrate their own Neon project.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
@@ -1093,8 +1101,14 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
 // Two bumps on this branch because the guard requires one per DDL change: 34 added
 // `chat_messages.attached_contacts`, 35 the last-interaction index the composer's pickers
 // order on.
-// 36 is main's (#161). 37 is the contact photo cooldown (#146) — see the v37 entry above.
-export const SCHEMA_VERSION = 37;
+//
+// 39 is the events revision (PR #152): organizer_name, organizer_url, attendance_mode on
+// events. Built as 33, moved to 34 when #148 took 33, and moved again here because while it
+// waited 34-36 landed on main and 37 and 38 were claimed by open branches. Every step was
+// the same rule — a shared number means one branch's DDL silently never runs.
+//
+// 40 is the contact photo cooldown (#146) — see the v40 entry above.
+export const SCHEMA_VERSION = 40;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2011,6 +2025,12 @@ async function migratePgvector(run: StatementRunner) {
 const alters = [
   // Deliberately not backfilled from `committed_at` — see the column's comment in schema.ts.
   `ALTER TABLE fundraising_investors ADD COLUMN IF NOT EXISTS received_at timestamptz`,
+  // The events feature landed whole at v32, so these are its first incremental columns.
+  // CREATE TABLE IF NOT EXISTS above is a no-op on a database that already has the table,
+  // which is why every new column has to appear in both places.
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_name text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_url text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS attendance_mode text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_step text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,
