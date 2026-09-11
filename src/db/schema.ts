@@ -1757,6 +1757,21 @@ export const chatMessages = pgTable(
     role: text("role").$type<"user" | "assistant">().notNull(),
     content: text("content").notNull(),
     recommendations: jsonb("recommendations").$type<ChatRecommendation[]>(),
+    /**
+     * People the user attached to this question with the composer's `+` or `@`.
+     *
+     * Stored so a reloaded thread can mark the same `@Name` spans it marked when the
+     * message was sent. Without it the mark had to be re-derived from the text alone by a
+     * shape heuristic, which over-reaches on "@Marcus Webb Who else" — capitalised words
+     * after a name look like part of it.
+     *
+     * The name is kept alongside the id deliberately: the message text is frozen, so the
+     * name that appears in it is a fact about this message, not about who the contact is
+     * now. Renaming a contact must not unmark a question that used their old name.
+     */
+    attachedContacts: jsonb("attached_contacts")
+      .$type<Array<{ id: string; name: string }>>()
+      .default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
