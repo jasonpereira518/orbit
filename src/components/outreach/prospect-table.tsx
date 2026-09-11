@@ -18,6 +18,8 @@ import { OutreachActions } from "@/components/outreach/outreach-actions";
 import { buildLinkedInSearchUrl, buildLinkedInUrl, channelLabel } from "@/lib/outreach-channels";
 import { isAwaitingReply, isDeliveredMessage } from "@/lib/outreach-metrics";
 import type { OutreachChannel, PipelineFilter } from "@/lib/outreach-types";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export type ProspectRow = {
   id: string;
@@ -79,10 +81,10 @@ export function ProspectTable({
     start(async () => {
       try {
         const result = await saveProspectAsContact({ campaignId, prospectId });
-        toast.success(result.created ? "Saved to contacts" : "Already in contacts");
+        toast.success(result.created ? "Added to your orbit" : "Already in your contacts");
         onUpdated?.();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Save failed");
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
       }
     });
   }
@@ -92,13 +94,13 @@ export function ProspectTable({
       try {
         const updated = await enrichProspect({ campaignId, prospectId });
         if (updated.linkedinUrl) {
-          toast.success("LinkedIn profile enriched");
+          toast.success("Found more on that LinkedIn profile");
         } else {
           toast.message("No LinkedIn URL found — try Find on LinkedIn");
         }
         onUpdated?.();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Enrich failed");
+        toast.error(friendlyError(err, "Couldn’t find more on that profile — try again?"));
       }
     });
   }

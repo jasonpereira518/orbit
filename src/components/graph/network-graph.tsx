@@ -391,7 +391,7 @@ export function NetworkGraph({
       })
       .catch((err) => {
         console.error(err);
-        toast.error("Could not load the rest of your network.");
+        toast.error("Couldn’t load the rest of your network — try again?");
       })
       .finally(() => setLoadingAll(false));
   }, []);
