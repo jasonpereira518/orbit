@@ -19,6 +19,9 @@ import {
   CAPTURE_MAX_UPLOAD_BYTES,
   formatUploadSize,
 } from "@/lib/capture-limits";
+import { MAX_RECORDING_MS, formatElapsed } from "@/lib/voice-recording";
+import type { VoiceRecording } from "@/lib/use-voice-recorder";
+import { VoiceRecorder } from "@/components/capture/voice-recorder";
 import { getSettings } from "@/actions/settings";
 import type { SaveNoteBatchOutput } from "@/lib/note-batch-save";
 import {
@@ -97,6 +100,7 @@ async function fileToBase64(file: File): Promise<string> {
 
 export function BulkNotesPanel({
   compact = false,
+  showRecorder = false,
   preferredContactId = null,
   preferredContactName = null,
   lockedParticipantId = null,
@@ -106,6 +110,14 @@ export function BulkNotesPanel({
   onSaved,
 }: {
   compact?: boolean;
+  /**
+   * Put a microphone above the textarea and let a recording drive the ingest.
+   *
+   * A flag rather than a separate panel: recording only changes where the text comes
+   * from, and the paste/review/done machine below is identical either way. Forking it
+   * would mean two copies of the parse, the review carousel and the save.
+   */
+  showRecorder?: boolean;
   preferredContactId?: string | null;
   preferredContactName?: string | null;
   /**
@@ -349,29 +361,76 @@ export function BulkNotesPanel({
             base64: await fileToBase64(file),
           }))
         );
-        const res = await ingestCaptureMedia({
-          text: notes,
-          files: payloads,
-        });
-        if (!res.ok) {
-          const missingKey = isMissingAiApiKeyError(res.error);
-          if (missingKey) setHasApiKey(false);
-          toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
-          return;
-        }
-        setNotes(res.text);
-        setCaptureHints(res.hints || null);
-        setIngestSources(res.sources || []);
-        setFileName(
-          files.length === 1
-            ? files[0]!.name
-            : `${files.length} files ingested`
+        await ingestPayloads(
+          payloads,
+          files.length === 1 ? files[0]!.name : `${files.length} files ingested`,
+          "Ready — check the text, then extract people"
         );
-        toast.success("Ready — check the text, then extract people");
       } catch (err) {
         toast.error(
           friendlyError(err, TOAST_COPY.fileReadFailed)
         );
+      }
+    });
+  }
+
+  /**
+   * The shared tail of every media ingest.
+   *
+   * Picked files and recorded audio differ only in how the bytes were obtained; from here
+   * down they are the same call, the same failure handling and the same "transcript lands
+   * in the textarea, editable" contract. Kept as one function so a fix to either never has
+   * to be made twice.
+   */
+  async function ingestPayloads(
+    payloads: Array<{ filename: string; mimeType: string; base64: string }>,
+    label: string,
+    successMessage: string
+  ) {
+    const res = await ingestCaptureMedia({ text: notes, files: payloads });
+    if (!res.ok) {
+      const missingKey = isMissingAiApiKeyError(res.error);
+      if (missingKey) setHasApiKey(false);
+      toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
+      return;
+    }
+    setNotes(res.text);
+    setCaptureHints(res.hints || null);
+    setIngestSources(res.sources || []);
+    setFileName(label);
+    toast.success(successMessage);
+  }
+
+  /**
+   * A finished recording, straight into the path a picked audio file already takes.
+   *
+   * The size check `handleFilesSelected` does is unnecessary here: the recorder's own
+   * six-minute cap bounds the WAV at ~11 MB, which `scripts/smoke-voice-recording.ts`
+   * pins below `CAPTURE_MAX_UPLOAD_BYTES`. Asserted rather than assumed, because the two
+   * limits live in different files and only the test currently ties them together.
+   */
+  function handleRecording(recording: VoiceRecording) {
+    if (recording.byteLength > CAPTURE_MAX_UPLOAD_BYTES) {
+      toast.error(
+        `That recording is ${formatUploadSize(recording.byteLength)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}`
+      );
+      return;
+    }
+    start(async () => {
+      try {
+        await ingestPayloads(
+          [
+            {
+              filename: recording.filename,
+              mimeType: recording.mimeType,
+              base64: recording.base64,
+            },
+          ],
+          `Voice note · ${formatElapsed(recording.durationMs)}`,
+          "Transcribed — check the text, then extract people"
+        );
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.fileReadFailed));
       }
     });
   }
@@ -412,8 +471,24 @@ export function BulkNotesPanel({
               extract and review everyone else.
             </p>
           )}
+          {showRecorder && (
+            <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+              <VoiceRecorder
+                onRecording={handleRecording}
+                busy={pending}
+                busyLabel="Transcribing…"
+                onCapReached={() =>
+                  toast.info(
+                    `Stopped at ${formatElapsed(MAX_RECORDING_MS)} — your recording was kept`
+                  )
+                }
+              />
+            </div>
+          )}
           <div>
-            <Label htmlFor="bulk-notes">Paste or upload notes</Label>
+            <Label htmlFor="bulk-notes">
+              {showRecorder ? "Or type it out" : "Paste or upload notes"}
+            </Label>
             {!compact && (
               <p className="mt-1 text-sm text-muted-foreground">
                 Drop in notes about one person or many — text, voice, photos,

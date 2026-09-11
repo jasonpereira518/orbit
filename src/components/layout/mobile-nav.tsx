@@ -290,7 +290,10 @@ export function MobileNav({
                 return (
                   <li key={navItem.href} className="flex-1">
                     <Link
-                      href={navItem.href}
+                      // Voice, not the paste box. On a phone the capture moment is
+                      // "walking out of the building", where typing is the one thing you
+                      // cannot do; the Messy Notes tab is still one tap away on arrival.
+                      href={`${navItem.href}?mode=voice`}
                       draggable={false}
                       className="relative flex w-full translate-y-1.5 flex-col items-center gap-0.5 px-1 py-1.5 text-[10px] font-medium text-primary"
                     >

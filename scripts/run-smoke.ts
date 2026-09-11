@@ -83,6 +83,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-timeline-vocabulary": "pure",
   "smoke-webhook-signing": "pure",
   "smoke-warp-chrono": "pure",
+  "smoke-voice-recording": "pure",
   "smoke-warp-journeys": "pure",
   // pglite ----------------------------------------------------------------------------
   "smoke-account-alerts": "pglite",
