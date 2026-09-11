@@ -151,6 +151,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-sync-scheduler": "pglite",
   "smoke-sync-columns": "pglite",
   "smoke-trigram-search": "pglite",
+  "smoke-transcription-vocabulary": "pglite",
   "smoke-usage-events": "pglite",
   "smoke-user-settings-race": "pglite",
   "smoke-webhook-guard": "pglite",

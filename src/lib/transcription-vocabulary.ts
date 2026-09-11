@@ -21,7 +21,7 @@
  * selection and the caps under node.
  */
 
-import { desc, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 
@@ -203,7 +203,14 @@ export async function loadNetworkVocabulary(
       // Most-recently-seen first, with never-interacted contacts last rather than first —
       // a NULL sorts high on a plain DESC in Postgres, which would put exactly the least
       // relevant rows at the front of a list that gets truncated.
-      .orderBy(desc(sql`${contacts.lastInteractionAt} NULLS LAST`))
+      //
+      // Written as one `sql` fragment rather than `desc(sql\`… NULLS LAST\`)`: Drizzle's
+      // `desc()` appends its keyword AFTER the fragment, producing
+      // `… NULLS LAST desc`, which Postgres rejects. `loadNetworkVocabulary` catches and
+      // returns [], so that mistake reads as "this user has no contacts" and is invisible
+      // until someone notices the names are never right. See
+      // `scripts/smoke-transcription-vocabulary.ts`.
+      .orderBy(sql`${contacts.lastInteractionAt} DESC NULLS LAST`)
       .limit(CONTACT_SCAN_LIMIT);
 
     return collectVocabularyTerms(rows, limit);
