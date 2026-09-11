@@ -235,12 +235,13 @@ export function ScanControls({
           if (!open) setMode("idle");
         }}
       >
-        <DialogContent className="sm:max-w-lg">
+        {/* Narrower than the default: the viewfinder is an upright page, so width past it is empty. */}
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Scan with your webcam</DialogTitle>
             <DialogDescription>
-              Hold each page inside the frame and take a photo. Add as many pages as you
-              need, then read them.
+              Hold each page upright inside the outline and take a photo. Add as many
+              pages as you need, then read them.
             </DialogDescription>
           </DialogHeader>
           <ScanCameraLazy

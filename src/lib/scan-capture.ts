@@ -13,9 +13,11 @@
 import {
   MAX_SCAN_PAGES,
   SCAN_OUTPUT_MIME,
+  SCAN_PAGE_ASPECT,
   SCAN_TARGET_BYTES,
   ScanError,
   capScanPages,
+  coverCrop,
   fitEdge,
   isHeicSource,
   scanEncodeAttempts,
@@ -75,9 +77,11 @@ export async function openCameraStream(): Promise<MediaStream> {
       video: {
         facingMode: { ideal: "environment" },
         // Ask high: handwriting is the finest detail we ever have to resolve, and the
-        // downscale ladder below will bring it back down to something sendable.
-        width: { ideal: 2560 },
-        height: { ideal: 1920 },
+        // downscale ladder below will bring it back down to something sendable. Height is
+        // the number that counts, because a landscape webcam frame is cropped to an upright
+        // page (`coverCrop`): a 1080p camera yields a page 1080 tall and only ~835 wide.
+        width: { ideal: 3840 },
+        height: { ideal: 2160 },
       },
     });
   } catch (err) {
@@ -184,20 +188,36 @@ async function encodePage(
   };
 }
 
-/** Grab the current video frame as a page. */
-export async function capturePageFromVideo(video: HTMLVideoElement): Promise<ScanPage> {
+/**
+ * Grab the current video frame as a page, cut to the viewfinder's shape.
+ *
+ * `aspect` must be the shape the `<video>` is shown in with `object-fit: cover`; the crop
+ * is then exactly the part of the frame the person could see (see `coverCrop`).
+ */
+export async function capturePageFromVideo(
+  video: HTMLVideoElement,
+  aspect: number = SCAN_PAGE_ASPECT
+): Promise<ScanPage> {
   const width = video.videoWidth;
   const height = video.videoHeight;
   if (!width || !height) throw new ScanError("decode-failed", "The camera sent no frame.");
+  const crop = coverCrop(width, height, aspect);
 
   let source: CanvasImageSource;
   try {
-    source = await createImageBitmap(video);
+    source = await createImageBitmap(video, crop.x, crop.y, crop.width, crop.height);
   } catch {
-    source = video;
+    // No createImageBitmap for a video element (older Safari): crop through a canvas.
+    const canvas = document.createElement("canvas");
+    canvas.width = crop.width;
+    canvas.height = crop.height;
+    const ctx = canvas.getContext("2d", { alpha: false });
+    if (!ctx) throw new ScanError("encode-failed", "This browser refused a 2D canvas.");
+    ctx.drawImage(video, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
+    source = canvas;
   }
   try {
-    return await encodePage(source, width, height, `photo-${Date.now()}.jpg`);
+    return await encodePage(source, crop.width, crop.height, `photo-${Date.now()}.jpg`);
   } finally {
     if (source instanceof ImageBitmap) source.close();
   }

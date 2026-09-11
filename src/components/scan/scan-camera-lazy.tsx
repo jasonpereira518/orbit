@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { Skeleton } from "@/components/ui/skeleton";
+import { VIEWFINDER_STYLE } from "@/components/scan/viewfinder";
 
 /**
  * `getUserMedia`, the canvas encoder and (via the panel) pdfjs are all only needed by
@@ -14,7 +15,7 @@ export const ScanCameraLazy = dynamic(
     ssr: false,
     loading: () => (
       <div className="space-y-3">
-        <Skeleton className="aspect-[4/3] w-full rounded-2xl" />
+        <Skeleton className="mx-auto rounded-2xl" style={VIEWFINDER_STYLE} />
         <Skeleton className="h-9 w-32" />
       </div>
     ),

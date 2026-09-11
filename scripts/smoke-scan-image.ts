@@ -15,10 +15,12 @@ import {
   MAX_SCAN_PAGES,
   SCAN_EDGE_LADDER,
   SCAN_OUTPUT_MIME,
+  SCAN_PAGE_ASPECT,
   SCAN_QUALITY_LADDER,
   SCAN_TARGET_BYTES,
   capScanPages,
   classifyScanFile,
+  coverCrop,
   estimateBase64Length,
   estimateDecodedBytes,
   fitEdge,
@@ -69,6 +71,32 @@ function main() {
   const degenerate = fitEdge(0, 0, 2000);
   check("a zero-dimension source still yields a drawable canvas",
     degenerate.width >= 1 && degenerate.height >= 1);
+
+  console.log("\nThe viewfinder crop is what the person saw...");
+  const within = (c: ReturnType<typeof coverCrop>, w: number, h: number) =>
+    c.x >= 0 && c.y >= 0 && c.x + c.width <= w && c.y + c.height <= h;
+  check("the viewfinder is an upright page", SCAN_PAGE_ASPECT < 1);
+  // The case this exists for: a laptop webcam's landscape frame.
+  const webcam = coverCrop(1920, 1080, SCAN_PAGE_ASPECT);
+  check("a 1080p webcam frame is cut to a portrait page",
+    webcam.height === 1080 && webcam.width < webcam.height, JSON.stringify(webcam));
+  check("...at the page's shape",
+    Math.abs(webcam.width / webcam.height - SCAN_PAGE_ASPECT) < 0.005,
+    String(webcam.width / webcam.height));
+  check("...from the middle, as object-fit: cover shows it",
+    Math.abs(webcam.x - (1920 - webcam.x - webcam.width)) <= 1, JSON.stringify(webcam));
+  check("...and never reaches outside the frame", within(webcam, 1920, 1080));
+  const tall = coverCrop(3024, 4032, SCAN_PAGE_ASPECT);
+  check("a frame taller than a page loses top and bottom, not sides",
+    tall.width === 3024 && tall.height < 4032 && tall.y > 0 && within(tall, 3024, 4032),
+    JSON.stringify(tall));
+  const exact = coverCrop(850, 1100, SCAN_PAGE_ASPECT);
+  check("a frame already page-shaped is kept whole",
+    exact.x === 0 && exact.y === 0 && exact.width === 850 && exact.height === 1100,
+    JSON.stringify(exact));
+  const empty = coverCrop(0, 0, SCAN_PAGE_ASPECT);
+  check("a camera with no frame yet still yields a drawable rect",
+    empty.width >= 1 && empty.height >= 1);
 
   console.log("\nEncode attempt order: quality first, then resolution...");
   const attempts = scanEncodeAttempts();

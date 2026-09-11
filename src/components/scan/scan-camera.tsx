@@ -16,6 +16,7 @@ import {
 } from "@/lib/scan-capture";
 import { MAX_SCAN_PAGES, ScanError } from "@/lib/scan-image";
 import { cn } from "@/lib/utils";
+import { VIEWFINDER_STYLE } from "@/components/scan/viewfinder";
 
 /**
  * The live camera, on a laptop's webcam or a phone's rear camera.
@@ -146,28 +147,40 @@ export function ScanCamera({
 
   return (
     <div className="space-y-3">
-      <div className="relative overflow-hidden rounded-2xl bg-black">
+      {/*
+        An upright page, not the webcam's own landscape frame. `object-cover` shows the
+        middle of the feed, and `capturePageFromVideo` crops the photo to exactly that
+        middle, so what is inside this box is what gets read.
+      */}
+      <div
+        className="relative mx-auto overflow-hidden rounded-2xl bg-black"
+        style={VIEWFINDER_STYLE}
+      >
         <video
           ref={videoRef}
           muted
           playsInline
-          className="aspect-[4/3] w-full object-cover"
+          className="absolute inset-0 size-full object-cover"
         />
 
         {/*
-          Corner brackets, not a full frame: they say "put the page inside this" without
-          drawing a box people then try to align exactly. Purely decorative.
+          The page outline, inset by the same fraction on every axis so it keeps the page's
+          shape. The margin outside it is dimmed but still captured: the outline says where
+          the page goes, and a corner that strays over it is not cut off. Purely decorative.
         */}
-        <div aria-hidden className="pointer-events-none absolute inset-[8%]">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-[6%] rounded-lg border border-white/35 shadow-[0_0_0_100vmax_rgb(0_0_0/0.35)]"
+        >
           {[
-            "left-0 top-0 border-l-2 border-t-2 rounded-tl-lg",
-            "right-0 top-0 border-r-2 border-t-2 rounded-tr-lg",
-            "left-0 bottom-0 border-l-2 border-b-2 rounded-bl-lg",
-            "right-0 bottom-0 border-r-2 border-b-2 rounded-br-lg",
+            "-left-px -top-px border-l-2 border-t-2 rounded-tl-lg",
+            "-right-px -top-px border-r-2 border-t-2 rounded-tr-lg",
+            "-left-px -bottom-px border-l-2 border-b-2 rounded-bl-lg",
+            "-right-px -bottom-px border-r-2 border-b-2 rounded-br-lg",
           ].map((corner) => (
             <span
               key={corner}
-              className={cn("absolute size-8 border-white/70", corner)}
+              className={cn("absolute size-7 border-white/90", corner)}
             />
           ))}
         </div>
@@ -193,7 +206,9 @@ export function ScanCamera({
             whileTap={reduced ? undefined : { scale: 0.9 }}
             transition={SPRING_TAP}
             aria-label="Take photo"
-            className="grid size-16 place-items-center rounded-full border-4 border-white/90 bg-white/25 backdrop-blur disabled:opacity-40"
+            // A dark fill, not a light one: this sits on the page, and a well-framed page is
+            // white right where the shutter is. A white-on-white button disappears.
+            className="grid size-16 place-items-center rounded-full border-4 border-white bg-black/45 shadow-lg shadow-black/30 backdrop-blur disabled:opacity-40"
           >
             <Camera className="size-6 text-white" />
           </motion.button>
@@ -217,7 +232,8 @@ export function ScanCamera({
                 <img
                   src={page.previewUrl}
                   alt={`Page ${i + 1}`}
-                  className="size-16 rounded-lg border border-border/60 object-cover"
+                  className="h-16 rounded-md border border-border/60 object-cover"
+                  style={{ aspectRatio: VIEWFINDER_STYLE.aspectRatio }}
                 />
                 <span className="absolute bottom-0 left-0 rounded-br-lg rounded-tl-lg bg-black/60 px-1 text-[10px] text-white">
                   {i + 1}

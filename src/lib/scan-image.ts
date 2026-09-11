@@ -118,6 +118,39 @@ export function fitEdge(width: number, height: number, edge: number): Dimensions
   };
 }
 
+/**
+ * The webcam viewfinder's shape: a US Letter page held upright, 8.5 wide by 11 tall.
+ *
+ * Letter rather than A4 because it is the wider of the two, so an A4 page (1:√2) also fits
+ * inside it with room at the sides — the frame is somewhere a page goes, not a stencil it
+ * has to match.
+ */
+export const SCAN_PAGE_ASPECT = 8.5 / 11;
+
+export type CropRect = { x: number; y: number; width: number; height: number };
+
+/**
+ * The centred region of a `width`×`height` frame that `object-fit: cover` shows in a box
+ * whose shape is `aspect` (width ÷ height).
+ *
+ * The captured page is cut to exactly this, so the photo is what the viewfinder showed.
+ * A laptop webcam sends a landscape frame; without the crop, a page the person carefully
+ * lined up in a portrait frame would arrive with a desk on either side of it.
+ */
+export function coverCrop(width: number, height: number, aspect: number): CropRect {
+  if (width <= 0 || height <= 0 || !(aspect > 0)) {
+    return { x: 0, y: 0, width: Math.max(1, width), height: Math.max(1, height) };
+  }
+  if (width / height > aspect) {
+    // Wider than the box: keep the full height, trim the sides.
+    const cropWidth = Math.max(1, Math.min(width, Math.round(height * aspect)));
+    return { x: Math.floor((width - cropWidth) / 2), y: 0, width: cropWidth, height };
+  }
+  // Taller than the box: keep the full width, trim top and bottom.
+  const cropHeight = Math.max(1, Math.min(height, Math.round(width / aspect)));
+  return { x: 0, y: Math.floor((height - cropHeight) / 2), width, height: cropHeight };
+}
+
 export type EncodeAttempt = { edge: number; quality: number };
 
 /**
