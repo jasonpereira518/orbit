@@ -926,6 +926,9 @@ CREATE TABLE IF NOT EXISTS events (
   provider text,
   provider_event_id text,
   description text,
+  organizer_name text,
+  organizer_url text,
+  attendance_mode text,
   cover_image_url text,
   cover_source_url text,
   theme_color text,
@@ -1097,11 +1100,18 @@ CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expir
  * production database with different DDL. #141's v35 deploy re-stamped that database
  * before #161 took 36, so #161's DDL still ran.) A number some database may already hold
  * is the one choice that silently skips this table, so the next free integer was not free.
+ * v39 = events revision: organizer_name, organizer_url, attendance_mode on events. Also
+ * built as 33 and moved when duplicate prevention landed first — the fifth collision, and
+ * the same rule: re-using 33 would have left those columns unapplied on every database
+ * main had already stamped.
  * v40 = v38 plus #161's v36 column, merged in from main. Builds of this branch from before
  * that merge (local databases, preview deploys) stamped 38 without the column, and a
  * reused 38 made them skip it: every user_settings read then failed. Merging another
- * branch's DDL is a DDL change, so it takes a new number. 39 is claimed by
- * events-feature-revision.
+ * branch's DDL is a DDL change, so it takes a new number. 39 was then events-feature-
+ * revision's claim.
+ * v41 = v40 plus #152's v39 event columns, merged in from main. Same rule as v40: a
+ * build of this branch pushed at 40 without those columns may already have stamped a
+ * database, and a reused 40 would skip them there.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
@@ -1111,8 +1121,8 @@ CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expir
 // be stamped with, not just one above main. A repeated version is the one real failure
 // mode this counter has. The alters are all `IF NOT EXISTS` and merge harmlessly, but a
 // collision means one branch's DDL never runs. The changelog above says which numbers are
-// taken and why 37 and 39 are skipped.
-export const SCHEMA_VERSION = 40;
+// taken and why 37 is skipped.
+export const SCHEMA_VERSION = 41;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2028,6 +2038,12 @@ async function migratePgvector(run: StatementRunner) {
 const alters = [
   // Deliberately not backfilled from `committed_at` — see the column's comment in schema.ts.
   `ALTER TABLE fundraising_investors ADD COLUMN IF NOT EXISTS received_at timestamptz`,
+  // The events feature landed whole at v32, so these are its first incremental columns.
+  // CREATE TABLE IF NOT EXISTS above is a no-op on a database that already has the table,
+  // which is why every new column has to appear in both places.
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_name text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS organizer_url text`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS attendance_mode text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_step text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS ai_provider text DEFAULT 'gemini'`,

@@ -1,9 +1,15 @@
 import Link from "next/link";
 import { RecruiterLogForm } from "@/components/recruiters/recruiter-log-form";
+import { requireUserId } from "@/lib/auth";
+import { getEntitlements } from "@/lib/entitlements";
+import { RecruitersLocked } from "@/components/locked-feature";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export default function NewRecruiterPage() {
+export default async function NewRecruiterPage() {
+  const { canUseRecruiters } = await getEntitlements(await requireUserId());
+  if (!canUseRecruiters) return <RecruitersLocked />;
+
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">

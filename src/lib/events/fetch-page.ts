@@ -32,16 +32,22 @@
  */
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { assertDeliverable } from "@/lib/net-guard";
+import { canonicalizeEventUrl } from "@/lib/events/canonical-url";
 import { parseEventPage, type EventPageDetails } from "@/lib/events/parse-page";
 
 /** One page is plenty for `<head>` metadata; anything larger is a document we do not want. */
 export const MAX_HTML_BYTES = 512_000;
 
 /**
- * Two hops covers a short link that lands on a canonical URL, plus one. Unbounded following
- * is a redirect loop waiting to happen, and each extra hop is another DNS check to get right.
+ * Ticket links are longer chains than event links: a mail-tracking redirector, then a short
+ * link, then the canonical page. Two hops covered the latter two and rejected real links
+ * whose first hop was the tracker, so the budget is four.
+ *
+ * Raising it costs nothing in safety — `assertDeliverable` runs before EVERY hop, so hop
+ * four is checked exactly as hop one is. What the bound still buys is termination: unbounded
+ * following is a redirect loop waiting to happen.
  */
-export const MAX_REDIRECT_HOPS = 2;
+export const MAX_REDIRECT_HOPS = 4;
 
 export const ALLOWED_CONTENT_TYPES = ["text/html", "application/xhtml+xml"] as const;
 
@@ -63,7 +69,11 @@ export class EventPageError extends Error {
     | "not_html"
     | "too_many_redirects"
     | "unreachable"
-    | "http_error";
+    | "http_error"
+    /** An order or wallet page. It exists, but no public event page is derivable from it. */
+    | "private_page"
+    /** The link resolved to a login wall, whose title is not this event's title. */
+    | "sign_in_required";
   constructor(code: EventPageError["code"], message: string) {
     super(message);
     this.name = "EventPageError";
@@ -183,24 +193,12 @@ async function attemptOnce(
   throw new EventPageError("http_error", `That page returned ${last?.status ?? "no response"}.`);
 }
 
-/**
- * Fetch and parse a public event page.
- *
- * Throws `EventPageError` for anything the user can act on, so callers can show the reason
- * rather than a generic failure. `assertDeliverable` throws plain `Error`s; those are
- * translated to `code: "blocked"` here so a refused address never reads as a site outage.
- */
-export async function fetchEventPage(
-  rawUrl: string,
-  deps: FetchPageDeps = { fetch }
+/** Follow one candidate's redirect chain to a parsed page. */
+async function followAndParse(
+  start: string,
+  deps: FetchPageDeps
 ): Promise<EventPageDetails> {
-  let url: string;
-  try {
-    url = new URL(rawUrl.trim()).href;
-  } catch {
-    throw new EventPageError("blocked", "That does not look like a link.");
-  }
-
+  let url = start;
   for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
     let result: Awaited<ReturnType<typeof attemptOnce>>;
     try {
@@ -214,4 +212,70 @@ export async function fetchEventPage(
     url = result.location;
   }
   throw new EventPageError("too_many_redirects", "That link redirected too many times.");
+}
+
+const SIGN_IN_PATH = /\/(log-?in|sign-?in|sign-?up|auth|authenticate)(\/|$)/i;
+
+/**
+ * Did we land on a login wall rather than the event?
+ *
+ * Worth detecting because the failure is silent otherwise: a login page parses perfectly
+ * well, and "Log In — Eventbrite" would be stored as the event's title.
+ *
+ * Two independent signals, and the title one is deliberately narrow. `/^register/` would
+ * have been the obvious pattern and is exactly wrong — "Register for the AI Summit" is a
+ * real event title. So the title branch fires only on an unambiguous log-in/sign-in phrase
+ * AND a page carrying neither structured event data nor a date, which no real event page
+ * manages at once.
+ */
+function looksLikeSignIn(details: EventPageDetails): boolean {
+  try {
+    if (SIGN_IN_PATH.test(new URL(details.sourceUrl).pathname)) return true;
+  } catch {
+    // An unparseable sourceUrl cannot be judged; fall through to the content signal.
+  }
+  const bare = details.warnings.includes("no-jsonld-event") && !details.startsAt;
+  return bare && /(^|\W)(log ?in|sign ?in)(\W|$)/i.test(details.title ?? "");
+}
+
+/**
+ * Fetch and parse the public page for a pasted event link.
+ *
+ * The link is canonicalised first (see `canonical-url.ts`), which yields ORDERED candidates
+ * rather than one URL: a rewritten public-page guess, then the user's own link. Each is
+ * tried in turn, so a rewrite rule that has gone stale costs one wasted request instead of
+ * failing the paste.
+ *
+ * Throws `EventPageError` for anything the user can act on, so callers can show the reason
+ * rather than a generic failure.
+ */
+export async function fetchEventPage(
+  rawUrl: string,
+  deps: FetchPageDeps = { fetch }
+): Promise<EventPageDetails> {
+  const outcome = canonicalizeEventUrl(rawUrl);
+  if (outcome.kind === "invalid") throw new EventPageError("blocked", outcome.message);
+  if (outcome.kind === "private") throw new EventPageError("private_page", outcome.message);
+
+  let lastError: EventPageError | null = null;
+  for (const candidate of outcome.candidates) {
+    let details: EventPageDetails;
+    try {
+      details = await followAndParse(candidate, deps);
+    } catch (error) {
+      // Keep the first refusal: it came from the candidate we thought most likely, and a
+      // later candidate's error is usually the same story told about a worse URL.
+      lastError ??= error as EventPageError;
+      continue;
+    }
+    if (looksLikeSignIn(details)) {
+      lastError ??= new EventPageError(
+        "sign_in_required",
+        "That link opens a sign-in page. Paste the event's public page instead."
+      );
+      continue;
+    }
+    return details;
+  }
+  throw lastError ?? new EventPageError("unreachable", "That page could not be reached.");
 }

@@ -22,21 +22,27 @@ export default async function ChatPage() {
      * Pinning the height on THIS container rather than the card is what fixes the
      * API-key notice: the notice is a sibling in this flex column, so it takes its share
      * and the card absorbs the rest, instead of the card assuming a fixed amount of
-     * chrome above it and running off the bottom of the screen. Subtracts only the shell's
-     * own padding and mobile header — chrome that does not change with content.
+     * chrome above it and running off the bottom of the screen.
+     *
+     * Below `md` the offset also clears the floating nav, not just the shell's padding and
+     * header: the raised Capture button overlaps the page bottom, and a smaller offset put
+     * the composer under it. Measured at 375x812: page top 89px, Capture top 735px. The
+     * safe-area term matters in standalone mode, where the nav rides above the home bar.
      */
-    <div className="flex h-[calc(100dvh-9.75rem)] min-h-0 flex-col gap-4 overflow-hidden md:h-[calc(100dvh-4rem)]">
+    <div className="flex h-[calc(100dvh-11rem-env(safe-area-inset-bottom))] min-h-0 flex-col gap-4 overflow-hidden md:h-[calc(100dvh-4rem)]">
       <div className="shrink-0">
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
           Chat with your network
         </h1>
-        <p className="mt-1 text-muted-foreground">
+        {/* Hidden on phones: the empty chat card says the same thing, and every line here
+            comes out of the message area. */}
+        <p className="mt-1 hidden text-muted-foreground sm:block">
           Ask who can help, who to follow up with, or who knows what.
         </p>
       </div>
       {!settings.hasApiKey && (
         <div className="shrink-0">
-          <AiKeyNotice feature="chat" />
+          <AiKeyNotice feature="chat" compact />
         </div>
       )}
       <ChatPanelLazy />
