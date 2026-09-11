@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { CaptureFormSkeleton } from "@/components/loading/page-skeletons";
+import type { CaptureMode } from "@/components/capture/capture-form";
 
 const CaptureForm = dynamic(
   () =>
@@ -21,7 +22,7 @@ export function CaptureFormLazy({
 }: {
   initialContactId?: string | null;
   initialContactName?: string | null;
-  defaultMode?: "messy" | "structured";
+  defaultMode?: CaptureMode;
   hasApiKey?: boolean;
 }) {
   return (

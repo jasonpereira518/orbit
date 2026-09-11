@@ -6,6 +6,12 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { decryptOrNull } from "@/lib/crypto";
+import { buildWisprContext, transcribeWithWispr } from "@/lib/wispr";
+import {
+  loadNetworkVocabulary,
+  vocabularyToPromptLine,
+  vocabularyToWhisperPrompt,
+} from "@/lib/transcription-vocabulary";
 import { z } from "zod";
 import {
   withUsage,
@@ -286,6 +292,21 @@ export function getProviderApiKey(
 
   if (personal) return personal;
   return getEnvProviderKey(provider);
+}
+
+/**
+ * The Wispr transcription key: the user's own, else an env key in local dev.
+ *
+ * Separate from `getProviderApiKey` because Wispr is not an `AiProvider` — it transcribes
+ * and never completes, so it takes no part in provider or model selection.
+ */
+export function getWisprApiKey(
+  settings?: { wisprApiKeyEncrypted?: string | null } | null,
+): string | null {
+  const personal = decryptOrNull(settings?.wisprApiKeyEncrypted);
+  if (personal) return personal;
+  if (!allowEnvProviderKeys()) return null;
+  return process.env.WISPR_API_KEY || null;
 }
 
 export function usingEnvKey(
@@ -778,12 +799,67 @@ async function completeMultimodalJsonInner(
   }
 }
 
-/** Speech-to-text using OpenAI Whisper, or Gemini audio understanding as fallback. */
+/** Which engine actually produced a transcript, so the UI can say so when it wasn't the first choice. */
+export type TranscriptionEngine = "wispr" | "whisper" | "gemini";
+
+export type TranscriptionResult = { text: string; engine: TranscriptionEngine };
+
+/**
+ * Speech to text: Wispr, then OpenAI Whisper, then Gemini audio understanding.
+ *
+ * THE ORDER IS ABOUT PROPER NOUNS, NOT ACCURACY IN GENERAL. All three transcribe ordinary
+ * English about equally well. What separates them here is that this is a networking CRM:
+ * a note is mostly *names*, and a misheard name does not produce a typo, it produces a
+ * duplicate contact. Wispr goes first because its `dictionary_context` takes the user's
+ * network as an explicit term list.
+ *
+ * So the vocabulary is built once and handed to whichever engine runs — Wispr's dictionary,
+ * Whisper's `prompt`, Gemini's prompt text. A user with no Wispr key (which, since the API
+ * is partner-gated, is most of them) still gets their contacts spelled right.
+ *
+ * Falling through is silent to the pipeline but not to the user: the engine that won comes
+ * back in the result, and `ingestCaptureMedia` reports it.
+ */
 export async function transcribeAudioWithAI(
   userId: string,
   input: { mimeType: string; base64: string; filename?: string },
-): Promise<string> {
+): Promise<TranscriptionResult> {
   const settings = await loadSettings(userId);
+
+  // One read, shared by every branch below. Never throws and returns [] on failure — a
+  // transcript with misspelled names beats no transcript.
+  const vocabulary = await loadNetworkVocabulary(userId);
+
+  const wisprKey = getWisprApiKey(settings);
+  if (wisprKey) {
+    const text = await withUsage(
+      {
+        userId,
+        operation: "capture.transcribe.audio",
+        provider: "wispr",
+        model: "flow",
+        kind: "transcription",
+        keyOwner: settings?.wisprApiKeyEncrypted ? "user" : "orbit",
+      },
+      async () =>
+        // `transcribeWithWispr` never throws: a bad key, an outage or an unrecognised
+        // response shape all return null. `withUsage` therefore records this as a
+        // successful call with a null result, which is the honest reading — we reached the
+        // provider and got nothing usable, and the row exists to show the volume.
+        transcribeWithWispr(wisprKey, {
+          audioBase64: input.base64,
+          context: await buildWisprContext(userId, {
+            firstName: settings?.firstName,
+            lastName: settings?.lastName,
+          }),
+        }),
+    );
+    if (text) return { text, engine: "wispr" };
+    // Fall through. Wispr's wire format is unverified (see src/lib/wispr.ts), so a null
+    // here is as likely to be a schema surprise as an outage, and neither is worth
+    // failing a capture over.
+  }
+
   const openaiKey = getProviderApiKey("openai", settings);
   if (openaiKey) {
     const client = new OpenAI({ apiKey: openaiKey });
@@ -803,16 +879,20 @@ export async function transcribeAudioWithAI(
         keyOwner: usingEnvKey("openai", settings) ? "orbit" : "user",
       },
       async () => {
+        const prompt = vocabularyToWhisperPrompt(vocabulary);
         const result = await client.audio.transcriptions.create({
           file,
           model: "whisper-1",
+          // Whisper's decoding prior. Omitted rather than sent empty: a blank prompt is
+          // not the same request as no prompt.
+          ...(prompt ? { prompt } : {}),
         });
         // Whisper bills per second of audio and returns no usage object, so this row
         // stores null tokens and counts as volume only. A fabricated zero would be a lie
         // that got summed.
         const text = result.text?.trim();
         if (!text) throw new Error("Empty transcription");
-        return text;
+        return { text, engine: "whisper" as const };
       },
     );
   }
@@ -838,7 +918,12 @@ export async function transcribeAudioWithAI(
               role: "user",
               parts: [
                 {
-                  text: 'Transcribe this audio verbatim. Return JSON: {"text": string}. If unintelligible, use an empty string.',
+                  text: [
+                    'Transcribe this audio verbatim. Return JSON: {"text": string}. If unintelligible, use an empty string.',
+                    vocabularyToPromptLine(vocabulary),
+                  ]
+                    .filter(Boolean)
+                    .join(" "),
                 },
                 {
                   inlineData: {
@@ -861,13 +946,13 @@ export async function transcribeAudioWithAI(
         const parsed = parseAiJson<{ text?: string }>(raw);
         const text = parsed.text?.trim();
         if (!text) throw new Error("Empty transcription");
-        return text;
+        return { text, engine: "gemini" as const };
       },
     );
   }
 
   throw new Error(
-    "Voice capture needs an OpenAI or Gemini API key in Settings for transcription.",
+    "Voice capture needs an OpenAI, Gemini, or Wispr API key in Settings for transcription.",
   );
 }
 

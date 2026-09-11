@@ -83,6 +83,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-timeline-vocabulary": "pure",
   "smoke-webhook-signing": "pure",
   "smoke-warp-chrono": "pure",
+  "smoke-voice-recording": "pure",
+  "smoke-wispr": "pure",
   "smoke-warp-journeys": "pure",
   // pglite ----------------------------------------------------------------------------
   "smoke-account-alerts": "pglite",
@@ -149,6 +151,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-sync-scheduler": "pglite",
   "smoke-sync-columns": "pglite",
   "smoke-trigram-search": "pglite",
+  "smoke-transcription-vocabulary": "pglite",
   "smoke-usage-events": "pglite",
   "smoke-user-settings-race": "pglite",
   "smoke-webhook-guard": "pglite",

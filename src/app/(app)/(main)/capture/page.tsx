@@ -12,7 +12,9 @@ export default async function CapturePage({
   const params = await searchParams;
   const requestedContactId = params.contactId || null;
   const modeParam =
-    params.mode === "structured" || params.mode === "messy"
+    params.mode === "structured" ||
+    params.mode === "messy" ||
+    params.mode === "voice"
       ? params.mode
       : null;
 
