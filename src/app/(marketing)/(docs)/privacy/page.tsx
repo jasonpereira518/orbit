@@ -20,13 +20,13 @@ export const metadata: Metadata = {
     "What Orbit collects, who it shares data with, and how to export or delete everything in your account.",
 };
 
-const LAST_UPDATED = "August 12, 2026";
+const LAST_UPDATED = "September 6, 2026";
 
 const HIGHLIGHTS: readonly Highlight[] = [
   {
     icon: ShieldCheck,
     title: "Your network isn't a product",
-    body: "Orbit doesn't sell personal information, run ad pixels, or ship third-party analytics trackers.",
+    body: "Orbit doesn't sell personal information or run ad pixels. Traffic is measured first-party and without a tracking cookie.",
   },
   {
     icon: Sparkles,
@@ -52,7 +52,7 @@ const TOC: readonly TocItem[] = [
   { id: "third-parties", label: "Who else sees it" },
   { id: "ai", label: "AI processing" },
   { id: "payments", label: "Payments" },
-  { id: "cookies", label: "Cookies & storage" },
+  { id: "cookies", label: "Cookies, storage & analytics" },
   { id: "controls", label: "Your controls" },
   { id: "retention", label: "Retention" },
   { id: "security", label: "Security" },
@@ -77,7 +77,7 @@ const PROCESSORS = [
   {
     name: "Vercel",
     badge: "Required",
-    body: "Hosting and file storage for the app, including uploaded or fetched contact avatars.",
+    body: "Hosting and file storage for the app, including uploaded or fetched contact avatars. Also provides cookieless, aggregate performance analytics for the site.",
   },
   {
     name: "Stripe",
@@ -275,7 +275,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="cookies" index={7} title="Cookies and local storage">
+        <DocSection id="cookies" index={7} title="Cookies, local storage, and analytics">
           <p>
             Orbit uses Clerk session cookies to keep you signed in. On your very
             first visit it also sets one first-party cookie,{" "}
@@ -289,8 +289,37 @@ export default function PrivacyPage() {
             preferences live with your account instead.
           </p>
           <p>
-            There are no advertising pixels and no third-party analytics
-            trackers in the product today.
+            Orbit measures its own traffic — page views, which pages get read,
+            and roughly where visitors are — and it does so{" "}
+            <strong>without setting a tracking cookie</strong>. Instead of
+            identifying your browser, each request is reduced to a one-way hash
+            of your IP address and browser type mixed with a secret that changes
+            every day. Your IP address is never written down. Because the secret
+            rotates daily, that hash cannot link you to yesterday or to
+            tomorrow, and it cannot be reversed into an IP by anyone who obtains
+            the data. The trade is deliberate: we can see how many people
+            visited on a given day, and never who they were or that they came
+            back.
+          </p>
+          <p>
+            One thing that description does not cover, and should:{" "}
+            <strong>
+              while you are signed in, the pages you open in the app are recorded
+              against your account
+            </strong>{" "}
+            — which page, when, and roughly how long you stayed. That is visible
+            only to Orbit&apos;s operator, it is used to understand which features
+            get used and where people get stuck, and it is never sold, shared, or
+            used to advertise to you. It follows the same 180-day deletion as
+            everything else here. Signed-out browsing on the marketing pages stays
+            anonymous in the way described above.
+          </p>
+          <p>
+            Alongside that, Vercel Web Analytics and Speed Insights report
+            aggregate performance for the site — page load speed and similar
+            timings. They are cookieless too. There are no advertising pixels,
+            no cross-site tracking, and nothing here is shared with or sold to
+            anyone.
           </p>
         </DocSection>
 
@@ -330,6 +359,13 @@ export default function PrivacyPage() {
             account. Downgrading a plan never deletes anything: contacts you
             added while subscribed stay visible and exportable even if you are
             back under the Free Plan&apos;s limit.
+          </p>
+          <p>
+            Traffic records — the page-view counts described above — are deleted
+            automatically after 180 days. Views made while you were signed in are
+            linked to your account until then; deleting your account unlinks them
+            immediately, leaving the anonymous count and removing the connection
+            to you. Views made signed out were never linked to anyone.
           </p>
           <p>
             After deletion, residual copies may persist briefly in backups or

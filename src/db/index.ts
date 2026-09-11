@@ -980,6 +980,29 @@ CREATE TABLE IF NOT EXISTS event_provider_connections (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS page_views (
+  id uuid PRIMARY KEY,
+  visitor_hash text NOT NULL,
+  session_id text NOT NULL,
+  user_id text,
+  route text NOT NULL,
+  referrer_host text,
+  utm_source text,
+  utm_medium text,
+  utm_campaign text,
+  country text,
+  region text,
+  city text,
+  device text NOT NULL,
+  is_bot boolean NOT NULL DEFAULT false,
+  dwell_ms integer,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS page_views_created_idx ON page_views(created_at);
+CREATE INDEX IF NOT EXISTS page_views_route_created_idx ON page_views(route, created_at);
+CREATE INDEX IF NOT EXISTS page_views_session_idx ON page_views(session_id, created_at);
+CREATE INDEX IF NOT EXISTS page_views_visitor_idx ON page_views(visitor_hash, created_at);
+CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country, created_at);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -1033,12 +1056,13 @@ CREATE TABLE IF NOT EXISTS event_provider_connections (
  * v31 = the connector platform: api_keys, api_idempotency_keys, webhook_endpoints,
  * outbound_webhook_deliveries.
  * v32 = the events feature: events, event_attendees, event_provider_connections.
+ * v33 = page_views (first-party traffic analytics).
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
  * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
  */
-export const SCHEMA_VERSION = 32;
+export const SCHEMA_VERSION = 33;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a

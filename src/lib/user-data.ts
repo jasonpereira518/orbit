@@ -28,6 +28,7 @@ import {
   outboundWebhookDeliveries,
   outlookConnections,
   outreachCampaigns,
+  pageViews,
   recruiterMessages,
   reminderLists,
   reminders,
@@ -248,6 +249,22 @@ export async function purgeUserData(
     .update(billingEvents)
     .set({ userId: null })
     .where(eq(billingEvents.userId, userId));
+
+  // ANONYMISED, NOT DELETED — for the same reason, and with a sharper one behind it.
+  //
+  // `page_views` is an aggregate traffic record. Deleting a departing account's rows would
+  // retroactively change how many people visited the site last March, which is both wrong
+  // and the kind of wrong nobody would ever notice. Nulling `user_id` keeps the count and
+  // removes the person.
+  //
+  // It also makes the privacy page true rather than nearly true. That page says traffic
+  // records hold nothing pointing back to you — which is so for anonymous views by
+  // construction, since the visitor hash is salted per day and expires, but `user_id` is
+  // set on views from a signed-in session. This is the statement that closes that gap.
+  await db
+    .update(pageViews)
+    .set({ userId: null })
+    .where(eq(pageViews.userId, userId));
 
   await db.delete(outreachCampaigns).where(eq(outreachCampaigns.userId, userId));
 

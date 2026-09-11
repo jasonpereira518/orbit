@@ -6,6 +6,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { WarpProvider } from "@/components/warp/warp-provider";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
+import { PageviewBeacon } from "@/components/analytics/pageview-beacon";
 import "./globals.css";
 
 const outfit = Outfit({
@@ -62,6 +63,10 @@ export default function RootLayout({
             <Toaster />
           </AuthProvider>
         </ThemeProvider>
+        {/* Orbit's own traffic pipeline: page views, sessions and geography, read by
+            /admin/analytics. Vercel's two stay for Core Web Vitals only — they cannot be
+            joined to the users and billing tables, so conversion has to be measured here. */}
+        <PageviewBeacon />
         <Analytics />
         <SpeedInsights />
       </body>
