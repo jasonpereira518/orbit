@@ -695,7 +695,7 @@ export function SuspendedPageSkeleton() {
 
 /**
  * Mirrors the real pricing page's section order 1:1 — see
- * src/app/(marketing)/pricing/page.tsx and src/components/pricing/*. Kept in
+ * src/app/(clerk)/(marketing)/pricing/page.tsx and src/components/pricing/*. Kept in
  * sync deliberately: this is a full-page async Server Component (auth() +
  * two DB reads), so it's the marketing route most likely to actually show a
  * loading state, and a generic skeleton here would visibly jump on swap-in.
