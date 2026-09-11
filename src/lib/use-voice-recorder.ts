@@ -284,6 +284,24 @@ export function useVoiceRecorder(
     setElapsedMs(0);
     setState("requesting");
 
+    // CONSTRUCTED SYNCHRONOUSLY, INSIDE THE CLICK. This must not move below the
+    // `getUserMedia` await. iOS Safari only lets an AudioContext start while the user
+    // activation from the tap is still live, and that activation does not survive the
+    // permission round-trip: a context built afterwards comes back `suspended` and
+    // `resume()` is refused, so the meter sits at zero and the recording is silent — on
+    // the exact device this feature exists for. `teardown` closes it on every failure
+    // path, including a denied permission.
+    const Ctor = getAudioContextCtor();
+    if (!Ctor) {
+      fail("unknown");
+      return;
+    }
+    // Asking for 16 kHz saves the resample when it is honoured. Safari and several Android
+    // builds ignore it and give the hardware rate, which is why every consumer reads
+    // `ctx.sampleRate` back rather than assuming.
+    const ctx = new Ctor({ sampleRate: TARGET_SAMPLE_RATE });
+    ctxRef.current = ctx;
+
     void (async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -301,14 +319,6 @@ export function useVoiceRecorder(
           return;
         }
         streamRef.current = stream;
-
-        const Ctor = getAudioContextCtor();
-        if (!Ctor) throw new Error("no AudioContext");
-        // Asking for 16 kHz saves the resample when it is honoured. Safari and several
-        // Android builds ignore it and give the hardware rate, which is why every consumer
-        // reads `ctx.sampleRate` back rather than assuming.
-        const ctx = new Ctor({ sampleRate: TARGET_SAMPLE_RATE });
-        ctxRef.current = ctx;
 
         // Autoplay policy can hand back a suspended context even inside a click handler.
         if (ctx.state === "suspended") await ctx.resume();
