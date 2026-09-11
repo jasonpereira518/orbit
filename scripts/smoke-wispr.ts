@@ -177,9 +177,12 @@ check("no terms is an empty prompt", vocabularyToWhisperPrompt([]) === "");
   // most-recent contacts this list is ordered to put first. So the budget is enforced here.
   const many = Array.from({ length: 400 }, (_, i) => `Personname${i}`);
   const prompt = vocabularyToWhisperPrompt(many);
+  // Exactly the cap, not the cap plus slack. The `+ 1` this once allowed was hiding a real
+  // off-by-one: the terminating "." was appended after the loop had already filled the
+  // budget, so the function overran the only limit it enforces.
   check(
     `stays inside the ${WHISPER_PROMPT_MAX_CHARS}-char budget`,
-    prompt.length <= WHISPER_PROMPT_MAX_CHARS + 1,
+    prompt.length <= WHISPER_PROMPT_MAX_CHARS,
     `${prompt.length}`,
   );
   check("keeps the earliest (most recent) terms", prompt.includes("Personname0"));
@@ -200,6 +203,16 @@ check(
   "a single term too long for the budget yields nothing rather than a fragment",
   vocabularyToWhisperPrompt(["x".repeat(40)], 20) === "",
 );
+
+{
+  // Walk the cap across a range so an off-by-one cannot hide in one lucky value.
+  const many = Array.from({ length: 200 }, (_, i) => `Personname${i}`);
+  for (const cap of [40, 41, 42, 60, 100, 137, 200, 333, 550, 551]) {
+    const out = vocabularyToWhisperPrompt(many, cap);
+    check(`never exceeds a cap of ${cap}`, out.length <= cap, `${out.length}`);
+    if (out) check(`…and still ends as a sentence at ${cap}`, out.endsWith("."), out.slice(-12));
+  }
+}
 
 // ── vocabularyToPromptLine ────────────────────────────────────────────────────────────
 console.log("\nvocabularyToPromptLine");

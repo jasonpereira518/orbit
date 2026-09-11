@@ -158,10 +158,14 @@ export function vocabularyToWhisperPrompt(
   // A short lead-in so the model reads what follows as names rather than as content to
   // transcribe. Counted against the budget like everything else.
   const lead = "People and companies mentioned: ";
+  // The closing "." is part of what gets sent, so it has to come out of the budget before
+  // the loop, not after it. Appending it to an already-full string returned `maxChars + 1`
+  // — one over a cap this function is the only enforcer of.
+  const budget = maxChars - 1;
   let out = lead;
   for (const term of terms) {
     const next = out === lead ? out + term : `${out}, ${term}`;
-    if (next.length > maxChars) break;
+    if (next.length > budget) break;
     out = next;
   }
   if (out === lead) return "";
