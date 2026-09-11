@@ -20,7 +20,12 @@ import { EventPageError, type FetchPageDeps } from "@/lib/events/guarded-fetch";
 import { fetchEventPage } from "@/lib/events/fetch-page";
 import { restampEventInteractions } from "@/lib/events/connect";
 import { resolveField } from "@/lib/events/resync";
-import { speakersNotOnRoster, speakersToAttendees } from "@/lib/events/parse-roster";
+import {
+  peopleToAttendees,
+  speakersNotOnRoster,
+  speakersToAttendees,
+} from "@/lib/events/parse-roster";
+import { claimEventAliases } from "@/lib/events/discovery/record";
 import {
   getEventForUser,
   listRosterForUser,
@@ -87,6 +92,9 @@ export async function enrichEvent(
       organizerName: take(details.organizerName, existing?.organizerName ?? null),
       organizerUrl: take(details.organizerUrl, existing?.organizerUrl ?? null),
       attendanceMode: take(details.attendanceMode, existing?.attendanceMode ?? null),
+      // The host's own count, which is usually larger than the roster and legitimately so:
+      // it is how many people were in the room, not how many we know the names of.
+      attendeeCount: take(details.guestCount, existing?.attendeeCount ?? null),
       url: details.canonicalUrl ?? url,
       source: "page",
       // Only overwrite the cover when this read actually produced one, or a page that briefly
@@ -104,17 +112,39 @@ export async function enrichEvent(
     // untitled placeholder — so the interactions written from this event follow along.
     const restamped = await restampFromEvent(userId, eventId, existing ?? null);
 
-    // The host's published line-up, as unconfirmed roster rows tagged `page`. Deliberately
-    // NOT ingested: `connectAttendees` is still the only path to a contact, and it still
-    // needs a human. This only puts names on the roster for the user to confirm or delete.
-    const speakers = speakersToAttendees(details.speakers);
-    if (speakers.length > 0) {
+    // Everyone the page itself names, as unconfirmed roster rows tagged `page`.
+    //
+    // Three kinds, and they are all the same kind of fact: a host advertising their own event.
+    // Billed speakers (JSON-LD `performer`), the hosts, and the guests a host chose to FEATURE
+    // on the page. None of them is a guest list — see the header of `platforms/adapters.ts`
+    // for where that line is and why it is there.
+    //
+    // Deliberately NOT ingested: `connectAttendees` is still the only path to a contact, and
+    // it still needs a human. This only puts names on the roster to confirm or delete.
+    const fromPage = [
+      ...speakersToAttendees(details.speakers),
+      ...peopleToAttendees(details.hosts, "host", details.platform),
+      ...peopleToAttendees(details.featuredGuests, "attendee", details.platform),
+    ];
+    if (fromPage.length > 0) {
       // Filtered against who is already listed, or refreshing would re-add a name-only row
-      // for every speaker whose roster entry the user has since corrected. See
+      // for every person whose roster entry the user has since corrected. See
       // `speakersNotOnRoster` for why a name comparison is the right tool here specifically.
       const roster = await listRosterForUser(userId, eventId);
-      const fresh = speakersNotOnRoster(speakers, roster.map((r) => r.fullName));
+      const fresh = speakersNotOnRoster(fromPage, roster.map((r) => r.fullName));
       if (fresh.length > 0) await upsertEventAttendees(userId, eventId, fresh, "page");
+    }
+
+    // The platform's own id for this event, recorded as an alias rather than written to
+    // `events.provider_event_id` — the partial unique index there belongs to the host-API
+    // sync, and two rows claiming one provider id is a constraint violation, not a merge.
+    if (details.platform && details.providerEventId) {
+      await claimEventAliases(
+        userId,
+        eventId,
+        [{ kind: "provider", value: `${details.platform}:${details.providerEventId}` }],
+        "page"
+      ).catch(() => {});
     }
     return { ok: true, restamped };
   } catch (error) {

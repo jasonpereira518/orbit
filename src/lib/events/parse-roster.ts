@@ -346,3 +346,54 @@ export function speakersToAttendees(speakers: EventSpeaker[]): ParsedAttendee[] 
 
   return out;
 }
+
+/**
+ * The people a platform's own page names — hosts, and the guests a host featured.
+ *
+ * Richer than a JSON-LD speaker: these carry the platform's user id and, on Luma, a LinkedIn
+ * handle. That matters more than it sounds. A name-only row keys as `nm:<name>`, the weakest
+ * identity there is, so it cannot be matched to a contact with any confidence and cannot be
+ * recognised as the same person at a second event. A LinkedIn URL keys at the top tier, which
+ * is what makes "you keep running into this person" possible at all.
+ *
+ * `externalRef` carries the platform id (`luma:usr-…`) rather than the bare value, because a
+ * Luma user id and a Partiful user id are only unique within their own platform.
+ */
+export function peopleToAttendees(
+  people: Array<{
+    name: string;
+    externalRef: string | null;
+    linkedinUrl: string | null;
+    xHandle: string | null;
+  }>,
+  role: AttendeeRole,
+  platform?: string | null
+): ParsedAttendee[] {
+  const out: ParsedAttendee[] = [];
+  const seen = new Set<string>();
+
+  for (const item of people) {
+    const identityKey = attendeeIdentityKey({
+      linkedinUrl: item.linkedinUrl,
+      xHandle: item.xHandle,
+      fullName: item.name,
+    });
+    if (!identityKey || seen.has(identityKey)) continue;
+    seen.add(identityKey);
+
+    out.push({
+      fullName: item.name,
+      email: null,
+      company: null,
+      title: null,
+      linkedinUrl: item.linkedinUrl,
+      xHandle: item.xHandle,
+      attendeeRole: role,
+      externalRef:
+        item.externalRef && platform ? `${platform}:${item.externalRef}` : item.externalRef,
+      identityKey,
+    });
+  }
+
+  return out;
+}

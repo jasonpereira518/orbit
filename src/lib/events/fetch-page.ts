@@ -14,6 +14,9 @@
  * session, no "who's going" endpoint, no pagination. A full guest list comes from a
  * host-scoped provider API (`src/lib/events/connectors/`) or from the user pasting one.
  *
+ * One request per candidate URL, with the honest `OrbitBot` user agent and `Retry-After`
+ * respected. Nothing here browses a platform.
+ *
  * That is a product constraint rather than a missing feature. Every platform's terms draw the
  * line at their "publicly supported interfaces", and for an event you merely attended the
  * guest list is not one of them.
@@ -26,6 +29,7 @@ import {
   guardedFetchText,
   type FetchPageDeps,
 } from "@/lib/events/guarded-fetch";
+import { maxBytesForUrl } from "@/lib/events/platforms/adapters";
 import { parseEventPage, type EventPageDetails } from "@/lib/events/parse-page";
 
 // Re-exported rather than moved out of sight: these are this module's published surface, and
@@ -85,7 +89,13 @@ export async function fetchEventPage(
   for (const candidate of outcome.candidates) {
     let details: EventPageDetails;
     try {
-      const page = await guardedFetchText(candidate, { deps });
+      // A known platform gets a bigger budget: `__NEXT_DATA__` sits at the END of the body,
+      // so the 512 KB default — chosen when only `<head>` mattered — truncates it on any
+      // real Luma page, and a truncated JSON blob parses as nothing at all.
+      const page = await guardedFetchText(candidate, {
+        deps,
+        maxBytes: maxBytesForUrl(candidate) ?? undefined,
+      });
       details = parseEventPage(page.text, page.url);
     } catch (error) {
       // Keep the first refusal: it came from the candidate we thought most likely, and a

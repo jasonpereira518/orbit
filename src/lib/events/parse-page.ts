@@ -25,21 +25,27 @@
  * `attempt()` helper enforces for its adapters, for the same reason: a page we cannot fully
  * read is still worth the parts we can.
  *
- * ## What this reads about people — a narrowed rule, not an abandoned one
+ * ## What this reads about people — a narrowed rule, narrowed once more
  *
- * #140 said flatly: no attendee data is ever read from a page. That has been narrowed, on
- * purpose, to: only `performer` is read — the billed speakers a host published as part of
- * the event's own description — and no general guest list ever is.
+ * #140 said flatly: no attendee data is ever read from a page. That became: only `performer`
+ * is read — the billed speakers a host published — and no general guest list ever is. This
+ * revision widens it by exactly one step, and the step is worth stating precisely.
  *
- * The distinction is who published the fact and about whom. A speaker line-up is the host
- * advertising their own event; an attendee list is a roomful of people who did not consent
- * to appear in a stranger's CRM. The second is still never touched: nothing here looks at
- * RSVPs, guest counts, "who's going" widgets, or ticket holders, and no platform exposes
- * those to someone who merely attended anyway.
+ * Read: the HOSTS, and the guests a host chose to FEATURE on their own event page. Both are
+ * the host advertising their own event, about people who agreed to be on the bill. Also read:
+ * the guest COUNT, a number the page renders to everyone, which names nobody.
  *
- * Speakers arrive as UNCONFIRMED roster rows tagged `source: "page"`. #140's other rule —
- * nobody becomes a contact without a human saying so — is untouched.
+ * Still never read: the guest list. Nothing here looks at RSVPs, "who's going" widgets or
+ * ticket holders; nothing sends a cookie or calls an internal endpoint; nothing paginates.
+ * An attendee list is a roomful of people who did not consent to appear in a stranger's CRM,
+ * and every platform's terms draw the line in the same place.
+ *
+ * Everyone read here arrives as UNCONFIRMED roster rows tagged `source: "page"`. #140's other
+ * rule — nobody becomes a contact without a human saying so — is untouched.
  */
+
+import { parsePlatformPage, type PagePerson } from "@/lib/events/platforms/adapters";
+import type { EventPlatform } from "@/lib/events/platforms";
 
 /** A billed speaker, as published by the host. See the header on why only these are read. */
 export type EventSpeaker = { name: string; url: string | null };
@@ -69,6 +75,22 @@ export type EventPageDetails = {
   attendanceMode: "offline" | "online" | "mixed" | null;
   /** `performer` only. Never a guest list — see the header. */
   speakers: EventSpeaker[];
+  /** Which platform's page this was, when we recognise it. */
+  platform: EventPlatform | null;
+  /** The platform's own id for the event — the strongest dedup key there is. */
+  providerEventId: string | null;
+  /** The people running it, as the page itself names them. */
+  hosts: PagePerson[];
+  /**
+   * Guests the HOST chose to feature on the page.
+   *
+   * Not a guest list, and the distinction is the whole basis of this feature: these are people
+   * a host put on their own event's page, the same way a speaker line-up is. Nothing here
+   * reads RSVPs, "who's going" widgets, or ticket holders, and no cookie is ever sent.
+   */
+  featuredGuests: PagePerson[];
+  /** How many people the page says are going. A number, naming nobody. */
+  guestCount: number | null;
   imageUrl: string | null;
   /** `<meta name="theme-color">`, the strongest rung of the theming ladder. */
   themeColor: string | null;
@@ -373,6 +395,11 @@ export function parseEventPage(html: string, sourceUrl: string): EventPageDetail
       ? attempt(warnings, "eventAttendanceMode", () => attendanceModeOf(event))
       : null,
     speakers: speakers ?? [],
+    platform: null,
+    providerEventId: null,
+    hosts: [],
+    featuredGuests: [],
+    guestCount: null,
     imageUrl: absolute(ogImage ?? ldImage, sourceUrl),
     themeColor: attempt(warnings, "theme-color", () => {
       const value = meta(head, ["theme-color", "msapplication-TileColor"]);
@@ -386,5 +413,25 @@ export function parseEventPage(html: string, sourceUrl: string): EventPageDetail
   // The host published a wall-clock time with no zone, so the instant above is a guess.
   // Recorded rather than hidden — `fetch-page.ts` and the UI both read these.
   if (details.startsAt && !details.timezone) warnings.push("no-timezone");
+
+  // The platform overlay, where the page belongs to a platform we know.
+  //
+  // It wins on three fields and only three: the event's own id (JSON-LD has none), the IANA
+  // zone name (JSON-LD can only carry an offset, which is wrong half the year), and the
+  // people — because JSON-LD's `performer` is empty on every one of these platforms while
+  // their embedded JSON names the hosts outright.
+  const platform = attempt(warnings, "platform", () => parsePlatformPage(html, sourceUrl));
+  if (platform) {
+    details.platform = platform.platform;
+    details.providerEventId = platform.providerEventId;
+    details.hosts = platform.hosts;
+    details.featuredGuests = platform.featuredGuests;
+    details.guestCount = platform.guestCount;
+    details.organizerName = details.organizerName ?? platform.organizerName;
+    if (platform.timezone) details.timezone = platform.timezone;
+    // A known platform whose page yielded no event is markup drift, and the one failure this
+    // parser cannot notice on its own — everything else degrades to a missing field.
+    if (platform.zeroYield) warnings.push("platform-zero-yield");
+  }
   return details;
 }
