@@ -1097,6 +1097,11 @@ CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expir
  * production database with different DDL. #141's v35 deploy re-stamped that database
  * before #161 took 36, so #161's DDL still ran.) A number some database may already hold
  * is the one choice that silently skips this table, so the next free integer was not free.
+ * v40 = v38 plus #161's v36 column, merged in from main. Builds of this branch from before
+ * that merge (local databases, preview deploys) stamped 38 without the column, and a
+ * reused 38 made them skip it: every user_settings read then failed. Merging another
+ * branch's DDL is a DDL change, so it takes a new number. 39 is claimed by
+ * events-feature-revision.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
@@ -1106,8 +1111,8 @@ CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expir
 // be stamped with, not just one above main. A repeated version is the one real failure
 // mode this counter has. The alters are all `IF NOT EXISTS` and merge harmlessly, but a
 // collision means one branch's DDL never runs. The changelog above says which numbers are
-// taken and why 37 is skipped.
-export const SCHEMA_VERSION = 38;
+// taken and why 37 and 39 are skipped.
+export const SCHEMA_VERSION = 40;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
