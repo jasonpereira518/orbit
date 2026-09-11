@@ -6,19 +6,12 @@ import { createHash } from "node:crypto";
  */
 export const EXTRACTED_DATE_REMINDER_TYPE = "extracted_date";
 
-export function isoDay(d: Date) {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
 /**
- * Parses YYYY-MM-DD at local noon. Never `new Date(iso)`, which parses as UTC and can
- * land on the previous calendar day for western timezones.
+ * Re-exported from `@/lib/dates`, which is the canonical home now that client
+ * components need these too — this module imports `node:crypto` and so cannot be
+ * bundled for the browser. Existing importers keep working unchanged.
  */
-export function isoDayToLocalNoon(iso: string) {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(y, (m || 1) - 1, d || 1, 12, 0, 0, 0);
-}
+export { isoDay, isoDayToLocalNoon } from "@/lib/dates";
 
 function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex");

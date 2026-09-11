@@ -33,7 +33,7 @@ import type {
 } from "@/lib/ai";
 import {
   MISSING_AI_API_KEY_MESSAGE,
-  isMissingAiApiKeyError,
+  isMissingAiApiKeyMessage,
   toUserFacingError,
 } from "@/lib/errors";
 import { Button } from "@/components/ui/button";
@@ -357,7 +357,7 @@ export function BulkNotesPanel({
           files: payloads,
         });
         if (!res.ok) {
-          const missingKey = isMissingAiApiKeyError(res.error);
+          const missingKey = isMissingAiApiKeyMessage(res.error);
           if (missingKey) setHasApiKey(false);
           toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
           return;
@@ -490,7 +490,7 @@ export function BulkNotesPanel({
                       : captureHints;
                   const res = await parseBulkCaptureNotes(notes, hints);
                   if (!res.ok) {
-                    const missingKey = isMissingAiApiKeyError(res.error);
+                    const missingKey = isMissingAiApiKeyMessage(res.error);
                     if (missingKey) setHasApiKey(false);
                     toast.error(
                       missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error
@@ -567,7 +567,7 @@ export function BulkNotesPanel({
                     err,
                     MISSING_AI_API_KEY_MESSAGE
                   ).message;
-                  if (isMissingAiApiKeyError(message)) setHasApiKey(false);
+                  if (isMissingAiApiKeyMessage(message)) setHasApiKey(false);
                   toast.error(message);
                 }
               })

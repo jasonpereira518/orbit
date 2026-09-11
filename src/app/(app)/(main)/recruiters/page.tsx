@@ -6,9 +6,6 @@ import {
   listMyRecruiters,
 } from "@/actions/recruiters";
 import { getGmailConnectionStatus, getGmailScanStatus } from "@/actions/gmail";
-import { requireUserId } from "@/lib/auth";
-import { getEntitlements } from "@/lib/entitlements";
-import { LockedFeature } from "@/components/locked-feature";
 import { PeopleListShell } from "@/components/contacts/people-list-shell";
 import {
   RecruiterList,
@@ -25,22 +22,8 @@ export default async function RecruitersPage({
   searchParams: Promise<{ q?: string; tab?: string }>;
 }) {
   const params = await searchParams;
-  const { canUseRecruiters } = await getEntitlements(await requireUserId());
-
-  if (!canUseRecruiters) {
-    return (
-      <LockedFeature
-        title="Recruiter tracking"
-        description="A crowdsourced directory of recruiters, plus a record of every conversation you've had with each of them."
-        highlights={[
-          "Search recruiters by company and specialism",
-          "Log interactions and unlock contact details",
-          "Pull recruiter threads straight out of Gmail",
-          "See who has gone quiet and who is worth a nudge",
-        ]}
-      />
-    );
-  }
+  // The paywall lives in this section's layout, so it covers /recruiters/new and
+  // /recruiters/[id] too. Reaching this line means the user is entitled.
 
   // "Discover" replaced the old "Directory" tab. Directory used to mean "every recruiter
   // anyone had ever logged"; under the sharing model a private user's directory is

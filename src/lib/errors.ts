@@ -2,9 +2,52 @@
 export const MISSING_AI_API_KEY_MESSAGE =
   "Add your AI API key in Settings to use this feature.";
 
-export function isMissingAiApiKeyError(message: string | null | undefined) {
+/**
+ * Thrown at the one place that knows a key is absent — `getAiConfig` and its
+ * embedding equivalent in `@/lib/ai`. Everything downstream identifies "no key"
+ * by this type.
+ *
+ * It used to be identified by testing the message against `/api key/i`, which
+ * also matched the *accurate* "Invalid Gemini API key. Update it in Settings…"
+ * that `aiProviderErrorMessage` produces for a rejected key — and rewrote it to
+ * "Add your AI API key in Settings." The result was a closed loop: Settings said
+ * the key was saved, every AI surface said there wasn't one, and nothing ever
+ * named the real problem. A key that is present but bad must keep its own message.
+ */
+export class MissingAiKeyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MissingAiKeyError";
+  }
+}
+
+/**
+ * Whether a thrown value means "the user has configured no provider key at all".
+ *
+ * Takes the error itself, not its message — a message cannot distinguish absent
+ * from invalid, and guessing is what caused the loop described above.
+ */
+export function isMissingAiApiKeyError(err: unknown): boolean {
+  if (err instanceof MissingAiKeyError) return true;
+  // Unwrap one level: Next wraps action throws, and `toUserFacingError` reads
+  // `cause` for exactly that reason.
+  const cause = (err as { cause?: unknown } | null | undefined)?.cause;
+  return cause instanceof MissingAiKeyError;
+}
+
+/**
+ * The client-side counterpart, for the one case where the type cannot survive:
+ * a Server Action returns `{ ok: false, error: string }`, so the browser only
+ * ever sees a message.
+ *
+ * Matches the exact constant the server normalizes to, rather than sniffing for
+ * "api key" anywhere in the text — that looser test is what used to swallow
+ * "Invalid Gemini API key. Update it in Settings…" and report a present-but-bad
+ * key as a missing one.
+ */
+export function isMissingAiApiKeyMessage(message: string | null | undefined) {
   if (!message) return false;
-  return /api key/i.test(message);
+  return message.trim() === MISSING_AI_API_KEY_MESSAGE;
 }
 
 /**
@@ -16,6 +59,11 @@ export function toUserFacingError(
   err: unknown,
   fallback = "Something went wrong"
 ): Error {
+  // Checked once, against the error itself rather than any message it carries.
+  if (isMissingAiApiKeyError(err)) {
+    return new Error(MISSING_AI_API_KEY_MESSAGE);
+  }
+
   if (err instanceof Error) {
     const msg = err.message?.trim();
     // Next.js digest wrapper — recover anything useful from cause/name
@@ -26,25 +74,15 @@ export function toUserFacingError(
     ) {
       const cause = (err as Error & { cause?: unknown }).cause;
       if (cause instanceof Error && cause.message.trim()) {
-        return new Error(
-          isMissingAiApiKeyError(cause.message)
-            ? MISSING_AI_API_KEY_MESSAGE
-            : cause.message
-        );
+        return new Error(cause.message);
       }
       return new Error(fallback);
-    }
-    if (isMissingAiApiKeyError(msg)) {
-      return new Error(MISSING_AI_API_KEY_MESSAGE);
     }
     return err;
   }
 
   if (typeof err === "string" && err.trim()) {
-    const msg = err.trim();
-    return new Error(
-      isMissingAiApiKeyError(msg) ? MISSING_AI_API_KEY_MESSAGE : msg
-    );
+    return new Error(err.trim());
   }
 
   if (err && typeof err === "object") {
@@ -54,11 +92,7 @@ export function toUserFacingError(
       (typeof record.error === "string" && record.error) ||
       (typeof record.statusText === "string" && record.statusText);
     if (message) {
-      return new Error(
-        isMissingAiApiKeyError(message)
-          ? MISSING_AI_API_KEY_MESSAGE
-          : message
-      );
+      return new Error(message);
     }
   }
 
@@ -66,6 +100,11 @@ export function toUserFacingError(
 }
 
 export function aiProviderErrorMessage(err: unknown, provider: string): string {
+  // Before any message matching: "no key at all" and "the key was rejected" need
+  // different sentences, and the missing-key message itself contains "API key",
+  // so it would otherwise fall into the invalid-key branch below.
+  if (isMissingAiApiKeyError(err)) return MISSING_AI_API_KEY_MESSAGE;
+
   const base = toUserFacingError(err, `${provider} request failed`).message;
 
   if (/api key|unauthorized|401|invalid.*key/i.test(base)) {
@@ -100,6 +139,10 @@ export type AiErrorKind =
   | "other";
 
 export function classifyAiError(err: unknown): AiErrorKind {
+  // Same ordering requirement as `aiProviderErrorMessage`. Kept as "auth" rather
+  // than a new kind so existing `usage_events.error_kind` aggregates stay comparable.
+  if (isMissingAiApiKeyError(err)) return "auth";
+
   const base = toUserFacingError(err, "request failed").message;
 
   if (/^Empty AI response$/i.test(base)) return "empty_response";

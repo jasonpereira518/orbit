@@ -39,6 +39,11 @@ import {
   rebuildContactEmbedding,
   rebuildContactEmbeddingsBatch,
 } from "@/lib/search";
+import {
+  normalizeContactInput,
+  parseContactInput,
+  parseContactPatch,
+} from "@/lib/contact-input";
 
 export type ContactWriteOptions = {
   /** Skip path revalidation during bulk imports. */
@@ -341,9 +346,13 @@ export async function contactUsageForUser(userId: string) {
 
 export async function createContactForUser(
   userId: string,
-  input: ContactInput,
+  rawInput: ContactInput,
   options?: ContactWriteOptions
 ) {
+  // Before the headroom check: an invalid contact should not consume the plan
+  // allowance or record a paywall gate-hit on its way to being rejected.
+  const input = parseContactInput(rawInput);
+
   const headroom = await contactHeadroomForUser(userId);
   if (headroom !== null && headroom < 1) {
     const { plan, contactLimit } = await getEntitlements(userId);
@@ -499,13 +508,23 @@ export async function createContactsBulkForUser(
   // Take what fits rather than failing the whole batch: a free user importing 847
   // LinkedIn connections should still get their first 500, and the caller reports the
   // shortfall by comparing `created.length` against what it passed in.
+  // Salvage what each row allows, and drop only rows with no usable name. This matches
+  // the plan-cap behaviour directly below: the caller reports the shortfall by comparing
+  // `created.length` against what it passed in, so a dropped row is already accounted for.
+  const valid = inputs.reduce<ContactInput[]>((acc, input) => {
+    const result = normalizeContactInput(input, "lenient");
+    if (result.ok) acc.push(result.value);
+    return acc;
+  }, []);
+  if (valid.length === 0) return [];
+
   const headroom =
     options?.headroom !== undefined
       ? options.headroom
       : await contactHeadroomForUser(userId);
   if (headroom !== null && headroom < 1) return [];
   const admitted =
-    headroom === null ? inputs : inputs.slice(0, headroom);
+    headroom === null ? valid : valid.slice(0, headroom);
 
   const db = await getDb();
   const now = new Date();
@@ -720,9 +739,12 @@ export async function bulkMergeContactsForUser(
 export async function updateContactForUser(
   userId: string,
   id: string,
-  input: Partial<ContactInput>,
+  rawInput: Partial<ContactInput>,
   options?: ContactWriteOptions
 ) {
+  // Same contract as create, applied to whichever fields this patch actually carries.
+  const input = parseContactPatch(rawInput);
+
   const db = await getDb();
   const staleAt = new Date();
 

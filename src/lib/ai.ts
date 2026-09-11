@@ -14,7 +14,7 @@ import {
   tokensFromAnthropic,
   type TokenCounts,
 } from "@/lib/usage-events";
-import { aiProviderErrorMessage } from "@/lib/errors";
+import { aiProviderErrorMessage, MissingAiKeyError } from "@/lib/errors";
 import {
   RECOMMENDATIONS_MARKER,
   createAnswerSplitter,
@@ -300,7 +300,7 @@ export async function getAiConfig(userId: string) {
 
   if (!apiKey) {
     const meta = AI_PROVIDERS.find((p) => p.id === provider)!;
-    throw new Error(
+    throw new MissingAiKeyError(
       `No ${meta.label} API key configured. Add your own key in Settings.`,
     );
   }
@@ -351,7 +351,7 @@ export async function resolveEmbeddingBackend(userId: string): Promise<{
   if (provider === "openai") {
     const apiKey = getProviderApiKey("openai", settings);
     if (!apiKey) {
-      throw new Error(
+      throw new MissingAiKeyError(
         "No OpenAI API key configured for embeddings. Add your own key in Settings.",
       );
     }
@@ -361,7 +361,7 @@ export async function resolveEmbeddingBackend(userId: string): Promise<{
   if (provider === "gemini") {
     const apiKey = getProviderApiKey("gemini", settings);
     if (!apiKey) {
-      throw new Error(
+      throw new MissingAiKeyError(
         "No Gemini API key configured for embeddings. Add your own key in Settings.",
       );
     }

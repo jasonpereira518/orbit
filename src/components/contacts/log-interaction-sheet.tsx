@@ -25,7 +25,7 @@ import {
 } from "@/lib/interaction-types";
 import { requestInteractionFlight } from "@/components/contacts/interaction-flight";
 import { pickLockedParticipant, withLockedSeedPerson } from "@/lib/note-batches";
-import { isMissingAiApiKeyError } from "@/lib/errors";
+import { isMissingAiApiKeyMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 
 function todayYmd() {
@@ -138,7 +138,7 @@ export function LogInteractionSheet({
           // A missing key is a configuration fact, not a failed save; anything else is a
           // genuine extraction failure. Either way the note itself still gets logged.
           await savePlain(
-            isMissingAiApiKeyError(res.error)
+            isMissingAiApiKeyMessage(res.error)
               ? "no AI key, so it was saved as written"
               : "couldn't summarize it, so it was saved as written"
           );

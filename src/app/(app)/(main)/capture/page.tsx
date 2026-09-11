@@ -2,6 +2,7 @@ import { getContact } from "@/actions/contacts";
 import { getPlanOverview, getSettings } from "@/actions/settings";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import { CaptureFormLazy } from "@/components/capture/capture-form-lazy";
+import { isUuid } from "@/lib/ids";
 
 export default async function CapturePage({
   searchParams,
@@ -20,7 +21,9 @@ export default async function CapturePage({
 
   let contactId: string | null = null;
   let contactName: string | null = null;
-  if (requestedContactId) {
+  // A junk `?contactId=` is ignored rather than fatal — Capture is still usable
+  // without a pre-selected person, and getContact would throw on a non-uuid.
+  if (requestedContactId && isUuid(requestedContactId)) {
     const contact = await getContact(requestedContactId);
     if (contact) {
       contactId = contact.id;

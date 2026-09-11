@@ -11,6 +11,7 @@ import {
   type ReminderActionKind,
 } from "@/db/schema";
 import { listActiveGoalTexts } from "@/actions/goals";
+import { parseDueDateInput } from "@/lib/dates";
 import { requireUserId, getCurrentUserProfile } from "@/lib/auth";
 import { generateFollowUpDraft } from "@/lib/follow-up-drafts";
 import {
@@ -296,7 +297,7 @@ export async function createReminder(input: {
       listId,
       title: input.title,
       description: input.description,
-      dueDate: input.dueDate ? new Date(input.dueDate) : null,
+      dueDate: input.dueDate ? parseDueDateInput(input.dueDate) : null,
       reminderType: input.reminderType || "manual",
       actionKind,
       createdBy: "user",
@@ -332,7 +333,7 @@ export async function updateReminder(
   if (input.title !== undefined) patch.title = input.title.trim();
   if (input.description !== undefined) patch.description = input.description;
   if (input.dueDate !== undefined) {
-    patch.dueDate = input.dueDate ? new Date(input.dueDate) : null;
+    patch.dueDate = input.dueDate ? parseDueDateInput(input.dueDate) : null;
   }
   if (input.contactId !== undefined) patch.contactId = input.contactId;
   if (input.listId !== undefined) {

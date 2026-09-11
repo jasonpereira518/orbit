@@ -12,6 +12,7 @@ import {
   MicrolinkRateLimitError,
   parseImageDataUrl,
 } from "@/lib/contact-avatar";
+import { isUuid } from "@/lib/ids";
 
 type Params = { params: Promise<{ contactId: string }> };
 
@@ -51,6 +52,11 @@ export async function GET(_req: Request, { params }: Params) {
     return new NextResponse(null, { status: 401 });
   }
   const { contactId } = await params;
+  // Same uuid guard as the contact pages. Without it a junk id in an <img src>
+  // returns a 500 instead of the 404 the caller already handles.
+  if (!isUuid(contactId)) {
+    return new NextResponse(null, { status: 404 });
+  }
   const db = await getDb();
 
   const contact = await db.query.contacts.findFirst({

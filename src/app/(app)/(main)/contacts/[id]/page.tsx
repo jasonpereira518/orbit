@@ -34,6 +34,7 @@ import { formatHowMetSummary } from "@/lib/met-context";
 import { getSettings } from "@/actions/settings";
 import { notFound, redirect } from "next/navigation";
 import { resolveContactId } from "@/lib/contact-merge";
+import { isUuid } from "@/lib/ids";
 
 export default async function ContactDetailPage({
   params,
@@ -41,6 +42,10 @@ export default async function ContactDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  // A malformed id is a 404, not a crash: `contacts.id` is a `uuid` column, so an
+  // arbitrary string makes Postgres throw 22P02 before the notFound() paths below
+  // can run, and the user gets the generic error boundary instead.
+  if (!isUuid(id)) notFound();
 
   // Every side query needs only the route param — start them all before the
   // first await so nothing serializes behind getContact. The .catch wrappers

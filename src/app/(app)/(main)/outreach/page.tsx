@@ -1,33 +1,14 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { listCampaigns } from "@/actions/outreach";
-import { requireUserId } from "@/lib/auth";
-import { getEntitlements } from "@/lib/entitlements";
-import { LockedFeature } from "@/components/locked-feature";
 import { OutreachCampaignCard } from "@/components/outreach/outreach-campaign-card";
 import { buttonVariants } from "@/components/ui/button";
 import { formatReplyRate } from "@/lib/outreach-metrics";
 import { cn } from "@/lib/utils";
 
 export default async function OutreachPage() {
-  const { canUseOutreach } = await getEntitlements(await requireUserId());
-
-  if (!canUseOutreach) {
-    return (
-      <LockedFeature
-        title="Outreach"
-        description="Find the right people, draft messages that sound like you, and track what actually gets replies — without leaving Orbit."
-        highlights={[
-          "Search prospects by role, company, and seniority",
-          "Personalized email and SMS drafts from your own notes",
-          "Reply tracking and per-campaign quality scores",
-          "Sequenced follow-ups that stop when someone replies",
-        ]}
-        note="Both send email and SMS on Orbit's credits. On Orbit Lifetime you supply your own Apollo key for prospect search."
-      />
-    );
-  }
-
+  // The paywall lives in this section's layout, so it covers /outreach/new and
+  // /outreach/[id] too. Reaching this line means the user is entitled.
   const campaigns = await listCampaigns();
 
   const totals = campaigns.reduce(

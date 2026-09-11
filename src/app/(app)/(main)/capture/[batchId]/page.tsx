@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { getNoteBatch } from "@/actions/note-batches";
 import { NoteBatchResultView } from "@/components/capture/note-batch-result";
 import { isoDay } from "@/lib/suggested-reminder-utils";
+import { isUuid } from "@/lib/ids";
 
 export default async function NoteBatchPage({
   params,
@@ -9,6 +10,9 @@ export default async function NoteBatchPage({
   params: Promise<{ batchId: string }>;
 }) {
   const { batchId } = await params;
+  // `note_batches.id` is a uuid column — guard before querying so a stale or
+  // truncated link 404s rather than surfacing a database error.
+  if (!isUuid(batchId)) notFound();
   const batch = await getNoteBatch(batchId);
   if (!batch) notFound();
   return (
