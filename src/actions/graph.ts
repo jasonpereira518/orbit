@@ -75,7 +75,9 @@ export async function refreshConstellationBatch(input?: {
     // Unattempted rows are simply not counted as processed; the client asks again.
     if (deadlineReached(deadline)) break;
     try {
-      await rebuildContactEmbedding(userId, row.id);
+      // strict: this batch reports progress to someone watching a spinner, so a
+      // swallowed provider failure would be counted as a success.
+      await rebuildContactEmbedding(userId, row.id, undefined, { strict: true });
     } catch (err) {
       console.error("Embedding rebuild failed", row.id, err);
       failed += 1;
@@ -107,6 +109,9 @@ export async function refreshConstellationBatch(input?: {
   return {
     total,
     processed,
+    // `failed` was computed, logged and recorded — and then dropped on the floor here, so
+    // the client had no way to know anything had gone wrong and always reported success.
+    failed,
     done,
     graph,
   };

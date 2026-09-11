@@ -36,8 +36,15 @@ export function WizardAiKey({
     if (!key) return;
     start(async () => {
       try {
-        await saveAiSettings({ provider, apiKey: key });
-        toast.success(`${meta?.label ?? "AI"} key saved`);
+        const res = await saveAiSettings({ provider, apiKey: key });
+        // Do not advance the wizard on a key the provider refused — discovering it three
+        // screens later is exactly the setup cliff this check exists to remove.
+        if (!res.ok) {
+          toast.error(res.error);
+          return;
+        }
+        if (res.keyWarning) toast.warning(res.keyWarning);
+        else toast.success(`${meta?.label ?? "AI"} key verified`);
         onSaved();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Could not save the key");
@@ -88,8 +95,20 @@ export function WizardAiKey({
           }}
         />
         <p className="text-xs text-muted-foreground">
-          Stored encrypted with your account. Keys are created in your provider&apos;s
-          console; the free tiers cover a normal week of use.
+          Stored encrypted with your account. The free tiers cover a normal week of use.
+          {meta?.consoleUrl && (
+            <>
+              {" "}
+              <a
+                href={meta.consoleUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-foreground underline underline-offset-2 hover:no-underline"
+              >
+                Get a {meta.label} key →
+              </a>
+            </>
+          )}
         </p>
       </div>
 

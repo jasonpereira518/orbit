@@ -41,6 +41,7 @@ import {
 } from "@/lib/linkedin-messages";
 import {
   mapCalendarCsvRow,
+  looksLikeCalendar,
   parseIcsEvents,
   peopleFromEvent,
   windowCalendarEvents,
@@ -524,6 +525,13 @@ export async function previewCalendarImport(payload: {
   let events: ParsedCalendarEvent[] = [];
 
   if (payload.kind === "ics") {
+    // Checked before parsing so a truncated or wrong-format file says so, instead of
+    // reporting "0 events" as if the calendar were simply empty.
+    if (!looksLikeCalendar(payload.text)) {
+      throw new Error(
+        "That doesn't look like a calendar file. Export an .ics from Google Calendar, Outlook, or Apple Calendar and try again."
+      );
+    }
     events = parseIcsEvents(payload.text);
   } else {
     const parsed = Papa.parse<Record<string, string>>(payload.text, {
@@ -624,6 +632,13 @@ export async function confirmCalendarImport(payload: {
 
   let events: ParsedCalendarEvent[] = [];
   if (payload.kind === "ics") {
+    // Checked before parsing so a truncated or wrong-format file says so, instead of
+    // reporting "0 events" as if the calendar were simply empty.
+    if (!looksLikeCalendar(payload.text)) {
+      throw new Error(
+        "That doesn't look like a calendar file. Export an .ics from Google Calendar, Outlook, or Apple Calendar and try again."
+      );
+    }
     events = parseIcsEvents(payload.text);
   } else {
     const parsed = Papa.parse<Record<string, string>>(payload.text, {

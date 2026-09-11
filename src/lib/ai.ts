@@ -1813,3 +1813,77 @@ export async function chatWithNetwork(
     }>;
   }>(content);
 }
+
+/**
+ * Check that a provider key actually works, before it is stored.
+ *
+ * `saveAiSettings` encrypted and stored whatever string it was handed, so a typo, an
+ * expired key, or an OpenAI key pasted into the Gemini field all saved cleanly and
+ * reported "Your key is saved" — and then failed at first use, several screens away from
+ * the field that caused it. For a bring-your-own-key product, "does my key work" is the
+ * one question Settings has to be able to answer.
+ *
+ * Lists models rather than running a completion: it is the cheapest authenticated call
+ * each provider offers, costs no tokens, and fails with a clean 401 on a bad key.
+ *
+ * Returns a result rather than throwing — the caller decides whether a provider being
+ * unreachable should block a save, and a network failure must not be reported as a bad
+ * key.
+ */
+export type KeyVerification =
+  | { status: "valid" }
+  | { status: "invalid"; message: string }
+  | { status: "unreachable"; message: string };
+
+export async function verifyProviderKey(
+  provider: AiProvider,
+  apiKey: string
+): Promise<KeyVerification> {
+  const key = apiKey.trim();
+  if (!key) return { status: "invalid", message: "Enter an API key." };
+
+  const meta = AI_PROVIDERS.find((p) => p.id === provider);
+  const label = meta?.label ?? provider;
+
+  try {
+    if (provider === "gemini") {
+      const client = new GoogleGenAI({ apiKey: key });
+      await client.models.list();
+    } else if (provider === "openai") {
+      const client = new OpenAI({ apiKey: key });
+      await client.models.list();
+    } else {
+      const client = new Anthropic({ apiKey: key });
+      await client.models.list();
+    }
+    return { status: "valid" };
+  } catch (err) {
+    if (isAuthRejection(err)) {
+      return {
+        status: "invalid",
+        message: `${label} rejected that key. Check you copied a ${label} key and that it is still active.`,
+      };
+    }
+    return {
+      status: "unreachable",
+      message: `Couldn't reach ${label} to check the key. It has been saved — if AI features fail, re-check it here.`,
+    };
+  }
+}
+
+/**
+ * A credential rejection, as distinct from an outage or a blocked network.
+ *
+ * The distinction is the whole point of `verifyProviderKey`: telling someone their key is
+ * wrong when the provider was merely down would be its own version of the bug this
+ * replaces.
+ */
+function isAuthRejection(err: unknown): boolean {
+  const status = (err as { status?: number; statusCode?: number } | null)?.status ??
+    (err as { statusCode?: number } | null)?.statusCode;
+  if (status === 401 || status === 403) return true;
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  return /\b401\b|\b403\b|unauthorized|permission denied|invalid[_ ]?api[_ ]?key|api key not valid|incorrect api key/i.test(
+    message
+  );
+}

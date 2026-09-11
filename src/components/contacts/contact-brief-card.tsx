@@ -31,17 +31,41 @@ function revealInteraction(interactionId: string) {
   flashSection(`interaction-${interactionId}`);
 }
 
-export function ContactBriefCard({ contactId, standing, recentDiscussions, nextSteps, stale }: {
+export function ContactBriefCard({ contactId, standing, recentDiscussions, nextSteps, stale, aiConfigured = true, summary = null }: {
   contactId: string; standing: string | null; recentDiscussions: RecentDiscussion[]; nextSteps: OpenActionItem[]; stale: boolean;
+  /**
+   * Whether an AI provider key is configured. Without one the brief generator falls back
+   * to a deterministic template that produces no "standing" at all, so promising that the
+   * brief "will write itself from your notes" is a promise the app cannot keep — and
+   * Regenerate returns 200 in ~50ms having changed nothing.
+   */
+  aiConfigured?: boolean;
+  /**
+   * The "Who they are" summary rendered directly above this card.
+   *
+   * Without an AI key the brief generator's fallback sets `standing = summary`, so the
+   * two cards rendered character-for-character identical paragraphs. Passing it here
+   * lets this card notice the duplication and show its empty state instead of repeating
+   * the paragraph the reader just finished.
+   */
+  summary?: string | null;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  // Identical to the summary above means the deterministic fallback produced it, not a
+  // model reading the relationship — so it says nothing new and is dropped.
+  const distinctStanding =
+    standing && standing.trim() === (summary ?? "").trim() ? null : standing;
   return (
     <Card className="border-border/70 shadow-none">
       <CardHeader className="border-b border-border/50">
         <CardTitle as="h2">Where things stand</CardTitle>
         <CardAction>
-          <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 text-xs text-muted-foreground" disabled={pending}
+          {/* Disabled without a key: Refresh used to return 200 in ~50ms and change
+              nothing at all, so a user would sit there clicking it. */}
+          <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 text-xs text-muted-foreground"
+            disabled={pending || !aiConfigured}
+            title={aiConfigured ? undefined : "Add an AI provider key in Settings to refresh this"}
             onClick={() => start(async () => {
               try { await regenerateContactSummary(contactId); router.refresh(); }
               catch (err) { toast.error(err instanceof Error ? err.message : "Could not refresh"); }
@@ -53,7 +77,10 @@ export function ContactBriefCard({ contactId, standing, recentDiscussions, nextS
       <CardContent className="grid gap-5 pt-4 lg:grid-cols-[1.2fr_1fr]">
         <div className="space-y-4">
           <p className="text-sm leading-relaxed text-ink">
-            {standing ?? "Log an interaction below and the brief will write itself from your notes."}
+            {distinctStanding ??
+              (aiConfigured
+                ? "Log an interaction below and the brief will write itself from your notes."
+                : "Add an AI provider key in Settings and Orbit will write this from your logged notes.")}
           </p>
           {recentDiscussions.length > 0 && (
             <div>

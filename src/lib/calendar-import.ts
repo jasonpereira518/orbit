@@ -138,6 +138,29 @@ function getAllPropLines(block: string, name: string): string[] {
  * Minimal VEVENT parser for calendar exports (.ics).
  * Supports SUMMARY, DESCRIPTION, LOCATION, DTSTART/DTEND, ATTENDEE, ORGANIZER, UID.
  */
+/**
+ * Whether a payload is plausibly an iCalendar file at all.
+ *
+ * `parseIcsEvents` returns `[]` for a truncated export, an HTML error page saved as
+ * .ics, and an empty string alike — byte-identical to a valid calendar containing no
+ * events. The upload UI reported all of them the same cheerful way: a green toast
+ * reading "0 events in window · 0 with matches". Someone whose export was cut short was
+ * told, confidently, that they had no meetings.
+ *
+ * Deliberately separate from `parseIcsEvents`, which stays total: the feed sync and the
+ * capture ingest both parse payloads where an empty result is a normal outcome, and only
+ * the upload path has a human to tell.
+ */
+export function looksLikeCalendar(icsText: string): boolean {
+  const text = icsText.trim();
+  if (!text) return false;
+  // A VCALENDAR wrapper is required by RFC 5545 and present in every real export.
+  if (!/BEGIN:VCALENDAR/i.test(text)) return false;
+  // A calendar with no VEVENT at all is legitimate (a subscribed-but-empty feed), so the
+  // wrapper alone is enough to say "this is a calendar".
+  return true;
+}
+
 export function parseIcsEvents(icsText: string): ParsedCalendarEvent[] {
   const unfolded = unfoldIcs(icsText);
   const blocks = unfolded.split(/BEGIN:VEVENT/i).slice(1);

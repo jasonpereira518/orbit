@@ -195,6 +195,10 @@ export default async function ContactDetailPage({
   // Awaited once here rather than inline: both the brief card's next-steps list and the
   // timeline's per-interaction "N open" chips read the same rows.
   const nextSteps = await nextStepsPromise;
+  const briefNextSteps = nextSteps.map((item) => ({
+    ...item,
+    interactionDate: new Date(item.interactionDate).toISOString(),
+  }));
 
   const formInitial = {
     fullName: contact.fullName,
@@ -288,16 +292,31 @@ export default async function ContactDetailPage({
         className="reveal-mount"
         style={{ "--reveal-delay": "90ms" } as React.CSSProperties}
       >
-        <ContactBriefCard
-          contactId={contact.id}
-          standing={brief?.standing ?? null}
-          recentDiscussions={brief?.recentDiscussions ?? []}
-          nextSteps={nextSteps.map((item) => ({
-            ...item,
-            interactionDate: new Date(item.interactionDate).toISOString(),
-          }))}
-          stale={briefStale}
-        />
+        {/* Wrapped for the same reason as StreamedExperience below: `settingsPromise`
+            is meant to stream, and awaiting it in the page body would block everything
+            after it on the settings read. */}
+        <Suspense
+          fallback={
+            <ContactBriefCard
+              contactId={contact.id}
+              standing={brief?.standing ?? null}
+              recentDiscussions={brief?.recentDiscussions ?? []}
+              nextSteps={briefNextSteps}
+              stale={briefStale}
+              summary={contact.aiSummary}
+            />
+          }
+        >
+          <StreamedBrief
+            settings={settingsPromise}
+            contactId={contact.id}
+            standing={brief?.standing ?? null}
+            recentDiscussions={brief?.recentDiscussions ?? []}
+            nextSteps={briefNextSteps}
+            stale={briefStale}
+            summary={contact.aiSummary}
+          />
+        </Suspense>
       </div>
 
       <div
@@ -491,5 +510,43 @@ async function StreamedRelated({
     <div className="reveal-mount">
       <ContactRelatedPeople people={resolved} subjectName={subjectName} />
     </div>
+  );
+}
+
+/**
+ * Resolves the AI-key flag for the brief card without blocking the page on it.
+ *
+ * The card needs to know whether a provider key exists so it can stop promising that the
+ * brief "will write itself from your notes" and stop offering a Refresh that returns 200
+ * having changed nothing. That flag comes from `settingsPromise`, which the page streams.
+ */
+async function StreamedBrief({
+  settings,
+  contactId,
+  standing,
+  recentDiscussions,
+  nextSteps,
+  stale,
+  summary,
+}: {
+  settings: Promise<{ hasApiKey: boolean }>;
+  contactId: string;
+  standing: string | null;
+  recentDiscussions: React.ComponentProps<typeof ContactBriefCard>["recentDiscussions"];
+  nextSteps: React.ComponentProps<typeof ContactBriefCard>["nextSteps"];
+  stale: boolean;
+  summary: string | null;
+}) {
+  const { hasApiKey } = await settings;
+  return (
+    <ContactBriefCard
+      contactId={contactId}
+      standing={standing}
+      recentDiscussions={recentDiscussions}
+      nextSteps={nextSteps}
+      stale={stale}
+      aiConfigured={hasApiKey}
+      summary={summary}
+    />
   );
 }

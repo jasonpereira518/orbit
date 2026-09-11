@@ -152,7 +152,24 @@ export function BulkActionBar({
           messageIds: sendable.map((r) => r.messageId),
           ignoreWarnings: ignoreWarnings || !qualityNote,
         });
-        toast.success(`Sent ${result.sent}, failed ${result.failed}`);
+        // `toast.success` fired unconditionally, so a run where every send failed —
+        // the default state, since Resend and Twilio are unconfigured until a user
+        // sets them up — produced a green "Sent 0, failed 12". The per-message reason
+        // was collected in `results[].error` and shown nowhere.
+        const firstError = result.results.find((r) => !r.ok)?.error;
+        if (result.sent === 0 && result.failed > 0) {
+          toast.error(
+            firstError
+              ? `Nothing sent — ${firstError}`
+              : `Nothing sent (${result.failed} failed)`
+          );
+        } else if (result.failed > 0) {
+          toast.warning(
+            `Sent ${result.sent}, ${result.failed} failed${firstError ? ` — ${firstError}` : ""}`
+          );
+        } else {
+          toast.success(`Sent ${result.sent}`);
+        }
         setDangerOpen(false);
         refresh();
       } catch (err) {

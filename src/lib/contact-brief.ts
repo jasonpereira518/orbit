@@ -304,6 +304,7 @@ Rules:
   const recentDiscussions = buildRecentDiscussions(recentRows);
   const generatedAt = new Date();
   const basisInteractionId = recent[0]?.id ?? null;
+
   await db
     .insert(contactBriefs)
     .values({

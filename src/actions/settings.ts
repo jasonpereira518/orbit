@@ -28,6 +28,7 @@ import {
   resolveAiModel,
   resolveAiProvider,
   usingEnvKey,
+  verifyProviderKey,
   type AiProvider,
 } from "@/lib/ai";
 
@@ -185,9 +186,25 @@ export async function saveAiSettings(input: {
 
   const provider = resolveAiProvider(input.provider);
   const aiModel = resolveAiModel(provider, input.model);
-  const encrypted = input.apiKey?.trim()
-    ? encrypt(input.apiKey.trim())
-    : null;
+
+  // Verify before storing. A key that the provider rejects is refused here, at the field
+  // that caused it, instead of being encrypted, reported as saved, and then failing
+  // several screens away the first time an AI feature runs.
+  //
+  // Only a credential rejection blocks the save — if the provider is simply unreachable
+  // the key is stored and the caller is told the check could not run, because refusing to
+  // save on a transient outage would be its own trap.
+  let keyWarning: string | null = null;
+  const rawKey = input.apiKey?.trim();
+  if (rawKey) {
+    const verdict = await verifyProviderKey(provider, rawKey);
+    if (verdict.status === "invalid") {
+      return { ok: false as const, error: verdict.message };
+    }
+    if (verdict.status === "unreachable") keyWarning = verdict.message;
+  }
+
+  const encrypted = rawKey ? encrypt(rawKey) : null;
 
   const previousBackend = existing
     ? await embeddingBackendFor(resolveAiProvider(existing.aiProvider), existing)
@@ -241,7 +258,11 @@ export async function saveAiSettings(input: {
 
   revalidatePath("/settings");
   revalidatePath("/chat");
-  return { ok: true, embeddingReset: Boolean(previousBackend && nextBackend && previousBackend !== nextBackend) };
+  return {
+    ok: true as const,
+    embeddingReset: Boolean(previousBackend && nextBackend && previousBackend !== nextBackend),
+    keyWarning,
+  };
 }
 
 export async function clearApiKey(provider?: AiProvider) {

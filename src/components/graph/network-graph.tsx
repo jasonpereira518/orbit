@@ -2118,9 +2118,12 @@ export function NetworkGraph({
     try {
       let offset = 0;
       let done = false;
+      let failed = 0;
+      let refreshedTotal = 0;
       while (!done) {
         if (operationsStoppedRef.current) return;
         const result = await refreshConstellationBatch({ offset, limit: 8 });
+        failed += result.failed;
         setRefreshProgress({
           processed: result.processed,
           total: result.total,
@@ -2130,6 +2133,7 @@ export function NetworkGraph({
           total: result.total,
         });
         offset = result.processed;
+        refreshedTotal = result.total;
         done = result.done;
         if (result.graph) {
           lastFetchAt.current = Date.now();
@@ -2138,10 +2142,26 @@ export function NetworkGraph({
         }
         if (result.total === 0) break;
       }
-      finishBackgroundJob(jobId, {
-        status: "completed",
-        resultMessage: "Constellation refreshed",
-      });
+      // Every contact failed to rebuild — almost always a missing or rejected AI key.
+      // This used to finish with a green "Constellation refreshed" after ~20 seconds of
+      // work that rebuilt nothing, which is a worse outcome than an honest error.
+      if (failed > 0 && failed >= refreshedTotal) {
+        finishBackgroundJob(jobId, {
+          status: "failed",
+          error:
+            "Couldn't refresh — check your AI provider key in Settings.",
+        });
+      } else if (failed > 0) {
+        finishBackgroundJob(jobId, {
+          status: "completed",
+          resultMessage: `Refreshed ${Math.max(0, refreshedTotal - failed)} of ${refreshedTotal} — ${failed} couldn't be rebuilt.`,
+        });
+      } else {
+        finishBackgroundJob(jobId, {
+          status: "completed",
+          resultMessage: "Constellation refreshed",
+        });
+      }
     } catch (err) {
       console.error(err);
       finishBackgroundJob(jobId, {

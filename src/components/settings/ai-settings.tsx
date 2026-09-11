@@ -157,13 +157,23 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
                   model,
                   apiKey: apiKey.trim() || undefined,
                 });
+                // A key the provider rejected is refused rather than stored, so the
+                // field keeps its value and the person can fix the paste in place.
+                if (!res.ok) {
+                  toast.error(res.error);
+                  return;
+                }
                 setApiKey("");
                 setSettings(await getSettings());
-                toast.success(
-                  res.embeddingReset
-                    ? "Settings saved. Search embeddings reset for the new provider."
-                    : "AI settings saved"
-                );
+                if (res.keyWarning) {
+                  toast.warning(res.keyWarning);
+                } else {
+                  toast.success(
+                    res.embeddingReset
+                      ? "Settings saved. Search embeddings reset for the new provider."
+                      : "Key verified — AI settings saved"
+                  );
+                }
               } catch (err) {
                 toast.error(
                   err instanceof Error ? err.message : "Failed to save"

@@ -6,24 +6,35 @@ export const AI_PROVIDERS: Array<{
   label: string;
   keyPlaceholder: string;
   envVar: string;
+  /**
+   * Where this provider's keys are actually made.
+   *
+   * Setup told people "keys are created in your provider's console" and linked to
+   * nothing — for a job seeker who has never created an API key, that is the single
+   * hardest step in onboarding, and it had no hand-hold at all.
+   */
+  consoleUrl: string;
 }> = [
   {
     id: "gemini",
     label: "Google Gemini",
     keyPlaceholder: "AIza...",
     envVar: "GEMINI_API_KEY",
+    consoleUrl: "https://aistudio.google.com/apikey",
   },
   {
     id: "openai",
     label: "OpenAI",
     keyPlaceholder: "sk-...",
     envVar: "OPENAI_API_KEY",
+    consoleUrl: "https://platform.openai.com/api-keys",
   },
   {
     id: "anthropic",
     label: "Anthropic",
     keyPlaceholder: "sk-ant-...",
     envVar: "ANTHROPIC_API_KEY",
+    consoleUrl: "https://console.anthropic.com/settings/keys",
   },
 ];
 
