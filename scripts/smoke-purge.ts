@@ -156,6 +156,22 @@ async function seed() {
     result: {} as never,
   });
 
+  // A recorded call and one line of it. The segment carries its own `user_id` and is
+  // deleted explicitly, though it would also cascade from the session.
+  const [meetingRow] = await db
+    .insert(schema.meetingSessions)
+    .values({ userId: USER, title: "Weekly sync" })
+    .returning();
+  await db.insert(schema.meetingTranscriptSegments).values({
+    sessionId: meetingRow.id,
+    userId: USER,
+    seq: 0,
+    startMs: 0,
+    endMs: 60_000,
+    text: "what everyone on the call said, verbatim",
+    engine: "whisper",
+  });
+
   // Cascade-covered (from `contacts` / `interactions`), seeded anyway: the cascade is the
   // thing under test, and an unseeded table proves nothing about it.
   await db.insert(schema.contactBriefs).values({
