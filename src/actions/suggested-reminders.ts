@@ -203,3 +203,27 @@ export async function discardSuggestedReminder(id: string) {
 
   revalidateReminderPaths(row.contactId);
 }
+
+/**
+ * Undo for `discardSuggestedReminder`. The discard deliberately keeps the row (it is what
+ * stops a re-paste re-suggesting it), so the inverse is one UPDATE back to pending. It
+ * can only have been pending before: `loadPendingSuggestion` refuses anything else.
+ * Only touches a row that is still discarded — not one confirmed in the meantime.
+ */
+export async function restoreSuggestedReminder(id: string) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const restored = await db
+    .update(suggestedReminders)
+    .set({ status: "pending", resolvedAt: null })
+    .where(
+      and(
+        eq(suggestedReminders.id, id),
+        eq(suggestedReminders.userId, userId),
+        eq(suggestedReminders.status, "discarded")
+      )
+    )
+    .returning();
+  if (restored[0]) revalidateReminderPaths(restored[0].contactId);
+  return { restored: restored.length > 0 };
+}

@@ -31,6 +31,8 @@ import { formatHowMetSummary } from "@/lib/met-context";
 import { closenessTierChipClass } from "@/lib/closeness";
 import { RING_LABELS, type GraphNodeData } from "@/lib/graph-layout";
 import type { UserSocialLinks } from "@/actions/graph";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export type InspectSelection =
   | { type: "contact"; id: string; data: GraphNodeData }
@@ -561,14 +563,12 @@ function ContactPanelBody({
                       onContactPatch?.(id, { aiSummary: res.summary });
                       toast.success("Summary updated");
                     } else {
-                      toast.error("Could not generate summary");
+                      toast.error(TOAST_COPY.summaryFailed);
                     }
                     onRefresh();
                   } catch (err) {
                     toast.error(
-                      err instanceof Error
-                        ? err.message
-                        : "Could not generate summary"
+                      friendlyError(err, TOAST_COPY.summaryFailed)
                     );
                   }
                 })

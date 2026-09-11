@@ -45,6 +45,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
 import { deleteAttendee, updateAttendee } from "@/actions/events";
 import type { AttendeeRole, RosterRow } from "@/lib/events/types";
 
@@ -92,24 +93,24 @@ export function EditAttendeeDialog({
         });
 
         if (result.ok) {
-          toast.success("Saved.");
+          toast.success("Saved");
           onClose();
           router.refresh();
           return;
         }
         if (result.reason === "collision") {
           toast.error(
-            `${result.otherName ?? "Someone else"} is already on this roster with those details. Delete one of the two rows, then try again.`
+            `${result.otherName ?? "Someone else"} is already on this roster with those details — delete one of the two rows, then try again`
           );
           return;
         }
         if (result.reason === "empty") {
-          toast.error("Give them a name, an email, a LinkedIn URL or a handle.");
+          toast.error("Give them a name, an email, a LinkedIn URL or a handle");
           return;
         }
-        toast.error("That person is no longer on this roster.");
+        toast.error("That person is no longer on this roster");
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not save those changes.");
+        toast.error(friendlyError(error, "Couldn’t save those changes — try again?"));
       }
     });
   }
@@ -120,13 +121,13 @@ export function EditAttendeeDialog({
         await deleteAttendee(eventId, row.id);
         toast.success(
           row.contactId
-            ? "Removed from this roster. They are still in your contacts."
-            : "Removed from this roster."
+            ? "Removed from this roster — they’re still in your contacts"
+            : "Removed from this roster"
         );
         onClose();
         router.refresh();
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not remove that person.");
+        toast.error(friendlyError(error, "Couldn’t remove that person — try again?"));
       }
     });
   }

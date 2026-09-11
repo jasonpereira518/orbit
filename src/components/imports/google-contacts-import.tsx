@@ -15,6 +15,8 @@ import { BusyHint } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { toast } from "@/lib/toast";
 import { IntegrationUnavailable } from "@/components/imports/integration-unavailable";
+import { describeOAuthReason, friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export function GoogleContactsImport() {
   const router = useRouter();
@@ -69,7 +71,11 @@ export function GoogleContactsImport() {
       router.refresh();
       getGmailConnectionStatus().then(setStatus).catch(() => {});
     } else if (google === "error") {
-      toast.error(params.get("reason") || "Google connection failed");
+      {
+        const oauth = describeOAuthReason(params.get("reason"), "Google");
+        if (oauth.cancelled) toast.message(oauth.message);
+        else toast.error(oauth.message);
+      }
       params.delete("google");
       params.delete("gmail");
       params.delete("reason");
@@ -118,7 +124,7 @@ export function GoogleContactsImport() {
                     const { url } = await startGmailOAuth("/imports");
                     window.location.href = url;
                   } catch (err) {
-                    toast.error(err instanceof Error ? err.message : "OAuth failed");
+                    toast.error(friendlyError(err, TOAST_COPY.connectFailed));
                   }
                 })
               }
@@ -135,7 +141,7 @@ export function GoogleContactsImport() {
                       const res = await previewGoogleContacts();
                       setContactsScopeGranted(res.contactsScopeGranted);
                       if (!res.contactsScopeGranted) {
-                        toast.error("Reconnect Google to grant contacts access");
+                        toast.error("Reconnect Google to allow access to your contacts");
                         return;
                       }
                       setPeople(res.people);
@@ -146,7 +152,7 @@ export function GoogleContactsImport() {
                       toast.success(`Loaded ${res.people.length} contacts`);
                     } catch (err) {
                       toast.error(
-                        err instanceof Error ? err.message : "Could not load contacts"
+                        friendlyError(err, TOAST_COPY.loadContactsFailed)
                       );
                     }
                   })
@@ -212,7 +218,7 @@ export function GoogleContactsImport() {
                 setSelected(new Set());
                 setLoaded(false);
               } catch (err) {
-                toast.error(err instanceof Error ? err.message : "Import failed");
+                toast.error(friendlyError(err, TOAST_COPY.importFailed));
               }
             }}
           >

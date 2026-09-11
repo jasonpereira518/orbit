@@ -12,6 +12,8 @@ import {
 } from "@/actions/calendar-feed";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { TOAST_COPY } from "@/lib/toast-copy";
+import { friendlyError, TIMEOUT_MESSAGE } from "@/lib/errors";
 
 /**
  * How long to wait for the status action before giving up on it.
@@ -94,10 +96,8 @@ export function CalendarFeedSettings() {
         const timedOut = err instanceof Error && err.message === TIMED_OUT;
         toast.error(
           timedOut
-            ? "That took too long. Please try again."
-            : err instanceof Error
-              ? err.message
-              : "Something went wrong"
+            ? TIMEOUT_MESSAGE
+            : friendlyError(err, "That didn’t work — try again?")
         );
       }
     });
@@ -168,7 +168,7 @@ export function CalendarFeedSettings() {
                 variant="outline"
                 onClick={async () => {
                   await navigator.clipboard.writeText(status.url!);
-                  toast.success("Copied to clipboard");
+                  toast.success(TOAST_COPY.copied);
                 }}
               >
                 Copy link

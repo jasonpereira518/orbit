@@ -61,6 +61,7 @@ import { listCalendarEvents } from "@/lib/events/connectors/luma";
 import { resolveEventTitle } from "@/lib/events/types";
 import type { AttendeeRole, ConnectSummary, RosterRow } from "@/lib/events/types";
 import type { EventRecord } from "@/db/schema";
+import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 
 const OAUTH_STATE_COOKIE = "orbit_eventbrite_oauth_state";
 const SURFACE = "page.events";
@@ -93,37 +94,39 @@ export async function createEvent(input: {
   url?: string | null;
   role?: "attended" | "hosted";
   notes?: string | null;
-}): Promise<{ id: string }> {
-  const userId = await requireUserForSurface(SURFACE);
-  const title = input.title.trim();
-  if (!title) throw new Error("An event needs a name.");
+}): Promise<ActionResult<{ id: string }>> {
+  return asActionResult(async () => {
+    const userId = await requireUserForSurface(SURFACE);
+    const title = input.title.trim();
+    if (!title) throw new UserFacingError("Give the event a name first");
 
-  // Cleaned before the row is written, not just before it is fetched. Enrichment can fail —
-  // the host is down, the link needs a login — and the pasted URL would otherwise persist
-  // with the user's own Luma guest token in it, rendered back as a link on the event page.
-  const outcome = input.url ? canonicalizeEventUrl(input.url) : null;
-  const url = outcome?.kind === "ok" ? outcome.candidates[0]! : input.url ?? null;
+    // Cleaned before the row is written, not just before it is fetched. Enrichment can fail —
+    // the host is down, the link needs a login — and the pasted URL would otherwise persist
+    // with the user's own Luma guest token in it, rendered back as a link on the event page.
+    const outcome = input.url ? canonicalizeEventUrl(input.url) : null;
+    const url = outcome?.kind === "ok" ? outcome.candidates[0]! : input.url ?? null;
 
-  const event = await createEventForUser(userId, {
-    title,
-    startsAt: input.startsAt ? new Date(input.startsAt) : null,
-    venue: input.venue ?? null,
-    city: input.city ?? null,
-    url,
-    role: input.role ?? "attended",
-    notes: input.notes ?? null,
-    // Seeded from the title so the card has an identity immediately; enrichment may improve
-    // it, but nothing renders grey in the meantime.
-    ...seedTheme(url ?? title),
+    const event = await createEventForUser(userId, {
+      title,
+      startsAt: input.startsAt ? new Date(input.startsAt) : null,
+      venue: input.venue ?? null,
+      city: input.city ?? null,
+      url,
+      role: input.role ?? "attended",
+      notes: input.notes ?? null,
+      // Seeded from the title so the card has an identity immediately; enrichment may improve
+      // it, but nothing renders grey in the meantime.
+      ...seedTheme(url ?? title),
+    });
+
+    if (input.url) {
+      // Off the request path: the user should land on their event, not wait on someone
+      // else's web server. `enrich_status` on the row is how the UI shows this is in flight.
+      after(() => enrichEventInternal(userId, event.id, input.url!).catch(() => {}));
+    }
+    revalidateEvents();
+    return { id: event.id };
   });
-
-  if (input.url) {
-    // Off the request path: the user should land on their event, not wait on someone
-    // else's web server. `enrich_status` on the row is how the UI shows this is in flight.
-    after(() => enrichEventInternal(userId, event.id, input.url!).catch(() => {}));
-  }
-  revalidateEvents();
-  return { id: event.id };
 }
 
 function seedTheme(seed: string) {
@@ -147,7 +150,7 @@ export async function enrichEventFromUrl(
     await consumeBucket(userId, "eventEnrich", RATE_LIMITS.eventEnrich);
   } catch (error) {
     if (isRateLimitedError(error)) {
-      return { ok: false, error: "Too many lookups just now — try again in a few minutes." };
+      return { ok: false, error: "Too many lookups just now — try again in a few minutes" };
     }
     throw error;
   }
@@ -307,14 +310,14 @@ export async function previewResync(
 ): Promise<{ ok: true; changes: EventFieldChange[] } | { ok: false; error: string }> {
   const userId = await requireUserForSurface(SURFACE);
   const event = await getEventForUser(userId, eventId);
-  if (!event) return { ok: false, error: "That event no longer exists." };
-  if (!event.url) return { ok: false, error: "This event has no link to refresh from." };
+  if (!event) return { ok: false, error: "That event no longer exists" };
+  if (!event.url) return { ok: false, error: "This event has no link to refresh from" };
 
   try {
     await consumeBucket(userId, "eventEnrich", RATE_LIMITS.eventEnrich);
   } catch (error) {
     if (isRateLimitedError(error)) {
-      return { ok: false, error: "Too many lookups just now — try again in a few minutes." };
+      return { ok: false, error: "Too many lookups just now — try again in a few minutes" };
     }
     throw error;
   }
@@ -325,7 +328,7 @@ export async function previewResync(
   } catch (error) {
     return {
       ok: false,
-      error: error instanceof EventPageError ? error.message : "That page could not be read.",
+      error: error instanceof EventPageError ? error.message : "Couldn’t read that page — try again?",
     };
   }
 }
@@ -341,14 +344,14 @@ export async function previewResync(
 export async function resyncEvent(eventId: string): Promise<{ ok: boolean; error?: string }> {
   const userId = await requireUserForSurface(SURFACE);
   const event = await getEventForUser(userId, eventId);
-  if (!event) return { ok: false, error: "That event no longer exists." };
-  if (!event.url) return { ok: false, error: "This event has no link to refresh from." };
+  if (!event) return { ok: false, error: "That event no longer exists" };
+  if (!event.url) return { ok: false, error: "This event has no link to refresh from" };
 
   try {
     await consumeBucket(userId, "eventEnrich", RATE_LIMITS.eventEnrich);
   } catch (error) {
     if (isRateLimitedError(error)) {
-      return { ok: false, error: "Too many lookups just now — try again in a few minutes." };
+      return { ok: false, error: "Too many lookups just now — try again in a few minutes" };
     }
     throw error;
   }
@@ -573,14 +576,14 @@ export async function getEventConnections(): Promise<{
 export async function connectLuma(apiKey: string): Promise<{ ok: boolean; error?: string }> {
   const userId = await requireSyncUser();
   const key = apiKey.trim();
-  if (!key) return { ok: false, error: "Paste your Luma API key." };
+  if (!key) return { ok: false, error: "Paste your Luma API key first" };
 
   try {
     await listCalendarEvents(key, null);
   } catch {
     return {
       ok: false,
-      error: "Luma rejected that key. It must be a calendar key from a Luma Plus account.",
+      error: "Luma didn’t accept that key — it needs to be a calendar key from a Luma Plus account",
     };
   }
 

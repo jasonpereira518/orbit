@@ -44,6 +44,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
 import { deleteEvent, updateEvent } from "@/actions/events";
 import { fromWallClockInput, toWallClockInput, zoneLabel } from "@/lib/events/wall-clock";
 
@@ -97,7 +98,7 @@ export function EditEventDialog({
 
   function save() {
     if (!form.title.trim()) {
-      toast.error("An event needs a name.");
+      toast.error("Give the event a name first");
       return;
     }
     start(async () => {
@@ -119,11 +120,11 @@ export function EditEventDialog({
               ? null
               : (form.attendanceMode as "offline" | "online" | "mixed"),
         });
-        toast.success("Saved.");
+        toast.success("Saved");
         onClose();
         router.refresh();
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not save those changes.");
+        toast.error(friendlyError(error, "Couldn’t save those changes — try again?"));
       }
     });
   }
@@ -132,11 +133,11 @@ export function EditEventDialog({
     start(async () => {
       try {
         await deleteEvent(event.id);
-        toast.success("Event deleted. The people you connected are still in your contacts.");
+        toast.success("Event deleted — the people you connected are still in your contacts");
         router.push("/events");
         router.refresh();
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not delete that event.");
+        toast.error(friendlyError(error, "Couldn’t delete that event — try again?"));
       }
     });
   }

@@ -18,6 +18,8 @@ import {
   startImportJob,
   useImportJob,
 } from "@/lib/import-job-runner";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 type PreviewResult = Awaited<ReturnType<typeof previewLinkedInCsv>>;
 type ConnectionsPreview = Exclude<PreviewResult, { error: string }>;
@@ -89,7 +91,7 @@ export function LinkedInConnectionsImport() {
         onFile={(file) => {
           if (file.size > LARGE_FILE_WARNING_BYTES) {
             toast.message(
-              `This is a large file (${(file.size / (1024 * 1024)).toFixed(1)}MB) — import may take a while.`
+              `This is a large file (${(file.size / (1024 * 1024)).toFixed(1)}MB) — the import may take a while`
             );
           }
           start(async () => {
@@ -106,7 +108,7 @@ export function LinkedInConnectionsImport() {
               setSelected(new Set());
               setWarnings([]);
               toast.error(
-                err instanceof Error ? err.message : "Preview failed",
+                friendlyError(err, TOAST_COPY.previewFailed),
               );
             }
           });
@@ -129,7 +131,7 @@ export function LinkedInConnectionsImport() {
               } catch (err) {
                 setWarnings([]);
                 toast.error(
-                  err instanceof Error ? err.message : "Preview failed",
+                  friendlyError(err, TOAST_COPY.previewFailed),
                 );
               }
             })
@@ -157,7 +159,7 @@ export function LinkedInConnectionsImport() {
               setFileName(null);
               setWarnings([]);
             } catch (err) {
-              toast.error(err instanceof Error ? err.message : "Import failed");
+              toast.error(friendlyError(err, TOAST_COPY.importFailed));
             }
           }}
         >

@@ -109,7 +109,7 @@ export function WizardTriage({ onDone }: { onDone: () => void }) {
         } catch {
           // Nothing saved — keep every local rating so "Next" can be
           // retried, and say so instead of silently advancing as if it had.
-          toast.error("Couldn't save these ratings. Try again.");
+          toast.error("These ratings didn’t save — try again?");
           return;
         }
         if (result.failedContactIds.length > 0) {
@@ -125,8 +125,8 @@ export function WizardTriage({ onDone }: { onDone: () => void }) {
           });
           toast.error(
             result.failedContactIds.length === 1
-              ? "1 rating didn't save. Try again."
-              : `${result.failedContactIds.length} ratings didn't save. Try again.`
+              ? "1 rating didn’t save — try again?"
+              : `${result.failedContactIds.length} ratings didn’t save — try again?`
           );
           // Stay on this screen — advancing would make the failure
           // indistinguishable from success, and a lost rating is exactly the

@@ -8,6 +8,10 @@ import { getDb } from "@/db";
 import { contacts, type ReminderActionKind } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import {
+  listUnresolvedMentionsFor,
+  type UnresolvedMention,
+} from "@/lib/unresolved-mentions";
+import {
   fetchRawCommitments,
   validateCommitments,
   emptyCommitmentResult,
@@ -34,7 +38,7 @@ import {
   buildDuplicateIndex,
   findDuplicateCandidatesIndexed,
 } from "@/lib/duplicates";
-import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
+import { friendlyError } from "@/lib/errors";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { resolveMentions, type MentionCandidate } from "@/lib/mention-resolution";
 import type { PreviewMention } from "@/lib/note-batches";
@@ -45,6 +49,7 @@ import {
   type NoteBatchParticipantInput,
 } from "@/lib/note-batch-save";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export type BulkNoteDuplicate = {
   id: string;
@@ -163,7 +168,7 @@ export async function ingestCaptureMedia(input: {
     if (uploadBytes > CAPTURE_MAX_UPLOAD_BYTES) {
       return {
         ok: false as const,
-        error: `That upload is ${formatUploadSize(uploadBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}. Try fewer or smaller files.`,
+        error: `That upload is ${formatUploadSize(uploadBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}, so try fewer or smaller files`,
       };
     }
 
@@ -177,11 +182,13 @@ export async function ingestCaptureMedia(input: {
       text: normalized.text,
       hints: normalized.hints,
       sources: normalized.sources,
+      transcriptionEngine: normalized.transcriptionEngine ?? null,
     };
   } catch (err) {
+    // Data, not a throw — so never stripped in production. See `friendlyError`.
     return {
       ok: false as const,
-      error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message,
+      error: friendlyError(err, TOAST_COPY.fileReadFailed),
     };
   }
 }
@@ -374,10 +381,11 @@ export async function parseBulkCaptureNotes(
       mentions,
     };
   } catch (err) {
-    const { toUserFacingError } = await import("@/lib/errors");
+    // Data, not a throw — so never stripped in production, and `toUserFacingError` put
+    // raw text such as "Failed to parse AI JSON: {…" in front of the person verbatim.
     return {
       ok: false as const,
-      error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message,
+      error: friendlyError(err, TOAST_COPY.notesReadFailed),
     };
   }
 }
@@ -433,4 +441,16 @@ export async function confirmBulkCapture(
   revalidatePath("/graph");
   for (const id of out.contactIds) revalidatePath(`/contacts/${id}`);
   return out;
+}
+
+
+/**
+ * People named in your recent notes who are still not in your network.
+ *
+ * Thin wrapper; the work is in `@/lib/unresolved-mentions` so a smoke test can drive it
+ * with a real database and no auth, the same split `getChatSuggestions` uses.
+ */
+export async function listUnresolvedMentions(): Promise<UnresolvedMention[]> {
+  const userId = await requireUserId();
+  return listUnresolvedMentionsFor(userId);
 }

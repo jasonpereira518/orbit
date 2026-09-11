@@ -56,6 +56,7 @@ import {
   MicrolinkRateLimitError,
 } from "@/lib/contact-avatar";
 import { clientContactAvatarUrl } from "@/lib/contact-avatar-url";
+import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
 import {
   countAvatarBackfillCandidates,
@@ -326,7 +327,17 @@ function searchCondition(q: string) {
  */
 export async function searchContactsForPicker(
   q?: string,
-  limit = 50
+  limit = 50,
+  /**
+   * `alphabetical` is right for browsing a long list in a `<select>`, which is what the
+   * capture form, the reminder dialog and the onboarding wizard do with this.
+   *
+   * `recent` is right for a type-ahead that has just been opened with nothing typed: the
+   * composer's `@` menu offered whoever came first in the address book, which reads as
+   * broken rather than as waiting. Defaulted to the old behaviour so those three callers
+   * are untouched.
+   */
+  order: "alphabetical" | "recent" = "alphabetical"
 ): Promise<ContactPickerOption[]> {
   const userId = await requireUserId();
   const db = await getDb();
@@ -341,10 +352,24 @@ export async function searchContactsForPicker(
       fullName: contacts.fullName,
       preferredName: contacts.preferredName,
       company: contacts.company,
+      firstName: contacts.firstName,
+      // Never `profileImageUrl` itself: that column carries base64 up to 120 KB a row when
+      // Blob storage is unconfigured, and a 200-row picker would drag all of it across the
+      // wire only to rewrite it to `/api/avatars/{id}` anyway.
+      avatarUrl: clientAvatarUrlSql.as("avatar_url"),
     })
     .from(contacts)
     .where(and(...conditions))
-    .orderBy(asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id))
+    .orderBy(
+      ...(order === "recent"
+        ? [
+            // Never-spoken-to contacts fall to the back and sort alphabetically among
+            // themselves, so the tail is still browsable rather than arbitrary.
+            sql`${contacts.lastInteractionAt} desc nulls last`,
+            asc(contacts.sortKey),
+          ]
+        : [asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id)])
+    )
     .limit(Math.min(Math.max(limit, 1), 200));
 
   return rows;

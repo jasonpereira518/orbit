@@ -28,6 +28,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "@/lib/toast";
 import { createEvent, enrichEventFromUrl } from "@/actions/events";
 import { UNTITLED_EVENT } from "@/lib/events/types";
+import { friendlyError } from "@/lib/errors";
 
 export function AddEventDialog() {
   const router = useRouter();
@@ -42,16 +43,21 @@ export function AddEventDialog() {
     // it with the page's own title, which is the whole point of pasting a link.
     const name = title.trim() || (url.trim() ? UNTITLED_EVENT : "");
     if (!name) {
-      toast.error("Give the event a name, or paste its link.");
+      toast.error("Give the event a name, or paste its link");
       return;
     }
     start(async () => {
       try {
-        const { id } = await createEvent({
+        const created = await createEvent({
           title: name,
           url: url.trim() || null,
           startsAt: startsAt || null,
         });
+        if (!created.ok) {
+          toast.error(created.error);
+          return;
+        }
+        const { id } = created.value;
         if (url.trim()) {
           // Awaited here (rather than left to the background pass `createEvent` also kicks)
           // so the user lands on a page that already has its title and cover.
@@ -65,7 +71,7 @@ export function AddEventDialog() {
         router.push(`/events/${id}`);
         router.refresh();
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not add that event.");
+        toast.error(friendlyError(error, "Couldn’t add that event — try again?"));
       }
     });
   }

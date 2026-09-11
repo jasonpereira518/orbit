@@ -49,6 +49,7 @@ import type { ConnectSummary, RosterRow } from "@/lib/events/types";
 import { ConnectPreviewDialog, type PreviewRow } from "./connect-preview-dialog";
 import { EditAttendeeDialog } from "./edit-attendee-dialog";
 import { IngestResultCard } from "./ingest-result-card";
+import { friendlyError } from "@/lib/errors";
 
 /** One roster row already recognised as somebody in your network. */
 export type RosterMatch = {
@@ -158,7 +159,7 @@ export function AttendeeRoster({
       try {
         setPreview(await previewConnectAttendees(eventId, actionable));
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not check those people.");
+        toast.error(friendlyError(error, "Couldn’t check those people — try again?"));
       }
     });
   }
@@ -182,12 +183,12 @@ export function AttendeeRoster({
         // Truthful headline: "added N" would be a lie when the plan cap bit part-way.
         toast.success(
           result.created + result.matched === 0
-            ? "No new connections were added."
-            : `${result.created} added, ${result.matched} already in your network.`
+            ? "No new connections to add"
+            : `${result.created} added — ${result.matched} already in your network`
         );
         router.refresh();
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not add those people.");
+        toast.error(friendlyError(error, "Couldn’t add those people — try again?"));
       }
     });
   }
@@ -200,10 +201,10 @@ export function AttendeeRoster({
     start(async () => {
       try {
         await removeSpokenToConnection(eventId, attendeeId);
-        toast.success("Unlinked from this event. The contact is still in your network.");
+        toast.success("Unlinked from this event — they’re still in your network");
         router.refresh();
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not unlink that person.");
+        toast.error(friendlyError(error, "Couldn’t unlink that person — try again?"));
       } finally {
         setBusyRow(null);
       }

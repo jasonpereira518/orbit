@@ -30,6 +30,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
 import { previewResync, resyncEvent } from "@/actions/events";
 import { EditEventDialog, type EditableEvent } from "./edit-event-dialog";
 
@@ -51,12 +52,12 @@ export function EventActions({ event }: { event: EditableEvent }) {
         }
         if (result.changes.length === 0) {
           // Not a failure, and not worth a dialog: the page still says what we already hold.
-          toast.success("Already up to date with the event page.");
+          toast.success("Already up to date with the event page");
           return;
         }
         setChanges(result.changes);
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not read that page.");
+        toast.error(friendlyError(error, "Couldn’t read that page — try again?"));
       }
     });
   }
@@ -67,13 +68,13 @@ export function EventActions({ event }: { event: EditableEvent }) {
         const result = await resyncEvent(event.id);
         setChanges(null);
         if (!result.ok) {
-          toast.error(result.error ?? "Could not refresh from that page.");
+          toast.error(result.error ?? "Couldn’t refresh from that page — try again?");
           return;
         }
-        toast.success("Refreshed from the event page.");
+        toast.success("Refreshed from the event page");
         router.refresh();
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not refresh from that page.");
+        toast.error(friendlyError(error, "Couldn’t refresh from that page — try again?"));
       }
     });
   }

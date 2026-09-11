@@ -6,6 +6,8 @@ import { saveOutreachSettings } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 type OutreachSettingsState = {
   apollo: boolean;
@@ -125,7 +127,7 @@ export function OutreachSettings({
               });
               toast.success("Outreach settings saved");
             } catch (err) {
-              toast.error(err instanceof Error ? err.message : "Failed to save");
+              toast.error(friendlyError(err, TOAST_COPY.saveFailed));
             }
           })
         }
