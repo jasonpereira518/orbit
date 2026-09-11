@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { SELECTABLE_INTERACTION_TYPES } from "@/lib/interaction-types";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { subscribePendingVoiceRecording } from "@/lib/pending-voice-note";
 
 export type CaptureMode = "voice" | "messy" | "structured";
 
@@ -47,6 +48,20 @@ export function CaptureForm({
   const router = useRouter();
   const [mode, setMode] = useState<CaptureMode>(defaultMode);
   const [pending, start] = useTransition();
+
+  // A link to another tab of this same page (`?mode=` changing) is a search-param-only
+  // navigation: the form stays mounted and only its props change. Follow them, so the
+  // phone nav's Capture button lands on Voice even from Messy Notes.
+  const [seededMode, setSeededMode] = useState(defaultMode);
+  if (defaultMode !== seededMode) {
+    setSeededMode(defaultMode);
+    setMode(defaultMode);
+  }
+
+  // A note held-and-recorded from the phone nav is transcribed by the Voice tab's panel,
+  // which only exists on the Voice tab. Switching here is what mounts it; it then picks
+  // the recording up itself (see `src/lib/pending-voice-note.ts`).
+  useEffect(() => subscribePendingVoiceRecording(() => setMode("voice")), []);
 
   const [contactOptions, setContactOptions] = useState<ContactOption[]>(() =>
     initialContactId
@@ -101,7 +116,9 @@ export function CaptureForm({
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <Label className="text-muted-foreground">Logging style</Label>
+        {/* On a phone the tabs sit directly above the mic, and the label is one more row
+            pushing it down. */}
+        <Label className="hidden text-muted-foreground sm:block">Logging style</Label>
         <div
           role="tablist"
           aria-label="Capture mode"
@@ -126,7 +143,14 @@ export function CaptureForm({
             Structured Logging
           </ModeTab>
         </div>
-        <p className="text-sm text-muted-foreground">
+        {/* The Voice blurb is dropped on a phone, where the hint under the mic says what
+            to do in fewer words and the mic keeps its place near the top. */}
+        <p
+          className={cn(
+            "text-sm text-muted-foreground",
+            mode === "voice" && "max-sm:hidden"
+          )}
+        >
           {mode === "voice" &&
             "Just finished a conversation? Say who you met and what you agreed — Orbit transcribes it, pulls out the people, and turns \"ping her in two weeks\" into a reminder."}
           {mode === "messy" &&

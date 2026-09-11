@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
+import { Sparkles } from "lucide-react";
 import { addDays, format } from "date-fns";
 import { toast } from "@/lib/toast";
 import { useCornerClearanceAbove } from "@/lib/corner-clearance";
@@ -21,6 +22,10 @@ import {
 } from "@/lib/capture-limits";
 import { MAX_RECORDING_MS, formatElapsed } from "@/lib/voice-recording";
 import type { VoiceRecording } from "@/lib/use-voice-recorder";
+import {
+  subscribePendingVoiceRecording,
+  takePendingVoiceRecording,
+} from "@/lib/pending-voice-note";
 import { VoiceRecorder } from "@/components/capture/voice-recorder";
 import { getSettings } from "@/actions/settings";
 import type { SaveNoteBatchOutput } from "@/lib/note-batch-save";
@@ -111,11 +116,13 @@ export function BulkNotesPanel({
 }: {
   compact?: boolean;
   /**
-   * Put a microphone above the textarea and let a recording drive the ingest.
+   * The Voice tab: the paste step becomes a microphone and nothing else until something
+   * has been said, then the transcript and one big Extract. No typing box up front —
+   * that is what the Messy Notes tab is for.
    *
    * A flag rather than a separate panel: recording only changes where the text comes
-   * from, and the paste/review/done machine below is identical either way. Forking it
-   * would mean two copies of the parse, the review carousel and the save.
+   * from, and the review/done machine below is identical either way. Forking it would
+   * mean two copies of the parse, the review carousel and the save.
    */
   showRecorder?: boolean;
   preferredContactId?: string | null;
@@ -170,6 +177,8 @@ export function BulkNotesPanel({
   /** Whether to mention a fallback at all — see `ingestPayloads`. */
   const [wisprConfigured, setWisprConfigured] = useState(false);
   const [pending, start] = useTransition();
+  /** Which of `pending`'s two jobs is running, so the Voice tab can name it. */
+  const [extracting, setExtracting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -453,13 +462,129 @@ export function BulkNotesPanel({
     });
   }
 
+  function extractPeople() {
+    setExtracting(true);
+    start(async () => {
+      try {
+        const hints: CaptureParseHints | null =
+          lockedParticipantId && lockedParticipantName
+            ? withLockedSeedPerson(captureHints, lockedParticipantName)
+            : captureHints;
+        const res = await parseBulkCaptureNotes(notes, hints);
+        if (!res.ok) {
+          const missingKey = isMissingAiApiKeyError(res.error);
+          if (missingKey) setHasApiKey(false);
+          toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
+          return;
+        }
+        setSharedNotes(res.sharedNotes || []);
+        const lockedKey =
+          lockedParticipantId && lockedParticipantName
+            ? pickLockedParticipant(
+                res.items.map((item) => ({
+                  key: item.key,
+                  name: item.parsed.name,
+                  duplicateIds: item.duplicates.map((d) => d.id),
+                })),
+                { id: lockedParticipantId, name: lockedParticipantName }
+              )
+            : null;
+        setItems(
+          res.items.map((item) => {
+            const isLocked = lockedKey !== null && item.key === lockedKey;
+            const preferredMatch =
+              preferredContactId &&
+              item.duplicates.some((d) => d.id === preferredContactId)
+                ? preferredContactId
+                : null;
+            return {
+              ...item,
+              decision: "pending" as const,
+              mergeContactId: isLocked
+                ? lockedParticipantId
+                : preferredMatch || item.suggestedMergeId,
+              locked: isLocked,
+              createReminder: Boolean(item.parsed.follow_up_recommendation),
+              relationshipScore: item.parsed.relationship_score_suggestion || 2,
+              tagNames: (item.parsed.tags || []).join(", "),
+              followUpDays: item.parsed.follow_up_days || 14,
+            };
+          })
+        );
+        const found = res.suggestedReminders || [];
+        setSourceText(res.sourceText);
+        setSourceHash(res.sourceHash);
+        setAnchorIso(res.anchorIso);
+        setAnchorBasis(res.anchorBasis);
+        setSkipped(res.suggestionsSkipped || null);
+        setMentions(res.mentions || []);
+        setSuggestions(
+          found.map((s) => ({
+            ...s,
+            // High-confidence items start checked; the user still sees
+            // every one before anything is written.
+            checked: s.confidenceScore >= 60,
+            personNameOverride: null,
+          }))
+        );
+        setReviewIndex(0);
+        setSlideDirection(1);
+        // A note can carry dates but no people — skip the person carousel.
+        setStep(res.items.length ? "review" : "done");
+
+        const peopleLabel = `${res.items.length} ${
+          res.items.length === 1 ? "person" : "people"
+        }`;
+        const dateLabel = found.length
+          ? `, ${found.length} ${found.length === 1 ? "date" : "dates"}`
+          : "";
+        toast.success(`Found ${peopleLabel}${dateLabel}`);
+      } catch (err) {
+        // Only unexpected throws reach here — a missing key comes back as
+        // `res.ok === false` above — so the key message is no longer the
+        // fallback. `friendlyError` still names a genuine missing key.
+        const message = friendlyError(err, TOAST_COPY.notesReadFailed);
+        if (message === MISSING_AI_API_KEY_MESSAGE) setHasApiKey(false);
+        toast.error(message);
+      } finally {
+        setExtracting(false);
+      }
+    });
+  }
+
+  // A note recorded by holding the phone nav's Capture button arrives here, already
+  // finished, and takes the same path as one recorded on this page. Read through a live
+  // ref so the subscription never transcribes against a stale `notes`. Only on the paste
+  // step: one that lands mid-review waits rather than bulldozing the cards on screen.
+  const handleRecordingRef = useRef(handleRecording);
+  useLayoutEffect(() => {
+    handleRecordingRef.current = handleRecording;
+  });
+  useEffect(() => {
+    if (!showRecorder || step !== "paste") return;
+    const consume = () => {
+      const recording = takePendingVoiceRecording();
+      if (recording) handleRecordingRef.current(recording);
+    };
+    consume();
+    return subscribePendingVoiceRecording(consume);
+  }, [showRecorder, step]);
+
+  const onCapReached = () =>
+    toast.info(
+      `Stopped at ${formatElapsed(MAX_RECORDING_MS)} — your recording was kept`
+    );
+  const hasTranscript = notes.trim().length > 0;
+
   return (
     <div className={cn("space-y-4", compact && "space-y-3")}>
       {step === "paste" && (
         <div
           className={cn(
             "space-y-3",
-            !compact && "rounded-2xl border border-border/70 bg-card p-6 space-y-4"
+            !compact && "rounded-2xl border border-border/70 bg-card p-6 space-y-4",
+            // On a phone the Voice tab is the mic, not a card with a mic in it.
+            showRecorder && "max-sm:border-0 max-sm:bg-transparent max-sm:p-0"
           )}
         >
           {!hasApiKey && (
@@ -489,182 +614,141 @@ export function BulkNotesPanel({
               extract and review everyone else.
             </p>
           )}
-          {showRecorder && (
-            <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
-              <VoiceRecorder
-                onRecording={handleRecording}
-                busy={pending}
-                busyLabel="Transcribing…"
-                onCapReached={() =>
-                  toast.info(
-                    `Stopped at ${formatElapsed(MAX_RECORDING_MS)} — your recording was kept`
-                  )
-                }
-              />
-            </div>
+          {showRecorder && !hasTranscript && (
+            <VoiceRecorder
+              onRecording={handleRecording}
+              busy={pending}
+              busyLabel="Transcribing…"
+              onCapReached={onCapReached}
+            />
           )}
-          <div>
-            <Label htmlFor="bulk-notes">
-              {showRecorder ? "Or type it out" : "Paste or upload notes"}
-            </Label>
-            {!compact && (
-              <p className="mt-1 text-sm text-muted-foreground">
-                Drop in notes about one person or many — text, voice, photos,
-                calendar invites, or email forwards. Orbit splits profiles out,
-                keeps shared event/group context attached to each, and you
-                review one card at a time.
-              </p>
-            )}
-            {compact && (
-              <p className="mt-1 text-xs text-muted-foreground">
-                Multi-person notes (text / voice / photo / .ics / .eml) →
-                extract → review → save.
-              </p>
-            )}
-            <Textarea
-              id="bulk-notes"
-              className={cn("mt-2", compact ? "min-h-[140px]" : "min-h-[220px]")}
-              placeholder={
-                compact
-                  ? `Met Sarah Chen at AWS Summit — Codex partnerships at OpenAI...\n\nMarcus Lee (Stripe) offered an intro...`
-                  : `AWS Summit afterparty — talked with a few people over drinks about AI tooling.\n\nMet Sarah Chen — she leads Codex partnerships at OpenAI...\n\nAlso caught up with Marcus Lee (Stripe, recruiting). He offered an intro to their AI infra team...\n\nQuick note on Priya Nair from the same night — still at Notion, exploring agent workflows.`
-              }
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-            />
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              ref={fileRef}
-              type="file"
-              multiple
-              accept={CAPTURE_FILE_ACCEPT}
-              className="hidden"
-              onChange={(e) => {
-                handleFilesSelected(e.target.files);
-                e.target.value = "";
-              }}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size={compact ? "sm" : "default"}
-              disabled={pending}
-              onClick={() => fileRef.current?.click()}
-            >
-              Upload notes / media
-            </Button>
-            {fileName && (
-              <span className="truncate text-xs text-muted-foreground">
-                {fileName}
-              </span>
-            )}
-            {ingestSources.length > 0 && (
-              <span className="truncate text-xs text-muted-foreground">
-                via {ingestSources.join(", ")}
-              </span>
-            )}
-          </div>
-
-          <Button
-            disabled={pending || !notes.trim() || !hasApiKey}
-            size={compact ? "sm" : "default"}
-            className="w-full bg-primary text-primary-foreground hover:bg-primary/90 sm:w-auto"
-            onClick={() =>
-              start(async () => {
-                try {
-                  const hints: CaptureParseHints | null =
-                    lockedParticipantId && lockedParticipantName
-                      ? withLockedSeedPerson(captureHints, lockedParticipantName)
-                      : captureHints;
-                  const res = await parseBulkCaptureNotes(notes, hints);
-                  if (!res.ok) {
-                    const missingKey = isMissingAiApiKeyError(res.error);
-                    if (missingKey) setHasApiKey(false);
-                    toast.error(
-                      missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error
-                    );
-                    return;
+          {showRecorder && hasTranscript && (
+            <>
+              <div>
+                <div className="flex items-baseline justify-between gap-2">
+                  <Label htmlFor="bulk-notes">Transcript</Label>
+                  {fileName && (
+                    <span className="truncate text-xs text-muted-foreground">
+                      {fileName}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Fix any names Orbit misheard, then extract.
+                </p>
+                <Textarea
+                  id="bulk-notes"
+                  className="mt-2 min-h-[180px]"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                />
+              </div>
+              <Button
+                disabled={pending || !hasApiKey}
+                className="h-14 w-full gap-2 rounded-xl bg-primary text-base text-primary-foreground hover:bg-primary/90"
+                onClick={extractPeople}
+              >
+                <Sparkles className="size-5" aria-hidden />
+                {extracting ? "Extracting…" : "Extract people"}
+              </Button>
+              <div className="flex items-center justify-between gap-3">
+                {/* New audio is transcribed after what is already here — the server
+                    joins the two with a divider — so "add more" never loses the first
+                    take. */}
+                <VoiceRecorder
+                  size="compact"
+                  onRecording={handleRecording}
+                  busy={pending}
+                  busyLabel={extracting ? "Extracting people…" : "Transcribing…"}
+                  onCapReached={onCapReached}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="shrink-0 text-muted-foreground"
+                  disabled={pending}
+                  onClick={resetToPaste}
+                >
+                  Start over
+                </Button>
+              </div>
+            </>
+          )}
+          {!showRecorder && (
+            <>
+              <div>
+                <Label htmlFor="bulk-notes">Paste or upload notes</Label>
+                {!compact && (
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Drop in notes about one person or many — text, voice, photos,
+                    calendar invites, or email forwards. Orbit splits profiles out,
+                    keeps shared event/group context attached to each, and you
+                    review one card at a time.
+                  </p>
+                )}
+                {compact && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Multi-person notes (text / voice / photo / .ics / .eml) →
+                    extract → review → save.
+                  </p>
+                )}
+                <Textarea
+                  id="bulk-notes"
+                  className={cn("mt-2", compact ? "min-h-[140px]" : "min-h-[220px]")}
+                  placeholder={
+                    compact
+                      ? `Met Sarah Chen at AWS Summit — Codex partnerships at OpenAI...\n\nMarcus Lee (Stripe) offered an intro...`
+                      : `AWS Summit afterparty — talked with a few people over drinks about AI tooling.\n\nMet Sarah Chen — she leads Codex partnerships at OpenAI...\n\nAlso caught up with Marcus Lee (Stripe, recruiting). He offered an intro to their AI infra team...\n\nQuick note on Priya Nair from the same night — still at Notion, exploring agent workflows.`
                   }
-                  setSharedNotes(res.sharedNotes || []);
-                  const lockedKey =
-                    lockedParticipantId && lockedParticipantName
-                      ? pickLockedParticipant(
-                          res.items.map((item) => ({
-                            key: item.key,
-                            name: item.parsed.name,
-                            duplicateIds: item.duplicates.map((d) => d.id),
-                          })),
-                          { id: lockedParticipantId, name: lockedParticipantName }
-                        )
-                      : null;
-                  setItems(
-                    res.items.map((item) => {
-                      const isLocked = lockedKey !== null && item.key === lockedKey;
-                      const preferredMatch =
-                        preferredContactId &&
-                        item.duplicates.some((d) => d.id === preferredContactId)
-                          ? preferredContactId
-                          : null;
-                      return {
-                        ...item,
-                        decision: "pending" as const,
-                        mergeContactId: isLocked
-                          ? lockedParticipantId
-                          : preferredMatch || item.suggestedMergeId,
-                        locked: isLocked,
-                        createReminder: Boolean(
-                          item.parsed.follow_up_recommendation
-                        ),
-                        relationshipScore:
-                          item.parsed.relationship_score_suggestion || 2,
-                        tagNames: (item.parsed.tags || []).join(", "),
-                        followUpDays: item.parsed.follow_up_days || 14,
-                      };
-                    })
-                  );
-                  const found = res.suggestedReminders || [];
-                  setSourceText(res.sourceText);
-                  setSourceHash(res.sourceHash);
-                  setAnchorIso(res.anchorIso);
-                  setAnchorBasis(res.anchorBasis);
-                  setSkipped(res.suggestionsSkipped || null);
-                  setMentions(res.mentions || []);
-                  setSuggestions(
-                    found.map((s) => ({
-                      ...s,
-                      // High-confidence items start checked; the user still sees
-                      // every one before anything is written.
-                      checked: s.confidenceScore >= 60,
-                      personNameOverride: null,
-                    }))
-                  );
-                  setReviewIndex(0);
-                  setSlideDirection(1);
-                  // A note can carry dates but no people — skip the person carousel.
-                  setStep(res.items.length ? "review" : "done");
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                />
+              </div>
 
-                  const peopleLabel = `${res.items.length} ${
-                    res.items.length === 1 ? "person" : "people"
-                  }`;
-                  const dateLabel = found.length
-                    ? `, ${found.length} ${found.length === 1 ? "date" : "dates"}`
-                    : "";
-                  toast.success(`Found ${peopleLabel}${dateLabel}`);
-                } catch (err) {
-                  // Only unexpected throws reach here — a missing key comes back as
-                  // `res.ok === false` above — so the key message is no longer the
-                  // fallback. `friendlyError` still names a genuine missing key.
-                  const message = friendlyError(err, TOAST_COPY.notesReadFailed);
-                  if (message === MISSING_AI_API_KEY_MESSAGE) setHasApiKey(false);
-                  toast.error(message);
-                }
-              })
-            }
-          >
-            {pending ? "Parsing…" : "Extract people"}
-          </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  ref={fileRef}
+                  type="file"
+                  multiple
+                  accept={CAPTURE_FILE_ACCEPT}
+                  className="hidden"
+                  onChange={(e) => {
+                    handleFilesSelected(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size={compact ? "sm" : "default"}
+                  disabled={pending}
+                  onClick={() => fileRef.current?.click()}
+                >
+                  Upload notes / media
+                </Button>
+                {fileName && (
+                  <span className="truncate text-xs text-muted-foreground">
+                    {fileName}
+                  </span>
+                )}
+                {ingestSources.length > 0 && (
+                  <span className="truncate text-xs text-muted-foreground">
+                    via {ingestSources.join(", ")}
+                  </span>
+                )}
+              </div>
+
+              <Button
+                disabled={pending || !notes.trim() || !hasApiKey}
+                size={compact ? "sm" : "default"}
+                className="w-full bg-primary text-primary-foreground hover:bg-primary/90 sm:w-auto"
+                onClick={extractPeople}
+              >
+                {pending ? "Parsing…" : "Extract people"}
+              </Button>
+            </>
+          )}
         </div>
       )}
 
