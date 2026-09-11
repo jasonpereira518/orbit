@@ -17,6 +17,7 @@ import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit
 import { fetchEventPage, EventPageError } from "@/lib/events/fetch-page";
 import { canonicalizeEventUrl } from "@/lib/events/canonical-url";
 import { enrichEvent } from "@/lib/events/enrich";
+import { IcsFeedGoneError, syncIcsFeed } from "@/lib/events/discovery/from-ics-feed";
 import {
   combineResolutions,
   dismissEventForUser,
@@ -57,7 +58,12 @@ import {
 } from "@/lib/events/connections";
 import { buildEventbriteAuthUrl, eventbriteOAuthConfig } from "@/lib/events/connectors/eventbrite-oauth";
 import { listCalendarEvents } from "@/lib/events/connectors/luma";
-import type { AttendeeRole, ConnectSummary, RosterRow } from "@/lib/events/types";
+import type {
+  AttendeeRole,
+  ConnectSummary,
+  EventConnectionProvider,
+  RosterRow,
+} from "@/lib/events/types";
 import type { EventRecord } from "@/db/schema";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 
@@ -555,6 +561,57 @@ export async function connectLuma(apiKey: string): Promise<{ ok: boolean; error?
   return { ok: true };
 }
 
+/**
+ * Connect a personal Luma or Partiful calendar feed.
+ *
+ * The most valuable connection in the feature and the cheapest to make: no OAuth app, no paid
+ * plan, no scraping — the user pastes the "subscribe to my calendar" link their platform
+ * already offers, and every event they register for from then on appears on its own.
+ *
+ * Validated by fetching it once before it is stored, for the same reason `connectLuma` makes
+ * a live call: a link that does not resolve is a link that will fail silently in a background
+ * job three hours from now, and the user is standing right here able to fix it.
+ *
+ * The URL is a secret — it lists everything its holder has registered for — so it is stored
+ * encrypted and never echoed back with its query string intact.
+ */
+export async function connectEventFeed(
+  provider: "luma_ics" | "partiful_ics",
+  feedUrl: string
+): Promise<{ ok: boolean; error?: string; found?: number }> {
+  const userId = await requireSyncUser();
+  const raw = feedUrl.trim();
+  if (!raw) return { ok: false, error: "Paste your calendar link first" };
+
+  // `webcal:` is what these platforms hand out for a one-click subscribe, and it is https
+  // underneath. Rewriting it here means the user can paste exactly what they copied.
+  const normalized = raw.replace(/^webcal:\/\//i, "https://");
+  if (!/^https:\/\//i.test(normalized)) {
+    return { ok: false, error: "That link needs to start with https:// or webcal://" };
+  }
+
+  try {
+    // Fetching the feed IS the validation, and it is not wasted work: whatever it holds is
+    // recorded now, so the user sees their events immediately rather than in fifteen minutes.
+    const stats = await syncIcsFeed(userId, normalized, provider);
+    await upsertEventConnection(userId, {
+      provider,
+      authKind: "ics",
+      secret: normalized,
+      label: provider === "luma_ics" ? "Luma calendar feed" : "Partiful calendar feed",
+    });
+    revalidateEvents();
+    return { ok: true, found: stats.created + stats.attached };
+  } catch (error) {
+    if (error instanceof IcsFeedGoneError) return { ok: false, error: error.message };
+    if (error instanceof EventPageError) {
+      // `net-guard` and the fetcher both produce user-facing messages already.
+      return { ok: false, error: error.message };
+    }
+    return { ok: false, error: "That calendar link couldn’t be read — check it and try again?" };
+  }
+}
+
 export async function startEventbriteOAuth(): Promise<{ url: string }> {
   const userId = await requireSyncUser();
   const config = eventbriteOAuthConfig();
@@ -586,7 +643,9 @@ export async function consumeEventbriteOAuthState(state: string | null): Promise
   return userId;
 }
 
-export async function disconnectEventProvider(provider: "luma" | "eventbrite"): Promise<void> {
+export async function disconnectEventProvider(
+  provider: EventConnectionProvider
+): Promise<void> {
   const userId = await requireSyncUser();
   await deleteEventConnection(userId, provider);
   revalidateEvents();

@@ -26,7 +26,10 @@ import {
   backoffMs,
 } from "@/lib/provider-connections";
 import type { EventProviderSyncCursor } from "@/db/schema";
-import type { EventProviderId } from "@/lib/events/types";
+import type {
+  EventConnectionAuthKind,
+  EventConnectionProvider,
+} from "@/lib/events/types";
 
 /** Matches the Gmail/Outlook cadence. The GitHub Actions cron runs every 15 minutes anyway. */
 export const EVENT_SYNC_INTERVAL_MS = 30 * 60 * 1000;
@@ -34,8 +37,8 @@ export const EVENT_SYNC_INTERVAL_MS = 30 * 60 * 1000;
 export type ClaimedEventConnection = {
   id: string;
   userId: string;
-  provider: EventProviderId;
-  authKind: "api_key" | "oauth";
+  provider: EventConnectionProvider;
+  authKind: EventConnectionAuthKind;
   accountRef: string | null;
   /** Already decrypted. Null means the row is unusable and the caller must flag reauth. */
   secret: string | null;
@@ -46,8 +49,8 @@ export type ClaimedEventConnection = {
 type ClaimRow = {
   id: string;
   user_id: string;
-  provider: EventProviderId;
-  auth_kind: "api_key" | "oauth";
+  provider: EventConnectionProvider;
+  auth_kind: EventConnectionAuthKind;
   account_ref: string | null;
   api_key_encrypted: string | null;
   access_token_encrypted: string | null;
@@ -207,7 +210,7 @@ export async function markNeedsReauth(id: string, error: string): Promise<void> 
 
 export type EventConnectionSummary = {
   id: string;
-  provider: EventProviderId;
+  provider: EventConnectionProvider;
   label: string | null;
   status: "active" | "needs_reauth";
   lastSyncedAt: Date | null;
@@ -218,7 +221,7 @@ export async function listEventConnections(userId: string): Promise<EventConnect
   const db = await getDb();
   const rows = rowsOf<{
     id: string;
-    provider: EventProviderId;
+    provider: EventConnectionProvider;
     label: string | null;
     status: "active" | "needs_reauth";
     last_synced_at: string | Date | null;
@@ -251,8 +254,8 @@ export async function listEventConnections(userId: string): Promise<EventConnect
 export async function upsertEventConnection(
   userId: string,
   input: {
-    provider: EventProviderId;
-    authKind: "api_key" | "oauth";
+    provider: EventConnectionProvider;
+    authKind: EventConnectionAuthKind;
     secret: string;
     refreshToken?: string | null;
     tokenExpiresAt?: Date | null;
@@ -298,7 +301,7 @@ export async function upsertEventConnection(
 /** Disconnecting deletes the row — the same rule the Gmail/Outlook tables follow. */
 export async function deleteEventConnection(
   userId: string,
-  provider: EventProviderId
+  provider: EventConnectionProvider
 ): Promise<void> {
   const db = await getDb();
   await db.execute(sql`

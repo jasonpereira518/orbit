@@ -27,6 +27,7 @@ import {
 } from "../src/lib/events/discovery/aliases";
 import { createEventForUser, listEventsForUser, listRosterForUser } from "../src/lib/events/store";
 import { claimDueEnrichments, markEnrichResult } from "../src/lib/events/enrich-queue";
+import { IcsFeedGoneError, syncIcsFeed } from "../src/lib/events/discovery/from-ics-feed";
 import type { DiscoveryCandidate } from "../src/lib/events/discovery/types";
 
 const USER = "event-discovery-smoke-user";
@@ -261,6 +262,64 @@ run(async () => {
     await dismissEventForUser(USER, event!.id);
     const claimed = await claimDueEnrichments(5);
     check("it is not in the queue", claimed.every((c) => c.id !== event!.id));
+  }
+
+  console.log("\na personal calendar feed");
+  {
+    // The most valuable connection in the feature: no API, no paid plan, no scraping — just
+    // the "subscribe to my calendar" link every one of these platforms already hands out.
+    const feed = `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:evt-feed1@lu.ma
+SUMMARY:Founders Brunch
+DTSTART:20260801T170000Z
+URL:https://lu.ma/e/evt-feedOne
+END:VEVENT
+BEGIN:VEVENT
+UID:evt-feed2@lu.ma
+SUMMARY:Design Systems Night
+DTSTART:20260815T010000Z
+URL:https://lu.ma/e/evt-feedTwo
+STATUS:CANCELLED
+END:VEVENT
+END:VCALENDAR`;
+    const served = (body: string, status = 200) =>
+      ({
+        fetch: (async () =>
+          new Response(status === 200 ? body : null, {
+            status,
+            headers: status === 200 ? { "content-type": "text/calendar" } : {},
+          })) as unknown as typeof fetch,
+      });
+
+    const before = await eventCount();
+    const stats = await syncIcsFeed(USER, "https://api.lu.ma/ics/get?u=secret", "luma_ics", served(feed));
+    check("both events are created", stats.created === 2, JSON.stringify(stats));
+    check("and exist", (await eventCount()) === before + 2);
+
+    const rows = await listEventsForUser(USER);
+    const brunch = rows.find((e) => e.title === "Founders Brunch");
+    check("badged as coming from the Luma feed", brunch?.discoveredVia === "luma_ics", String(brunch?.discoveredVia));
+    const cancelled = rows.find((e) => e.title === "Design Systems Night");
+    // Still worth keeping: the user may have met people at whatever replaced it, and
+    // "cancelled" is the honest label either way.
+    check("a cancelled event is kept and labelled", cancelled?.rsvpStatus === "cancelled", String(cancelled?.rsvpStatus));
+
+    // The feed is polled every half hour, forever. Re-reading it must be a no-op.
+    const again = await syncIcsFeed(USER, "https://api.lu.ma/ics/get?u=secret", "luma_ics", served(feed));
+    check("re-reading the feed creates nothing", again.created === 0, JSON.stringify(again));
+    check("and the count holds", (await eventCount()) === before + 2);
+
+    // Regenerating the link is how these platforms revoke one.
+    let gone: unknown = null;
+    try {
+      await syncIcsFeed(USER, "https://api.lu.ma/ics/get?u=stale", "luma_ics", served("", 404));
+    } catch (error) {
+      gone = error;
+    }
+    check("a revoked feed URL is not a transient failure", gone instanceof IcsFeedGoneError, String(gone));
+
+    check("and the feed created no contacts either", (await contactCount()) === 0);
   }
 
   console.log("\nand after all of that");

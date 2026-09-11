@@ -3137,14 +3137,29 @@ export const eventProviderConnections = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     userId: text("user_id").notNull(),
-    provider: text("provider").$type<"luma" | "eventbrite">().notNull(),
+    /**
+     * Which SOURCE this row connects to, not merely which company.
+     *
+     * `luma` is a host API key; `luma_ics` is the user's personal feed of everything they
+     * registered for. Same platform, different data, and a user can have both — which is why
+     * they are separate values under the `(user_id, provider)` unique index rather than one
+     * row with a mode flag.
+     */
+    provider: text("provider")
+      .$type<"luma" | "eventbrite" | "luma_ics" | "partiful_ics" | "gmail">()
+      .notNull(),
     /**
      * Luma authenticates with a user-supplied API key scoped to one calendar; Eventbrite
      * uses OAuth. One table with a discriminator rather than two near-identical ones —
      * unlike Gmail/Outlook, these two genuinely differ in their credential shape, so the
      * difference is worth naming instead of hiding behind duplicate columns.
+     *
+     * `ics` is a secret URL and nothing else. `google_grant` stores no secret at all: the
+     * row's existence IS the opt-in, and the token comes from `gmail_connections`.
      */
-    authKind: text("auth_kind").$type<"api_key" | "oauth">().notNull(),
+    authKind: text("auth_kind")
+      .$type<"api_key" | "oauth" | "ics" | "google_grant">()
+      .notNull(),
     /** Calendar or organisation name, shown so the user can tell two connections apart. */
     label: text("label"),
     /** Luma calendar api id / Eventbrite organization_id. */

@@ -41,6 +41,8 @@ import {
   listOrganizationEvents,
 } from "@/lib/events/connectors/eventbrite";
 import { upsertProviderEvent, upsertProviderAttendees } from "@/lib/events/provider-writes";
+import { IcsFeedGoneError, syncIcsFeed } from "@/lib/events/discovery/from-ics-feed";
+import type { FetchPageDeps } from "@/lib/events/guarded-fetch";
 import type { ProviderAttendee, ProviderEvent, ProviderPage } from "@/lib/events/types";
 
 /** Matches `CONNECTIONS_PER_RUN` in the calendar scheduler. */
@@ -74,7 +76,31 @@ async function drain<T>(
   return items;
 }
 
-async function syncOne(
+/**
+ * A personal calendar feed: everything the user registered for, hosted or not.
+ *
+ * The counterpart to `syncHostApi` below, and the more valuable half for most people — a host
+ * API can only ever see the events you RUN. Feeds create and update events and never touch a
+ * roster, because an iCal feed carries no guests.
+ */
+async function syncFeed(
+  conn: ClaimedEventConnection,
+  stats: EventSyncStats,
+  deps?: FetchPageDeps
+): Promise<void> {
+  if (!conn.secret) {
+    await markNeedsReauth(conn.id, "That calendar link could not be read. Reconnect to fix.");
+    stats.failed++;
+    return;
+  }
+
+  const discovered = await syncIcsFeed(conn.userId, conn.secret, conn.provider, deps);
+  stats.eventsUpserted += discovered.created + discovered.attached;
+  await markEventSyncResult(conn.id, { ok: true, cursor: null });
+  stats.synced++;
+}
+
+async function syncHostApi(
   conn: ClaimedEventConnection,
   stats: EventSyncStats,
   passDeadline: number
@@ -89,6 +115,7 @@ async function syncOne(
 
   // One connection may have a minute, but never more of it than the pass itself has left.
   const deadline = Math.min(deadlineAfter(PER_CONNECTION_BUDGET_MS), passDeadline);
+  const provider = conn.provider === "luma" ? "luma" : "eventbrite";
   const events: ProviderEvent[] =
     conn.provider === "luma"
       ? await drain((c) => listCalendarEvents(conn.secret!, c), deadline)
@@ -102,7 +129,7 @@ async function syncOne(
     // Everything a provider API can reach is an event the user HOSTS — neither Luma nor
     // Eventbrite exposes guest lists for events you merely attended. Marking the row honestly
     // is what lets the UI explain why some events have rosters and others need a paste.
-    const eventId = await upsertProviderEvent(conn.userId, conn.provider, event);
+    const eventId = await upsertProviderEvent(conn.userId, provider, event);
     stats.eventsUpserted++;
 
     const attendees: ProviderAttendee[] =
@@ -117,7 +144,7 @@ async function syncOne(
       conn.userId,
       eventId,
       attendees,
-      conn.provider
+      provider
     );
   }
 
@@ -127,7 +154,11 @@ async function syncOne(
 
 export async function runEventSyncPass(
   now: Date = new Date(),
-  options: { deadline?: number } = {}
+  options: {
+    deadline?: number;
+    /** How a calendar feed is fetched. Injectable so a test never reaches the network. */
+    feedDeps?: FetchPageDeps;
+  } = {}
 ): Promise<EventSyncStats> {
   const stats: EventSyncStats = {
     claimed: 0,
@@ -151,13 +182,25 @@ export async function runEventSyncPass(
     // done, where its lease has to expire before anyone touches it again.
     if (deadlineReached(passDeadline)) break;
     try {
-      await syncOne(conn, stats, passDeadline);
+      // Dispatch on HOW this connection authenticates, not on which company it points at:
+      // `luma` is a host API key and `luma_ics` a personal feed, and they share nothing but
+      // a brand. `gmail` is handled in its own pass — see `from-gmail.ts`.
+      if (conn.authKind === "ics") await syncFeed(conn, stats, options.feedDeps);
+      else if (conn.authKind === "api_key" || conn.authKind === "oauth") {
+        await syncHostApi(conn, stats, passDeadline);
+      }
     } catch (error) {
       stats.failed++;
       // An auth failure is a consent problem, not a transport one. Walking it up the backoff
       // ladder would keep retrying a credential that will never work again while telling the
       // user nothing; flagging it puts a "reconnect" prompt in front of them instead.
-      if (error instanceof LumaAuthError || error instanceof EventbriteAuthError) {
+      // A feed URL that 404s has been revoked — regenerating the link is how these platforms
+      // revoke one. Same class as a dead token: retrying it every half hour says nothing.
+      if (
+        error instanceof LumaAuthError ||
+        error instanceof EventbriteAuthError ||
+        error instanceof IcsFeedGoneError
+      ) {
         await markNeedsReauth(conn.id, (error as Error).message).catch(() => {});
         continue;
       }

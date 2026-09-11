@@ -339,7 +339,10 @@ export async function runSyncPass(
   // contact without a human saying so — and is safe to cut short and resume next run.
   if (!deadlineReached(deadline)) {
     try {
-      const eventStats = await runEventSyncPass(now, { deadline });
+      const eventStats = await runEventSyncPass(now, {
+        deadline,
+        feedDeps: deps.eventPageFetch ? { fetch: deps.eventPageFetch } : undefined,
+      });
       stats.eventConnectionsClaimed = eventStats.claimed;
       stats.eventConnectionsSynced = eventStats.synced;
       stats.eventConnectionsFailed = eventStats.failed;

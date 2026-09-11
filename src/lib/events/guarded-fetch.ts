@@ -114,9 +114,16 @@ async function readCapped(res: Response, maxBytes: number): Promise<string> {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
+      // The chunk is trimmed to what is left of the budget BEFORE being appended. Checking
+      // the total afterwards bounds nothing when the whole body arrives as one chunk — which
+      // is precisely the shape a hostile server would send, and the case the cap exists for.
+      const room = maxBytes - total;
+      if (value.byteLength >= room) {
+        out += decoder.decode(value.subarray(0, room));
+        break;
+      }
       total += value.byteLength;
       out += decoder.decode(value, { stream: true });
-      if (total >= maxBytes) break;
     }
   } finally {
     await reader.cancel().catch(() => {});
