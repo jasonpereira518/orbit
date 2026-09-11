@@ -103,6 +103,9 @@ export async function upsertProviderAttendees(
       title: a.title,
       linkedinUrl: a.linkedinUrl,
       xHandle: a.xHandle,
+      // Both connectors compute this (luma.ts, eventbrite.ts) and it used to be dropped
+      // right here, so every row landed with a NULL role.
+      attendeeRole: a.attendeeRole ?? null,
       identityKey,
     });
   }
