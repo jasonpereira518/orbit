@@ -152,7 +152,6 @@ export function ContactAvatarPreview({
                 contactId={contact.id}
                 firstName={contact.firstName}
                 fullName={contact.fullName}
-                linkedinUrl={contact.linkedinUrl}
                 profileImageUrl={contact.profileImageUrl}
                 size="lg"
                 className="size-14 max-h-14 max-w-14 shrink-0"

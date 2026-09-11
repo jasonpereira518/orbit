@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import Papa from "papaparse";
@@ -1177,4 +1177,102 @@ export async function confirmContactsFileImport(
   revalidatePath("/imports");
 
   return { importId: importRow.id, totalRows: selectedIndexes.length };
+}
+
+export type GooglePhotoMatchResult = {
+  connected: boolean;
+  contactsScopeGranted: boolean;
+  /** Contacts that gained a photo. */
+  matched: number;
+  /** Contacts still without one after the pass. */
+  remaining: number;
+};
+
+/**
+ * Fill missing contact photos from Google Contacts.
+ *
+ * Google People photos already flow in at import time, but only for the people you
+ * select in that wizard — contacts added any other way never get matched, even when
+ * Google has a picture of them. This is that pass, over the contacts you already have.
+ *
+ * Matching is EXACT ON EMAIL, deliberately. The fuzzy duplicate matcher used by the
+ * import wizard is fine when a human is confirming each row, but here nobody is
+ * looking: putting the wrong face on a contact is a worse outcome than leaving the
+ * silhouette, and is invisible until someone notices a stranger in their list.
+ *
+ * The remote Google URL is what gets stored; the avatar backfill caches it durably on
+ * its next tick, the same as any other remote photo.
+ */
+export async function matchGooglePhotos(): Promise<GooglePhotoMatchResult> {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const conn = await db.query.gmailConnections.findFirst({
+    where: and(
+      eq(gmailConnections.userId, userId),
+      eq(gmailConnections.status, "active")
+    ),
+  });
+  if (!conn) {
+    return { connected: false, contactsScopeGranted: false, matched: 0, remaining: 0 };
+  }
+  if (!hasContactsScope(conn.scopes)) {
+    return { connected: true, contactsScopeGranted: false, matched: 0, remaining: 0 };
+  }
+
+  const accessToken = await getValidAccessToken(userId);
+  const googleContacts = await fetchGooglePeopleContacts(accessToken);
+
+  // One lookup table keyed by lowercased email, so the pass is O(people + contacts)
+  // rather than running the duplicate matcher for every pair.
+  const photoByEmail = new Map<string, string>();
+  for (const person of googleContacts) {
+    const email = person.email?.trim().toLowerCase();
+    const photo = person.photoUrl?.trim();
+    if (!email || !photo) continue;
+    if (!photoByEmail.has(email)) photoByEmail.set(email, photo);
+  }
+
+  const needPhoto = await db
+    .select({ id: contacts.id, email: contacts.email })
+    .from(contacts)
+    .where(
+      and(
+        eq(contacts.userId, userId),
+        sql`${contacts.email} IS NOT NULL AND btrim(${contacts.email}) <> ''`,
+        // Same "nothing usable stored" test the backfill uses.
+        sql`(${contacts.profileImageUrl} IS NULL
+             OR btrim(${contacts.profileImageUrl}) = ''
+             OR ${contacts.profileImageUrl} LIKE '%unavatar.io%'
+             OR ${contacts.profileImageUrl} LIKE '%static.licdn.com/aero%')`
+      )
+    );
+
+  let matched = 0;
+  for (const row of needPhoto) {
+    const photo = photoByEmail.get(row.email!.trim().toLowerCase());
+    if (!photo) continue;
+    await db
+      .update(contacts)
+      .set({
+        profileImageUrl: photo,
+        // A photo found here clears any cooldown the backfill set, so it caches promptly.
+        profileImageCheckedAt: null,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(contacts.id, row.id), eq(contacts.userId, userId)));
+    matched += 1;
+  }
+
+  if (matched > 0) {
+    revalidatePath("/contacts");
+    revalidatePath("/graph");
+  }
+
+  return {
+    connected: true,
+    contactsScopeGranted: true,
+    matched,
+    remaining: needPhoto.length - matched,
+  };
 }

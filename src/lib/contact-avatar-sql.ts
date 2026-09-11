@@ -20,3 +20,43 @@ export const clientAvatarUrlSql = sql<string | null>`CASE
     OR ${contacts.profileImageUrl} LIKE '%static.licdn.com/aero%' THEN NULL
   ELSE btrim(${contacts.profileImageUrl})
 END`;
+
+/**
+ * The columns the contacts list selects.
+ *
+ * Exported so `scripts/smoke-page-budgets.ts` can run the real projection and assert the
+ * base64 column never leaves Postgres. `listContactsPage` itself calls `requireUserId()`,
+ * so a smoke cannot invoke it directly — and an unguarded hot query is exactly how the
+ * bare-column regression got in, on the one scan that matters most.
+ */
+export const contactsListSelection = {
+  id: contacts.id,
+  fullName: contacts.fullName,
+  firstName: contacts.firstName,
+  lastName: contacts.lastName,
+  preferredName: contacts.preferredName,
+  title: contacts.title,
+  company: contacts.company,
+  school: contacts.school,
+  location: contacts.location,
+  linkedinUrl: contacts.linkedinUrl,
+  profileImageUrl: clientAvatarUrlSql,
+  /**
+   * Whether `/api/avatars/{id}` has any source to try for this contact.
+   *
+   * Computed in SQL so the list can opt a row into on-demand resolution without the
+   * payload carrying the email address itself — the list has no other use for it.
+   */
+  canResolveAvatar: sql<boolean>`(
+    (${contacts.linkedinUrl} IS NOT NULL AND btrim(${contacts.linkedinUrl}) <> '')
+    OR (${contacts.email} IS NOT NULL AND btrim(${contacts.email}) <> '')
+  )`,
+  relationshipScore: contacts.relationshipScore,
+  closeness: contacts.closeness,
+  closenessTier: contacts.closenessTier,
+  priorityLevel: contacts.priorityLevel,
+  nextFollowUpAt: contacts.nextFollowUpAt,
+  lastInteractionAt: contacts.lastInteractionAt,
+  sortKey: contacts.sortKey,
+  updatedAt: contacts.updatedAt,
+};
