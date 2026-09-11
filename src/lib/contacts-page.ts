@@ -38,6 +38,8 @@ export type ContactListRow = {
   location: string | null;
   linkedinUrl: string | null;
   profileImageUrl: string | null;
+  /** True when the avatar route has a LinkedIn URL or email it could still resolve from. */
+  canResolveAvatar: boolean;
   relationshipScore: number;
   /** 0–1, matching what the UI renders. Stored as a 0–100 integer so it can be indexed. */
   closeness: number;
@@ -60,4 +62,11 @@ export type ContactPickerOption = {
   fullName: string;
   preferredName: string | null;
   company: string | null;
+  /** For the gendered fallback illustration when there is no photo. */
+  firstName: string | null;
+  /**
+   * Already browser-safe — `clientAvatarUrlSql` decides this in Postgres so a picker never
+   * selects `profile_image_url`, which holds up to 120 KB of base64 per contact.
+   */
+  avatarUrl: string | null;
 };

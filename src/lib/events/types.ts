@@ -21,10 +21,38 @@
  * error naming neither file.
  */
 
+/**
+ * The stand-in title used when someone adds an event by link alone.
+ *
+ * It is a real stored value (`events.title` is NOT NULL), but it is NOT a choice the user
+ * made, and enrichment has to be able to tell those apart — otherwise the placeholder wins
+ * over the title fetched from the page and the event stays "Untitled event" forever.
+ */
+export const UNTITLED_EVENT = "Untitled event";
+
+/**
+ * Which title an enriched event should end up with.
+ *
+ * The rule is "the user's own typing beats anything scraped" — they were there, the page is a
+ * marketing asset. The subtlety is that `UNTITLED_EVENT` is not typing: it is what
+ * `createEvent` stores when someone adds an event by pasting a link and nothing else. Counting
+ * it as a real choice made the page's title lose to a placeholder, so every added-by-link
+ * event stayed "Untitled event" — which defeats the reason for pasting a link at all.
+ */
+export function resolveEventTitle(
+  existingTitle: string | null | undefined,
+  fetchedTitle: string | null | undefined
+): string {
+  const existing = existingTitle?.trim();
+  if (existing && existing !== UNTITLED_EVENT) return existing;
+  return fetchedTitle?.trim() || UNTITLED_EVENT;
+}
+
 export type EventProviderId = "luma" | "eventbrite";
 export type EventRole = "attended" | "hosted";
 export type EventSource = "manual" | "page" | EventProviderId;
-export type AttendeeSource = "paste" | "csv" | "screenshot" | EventProviderId;
+/** `page` is a speaker read from the event page's `performer` — never a guest list. */
+export type AttendeeSource = "paste" | "csv" | "screenshot" | "page" | EventProviderId;
 export type AttendeeRole = "attendee" | "host" | "speaker";
 
 /** One event as a provider reports it. Producers map to this; nothing else touches their JSON. */

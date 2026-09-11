@@ -1,6 +1,7 @@
 import { parseIcsEvents } from "@/lib/calendar-import";
 import {
   transcribeAudioWithAI,
+  type TranscriptionEngine,
   transcribeImagesWithAI,
   type CaptureParseHints,
 } from "@/lib/ai";
@@ -17,6 +18,14 @@ export type NormalizedCaptureInput = {
   hints: CaptureParseHints;
   /** Human-readable labels of what was ingested (for UI). */
   sources: string[];
+  /**
+   * Which engine transcribed the audio, when there was any.
+   *
+   * Carried out to the UI so a silent downgrade stays visible: a user who configured Wispr
+   * and quietly got Whisper because their key was rejected would otherwise see only
+   * worse-spelled names and no reason. Absent when nothing was transcribed.
+   */
+  transcriptionEngine?: TranscriptionEngine;
 };
 
 const MAX_IMAGES = 8;
@@ -392,16 +401,21 @@ export async function normalizeCaptureInput(
     }
   }
 
+  let transcriptionEngine: TranscriptionEngine | undefined;
   for (const audio of audios) {
-    const text = await transcribeAudioWithAI(userId, {
+    const result = await transcribeAudioWithAI(userId, {
       mimeType: audio.mimeType.startsWith("audio/")
         ? audio.mimeType
         : "audio/webm",
       base64: audio.base64,
       filename: audio.filename,
     });
-    if (text.trim()) {
-      chunks.push(text.trim());
+    // Last one wins across multiple files. They share a settings snapshot, so they only
+    // ever disagree if a key started failing mid-batch — in which case the later, degraded
+    // answer is the one worth reporting.
+    transcriptionEngine = result.engine;
+    if (result.text.trim()) {
+      chunks.push(result.text.trim());
       sources.push(`voice:${audio.filename}`);
     }
   }
@@ -415,5 +429,6 @@ export async function normalizeCaptureInput(
     text,
     hints,
     sources: sources.length ? sources : ["text"],
+    ...(transcriptionEngine ? { transcriptionEngine } : {}),
   };
 }

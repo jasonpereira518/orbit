@@ -110,7 +110,14 @@ export function PeopleListShell({
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="min-w-0 flex-1">
+        {/*
+          A floor on the title block, not `min-w-0`. With a zero minimum the row never
+          wraps: the title just gives up width to the actions, and at tablet widths it
+          was squeezed to ~150px — "800 people in your network" broke across two lines
+          beside a row of buttons that had room to move. With a 16rem floor, flex-wrap
+          sends the actions to their own line before the title gives anything up.
+        */}
+        <div className="min-w-64 flex-1">
           <motion.h1
             key={title}
             initial={{ opacity: 0, y: 6 }}

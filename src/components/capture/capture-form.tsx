@@ -18,7 +18,7 @@ import { SELECTABLE_INTERACTION_TYPES } from "@/lib/interaction-types";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
-type CaptureMode = "messy" | "structured";
+export type CaptureMode = "voice" | "messy" | "structured";
 
 type ContactOption = {
   id: string;
@@ -108,6 +108,12 @@ export function CaptureForm({
           className="inline-flex w-full rounded-lg bg-muted p-[3px] sm:w-auto"
         >
           <ModeTab
+            active={mode === "voice"}
+            onClick={() => setMode("voice")}
+          >
+            Voice
+          </ModeTab>
+          <ModeTab
             active={mode === "messy"}
             onClick={() => setMode("messy")}
           >
@@ -121,14 +127,21 @@ export function CaptureForm({
           </ModeTab>
         </div>
         <p className="text-sm text-muted-foreground">
-          {mode === "messy"
-            ? "Paste notes about one person or many — AI extracts each profile, keeps shared event context, and you review before saving."
-            : "Fill in the fields yourself for a clean interaction log on a contact."}
+          {mode === "voice" &&
+            "Just finished a conversation? Say who you met and what you agreed — Orbit transcribes it, pulls out the people, and turns \"ping her in two weeks\" into a reminder."}
+          {mode === "messy" &&
+            "Paste notes about one person or many — AI extracts each profile, keeps shared event context, and you review before saving."}
+          {mode === "structured" &&
+            "Fill in the fields yourself for a clean interaction log on a contact."}
         </p>
       </div>
 
-      {mode === "messy" && (
+      {(mode === "voice" || mode === "messy") && (
         <BulkNotesPanel
+          // Remounting on mode change is deliberate: carrying a half-reviewed parse across
+          // a tab switch would leave the user looking at cards they can no longer explain.
+          key={mode}
+          showRecorder={mode === "voice"}
           preferredContactId={initialContactId}
           preferredContactName={initialContactName}
           hasApiKey={hasApiKey}

@@ -5,12 +5,26 @@
  * OpenGraph, Partiful gives little more than a title) so that when one of them reshuffles
  * their markup, a failing assertion says so rather than events quietly arriving blank.
  *
- * The load-bearing negative: `parseEventPage` returns no attendee field at all. Guest lists
- * are never scraped, and a test that asserts the shape is what keeps a future edit from
- * "helpfully" adding one.
+ * ## The load-bearing negative, narrowed on purpose
+ *
+ * This file used to assert that `parseEventPage` returned NO people at all. That rule has been
+ * deliberately narrowed to: only `performer` — the line-up a host published to advertise their
+ * own event — and never a guest list.
+ *
+ * The narrowing is recorded here rather than done silently because the original assertion was
+ * the guard, and deleting a guard should cost a paragraph. What still holds, and what the
+ * checks below enforce, is the part that actually protects people: nothing reads RSVPs,
+ * "who's going" widgets, guest counts, or ticket holders. A speaker is the host talking about
+ * their own event; an attendee is someone who never agreed to be in a stranger's CRM.
  */
 import { parseEventPage } from "../src/lib/events/parse-page";
-import { parseRosterCsv, parseRosterText, MAX_ROSTER_ROWS } from "../src/lib/events/parse-roster";
+import { resolveEventTitle } from "../src/lib/events/types";
+import {
+  parseRosterCsv,
+  parseRosterText,
+  speakersToAttendees,
+  MAX_ROSTER_ROWS,
+} from "../src/lib/events/parse-roster";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -29,6 +43,11 @@ const LUMA = `<!doctype html><html><head>
 {"@context":"https://schema.org","@type":"Event","name":"AI Tinkerers SF",
  "startDate":"2026-03-04T18:00:00-08:00","endDate":"2026-03-04T21:00:00-08:00",
  "location":{"@type":"Place","name":"Shack15","address":{"@type":"PostalAddress","addressLocality":"San Francisco"}},
+ "organizer":{"@type":"Organization","name":"AI Tinkerers","url":"/org/ai-tinkerers"},
+ "eventAttendanceMode":"https://schema.org/OfflineEventAttendanceMode",
+ "performer":[{"@type":"Person","name":"Ada Lovelace","url":"https://www.linkedin.com/in/ada"},
+              {"@type":"Person","name":"Grace Hopper","url":"https://grace.example.com"},
+              {"@type":"Person","name":"Ada Lovelace"}],
  "image":"https://images.lu.ma/logo-small.png"}
 </script></head><body>...</body></html>`;
 
@@ -37,6 +56,27 @@ const EVENTBRITE = `<!doctype html><html><head>
 <meta property="og:image" content="https://img.evbuc.com/hero.jpg">
 <meta property="og:url" content="https://www.eventbrite.com/e/founder-mixer-123">
 </head><body></body></html>`;
+
+/** A host that published a wall-clock time and no offset — the common, ambiguous case. */
+const FLOATING_TIME = `<!doctype html><html><head>
+<script type="application/ld+json">
+{"@type":"Event","name":"Floating","startDate":"2026-03-04T18:00:00"}
+</script></head><body></body></html>`;
+
+const ONLINE = `<!doctype html><html><head>
+<script type="application/ld+json">
+{"@type":"Event","name":"Remote Standup","startDate":"2026-03-04T18:00:00Z",
+ "eventAttendanceMode":"OnlineEventAttendanceMode","organizer":"Solo Organiser"}
+</script></head><body></body></html>`;
+
+/** The shape that must NOT produce people: a guest list, however it is dressed up. */
+const GUEST_LIST = `<!doctype html><html><head>
+<script type="application/ld+json">
+{"@type":"Event","name":"Mixer","startDate":"2026-03-04T18:00:00Z",
+ "attendee":[{"@type":"Person","name":"Should Not Appear"}],
+ "attendees":[{"@type":"Person","name":"Nor This"}],
+ "maximumAttendeeCapacity":300}
+</script></head><body></body></html>`;
 
 const PARTIFUL = `<!doctype html><html><head><title>Rooftop Thing</title></head><body></body></html>`;
 
@@ -68,7 +108,52 @@ function main() {
     // og:image wins over JSON-LD image: the former is the host's chosen share graphic,
     // the latter is routinely a logo.
     check("og:image beats ld image", d.imageUrl === "https://images.lu.ma/cover.png", String(d.imageUrl));
-    check("NO attendee field is exposed", !("attendees" in d) && !("guests" in d));
+    check("organizer name", d.organizerName === "AI Tinkerers", String(d.organizerName));
+    // Hosts write organizer URLs relative more often than you would hope.
+    check(
+      "organizer url is absolutised",
+      d.organizerUrl === "https://lu.ma/org/ai-tinkerers",
+      String(d.organizerUrl)
+    );
+    check("attendance mode from a schema.org URL", d.attendanceMode === "offline", String(d.attendanceMode));
+    check("the published offset is kept", d.timezone === "-08:00", String(d.timezone));
+    check("speakers are read", d.speakers.length === 2, String(d.speakers.length));
+    check(
+      "a repeated speaker collapses",
+      d.speakers.filter((x) => x.name === "Ada Lovelace").length === 1
+    );
+    check("speaker url is kept", d.speakers[0]?.url?.includes("/in/ada") === true);
+  }
+
+  console.log("\nthe line drawn at speakers");
+  {
+    const d = parseEventPage(GUEST_LIST, "https://example.com/e");
+    // The narrowing was to `performer` ONLY. A guest list must stay invisible however the
+    // host spells it, and no attendee-shaped field may exist on the result at all.
+    check("no attendee/guest field is exposed", !("attendees" in d) && !("guests" in d) && !("attendee" in d));
+    check("schema.org `attendee` produces no speakers", d.speakers.length === 0, String(d.speakers.length));
+    check("capacity is not read", !("maximumAttendeeCapacity" in d) && !("capacity" in d));
+  }
+
+  console.log("\ntime zones");
+  {
+    const d = parseEventPage(FLOATING_TIME, "https://example.com/e");
+    // The bug: `new Date("...T18:00:00")` reads as the RUNTIME's zone, so this assertion
+    // used to pass in New York and fail on Vercel. Parsing as UTC makes it machine-independent.
+    check(
+      "an offset-less time parses identically everywhere",
+      d.startsAt?.toISOString() === "2026-03-04T18:00:00.000Z",
+      String(d.startsAt)
+    );
+    check("and is reported as zone-less rather than certain", d.timezone === null, String(d.timezone));
+    check("which is recorded", d.warnings.includes("no-timezone"));
+  }
+  {
+    const d = parseEventPage(ONLINE, "https://example.com/e");
+    check("a bare enum name is understood", d.attendanceMode === "online", String(d.attendanceMode));
+    check("Z is a stated zone", d.timezone === "Z", String(d.timezone));
+    check("no no-timezone warning when stated", !d.warnings.includes("no-timezone"));
+    check("a string organizer works", d.organizerName === "Solo Organiser", String(d.organizerName));
   }
 
   console.log("\nEventbrite-shaped page (OpenGraph only)");
@@ -157,6 +242,43 @@ function main() {
     const rows = Array.from({ length: MAX_ROSTER_ROWS + 50 }, (_, i) => `Person ${i} <p${i}@x.io>`);
     const r = parseRosterText(rows.join("\n"));
     check("the row cap holds", r.attendees.length === MAX_ROSTER_ROWS, String(r.attendees.length));
+  }
+
+  console.log("\ntitle resolution");
+  {
+    // The regression: `createEvent` stores UNTITLED_EVENT when you add an event by pasting a
+    // link alone. Enrichment then ran "existing title wins", the placeholder was truthy, and
+    // the title fetched from the page lost to it — so pasting a link produced an event
+    // permanently called "Untitled event".
+    check("the placeholder loses to a fetched title", resolveEventTitle("Untitled event", "Founder Mixer") === "Founder Mixer");
+    check("a real typed title still wins", resolveEventTitle("My Own Name", "Founder Mixer") === "My Own Name");
+    check("a blank falls through to the page", resolveEventTitle(null, "Founder Mixer") === "Founder Mixer");
+    check("whitespace counts as blank", resolveEventTitle("   ", "Founder Mixer") === "Founder Mixer");
+    check("both missing falls back to the placeholder", resolveEventTitle(null, null) === "Untitled event");
+    check("an unreadable page does not erase a typed title", resolveEventTitle("My Own Name", null) === "My Own Name");
+  }
+
+  console.log("\nspeakers as roster rows");
+  {
+    const rows = speakersToAttendees([
+      { name: "Ada Lovelace", url: "https://www.linkedin.com/in/ada" },
+      { name: "Katherine J", url: "https://x.com/@katherinej" },
+      { name: "Grace Hopper", url: "https://grace.example.com" },
+      { name: "Grace Hopper", url: null },
+      { name: "Broken", url: "not a url" },
+    ]);
+    check("every speaker becomes a row", rows.length === 4, String(rows.length));
+    check("all are marked as speakers", rows.every((r) => r.attendeeRole === "speaker"));
+    check("a LinkedIn url is claimed", rows[0]?.linkedinUrl?.includes("/in/ada") === true);
+    check("and keys on it", rows[0]?.identityKey === "li:https://www.linkedin.com/in/ada", String(rows[0]?.identityKey));
+    check("an X url becomes a handle", rows[1]?.xHandle === "katherinej", String(rows[1]?.xHandle));
+    // A personal homepage has no column that means "homepage"; dropping it beats filing it
+    // under `linkedinUrl`, where every later consumer would read it as a LinkedIn profile.
+    check("a homepage is dropped, not mis-filed", rows[2]?.linkedinUrl === null && rows[2]?.xHandle === null);
+    check("and falls back to a name key", rows[2]?.identityKey === "nm:grace hopper", String(rows[2]?.identityKey));
+    check("the same name twice collapses", rows.filter((r) => r.fullName === "Grace Hopper").length === 1);
+    check("a malformed url costs the link, not the speaker", rows[3]?.fullName === "Broken", String(rows[3]?.fullName));
+    check("no email is invented", rows.every((r) => r.email === null));
   }
 
   if (failures > 0) {
