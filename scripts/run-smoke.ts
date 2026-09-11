@@ -42,6 +42,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-retrieval": "pure",
   "smoke-chat-stream": "pure",
   "smoke-chat-suggestions": "pure",
+  "smoke-clerk-free-site": "pure",
+  "smoke-clerk-session-hint": "pure",
   "smoke-closeness": "pure",
   "smoke-event-canonical-url": "pure",
   "smoke-event-connectors": "pure",
@@ -82,6 +84,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-public-routes": "pure",
   "smoke-recruiter-scan": "pure",
   "smoke-relative-date": "pure",
+  "smoke-reveal-reduced-motion": "pure",
   "smoke-scan-image": "pure",
   "smoke-scale-schema": "pure", // own in-memory PGlite
   "smoke-schema-ddl": "pure",
