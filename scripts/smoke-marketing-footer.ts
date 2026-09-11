@@ -26,8 +26,8 @@ function code(file: string): string {
 
 const PAGES = [
   "src/components/landing/landing-scenes.tsx",
-  "src/app/(marketing)/pricing/page.tsx",
-  "src/app/(marketing)/interest/page.tsx",
+  "src/app/(clerk)/(marketing)/pricing/page.tsx",
+  "src/app/(site)/interest/page.tsx",
 ];
 
 function main() {
