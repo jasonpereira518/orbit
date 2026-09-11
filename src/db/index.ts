@@ -472,6 +472,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   role text NOT NULL,
   content text NOT NULL,
   recommendations jsonb,
+  attached_contacts jsonb DEFAULT '[]',
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages(thread_id);
@@ -1085,15 +1086,25 @@ CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expir
  * duplicates being created), contact_merges (a merged contact archived whole, so the
  * loser's row can be deleted rather than flagged), duplicate_suggestions (name-tier
  * matches, which no longer auto-merge).
- * v34 = capture_handoffs: the phone-to-desktop scanning handoff. Written as 33 and moved
- * when duplicate prevention landed first with it — by the v21 rule, reusing 33 would
- * have left the table uncreated on every database #148 had already stamped.
+ * v34 = chat_messages.attached_contacts: the people attached to a chat question (#141).
+ * v35 = the last-interaction index the chat composer's person pickers order on (#141).
+ * v38 = capture_handoffs: the phone-to-desktop scanning handoff (#143). Written as 33,
+ * then 34, and moved each time another branch landed first with that number. It skips
+ * 36 and 37 instead of taking the next free integer. #146's pre-merge preview builds
+ * stamped 36 onto the production database with different DDL, and 37 is #146's own
+ * claim. A number some database may already hold is the one choice that silently skips
+ * this table, so the next free integer was not free.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
  * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
  */
-export const SCHEMA_VERSION = 34;
+// Pick a number above anything ANY branch has claimed and anything a database may already
+// be stamped with, not just one above main. A repeated version is the one real failure
+// mode this counter has. The alters are all `IF NOT EXISTS` and merge harmlessly, but a
+// collision means one branch's DDL never runs. The changelog above says which numbers are
+// taken and why 36 and 37 are skipped.
+export const SCHEMA_VERSION = 38;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1196,6 +1207,10 @@ export const SCALE_DDL: string[] = [
   // the same way, so the index has to be declared that way to serve it.
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_idx ON contacts(user_id, closeness DESC, id DESC)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
+  // For the composer's pickers, which open on "who have I actually spoken to lately"
+  // rather than whoever is alphabetically first. `updated_at` is the wrong column for
+  // that — editing a contact is not talking to them.
+  `CREATE INDEX IF NOT EXISTS contacts_user_last_interaction_idx ON contacts(user_id, last_interaction_at DESC NULLS LAST)`,
   `CREATE INDEX IF NOT EXISTS contacts_search_gin ON contacts USING gin(search_tsv)`,
   `CREATE INDEX IF NOT EXISTS contacts_slug_idx ON contacts(linkedin_slug) WHERE linkedin_slug IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS contacts_user_email_idx ON contacts(user_id, email) WHERE email IS NOT NULL`,
@@ -2132,6 +2147,7 @@ const alters = [
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS ai_summary text`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS companies_mentioned jsonb DEFAULT '[]'`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS roles_discussed jsonb DEFAULT '[]'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attached_contacts jsonb DEFAULT '[]'`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS first_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS last_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email_count integer NOT NULL DEFAULT 0`,

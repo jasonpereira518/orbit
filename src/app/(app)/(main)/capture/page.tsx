@@ -2,6 +2,7 @@ import { getContact } from "@/actions/contacts";
 import { getPlanOverview, getSettings } from "@/actions/settings";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import { CaptureFormLazy } from "@/components/capture/capture-form-lazy";
+import { UnresolvedMentionsCard } from "@/components/capture/unresolved-mentions-card";
 
 export default async function CapturePage({
   searchParams,
@@ -44,6 +45,9 @@ export default async function CapturePage({
             : "Paste notes about one person or many, review each profile, then save."}
         </p>
       </div>
+      {/* Only on the general capture page: when you arrived to log an interaction with one
+          named person, a list of other people is a distraction from the thing you came for. */}
+      {!contactId && <UnresolvedMentionsCard />}
       {/* Capture creates contacts, so the same cap applies. Logging an interaction with
           an existing contact is never blocked — only creating new people is. */}
       {!contactId && (
