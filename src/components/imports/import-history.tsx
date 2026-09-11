@@ -2,6 +2,7 @@
 
 import { formatDistanceToNow } from "date-fns";
 import {
+  BookUser,
   Calendar as CalendarIcon,
   FileSpreadsheet,
   MessageSquare,
@@ -12,6 +13,10 @@ import { Badge } from "@/components/ui/badge";
 const SOURCE_META: Record<string, { icon: LucideIcon; badge: string }> = {
   linkedin_connections: {
     icon: FileSpreadsheet,
+    badge: "bg-import-connections/10 text-import-connections",
+  },
+  contacts_file: {
+    icon: BookUser,
     badge: "bg-import-connections/10 text-import-connections",
   },
   linkedin_messages: {

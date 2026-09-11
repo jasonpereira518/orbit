@@ -20,7 +20,7 @@ export const metadata: Metadata = {
     "What Orbit collects, who it shares data with, and how to export or delete everything in your account.",
 };
 
-const LAST_UPDATED = "August 12, 2026";
+const LAST_UPDATED = "September 11, 2026";
 
 const HIGHLIGHTS: readonly Highlight[] = [
   {
@@ -77,7 +77,7 @@ const PROCESSORS = [
   {
     name: "Vercel",
     badge: "Required",
-    body: "Hosting and file storage for the app, including uploaded or fetched contact avatars.",
+    body: "Hosting and file storage for the app, including uploaded or fetched contact avatars and the photos you attach to a capture.",
   },
   {
     name: "Stripe",
@@ -160,7 +160,11 @@ export default function PrivacyPage() {
               LinkedIn URL, website, notes, tags, closeness scores, follow-up
               dates and similar fields), interaction logs, goals, reminders,
               chat threads, calendar events, synced mail metadata, outreach
-              campaigns and messages, and import metadata.
+              campaigns and messages, and import metadata. When you capture
+              notes, Orbit keeps the text and any photos you upload with it, so
+              you can look back at the original. Photos are resized and stripped
+              of their metadata (including location) before they are stored.
+              Voice recordings are transcribed and not kept.
             </li>
             <li>
               <strong>Secrets you provide</strong> — the API keys you supply for

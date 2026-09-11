@@ -10,7 +10,7 @@
  */
 import { and, eq, inArray, or } from "drizzle-orm";
 import { getDb } from "@/db";
-import { actionItems, contacts, interactionMentions, noteBatches, reminders, type NoteBatchResult, type ReminderActionKind } from "@/db/schema";
+import { actionItems, contacts, interactionMentions, noteBatches, reminders, type CaptureSourceKind, type NoteBatchResult, type ReminderActionKind } from "@/db/schema";
 import type { ParsedNote } from "@/lib/ai";
 import type { DatedCommitment } from "@/lib/date-commitment-extract";
 import type { MentionMatchedBy } from "@/lib/mention-resolution";
@@ -61,6 +61,8 @@ export type SaveNoteBatchInput = {
   commitments: NoteBatchCommitmentInput[];
   mentions?: NoteBatchMentionInput[];
   skipped: { relative: number; unverifiable: number; past: number };
+  /** How the notes arrived — see `noteBatches.inputSources`. Defaults to none recorded. */
+  inputSources?: CaptureSourceKind[];
 };
 
 export type SaveNoteBatchOutput = {
@@ -114,6 +116,7 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
       anchorBasis: input.anchorBasis,
       status: "saved",
       result,
+      inputSources: input.inputSources ?? [],
     })
     .returning();
   const batchId = batch.id;

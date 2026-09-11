@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
+import { X } from "lucide-react";
 import { addDays, format } from "date-fns";
 import { toast } from "@/lib/toast";
 import { useCornerClearanceAbove } from "@/lib/corner-clearance";
@@ -15,6 +16,7 @@ import {
   type SuggestedReminderPreview,
 } from "@/actions/capture";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
+import { capturePhotoSrc } from "@/components/capture/capture-source-meta";
 import {
   CAPTURE_MAX_UPLOAD_BYTES,
   formatUploadSize,
@@ -142,6 +144,13 @@ export function BulkNotesPanel({
     null
   );
   const [ingestSources, setIngestSources] = useState<string[]>([]);
+  /**
+   * Every way text has come into this capture so far, across uploads — `ingestSources`
+   * only describes the latest one. Saved with the batch for the history's icons.
+   */
+  const [captureSources, setCaptureSources] = useState<string[]>([]);
+  /** Photos kept by `ingestCaptureMedia`, claimed for the capture on save. */
+  const [photoIds, setPhotoIds] = useState<string[]>([]);
   const [step, setStep] = useState<"paste" | "review" | "done">("paste");
   // The review card's Accept row sits where the toast stack lands, and
   // `Found N people` fires in the same commit that renders the card. Lift the
@@ -219,6 +228,8 @@ export function BulkNotesPanel({
     setFileName(null);
     setCaptureHints(null);
     setIngestSources([]);
+    setCaptureSources([]);
+    setPhotoIds([]);
     setItems([]);
     setSharedNotes([]);
     setReviewIndex(0);
@@ -305,6 +316,10 @@ export function BulkNotesPanel({
           })),
           mentions,
           skipped: skipped ?? { relative: 0, unverifiable: 0, past: 0 },
+          photoIds,
+          // Typing after an upload adds to the text without an ingest, so "text" is only
+          // implied when nothing was uploaded — the server fills that default in.
+          sources: captureSources,
         });
         // The profile entry point's default path gets its own toast below (a link to
         // the fuller capture results, not a raw count) — every other path shares this
@@ -403,8 +418,26 @@ export function BulkNotesPanel({
     setNotes(res.text);
     setCaptureHints(res.hints || null);
     setIngestSources(res.sources || []);
+    // Every ingest re-sends the textarea, so after the first one a bare "text" label means
+    // "the previous transcript came back", not "the person typed" — only the first counts.
+    setCaptureSources((prev) => [
+      ...new Set([
+        ...prev,
+        ...(res.sources || []).filter((s) => !(prev.length && s === "text")),
+      ]),
+    ]);
+    setPhotoIds((prev) => [...prev, ...res.photos.map((p) => p.id)]);
     setFileName(label);
     toast.success(successMessage);
+    // Said once, and only when it happened: the text was still read, so this is about
+    // what the capture history will be able to show later, not about this capture.
+    if (res.photosNotKept > 0) {
+      toast.info(
+        res.photosNotKept === 1
+          ? "Read the photo, but couldn’t keep a copy for your history"
+          : `Read ${res.photosNotKept} photos, but couldn’t keep copies for your history`
+      );
+    }
 
     // A silent downgrade is the failure mode worth naming. Someone who configured Wispr
     // and got Whisper — because the key was rejected, or the service was down — would
@@ -566,6 +599,37 @@ export function BulkNotesPanel({
               </span>
             )}
           </div>
+
+          {photoIds.length > 0 && (
+            <div className="space-y-1.5">
+              <ul className="flex flex-wrap gap-2" aria-label="Photos kept with this capture">
+                {photoIds.map((id, index) => (
+                  <li key={id} className="relative">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- served by an
+                        auth-gated API route, not a remote origin next/image can optimise. */}
+                    <img
+                      src={capturePhotoSrc(id)}
+                      alt={`Photo ${index + 1}`}
+                      className="size-14 rounded-lg border border-border/60 object-cover"
+                    />
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => setPhotoIds((prev) => prev.filter((p) => p !== id))}
+                      className="absolute -top-1.5 -right-1.5 flex size-5 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-sm hover:text-foreground"
+                      aria-label={`Don’t keep photo ${index + 1}`}
+                    >
+                      <X className="size-3" aria-hidden />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-muted-foreground">
+                Kept with this capture so you can look back at them. Remove any you
+                don&apos;t want saved — the text already read from them stays above.
+              </p>
+            </div>
+          )}
 
           <Button
             disabled={pending || !notes.trim() || !hasApiKey}

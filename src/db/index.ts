@@ -236,11 +236,29 @@ CREATE TABLE IF NOT EXISTS note_batches (
   anchor_basis text NOT NULL DEFAULT 'upload',
   status text NOT NULL DEFAULT 'saved',
   result jsonb NOT NULL,
+  input_sources jsonb NOT NULL DEFAULT '[]',
   created_at timestamptz NOT NULL DEFAULT now(),
   undone_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS note_batches_user_created_idx ON note_batches(user_id, created_at);
 CREATE INDEX IF NOT EXISTS note_batches_user_source_idx ON note_batches(user_id, source_hash);
+CREATE TABLE IF NOT EXISTS capture_photos (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  note_batch_id uuid REFERENCES note_batches(id) ON DELETE CASCADE,
+  position integer NOT NULL DEFAULT 0,
+  file_name text,
+  storage text NOT NULL,
+  blob_url text,
+  inline_data text,
+  content_type text NOT NULL,
+  byte_size integer NOT NULL,
+  width integer,
+  height integer,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS capture_photos_batch_idx ON capture_photos(note_batch_id, position);
+CREATE INDEX IF NOT EXISTS capture_photos_user_created_idx ON capture_photos(user_id, created_at);
 CREATE TABLE IF NOT EXISTS interaction_mentions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1098,7 +1116,10 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
 // events. Built as 33, moved to 34 when #148 took 33, and moved again here because while it
 // waited 34-36 landed on main and 37 and 38 were claimed by open branches. Every step was
 // the same rule — a shared number means one branch's DDL silently never runs.
-export const SCHEMA_VERSION = 39;
+//
+// 40 is capture history: the capture_photos table and note_batches.input_sources. 37 and
+// 38 are still claimed by open branches, so this skips past them rather than risk sharing.
+export const SCHEMA_VERSION = 40;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -1334,6 +1355,13 @@ export const SCALE_DDL: string[] = [
   `CREATE INDEX IF NOT EXISTS duplicate_suggestions_pending_idx
      ON duplicate_suggestions(user_id, confidence DESC)
      WHERE status = 'pending'`,
+
+  // --- Capture history ---------------------------------------------------------------
+  //
+  // How a capture's notes arrived (typed, voice, photos...), for the history list's icons.
+  // Here rather than only in the CREATE TABLE above, which never adds a column to a
+  // note_batches table that already exists.
+  `ALTER TABLE note_batches ADD COLUMN IF NOT EXISTS input_sources jsonb NOT NULL DEFAULT '[]'`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */

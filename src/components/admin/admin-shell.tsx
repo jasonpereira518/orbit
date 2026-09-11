@@ -12,10 +12,10 @@ import { cn } from "@/lib/utils";
  * The operator console's frame.
  *
  * Deliberately NOT `AppShell`. That component mounts AvatarBackfill, ImportJobWatcher,
- * DueNotificationsWatcher, GlobalJobProgressBar and the ⌘K FloatingAskBar — all of which
- * read or mutate *Jason's own* data. A progress bar for his import, or an ask-bar that
- * answers questions about his network, on a page rendering someone else's account, is a
- * mis-attribution bug waiting to happen.
+ * DueNotificationsWatcher, GlobalJobProgressBar, the ⌘J FloatingAskBar and the ⌘K command
+ * palette — all of which read or mutate *Jason's own* data. A progress bar for his import,
+ * or an ask-bar that answers questions about his network, on a page rendering someone
+ * else's account, is a mis-attribution bug waiting to happen.
  *
  * Visual language: same Orbit tokens, inverted type logic. Fraunces appears on the page
  * h1 and nowhere else — every number is sans-serif `tabular-nums`, because proportional

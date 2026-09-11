@@ -26,10 +26,22 @@ import {
   type SharedNoteContext,
 } from "@/lib/ai";
 import {
+  captureImageFiles,
   normalizeCaptureInput,
   normalizePastedCaptureText,
   type CaptureMediaFile,
 } from "@/lib/capture-ingest";
+import {
+  attachCapturePhotos,
+  discardCapturePhotos,
+  storeCapturePhotos,
+  type StoredCapturePhoto,
+} from "@/lib/capture-photos";
+import {
+  CAPTURE_HISTORY_PAGE,
+  listCaptureHistoryFor,
+  type CaptureHistoryPage,
+} from "@/lib/capture-history";
 import {
   CAPTURE_MAX_UPLOAD_BYTES,
   formatUploadSize,
@@ -41,7 +53,7 @@ import {
 import { friendlyError } from "@/lib/errors";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { resolveMentions, type MentionCandidate } from "@/lib/mention-resolution";
-import type { PreviewMention } from "@/lib/note-batches";
+import { captureSourceKinds, type PreviewMention } from "@/lib/note-batches";
 import {
   saveNoteBatch,
   type NoteBatchCommitmentInput,
@@ -142,7 +154,11 @@ function mergeTopics(
 
 /**
  * Ingest voice / photos / calendar / email into normalized capture text.
- * Media is processed ephemerally and not stored.
+ *
+ * Audio, calendar and email files are read and dropped. Photos are also kept — shrunk,
+ * stripped of metadata, and unattached until a save claims them — so the capture history
+ * can show the original next to what was pulled out of it (see `src/lib/capture-photos.ts`).
+ * The ids come back as `photos`; the panel hands them to `confirmBulkCapture`.
  */
 export async function ingestCaptureMedia(input: {
   text?: string;
@@ -172,10 +188,32 @@ export async function ingestCaptureMedia(input: {
       };
     }
 
-    const normalized = await normalizeCaptureInput(userId, {
-      text: input.text,
-      files: input.files,
-    });
+    // Kept alongside the transcription rather than after it: re-encoding and uploading eight
+    // photos is seconds of work that has no reason to queue behind a model call. Settled,
+    // not raced, so a transcription failure can still find and discard what was stored.
+    const images = captureImageFiles(input.files);
+    const [normalizedResult, storedResult] = await Promise.allSettled([
+      normalizeCaptureInput(userId, {
+        text: input.text,
+        files: input.files,
+      }),
+      storeCapturePhotos(
+        userId,
+        images.map((img) => ({ filename: img.filename, base64: img.base64 }))
+      ),
+    ]);
+    const photos: StoredCapturePhoto[] =
+      storedResult.status === "fulfilled" ? storedResult.value : [];
+    if (normalizedResult.status === "rejected") {
+      // No text means nothing can be saved to claim these, so do not leave them for the
+      // prune to find tomorrow.
+      await discardCapturePhotos(
+        userId,
+        photos.map((p) => p.id)
+      ).catch(() => {});
+      throw normalizedResult.reason;
+    }
+    const normalized = normalizedResult.value;
 
     return {
       ok: true as const,
@@ -183,6 +221,9 @@ export async function ingestCaptureMedia(input: {
       hints: normalized.hints,
       sources: normalized.sources,
       transcriptionEngine: normalized.transcriptionEngine ?? null,
+      photos,
+      /** Photos that were read but could not be kept, so the panel can say so. */
+      photosNotKept: Math.max(0, images.length - photos.length),
     };
   } catch (err) {
     // Data, not a throw — so never stripped in production. See `friendlyError`.
@@ -402,6 +443,10 @@ export async function confirmBulkCapture(
     commitments: NoteBatchCommitmentInput[];
     mentions?: NoteBatchMentionInput[];
     skipped: RejectedCounts;
+    /** Ids `ingestCaptureMedia` returned for this capture's photos. */
+    photoIds?: string[];
+    /** `ingestCaptureMedia`'s `sources` labels, for the history's icons. */
+    sources?: string[];
   }
 ) {
   const userId = await requireUserId();
@@ -422,7 +467,17 @@ export async function confirmBulkCapture(
     commitments: batch.commitments,
     mentions: batch.mentions ?? [],
     skipped: batch.skipped,
+    inputSources: captureSourceKinds([
+      ...(batch.sources ?? []),
+      ...(batch.photoIds?.length ? ["photos"] : []),
+    ]),
   });
+
+  // After the save, not inside it: a photo is a record of where the notes came from, and a
+  // failure to claim one must not roll back contacts and reminders the person just reviewed.
+  if (batch.photoIds?.length) {
+    await attachCapturePhotos(userId, out.batchId, batch.photoIds).catch(() => 0);
+  }
 
   // The lib skipped embeddings and summaries (it must run outside a request scope for the
   // smoke suite); this is the request scope, so schedule them here.
@@ -453,4 +508,16 @@ export async function confirmBulkCapture(
 export async function listUnresolvedMentions(): Promise<UnresolvedMention[]> {
   const userId = await requireUserId();
   return listUnresolvedMentionsFor(userId);
+}
+
+/**
+ * One page of the capture history, newest first. `cursor` is the previous page's
+ * `nextCursor`; omit it for the first page.
+ */
+export async function listCaptureHistory(
+  cursor?: string | null,
+  limit: number = CAPTURE_HISTORY_PAGE
+): Promise<CaptureHistoryPage> {
+  const userId = await requireUserId();
+  return listCaptureHistoryFor(userId, { cursor, limit });
 }

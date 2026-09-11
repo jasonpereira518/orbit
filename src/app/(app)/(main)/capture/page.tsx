@@ -1,7 +1,12 @@
+import { Suspense } from "react";
 import { getContact } from "@/actions/contacts";
 import { getPlanOverview, getSettings } from "@/actions/settings";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import { CaptureFormLazy } from "@/components/capture/capture-form-lazy";
+import {
+  CaptureHistory,
+  CaptureHistorySkeleton,
+} from "@/components/capture/capture-history";
 import { UnresolvedMentionsCard } from "@/components/capture/unresolved-mentions-card";
 
 export default async function CapturePage({
@@ -61,6 +66,13 @@ export default async function CapturePage({
         defaultMode={defaultMode}
         hasApiKey={settings.hasApiKey}
       />
+      {/* Hidden when logging with one named person, for the same reason the mentions card
+          is: the page is doing one specific thing, and a feed of past captures is not it. */}
+      {!contactId && (
+        <Suspense fallback={<CaptureHistorySkeleton />}>
+          <CaptureHistory />
+        </Suspense>
+      )}
     </div>
   );
 }

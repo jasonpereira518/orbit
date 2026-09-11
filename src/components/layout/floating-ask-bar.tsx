@@ -17,7 +17,7 @@ import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { ArrowUp, Loader2, RotateCcw, Search, Sparkles, X } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
-import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
+import { OPEN_ASK_BAR_EVENT, type OpenAskBarDetail } from "@/lib/ask-bar-events";
 import { useFeedbackPanelState } from "@/lib/feedback-events";
 import { askNetwork, createChatThread } from "@/actions/chat";
 import { streamChat } from "@/lib/chat-stream-client";
@@ -191,7 +191,9 @@ export function FloatingAskBar() {
 
   useEffect(() => {
     function onKey(e: globalThis.KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      // ⌘J, not ⌘K: ⌘K opens the command palette, which can also hand a typed question
+      // straight to this bar — so the old shortcut still gets here, one Enter later.
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
         e.preventDefault();
         focusBar();
       }
@@ -205,9 +207,15 @@ export function FloatingAskBar() {
     return () => window.removeEventListener("keydown", onKey);
   }, [focusBar, open]);
 
+  // Read through a ref so the listener below is registered once, not re-bound every time
+  // `sendQuestion`'s identity changes with a pending reply.
+  const sendQuestionRef = useRef<(q: string) => void>(() => {});
+
   useEffect(() => {
-    function onOpenRequest() {
+    function onOpenRequest(e: Event) {
       focusBar();
+      const question = (e as CustomEvent<OpenAskBarDetail | null>).detail?.question?.trim();
+      if (question) sendQuestionRef.current(question);
     }
     window.addEventListener(OPEN_ASK_BAR_EVENT, onOpenRequest);
     return () => window.removeEventListener(OPEN_ASK_BAR_EVENT, onOpenRequest);
@@ -418,6 +426,9 @@ export function FloatingAskBar() {
     },
     [activeContactId, chatPending, ensureChatThread]
   );
+  useEffect(() => {
+    sendQuestionRef.current = (q) => sendQuestion(q);
+  }, [sendQuestion]);
 
   function clearThread() {
     setMessages([]);
@@ -768,7 +779,7 @@ export function FloatingAskBar() {
           />
           {!open && !query && (
             <kbd className="hidden shrink-0 rounded-full border border-border/70 bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground sm:inline">
-              ⌘K
+              ⌘J
             </kbd>
           )}
           {(query || open) && !chatPending && query && (

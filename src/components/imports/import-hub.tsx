@@ -73,14 +73,15 @@ const TABS: {
 ];
 
 /**
- * Which tab an in-flight import job belongs to. Google/Outlook contacts imports render
- * inside the "connections" tab alongside LinkedIn connections (see the panel below), so
- * both map there rather than getting their own tab. `null` for kinds this hub doesn't
- * surface a tab for.
+ * Which tab an in-flight import job belongs to. Contacts-file and Google/Outlook contacts
+ * imports render inside the "connections" tab alongside LinkedIn connections (see the panel
+ * below), so they map there rather than getting their own tab. `null` for kinds this hub
+ * doesn't surface a tab for.
  */
 function tabForImportJobKind(kind: ImportJobKind): ImportTab | null {
   switch (kind) {
     case "connections":
+    case "contacts_file":
     case "google_contacts":
     case "outlook_contacts":
       return "connections";
@@ -105,6 +106,14 @@ const LinkedInConnectionsImport = dynamic(
       default: m.LinkedInConnectionsImport,
     })),
   { loading: () => <PanelSkeleton /> },
+);
+
+const ContactsFileImport = dynamic(
+  () =>
+    import("@/components/imports/contacts-file-import").then((m) => ({
+      default: m.ContactsFileImport,
+    })),
+  { loading: () => <PanelSkeleton /> }
 );
 
 const GoogleContactsImport = dynamic(
@@ -146,6 +155,7 @@ const CalendarImportSection = dynamic(
  */
 const TAB_FOR_ANCHOR: Record<string, ImportTab | undefined> = {
   "import-panel-connections": "connections",
+  "import-contacts-file": "connections",
   "import-google-contacts": "connections",
   "import-outlook-contacts": "connections",
   "import-panel-messages": "messages",
@@ -177,9 +187,9 @@ export function ImportHub({
     setMounted((prev) => (prev[tab] ? prev : { ...prev, [tab]: true }));
   }, [tab]);
 
-  // When returning mid-import, open the relevant tab and show progress. Google/Outlook
-  // contacts imports render inside the "connections" tab alongside LinkedIn connections
-  // (see the panel below), so both map there rather than getting their own tab.
+  // When returning mid-import, open the relevant tab and show progress. Contacts-file and
+  // Google/Outlook contacts imports render inside the "connections" tab alongside LinkedIn
+  // connections (see the panel below), so they map there rather than getting their own tab.
   useEffect(() => {
     if (job?.status !== "running") return;
     const targetTab = tabForImportJobKind(job.kind);
@@ -279,6 +289,7 @@ export function ImportHub({
           className="space-y-6"
         >
           <LinkedInConnectionsImport />
+          <ContactsFileImport />
           <GoogleContactsImport />
           <OutlookContactsImport />
         </div>
