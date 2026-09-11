@@ -37,6 +37,9 @@ export const ROUTE_PATTERNS: readonly string[] = [
   "/sign-up/[[...sign-up]]",
   // Checkout
   "/upgrade",
+  // The phone side of a scan handoff. The segment is a one-time credential, which is one
+  // more reason the stored route must be the pattern and never the path.
+  "/scan/[token]",
   // Account states
   "/suspended",
   "/onboarding",

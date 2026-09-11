@@ -299,6 +299,20 @@ export function CaptureFormSkeleton() {
         </div>
       ))}
       <Skeleton className="h-32 w-full rounded-lg" />
+      {/*
+        The scan controls: two tap tiles below md, a three-button row above it. Sized to
+        match so the skeleton does not collapse to a shorter form and then jump when the
+        real controls arrive.
+      */}
+      <div className="grid grid-cols-2 gap-2 md:hidden">
+        <Skeleton className="h-[86px] rounded-xl" />
+        <Skeleton className="h-[86px] rounded-xl" />
+      </div>
+      <div className="hidden gap-2 md:flex">
+        <Skeleton className="h-9 w-44 rounded-lg" />
+        <Skeleton className="h-9 w-28 rounded-lg" />
+        <Skeleton className="h-9 w-36 rounded-lg" />
+      </div>
       <Skeleton className="mt-2 h-9 w-32" />
     </div>
   );

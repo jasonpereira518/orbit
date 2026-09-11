@@ -5,6 +5,7 @@ import {
   aiSuggestions,
   billingEvents,
   calendarSubscriptions,
+  captureHandoffs,
   chatThreads,
   closenessCohorts,
   companies,
@@ -161,6 +162,10 @@ export async function purgeUserData(
   await db.delete(aiSuggestions).where(eq(aiSuggestions.userId, userId));
   await db.delete(imports).where(eq(imports.userId, userId));
   await db.delete(calendarSubscriptions).where(eq(calendarSubscriptions.userId, userId));
+  // Short-lived by construction — claimed on pickup, swept on expiry — but a scan started
+  // minutes before the account was deleted would otherwise leave a live grant and a
+  // transcript of the user's notes behind it.
+  await db.delete(captureHandoffs).where(eq(captureHandoffs.userId, userId));
   // Before `contacts`: `event_attendees.contact_id` is `ON DELETE SET NULL`, so deleting
   // contacts first would rewrite every one of these rows on the way to deleting them anyway.
   // Attendees are deleted explicitly rather than left to the cascade from `events` — they
