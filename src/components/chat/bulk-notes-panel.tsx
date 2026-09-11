@@ -4,8 +4,8 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
-import { X } from "lucide-react";
-import { addDays, format } from "date-fns";
+import { Camera, History, X } from "lucide-react";
+import { addDays, format, formatDistanceToNow } from "date-fns";
 import { toast } from "@/lib/toast";
 import { useCornerClearanceAbove } from "@/lib/corner-clearance";
 import {
@@ -21,6 +21,19 @@ import {
   CAPTURE_MAX_UPLOAD_BYTES,
   formatUploadSize,
 } from "@/lib/capture-limits";
+import {
+  clearCaptureDraft,
+  readCaptureDraft,
+  writeCaptureDraft,
+  type CaptureDraft,
+} from "@/lib/capture-draft";
+import {
+  CAPTURE_HANDOFF_EVENT,
+  appendHandoff,
+  takeCaptureHandoff,
+} from "@/lib/capture-handoff";
+import { shrinkImageForUpload } from "@/lib/capture-image-shrink";
+import { useMediaQuery } from "@/lib/use-media-query";
 import { MAX_RECORDING_MS, formatElapsed } from "@/lib/voice-recording";
 import type { VoiceRecording } from "@/lib/use-voice-recorder";
 import { VoiceRecorder } from "@/components/capture/voice-recorder";
@@ -89,7 +102,16 @@ const CAPTURE_FILE_ACCEPT = [
   ".ogg",
 ].join(",");
 
-async function fileToBase64(file: File): Promise<string> {
+/** Debounce for the draft autosave: long enough not to write on every keystroke. */
+const DRAFT_SAVE_DELAY_MS = 500;
+
+/** A shrunk photo is a JPEG whatever it started as, so its name should say so. */
+function uploadName(file: File, blob: Blob) {
+  if (blob === file) return file.name;
+  return `${file.name.replace(/\.[^./]+$/, "") || "photo"}.jpg`;
+}
+
+async function fileToBase64(file: Blob): Promise<string> {
   const buffer = await file.arrayBuffer();
   const bytes = new Uint8Array(buffer);
   let binary = "";
@@ -110,6 +132,8 @@ export function BulkNotesPanel({
   entryPoint,
   hasApiKey: hasApiKeyProp,
   onSaved,
+  draftKey = null,
+  acceptsHandoff = false,
 }: {
   compact?: boolean;
   /**
@@ -135,10 +159,34 @@ export function BulkNotesPanel({
   hasApiKey?: boolean;
   /** Called after a successful save. Defaults to staying on the paste step. */
   onSaved?: (result: SaveNoteBatchOutput) => void;
+  /**
+   * Where to keep unsaved notes as they are typed (`captureDraftKey`). Only the capture page
+   * sets it; the chat drawer and the onboarding wizard are one-off panels with nothing to
+   * come back to. See `src/lib/capture-draft.ts`.
+   */
+  draftKey?: string | null;
+  /**
+   * Take text handed over by the command palette's "Capture this". Only the general capture
+   * page: a note typed anywhere must not land in a draft that is about one specific person.
+   */
+  acceptsHandoff?: boolean;
 }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const notesRef = useRef<HTMLTextAreaElement>(null);
+  // `capture` opens the camera on a phone and is ignored on a desktop, where the button would
+  // only be a second file picker — so it is offered only to touch-first pointers.
+  const coarsePointer = useMediaQuery("(pointer: coarse)");
   const [notes, setNotes] = useState("");
+  /** When a restored draft was last saved, for the banner; null when nothing was restored. */
+  const [restoredAt, setRestoredAt] = useState<number | null>(null);
+  /**
+   * The draft key whose contents are in state. Autosave waits for this to match `draftKey`,
+   * or the empty first render would overwrite — and so delete — the draft about to load.
+   */
+  const [loadedDraftKey, setLoadedDraftKey] = useState<string | null>(null);
+  const latestDraftRef = useRef<Omit<CaptureDraft, "savedAt"> | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [captureHints, setCaptureHints] = useState<CaptureParseHints | null>(
     null
@@ -201,6 +249,93 @@ export function BulkNotesPanel({
   useEffect(() => {
     if (hasApiKeyProp !== undefined) setHasApiKey(hasApiKeyProp);
   }, [hasApiKeyProp]);
+
+  function focusNotesAtEnd() {
+    requestAnimationFrame(() => {
+      const el = notesRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+      el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  }
+
+  // Load this panel's draft, then anything the palette handed over, appended after it. After
+  // mount rather than in `useState`: the capture form is server-rendered, and the server has
+  // no localStorage to agree with. Deferred a microtask for the reason `GoogleContactsImport`
+  // gives — this is reading an external store, not deriving state from props.
+  useEffect(() => {
+    if (!draftKey) return;
+    // A superseded run must not read at all, not just not write: taking the handoff is
+    // destructive, and an effect that runs twice (Strict Mode, or `draftKey` changing
+    // mid-flight) would otherwise have its first pass take the text and its second
+    // overwrite the box with the draft alone.
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      const draft = readCaptureDraft(window.localStorage, draftKey);
+      const handed = acceptsHandoff ? takeCaptureHandoff(window.sessionStorage) : null;
+      setNotes(handed ? appendHandoff(draft?.notes ?? "", handed) : (draft?.notes ?? ""));
+      setCaptureSources(draft?.sources ?? []);
+      setPhotoIds(draft?.photoIds ?? []);
+      setRestoredAt(draft ? draft.savedAt : null);
+      setLoadedDraftKey(draftKey);
+      if (handed) focusNotesAtEnd();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [draftKey, acceptsHandoff]);
+
+  // "Capture this" while this page is already open: no navigation, so no mount to read it.
+  useEffect(() => {
+    if (!draftKey || !acceptsHandoff) return;
+    function onHandoff() {
+      const handed = takeCaptureHandoff(window.sessionStorage);
+      if (!handed) return;
+      setNotes((prev) => appendHandoff(prev, handed));
+      if (step === "paste") focusNotesAtEnd();
+      else toast.info("Added to your notes — you’ll see it when you go back to them");
+    }
+    window.addEventListener(CAPTURE_HANDOFF_EVENT, onHandoff);
+    return () => window.removeEventListener(CAPTURE_HANDOFF_EVENT, onHandoff);
+  }, [draftKey, acceptsHandoff, step]);
+
+  // Autosave, while the notes are still being written. Review and done are left alone: the
+  // draft keeps the text they started from, which is exactly what to come back to if the
+  // tab closes mid-review.
+  useEffect(() => {
+    if (!draftKey || loadedDraftKey !== draftKey || step !== "paste") return;
+    const draft = { notes, sources: captureSources, photoIds };
+    latestDraftRef.current = draft;
+    const timer = window.setTimeout(() => {
+      writeCaptureDraft(window.localStorage, draftKey, draft);
+    }, DRAFT_SAVE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [draftKey, loadedDraftKey, step, notes, captureSources, photoIds]);
+
+  // The debounce's last half-second, flushed when the page goes away — closing the tab right
+  // after typing is the case this whole feature exists for — and when the panel unmounts,
+  // which is what switching between the Voice and Messy tabs does.
+  useEffect(() => {
+    if (!draftKey || loadedDraftKey !== draftKey) return;
+    const key = draftKey;
+    function flush() {
+      if (latestDraftRef.current) writeCaptureDraft(window.localStorage, key, latestDraftRef.current);
+    }
+    window.addEventListener("pagehide", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      flush();
+    };
+  }, [draftKey, loadedDraftKey]);
+
+  function discardDraft() {
+    if (draftKey) clearCaptureDraft(window.localStorage, draftKey);
+    latestDraftRef.current = null;
+    resetToPaste();
+    setRestoredAt(null);
+  }
 
   const accepted = items.filter((i) => i.decision === "accepted");
   const discarded = items.filter((i) => i.decision === "discarded");
@@ -321,6 +456,12 @@ export function BulkNotesPanel({
           // implied when nothing was uploaded — the server fills that default in.
           sources: captureSources,
         });
+        // Saved, so there is nothing left to lose. Cleared here rather than left to the
+        // autosave: the capture page navigates away on save, and the panel never renders
+        // the empty paste step that would have removed it.
+        if (draftKey) clearCaptureDraft(window.localStorage, draftKey);
+        latestDraftRef.current = null;
+        setRestoredAt(null);
         // The profile entry point's default path gets its own toast below (a link to
         // the fuller capture results, not a raw count) — every other path shares this
         // one summary toast, so it's hoisted here instead of repeated per branch.
@@ -357,29 +498,36 @@ export function BulkNotesPanel({
     if (!fileList?.length) return;
     const files = Array.from(fileList);
 
-    // REJECT BEFORE ENCODING, because the failure downstream is invisible. An oversized
-    // body is not refused by the server: Next buffers the first N bytes, warns in the
-    // server log, and hands the action a truncated payload — which surfaces to the user
-    // as a confusing parse failure long after the upload appeared to succeed. Raising the
-    // limit only moves that cliff, so the size has to be checked here, where we can still
-    // say something true about which files are too big.
-    const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
-    if (totalBytes > CAPTURE_MAX_UPLOAD_BYTES) {
-      toast.error(
-        files.length === 1
-          ? `${files[0]!.name} is ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} per upload`
-          : `Those ${files.length} files total ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} per upload, so try smaller batches`
-      );
-      return;
-    }
-
     start(async () => {
       try {
+        // Photos shrink first — see `src/lib/capture-image-shrink.ts`. A phone camera's
+        // original would otherwise blow the platform's request-body cap on its own.
+        const prepared = await Promise.all(
+          files.map(async (file) => ({ file, blob: await shrinkImageForUpload(file) }))
+        );
+
+        // REJECT BEFORE ENCODING, because the failure downstream is invisible. An oversized
+        // body is not refused by the server: Next buffers the first N bytes, warns in the
+        // server log, and hands the action a truncated payload — which surfaces to the user
+        // as a confusing parse failure long after the upload appeared to succeed. Raising the
+        // limit only moves that cliff, so the size has to be checked here, where we can still
+        // say something true about which files are too big. Measured after shrinking, so a
+        // big photo that shrinks to fit is not refused for a size it no longer has.
+        const totalBytes = prepared.reduce((sum, p) => sum + p.blob.size, 0);
+        if (totalBytes > CAPTURE_MAX_UPLOAD_BYTES) {
+          toast.error(
+            files.length === 1
+              ? `${files[0]!.name} is ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} per upload`
+              : `Those ${files.length} files total ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} per upload, so try smaller batches`
+          );
+          return;
+        }
+
         const payloads = await Promise.all(
-          files.map(async (file) => ({
-            filename: file.name,
-            mimeType: file.type || "application/octet-stream",
-            base64: await fileToBase64(file),
+          prepared.map(async ({ file, blob }) => ({
+            filename: uploadName(file, blob),
+            mimeType: blob.type || file.type || "application/octet-stream",
+            base64: await fileToBase64(blob),
           }))
         );
         await ingestPayloads(
@@ -512,6 +660,25 @@ export function BulkNotesPanel({
               </p>
             </div>
           )}
+          {restoredAt !== null && (
+            <div
+              role="status"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/40 px-3 py-2 text-sm"
+            >
+              <span className="flex items-center gap-2 text-muted-foreground">
+                <History className="size-4 shrink-0" aria-hidden />
+                <span>
+                  Unsaved notes restored — last edited{" "}
+                  {Date.now() - restoredAt < 60_000
+                    ? "just now"
+                    : formatDistanceToNow(new Date(restoredAt), { addSuffix: true })}
+                </span>
+              </span>
+              <Button type="button" variant="ghost" size="sm" disabled={pending} onClick={discardDraft}>
+                Start fresh
+              </Button>
+            </div>
+          )}
           {preferredContactId && preferredContactName && (
             <p className="rounded-xl bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
               Logging with{" "}
@@ -555,6 +722,7 @@ export function BulkNotesPanel({
               </p>
             )}
             <Textarea
+              ref={notesRef}
               id="bulk-notes"
               className={cn("mt-2", compact ? "min-h-[140px]" : "min-h-[220px]")}
               placeholder={
@@ -579,6 +747,31 @@ export function BulkNotesPanel({
                 e.target.value = "";
               }}
             />
+            {coarsePointer && (
+              <>
+                <input
+                  ref={cameraRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={(e) => {
+                    handleFilesSelected(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size={compact ? "sm" : "default"}
+                  disabled={pending}
+                  onClick={() => cameraRef.current?.click()}
+                >
+                  <Camera aria-hidden />
+                  Scan business card
+                </Button>
+              </>
+            )}
             <Button
               type="button"
               variant="outline"
@@ -708,6 +901,8 @@ export function BulkNotesPanel({
                   setSlideDirection(1);
                   // A note can carry dates but no people — skip the person carousel.
                   setStep(res.items.length ? "review" : "done");
+                  // Acted on, so the "your notes are back" banner has done its job.
+                  setRestoredAt(null);
 
                   const peopleLabel = `${res.items.length} ${
                     res.items.length === 1 ? "person" : "people"

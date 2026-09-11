@@ -31,8 +31,8 @@ export default async function ImportsPage() {
           Imports
         </h1>
         <p className="mt-1 text-muted-foreground">
-          Upload LinkedIn data, sync calendars, and review past imports. After
-          import, browse everything in{" "}
+          Bring in LinkedIn, your address book, Google, Outlook and calendars,
+          and review past imports. After import, browse everything in{" "}
           <Link href="/knowledge" className="underline-offset-2 hover:underline">
             Knowledge
           </Link>

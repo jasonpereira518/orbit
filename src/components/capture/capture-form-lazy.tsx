@@ -19,11 +19,14 @@ export function CaptureFormLazy({
   initialContactName = null,
   defaultMode = "messy",
   hasApiKey = true,
+  userId,
 }: {
   initialContactId?: string | null;
   initialContactName?: string | null;
   defaultMode?: CaptureMode;
   hasApiKey?: boolean;
+  /** Scopes the autosaved draft to this account — see `captureDraftKey`. */
+  userId: string;
 }) {
   return (
     <CaptureForm
@@ -31,6 +34,7 @@ export function CaptureFormLazy({
       initialContactName={initialContactName}
       defaultMode={defaultMode}
       hasApiKey={hasApiKey}
+      userId={userId}
     />
   );
 }

@@ -8,6 +8,7 @@ import {
   CaptureHistorySkeleton,
 } from "@/components/capture/capture-history";
 import { UnresolvedMentionsCard } from "@/components/capture/unresolved-mentions-card";
+import { requireUserId } from "@/lib/auth";
 
 export default async function CapturePage({
   searchParams,
@@ -23,6 +24,7 @@ export default async function CapturePage({
       ? params.mode
       : null;
 
+  const userIdPromise = requireUserId();
   const settingsPromise = getSettings();
   const planPromise = getPlanOverview();
 
@@ -37,6 +39,7 @@ export default async function CapturePage({
   }
 
   const settings = await settingsPromise;
+  const userId = await userIdPromise;
   const { usage } = await planPromise;
   const defaultMode = modeParam || (contactId ? "structured" : "messy");
 
@@ -65,6 +68,7 @@ export default async function CapturePage({
         initialContactName={contactName}
         defaultMode={defaultMode}
         hasApiKey={settings.hasApiKey}
+        userId={userId}
       />
       {/* Hidden when logging with one named person, for the same reason the mentions card
           is: the page is doing one specific thing, and a feed of past captures is not it. */}

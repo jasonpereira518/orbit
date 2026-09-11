@@ -17,6 +17,7 @@ import {
   Loader2,
   Mic,
   Moon,
+  PenLine,
   NotebookPen,
   Search,
   Settings,
@@ -34,7 +35,9 @@ import { APP_NAV } from "@/components/layout/app-nav";
 import { SETTINGS_SECTIONS } from "@/components/settings/sections";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { requestAskBar } from "@/lib/ask-bar-events";
+import { handOffToCapture } from "@/lib/capture-handoff";
 import {
+  looksLikeNote,
   looksLikeQuestion,
   rankEntries,
   visibleEntries,
@@ -189,6 +192,8 @@ export function CommandPaletteDialog({
   }
 
   const contactsVisible = !hidden.has("page.contacts");
+  // The same test the Capture actions pass, so "Capture this" goes dark along with them.
+  const captureVisible = !hidden.has("page.capture");
 
   // People: the most recently seen when nothing is typed, a search once something is.
   // Every response is tagged, and anything but the latest is dropped, so a slow reply for
@@ -269,10 +274,41 @@ export function CommandPaletteDialog({
           }
         : null;
 
+    // Whatever was typed, as the start of a capture. Offered for any text, since only the
+    // person knows whether "Sarah Stripe" is a search or a note, but it only leads when the
+    // text reads like a sentence (`looksLikeNote`).
+    const captureRow: Row | null =
+      term && captureVisible
+        ? {
+            id: "capture-this",
+            group: "Capture",
+            label: (
+              <>
+                Capture this: <span className="font-medium text-ink">&ldquo;{term}&rdquo;</span>
+              </>
+            ),
+            icon: <CommandIcon icon={PenLine} />,
+            run: () => {
+              close();
+              handOffToCapture(term);
+              // Already on the general capture page: the event alone delivers it, and
+              // navigating would reload a page that is holding someone's draft.
+              const onGeneralCapture =
+                pathname === "/capture" &&
+                !new URLSearchParams(window.location.search).get("contactId");
+              if (!onGeneralCapture) router.push("/capture");
+            },
+          }
+        : null;
+
     // A question goes to the front: typing "who do I know at Stripe?" and pressing Enter
     // should ask it, not open whichever page happened to contain the word "know".
     const question = askRow && looksLikeQuestion(term);
     if (question) out.push(askRow);
+    // A note goes to the front for the same reason: nothing else will match a sentence,
+    // and Enter should do the one thing it can mean.
+    const note = captureRow && looksLikeNote(term);
+    if (note) out.push(captureRow);
 
     const actions = rankEntries(visibleEntries(ACTIONS, hidden), term);
     const theme = rankEntries([themeCommand], term);
@@ -325,11 +361,12 @@ export function CommandPaletteDialog({
       out.push(...rankEntries(visibleEntries(SETTINGS, hidden), term).map((c) => commandRow("Settings", c)));
     }
 
+    if (captureRow && !note) out.push(captureRow);
     if (askRow && !question) out.push(askRow);
     return out;
     // `go`/`close` only close over stable setters and the router.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, people, hidden, askMode, pathname, isDark, contactsVisible]);
+  }, [query, people, hidden, askMode, pathname, isDark, contactsVisible, captureVisible]);
 
   const active = rows[Math.min(activeIndex, Math.max(rows.length - 1, 0))];
 

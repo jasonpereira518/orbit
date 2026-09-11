@@ -88,3 +88,15 @@ export function looksLikeQuestion(query: string): boolean {
   if (q.length < 4) return false;
   return q.endsWith("?") || (QUESTION_START.test(q) && q.split(/\s+/).length >= 3);
 }
+
+/**
+ * Whether the text reads as a note to capture ("met Sarah at AWS, she's moving to Stripe")
+ * rather than something to search for. Decides whether "Capture this" leads the results —
+ * a search term is a word or two; a note is a sentence. A question is never a note: it
+ * belongs to Ask, which gets the top spot instead.
+ */
+export function looksLikeNote(query: string): boolean {
+  const q = query.trim();
+  if (!q || looksLikeQuestion(q)) return false;
+  return q.split(/\s+/).length >= 4 || q.length >= 25;
+}

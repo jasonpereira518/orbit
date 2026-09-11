@@ -30,8 +30,8 @@ Orbit is a personal networking CRM. Paste in messy notes from a coffee chat or c
 
 ## Features
 
-- **Capture** — paste raw notes (one person or many), let AI pull out contacts, companies, and context, review, then save. Recent captures stay listed on the page, with the original notes and photos one click away
-- **Command palette** — ⌘K / Ctrl+K from anywhere: jump to a person or page, start a capture, or hand a question to the ask bar (⌘J)
+- **Capture** — paste raw notes (one person or many), let AI pull out contacts, companies, and context, review, then save. Unsaved notes are kept as you type, phones get a "Scan business card" camera button, and recent captures stay listed on the page with the original notes and photos one click away
+- **Command palette** — ⌘K / Ctrl+K from anywhere: jump to a person or page, start a capture, "Capture this" to send what you typed straight to Capture, or hand a question to the ask bar (⌘J)
 - **Contacts** — searchable list + profiles, relationship strength, recruiter tracking
 - **Dashboard** — follow-ups, dormant connections, and suggestions in one view
 - **Chat** — ask natural-language questions about who's in your network and who can help

@@ -30,7 +30,10 @@ import {
   CALENDAR_CSV_IMPORT_TYPE,
   runImportJobById,
 } from "@/lib/import-job-dispatch";
-import { parseLinkedInConnectionsCsv } from "@/lib/linkedin-connections";
+import {
+  LinkedInExportError,
+  parseLinkedInConnectionsCsv,
+} from "@/lib/linkedin-connections";
 import {
   ContactsFileError,
   parseContactsFile,
@@ -92,6 +95,28 @@ function hasEncodingArtifacts(rows: { firstName: string; lastName: string; compa
   );
 }
 
+/**
+ * What a LinkedIn preview tells the person when the parser refuses a file. Only a
+ * `LinkedInExportError` is forwarded word for word: anything else is a bug, or
+ * PapaParse's own wording, and was never written to be read in a toast.
+ */
+function linkedInExportErrorMessage(err: unknown): string {
+  return err instanceof LinkedInExportError
+    ? err.message
+    : "Couldn’t read that file — is it the LinkedIn export this card asks for?";
+}
+
+type PreviewRefusal = { error: string };
+
+/**
+ * A refusal, typed rather than written as a literal. Two object literals in one inferred
+ * return type get normalised — each side grows optional `undefined` copies of the other's
+ * keys — and then `"error" in res` no longer narrows on the client.
+ */
+function refusal(message: string): PreviewRefusal {
+  return { error: message };
+}
+
 export async function previewLinkedInCsv(csvText: string) {
   const userId = await requireUserId();
   // parseLinkedInConnectionsCsv throws for expected validation failures (empty
@@ -102,9 +127,7 @@ export async function previewLinkedInCsv(csvText: string) {
   try {
     parsed = parseLinkedInConnectionsCsv(csvText);
   } catch (err) {
-    return {
-      error: err instanceof Error ? err.message : "Failed to parse CSV",
-    };
+    return refusal(linkedInExportErrorMessage(err));
   }
   const { columns, rows, warnings } = parsed;
   if (hasEncodingArtifacts(rows)) {
@@ -329,11 +352,24 @@ async function storedSelfLinkedInUrl(userId: string): Promise<string | null> {
   return settings?.socialLinks?.linkedin?.trim() || null;
 }
 
+/**
+ * Refusals come back as `{ error }` data rather than a throw, for the reason
+ * `previewLinkedInCsv` gives: a thrown message never survives production, and "This looks
+ * like a Connections export" is only worth writing if it reaches the person.
+ */
 export async function previewLinkedInMessagesCsv(csvText: string) {
   const userId = await requireUserId();
-  const { columns, messages } = parseLinkedInMessagesCsv(csvText);
+  let parsed: ReturnType<typeof parseLinkedInMessagesCsv>;
+  try {
+    parsed = parseLinkedInMessagesCsv(csvText);
+  } catch (err) {
+    return refusal(linkedInExportErrorMessage(err));
+  }
+  const { columns, messages } = parsed;
   if (!messages.length) {
-    throw new Error("No messages found in CSV. Export Messages from LinkedIn data download.");
+    return refusal(
+      "No messages found in that file — upload messages.csv from your LinkedIn data download"
+    );
   }
 
   const db = await getDb();

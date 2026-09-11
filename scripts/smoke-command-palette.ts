@@ -7,6 +7,7 @@
  * Run: npx tsx scripts/smoke-command-palette.ts
  */
 import {
+  looksLikeNote,
   looksLikeQuestion,
   rankEntries,
   scoreEntry,
@@ -67,6 +68,18 @@ for (const q of ["who do I know at Stripe", "Who works in AI?", "which recruiter
 }
 for (const q of ["sarah", "reminders", "who", "is", "new capture", "how to"]) {
   check(`"${q}" does not`, !looksLikeQuestion(q));
+}
+
+console.log("\nNotes");
+for (const q of [
+  "met Sarah at AWS, she's moving to Stripe",
+  "coffee with Priya tomorrow about the Notion role",
+  "Marcus intro to Linear infra team",
+]) {
+  check(`"${q}" reads as a note to capture`, looksLikeNote(q));
+}
+for (const q of ["sarah", "new capture", "sarah stripe", "who do I know at Stripe?", "   "]) {
+  check(`"${q}" does not`, !looksLikeNote(q));
 }
 
 console.log("\nsmoke-command-palette: all checks passed");

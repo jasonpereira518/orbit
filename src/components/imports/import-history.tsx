@@ -4,34 +4,58 @@ import { formatDistanceToNow } from "date-fns";
 import {
   BookUser,
   Calendar as CalendarIcon,
+  Contact,
   FileSpreadsheet,
+  Mail,
   MessageSquare,
+  Upload,
   type LucideIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
-const SOURCE_META: Record<string, { icon: LucideIcon; badge: string }> = {
-  linkedin_connections: {
-    icon: FileSpreadsheet,
-    badge: "bg-import-connections/10 text-import-connections",
-  },
-  contacts_file: {
-    icon: BookUser,
-    badge: "bg-import-connections/10 text-import-connections",
-  },
-  linkedin_messages: {
-    icon: MessageSquare,
-    badge: "bg-import-messages/10 text-import-messages",
-  },
-  calendar_ics: {
-    icon: CalendarIcon,
-    badge: "bg-import-calendar/10 text-import-calendar",
-  },
-  calendar_csv: {
-    icon: CalendarIcon,
-    badge: "bg-import-calendar/10 text-import-calendar",
-  },
+type SourceMeta = { label: string; icon: LucideIcon; badge: string };
+
+const CONNECTIONS_BADGE = "bg-import-connections/10 text-import-connections";
+const MESSAGES_BADGE = "bg-import-messages/10 text-import-messages";
+const CALENDAR_BADGE = "bg-import-calendar/10 text-import-calendar";
+
+/**
+ * Every `imports.import_type` Orbit writes, with the name a person would call it.
+ *
+ * The row used to print the raw type (`google_contacts · 12 created`), and only the
+ * LinkedIn and calendar types had an icon — so three of the ways into Orbit showed up in
+ * history as a bare string. Colours follow the tab each import lives on in the hub:
+ * contact imports share the Connections accent, whatever service they came from.
+ */
+const SOURCE_META: Record<string, SourceMeta> = {
+  linkedin_connections: { label: "LinkedIn connections", icon: FileSpreadsheet, badge: CONNECTIONS_BADGE },
+  contacts_file: { label: "Contacts file", icon: BookUser, badge: CONNECTIONS_BADGE },
+  google_contacts: { label: "Google Contacts", icon: Contact, badge: CONNECTIONS_BADGE },
+  outlook_contacts: { label: "Outlook Contacts", icon: Contact, badge: CONNECTIONS_BADGE },
+  linkedin_messages: { label: "LinkedIn messages", icon: MessageSquare, badge: MESSAGES_BADGE },
+  gmail_recruiter_scan: { label: "Gmail recruiter scan", icon: Mail, badge: MESSAGES_BADGE },
+  calendar_ics: { label: "Calendar (.ics)", icon: CalendarIcon, badge: CALENDAR_BADGE },
+  calendar_csv: { label: "Calendar (CSV)", icon: CalendarIcon, badge: CALENDAR_BADGE },
 };
+
+/** A type this list has never heard of still gets a row that looks like the others. */
+const UNKNOWN_SOURCE: SourceMeta = {
+  label: "Import",
+  icon: Upload,
+  badge: "bg-muted text-muted-foreground",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  processing: "In progress",
+  pending: "Waiting",
+  completed: "Done",
+  failed: "Didn’t finish",
+  cancelled: "Cancelled",
+};
+
+function statusLabel(status: string) {
+  return STATUS_LABEL[status] ?? status.charAt(0).toUpperCase() + status.slice(1);
+}
 
 export type ImportHistoryItem = {
   id: string;
@@ -70,39 +94,39 @@ export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
       <div>
         <h2 className="text-lg font-medium text-ink">Import history</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Recent LinkedIn and calendar imports for this account.
+          Every import on this account, newest first — LinkedIn, contacts files,
+          Google, Outlook and calendars.
         </p>
       </div>
 
       {history.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No imports yet. Upload a LinkedIn Connections or Messages file above,
-          or sync a calendar to get started.
+          No imports yet. Upload a LinkedIn export or a contacts file above,
+          connect Google or Outlook, or sync a calendar to get started.
         </p>
       ) : (
         <ul className="space-y-2">
           {history.map((h) => {
-            const meta = h.importType ? SOURCE_META[h.importType] : null;
-            const Icon = meta?.icon;
+            const meta = (h.importType && SOURCE_META[h.importType]) || UNKNOWN_SOURCE;
+            const Icon = meta.icon;
+            const title = h.fileName || meta.label;
             return (
               <li
                 key={h.id}
                 className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-background/60 px-4 py-3 text-sm"
               >
                 <div className="flex min-w-0 items-start gap-3">
-                  {Icon ? (
-                    <span
-                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${meta.badge}`}
-                    >
-                      <Icon className="h-3.5 w-3.5" />
-                    </span>
-                  ) : null}
+                  <span
+                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${meta.badge}`}
+                  >
+                    <Icon className="h-3.5 w-3.5" aria-hidden />
+                  </span>
                   <div className="min-w-0">
-                    <p className="font-medium text-ink">
-                      {h.fileName || "Import"}
-                    </p>
+                    <p className="truncate font-medium text-ink">{title}</p>
                     <p className="text-xs text-muted-foreground">
-                      {h.importType ? `${h.importType} · ` : ""}
+                      {/* Google and Outlook imports are named after their service, so the
+                          label would only repeat the title. */}
+                      {meta.label !== title ? `${meta.label} · ` : ""}
                       {h.contactsCreated ?? 0} created ·{" "}
                       {h.contactsUpdated ?? 0} updated
                       {h.stats?.messagesImported
@@ -143,8 +167,9 @@ export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
                         ? "secondary"
                         : "outline"
                   }
+                  className="shrink-0"
                 >
-                  {h.status}
+                  {statusLabel(h.status)}
                 </Badge>
               </li>
             );
