@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { friendlyError } from "@/lib/errors";
 
 type Sub = {
   id: string;
@@ -91,25 +92,30 @@ export function CalendarSubscribePanel({
           onClick={() =>
             start(async () => {
               try {
-                const res = await addCalendarSubscription({
+                const result = await addCalendarSubscription({
                   icsUrl: url.trim(),
                   label: label.trim() || undefined,
                   selfEmail: selfEmail.trim() || undefined,
                 });
+                if (!result.ok) {
+                  toast.error(result.error);
+                  return;
+                }
+                const res = result.value;
                 setSubs((prev) => [res.subscription as Sub, ...prev]);
                 setUrl("");
                 if (res.syncError) {
-                  toast.error(`Saved, but sync failed: ${res.syncError}`);
+                  toast.error("Calendar saved, but its first sync didn’t finish — use Sync to try again");
                 } else if (res.stats) {
                   toast.success(
                     `Synced: ${res.stats.scanned} events scanned · ${res.stats.matched} networking · ${res.stats.contactsCreated} contacts · ${res.stats.created} new meetings`,
                   );
                 } else {
-                  toast.success("Calendar subscribed");
+                  toast.success("Calendar connected — events will sync automatically");
                 }
               } catch (err) {
                 toast.error(
-                  err instanceof Error ? err.message : "Could not subscribe",
+                  friendlyError(err, "Couldn’t subscribe to that calendar — try again?"),
                 );
               }
             })
@@ -192,7 +198,7 @@ export function CalendarSubscribePanel({
                           );
                         } catch (err) {
                           toast.error(
-                            err instanceof Error ? err.message : "Sync failed",
+                            friendlyError(err, "That sync didn’t finish — try again?"),
                           );
                         }
                       })
@@ -215,7 +221,7 @@ export function CalendarSubscribePanel({
                             x.id === s.id ? { ...x, enabled: next ? 1 : 0 } : x,
                           ),
                         );
-                        toast.success(next ? "Enabled" : "Paused");
+                        toast.success(next ? "Sync on" : "Sync paused");
                       })
                     }
                   >
@@ -229,7 +235,7 @@ export function CalendarSubscribePanel({
                       start(async () => {
                         await removeCalendarSubscription(s.id);
                         setSubs((prev) => prev.filter((x) => x.id !== s.id));
-                        toast.success("Removed subscription");
+                        toast.success("Calendar disconnected");
                       })
                     }
                   >

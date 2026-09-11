@@ -12,6 +12,8 @@ import { ReminderFormDialog } from "@/components/reminders/reminder-form-dialog"
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export type NoteBatchReminderDetail = {
   description: string | null;
@@ -62,7 +64,7 @@ export function NoteBatchResultView({
         await dismissNoteReminder(id);
         setLocal((s) => ({ ...s, [id]: "dismissed" }));
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not dismiss");
+        toast.error(friendlyError(err, "Couldn’t dismiss that — try again?"));
       }
     });
   }
@@ -82,7 +84,7 @@ export function NoteBatchResultView({
         toast.success(`Undone: ${out.remindersDismissed} reminders dismissed`);
         router.refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Undo failed");
+        toast.error(friendlyError(err, TOAST_COPY.undoFailed));
       }
     });
   }
@@ -95,7 +97,7 @@ export function NoteBatchResultView({
         toast.success("Contact deleted");
         router.refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Delete failed");
+        toast.error(friendlyError(err, TOAST_COPY.deleteFailed));
       }
     });
   }

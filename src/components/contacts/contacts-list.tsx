@@ -356,7 +356,7 @@ export function ContactsList({
           toast.success(`${name} deleted`);
           router.refresh();
         } catch {
-          toast.error("Could not delete contact");
+          toast.error("Couldn’t delete that contact — try again?");
           setContacts(restore);
           router.refresh();
         }

@@ -39,40 +39,11 @@ const OVERDUE_CAP = 12;
 const SUGGESTION_CAP = 12;
 const DAY_MS = 86_400_000;
 
-/**
- * Questions this brief is for. Deliberately narrow: attaching an attention queue to
- * "who do I know at Google?" would push the model toward answering a question nobody
- * asked. Substring matching on purpose — "follow up", "followed up", "follow-ups" all hit.
- */
-const ATTENTION_PATTERNS = [
-  "reconnect",
-  "reach out",
-  "follow up",
-  "follow-up",
-  "followup",
-  "followed up",
-  "catch up",
-  "check in",
-  "overdue",
-  "gone quiet",
-  "quiet",
-  "dormant",
-  "neglect",
-  "lost touch",
-  "haven't spoken",
-  "havent spoken",
-  "haven't talked",
-  "not talked",
-  "who should i",
-  "need attention",
-  "this week",
-  "cold",
-];
-
-export function isAttentionQuestion(question: string) {
-  const q = question.toLowerCase();
-  return ATTENTION_PATTERNS.some((p) => q.includes(p));
-}
+// The predicate lives in `@/lib/chat-attention-match`, a leaf with no database reach: the
+// composer's suggestion rules use it to drop questions that would trip this brief, and they
+// run in a client bundle that must never pull `@/db` in behind it. Re-exported so callers
+// that already have the brief in hand need not know that.
+export { ATTENTION_PATTERNS, isAttentionQuestion } from "@/lib/chat-attention-match";
 
 function daysBetween(from: Date | string | null, now: number) {
   if (!from) return null;

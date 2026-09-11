@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   gemini_api_key_encrypted text,
   openai_api_key_encrypted text,
   anthropic_api_key_encrypted text,
+  wispr_api_key_encrypted text,
   ai_model text DEFAULT 'gemini-3.5-flash',
   onboarding_completed_at timestamptz,
   first_name text,
@@ -473,6 +474,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   role text NOT NULL,
   content text NOT NULL,
   recommendations jsonb,
+  attached_contacts jsonb DEFAULT '[]',
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS chat_messages_thread_idx ON chat_messages(thread_id);
@@ -1071,18 +1073,27 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
  * duplicates being created), contact_merges (a merged contact archived whole, so the
  * loser's row can be deleted rather than flagged), duplicate_suggestions (name-tier
  * matches, which no longer auto-merge).
- * v37 = contact photo cooldown: contacts.profile_image_checked_at. 34-36 are skipped on
- * purpose. 34 and 35 are claimed by open branches, and 36 was this branch's own number
- * BEFORE it merged v33 — preview builds had already stamped 36 onto the production
- * database with the pre-merge DDL (Vercel shares DATABASE_URL between Production and
- * Preview, and the build runs db:migrate). Re-using 36 for the merged DDL would let any
- * database stamped by that earlier build skip v33's tables. A changed DDL set gets a
- * number no database has seen.
+ * v37 = contact photo cooldown: contacts.profile_image_checked_at. Merged on top of main's
+ * 34-36 (#141, #161). 36 is also the number this branch used BEFORE merging v33: its preview
+ * builds stamped 36 onto the production database with the pre-merge DDL, back when Preview
+ * shared Production's DATABASE_URL. 37 is still safe to reuse across this merge because no
+ * database is currently stamped 37 — production was re-stamped 36 by #161's deploy, and
+ * previews now migrate a separate Neon project. 38 is claimed by the scan-notes branch.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
  * too, renumber to 33 and regenerate scripts/schema-ddl.lock.json rather than reusing 32.)
  */
+// 34 and 35 are this branch's, above main's 33 (duplicate prevention, #148). 33 was
+// skipped here deliberately while it was still claimed by unmerged branches — a repeated
+// version is the one real failure mode this counter has, since the alters are all
+// `IF NOT EXISTS` and concatenate harmlessly on merge but a collision means one branch's
+// DDL never runs. That skip is why this merge resolved to a number rather than a clash.
+//
+// Two bumps on this branch because the guard requires one per DDL change: 34 added
+// `chat_messages.attached_contacts`, 35 the last-interaction index the composer's pickers
+// order on.
+// 36 is main's (#161). 37 is the contact photo cooldown (#146) — see the v37 entry above.
 export const SCHEMA_VERSION = 37;
 
 /**
@@ -1186,6 +1197,10 @@ export const SCALE_DDL: string[] = [
   // the same way, so the index has to be declared that way to serve it.
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_idx ON contacts(user_id, closeness DESC, id DESC)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
+  // For the composer's pickers, which open on "who have I actually spoken to lately"
+  // rather than whoever is alphabetically first. `updated_at` is the wrong column for
+  // that — editing a contact is not talking to them.
+  `CREATE INDEX IF NOT EXISTS contacts_user_last_interaction_idx ON contacts(user_id, last_interaction_at DESC NULLS LAST)`,
   `CREATE INDEX IF NOT EXISTS contacts_search_gin ON contacts USING gin(search_tsv)`,
   `CREATE INDEX IF NOT EXISTS contacts_slug_idx ON contacts(linkedin_slug) WHERE linkedin_slug IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS contacts_user_email_idx ON contacts(user_id, email) WHERE email IS NOT NULL`,
@@ -1549,6 +1564,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "timestamptz NOT NULL DEFAULT now()"
   );
   await ensureColumn(client, "imports", "total_rows", "integer");
+  await ensureColumn(client, "user_settings", "wispr_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "apollo_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "resend_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_account_sid_encrypted", "text");
@@ -2013,6 +2029,7 @@ const alters = [
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS stats jsonb DEFAULT '{}'`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS total_rows integer`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS wispr_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS apollo_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS resend_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_account_sid_encrypted text`,
@@ -2124,6 +2141,7 @@ const alters = [
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS ai_summary text`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS companies_mentioned jsonb DEFAULT '[]'`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS roles_discussed jsonb DEFAULT '[]'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attached_contacts jsonb DEFAULT '[]'`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS first_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS last_email_at timestamptz`,
   `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS email_count integer NOT NULL DEFAULT 0`,

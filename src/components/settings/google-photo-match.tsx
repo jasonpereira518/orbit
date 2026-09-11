@@ -53,7 +53,7 @@ export function GooglePhotoMatch() {
                   );
                 }
               } catch {
-                toast.error("Couldn't reach Google Contacts");
+                toast.error("Couldn’t reach Google Contacts");
               }
             })
           }

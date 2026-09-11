@@ -22,6 +22,7 @@ import {
   startEventbriteOAuth,
 } from "@/actions/events";
 import type { EventConnectionSummary } from "@/lib/events/connections";
+import { friendlyError } from "@/lib/errors";
 
 export function EventConnectionsCard({
   connections,
@@ -42,12 +43,12 @@ export function EventConnectionsCard({
     start(async () => {
       const result = await connectLuma(apiKey);
       if (!result.ok) {
-        toast.error(result.error ?? "Luma rejected that key.");
+        toast.error(result.error ?? "Luma didn’t accept that key — check it and try again");
         return;
       }
       setApiKey("");
       setShowLumaField(false);
-      toast.success("Luma connected. Events you host will sync automatically.");
+      toast.success("Luma connected — events you host will sync automatically");
       router.refresh();
     });
   }
@@ -58,7 +59,7 @@ export function EventConnectionsCard({
         const { url } = await startEventbriteOAuth();
         window.location.href = url;
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not start Eventbrite.");
+        toast.error(friendlyError(error, "Couldn’t connect Eventbrite — try again?"));
       }
     });
   }
@@ -66,7 +67,7 @@ export function EventConnectionsCard({
   function disconnect(provider: "luma" | "eventbrite") {
     start(async () => {
       await disconnectEventProvider(provider);
-      toast.success("Disconnected.");
+      toast.success("Disconnected");
       router.refresh();
     });
   }

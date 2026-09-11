@@ -79,7 +79,10 @@ export async function GET(request: Request) {
     redirectBase.searchParams.set("google", "error");
     redirectBase.searchParams.set(
       "reason",
-      err instanceof Error ? err.message : "oauth_failed"
+      // A code, not the message. The full error is already in recordErrorEvent above;
+      // in the URL it only leaked token-endpoint bodies into a toast, browser history
+      // and access logs.
+      "oauth_failed"
     );
     return NextResponse.redirect(redirectBase);
   }

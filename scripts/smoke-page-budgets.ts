@@ -26,6 +26,7 @@ import { contacts } from "../src/db/schema";
 import { getDashboardData } from "../src/lib/reminders";
 import { loadGraphData } from "../src/lib/graph-data";
 import { loadNotificationPanel } from "../src/lib/notification-panel";
+import { loadSuggestionSignals } from "../src/lib/chat-suggestions-data";
 import {
   AVATAR_RECHECK_DAYS,
   findAvatarBackfillCandidates,
@@ -301,6 +302,57 @@ async function main() {
   check(
     "contacts list still resolves an inline avatar to the avatar route",
     listJson.includes("/api/avatars/")
+  );
+
+  // ---- Composer suggestion signals ---------------------------------------------------
+  // The row renders on every visit to an empty /chat and on every open of the floating ask
+  // bar, so its cost is paid far more often than a page load. Nine in the steady state, up
+  // from six when the taxonomy added commitments, notes mentions, goals and the cold-start
+  // company aggregate. Every one is a bounded index read over the user's own slice, and the
+  // row is fetched at most once per page load — but this is the largest cost in the feature
+  // and the number is meant to be argued rather than absorbed. If it has to come down, the
+  // company aggregate is the one to drop, at the cost of the best cold-start question.
+  console.log("\nComposer suggestions (loadSuggestionSignals)…");
+  startQueryCount();
+  await loadSuggestionSignals(USER);
+  const suggestionCount = stopQueryCount();
+  const suggestionScans = contactScans(capturedQueries());
+  console.log(`  statements: ${suggestionCount}`);
+  check("suggestions issue ≤ 12 statements", suggestionCount <= 12, `got ${suggestionCount}`);
+  check(
+    "suggestions do not pull notes as a bare column — the emptiness test belongs in the predicate",
+    suggestionScans.every((s) => !selectsBare(s, "notes")),
+    suggestionScans.find((s) => selectsBare(s, "notes"))?.slice(0, 300)
+  );
+  check(
+    "suggestions do not pull profile_image_url",
+    suggestionScans.every((s) => !selectsBare(s, "profile_image_url")),
+    suggestionScans.find((s) => selectsBare(s, "profile_image_url"))?.slice(0, 200)
+  );
+  check(
+    "every suggestion scan is bounded in SQL",
+    suggestionScans.every((s) => /\blimit\b/i.test(s)),
+    suggestionScans.find((s) => !/\blimit\b/i.test(s))?.slice(0, 300)
+  );
+  // The point of the budget: cost must not track network SIZE. That is not the same as
+  // "identical regardless of data" — several lookups are conditional on there being
+  // something to look up (mentions only when the user uses `@`, contact briefs only when
+  // somebody is actually overdue), and skipping those on an empty account is correct.
+  // What must never happen is the count going UP with the size of the network, which is
+  // what a scan creeping in — the closeness cohort back inside `getAttentionBrief`, say —
+  // would look like. The bounded-in-SQL assertion above is the other half of that guard.
+  startQueryCount();
+  await loadSuggestionSignals(`${USER}-empty`);
+  const emptyCount = stopQueryCount();
+  check(
+    "3,000 contacts cost no more statements than an empty account plus its conditional lookups",
+    suggestionCount <= emptyCount + 2,
+    `empty ${emptyCount} vs populated ${suggestionCount}`
+  );
+  check(
+    "and an empty account is never the more expensive one",
+    emptyCount <= suggestionCount,
+    `empty ${emptyCount} vs populated ${suggestionCount}`
   );
 
   // ---- Avatar backfill candidates ----------------------------------------------------

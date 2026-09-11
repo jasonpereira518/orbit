@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 /**
  * Sized per-instance rather than in `clerkAppearance`: the same object dresses
@@ -149,7 +151,7 @@ export function ProfileSettings({
                 toast.success("Social links saved");
               } catch (err) {
                 toast.error(
-                  err instanceof Error ? err.message : "Could not save"
+                  friendlyError(err, TOAST_COPY.saveFailed)
                 );
               }
             })

@@ -40,6 +40,8 @@ import {
   type OutreachMessageStatus,
   type SequenceStep,
 } from "@/lib/outreach-types";
+import { friendlyError, UserFacingError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 async function requireCampaign(userId: string, campaignId: string) {
   const db = await getDb();
@@ -1006,7 +1008,9 @@ export async function sendOutreachMessageAction(messageId: string) {
     },
   ]);
   if (quality.blocking.length) {
-    throw new Error(quality.blocking[0].message);
+    // Deliberate wording, so `friendlyError` lets it through where it is caught on the
+    // server — the per-message loop in `bulkSendOutreach`.
+    throw new UserFacingError(quality.blocking[0].message);
   }
 
   const channel = message.channel as OutreachChannel;
@@ -1111,19 +1115,24 @@ export async function bulkSendOutreach(input: {
     campaignId: input.campaignId,
     messageIds: input.messageIds,
   });
+  // Both outcomes come back as data. They used to be thrown, and a thrown message is a
+  // digest in production — so the client's `startsWith("Quality warnings:")` check could
+  // never match there, and a blocked send never said why. The dialog pre-checks quality
+  // through `previewBulkSendQuality`, so these are the safety net for drafts that
+  // changed in between; a safety net that says nothing is not one.
   if (quality.blocking.length) {
-    throw new Error(
-      `Cannot send: ${quality.blocking[0].message}${
-        quality.blocking.length > 1
-          ? ` (+${quality.blocking.length - 1} more)`
-          : ""
-      }`
-    );
+    const more =
+      quality.blocking.length > 1 ? ` (and ${quality.blocking.length - 1} more)` : "";
+    return {
+      status: "blocked" as const,
+      reason: `Can’t send yet — ${quality.blocking[0].message}${more}`,
+    };
   }
   if (!input.ignoreWarnings && quality.warnings.length) {
-    throw new Error(
-      `Quality warnings: ${quality.warnings[0].message}. Confirm to send anyway.`
-    );
+    return {
+      status: "needs_confirmation" as const,
+      warning: quality.warnings[0].message,
+    };
   }
 
   const ids = input.messageIds.slice(0, BULK_SEND_LIMIT);
@@ -1137,7 +1146,7 @@ export async function bulkSendOutreach(input: {
       results.push({
         messageId,
         ok: false,
-        error: err instanceof Error ? err.message : "Send failed",
+        error: friendlyError(err, TOAST_COPY.sendFailed),
       });
     }
   }
@@ -1145,6 +1154,7 @@ export async function bulkSendOutreach(input: {
   revalidatePath(`/outreach/${input.campaignId}`);
   revalidatePath("/outreach");
   return {
+    status: "sent" as const,
     sent: results.filter((r) => r.ok).length,
     failed: results.filter((r) => !r.ok).length,
     results,
