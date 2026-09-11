@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { isDemoMode } from "@/lib/auth";
-import { attributionFromUrl, referrerHost } from "@/lib/attribution-parse";
+import { attributionFromUrl } from "@/lib/attribution-parse";
 import { isBotUserAgent } from "@/lib/analytics-bots";
 import { isTrackedPath, normalizeRoute } from "@/lib/analytics-routes";
 import {
@@ -98,6 +98,12 @@ function geoFrom(headers: Headers) {
   };
 }
 
+/** A Host header reduced to the form `referrerHost()` produces: no port, no `www.`. */
+function bareHost(host: string | null): string | null {
+  if (!host) return null;
+  return host.split(",")[0]!.trim().split(":")[0]!.replace(/^www\./, "").toLowerCase() || null;
+}
+
 const isUuid = (value: unknown): value is string =>
   typeof value === "string" &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
@@ -134,14 +140,21 @@ export async function POST(request: Request) {
     if (overRateLimit(visitorHash, Date.now())) return OK();
 
     // The client sends its full URL so the UTMs can be read here rather than trusted from
-    // it. `attributionFromUrl` and `referrerHost` are the same parsers the signup
-    // attribution cookie uses, so a campaign is spelled identically in both places — and
-    // `referrerHost` already drops same-origin, which is what stops every internal
-    // navigation from registering as a referral.
+    // it. `attributionFromUrl` is the same parser the signup attribution cookie uses, so a
+    // campaign is spelled identically in both places.
     const url = typeof body.url === "string" ? body.url : "";
     const referrer = typeof body.referrer === "string" ? body.referrer : null;
     const attribution = attributionFromUrl(url, referrer);
     const geo = geoFrom(headers);
+
+    // `referrerHost` parses a host and nothing more — it does NOT drop same-origin (the
+    // middleware does that for itself, separately). Without this, every full-page load
+    // from one Orbit page to another records Orbit as its own top referrer.
+    const ownHost = bareHost(headers.get("x-forwarded-host") ?? headers.get("host"));
+    const externalReferrer =
+      attribution.referrer && bareHost(attribution.referrer) !== ownHost
+        ? attribution.referrer
+        : null;
 
     // Demo mode has no Clerk, so `auth()` yields nothing and every local page view would
     // record as anonymous — which makes the per-account breakdown impossible to see while
@@ -162,7 +175,7 @@ export async function POST(request: Request) {
       sessionId: body.sessionId,
       userId,
       route: normalizeRoute(body.path),
-      referrerHost: attribution.referrer ?? referrerHost(referrer),
+      referrerHost: externalReferrer,
       utmSource: attribution.utmSource,
       utmMedium: attribution.utmMedium,
       utmCampaign: attribution.utmCampaign,

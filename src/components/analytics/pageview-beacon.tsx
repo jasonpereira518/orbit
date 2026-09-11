@@ -23,18 +23,47 @@ import { isTrackedPath } from "@/lib/analytics-routes";
 
 const SESSION_KEY = "orbit_sid";
 
-function sessionId(): string | null {
+/**
+ * A session ends after this long with no page view — the conventional 30 minutes.
+ *
+ * Without it a session is the lifetime of the TAB, and for a CRM that is the wrong unit:
+ * people pin Orbit and come back to it every morning, which made one tab a single
+ * multi-day "session" and pushed the median session length into days.
+ */
+const SESSION_IDLE_MS = 30 * 60_000;
+
+function sessionId(now: number): string | null {
   try {
-    const existing = sessionStorage.getItem(SESSION_KEY);
-    if (existing) return existing;
-    const minted = crypto.randomUUID();
-    sessionStorage.setItem(SESSION_KEY, minted);
-    return minted;
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    let stored: { id?: unknown; at?: unknown } | null = null;
+    if (raw) {
+      try {
+        stored = JSON.parse(raw) as { id?: unknown; at?: unknown };
+      } catch {
+        // A bare id from before the idle timeout existed. Treat it as expired.
+      }
+    }
+    const fresh =
+      typeof stored?.id === "string" &&
+      typeof stored?.at === "number" &&
+      now - stored.at < SESSION_IDLE_MS;
+    const id = fresh ? (stored!.id as string) : crypto.randomUUID();
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({ id, at: now }));
+    return id;
   } catch {
     // Private mode, storage disabled, or a sandboxed frame. No session, no tracking.
     return null;
   }
 }
+
+/**
+ * Whether this document has already reported a view.
+ *
+ * `document.referrer` is fixed for the life of the document — client-side navigation
+ * never updates it — so sending it with every view credited the landing referrer with
+ * every page of the visit. Only the first view of a document carries it.
+ */
+let documentReported = false;
 
 function post(payload: Record<string, unknown>, viaBeacon: boolean): void {
   try {
@@ -109,11 +138,19 @@ export function PageviewBeacon() {
   useEffect(() => {
     if (!pathname || !isTrackedPath(pathname)) return;
 
-    const sid = sessionId();
+    const now = Date.now();
+    const sid = sessionId(now);
     if (!sid) return;
 
     const id = crypto.randomUUID();
-    open.current = { id, since: Date.now(), accumulated: 0 };
+    // Start the clock stopped if the page opened in a background tab (a middle-click, a
+    // restored session). Otherwise every second it sat unseen counted as reading, and the
+    // `visibilitychange` handler would not reset it because the clock was already running.
+    const hidden = document.visibilityState === "hidden";
+    open.current = { id, since: hidden ? 0 : now, accumulated: 0 };
+
+    const referrer = documentReported ? null : document.referrer || null;
+    documentReported = true;
 
     post(
       {
@@ -124,7 +161,7 @@ export function PageviewBeacon() {
         // The full URL, so the server can read UTMs with the same parser the signup
         // attribution cookie uses. The server decides the stored route, not the client.
         url: window.location.href,
-        referrer: document.referrer || null,
+        referrer,
       },
       false
     );

@@ -142,23 +142,28 @@ export type TrafficPoint = {
 /**
  * Views and visitor-days per bucket, gap-filled by the shared `series()` spine.
  *
- * No `now` parameter, unlike its neighbours. `series()` anchors its spine on SQL `now()`,
- * so one passed in here would be accepted, ignored, and silently return today's buckets
- * for a caller that asked for last month's — worse than not offering it.
+ * Takes the RANGE, not a grain and bucket count, so it cannot drift from the headline
+ * total above it. The spine's buckets start on calendar boundaries while `since()` is a
+ * rolling window, so a spine of exactly N buckets began up to a bucket AFTER the window —
+ * on 90 days the bars covered 84-90 and summed to less than the number printed over them.
+ * One extra bucket reaches back past the window start, and the join counts only views at
+ * or after it, so the bars sum to the headline exactly; the first bar is simply partial.
+ *
+ * `from` uses JS time and the spine uses SQL `now()`. Both are "now" in any real request.
  */
-export async function trafficTrend(
-  grain: Grain = "day",
-  buckets = 30
-): Promise<TrafficPoint[]> {
+export async function trafficTrend(range: Range = "30d"): Promise<TrafficPoint[]> {
   const db = await getDb();
+  const grain = rangeGrain(range);
+  const from = since(range, new Date());
   const result = await db.execute(sql`
-    WITH spine AS (${series(grain, buckets)})
+    WITH spine AS (${series(grain, rangeBuckets(range) + 1)})
     SELECT spine.bucket_start,
            count(pv.id)::int AS views,
            count(DISTINCT pv.visitor_hash)::int AS visitors
     FROM spine
     LEFT JOIN page_views pv
       ON pv.is_bot = false
+     AND pv.created_at >= ${from}
      AND date_trunc(${grain}, pv.created_at) = spine.bucket_start
     GROUP BY spine.bucket_start
     ORDER BY spine.bucket_start
@@ -264,13 +269,20 @@ export async function geoBreakdown(
     visitorDays: num(r.visitor_days),
   });
 
+  // GROUPING() separates a rolled-up NULL from a real one, and a real NULL is common here:
+  // Vercel often knows the country but not the city (mobile carriers, some VPNs). Those
+  // rows are genuinely in the city grouping set, so without the null checks they landed in
+  // the Cities panel labelled as the bare country — "US" listed as if it were a city.
   return {
     countries: rows.filter((r) => num(r.g_region) === 1).map(shape).slice(0, 25),
     regions: rows
-      .filter((r) => num(r.g_region) === 0 && num(r.g_city) === 1)
+      .filter((r) => num(r.g_region) === 0 && num(r.g_city) === 1 && r.region != null)
       .map(shape)
       .slice(0, 25),
-    cities: rows.filter((r) => num(r.g_city) === 0).map(shape).slice(0, 25),
+    cities: rows
+      .filter((r) => num(r.g_city) === 0 && r.city != null)
+      .map(shape)
+      .slice(0, 25),
   };
 }
 
@@ -381,14 +393,32 @@ export async function acquisitionFunnel(
   const db = await getDb();
   const from = since(range, now);
 
+  // ANONYMOUS TRAFFIC ONLY. Signed-in views are existing customers using the product, not
+  // prospects — counting them made the denominator grow with the user base, so conversion
+  // fell every month acquisition stayed flat. A prospect's pre-signup views are anonymous
+  // by definition, which is exactly the population this stage means.
+  //
+  // `first_view` is returned alongside so the account stages below can start where traffic
+  // data starts. See the note on `measuredFrom`.
   const traffic = await db.execute(sql`
     SELECT
       count(DISTINCT (pv.visitor_hash, date_trunc('day', pv.created_at)))::int AS visitors,
       count(DISTINCT (pv.visitor_hash, date_trunc('day', pv.created_at)))
-        FILTER (WHERE pv.route IN ('/pricing', '/interest', '/upgrade'))::int AS intent
-    FROM ${PV} AND pv.created_at >= ${from}
+        FILTER (WHERE pv.route IN ('/pricing', '/interest'))::int AS intent,
+      (SELECT min(created_at) FROM page_views) AS first_view
+    FROM ${PV} AND pv.created_at >= ${from} AND pv.user_id IS NULL
   `);
-  const t = rowsOf<{ visitors: number; intent: number }>(traffic)[0];
+  const t = rowsOf<{ visitors: number; intent: number; first_view: string | null }>(
+    traffic
+  )[0];
+
+  // Traffic only exists from the day ANALYTICS_SALT was set. Counting a full window of
+  // signups against a few days of visitors produced "Created an account: 14 of 3" for the
+  // first month after launch — so every stage is measured from whichever is later, the
+  // window start or the first recorded view.
+  const firstView = toDate(t?.first_view);
+  const measuredFrom =
+    firstView && firstView.toISOString() > from ? firstView.toISOString() : from;
 
   // `isOnboarded` in admin-metrics.ts is the JS form of the same predicate: the column
   // alone undercounts, because `needsOnboarding` treats any contact or import as onboarded
@@ -413,9 +443,9 @@ export async function acquisitionFunnel(
                AND (b.mrr_delta_cents > 0 OR b.kind = 'lifetime')
            )
       )::int AS paid,
-      (SELECT count(*)::int FROM interest_list_signups WHERE created_at >= ${from}) AS interest
+      (SELECT count(*)::int FROM interest_list_signups WHERE created_at >= ${measuredFrom}) AS interest
     FROM user_settings s
-    WHERE s.created_at >= ${from}
+    WHERE s.created_at >= ${measuredFrom}
   `);
   const a = rowsOf<{
     signups: number;
@@ -428,7 +458,15 @@ export async function acquisitionFunnel(
   const signups = num(a?.signups);
 
   return [
-    { label: "Unique visitors", count: visitors, of: null, note: "visitor-days, not people" },
+    {
+      label: "Unique visitors",
+      count: visitors,
+      of: null,
+      note:
+        measuredFrom === from
+          ? "anonymous visitor-days, not people"
+          : `anonymous visitor-days, not people · every stage counted from ${measuredFrom.slice(0, 10)}, when tracking began`,
+    },
     { label: "Reached pricing or interest", count: num(t?.intent), of: visitors },
     {
       label: "Joined the interest list",

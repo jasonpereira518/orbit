@@ -16,7 +16,6 @@ import {
   RANGES,
   deviceBreakdown,
   geoBreakdown,
-  rangeBuckets,
   rangeDays,
   rangeGrain,
   formatDuration,
@@ -67,7 +66,7 @@ export default async function AdminTrafficPage({
   // `/admin/health` uses for the same reason.
   const [totals, trend, routes, geo, sources, devices, accounts] = await Promise.all([
     trafficTotals(range).catch(() => null),
-    trafficTrend(rangeGrain(range), rangeBuckets(range)).catch(() => []),
+    trafficTrend(range).catch(() => []),
     topRoutes(range).catch(() => []),
     geoBreakdown(range).catch(() => null),
     sourceBreakdown(range).catch(() => null),

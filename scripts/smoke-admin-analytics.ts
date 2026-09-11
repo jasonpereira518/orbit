@@ -14,7 +14,7 @@ import "./smoke/_env";
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { getDb, rowsOf } from "../src/db";
 import { billingEvents, contacts, pageViews, userSettings } from "../src/db/schema";
 import {
@@ -257,13 +257,32 @@ async function main() {
     `got ${totals.medianSessionSeconds}, expected 240 from [0, 240, 630]`
   );
 
-  const trend = await trafficTrend("day", 7);
-  check("trend is gap-filled to the bucket count", trend.length === 7, `got ${trend.length}`);
+  const trend = await trafficTrend("30d");
+  check(
+    "trend reaches one bucket past the window so its first bar covers the window start",
+    trend.length === 31,
+    `got ${trend.length}`
+  );
   check(
     "trend totals agree with the headline",
     trend.reduce((a, p) => a + p.views, 0) === totals.views,
     `${trend.reduce((a, p) => a + p.views, 0)} vs ${totals.views}`
   );
+
+  // The edge that used to disagree: a view inside the rolling window but on its partial
+  // first day (or, for 90 days, in the week the weekly spine used to start after). The
+  // headline counted it; no bar did.
+  const edgeIds = [randomUUID(), randomUUID()];
+  await db.insert(pageViews).values([
+    { ...base, id: edgeIds[0], visitorHash: visitorB, sessionId: randomUUID(), route: "/", createdAt: new Date(now.getTime() - (30 * 86_400_000 - 3_600_000)) },
+    { ...base, id: edgeIds[1], visitorHash: visitorB, sessionId: randomUUID(), route: "/", createdAt: new Date(now.getTime() - 89 * 86_400_000) },
+  ]);
+  for (const r of ["7d", "30d", "90d"] as const) {
+    const [t, tr] = await Promise.all([trafficTotals(r), trafficTrend(r)]);
+    const summed = tr.reduce((a, p) => a + p.views, 0);
+    check(`${r} bars sum to the ${r} headline, window edge included`, summed === t.views, `${summed} vs ${t.views}`);
+  }
+  await db.delete(pageViews).where(inArray(pageViews.id, edgeIds));
 
   const routesOut = await topRoutes("30d");
   const home = routesOut.find((r) => r.route === "/");
@@ -282,8 +301,18 @@ async function main() {
     `got ${pricing?.medianDwellSeconds}`
   );
 
+  // Vercel knew the country but not the city — common for mobile carriers.
+  const noCityId = randomUUID();
+  await db.insert(pageViews).values({ ...base, id: noCityId, visitorHash: visitorB, sessionId: randomUUID(), route: "/", createdAt: ago(3), country: "DE" });
   const geo = await geoBreakdown("30d");
-  check("countries rolled up", geo.countries.length === 2, `got ${geo.countries.length}`);
+  check(
+    "a country with no city does not appear in the cities list",
+    geo.cities.every((c) => c.city != null) && geo.regions.every((r) => r.region != null),
+    JSON.stringify(geo.cities.map((c) => [c.city, c.country]))
+  );
+  check("but it still counts toward its country", geo.countries.some((c) => c.country === "DE"));
+  await db.delete(pageViews).where(eq(pageViews.id, noCityId));
+  check("countries rolled up", geo.countries.length === 3, `got ${geo.countries.length}; US, GB and the city-less DE`);
   check(
     "US country total sums its cities",
     geo.countries.find((c) => c.country === "US")?.views === 3
@@ -408,6 +437,12 @@ async function main() {
     effectiveAt: nowIso,
   });
 
+  // An existing customer reading /pricing while signed in — not a prospect.
+  await db.insert(pageViews).values({ ...base, id: randomUUID(), visitorHash: hashVisitor("10.9.9.9", "UA-CUSTOMER", now), sessionId: randomUUID(), userId: "fun_customer", route: "/pricing", createdAt: ago(4) });
+  // An account created long before tracking began. Counting it against a few days of
+  // traffic is how "Created an account: 14 of 3" happened.
+  await db.insert(userSettings).values({ userId: "fun_old", email: "old@example.com", createdAt: new Date(now.getTime() - 10 * 86_400_000) });
+
   const funnel = await acquisitionFunnel("30d");
   const stage = (label: string) => funnel.find((s) => s.label === label);
   const delta = (label: string) =>
@@ -433,6 +468,21 @@ async function main() {
     "paid counts a Lifetime purchase as well as MRR",
     delta("Paid") === 2,
     `delta ${delta("Paid")}; a mrr_delta_cents-only test would say 1`
+  );
+  check(
+    "an account older than the first recorded view is not counted",
+    delta("Created an account") === 4,
+    `delta ${delta("Created an account")}; fun_old predates tracking and must not be`
+  );
+  check(
+    "the funnel says when its window was shortened",
+    (stage("Unique visitors")?.note ?? "").includes("when tracking began"),
+    stage("Unique visitors")?.note
+  );
+  check(
+    "a signed-in customer is not a visitor in the acquisition funnel",
+    stage("Reached pricing or interest")?.count === 1,
+    `got ${stage("Reached pricing or interest")?.count}; fun_customer's signed-in /pricing view must not count`
   );
   check(
     "every stage after the first carries a denominator",
@@ -609,6 +659,60 @@ async function main() {
   );
   process.env.ANALYTICS_SALT = "smoke-salt-at-least-16-chars";
 
+  // --- 7d. The ingest route, called for real ---------------------------------------------
+  //
+  // `referrerHost()` parses a host and nothing more, and the comments used to claim it
+  // dropped same-origin. It never did: a full-page load from one Orbit page to another
+  // recorded Orbit as its own referrer. This drives POST /api/track itself.
+
+  console.log("\ningest route");
+  const { POST: track } = await import("../src/app/api/track/route");
+  const beacon = (body: Record<string, unknown>, host = "orbit.example") =>
+    track(
+      new Request(`https://${host}/api/track`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          host,
+          "user-agent": realChrome,
+          "x-forwarded-for": "203.0.113.7",
+        },
+        body: JSON.stringify(body),
+      })
+    );
+  const viewOf = async (id: string) =>
+    db.query.pageViews.findFirst({ where: (t, { eq }) => eq(t.id, id) });
+
+  const selfRef = randomUUID();
+  const res = await beacon({ kind: "view", id: selfRef, sessionId: randomUUID(), path: "/pricing", url: "https://orbit.example/pricing", referrer: "https://www.orbit.example/" });
+  check("the route answers 204", res.status === 204, `got ${res.status}`);
+  const selfRow = await viewOf(selfRef);
+  check("the view was recorded", selfRow != null);
+  check(
+    "a referrer from Orbit's own host is not recorded as a referral",
+    selfRow?.referrerHost == null,
+    `got ${selfRow?.referrerHost}`
+  );
+
+  const extRef = randomUUID();
+  await beacon({ kind: "view", id: extRef, sessionId: randomUUID(), path: "/", url: "https://orbit.example/?utm_campaign=launch", referrer: "https://news.ycombinator.com/item?id=1" });
+  const extRow = await viewOf(extRef);
+  check("an external referrer is kept", extRow?.referrerHost === "news.ycombinator.com", `got ${extRow?.referrerHost}`);
+  check("UTMs are read from the URL", extRow?.utmCampaign === "launch", `got ${extRow?.utmCampaign}`);
+
+  const portRef = randomUUID();
+  await beacon({ kind: "view", id: portRef, sessionId: randomUUID(), path: "/", url: "http://localhost:3001/", referrer: "http://localhost:3001/pricing" }, "localhost:3001");
+  check("same-origin is recognised across a port", (await viewOf(portRef))?.referrerHost == null, `got ${(await viewOf(portRef))?.referrerHost}`);
+
+  await beacon({ kind: "dwell", id: extRef, dwellMs: 12_000 });
+  check("a dwell beacon through the route lands", (await viewOf(extRef))?.dwellMs === 12_000);
+
+  const adminId = randomUUID();
+  await beacon({ kind: "view", id: adminId, sessionId: randomUUID(), path: "/admin/analytics", url: "https://orbit.example/admin/analytics", referrer: null });
+  check("the admin console is never recorded", (await viewOf(adminId)) == null);
+
+  await db.delete(pageViews).where(inArray(pageViews.id, [selfRef, extRef, portRef]));
+
   // --- 8. Query budget -------------------------------------------------------------------
   //
   // The overview issues these together. No admin page is budgeted today; this is the first,
@@ -618,7 +722,7 @@ async function main() {
   startQueryCount();
   await Promise.all([
     trafficTotals("30d"),
-    trafficTrend("day", 30),
+    trafficTrend("30d"),
     topRoutes("30d"),
     geoBreakdown("30d"),
     sourceBreakdown("30d"),
@@ -634,7 +738,7 @@ async function main() {
 
   // Leave the shared database as we found it. 111 other scripts run against this same
   // PGlite directory, and several of them count users.
-  const fixtureUsers = ["fun_idle", "fun_active", "fun_lifetime", "fun_sub"];
+  const fixtureUsers = ["fun_idle", "fun_active", "fun_lifetime", "fun_sub", "fun_old"];
   await db.delete(pageViews);
   await db.delete(contacts).where(inArray(contacts.userId, fixtureUsers));
   await db.delete(billingEvents).where(inArray(billingEvents.userId, fixtureUsers));

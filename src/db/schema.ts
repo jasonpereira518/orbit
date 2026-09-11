@@ -3134,7 +3134,11 @@ export const pageViews = pgTable(
     userId: text("user_id"),
     /** A pattern from `ROUTE_PATTERNS`, or "/unknown". Never a raw pathname. */
     route: text("route").notNull(),
-    /** External referrers only; `referrerHost()` drops same-origin before this is set. */
+    /**
+     * External referrers only, and only on a document's first view — `/api/track` drops
+     * Orbit's own host, and the beacon stops sending `document.referrer` after the landing
+     * view because client-side navigation never changes it.
+     */
     referrerHost: text("referrer_host"),
     utmSource: text("utm_source"),
     utmMedium: text("utm_medium"),
