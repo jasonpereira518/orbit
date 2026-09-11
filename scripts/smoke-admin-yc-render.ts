@@ -163,9 +163,9 @@ async function main() {
   /* ----------------------------------------------------------------- page render */
   // Imported here rather than at the top so a seeding failure above reports as itself
   // instead of as a render error.
-  const { default: FundingPage } = await import("../src/app/(admin)/admin/yc/fundraising/page");
-  const { default: RunwayPage } = await import("../src/app/(admin)/admin/yc/runway/page");
-  const { default: RevenuePage } = await import("../src/app/(admin)/admin/yc/revenue/page");
+  const { default: FundingPage } = await import("../src/app/(clerk)/(admin)/admin/yc/fundraising/page");
+  const { default: RunwayPage } = await import("../src/app/(clerk)/(admin)/admin/yc/runway/page");
+  const { default: RevenuePage } = await import("../src/app/(clerk)/(admin)/admin/yc/revenue/page");
 
   const funding = textOf(await FundingPage());
   check("Funding renders the banked total", funding.includes("$235,000"), funding.slice(0, 40).join("|"));

@@ -27,6 +27,8 @@ import {
   gmailConnections,
   imports,
   interactions,
+  meetingSessions,
+  meetingTranscriptSegments,
   noteBatches,
   outboundWebhookDeliveries,
   outlookConnections,
@@ -138,6 +140,13 @@ export async function purgeUserData(
   // or `interactions` (its `seed_contact_id` is a plain column) — it survives both of
   // those deletes below unless removed explicitly.
   await db.delete(noteBatches).where(eq(noteBatches.userId, userId));
+  // Meeting transcripts: the words of everyone on a call, verbatim. Segments first and
+  // explicitly, though they cascade from the session — they carry their own `user_id`, and
+  // a transcript that outlived its account would be the worst leak this function could have.
+  await db
+    .delete(meetingTranscriptSegments)
+    .where(eq(meetingTranscriptSegments.userId, userId));
+  await db.delete(meetingSessions).where(eq(meetingSessions.userId, userId));
   await db.delete(interactions).where(eq(interactions.userId, userId));
   // The pasted text a note was parsed out of, kept so a save can be undone. `source_text`
   // is the user's own prose about named people, which makes this the most sensitive row

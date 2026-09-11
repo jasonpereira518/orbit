@@ -1019,6 +1019,39 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
   created_at timestamptz NOT NULL DEFAULT now(),
   resolved_at timestamptz
 );
+CREATE TABLE IF NOT EXISTS meeting_sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  title text,
+  attendees jsonb NOT NULL DEFAULT '[]',
+  capture_surface text,
+  includes_mic integer NOT NULL DEFAULT 1,
+  recorder_id text,
+  status text NOT NULL DEFAULT 'recording',
+  started_at timestamptz NOT NULL DEFAULT now(),
+  ended_at timestamptz,
+  duration_ms integer NOT NULL DEFAULT 0,
+  last_seq integer NOT NULL DEFAULT -1,
+  digest jsonb,
+  digest_error text,
+  note_batch_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS meeting_transcript_segments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id uuid NOT NULL REFERENCES meeting_sessions(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  seq integer NOT NULL,
+  start_ms integer NOT NULL,
+  end_ms integer NOT NULL,
+  text text NOT NULL,
+  engine text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS meeting_sessions_user_status_idx ON meeting_sessions(user_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS meeting_segments_session_seq_uidx ON meeting_transcript_segments(session_id, seq);
+CREATE INDEX IF NOT EXISTS meeting_segments_user_idx ON meeting_transcript_segments(user_id);
 CREATE TABLE IF NOT EXISTS page_views (
   id uuid PRIMARY KEY,
   visitor_hash text NOT NULL,
@@ -1110,9 +1143,11 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
  * claimed by the scan-notes branch. Also worth knowing: until Sep 11 2026 Preview shared
  * Production's DATABASE_URL, so preview builds stamped production directly. Previews now
  * migrate their own Neon project.
- * v44 = page_views (first-party traffic analytics). Built as 33 and moved at merge: 33 went
- * to duplicate prevention, main reached 40, and 42 and 43 are claimed by open branches
- * (meeting capture, scan notes) — so 44, above every number in flight.
+ * v42 = meeting capture: meeting_sessions + meeting_transcript_segments.
+ * v46 = page_views (first-party traffic analytics). Built as 33, moved to 44 when 33 went to
+ * duplicate prevention, and moved again when meeting capture (42) merged in: this branch's
+ * preview had already stamped its database 44 without meeting capture's tables, so keeping
+ * 44 would have skipped them there. 45 is claimed by the scan-notes branch.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
@@ -1135,9 +1170,14 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 //
 // 40 is the contact photo cooldown (#146) — see the v40 entry above.
 //
-// 44 is traffic analytics (page_views) — see the v44 entry above. 41 is unclaimed, but a
-// number below branches already in flight is how the last five collisions started.
-export const SCHEMA_VERSION = 44;
+// 42 is meeting capture: meeting_sessions + meeting_transcript_segments. 41 is skipped on
+// purpose — it was claimed by an open branch when this was built (43 and 44 are claimed now).
+//
+// 46 is traffic analytics (page_views) — see the v46 entry above. It shipped a preview as
+// 44, and that preview's database is stamped 44 with DDL from before meeting capture, so 44
+// can't carry meeting capture's tables: an unchanged number would skip them there. 45 is
+// claimed by the scan-notes branch.
+export const SCHEMA_VERSION = 46;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
@@ -2301,6 +2341,11 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS event_attendees_contact_idx ON event_attendees(contact_id) WHERE contact_id IS NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS event_provider_connections_user_uidx ON event_provider_connections(user_id, provider)`,
   `CREATE INDEX IF NOT EXISTS event_provider_connections_due_idx ON event_provider_connections(next_sync_at) WHERE next_sync_at IS NOT NULL`,
+  // Schema v42: meeting capture. Same rule as v31/v32 — every index in both places. The
+  // unique index is what makes a re-uploaded chunk a no-op rather than a repeated line.
+  `CREATE INDEX IF NOT EXISTS meeting_sessions_user_status_idx ON meeting_sessions(user_id, status)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS meeting_segments_session_seq_uidx ON meeting_transcript_segments(session_id, seq)`,
+  `CREATE INDEX IF NOT EXISTS meeting_segments_user_idx ON meeting_transcript_segments(user_id)`,
 ];
 
 /**

@@ -109,6 +109,55 @@ export function downsampleTo16k(
 }
 
 /**
+ * `downsampleTo16k` for a stream of small frames, carrying the remainder between calls.
+ *
+ * The stateless version is exact for one buffer but lossy per worklet frame: 128 samples
+ * at 48 kHz is 42.67 output samples, `Math.floor` keeps 42, and the last two input samples
+ * of every frame are dropped. That is 1.6% of the audio gone, a tiny discontinuity every
+ * 2.7 ms, and — over an hour-long meeting — a timeline almost a minute short. This keeps
+ * the unconsumed tail and prepends it to the next frame, so every input sample lands in
+ * exactly one output window.
+ */
+export function createDownsampler(inputRate: number): (frame: Float32Array) => Int16Array {
+  if (!Number.isFinite(inputRate) || inputRate <= 0) {
+    throw new Error(`createDownsampler: bad input rate ${inputRate}`);
+  }
+  const ratio = inputRate / TARGET_SAMPLE_RATE;
+  // At or below the target rate there is no window to straddle a frame boundary.
+  if (ratio <= 1 + 1e-9) return (frame) => downsampleTo16k(frame, inputRate);
+
+  let carry = new Float32Array(0);
+  // Where the next output window starts, as a fraction into `carry`. Kept because the
+  // ratio is rarely whole (44100/16000 is 2.75625): rounding the window start at each
+  // frame boundary instead would gain or lose a sample per frame — the bug this replaces,
+  // just smaller.
+  let phase = 0;
+  return (frame) => {
+    let input = frame;
+    if (carry.length) {
+      input = new Float32Array(carry.length + frame.length);
+      input.set(carry);
+      input.set(frame, carry.length);
+    }
+    const count = Math.max(0, Math.floor((input.length - phase) / ratio));
+    const out = new Int16Array(count);
+    for (let i = 0; i < count; i++) {
+      // The same box filter as `downsampleTo16k`, on a window that may start mid-sample.
+      const start = Math.floor(phase + i * ratio);
+      const end = Math.min(input.length, Math.ceil(phase + (i + 1) * ratio));
+      let sum = 0;
+      for (let j = start; j < end; j++) sum += input[j];
+      out[i] = floatToInt16(sum / Math.max(1, end - start));
+    }
+    const next = phase + count * ratio;
+    const consumed = Math.floor(next);
+    carry = input.slice(consumed);
+    phase = next - consumed;
+    return out;
+  };
+}
+
+/**
  * One float sample → one int16.
  *
  * The asymmetric scale is not a typo. Int16 runs -32768..32767, so the positive half has

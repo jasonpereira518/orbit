@@ -39,6 +39,12 @@ export const RATE_LIMITS = {
   /** Capture parsing, media ingestion and confirmation: each is a model call. */
   capture: { limit: 30, windowSec: 60 },
   /**
+   * One transcribed chunk of a live meeting (`/api/capture/meetings/[id]/chunks`). A
+   * recording sends one about every minute; the headroom is for draining a backlog after the
+   * connection comes back. Its own bucket so a long call can never starve capture's.
+   */
+  meetingChunk: { limit: 20, windowSec: 60 },
+  /**
    * On-demand photo resolution in `/api/avatars/[contactId]`.
    *
    * Sized for the contacts list, where every photoless row visible resolves itself —

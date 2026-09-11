@@ -2,7 +2,8 @@
  * Routes reachable without a Clerk session.
  *
  * Kept out of `proxy.ts` so it can be asserted against the filesystem: every page under
- * `src/app/(marketing)/` must appear here. A marketing page missing from this list is
+ * `src/app/(site)/` and `src/app/(clerk)/(marketing)/` must appear here. A marketing page
+ * missing from this list is
  * served only to signed-in users, which means the visitors it exists to convert get a
  * 404 — and only in production, since the middleware skips protection entirely when
  * Clerk is unconfigured locally. `scripts/smoke-public-routes.ts` enforces it.

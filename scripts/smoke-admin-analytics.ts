@@ -11,7 +11,7 @@
  */
 import "./smoke/_env";
 
-import { readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
@@ -95,6 +95,40 @@ for (const route of routes) {
     got === route,
     `normalizeRoute(${concrete}) = ${got}; add "${route}" to ROUTE_PATTERNS`
   );
+}
+
+// --- 1b. Every /admin page sits under the admin gate ---------------------------------
+//
+// The gate is `requireAdminPage()` in the admin group's layout, not in each page. When #158
+// moved every route group ((admin) -> (clerk)/(admin)), git carried existing admin pages
+// along but left this branch's NEW pages in the old folder — which no longer had a layout.
+// They still served /admin/analytics, to any signed-in user, emails and all, and nothing
+// failed: the route resolved, the build passed, every other check here was green.
+
+console.log("\nadmin gate coverage");
+
+function adminPages(dir = APP_DIR, prefix = "", gated = false): Array<{ route: string; gated: boolean; file: string }> {
+  const out: Array<{ route: string; gated: boolean; file: string }> = [];
+  const entries = readdirSync(dir);
+  const layout = entries.includes("layout.tsx") ? readFileSync(join(dir, "layout.tsx"), "utf8") : "";
+  const here = gated || layout.includes("requireAdminPage(");
+  for (const entry of entries) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) {
+      if (entry === "api") continue;
+      const segment = entry.startsWith("(") && entry.endsWith(")") ? "" : `/${entry}`;
+      out.push(...adminPages(full, prefix + segment, here));
+    } else if (entry === "page.tsx" && (prefix === "/admin" || prefix.startsWith("/admin/"))) {
+      out.push({ route: prefix, gated: here, file: full });
+    }
+  }
+  return out;
+}
+
+const admin = adminPages();
+check("found the admin console's pages", admin.length > 10, `saw ${admin.length}`);
+for (const page of admin) {
+  check(`${page.route} is behind requireAdminPage()`, page.gated, `${page.file} has no gated ancestor layout`);
 }
 
 // --- 2. No raw identifiers ever reach the column ------------------------------------
@@ -598,10 +632,10 @@ async function main() {
   }
 
   const { default: TrafficPage } = await import(
-    "../src/app/(admin)/admin/analytics/page"
+    "../src/app/(clerk)/(admin)/admin/analytics/page"
   );
   const { default: FunnelPage } = await import(
-    "../src/app/(admin)/admin/analytics/funnel/page"
+    "../src/app/(clerk)/(admin)/admin/analytics/funnel/page"
   );
 
   // Some traffic to render, since the fixtures above were cleaned up by the funnel block.
