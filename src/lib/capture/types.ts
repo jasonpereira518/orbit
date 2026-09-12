@@ -122,11 +122,14 @@ export type CaptureMeetingExtra = {
   title: string;
   ownerName: string | null;
   sourceExcerpt: string | null;
+  /** Ticked before the person touches anything — your own action items, nothing else. */
+  checkedByDefault: boolean;
 };
 
 /** What the runner stores once the parse is done. `CaptureParseResult` minus the corpus. */
 export type CaptureJobResult = Omit<CaptureParseResult, "sourceText" | "sourceHash"> & {
   meetingExtras?: CaptureMeetingExtra[];
+  saved?: CaptureSavedSummary;
 };
 
 export type CaptureDecisionKind = "accept" | "reject" | "skip";
@@ -155,11 +158,32 @@ export type CaptureDecision = {
   decidedAt: string;
 };
 
-/** `decisions` column: person key → decision, plus one reserved key for the meeting ticks. */
-export type CaptureDecisions = Record<string, CaptureDecision> & {
-  __meeting?: { extraReminderKeys: string[] } & Partial<CaptureDecision>;
+/** The summary's choices about the dated commitments the parse found. */
+export type CaptureReminderChoices = {
+  /** Keys of `result.suggestedReminders` that stay ticked. */
+  checked: string[];
+  overrides: Record<string, { personName?: string | null; dueDateIso?: string }>;
 };
 
-export const CAPTURE_MEETING_DECISION_KEY = "__meeting";
+/**
+ * The `decisions` column. Named sections rather than reserved keys, so a person whose
+ * key happened to be "meeting" could never collide with the meeting ticks.
+ */
+export type CaptureDecisions = {
+  people?: Record<string, CaptureDecision>;
+  meeting?: { extraReminderKeys: string[] };
+  reminders?: CaptureReminderChoices;
+};
+
+/** What the save wrote, kept on the job so the saved state can render after a reload. */
+export type CaptureSavedSummary = {
+  batchId: string;
+  created: number;
+  updated: number;
+  remindersCreated: number;
+  contactIds: string[];
+  /** contact id by person key, so the saved state can link each card to its profile. */
+  contactIdByKey: Record<string, string>;
+};
 
 export type IgnoredPersonReason = "rejected" | "skipped" | "mentioned";
