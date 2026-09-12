@@ -13,7 +13,7 @@ export function GraphPreview({ reducedMotion }: PreviewProps) {
 
   return (
     <div className="space-y-3 p-1">
-      <p className="font-[family-name:var(--font-display)] text-lg text-primary">
+      <p className="font-[family-name:var(--font-display)] text-lg text-ink">
         Constellation
       </p>
       <div

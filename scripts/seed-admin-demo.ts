@@ -178,7 +178,7 @@ async function main() {
         emailAddress: `person${i}@gmail.test`,
         accessTokenEncrypted: "ciphertext",
         refreshTokenEncrypted: "ciphertext",
-        status: "revoked",
+        status: "needs_reauth",
         tokenExpiresAt: ago(5),
       });
     }

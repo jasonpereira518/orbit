@@ -1,104 +1,32 @@
 "use server";
 
-import { eq } from "drizzle-orm";
-import { getDb, isPgvectorAvailable } from "@/db";
-import { contacts, contactEmbeddings } from "@/db/schema";
-import { createEmbedding, cosineSimilarity } from "@/lib/ai";
-import {
-  mergeSearchHits,
-  rankKeywordSearch,
-  type KeywordSearchHit,
-  type SearchableContact,
-} from "@/lib/keyword-search";
 import { requireUserId } from "@/lib/auth";
-import { pgvectorSearchContacts } from "@/lib/search";
+import { getQueryEmbedding } from "@/lib/embedding-cache";
+import { hybridSearchContacts } from "@/lib/hybrid-search";
+import { shouldUseSemanticArm, toKeywordHits } from "@/actions/search-adapter";
+import type { KeywordSearchHit } from "@/lib/keyword-search";
 
-function toSearchable(
-  c: Awaited<ReturnType<typeof loadContacts>>[number]
-): SearchableContact {
-  return {
-    id: c.id,
-    fullName: c.fullName,
-    preferredName: c.preferredName,
-    company: c.company,
-    school: c.school,
-    title: c.title,
-    location: c.location,
-    email: c.email,
-    phone: c.phone,
-    linkedinUrl: c.linkedinUrl,
-    website: c.website,
-    howMet: c.howMet,
-    metContext: c.metContext,
-    aiSummary: c.aiSummary,
-    notes: c.notes,
-    industry: c.industry,
-    keyFacts: c.keyFacts,
-    sharedInterests: c.sharedInterests,
-    relationshipScore: c.relationshipScore,
-    priorityLevel: c.priorityLevel,
-    tags: c.contactTags.map((ct) => ct.tag.name),
-  };
-}
+/** Lexical results are never held hostage by the embedding API. */
+const EMBED_SOFT_TIMEOUT_MS = 300;
 
-async function loadContacts(userId: string) {
-  const db = await getDb();
-  return db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    with: { contactTags: { with: { tag: true } } },
-  });
-}
-
-async function semanticHitsForQuery(
+async function embeddingWithSoftTimeout(
   userId: string,
-  query: string,
-  contactsById: Map<string, SearchableContact>
-): Promise<
-  Array<{ contactId: string; similarity: number; contact: SearchableContact }>
-> {
-  let queryEmbedding: number[];
+  query: string
+): Promise<number[] | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), EMBED_SOFT_TIMEOUT_MS);
+  });
   try {
-    queryEmbedding = await createEmbedding(userId, query);
-  } catch {
-    return [];
+    // On timeout the underlying promise keeps running and lands in the cache,
+    // so the next keystroke gets the semantic arm for free.
+    return await Promise.race([
+      getQueryEmbedding(userId, query).catch(() => null),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
-
-  const scores = new Map<string, number>();
-
-  if (isPgvectorAvailable()) {
-    try {
-      const rows = await pgvectorSearchContacts(userId, queryEmbedding, 24);
-      for (const row of rows) {
-        scores.set(row.contactId, row.similarity);
-      }
-    } catch {
-      // fall through to in-memory
-    }
-  }
-
-  if (scores.size === 0) {
-    const db = await getDb();
-    const embeddings = await db.query.contactEmbeddings.findMany({
-      where: eq(contactEmbeddings.userId, userId),
-    });
-    for (const row of embeddings) {
-      const sim = cosineSimilarity(queryEmbedding, row.embedding);
-      const prev = scores.get(row.contactId) ?? 0;
-      if (sim > prev) scores.set(row.contactId, sim);
-    }
-  }
-
-  return [...scores.entries()]
-    .map(([contactId, similarity]) => {
-      const contact = contactsById.get(contactId);
-      if (!contact) return null;
-      return { contactId, similarity, contact };
-    })
-    .filter(Boolean) as Array<{
-    contactId: string;
-    similarity: number;
-    contact: SearchableContact;
-  }>;
 }
 
 export async function searchDashboardContacts(
@@ -106,22 +34,16 @@ export async function searchDashboardContacts(
   options?: { limit?: number }
 ): Promise<KeywordSearchHit[]> {
   const q = query.trim();
-  if (!q || q.length < 1) return [];
+  if (!q) return [];
 
   const limit = Math.min(Math.max(options?.limit ?? 12, 1), 80);
   const userId = await requireUserId();
-  const rows = await loadContacts(userId);
-  const searchable = rows.map(toSearchable);
-  const contactsById = new Map(searchable.map((c) => [c.id, c]));
 
-  const keywordHits = rankKeywordSearch(searchable, q, limit);
+  const embedding =
+    q.length >= 3 && shouldUseSemanticArm(q)
+      ? await embeddingWithSoftTimeout(userId, q)
+      : null;
 
-  // Semantic path needs a longer query or no strong keyword hits
-  const useSemantic = q.length >= 3;
-  if (!useSemantic) return keywordHits;
-
-  const semanticHits = await semanticHitsForQuery(userId, q, contactsById);
-  if (semanticHits.length === 0) return keywordHits;
-
-  return mergeSearchHits(keywordHits, semanticHits, limit);
+  const ranked = await hybridSearchContacts(userId, { query: q, embedding, limit });
+  return toKeywordHits(ranked, q);
 }

@@ -21,6 +21,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
 import type {
   ClerkReconciliationPreview,
   StripeLifetimePreview,
@@ -51,18 +52,18 @@ function ClerkReconciliation({ targetUserId }: { targetUserId: string }) {
       try {
         setPreview(await previewClerkReconciliationAction(targetUserId));
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Clerk could not be checked.");
+        toast.error(friendlyError(error, "Clerk couldn’t be checked — try again?"));
       }
     });
   };
   const apply = () => startTransition(async () => {
     try {
       await reconcileClerkAction({ targetUserId, reason });
-      toast.success("Clerk state reconciled.");
+      toast.success("Clerk state reconciled");
       setOpen(false);
       router.refresh();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Reconciliation failed.");
+      toast.error(friendlyError(error, "Nothing was reconciled — try again?"));
     }
   });
 
@@ -124,17 +125,17 @@ function StripeReconciliation({ targetUserId }: { targetUserId: string }) {
       setPreview(await previewStripeLifetimeAction({ targetUserId, sessionId }));
     } catch (error) {
       setPreview(null);
-      toast.error(error instanceof Error ? error.message : "Stripe could not verify this session.");
+      toast.error(friendlyError(error, "Stripe couldn’t verify this session — try again?"));
     }
   });
   const apply = () => startTransition(async () => {
     try {
       await reconcileStripeLifetimeAction({ targetUserId, sessionId, reason });
-      toast.success("Lifetime purchase reconciled.");
+      toast.success("Lifetime purchase reconciled");
       setOpen(false);
       router.refresh();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Reconciliation failed.");
+      toast.error(friendlyError(error, "Nothing was reconciled — try again?"));
     }
   });
 

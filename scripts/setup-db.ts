@@ -32,10 +32,22 @@ import { sql } from "drizzle-orm";
   "import_job_rows",
   "recruiters",
   "user_recruiter_links",
+  "recruiter_messages",
   "gmail_connections",
   "outlook_connections",
   "usage_events",
   "admin_audit_log",
+  "cron_runs",
+  "ops_alert_state",
+  "rate_limit_buckets",
+  "webhook_deliveries",
+  "error_events",
+  "app_surface_flags",
+  "interest_list_signups",
+  "feedback",
+  "feedback_screenshots",
+  "broadcasts",
+  "broadcast_recipients",
 ] as const;
 
 async function main() {

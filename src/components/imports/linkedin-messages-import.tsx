@@ -13,6 +13,8 @@ import {
   readCsvOrZipMessages,
 } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 type MessagesPreview = Awaited<ReturnType<typeof previewLinkedInMessagesCsv>>;
 type MessagePerson = MessagesPreview["people"][number];
@@ -57,23 +59,28 @@ export function LinkedInMessagesImport() {
 
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-messages/70 bg-card p-6">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex min-w-0 flex-1 items-start gap-3 pr-2">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-messages/10 text-import-messages">
-            <MessageSquare className="h-4 w-4" />
-          </span>
-          <div className="min-w-0">
-            <h2 className="text-lg font-medium text-primary">
+      {/*
+        The export guide shares the title's row, not the whole header's. Beside the full
+        text block it took ~120px from a column already sharing a phone with the icon, and
+        the description ran four words to a line. Here the description spans the card.
+      */}
+      <div className="flex items-start gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-messages/10 text-import-messages">
+          <MessageSquare className="h-4 w-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-3">
+            <h2 className="min-w-0 text-lg font-medium text-ink">
               LinkedIn messages
             </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Upload a Messages CSV or ZIP, review conversation partners, then
-              import message history. Imports keep running if you leave this
-              page.
-            </p>
+            <LinkedInExportGuide variant="messages" />
           </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Upload a Messages CSV or ZIP, review conversation partners, then
+            import message history. Imports keep running if you leave this
+            page.
+          </p>
         </div>
-        <LinkedInExportGuide variant="messages" />
       </div>
 
       <ImportFilePicker
@@ -96,7 +103,7 @@ export function LinkedInMessagesImport() {
               setSelected(new Set());
               setMeta(null);
               toast.error(
-                err instanceof Error ? err.message : "Could not read file",
+                friendlyError(err, "Couldn’t read that file — is it the right export?"),
               );
             }
           });
@@ -117,7 +124,7 @@ export function LinkedInMessagesImport() {
                 toast.success(`Loaded ${res.totalConversations} people`);
               } catch (err) {
                 toast.error(
-                  err instanceof Error ? err.message : "Preview failed",
+                  friendlyError(err, TOAST_COPY.previewFailed),
                 );
               }
             })
@@ -144,7 +151,7 @@ export function LinkedInMessagesImport() {
               setMessagesText("");
               setFileName(null);
             } catch (err) {
-              toast.error(err instanceof Error ? err.message : "Import failed");
+              toast.error(friendlyError(err, TOAST_COPY.importFailed));
             }
           }}
         >
@@ -173,9 +180,15 @@ export function LinkedInMessagesImport() {
                   : p.willCreate
                     ? "Will create new contact"
                     : p.title,
-              meta: `${p.messageCount} message${p.messageCount === 1 ? "" : "s"}${
-                p.sampleContent ? ` · ${p.sampleContent}` : ""
-              }`,
+              // The sent/received split is the tell for an inverted owner guess: if Orbit
+              // decided the wrong person owns this export, every thread reads backwards, and
+              // here is where that is cheap to notice rather than after the rows are written.
+              // Absent when direction could not be established at all.
+              meta: `${
+                p.sentByYou !== null && p.receivedFromThem !== null
+                  ? `${p.sentByYou} sent · ${p.receivedFromThem} received`
+                  : `${p.messageCount} message${p.messageCount === 1 ? "" : "s"}`
+              }${p.sampleContent ? ` · ${p.sampleContent}` : ""}`,
               isRepeat: p.isRepeat,
               repeatReason: p.match?.reason || "Already in your network",
             }))}

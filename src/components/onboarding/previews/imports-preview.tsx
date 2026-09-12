@@ -28,7 +28,7 @@ const sources = [
 export function ImportsPreview({ reducedMotion }: PreviewProps) {
   return (
     <div className="space-y-3 p-1">
-      <p className="font-[family-name:var(--font-display)] text-lg text-primary">
+      <p className="font-[family-name:var(--font-display)] text-lg text-ink">
         Imports
       </p>
       <ul className="space-y-2">
@@ -54,6 +54,14 @@ export function ImportsPreview({ reducedMotion }: PreviewProps) {
           );
         })}
       </ul>
+      <motion.p
+        initial={reducedMotion ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: reducedMotion ? 0 : 0.35 }}
+        className="text-[11px] text-muted-foreground"
+      >
+        Everything you import feeds your searchable Knowledge base.
+      </motion.p>
     </div>
   );
 }

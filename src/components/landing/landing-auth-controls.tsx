@@ -1,9 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { UserButton } from "@clerk/nextjs";
-import { clerkAppearance } from "@/lib/clerk-appearance";
+import { useClerkSessionHint } from "@/lib/clerk-session-hint";
 
 const ghostClass =
   "rounded-lg px-3 py-2 text-sm text-[#c5d4d1] transition-colors hover:text-white";
@@ -17,33 +15,55 @@ const ctaGhostClass =
   "inline-flex items-center justify-center rounded-full border border-white/20 bg-white/5 px-6 py-3 text-sm text-[#e8f3f1] transition-colors hover:border-white/35 hover:bg-white/10";
 
 /**
- * Auth state is resolved server-side (see (marketing)/page.tsx), so the
- * correct variant renders from the first frame — signed-out visitors get
- * real sign-in/sign-up links, signed-in users get "Open app". Only the
- * Clerk avatar menu waits for hydration, behind a fixed-size placeholder
- * so nothing shifts.
+ * The marketing pages are static and shared by every visitor, so who is signed in is
+ * resolved HERE, in the browser — not on the server. It comes from Clerk's own
+ * `__client_uat` cookie (`useClerkSessionHint`), NOT from Clerk itself: the landing page,
+ * /interest and the docs mount no ClerkProvider, so that signed-out strangers download no
+ * Clerk JS. Signed-out visitors (the audience) see the right buttons from the first frame;
+ * a signed-in visitor sees them swap to "Open app" just after hydration.
+ *
+ * There is deliberately no avatar menu here any more: `UserButton` needs the provider
+ * these pages exist to avoid. The account menu lives in the app, one click away.
+ * `signedIn` remains accepted as a server-known hint for any caller that has one.
  */
-export function LandingAuthControls({
-  clerkOn,
-  demoMode,
-  signedIn = false,
-  variant,
-}: {
+type Props = {
   clerkOn: boolean;
   demoMode: boolean;
   signedIn?: boolean;
   variant: "header" | "hero";
-}) {
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => {
-    setHydrated(true);
-  }, []);
+  /**
+   * Hero variant only. Off by default, so /pricing, /contact and the docs
+   * pages keep today's "hidden below sm" behavior untouched. On, the buttons
+   * stack full-width below sm — a real tap target instead of nothing.
+   */
+  mobileVisible?: boolean;
+};
 
+/**
+ * Entry point. Safe on any page, with or without a ClerkProvider above it — which is
+ * what lets it render in `(site)`, where there is none. Without Clerk configured there is
+ * no Clerk session to hint at, and demo mode keeps its own routing below.
+ */
+export function LandingAuthControls(props: Props) {
+  const hinted = useClerkSessionHint();
+  const isSignedIn = props.clerkOn && (hinted || Boolean(props.signedIn));
+  return <AuthControlsView {...props} isSignedIn={isSignedIn} />;
+}
+
+function AuthControlsView({
+  clerkOn,
+  demoMode,
+  isSignedIn,
+  variant,
+  mobileVisible = false,
+}: Props & { isSignedIn: boolean }) {
   const solid = variant === "header" ? solidClass : ctaSolidClass;
   const ghost = variant === "header" ? ghostClass : ctaGhostClass;
   const wrapClass =
     variant === "hero"
-      ? "hidden sm:flex sm:w-auto sm:flex-row sm:gap-3"
+      ? mobileVisible
+        ? "flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:gap-3"
+        : "hidden sm:flex sm:w-auto sm:flex-row sm:gap-3"
       : "flex items-center gap-2 sm:gap-3";
 
   if (!clerkOn) {
@@ -60,25 +80,12 @@ export function LandingAuthControls({
     );
   }
 
-  if (signedIn) {
+  if (isSignedIn) {
     return (
-      <div
-        className={
-          variant === "hero"
-            ? "flex w-full items-center gap-3 sm:w-auto"
-            : wrapClass
-        }
-      >
+      <div className={wrapClass}>
         <Link href="/dashboard" className={solid}>
           Open app
         </Link>
-        <span className="inline-flex size-7 items-center justify-center">
-          {hydrated ? (
-            <UserButton appearance={clerkAppearance} />
-          ) : (
-            <span className="size-7 rounded-full bg-white/10" />
-          )}
-        </span>
       </div>
     );
   }

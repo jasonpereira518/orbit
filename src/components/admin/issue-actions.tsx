@@ -8,6 +8,7 @@ import {
   snoozeIssueAction,
 } from "@/actions/admin";
 import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
 
 export function IssueActions({ issueId }: { issueId: string }) {
   const router = useRouter();
@@ -20,7 +21,7 @@ export function IssueActions({ issueId }: { issueId: string }) {
         toast.success(message);
         router.refresh();
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "The issue could not be updated.");
+        toast.error(friendlyError(error, "The issue couldn’t be updated — try again?"));
       }
     });
   };

@@ -5,9 +5,7 @@
  *
  * Run: npx tsx scripts/smoke-entitlements.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import "./smoke/_env";
 
 import { and, count, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
@@ -16,8 +14,10 @@ import {
   FREE_CONTACT_LIMIT,
   getEntitlements,
   isPaywallError,
+  requireEntitlement,
   resolvePlan,
 } from "../src/lib/entitlements";
+import { isDemoAccount } from "../src/lib/demo-account";
 import {
   contactHeadroomForUser,
   contactUsageForUser,
@@ -94,7 +94,8 @@ async function main() {
   check(`contact limit is ${FREE_CONTACT_LIMIT}`, ent.contactLimit === FREE_CONTACT_LIMIT);
   check("outreach gated", ent.canUseOutreach === false);
   check("sync gated", ent.canUseSync === false);
-  check("hosted sends gated", ent.canUseHostedSends === false);
+  check("hosted sending gated", ent.canUseHostedSending === false);
+  check("hosted enrichment gated", ent.canUseHostedEnrichment === false);
 
   const resolver = await createCompanyResolver(USER);
   const bulk = Array.from({ length: FREE_CONTACT_LIMIT - 1 }, (_, i) => ({
@@ -109,13 +110,13 @@ async function main() {
 
   check("headroom is 1", (await contactHeadroomForUser(USER)) === 1);
 
-  const last = await createContactForUser(USER, { fullName: "Contact Number 100" }, WRITE_OPTS);
-  check("contact #100 saved", Boolean(last?.id));
+  const last = await createContactForUser(USER, { fullName: `Contact Number ${FREE_CONTACT_LIMIT}` }, WRITE_OPTS);
+  check(`contact #${FREE_CONTACT_LIMIT} saved`, Boolean(last?.id));
   check(`count is ${FREE_CONTACT_LIMIT}`, (await contactCount()) === FREE_CONTACT_LIMIT);
 
   let threw: unknown = null;
   try {
-    await createContactForUser(USER, { fullName: "Contact Number 101" }, WRITE_OPTS);
+    await createContactForUser(USER, { fullName: `Contact Number ${FREE_CONTACT_LIMIT + 1}` }, WRITE_OPTS);
   } catch (err) {
     threw = err;
   }
@@ -164,7 +165,10 @@ async function main() {
   check("outreach unlocked", ent.canUseOutreach === true);
   check("sync unlocked", ent.canUseSync === true);
   check("extension unlocked", ent.canUseExtension === true);
-  check("hosted sends still gated on lifetime", ent.canUseHostedSends === false);
+  // The whole point of the split: Lifetime sends on Orbit's credits (bounded by
+  // DAILY_SEND_LIMIT) but enriches on its own Apollo key (which has no ceiling).
+  check("hosted sending unlocked on lifetime", ent.canUseHostedSending === true);
+  check("hosted enrichment gated on lifetime", ent.canUseHostedEnrichment === false);
 
   const past101 = await createContactsBulkForUser(
     USER,
@@ -174,7 +178,7 @@ async function main() {
   );
   check("lifetime creates past the free cap", past101.length === 25, String(past101.length));
 
-  // --- subscription grants hosted sends ---
+  // --- subscription grants hosted enrichment ---
   console.log("\norbit subscription");
   await setBilling({
     compedPlan: null,
@@ -184,10 +188,108 @@ async function main() {
   });
   ent = await getEntitlements(USER);
   check("plan is orbit", ent.plan === "orbit", ent.plan);
-  check("hosted sends unlocked", ent.canUseHostedSends === true);
+  check("hosted sending unlocked", ent.canUseHostedSending === true);
+  check("hosted enrichment unlocked", ent.canUseHostedEnrichment === true);
+
+  // --- lifetime + live subscription are additive ---
+  // `resolvePlan` ranks lifetime above subscription, so this user resolves to `lifetime`,
+  // which is denied enrichment on its own. The union in `getEntitlements` is the only
+  // thing that grants it back, and it is now the sole flag that union can affect.
+  console.log("\nlifetime plus live subscription");
+  await setBilling({
+    lifetimePurchasedAt: past,
+    subscriptionPlan: "orbit",
+    subscriptionStatus: "active",
+    subscriptionPeriodEnd: future,
+  });
+  ent = await getEntitlements(USER);
+  check("plan stays lifetime", ent.plan === "lifetime", ent.plan);
+  check("subscription unions enrichment back in", ent.canUseHostedEnrichment === true);
+
+  // Lapse the subscription: the Lifetime floor holds, enrichment falls away.
+  await setBilling({ subscriptionStatus: "canceled", subscriptionPeriodEnd: past });
+  ent = await getEntitlements(USER);
+  check("plan still lifetime after lapse", ent.plan === "lifetime", ent.plan);
+  check("enrichment gated again after lapse", ent.canUseHostedEnrichment === false);
+  check("sending survives the lapse", ent.canUseHostedSending === true);
+
+  await setBilling({
+    lifetimePurchasedAt: null,
+    subscriptionPlan: "orbit",
+    subscriptionStatus: "active",
+    subscriptionPeriodEnd: future,
+  });
+  ent = await getEntitlements(USER);
 
   const usage = await contactUsageForUser(USER);
   check("usage reports unlimited", usage.limit === null, JSON.stringify(usage));
+
+  // --- demo accounts are never gated ---
+  // The showcase account stays on the plan it holds (free here) so the on-stage upgrade
+  // still has something to upgrade from; only the gates lift.
+  console.log("\ndemo accounts");
+  await reset();
+  const priorShowcase = process.env.DEMO_ACCOUNT_USER_ID;
+  process.env.DEMO_ACCOUNT_USER_ID = USER;
+  try {
+    ent = await getEntitlements(USER);
+    check("showcase keeps its real plan", ent.plan === "free" && ent.source === "free", ent.plan);
+    check("showcase has no contact cap", ent.contactLimit === null);
+    check("showcase headroom unlimited", (await contactHeadroomForUser(USER)) === null);
+    check(
+      "showcase has every feature",
+      ent.canUseOutreach &&
+        ent.canUseHostedSending &&
+        ent.canUseHostedEnrichment &&
+        ent.canUseRecruiters &&
+        ent.canUseSync &&
+        ent.canUseExtension &&
+        ent.canUseApi,
+      JSON.stringify(ent)
+    );
+    let demoThrew: unknown = null;
+    try {
+      await requireEntitlement(USER, "hostedEnrichment");
+    } catch (err) {
+      demoThrew = err;
+    }
+    check("requireEntitlement lets the showcase through", demoThrew === null, String(demoThrew));
+
+    await setBilling({ compedPlan: "lifetime" });
+    ent = await getEntitlements(USER);
+    check("comped showcase reports lifetime", ent.plan === "lifetime", ent.plan);
+    check("comped showcase keeps hosted enrichment", ent.canUseHostedEnrichment === true);
+  } finally {
+    if (priorShowcase === undefined) delete process.env.DEMO_ACCOUNT_USER_ID;
+    else process.env.DEMO_ACCOUNT_USER_ID = priorShowcase;
+  }
+  check("another account is not the showcase", !isDemoAccount("someone-else"));
+  // Localhost (`next dev`) makes every account a demo account, Clerk or not. Outside it,
+  // `demo-user` gets nothing: a Clerk-less deploy would otherwise hand every anonymous
+  // visitor paid access on that shared account.
+  const env = process.env as Record<string, string | undefined>;
+  const priorEnv = { node: env.NODE_ENV, clerk: env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY };
+  try {
+    delete env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    env.NODE_ENV = "development";
+    check("demo-user on localhost is a demo account", isDemoAccount("demo-user"));
+    env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_smoke";
+    check("a Clerk account on localhost is a demo account", isDemoAccount("user_real"));
+    ent = await getEntitlements(USER);
+    check("localhost lifts every gate", ent.canUseOutreach && ent.contactLimit === null);
+    env.NODE_ENV = "production";
+    check("a Clerk account off localhost is not", !isDemoAccount("user_real"));
+    delete env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    check("demo-user in a Clerk-less prod build is not", !isDemoAccount("demo-user"));
+    await setBilling({ compedPlan: null });
+    ent = await getEntitlements(USER);
+    check("off localhost the free gates hold", !ent.canUseOutreach && ent.contactLimit !== null);
+  } finally {
+    if (priorEnv.node === undefined) delete env.NODE_ENV;
+    else env.NODE_ENV = priorEnv.node;
+    if (priorEnv.clerk === undefined) delete env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    else env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = priorEnv.clerk;
+  }
 
   await reset();
   const db2 = await getDb();

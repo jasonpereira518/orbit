@@ -1,95 +1,37 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
+import { getCurrentPlan } from "@/actions/billing";
 import Link from "next/link";
-import { motion } from "motion/react";
 import { Check } from "lucide-react";
+import { BillingToggle } from "@/components/pricing/billing-toggle";
 import { LifetimeCheckoutButton } from "@/components/pricing/lifetime-checkout-button";
 import { PlanPriceDisplay } from "@/components/pricing/plan-price";
 import { cn } from "@/lib/utils";
-import {
-  ANNUAL_SAVING_PERCENT,
-  PLAN_COPY,
-  type BillingPeriod,
-} from "@/lib/plan-copy";
-import { LIFETIME_SEAT_LIMIT, type Plan } from "@/lib/plan-limits";
+import { planCopyWithOffer, type BillingPeriod } from "@/lib/plan-copy";
+import { type Plan } from "@/lib/plan-limits";
 
-function BillingToggle({
-  period,
-  onChange,
-}: {
-  period: BillingPeriod;
-  onChange: (next: BillingPeriod) => void;
-}) {
-  const name = useId();
-
-  // Native radios inside a fieldset: arrow-key navigation, grouping, and the
-  // checked state all come from the platform rather than from re-implemented ARIA.
-  return (
-    <fieldset className="mx-auto w-fit">
-      <legend className="sr-only">Billing period</legend>
-      <div className="flex items-center gap-1 rounded-full border border-[#e8f3f1]/[0.12] bg-[#05070f]/70 p-1 backdrop-blur-sm">
-        {(["monthly", "annual"] as const).map((value) => {
-          const selected = period === value;
-          return (
-            <label
-              key={value}
-              className={cn(
-                "relative cursor-pointer rounded-full px-4 py-2 text-sm transition-colors",
-                selected ? "text-[#0f2e28]" : "text-[#9aada8] hover:text-[#e8f3f1]",
-                "focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[#f2c14e]"
-              )}
-            >
-              <input
-                type="radio"
-                name={name}
-                value={value}
-                checked={selected}
-                onChange={() => onChange(value)}
-                className="sr-only"
-              />
-              {selected && (
-                <motion.span
-                  layoutId="pricing-period-pill"
-                  className="absolute inset-0 -z-10 rounded-full bg-[#eef7f4]"
-                  transition={{ type: "spring", stiffness: 380, damping: 32 }}
-                />
-              )}
-              <span className="relative whitespace-nowrap">
-                {value === "monthly" ? "Monthly" : "Annual"}
-                {value === "annual" && (
-                  <span
-                    className={cn(
-                      "ml-1.5 text-xs",
-                      selected ? "text-[#0f2e28]/70" : "text-[#f2c14e]"
-                    )}
-                  >
-                    −{ANNUAL_SAVING_PERCENT}%
-                  </span>
-                )}
-              </span>
-            </label>
-          );
-        })}
-      </div>
-    </fieldset>
-  );
-}
+/**
+ * Where signed-out buyers land after creating the account they need to buy: back here,
+ * with the toggle and cards fresh in mind, rather than into onboarding.
+ */
+const SIGN_UP_FROM_PRICING = "/sign-up?redirect_url=/pricing";
 
 function TierCta({
   planId,
   currentPlan,
   signedIn,
-  seatsLeft,
   lifetimePurchasable,
+  lifetimePriceUsd,
   period,
 }: {
   planId: Plan;
   currentPlan: Plan | null;
   signedIn: boolean;
-  seatsLeft: number;
-  /** Stripe is configured and seats remain, so checkout can actually complete. */
+  /** Stripe is configured, so checkout can actually complete. */
   lifetimePurchasable: boolean;
+  lifetimePriceUsd: number;
   period: BillingPeriod;
 }) {
   const base =
@@ -111,7 +53,7 @@ function TierCta({
   if (planId === "lifetime") {
     if (!lifetimePurchasable) {
       // Deliberately not a disabled <button>: with no checkout to attempt, a dead control
-      // reads as a broken product, while a stated queue reads as scarcity.
+      // reads as a broken product, while a stated wait reads as a date not yet reached.
       return (
         <div className="space-y-2">
           <p
@@ -120,12 +62,10 @@ function TierCta({
               "border border-dashed border-[#f2c14e]/35 text-[#f2c14e]"
             )}
           >
-            {seatsLeft > 0 ? `Opens to the first ${seatsLeft}` : "Sold out"}
+            Not on sale yet
           </p>
           <p className="text-center text-xs text-[#6d807c]">
-            {seatsLeft > 0
-              ? "Not on sale yet — it unlocks when checkout opens."
-              : "Every Orbit Lifetime spot has been claimed."}
+            It unlocks when checkout opens.
           </p>
         </div>
       );
@@ -135,38 +75,25 @@ function TierCta({
       // Checkout needs an account to attribute the purchase to, so send them to sign up
       // rather than into a Stripe session with nobody to grant the plan to.
       return (
-        <div className="space-y-2">
-          <Link
-            href="/sign-up"
-            className={cn(
-              base,
-              "bg-[#f2c14e] font-medium text-[#241a00] hover:opacity-90"
-            )}
-          >
-            Create an account to claim
-          </Link>
-          <p className="text-center text-xs text-[#6d807c]">
-            {seatsLeft} of {seatsLeft === 1 ? "1 spot" : "spots"} left.
-          </p>
-        </div>
+        <Link
+          href={SIGN_UP_FROM_PRICING}
+          className={cn(
+            base,
+            "bg-[#f2c14e] font-medium text-[#241a00] hover:opacity-90"
+          )}
+        >
+          Create an account to buy
+        </Link>
       );
     }
 
-    return (
-      <div className="space-y-2">
-        <LifetimeCheckoutButton />
-        <p className="text-center text-xs text-[#6d807c]">
-          {seatsLeft} {seatsLeft === 1 ? "spot" : "spots"} left of{" "}
-          {LIFETIME_SEAT_LIMIT}.
-        </p>
-      </div>
-    );
+    return <LifetimeCheckoutButton priceUsd={lifetimePriceUsd} />;
   }
 
   if (planId === "free") {
     return (
       <Link
-        href={signedIn ? "/dashboard" : "/sign-up"}
+        href={signedIn ? "/dashboard" : SIGN_UP_FROM_PRICING}
         className={cn(
           base,
           "border border-[#e8f3f1]/[0.18] text-[#e8f3f1] hover:opacity-80"
@@ -177,14 +104,15 @@ function TierCta({
     );
   }
 
-  // The chosen period rides along in the URL. Clerk's PricingTable has no prop to
-  // preselect it, so /upgrade states it in copy rather than pretending it carried over.
+  // The chosen period rides along in the URL, and /upgrade's Orbit Pro section honours
+  // it directly via ProCheckoutButton — real Stripe subscription checkout, not Clerk's
+  // PricingTable, which had no way to preselect a period at all.
   const upgradeHref =
     period === "annual" ? "/upgrade?period=annual" : "/upgrade";
 
   return (
     <Link
-      href={signedIn ? upgradeHref : "/sign-up"}
+      href={signedIn ? upgradeHref : SIGN_UP_FROM_PRICING}
       className={cn(
         base,
         "bg-[#eef7f4] text-[#0f2e28] hover:opacity-90"
@@ -198,8 +126,10 @@ function TierCta({
 /**
  * Each tier owns an accent rather than a single `featured` boolean, because the two paid
  * tiers now say different things: Orbit Pro is the default path (Orbit's own primary blue,
- * centred and lifted on wide screens), while Orbit Lifetime is the value play (the gold
- * accent the rest of the marketing site reserves for offers, plus the only badge).
+ * centred and lifted on wide screens, badged "Most popular"), while Orbit Lifetime is the
+ * value play (the gold accent the rest of the marketing site reserves for offers, badged
+ * "Best Value"). The two badges carry two different messages in two different colours —
+ * social proof against value — so neither dilutes the other.
  * Free stays deliberately recessed — dimmer border, no glow, muted ticks.
  */
 const TIER_ACCENT: Record<
@@ -209,7 +139,7 @@ const TIER_ACCENT: Record<
     tick: string;
     /** Soft wash behind the card's own translucent background. */
     glow: string | null;
-    badge: string | null;
+    badge: { label: string; className: string } | null;
     /** The centre column reads as the recommendation through position alone. */
     raised: boolean;
   }
@@ -223,42 +153,82 @@ const TIER_ACCENT: Record<
     raised: false,
   },
   orbit: {
-    // #599de7 is `--primary` in the app's dark theme, so the plan that unlocks the
-    // product is outlined in the colour the product itself runs on.
-    surface: "border-[#599de7]/40 bg-[#070b18]/80 hover:border-[#599de7]/75",
-    tick: "text-[#599de7]",
+    // `--brand-pro` is the Orbit Pro tier's own blue (see plan-badge.tsx), fixed
+    // rather than theme-aware because this card only ever sits on the starfield.
+    surface: "border-brand-pro/40 bg-[#070b18]/80 hover:border-brand-pro/75",
+    tick: "text-brand-pro",
     glow: "radial-gradient(circle, rgba(89,157,231,0.20), transparent 68%)",
-    badge: null,
+    badge: { label: "Most popular", className: "bg-brand-pro text-[#081326]" },
     raised: true,
   },
   lifetime: {
     surface: "border-[#f2c14e]/40 bg-[#070b18]/80 hover:border-[#f2c14e]/75",
     tick: "text-[#f2c14e]",
     glow: "radial-gradient(circle, rgba(242,193,78,0.15), transparent 68%)",
-    badge: "Best Value",
+    badge: { label: "Best Value", className: "bg-[#f2c14e] text-[#241a00]" },
     raised: false,
   },
 };
 
-export function PricingTiers({
-  currentPlan,
-  signedIn,
-  seatsLeft,
-  lifetimePurchasable,
-}: {
-  currentPlan: Plan | null;
-  signedIn: boolean;
-  seatsLeft: number;
+type TiersProps = {
+  clerkOn: boolean;
   lifetimePurchasable: boolean;
-}) {
+  /**
+   * Resolved on the server from the live sale count, because Lifetime's price rises after
+   * the introductory buyers. Passed in rather than read here so this stays a client
+   * component; the shape is deliberately minimal for the same reason.
+   */
+  lifetimeOffer: { priceUsd: number; compareAtUsd: number | null };
+};
+
+/**
+ * The page is static and shared, so "who is this" and "what plan are they on" resolve in
+ * the browser after Clerk loads. `useAuth()` throws outside a <ClerkProvider>, which is
+ * mounted only when Clerk is configured (also at build time, where this page is now
+ * prerendered), so the hook lives in a child that only exists when Clerk does. Plan
+ * awareness keys off a real Clerk user, never the demo user: without Clerk keys the header
+ * renders signed-out, and crediting demo-user with a plan would put "Your current plan"
+ * under a "Get Started" button.
+ */
+export function PricingTiers(props: TiersProps) {
+  if (!props.clerkOn) return <PricingTiersView {...props} signedIn={false} currentPlan={null} />;
+  return <ClerkAwareTiers {...props} />;
+}
+
+function ClerkAwareTiers(props: TiersProps) {
+  const auth = useAuth();
+  const signedIn = auth.isSignedIn === true;
+  const [currentPlan, setCurrentPlan] = useState<Plan | null>(null);
+  useEffect(() => {
+    if (!signedIn) return;
+    let cancelled = false;
+    getCurrentPlan()
+      .then((plan) => {
+        if (!cancelled) setCurrentPlan(plan);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [signedIn]);
+  return <PricingTiersView {...props} signedIn={signedIn} currentPlan={currentPlan} />;
+}
+
+function PricingTiersView({
+  lifetimePurchasable,
+  lifetimeOffer,
+  signedIn,
+  currentPlan,
+}: TiersProps & { signedIn: boolean; currentPlan: Plan | null }) {
   const [period, setPeriod] = useState<BillingPeriod>("monthly");
+  const plans = planCopyWithOffer(lifetimeOffer);
 
   return (
     <div className="space-y-10">
       <BillingToggle period={period} onChange={setPeriod} />
 
       <div className="grid items-start gap-5 lg:grid-cols-3 lg:gap-6">
-        {PLAN_COPY.map((plan) => {
+        {plans.map((plan) => {
           const accent = TIER_ACCENT[plan.id];
           const price = plan.price[period];
 
@@ -289,8 +259,13 @@ export function PricingTiers({
                 />
               )}
               {accent.badge && (
-                <p className="absolute -top-3 left-7 rounded-full bg-[#f2c14e] px-3 py-1 text-xs font-medium text-[#241a00]">
-                  {accent.badge}
+                <p
+                  className={cn(
+                    "absolute -top-3 left-7 rounded-full px-3 py-1 text-xs font-medium",
+                    accent.badge.className
+                  )}
+                >
+                  {accent.badge.label}
                 </p>
               )}
 
@@ -338,8 +313,8 @@ export function PricingTiers({
                   planId={plan.id}
                   currentPlan={currentPlan}
                   signedIn={signedIn}
-                  seatsLeft={seatsLeft}
                   lifetimePurchasable={lifetimePurchasable}
+                  lifetimePriceUsd={lifetimeOffer.priceUsd}
                   period={period}
                 />
               </div>

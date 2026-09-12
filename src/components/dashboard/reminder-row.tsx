@@ -13,6 +13,7 @@ export function ReminderRow({
   actionKind,
   contactId,
   contactName,
+  noteBatchId,
 }: {
   id: string;
   title: string;
@@ -22,6 +23,7 @@ export function ReminderRow({
   actionKind?: ReminderActionKind;
   contactId?: string | null;
   contactName?: string | null;
+  noteBatchId?: string | null;
 }) {
   return (
     <ReminderCard
@@ -33,6 +35,7 @@ export function ReminderRow({
       actionKind={actionKind}
       contactId={contactId}
       contactName={contactName}
+      noteBatchId={noteBatchId}
       compact
     />
   );

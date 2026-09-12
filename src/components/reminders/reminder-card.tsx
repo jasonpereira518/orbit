@@ -10,11 +10,10 @@ import {
   Pencil,
   Phone,
   Sparkles,
-  UserRound,
   NotebookPen,
   Coffee,
 } from "lucide-react";
-import { toast } from "@/lib/toast";
+import { runToastAction, toast } from "@/lib/toast";
 import {
   draftFollowUpResponse,
   moveReminderToList,
@@ -26,6 +25,8 @@ import { ReminderFormDialog } from "@/components/reminders/reminder-form-dialog"
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ExpandableText } from "@/components/ui/expandable-text";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 const TYPE_LABELS: Record<string, string> = {
   manual: "Task",
@@ -83,6 +84,7 @@ export function ReminderCard({
   lists,
   showListMove = false,
   compact = false,
+  noteBatchId,
 }: {
   id: string;
   title: string;
@@ -98,9 +100,11 @@ export function ReminderCard({
   lists?: ReminderCardListOption[];
   showListMove?: boolean;
   compact?: boolean;
+  /** When this reminder came from a confirmed note paste, links the type chip back to its results page. */
+  noteBatchId?: string | null;
 }) {
   const due = dueLabel(dueDate);
-  const typeLabel = TYPE_LABELS[reminderType] ?? "Task";
+  const typeLabel = noteBatchId ? "From notes" : TYPE_LABELS[reminderType] ?? "Task";
   const router = useRouter();
   const [pending, start] = useTransition();
   const [draft, setDraft] = useState<string | null>(null);
@@ -114,7 +118,7 @@ export function ReminderCard({
         setDraft(result.body);
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not draft follow-up"
+          friendlyError(err, TOAST_COPY.draftFollowUpFailed)
         );
       }
     });
@@ -137,14 +141,26 @@ export function ReminderCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-medium">{title}</p>
-            <span
-              className={cn(
-                "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-                TYPE_STYLES[reminderType] ?? TYPE_STYLES.manual
-              )}
-            >
-              {typeLabel}
-            </span>
+            {noteBatchId ? (
+              <Link
+                href={`/capture/${noteBatchId}`}
+                className={cn(
+                  "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide hover:underline",
+                  TYPE_STYLES[reminderType] ?? TYPE_STYLES.manual
+                )}
+              >
+                {typeLabel}
+              </Link>
+            ) : (
+              <span
+                className={cn(
+                  "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                  TYPE_STYLES[reminderType] ?? TYPE_STYLES.manual
+                )}
+              >
+                {typeLabel}
+              </span>
+            )}
             {!compact && (
               <span className="rounded-full bg-muted/80 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                 {kindLabel}
@@ -176,19 +192,22 @@ export function ReminderCard({
           )}
 
           <div className="mt-2 flex flex-wrap gap-1.5">
-            {contactId && (
-              <Link href={`/contacts/${contactId}`} className={actionClass}>
-                <UserRound className="mr-1.5 h-3.5 w-3.5" />
-                Open
-              </Link>
-            )}
+            {/* The contact name above is already a link to /contacts/{id}; a second
+                "Open" button three lines below it was the same destination twice.
+                For `meet` this used to render BOTH "Log" and "Log meeting" pointing
+                at the identical /capture url — now one control, labelled for the
+                kind. */}
             {contactId && (
               <Link
                 href={`/capture?contactId=${contactId}`}
                 className={actionClass}
               >
-                <NotebookPen className="mr-1.5 h-3.5 w-3.5" />
-                Log
+                {actionKind === "meet" ? (
+                  <Coffee className="mr-1.5 h-3.5 w-3.5" />
+                ) : (
+                  <NotebookPen className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                {actionKind === "meet" ? "Log meeting" : "Log"}
               </Link>
             )}
             {actionKind === "call" && contactPhone && (
@@ -205,15 +224,6 @@ export function ReminderCard({
                 <Mail className="mr-1.5 h-3.5 w-3.5" />
                 Email
               </a>
-            )}
-            {actionKind === "meet" && contactId && (
-              <Link
-                href={`/capture?contactId=${contactId}`}
-                className={actionClass}
-              >
-                <Coffee className="mr-1.5 h-3.5 w-3.5" />
-                Log meeting
-              </Link>
             )}
             {showDraft && contactId && (
               <Button
@@ -247,17 +257,20 @@ export function ReminderCard({
                 onChange={(e) => {
                   const next = e.target.value;
                   if (!next || next === listId) return;
-                  startMove(async () => {
-                    try {
-                      await moveReminderToList(id, next);
-                      toast.success("Moved");
-                      router.refresh();
-                    } catch (err) {
-                      toast.error(
-                        err instanceof Error ? err.message : "Could not move"
-                      );
-                    }
-                  });
+                  const previous = listId;
+                  const nextName = lists.find((l) => l.id === next)?.name;
+                  startMove(() =>
+                    runToastAction({
+                      run: () => moveReminderToList(id, next),
+                      success: nextName ? `Moved to ${nextName}` : "Moved",
+                      failure: "Couldn’t move that reminder — try again?",
+                      refresh: () => router.refresh(),
+                      // The prior list is already on the card, so the inverse is just
+                      // a move back. Offered only when there was a list to return to.
+                      undo: () =>
+                        previous ? () => moveReminderToList(id, previous) : null,
+                    }).then(() => undefined)
+                  );
                 }}
               >
                 {lists.map((l) => (
@@ -314,7 +327,7 @@ export function ReminderCard({
               className="h-7 px-2 text-xs"
               onClick={() => {
                 void navigator.clipboard.writeText(draft);
-                toast.success("Copied to clipboard");
+                toast.success(TOAST_COPY.copied);
               }}
             >
               <Copy className="mr-1 h-3 w-3" />

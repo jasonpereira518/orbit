@@ -13,8 +13,6 @@ export type VirgoStar = {
   hotspot?: "spica";
 };
 
-export const VIRGO_VIEW = { w: 280, h: 220 };
-
 export const VIRGO_STARS: VirgoStar[] = [
   { id: "vir109", x: 28.0, y: 89.1, r: 2.0 },
   { id: "mu", x: 31.8, y: 140.0, r: 2.1 },
@@ -61,8 +59,4 @@ export function virgoChainPath(chain: string[]): string {
       return `${i === 0 ? "M" : "L"} ${s.x} ${s.y}`;
     })
     .join(" ");
-}
-
-export function virgoStar(id: string): VirgoStar {
-  return byId[id]!;
 }

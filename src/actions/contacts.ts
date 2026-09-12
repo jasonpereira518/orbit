@@ -1,25 +1,40 @@
 "use server";
 
-import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
-import { contacts, interactions, reminders } from "@/db/schema";
+import {
+  actionItems,
+  contactTags,
+  contacts,
+  interactionMentions,
+  interactions,
+  reminders,
+  tags,
+} from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import {
+  CONTACTS_PAGE_SIZE,
+  type ContactPickerOption,
+  type ContactSort,
+  type ContactsPage,
+  type ContactsPageFilters,
+} from "@/lib/contacts-page";
 import { isPaywallError } from "@/lib/entitlements";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { listActiveGoalTexts } from "@/actions/goals";
 import { type CompanyResolver } from "@/lib/companies";
 import {
-  createContactForUser,
   createContactsBulkForUser,
+  deleteInteractionForUser,
   logInteractionForUser,
   updateContactForUser,
   type ContactInput,
   type ContactWriteOptions,
   type LogInteractionInput,
 } from "@/lib/contact-writes";
-import { generateAndStorePersonSummary } from "@/lib/person-summary";
-import { rebuildContactEmbedding } from "@/lib/search";
+import { generateAndStoreContactBrief } from "@/lib/contact-brief";
+import { scheduleEmbeddingRebuild } from "@/lib/contact-writes";
 import {
   selectTriageCandidates,
   type TriageCandidate,
@@ -29,21 +44,26 @@ import {
   getApolloApiKey,
   type LinkedInProfileEnrichment,
 } from "@/lib/apollo";
+import { saveContactProfile } from "@/lib/contact-profile";
+import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import {
   AVATAR_BACKFILL_BATCH_SIZE,
-  AvatarStorageError,
+  AVATAR_BACKFILL_BUDGET_MS,
   downloadAndPersistAvatar,
+  fetchGravatarPhotoUrl,
   fetchLinkedInPhotoUrl,
-  isUnusableAvatarUrl,
-  MicrolinkRateLimitError,
+  AvatarSourceRateLimitError,
 } from "@/lib/contact-avatar";
-import {
-  clientContactAvatarUrl,
-  isDurableAvatarUrl,
-} from "@/lib/contact-avatar-url";
+import { clientAvatarUrlSql, contactsListSelection } from "@/lib/contact-avatar-sql";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
+import {
+  countAvatarBackfillCandidates,
+  findAvatarBackfillCandidates,
+  runAvatarBackfillBatch,
+} from "@/lib/avatar-backfill";
+import { traced } from "@/lib/perf-trace";
 import {
   findRelatedContacts,
   type RelatedContact,
@@ -58,135 +78,331 @@ export type {
   ContactWriteOptions,
 } from "@/lib/contact-writes";
 
-export async function listContacts(filters?: {
-  q?: string;
-  company?: string;
-  minScore?: number;
-  followUp?: "due";
-}) {
+export type {
+  ContactListRow,
+  ContactPickerOption,
+  ContactSort,
+  ContactsPage,
+  ContactsPageFilters,
+} from "@/lib/contacts-page";
+
+/** Ordering position of the last row on a page, enough to resume immediately after it. */
+type Cursor =
+  | { s: "name"; k: string; n: string; id: string }
+  | { s: "closeness"; c: number; id: string }
+  | { s: "recent"; u: string; id: string };
+
+function encodeCursor(cursor: Cursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeCursor(raw: string | undefined, sort: ContactSort): Cursor | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+    // A cursor from a different sort describes a position that does not exist in this
+    // ordering. Starting over beats silently skipping or repeating people.
+    if (!parsed || parsed.s !== sort) return null;
+    return parsed as Cursor;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One page of a user's contacts, ordered, filtered and searched in Postgres.
+ *
+ * Every part of this used to happen in JavaScript over the whole network: the query loaded
+ * every contact and every tag, `Array.filter` applied the filters, and `localeCompare`
+ * sorted the result — so the cost of viewing 50 people was set by how many people you knew.
+ *
+ * Paging is keyset, not `OFFSET`. `OFFSET 5000` still walks the 5,000 rows it discards, so
+ * scrolling would get slower the further you went; comparing against the last row's
+ * ordering tuple starts exactly where the previous page stopped. That requires the ordering
+ * to be a total order, which is why every sort ends in `id`.
+ */
+export async function listContactsPage(
+  filters?: ContactsPageFilters
+): Promise<ContactsPage> {
   const userId = await requireUserId();
   const db = await getDb();
 
-  // Promise.resolve pins a single execution: a drizzle query builder is a lazy
-  // thenable that re-runs on every await, so handing the bare builder to the
-  // cohort would quietly issue the same scan twice.
-  const contactRowsPromise = Promise.resolve(
-    db.query.contacts.findMany({
-      where: eq(contacts.userId, userId),
-      columns: {
-        id: true,
-        userId: true,
-        fullName: true,
-        firstName: true,
-        lastName: true,
-        preferredName: true,
-        company: true,
-        title: true,
-        location: true,
-        school: true,
-        email: true,
-        phone: true,
-        linkedinUrl: true,
-        website: true,
-        // Omit raw profileImageUrl blob — rewritten via clientContactAvatarUrl.
-        profileImageUrl: true,
-        relationshipScore: true,
-        statedCloseness: true,
-        priorityLevel: true,
-        source: true,
-        industry: true,
-        metContext: true,
-        dateMet: true,
-        firstInteractionAt: true,
-        howMet: true,
-        // Heavy text fields not needed for list UI — keep short summary only.
-        notes: false,
-        aiSummary: true,
-        keyFacts: true,
-        sharedInterests: true,
-        nextFollowUpAt: true,
-        lastInteractionAt: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-      with: { contactTags: { with: { tag: true } } },
-      orderBy: [desc(contacts.updatedAt)],
-    })
-  );
+  const sort: ContactSort = filters?.sort ?? "name";
+  const limit = Math.min(Math.max(filters?.limit ?? CONTACTS_PAGE_SIZE, 1), 200);
+  const cursor = decodeCursor(filters?.cursor, sort);
 
-  const [allRows, closenessCohort] = await Promise.all([
-    contactRowsPromise,
-    // Donates the scan above rather than repeating it.
-    getClosenessCohort(userId, contactRowsPromise),
+  const conditions = [eq(contacts.userId, userId)];
+
+  const q = filters?.q?.trim();
+  if (q) conditions.push(searchCondition(q));
+
+  const company = filters?.company?.trim();
+  if (company) {
+    // Matches `contacts_company_idx`, which existed all along and was never used because
+    // this filter ran in JavaScript.
+    conditions.push(sql`lower(trim(${contacts.company})) = ${company.toLowerCase()}`);
+  }
+
+  if (filters?.minScore) {
+    conditions.push(sql`${contacts.relationshipScore} >= ${filters.minScore}`);
+  }
+
+  if (filters?.followUp === "due") {
+    conditions.push(
+      sql`${contacts.nextFollowUpAt} is not null and ${contacts.nextFollowUpAt} <= now()`
+    );
+  }
+
+  // The A–Z rail is a seek, not a scroll. Asking for "S" starts the page at the first
+  // contact sorting there rather than loading everyone up to it — which is the whole reason
+  // the rail survives pagination at all.
+  const letter = filters?.letter?.trim();
+  if (letter && sort === "name") {
+    conditions.push(
+      letter === "#"
+        ? sql`(${contacts.sortKey} is null or ${contacts.sortKey} < 'a')`
+        : sql`${contacts.sortKey} >= ${letter.toLowerCase()}`
+    );
+  }
+
+  if (cursor) conditions.push(cursorCondition(cursor));
+
+  const rows = await db
+    .select(contactsListSelection)
+    .from(contacts)
+    .where(and(...conditions))
+    .orderBy(...orderFor(sort))
+    // One extra row answers "is there more" without a second count.
+    .limit(limit + 1);
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+
+  const [tagsByContact, total] = await Promise.all([
+    tagsForContacts(page.map((r) => r.id)),
+    cursor ? Promise.resolve(null) : countContacts(and(...conditions)),
   ]);
 
-  let rows = allRows;
+  return {
+    items: page.map((row) => ({
+      id: row.id,
+      fullName: row.fullName,
+      firstName: row.firstName,
+      lastName: row.lastName,
+      preferredName: row.preferredName,
+      title: row.title,
+      company: row.company,
+      school: row.school,
+      location: row.location,
+      linkedinUrl: row.linkedinUrl,
+      // Already browser-safe: `clientAvatarUrlSql` resolved this in Postgres.
+      profileImageUrl: row.profileImageUrl,
+      canResolveAvatar: Boolean(row.canResolveAvatar),
+      relationshipScore: row.relationshipScore,
+      closeness: (row.closeness ?? 0) / 100,
+      closenessTier: row.closenessTier ?? "outer",
+      priorityLevel: row.priorityLevel,
+      nextFollowUpAt: row.nextFollowUpAt,
+      lastInteractionAt: row.lastInteractionAt,
+      tags: tagsByContact.get(row.id) ?? [],
+    })),
+    nextCursor: hasMore ? encodeCursor(cursorFor(sort, page[page.length - 1])) : null,
+    total,
+  };
+}
 
-  if (filters?.q?.trim()) {
-    const q = filters.q.trim().toLowerCase();
-    rows = rows.filter((c) =>
-      [
-        c.fullName,
-        c.preferredName,
-        c.company,
-        c.title,
-        c.location,
-        c.school,
-        c.email,
-        c.phone,
-        c.location,
-        c.metContext,
-        c.howMet,
-        c.website,
-        c.aiSummary,
-        // notes intentionally excluded — no longer selected (payload slimming);
-        // list search matches the AI summary instead of raw note text.
-      ]
-        .filter(Boolean)
-        .some((v) => v!.toLowerCase().includes(q))
-    );
+/**
+ * Every ordering ends in `id`, so it is a total order — without that tiebreak two contacts
+ * comparing equal can straddle a page boundary and be shown twice or skipped. It matters
+ * more than it sounds: closeness is a 0–100 integer over thousands of rows, so ties are the
+ * common case, not the edge case.
+ *
+ * The tiebreak also has to run in the *same direction* as the column ahead of it. Cursors
+ * are row-value comparisons — `(a, b) < (x, y)` — and that form compares every element the
+ * same way. Pairing a descending sort with an ascending id silently produces a condition
+ * that skips rows on one side of each tie and repeats them on the other.
+ */
+function orderFor(sort: ContactSort) {
+  if (sort === "closeness") {
+    return [desc(contacts.closeness), desc(contacts.id)];
   }
-  if (filters?.company?.trim()) {
-    rows = rows.filter(
-      (c) =>
-        (c.company || "").toLowerCase() === filters.company!.trim().toLowerCase()
-    );
+  if (sort === "recent") {
+    return [desc(contacts.updatedAt), desc(contacts.id)];
   }
-  if (filters?.minScore) {
-    rows = rows.filter((c) => c.relationshipScore >= filters.minScore!);
-  }
-  if (filters?.followUp === "due") {
-    const now = new Date();
-    rows = rows.filter(
-      (c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now
-    );
-  }
+  return [asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id)];
+}
 
-  const mapped = rows.map((c) => {
-    const tags = c.contactTags.map((ct) => ct.tag.name);
-    // Scored against the whole orbit, not this filtered page — a search result
-    // must not change how close someone is.
-    const closeness = closenessCohort.byId.get(c.id);
-    return {
-      ...c,
-      // Never ship base64 data URLs in list payloads.
-      profileImageUrl: clientContactAvatarUrl(c.id, c.profileImageUrl),
-      tags,
-      closeness: closeness?.closeness ?? 0,
-      closenessTier: closeness?.tier ?? ("outer" as const),
-      orbitScore: closeness?.orbitScore ?? 1,
-    };
-  });
+function cursorCondition(cursor: Cursor) {
+  if (cursor.s === "closeness") {
+    // Both elements descending, matching `orderFor`. See the note there on why the id must
+    // run the same direction as the column it breaks ties for.
+    return sql`(${contacts.closeness}, ${contacts.id}) < (${cursor.c}, ${cursor.id}::uuid)`;
+  }
+  if (cursor.s === "recent") {
+    return sql`(${contacts.updatedAt}, ${contacts.id}) < (${new Date(cursor.u)}, ${cursor.id}::uuid)`;
+  }
+  // Row-value comparison rather than the unrolled OR chain, so the planner can satisfy it
+  // straight from `contacts_user_sort_idx`.
+  return sql`(${contacts.sortKey}, ${contacts.fullName}, ${contacts.id}) > (${cursor.k}, ${cursor.n}, ${cursor.id}::uuid)`;
+}
 
-  mapped.sort((a, b) => {
-    const aLast = lastNameSortKey(a.lastName, a.fullName);
-    const bLast = lastNameSortKey(b.lastName, b.fullName);
-    const byLast = aLast.localeCompare(bLast, undefined, { sensitivity: "base" });
-    if (byLast !== 0) return byLast;
-    return a.fullName.localeCompare(b.fullName, undefined, { sensitivity: "base" });
-  });
+function cursorFor(
+  sort: ContactSort,
+  row: { id: string; sortKey: string | null; fullName: string; closeness: number | null; updatedAt: Date }
+): Cursor {
+  if (sort === "closeness") {
+    return { s: "closeness", c: row.closeness ?? 0, id: row.id };
+  }
+  if (sort === "recent") {
+    return { s: "recent", u: new Date(row.updatedAt).toISOString(), id: row.id };
+  }
+  return { s: "name", k: row.sortKey ?? "", n: row.fullName, id: row.id };
+}
 
-  return mapped;
+/**
+ * Match a query against the stored search vector, fuzzily against names, and against tags.
+ *
+ * Four branches because they answer different questions. `search_tsv` is whole-word and
+ * ranked, and covers everything on the contact row. The `%` prefix match is kept for the
+ * partial-word case a user typing into a filter box expects: "mar" should find "Marcus"
+ * before they finish the word, which neither full-text nor trigram will do. Trigram
+ * similarity is what finds someone when the spelling is off by a character — it is
+ * index-backed via `contacts_name_trgm` on `lower(full_name)`/`lower(company)`, so it is
+ * only worth adding for queries long enough to produce meaningful trigrams. Tags cannot be
+ * in a generated column — they live in their own table — so they are an EXISTS.
+ *
+ * `search_tsv` is written as a bare identifier because Drizzle has no `tsvector` column
+ * type to declare it with; Postgres maintains it as a generated column either way. The
+ * query selects `from contacts` unaliased, so the qualified name resolves.
+ */
+function searchCondition(q: string) {
+  const like = `${q.toLowerCase()}%`;
+  const lowered = q.toLowerCase();
+  // Trigram similarity only helps (and only uses its index) for queries long
+  // enough to produce meaningful trigrams; short prefixes are served by LIKE.
+  const fuzzy =
+    lowered.length >= 4
+      ? sql` or lower(${contacts.fullName}) % ${lowered} or lower(coalesce(${contacts.company}, '')) % ${lowered}`
+      : sql``;
+  return sql`(
+    contacts.search_tsv @@ websearch_to_tsquery('simple', ${q})
+    or lower(${contacts.fullName}) like ${like}
+    or lower(coalesce(${contacts.company}, '')) like ${like}
+    or lower(coalesce(${contacts.email}, '')) like ${like}
+    ${fuzzy}
+    or exists (
+      select 1 from contact_tags ct
+      join tags t on t.id = ct.tag_id
+      where ct.contact_id = ${contacts.id} and lower(t.name) like ${like}
+    )
+  )`;
+}
+
+/**
+ * Contacts for a picker — a bounded, searchable slice rather than the whole network.
+ *
+ * Three components (capture, the reminder dialog, the onboarding wizard) filled a `<select>`
+ * by calling `listContacts()` from the browser with no filter, which fetched and serialized
+ * every contact the user has. This is what they should have been asking for: a page of
+ * results, narrowed by whatever the user has typed.
+ */
+export async function searchContactsForPicker(
+  q?: string,
+  limit = 50,
+  /**
+   * `alphabetical` is right for browsing a long list in a `<select>`, which is what the
+   * capture form, the reminder dialog and the onboarding wizard do with this.
+   *
+   * `recent` is right for a type-ahead that has just been opened with nothing typed: the
+   * composer's `@` menu offered whoever came first in the address book, which reads as
+   * broken rather than as waiting. Defaulted to the old behaviour so those three callers
+   * are untouched.
+   */
+  order: "alphabetical" | "recent" = "alphabetical"
+): Promise<ContactPickerOption[]> {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const conditions = [eq(contacts.userId, userId)];
+  const term = q?.trim();
+  if (term) conditions.push(searchCondition(term));
+
+  const rows = await db
+    .select({
+      id: contacts.id,
+      fullName: contacts.fullName,
+      preferredName: contacts.preferredName,
+      company: contacts.company,
+      firstName: contacts.firstName,
+      // Never `profileImageUrl` itself: that column carries base64 up to 120 KB a row when
+      // Blob storage is unconfigured, and a 200-row picker would drag all of it across the
+      // wire only to rewrite it to `/api/avatars/{id}` anyway.
+      avatarUrl: clientAvatarUrlSql.as("avatar_url"),
+    })
+    .from(contacts)
+    .where(and(...conditions))
+    .orderBy(
+      ...(order === "recent"
+        ? [
+            // Never-spoken-to contacts fall to the back and sort alphabetically among
+            // themselves, so the tail is still browsable rather than arbitrary.
+            sql`${contacts.lastInteractionAt} desc nulls last`,
+            asc(contacts.sortKey),
+          ]
+        : [asc(contacts.sortKey), asc(contacts.fullName), asc(contacts.id)])
+    )
+    .limit(Math.min(Math.max(limit, 1), 200));
+
+  return rows;
+}
+
+/**
+ * Which letters the A–Z rail should offer.
+ *
+ * An index-only scan over `contacts_user_sort_idx` — it never touches the heap, and reads
+ * one small column rather than whole rows. The rail cannot derive this from the loaded page
+ * any more: with pagination the client has only seen the first 50 contacts, so asking it
+ * which letters exist would dim every letter the user has not scrolled to yet.
+ */
+export async function listContactLetters(): Promise<string[]> {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const rows = await db
+    .select({
+      letter: sql<string>`coalesce(nullif(upper(left(${contacts.sortKey}, 1)), ''), '#')`,
+    })
+    .from(contacts)
+    .where(eq(contacts.userId, userId))
+    .groupBy(sql`1`);
+
+  return rows.map((r) => (/^[A-Z]$/.test(r.letter) ? r.letter : "#"));
+}
+
+async function countContacts(where: ReturnType<typeof and>) {
+  const db = await getDb();
+  const rows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(contacts)
+    .where(where);
+  return Number(rows[0]?.n ?? 0);
+}
+
+/** Tag names for one page of contacts — one query for the page, not one per row. */
+async function tagsForContacts(ids: string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (ids.length === 0) return out;
+  const db = await getDb();
+  const rows = await db
+    .select({ contactId: contactTags.contactId, name: tags.name })
+    .from(contactTags)
+    .innerJoin(tags, eq(tags.id, contactTags.tagId))
+    .where(inArray(contactTags.contactId, ids));
+  for (const row of rows) {
+    const list = out.get(row.contactId) ?? [];
+    list.push(row.name);
+    out.set(row.contactId, list);
+  }
+  return out;
 }
 
 export type TriageDisplayCandidate = {
@@ -276,14 +492,6 @@ export async function getTriageCandidates(): Promise<TriageDisplayCandidate[]> {
       },
     ];
   });
-}
-
-function lastNameSortKey(lastName: string | null | undefined, fullName: string) {
-  const fromField = lastName?.trim();
-  if (fromField) return fromField.toLocaleLowerCase();
-  const parts = fullName.trim().split(/\s+/).filter(Boolean);
-  const inferred = parts.length > 1 ? parts[parts.length - 1]! : parts[0] || "";
-  return inferred.toLocaleLowerCase();
 }
 
 export type ContactFieldSuggestions = {
@@ -402,12 +610,39 @@ export async function getContact(id: string) {
     with: {
       contactTags: { with: { tag: true } },
       interactions: {
+        // The timeline renders a two-line clamp, so shipping whole pasted notes to a client
+        // component on every profile view bought nothing — a contact carrying an imported
+        // LinkedIn thread paid for thousands of characters to show two lines of them.
+        // `notesPreview` is truncated in SQL and is only ever used for that preview and for
+        // "does this have notes at all"; the detail sheet still loads the full row lazily
+        // through `getInteractionDetail`.
+        //
+        // Columns are restricted, not rows: `contacts/[id]/page.tsx` derives
+        // `hasLoggedInteraction` from `interactions.length > 0`, which a LIMIT would survive
+        // but a WHERE would not.
+        columns: {
+          id: true,
+          interactionType: true,
+          interactionDate: true,
+          sameDayOrder: true,
+          aiSummary: true,
+        },
+        extras: {
+          notesPreview: sql<
+            string | null
+          >`left(${interactions.rawNotes}, 600)`.as("notes_preview"),
+        },
         orderBy: [
           desc(interactions.interactionDate),
           asc(interactions.sameDayOrder),
         ],
       },
-      reminders: { orderBy: [desc(reminders.createdAt)] },
+      // `dismissed` is the undo tombstone: the row survives so the batch item_hash keeps
+      // blocking a re-paste, but it must never show up as a live reminder on the profile.
+      reminders: {
+        where: (r, { ne }) => ne(r.status, "dismissed"),
+        orderBy: [desc(reminders.createdAt)],
+      },
     },
   });
 
@@ -419,11 +654,31 @@ export async function getContact(id: string) {
   };
 }
 
+/**
+ * Create a contact from the manual "New contact" form (and any other single-record path).
+ *
+ * Goes through `resolveOrCreateContact` rather than straight to `createContactForUser`.
+ * This path performed no duplicate check at all until now — the form would happily create a
+ * second Ada Lovelace with the same LinkedIn URL as the first — which made hand entry the
+ * easiest way in the whole product to create a duplicate.
+ *
+ * Returns the contact that survives, which is not always the one that was inserted: if the
+ * record's identifiers already belonged to someone, the data is folded into them and their
+ * row comes back instead.
+ */
 export async function createContact(
   input: ContactInput,
   options?: ContactWriteOptions
 ) {
-  return createContactForUser(await requireUserId(), input, options);
+  const userId = await requireUserId();
+  const { contactId } = await resolveOrCreateContact(userId, input, options);
+  const db = await getDb();
+  const [contact] = await db
+    .select()
+    .from(contacts)
+    .where(and(eq(contacts.userId, userId), eq(contacts.id, contactId)))
+    .limit(1);
+  return contact;
 }
 
 /**
@@ -439,7 +694,7 @@ export async function createContactIfRoom(
   options?: ContactWriteOptions
 ) {
   try {
-    return await createContactForUser(await requireUserId(), input, options);
+    return await createContact(input, options);
   } catch (err) {
     if (isPaywallError(err)) return null;
     throw err;
@@ -550,6 +805,41 @@ export async function deleteContact(id: string) {
   revalidatePath("/graph");
 }
 
+/**
+ * Force a contact onto the constellation, off it, or back to the automatic rule.
+ *
+ * A direct update rather than `updateContactForUser`, which is the shared write path for
+ * everything else on a contact. That path sets `embeddingStaleAt` unconditionally and calls
+ * `scoreAfterWrite`, both correct for content changes and both wrong here: a pin is not part
+ * of the embedded text (see `buildContactEmbeddingContent`), so routing through it would
+ * enqueue a paid re-embed and dirty the closeness cohort for a value neither one reads.
+ *
+ * `updatedAt` is deliberately left alone for the same reason. The dashboard's contact scan
+ * orders by `desc(updated_at)`, so bumping it would shove whoever you pinned to the top of
+ * "recently updated" — a visible, confusing consequence of an invisible setting.
+ *
+ * Ownership lives in the WHERE clause, the house pattern: a row belonging to someone else
+ * simply matches nothing.
+ */
+export async function setConstellationPin(
+  contactId: string,
+  pin: "in" | "out" | null
+) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  await db
+    .update(contacts)
+    .set({ constellationPin: pin })
+    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+
+  revalidatePath("/");
+  revalidatePath("/contacts");
+  revalidatePath(`/contacts/${contactId}`);
+  revalidatePath("/graph");
+  revalidatePath("/dashboard");
+  return { pin };
+}
+
 export async function logInteraction(input: LogInteractionInput) {
   return logInteractionForUser(await requireUserId(), input);
 }
@@ -613,8 +903,13 @@ export async function updateInteraction(
     .where(eq(interactions.id, interactionId))
     .returning();
 
-  await rebuildContactEmbedding(userId, existing.contactId);
-  void generateAndStorePersonSummary(userId, existing.contactId).catch(
+  if (input.actionItems !== undefined) {
+    const { syncActionItems } = await import("@/lib/action-items");
+    await syncActionItems(userId, interactionId, existing.contactId, input.actionItems);
+  }
+
+  await scheduleEmbeddingRebuild(userId, existing.contactId);
+  void generateAndStoreContactBrief(userId, existing.contactId).catch(
     () => null
   );
 
@@ -673,13 +968,13 @@ export async function reorderSameDayInteractions(
 
 export async function regenerateContactSummary(contactId: string) {
   const userId = await requireUserId();
-  const summary = await generateAndStorePersonSummary(userId, contactId, {
+  const out = await generateAndStoreContactBrief(userId, contactId, {
     force: true,
   });
   revalidatePath(`/contacts/${contactId}`);
   revalidatePath("/graph");
   revalidatePath("/dashboard");
-  return { summary };
+  return { summary: out?.summary ?? null };
 }
 
 export type LinkedInRefreshTarget = {
@@ -756,54 +1051,17 @@ export async function backfillContactAvatars(
     Math.max(1, Math.floor(limit) || AVATAR_BACKFILL_BATCH_SIZE),
     AVATAR_BACKFILL_BATCH_SIZE
   );
-  const skip = new Set(options.skipIds ?? []);
+  const skipIds = options.skipIds ?? [];
   const db = await getDb();
 
-  const rows = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    columns: {
-      id: true,
-      linkedinUrl: true,
-      profileImageUrl: true,
-    },
-  });
+  // Two bounded statements: the page of work, and the size of the backlog it came from.
+  // The backlog count is what the client shows progress against and uses to stop.
+  const [candidates, backlog] = await Promise.all([
+    findAvatarBackfillCandidates(db, userId, { limit: batchSize, skipIds }),
+    countAvatarBackfillCandidates(db, userId, skipIds),
+  ]);
 
-  const needsWork = rows
-    .filter((r) => {
-      if (skip.has(r.id)) return false;
-      const linkedin = r.linkedinUrl?.trim();
-      const stored = r.profileImageUrl?.trim() || "";
-      if (!linkedin && (!stored || isUnusableAvatarUrl(stored))) return false;
-      // Need LinkedIn resolution when missing/unusable.
-      if (linkedin && isUnusableAvatarUrl(stored)) return true;
-      // Also durably cache remote URLs that aren't in Blob storage yet.
-      if (
-        stored &&
-        !isUnusableAvatarUrl(stored) &&
-        !isDurableAvatarUrl(stored)
-      ) {
-        return true;
-      }
-      return false;
-    })
-    // Prefer free remote→Blob caching work before spending Microlink quota.
-    .sort((a, b) => {
-      const aRemote =
-        Boolean(a.profileImageUrl?.trim()) &&
-        !isUnusableAvatarUrl(a.profileImageUrl) &&
-        !isDurableAvatarUrl(a.profileImageUrl)
-          ? 0
-          : 1;
-      const bRemote =
-        Boolean(b.profileImageUrl?.trim()) &&
-        !isUnusableAvatarUrl(b.profileImageUrl) &&
-        !isDurableAvatarUrl(b.profileImageUrl)
-          ? 0
-          : 1;
-      return aRemote - bRemote;
-    });
-
-  if (needsWork.length === 0) {
+  if (candidates.length === 0) {
     return {
       saved: 0,
       savedIds: [],
@@ -815,79 +1073,41 @@ export async function backfillContactAvatars(
     };
   }
 
-  let saved = 0;
-  const savedIds: string[] = [];
-  const failedIds: string[] = [];
-  let failed = 0;
-  let rateLimitedUntil: number | null = null;
-  let storageError: string | null = null;
-  const batch = needsWork.slice(0, batchSize);
+  const result = await traced(
+    "contacts.backfillAvatars",
+    () =>
+      runAvatarBackfillBatch(candidates, {
+        deadline: Date.now() + AVATAR_BACKFILL_BUDGET_MS,
+        persistRemote: downloadAndPersistAvatar,
+        resolveLinkedIn: fetchLinkedInPhotoUrl,
+        resolveGravatar: fetchGravatarPhotoUrl,
+        save: async (contactId, photoUrl) => {
+          await db
+            .update(contacts)
+            .set({ profileImageUrl: photoUrl, updatedAt: new Date() })
+            .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+        },
+        markChecked: async (contactId) => {
+          // Deliberately does NOT touch updatedAt: a failed photo lookup is not a
+          // change to the contact, and bumping it would reorder the "recent" sort.
+          await db
+            .update(contacts)
+            .set({ profileImageCheckedAt: new Date() })
+            .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+        },
+      }),
+    { userId }
+  );
 
-  for (const contact of batch) {
-    const stored = contact.profileImageUrl?.trim() || "";
-    try {
-      let photoUrl: string | null = null;
-
-      if (stored && !isUnusableAvatarUrl(stored) && !isDurableAvatarUrl(stored)) {
-        photoUrl = await downloadAndPersistAvatar(contact.id, stored);
-      }
-
-      if (!photoUrl && contact.linkedinUrl?.trim()) {
-        try {
-          photoUrl = await fetchLinkedInPhotoUrl(contact.id, contact.linkedinUrl);
-        } catch (err) {
-          if (err instanceof MicrolinkRateLimitError) {
-            rateLimitedUntil = err.resetAt;
-            // Unavatar was already tried inside fetchLinkedInPhotoUrl.
-            failed += 1;
-            continue;
-          }
-          throw err;
-        }
-      }
-
-      if (!photoUrl) {
-        failed += 1;
-        failedIds.push(contact.id);
-        continue;
-      }
-
-      await db
-        .update(contacts)
-        .set({ profileImageUrl: photoUrl, updatedAt: new Date() })
-        .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
-      saved += 1;
-      savedIds.push(contact.id);
-    } catch (err) {
-      if (err instanceof MicrolinkRateLimitError) {
-        rateLimitedUntil = err.resetAt;
-        break;
-      }
-      if (err instanceof AvatarStorageError) {
-        // Every remaining contact would fail the same way — stop the run.
-        storageError = err.message;
-        break;
-      }
-      failed += 1;
-      failedIds.push(contact.id);
-    }
-  }
-
-  const pending = Math.max(0, needsWork.length - saved - failedIds.length);
-  if (saved > 0) {
+  if (result.saved > 0) {
     revalidatePath("/contacts");
     revalidatePath("/");
     revalidatePath("/graph");
   }
 
   return {
-    saved,
-    savedIds,
-    failedIds,
-    pending,
-    failed,
-    rateLimitedUntil,
-    storageError,
+    ...result,
+    pending: Math.max(0, backlog - result.saved - result.failedIds.length),
   };
 }
 
@@ -1033,7 +1253,7 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
             contact.linkedinUrl
           );
         } catch (err) {
-          if (err instanceof MicrolinkRateLimitError) {
+          if (err instanceof AvatarSourceRateLimitError) {
             rateLimited = true;
             unmatched += 1;
             continue;
@@ -1073,6 +1293,26 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
         },
         { skipRevalidate: true }
       );
+
+      // Apollo fills a gap; it never overwrites an extension capture. `saveContactProfile`
+      // enforces that, so this call is unconditional and cheap when it is outranked.
+      if (profile.experiences.length) {
+        await saveContactProfile(userId, contact.id, {
+          source: "apollo",
+          sourceUrl: profile.linkedinUrl,
+          adapterVersion: null,
+          capturedAt: new Date(),
+          warnings: [],
+          headline: null,
+          about: null,
+          skills: [],
+          certifications: [],
+          volunteering: [],
+          publications: [],
+          experiences: profile.experiences,
+        }).catch(() => null); // never fail a refresh over the profile half
+      }
+
       refreshed += 1;
     } catch {
       failed += 1;
@@ -1227,233 +1467,6 @@ export async function listRelatedContacts(
   );
 }
 
-export type MutualContact = {
-  id: string;
-  fullName: string;
-  preferredName: string | null;
-  firstName: string | null;
-  title: string | null;
-  company: string | null;
-  school: string | null;
-  location: string | null;
-  profileImageUrl: string | null;
-  linkedinUrl: string | null;
-  email: string | null;
-  phone: string | null;
-  mutualCount: number;
-};
-
-function extractLinkedinSlug(url: string | null | undefined): string | null {
-  const t = url?.trim();
-  if (!t) return null;
-  const match = t.match(/linkedin\.com\/in\/([^/?#]+)/i);
-  return match ? match[1].toLowerCase() : null;
-}
-
-/**
- * Mutuals for a specific contact `contactId` (belonging to the signed-in user):
- * for each other account, count how many of the signed-in user's contacts
- * overlap with that other account's contacts, given that other account also
- * has the profile contact (matched by contact id and/or LinkedIn slug).
- *
- * Returns only the signed-in user's contacts (so we never expose other users).
- */
-export async function listMutualContacts(
-  contactId: string,
-  limit = 6
-): Promise<MutualContact[]> {
-  const userId = await requireUserId();
-  const db = await getDb();
-
-  const viewerContact = await db.query.contacts.findFirst({
-    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-    columns: {
-      id: true,
-      fullName: true,
-      preferredName: true,
-      firstName: true,
-      title: true,
-      company: true,
-      school: true,
-      location: true,
-      profileImageUrl: true,
-      linkedinUrl: true,
-      email: true,
-      phone: true,
-    },
-  });
-
-  if (!viewerContact) return [];
-
-  const profileLinkedinSlug = extractLinkedinSlug(viewerContact.linkedinUrl);
-  // If we can't match this contact identity across accounts, return nothing.
-  if (!profileLinkedinSlug) return [];
-
-  const viewerContacts = await db.query.contacts.findMany({
-    where: eq(contacts.userId, userId),
-    columns: {
-      id: true,
-      fullName: true,
-      preferredName: true,
-      firstName: true,
-      title: true,
-      company: true,
-      school: true,
-      location: true,
-      profileImageUrl: true,
-      linkedinUrl: true,
-      email: true,
-      phone: true,
-    },
-  });
-
-  // Map "identity key" => viewer contact ids.
-  // We can have duplicates in rare cases (e.g. if the same LinkedIn URL was
-  // imported twice), so keep arrays.
-  const viewerKeyToIds = new Map<string, string[]>();
-  const viewerById = new Map<string, MutualContact>();
-
-  for (const c of viewerContacts) {
-    const linkedinSlug = extractLinkedinSlug(c.linkedinUrl);
-
-    if (c.id) {
-      viewerById.set(c.id, {
-        id: c.id,
-        fullName: c.fullName,
-        preferredName: c.preferredName ?? null,
-        firstName: c.firstName ?? null,
-        title: c.title ?? null,
-        company: c.company ?? null,
-        school: c.school ?? null,
-        location: c.location ?? null,
-        profileImageUrl: c.profileImageUrl ?? null,
-        linkedinUrl: c.linkedinUrl ?? null,
-        email: c.email ?? null,
-        phone: c.phone ?? null,
-        mutualCount: 0, // filled later
-      });
-    }
-
-    const keys: string[] = [`i:${c.id}`];
-    if (linkedinSlug) keys.push(`l:${linkedinSlug}`);
-
-    for (const key of keys) {
-      const existing = viewerKeyToIds.get(key);
-      if (existing) existing.push(c.id);
-      else viewerKeyToIds.set(key, [c.id]);
-    }
-  }
-
-  const profileKeys = new Set<string>([`i:${viewerContact.id}`]);
-  if (profileLinkedinSlug) profileKeys.add(`l:${profileLinkedinSlug}`);
-
-  const MAX_OTHER_USERS_SCAN = 20;
-  const MAX_OTHER_USER_CONTACTS_SCAN = 250;
-  const MAX_OTHER_USER_MATCHING_CONTACTS = 1000;
-
-  // Step 1: find other userIds that likely have this profile contact.
-  const otherUserConditions: Array<ReturnType<typeof ilike>> = [
-    ilike(contacts.linkedinUrl, `%/in/${profileLinkedinSlug}%`),
-  ];
-
-  const otherUserRows = await db.query.contacts.findMany({
-    where: and(
-      sql`${contacts.userId} <> ${userId}`,
-      or(...otherUserConditions)
-    ),
-    columns: {
-      userId: true,
-      lastInteractionAt: true,
-    },
-    limit: MAX_OTHER_USER_MATCHING_CONTACTS,
-  });
-
-  const maxLastInteractionAtByUser = new Map<string, number>();
-  for (const r of otherUserRows) {
-    if (!r.userId) continue;
-    const ts = r.lastInteractionAt ? new Date(r.lastInteractionAt).getTime() : 0;
-    const prev = maxLastInteractionAtByUser.get(r.userId) ?? -Infinity;
-    if (ts > prev) maxLastInteractionAtByUser.set(r.userId, ts);
-  }
-
-  const otherUserIds = [...maxLastInteractionAtByUser.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, MAX_OTHER_USERS_SCAN)
-    .map(([id]) => id);
-
-  const mutualCountByViewerContactId = new Map<string, number>();
-
-  // Step 2: for each other user, count which of *your* contacts overlap
-  // (given that they also have the profile contact).
-  for (const otherUserId of otherUserIds) {
-    const otherContacts = await db.query.contacts.findMany({
-      where: eq(contacts.userId, otherUserId),
-      columns: {
-        id: true,
-        linkedinUrl: true,
-        lastInteractionAt: true,
-      },
-      // Prefer recent contacts so we find mutuals quickly.
-      orderBy: (c, { desc: descOrder }) => [descOrder(c.lastInteractionAt)],
-      limit: MAX_OTHER_USER_CONTACTS_SCAN,
-    });
-
-    let hasProfile = false;
-    const overlaps = new Set<string>(); // viewer contact ids
-
-    for (const oc of otherContacts) {
-      const linkedinSlug = extractLinkedinSlug(oc.linkedinUrl);
-
-      const keys: string[] = [`i:${oc.id}`];
-      if (linkedinSlug) keys.push(`l:${linkedinSlug}`);
-      if (keys.length === 0) continue;
-
-      if (!hasProfile) {
-        for (const k of keys) {
-          if (profileKeys.has(k)) {
-            hasProfile = true;
-            break;
-          }
-        }
-      }
-
-      for (const k of keys) {
-        const viewerIds = viewerKeyToIds.get(k);
-        if (!viewerIds) continue;
-        for (const vid of viewerIds) overlaps.add(vid);
-      }
-    }
-
-    if (!hasProfile) continue;
-
-    for (const vid of overlaps) {
-      if (vid === contactId) continue;
-      const current = mutualCountByViewerContactId.get(vid) ?? 0;
-      mutualCountByViewerContactId.set(vid, current + 1);
-    }
-  }
-
-  const result: MutualContact[] = [];
-  for (const [vid, count] of mutualCountByViewerContactId.entries()) {
-    const base = viewerById.get(vid);
-    if (!base) continue;
-    result.push({
-      ...base,
-      mutualCount: count,
-    });
-  }
-
-  result.sort(
-    (a, b) =>
-      b.mutualCount - a.mutualCount ||
-      (a.fullName || "").localeCompare(b.fullName || "", undefined, {
-        sensitivity: "base",
-      })
-  );
-
-  return result.slice(0, limit);
-}
-
 /** Lightweight contact payload for the floating ask bar person chip. */
 export async function getAskBarContact(contactId: string): Promise<{
   id: string;
@@ -1485,4 +1498,156 @@ export async function getAskBarContact(contactId: string): Promise<{
     profileImageUrl: contact.profileImageUrl,
     linkedinUrl: contact.linkedinUrl,
   };
+}
+
+/**
+ * Everything the interaction detail sheet shows, fetched when the sheet opens rather than
+ * loaded with the profile — the timeline can hold hundreds of interactions and only one is
+ * ever open at a time.
+ */
+export async function getInteractionDetail(interactionId: string) {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const row = await db.query.interactions.findFirst({
+    where: and(
+      eq(interactions.id, interactionId),
+      eq(interactions.userId, userId)
+    ),
+  });
+  if (!row) throw new Error("Interaction not found");
+
+  const [items, mentioned] = await Promise.all([
+    db
+      .select({
+        id: actionItems.id,
+        text: actionItems.text,
+        status: actionItems.status,
+        reminderId: actionItems.reminderId,
+      })
+      .from(actionItems)
+      .where(
+        and(
+          eq(actionItems.userId, userId),
+          eq(actionItems.interactionId, interactionId)
+        )
+      )
+      .orderBy(asc(actionItems.position)),
+    db
+      .select({
+        contactId: interactionMentions.contactId,
+        mentionText: interactionMentions.mentionText,
+        fullName: contacts.fullName,
+      })
+      .from(interactionMentions)
+      .innerJoin(contacts, eq(contacts.id, interactionMentions.contactId))
+      .where(
+        and(
+          eq(interactionMentions.userId, userId),
+          eq(interactionMentions.interactionId, interactionId)
+        )
+      ),
+  ]);
+
+  return {
+    id: row.id,
+    contactId: row.contactId,
+    interactionType: row.interactionType,
+    interactionDate: new Date(row.interactionDate).toISOString(),
+    aiSummary: row.aiSummary,
+    rawNotes: row.rawNotes,
+    topics: row.topics ?? [],
+    source: row.source,
+    // `action_items` rows are the source of truth; the jsonb column on the interaction is a
+    // write-through denorm, so it is deliberately not read here. When a row has notes but no
+    // rows (an older interaction, or one logged without AI), fall back to the denorm so the
+    // sheet still shows what was recorded.
+    actionItems: items.length
+      ? items
+      : (row.actionItems ?? []).map((text, index) => ({
+          id: `denorm-${index}`,
+          text,
+          status: "open" as const,
+          reminderId: null as string | null,
+        })),
+    /** True when the items above came from `action_items` and can therefore be checked off. */
+    actionItemsCheckable: items.length > 0,
+    mentions: mentioned,
+  };
+}
+
+export type InteractionDetail = Awaited<ReturnType<typeof getInteractionDetail>>;
+
+/**
+ * Re-extract the summary, topics and action items for one interaction from its own notes.
+ *
+ * `syncActionItems` diffs by hash, so items the user already ticked off keep their completed
+ * state instead of coming back as fresh open ones.
+ */
+export async function resummarizeInteraction(interactionId: string) {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  const existing = await db.query.interactions.findFirst({
+    where: and(
+      eq(interactions.id, interactionId),
+      eq(interactions.userId, userId)
+    ),
+  });
+  if (!existing) throw new Error("Interaction not found");
+
+  const notes = (existing.rawNotes || "").trim();
+  if (!notes) throw new Error("There are no notes to summarize");
+
+  const contact = await db.query.contacts.findFirst({
+    where: and(
+      eq(contacts.id, existing.contactId),
+      eq(contacts.userId, userId)
+    ),
+  });
+
+  const { consumeBucket, RATE_LIMITS } = await import("@/lib/rate-limit");
+  await consumeBucket("capture", userId, RATE_LIMITS.capture);
+
+  const { parseMultiPersonNotesWithAI } = await import("@/lib/ai");
+  const { withLockedSeedPerson } = await import("@/lib/note-batches");
+  const parsed = await parseMultiPersonNotesWithAI(
+    userId,
+    notes,
+    contact ? withLockedSeedPerson(null, contact.fullName) : null
+  );
+
+  const person =
+    parsed.people.find((p) => p.presence !== "mentioned") ?? parsed.people[0];
+  if (!person) throw new Error("Couldn't find anything to summarize in those notes");
+
+  const { MAX_ACTION_ITEMS_PER_INTERACTION, syncActionItems } = await import(
+    "@/lib/action-items"
+  );
+  const items = (person.action_items ?? [])
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, MAX_ACTION_ITEMS_PER_INTERACTION);
+
+  const [row] = await db
+    .update(interactions)
+    .set({
+      aiSummary: person.summary?.trim() || existing.aiSummary,
+      topics: person.topics ?? [],
+      actionItems: items,
+    })
+    .where(eq(interactions.id, interactionId))
+    .returning();
+
+  await syncActionItems(userId, interactionId, existing.contactId, items);
+  await scheduleEmbeddingRebuild(userId, existing.contactId);
+  void generateAndStoreContactBrief(userId, existing.contactId).catch(() => null);
+
+  revalidatePath(`/contacts/${existing.contactId}`);
+  revalidatePath("/dashboard");
+  return row;
+}
+
+export async function deleteInteraction(interactionId: string) {
+  return deleteInteractionForUser(await requireUserId(), interactionId);
 }

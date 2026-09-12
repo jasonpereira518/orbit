@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { resolvePlan, type Plan, type PlanSource } from "@/lib/entitlements";
 import type { AdminUserRow } from "@/lib/admin-metrics";
+import { PRESENCE_WINDOW_MS } from "@/lib/presence-window";
 
 /**
  * The paginated roster query.
@@ -38,6 +39,7 @@ export type RosterPlanFilter = "all" | "free" | "orbit" | "lifetime" | "comped";
 
 export type RosterStateFilter =
   | "all"
+  | "live"
   | "no-key"
   | "past-due"
   | "inactive"
@@ -81,7 +83,10 @@ const ORDER_BY: Record<RosterSort, string> = {
   contacts: "agg.contacts",
   interactions: "agg.interactions",
   ai: "agg.ai_calls",
-  email: "lower(coalesce(s.email, s.user_id))",
+  // Sorts by what the Account column *displays* — name, then email, then id. A sort order
+  // that disagrees with the visible text reads as a bug every single time.
+  email:
+    "lower(coalesce(nullif(btrim(coalesce(s.first_name, '') || ' ' || coalesce(s.last_name, '')), ''), s.email, s.user_id))",
 };
 
 const DEFAULT_SORT_DIR: Record<RosterSort, "asc" | "desc"> = {
@@ -126,6 +131,9 @@ const HAS_PROVIDER_KEY_SQL = `
 type RosterRecord = {
   user_id: string;
   email: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  profile_image_url: string | null;
   created_at: string | Date;
   last_active_at: string | Date | null;
   onboarding_completed_at: string | Date | null;
@@ -152,6 +160,7 @@ type RosterRecord = {
   out_tokens: string | number;
   cost_micros: string | number;
   first_interaction_at: string | Date | null;
+  first_contact_at: string | Date | null;
   last_write_at: string | Date | null;
   total_count: string | number;
 };
@@ -198,6 +207,9 @@ function toRow(record: RosterRecord): AdminUserRow {
   return {
     userId: record.user_id,
     email: record.email,
+    firstName: record.first_name,
+    lastName: record.last_name,
+    imageUrl: record.profile_image_url,
     plan,
     planSource: source,
     compedNote: record.comped_note,
@@ -227,6 +239,7 @@ function toRow(record: RosterRecord): AdminUserRow {
     aiTokens: { input: num(record.in_tokens), output: num(record.out_tokens) },
     estimatedCostMicros: num(record.cost_micros),
     firstInteractionAt: toDate(record.first_interaction_at),
+    firstContactAt: toDate(record.first_contact_at),
   };
 }
 
@@ -245,7 +258,10 @@ function buildPredicates(query: RosterQuery) {
     // pasting a Clerk id — whole or partial — is the most common way this box gets used.
     const prefix = `${q.toLowerCase()}%`;
     parts.push(
-      sql`(lower(coalesce(s.email, '')) LIKE ${prefix} OR lower(s.user_id) LIKE ${prefix})`
+      sql`(lower(coalesce(s.email, '')) LIKE ${prefix}
+           OR lower(s.user_id) LIKE ${prefix}
+           OR lower(coalesce(s.first_name, '')) LIKE ${prefix}
+           OR lower(coalesce(s.last_name, '')) LIKE ${prefix})`
     );
   }
 
@@ -257,6 +273,14 @@ function buildPredicates(query: RosterQuery) {
   }
 
   switch (query.state ?? "all") {
+    case "live":
+      // Interpolated as an interval rather than compared against a JS `now`: the cutoff has
+      // to be evaluated by the database at query time, or a cached render would filter
+      // against whenever the page was built.
+      parts.push(
+        sql`s.last_active_at > now() - make_interval(secs => ${PRESENCE_WINDOW_MS / 1000})`
+      );
+      break;
     case "no-key":
       parts.push(sql`NOT (${sql.raw(HAS_PROVIDER_KEY_SQL)})`);
       break;
@@ -299,24 +323,26 @@ function rosterSql(query: RosterQuery, limit: number, offset: number) {
         max(u.out_tokens)        AS out_tokens,
         max(u.cost_micros)       AS cost_micros,
         max(u.first_interaction_at) AS first_interaction_at,
+        max(u.first_contact_at)  AS first_contact_at,
         max(u.last_write_at)     AS last_write_at
       FROM (
         SELECT user_id, count(*)::int AS contacts, 0 AS interactions, 0 AS imports,
                0 AS chat_messages, 0 AS ai_calls, 0::bigint AS ai_failures,
                0::bigint AS in_tokens, 0::bigint AS out_tokens, 0::bigint AS cost_micros,
-               NULL::timestamptz AS first_interaction_at, max(created_at) AS last_write_at
+               NULL::timestamptz AS first_interaction_at,
+               min(created_at) AS first_contact_at, max(created_at) AS last_write_at
         FROM contacts GROUP BY user_id
         UNION ALL
         SELECT user_id, 0, count(*)::int, 0, 0, 0, 0::bigint, 0::bigint, 0::bigint,
-               0::bigint, min(created_at), max(created_at)
+               0::bigint, min(created_at), NULL::timestamptz, max(created_at)
         FROM interactions GROUP BY user_id
         UNION ALL
         SELECT user_id, 0, 0, count(*)::int, 0, 0, 0::bigint, 0::bigint, 0::bigint,
-               0::bigint, NULL::timestamptz, max(created_at)
+               0::bigint, NULL::timestamptz, NULL::timestamptz, max(created_at)
         FROM imports GROUP BY user_id
         UNION ALL
         SELECT user_id, 0, 0, 0, count(*)::int, 0, 0::bigint, 0::bigint, 0::bigint,
-               0::bigint, NULL::timestamptz, max(created_at)
+               0::bigint, NULL::timestamptz, NULL::timestamptz, max(created_at)
         FROM chat_messages GROUP BY user_id
         UNION ALL
         SELECT user_id, 0, 0, 0, 0, count(*)::int,
@@ -324,13 +350,14 @@ function rosterSql(query: RosterQuery, limit: number, offset: number) {
                coalesce(sum(input_tokens), 0),
                coalesce(sum(output_tokens), 0),
                coalesce(sum(estimated_cost_micros), 0),
-               NULL::timestamptz, max(created_at)
+               NULL::timestamptz, NULL::timestamptz, max(created_at)
         FROM usage_events GROUP BY user_id
       ) u
       GROUP BY u.user_id
     )
     SELECT
       s.user_id, s.email, s.created_at, s.last_active_at,
+      s.first_name, s.last_name, s.profile_image_url,
       s.onboarding_completed_at, s.wizard_completed_at,
       s.ai_provider, s.ai_model,
       (${sql.raw(HAS_PROVIDER_KEY_SQL)}) AS has_provider_key,
@@ -347,6 +374,7 @@ function rosterSql(query: RosterQuery, limit: number, offset: number) {
       coalesce(agg.out_tokens, 0)    AS out_tokens,
       coalesce(agg.cost_micros, 0)   AS cost_micros,
       agg.first_interaction_at,
+      agg.first_contact_at,
       agg.last_write_at,
       count(*) OVER () AS total_count
     FROM user_settings s

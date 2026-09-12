@@ -1,6 +1,8 @@
-import { orderConstellationMembers, type EdgeKind, type GraphContactInput, type LayoutEdge } from "@/lib/graph-layout";
-import { buildConstellationClusters } from "@/lib/constellation-clusters";
-import { assignClusterShapes } from "@/lib/constellation-shapes";
+import type { EdgeKind, GraphContactInput, LayoutEdge } from "@/lib/graph-layout";
+import {
+  buildConstellationFit,
+  constellationFitEdges,
+} from "@/lib/constellation-fit";
 import {
   closenessTier,
   computeClosenessForAll,
@@ -41,7 +43,30 @@ export type NetworkMetrics = {
   totalPeerEdges: number;
   avgPeerDegree: number;
   degreeBuckets: { none: number; oneToTwo: number; threePlus: number };
+  /**
+   * How many contacts the peer-link figures were actually computed over.
+   *
+   * Equal to `totalContacts` for most networks. Above `METRICS_MAX_CONTACTS` the link
+   * analysis runs on the closest contacts only — see the note there — and the peer-link
+   * stats describe that subset while `tierCounts` and `totalContacts` still describe
+   * everyone. Surfaced rather than hidden so a caller can say so.
+   */
+  metricsSampleSize: number;
 };
+
+/**
+ * Ceiling on how many contacts the peer-link analysis considers.
+ *
+ * `buildPeerEdges({ metrics: true })` compares every pair of contacts, so its cost grows
+ * with the square of the network: 2,000 contacts is two million comparisons, 5,000 is
+ * twelve and a half million — and this runs on the dashboard's render path, on every load.
+ *
+ * The cap is applied by closeness, so what survives is the part of the network the reader
+ * cares about. "How interconnected are the people I actually know" is the question the
+ * chart answers; the thousand acquaintances imported from a CSV and never touched since
+ * were only ever adding cost to it.
+ */
+export const METRICS_MAX_CONTACTS = 750;
 
 export type ContactWithNetwork = ClosenessContact & {
   id: string;
@@ -91,20 +116,38 @@ function nameAliases(c: GraphContactInput) {
   return [...names];
 }
 
-function mentionsOther(a: GraphContactInput, b: GraphContactInput) {
-  const text = contactCorpus(a);
-  if (!text) return false;
-  return nameAliases(b).some((alias) => {
-    if (alias.length < 3) return false;
-    return text.includes(alias);
-  });
+/**
+ * Everything the all-pairs loop below needs from a single contact, derived once.
+ *
+ * The loop is O(n^2) by nature — it is asking which pairs are connected — but it used to
+ * rebuild each contact's corpus string, alias list and lowercased tag sets *inside* the
+ * pair comparison, so every contact's multi-KB notes were re-joined and re-lowercased
+ * ~2n times instead of once. That made the constant factor scale with note length.
+ */
+type SoftKnowsFacts = {
+  corpus: string;
+  aliases: string[];
+  tagsLower: string[];
+  tagsSet: Set<string>;
+  interestsLower: string[];
+  interestsSet: Set<string>;
+  clusterId: string | undefined;
+};
+
+function mentionsAliasOf(textOwner: SoftKnowsFacts, named: SoftKnowsFacts) {
+  if (!textOwner.corpus) return false;
+  return named.aliases.some((alias) => textOwner.corpus.includes(alias));
 }
 
-function sharedCount(a: string[], b: string[]) {
-  const setB = new Set(b.map((t) => t.toLowerCase()));
+/**
+ * Counts entries of `aLower` present in `bSet`. Deliberately iterates the array rather
+ * than intersecting two sets: the original counted duplicates on the `a` side, and
+ * collapsing them would quietly change the >= 2 thresholds this feeds.
+ */
+function overlapCount(aLower: string[], bSet: Set<string>) {
   let n = 0;
-  for (const t of a) {
-    if (setB.has(t.toLowerCase())) n += 1;
+  for (const value of aLower) {
+    if (bSet.has(value)) n += 1;
   }
   return n;
 }
@@ -135,15 +178,34 @@ function addSoftKnowsEdges(
   contacts: GraphContactInput[],
   byContactId: Map<string, { id: string }>
 ) {
-  for (let i = 0; i < contacts.length; i++) {
-    for (let j = i + 1; j < contacts.length; j++) {
-      const a = contacts[i];
-      const b = contacts[j];
-      const ca = byContactId.get(a.id)?.id;
-      const cb = byContactId.get(b.id)?.id;
-      if (ca && cb && ca === cb) continue;
+  const facts: SoftKnowsFacts[] = contacts.map((c) => {
+    const tagsLower = (c.tags || []).map((t) => t.toLowerCase());
+    const interestsLower = (c.sharedInterests || []).map((t) =>
+      t.toLowerCase()
+    );
+    return {
+      corpus: contactCorpus(c),
+      // `nameAliases` already drops anything shorter than 3, which is the bar the pair
+      // comparison used to re-apply per alias per pair.
+      aliases: nameAliases(c).filter((alias) => alias.length >= 3),
+      tagsLower,
+      tagsSet: new Set(tagsLower),
+      interestsLower,
+      interestsSet: new Set(interestsLower),
+      clusterId: byContactId.get(c.id)?.id,
+    };
+  });
 
-      if (mentionsOther(a, b) || mentionsOther(b, a)) {
+  for (let i = 0; i < contacts.length; i++) {
+    const a = contacts[i];
+    const fa = facts[i];
+    for (let j = i + 1; j < contacts.length; j++) {
+      const b = contacts[j];
+      const fb = facts[j];
+      if (fa.clusterId && fb.clusterId && fa.clusterId === fb.clusterId)
+        continue;
+
+      if (mentionsAliasOf(fa, fb) || mentionsAliasOf(fb, fa)) {
         addPeerEdge(edges, seenPairs, a.id, b.id, {
           kind: "knows",
           reason: "mention",
@@ -151,8 +213,7 @@ function addSoftKnowsEdges(
         continue;
       }
 
-      const tagOverlap = sharedCount(a.tags || [], b.tags || []);
-      if (tagOverlap >= 2) {
+      if (overlapCount(fa.tagsLower, fb.tagsSet) >= 2) {
         addPeerEdge(edges, seenPairs, a.id, b.id, {
           kind: "knows",
           reason: "sharedTags",
@@ -160,11 +221,7 @@ function addSoftKnowsEdges(
         continue;
       }
 
-      const interestOverlap = sharedCount(
-        a.sharedInterests || [],
-        b.sharedInterests || []
-      );
-      if (interestOverlap >= 2) {
+      if (overlapCount(fa.interestsLower, fb.interestsSet) >= 2) {
         addPeerEdge(edges, seenPairs, a.id, b.id, {
           kind: "knows",
           reason: "sharedInterests",
@@ -183,10 +240,9 @@ function addSoftKnowsEdges(
  * company/school clusters plus soft knows (not sparse star paths).
  */
 /**
- * Peer edges between contacts. Constellation figures are traced by each
- * cluster's top members only (shapes are capped at FIGURE_STAR_MAX stars via
- * the shared assignClusterShapes/orderConstellationMembers helpers, keeping
- * these lines in lockstep with star placement in graph-layout).
+ * Peer edges between contacts. Constellation figure lines come straight from
+ * buildConstellationFit — the same member↔star assignment that places stars
+ * in graph-layout — so lines and stars cannot drift apart.
  */
 export function buildPeerEdges(
   contacts: GraphContactInput[],
@@ -199,11 +255,8 @@ export function buildPeerEdges(
   const edges: PeerEdge[] = [];
   const seenPairs = new Set<string>();
 
-  const { clusters, byContactId } = buildConstellationClusters(contacts);
-  const contactsById = new Map(contacts.map((c) => [c.id, c]));
-  const shapes = assignClusterShapes(
-    clusters.map((c) => ({ id: c.id, contactIds: c.contactIds }))
-  );
+  const fit = buildConstellationFit(contacts);
+  const { clusters, byContactId } = fit;
 
   if (options?.metrics) {
     for (const cluster of clusters) {
@@ -228,29 +281,12 @@ export function buildPeerEdges(
     return edges;
   }
 
-  for (const cluster of clusters) {
-    if (cluster.count < 2 || cluster.kind === "other") continue;
-    const group = cluster.contactIds
-      .map((id) => contactsById.get(id))
-      .filter((c): c is GraphContactInput => Boolean(c));
-    if (group.length < 2) continue;
-
-    const ordered = orderConstellationMembers(group);
-    const reason = clusterReason(cluster.kind);
-
-    // Edges follow the same real constellation figure used for placement
-    const shape = shapes.get(cluster.id);
-    if (!shape) continue;
-    for (const [ai, bi] of shape.edges) {
-      const a = ordered[ai];
-      const b = ordered[bi];
-      if (!a || !b) continue;
-      addPeerEdge(edges, seenPairs, a.id, b.id, {
-        kind: "constellation",
-        reason,
-        company: cluster.name,
-      });
-    }
+  for (const fitEdge of constellationFitEdges(fit)) {
+    addPeerEdge(edges, seenPairs, fitEdge.source, fitEdge.target, {
+      kind: "constellation",
+      reason: clusterReason(fitEdge.clusterKind),
+      company: fitEdge.clusterName,
+    });
   }
 
   if (options?.constellationOnly) {
@@ -341,7 +377,20 @@ export function computeNetworkMetrics(
     sharedInterests: c.sharedInterests ?? null,
   }));
 
-  const peerEdges = buildPeerEdges(graphContacts, { metrics: true });
+  // Only the closest `METRICS_MAX_CONTACTS` take part in the all-pairs link analysis.
+  // Sorting by the already-computed score is O(n log n); comparing every pair is O(n²).
+  const sampled =
+    graphContacts.length <= METRICS_MAX_CONTACTS
+      ? graphContacts
+      : [...graphContacts]
+          .sort(
+            (a, b) =>
+              (scores.get(b.id)?.closeness ?? 0) - (scores.get(a.id)?.closeness ?? 0)
+          )
+          .slice(0, METRICS_MAX_CONTACTS);
+  const sampledIds = new Set(sampled.map((c) => c.id));
+
+  const peerEdges = buildPeerEdges(sampled, { metrics: true });
   const degrees = peerDegreeMap(peerEdges);
 
   const tierCounts = { inner: 0, mid: 0, outer: 0 };
@@ -356,9 +405,13 @@ export function computeNetworkMetrics(
     // distribution to the same shape no matter how healthy the network is.
     tierCounts[closenessTier(breakdown.raw)] += 1;
     const peerDegree = degrees.get(c.id) || 0;
-    if (peerDegree === 0) degreeBuckets.none += 1;
-    else if (peerDegree <= 2) degreeBuckets.oneToTwo += 1;
-    else degreeBuckets.threePlus += 1;
+    // Bucketed over the sampled set only. Counting an unsampled contact as "no links"
+    // would not mean they have none — it would mean nobody looked.
+    if (sampledIds.has(c.id)) {
+      if (peerDegree === 0) degreeBuckets.none += 1;
+      else if (peerDegree <= 2) degreeBuckets.oneToTwo += 1;
+      else degreeBuckets.threePlus += 1;
+    }
 
     contactsWithNetwork.push({
       ...c,
@@ -371,8 +424,9 @@ export function computeNetworkMetrics(
   }
 
   const totalPeerDegree = [...degrees.values()].reduce((a, b) => a + b, 0);
-  const avgPeerDegree =
-    contacts.length > 0 ? totalPeerDegree / contacts.length : 0;
+  // Averaged over the contacts that were actually analysed, not the whole network — the
+  // divisor has to match the numerator or the figure drops as unanalysed contacts are added.
+  const avgPeerDegree = sampled.length > 0 ? totalPeerDegree / sampled.length : 0;
 
   return {
     metrics: {
@@ -381,6 +435,7 @@ export function computeNetworkMetrics(
       totalPeerEdges: peerEdges.length,
       avgPeerDegree: Math.round(avgPeerDegree * 10) / 10,
       degreeBuckets,
+      metricsSampleSize: sampled.length,
     },
     contactsWithNetwork,
   };

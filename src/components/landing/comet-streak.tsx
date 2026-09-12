@@ -9,6 +9,8 @@ import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 const RED = [255, 107, 74] as const;
 const ICE = [196, 220, 230] as const;
 const WHITE = [255, 255, 255] as const;
+const FIRE_CORE = [255, 179, 71] as const;
+const FIRE_HOT = [255, 241, 204] as const;
 
 function mix(
   from: readonly [number, number, number],
@@ -17,7 +19,21 @@ function mix(
   alpha = 1
 ) {
   const c = from.map((f, i) => Math.round(f + (to[i]! - f) * t));
-  return `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${alpha})`;
+  return `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${Math.min(1, Math.max(0, alpha))})`;
+}
+
+/**
+ * Deterministic, seedable "flicker" for a value driven purely by scroll
+ * progress (no rAF loop) — three sine waves at incommensurate frequencies
+ * so it reads as irregular sputtering rather than a single smooth wobble.
+ * Returns roughly [-1, 1].
+ */
+function flicker(v: number, seed: number) {
+  return (
+    Math.sin(v * 41 + seed) * 0.5 +
+    Math.sin(v * 97 + seed * 2.3) * 0.3 +
+    Math.sin(v * 233 + seed * 4.1) * 0.2
+  );
 }
 
 /**
@@ -49,10 +65,23 @@ export function CometStreak() {
   const headColor = useTransform(scrollYProgress, (v) =>
     mix(WHITE, RED, drift(v))
   );
-  const headGlow = useTransform(
-    scrollYProgress,
-    (v) => `0 0 20px 7px ${mix(ICE, RED, drift(v), 0.5 + 0.2 * drift(v))}`
-  );
+  // Two stacked shadows: a flickering hot core (the "fire") inside a cooler,
+  // drift-colored halo (the existing ice→red glow, now lightly sputtering too).
+  const headGlow = useTransform(scrollYProgress, (v) => {
+    const d = drift(v);
+    const core = flicker(v, 0);
+    const halo = flicker(v, 5.2);
+    const coreBlur = 9 + core * 4;
+    const coreSpread = 2.5 + core * 1.5;
+    const coreAlpha = 0.6 + core * 0.25;
+    const haloBlur = 20 + halo * 6;
+    const haloSpread = 7 + halo * 2;
+    const haloAlpha = 0.5 + 0.2 * d + halo * 0.1;
+    return [
+      `0 0 ${coreBlur}px ${coreSpread}px ${mix(FIRE_HOT, FIRE_CORE, 0.45, coreAlpha)}`,
+      `0 0 ${haloBlur}px ${haloSpread}px ${mix(ICE, RED, d, haloAlpha)}`,
+    ].join(", ");
+  });
   const tailGradient = useTransform(
     scrollYProgress,
     (v) =>
@@ -66,9 +95,15 @@ export function CometStreak() {
 
   // Bow shock ahead of the head: thicker, larger, and more present the
   // farther the comet has drifted.
-  const shockWidth = useTransform(scrollYProgress, (v) => 1.5 + 4.5 * drift(v));
+  const shockWidth = useTransform(
+    scrollYProgress,
+    (v) => 1.5 + 4.5 * drift(v) + flicker(v, 0) * 0.6
+  );
   const shockScale = useTransform(scrollYProgress, (v) => 0.9 + 0.65 * drift(v));
-  const shockOpacity = useTransform(scrollYProgress, (v) => 0.85 * drift(v));
+  const shockOpacity = useTransform(
+    scrollYProgress,
+    (v) => Math.min(1, Math.max(0, 0.85 * drift(v) + flicker(v, 5.2) * 0.12))
+  );
   const shockColor = useTransform(scrollYProgress, (v) =>
     mix(ICE, RED, drift(v), 0.8)
   );
@@ -85,7 +120,7 @@ export function CometStreak() {
       >
         {/* Tail sweeps behind the head. */}
         <motion.div
-          className="h-[3px] w-64 rounded-full bg-[linear-gradient(90deg,transparent,rgba(196,220,230,0.55),rgba(255,255,255,0.95))]"
+          className="h-[3px] w-40 rounded-full md:w-64 bg-[linear-gradient(90deg,transparent,rgba(196,220,230,0.55),rgba(255,255,255,0.95))]"
           style={reduced ? undefined : { background: tailGradient }}
         />
         <motion.div

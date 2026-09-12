@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   useTransition,
@@ -14,13 +16,18 @@ import { AnimatePresence, motion } from "motion/react";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { ArrowUp, Loader2, RotateCcw, Search, Sparkles, X } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } from "@/lib/errors";
-import { askNetwork } from "@/actions/chat";
+import { friendlyError } from "@/lib/errors";
+import { OPEN_ASK_BAR_EVENT } from "@/lib/ask-bar-events";
+import { useFeedbackPanelState } from "@/lib/feedback-events";
+import { askNetwork, createChatThread } from "@/actions/chat";
+import { streamChat } from "@/lib/chat-stream-client";
+import { SuggestionPills } from "@/components/chat/suggestion-cards";
+import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
+import { CONTACT_PAGE_SUGGESTIONS, type ChatSuggestion } from "@/lib/chat-suggestions";
 import { getAskBarContact } from "@/actions/contacts";
 import { searchDashboardContacts } from "@/actions/search";
 import { createReminder } from "@/actions/reminders";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
-import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,6 +35,26 @@ import {
   type KeywordSearchHit,
 } from "@/lib/keyword-search";
 import { cn } from "@/lib/utils";
+import { TOAST_COPY } from "@/lib/toast-copy";
+
+/**
+ * Split out of the shell's chunk.
+ *
+ * `ChatMarkdown` pulls react-markdown — micromark plus the mdast/hast pipeline, ~30-40KB
+ * gzipped — and only ever renders an answer that exists *after* the user has asked
+ * something. `AppShell` mounts this bar on nearly every route, so importing it statically
+ * put that parser in the first load of /dashboard, /contacts, /graph and /reminders to
+ * render nothing. `preloadChatMarkdown` runs when the bar opens, so the chunk is already
+ * in flight long before an answer comes back and there is no gap to paint around.
+ */
+const ChatMarkdown = dynamic(
+  () => import("@/components/chat/chat-markdown").then((m) => m.ChatMarkdown),
+  { loading: () => null }
+);
+
+function preloadChatMarkdown() {
+  void import("@/components/chat/chat-markdown");
+}
 
 type ChatResult = Extract<
   Awaited<ReturnType<typeof askNetwork>>,
@@ -48,6 +75,8 @@ type AssistantMessage = {
   answer: string;
   recommendations: ChatResult["recommendations"];
   retrieved: ChatResult["retrieved"];
+  /** True while the answer is still arriving from `/api/chat`. */
+  streaming?: boolean;
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
@@ -55,19 +84,17 @@ type ThreadMessage = UserMessage | AssistantMessage;
 const CONTACT_PATH_RE =
   /^\/contacts\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
-const SUGGESTIONS = [
-  "Who do I know at AWS?",
-  "Who have I not followed up with recently?",
-  "Who are the best recruiters for my search?",
-  "Who should I reconnect with this week?",
-];
-
-const PROFILE_SUGGESTIONS = [
-  "What should I know before we talk?",
-  "Summarize our relationship",
-  "What have we talked about recently?",
-  "Suggest a warm follow-up angle",
-];
+/**
+ * Only the contact-scoped set is hardcoded here now.
+ *
+ * The general ones were a verbatim copy of the chat panel's, which is how they drifted from
+ * what the pipeline could actually answer. They come from `useChatSuggestions` instead —
+ * the same personalised row `/chat` shows, rendered as pills because this popover is too
+ * narrow for a card. On a contact's page these still win: the pathname is a stronger signal
+ * about what you are asking than anything a general rule could infer.
+ */
+/** How many fit the bar's panel without crowding out the search results below. */
+const ASK_BAR_SUGGESTIONS = 4;
 
 function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -79,6 +106,20 @@ function contactIdFromPath(pathname: string): string | null {
 }
 
 export function FloatingAskBar() {
+  /**
+   * Out of the way while a feedback screenshot is being taken or cropped.
+   *
+   * Two reasons, and the store's `"capturing"` covers both because it spans the widget's
+   * capture AND selection phases. `getDisplayMedia` photographs the composited output, so
+   * this bar would otherwise be baked into the picture of the very page being reported on.
+   * And the crop overlay leaves a clear band along the bottom for its own toolbar, which is
+   * exactly where this sits — so it showed through underneath it.
+   *
+   * `null`, not the `visible` slide-out below: that animates over `DUR.slow`, and the frame
+   * is grabbed a tick after the phase changes. A bar halfway through leaving is still in
+   * the photograph. Same reasoning as `FeedbackTrigger`.
+   */
+  const feedbackState = useFeedbackPanelState();
   const pathname = usePathname();
   const pathContactId = contactIdFromPath(pathname);
 
@@ -87,6 +128,7 @@ export function FloatingAskBar() {
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<number | null>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
+  const chatThreadIdRef = useRef<string | null>(null);
 
   const [open, setOpen] = useState(false);
   const [hidden, setHidden] = useState(false);
@@ -95,12 +137,24 @@ export function FloatingAskBar() {
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [lastUserQuery, setLastUserQuery] = useState("");
   const [searchPending, startSearch] = useTransition();
-  const [chatPending, startChat] = useTransition();
+  // Plain state, not a transition: streamed tokens must render as they arrive, and
+  // updates inside `startTransition` are deferred until the async work settles.
+  const [chatPending, setChatPending] = useState(false);
+  // The "searching" bubble makes sense until the first token; after that the answer
+  // itself is the progress indicator.
+  const awaitingFirstToken =
+    chatPending && !messages.some((m) => m.role === "assistant" && m.streaming);
 
   const [profileContact, setProfileContact] = useState<AskBarContact | null>(
     null
   );
   const [chipDismissed, setChipDismissed] = useState(false);
+
+  // Warm the markdown chunk as soon as the bar opens, so it is resolved well before the
+  // first answer returns from the model.
+  useEffect(() => {
+    if (open) preloadChatMarkdown();
+  }, [open]);
 
   const personContextActive =
     Boolean(pathContactId) && Boolean(profileContact) && !chipDismissed;
@@ -150,6 +204,14 @@ export function FloatingAskBar() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [focusBar, open]);
+
+  useEffect(() => {
+    function onOpenRequest() {
+      focusBar();
+    }
+    window.addEventListener(OPEN_ASK_BAR_EVENT, onOpenRequest);
+    return () => window.removeEventListener(OPEN_ASK_BAR_EVENT, onOpenRequest);
+  }, [focusBar]);
 
   const chatPendingRef = useRef(chatPending);
   chatPendingRef.current = chatPending;
@@ -258,8 +320,15 @@ export function FloatingAskBar() {
     return true;
   }
 
+  const ensureChatThread = useCallback(async () => {
+    if (chatThreadIdRef.current) return chatThreadIdRef.current;
+    const created = await createChatThread();
+    chatThreadIdRef.current = created.id;
+    return created.id;
+  }, []);
+
   const sendQuestion = useCallback(
-    (raw: string) => {
+    (raw: string, opts?: { contextContactIds?: readonly string[] }) => {
       const q = raw.trim();
       if (!q || chatPending) return;
 
@@ -275,52 +344,121 @@ export function FloatingAskBar() {
       setOpen(true);
 
       const contactId = activeContactId;
-      startChat(async () => {
+      const assistantId = newId();
+      setChatPending(true);
+      void (async () => {
+        let threadId: string;
         try {
-          const res = await askNetwork(
-            q,
-            contactId ? { contactId } : undefined
-          );
-          if (!res.ok) {
-            toast.error(res.error);
-            setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
-            setQuery(q);
-            return;
-          }
-          const assistantMsg: AssistantMessage = {
-            id: newId(),
-            role: "assistant",
-            answer: res.answer,
-            recommendations: res.recommendations,
-            retrieved: res.retrieved,
-          };
-          setMessages((prev) => [...prev, assistantMsg]);
+          threadId = await ensureChatThread();
         } catch (err) {
-          toast.error(
-            toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message
-          );
+          // Creating a thread only inserts a row — it never needs an AI key, so the key
+          // message was the wrong fallback here.
+          toast.error(friendlyError(err, TOAST_COPY.chatStartFailed));
           setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
           setQuery(q);
+          setChatPending(false);
+          return;
         }
-      });
+
+        let placed = false;
+        const patch = (fn: (m: AssistantMessage) => AssistantMessage) =>
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId && m.role === "assistant" ? fn(m) : m))
+          );
+        const ensurePlaceholder = () => {
+          if (placed) return;
+          placed = true;
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: assistantId,
+              role: "assistant",
+              answer: "",
+              recommendations: [],
+              retrieved: [],
+              streaming: true,
+            },
+          ]);
+        };
+
+        await streamChat(
+          {
+            question: q,
+            threadId,
+            contactId: contactId ?? undefined,
+            // A suggestion card names someone without an `@` token, so its id rides along
+            // here — that is what routes the question through `loadAttachedPeople` and puts
+            // the real timeline in front of the model.
+            contextContactIds: opts?.contextContactIds
+              ? [...opts.contextContactIds]
+              : undefined,
+          },
+          {
+            onAnswer: (delta) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, answer: m.answer + delta }));
+            },
+            onRecommendations: (items) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, recommendations: items }));
+            },
+            onDone: (info) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, retrieved: info.retrieved, streaming: false }));
+            },
+            onError: (message) => {
+              toast.error(message);
+              setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
+              setQuery(q);
+            },
+          }
+        );
+        setChatPending(false);
+      })();
     },
-    [activeContactId, chatPending]
+    [activeContactId, chatPending, ensureChatThread]
   );
 
   function clearThread() {
     setMessages([]);
     setQuery("");
     setHits([]);
+    chatThreadIdRef.current = null;
   }
 
   const showPanel = open;
   const visible = !hidden || stayVisibleWhileWaiting;
-  const suggestionChips =
-    personContextActive && open ? PROFILE_SUGGESTIONS : SUGGESTIONS;
+  // Fetched only once the bar is open: it is mounted on nearly every route, and a closed
+  // bar has no business issuing a query. Shares a module-level cache with /chat.
+  const personalised = useChatSuggestions(open && !personContextActive);
+  // Shaped as suggestions so one component renders both sets. `kind` is "generic" because
+  // that is what these are — fixed strings, not a rule's output — and nothing here reads it
+  // beyond picking an icon the pill variant does not draw.
+  const profileChips: ChatSuggestion[] = useMemo(
+    () =>
+      CONTACT_PAGE_SUGGESTIONS.map((question, i) => ({
+        id: `profile:${i}`,
+        kind: "generic" as const,
+        question,
+        basis: "",
+        contactIds: [],
+        interactionType: null,
+        rank: 10,
+      })),
+    [],
+  );
+  // Capped: this popover is `w-80` inside a 48vh scroller, and six long questions wrapped
+  // to five lines of pills, which pushed the results below the fold.
+  const suggestionChips = (
+    personContextActive && open ? profileChips : (personalised ?? [])
+  ).slice(0, ASK_BAR_SUGGESTIONS);
   const placeholder =
     personContextActive && open && activeContactName
       ? `Ask about ${activeContactName}…`
       : "Ask your network…";
+
+  // After every hook, before the tree — see the note on `feedbackState` above.
+  if (feedbackState === "capturing") return null;
 
   return (
     <motion.div
@@ -333,8 +471,13 @@ export function FloatingAskBar() {
       }
       transition={{ duration: DUR.slow, ease: EASE_HOUSE }}
       className={cn(
-        "pointer-events-none fixed inset-x-0 z-50 flex justify-center px-4",
-        "bottom-[calc(4.5rem+env(safe-area-inset-bottom))] md:bottom-5",
+        "pointer-events-none fixed inset-x-0 z-50 justify-center px-4",
+        // On mobile the bar is intrusive if left permanently floating above
+        // the bottom nav — keep it fully out of the layout there until the
+        // "Ask your network" item in the More sheet opens it. Desktop keeps
+        // the persistent collapsed pill.
+        open ? "flex" : "hidden md:flex",
+        "bottom-[calc(6.5rem+env(safe-area-inset-bottom))] md:bottom-5",
         !visible && "pointer-events-none"
       )}
       aria-hidden={!visible}
@@ -412,19 +555,15 @@ export function FloatingAskBar() {
                             ? `Ask anything about ${activeContactName}—relationship history, talking points, or follow-ups.`
                             : "Ask anything about people, companies, or follow-ups in your network."}
                         </p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {suggestionChips.map((chip) => (
-                            <button
-                              key={chip}
-                              type="button"
-                              disabled={chatPending}
-                              className="rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-                              onClick={() => sendQuestion(chip)}
-                            >
-                              {chip}
-                            </button>
-                          ))}
-                        </div>
+                        <SuggestionPills
+                          items={suggestionChips}
+                          disabled={chatPending}
+                          onPick={(s) =>
+                            sendQuestion(s.question, {
+                              contextContactIds: s.contactIds.length ? s.contactIds : undefined,
+                            })
+                          }
+                        />
                       </>
                     )}
                   </div>
@@ -441,7 +580,7 @@ export function FloatingAskBar() {
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                              <p className="text-sm font-medium text-primary">
+                              <p className="text-sm font-medium text-ink">
                                 {hit.preferredName || hit.fullName}
                               </p>
                               <p className="truncate text-xs text-muted-foreground">
@@ -522,7 +661,7 @@ export function FloatingAskBar() {
                         </div>
                       )
                     )}
-                    {chatPending && (
+                    {awaitingFirstToken && (
                       <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-border/70 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
                         <Loader2 className="size-3.5 animate-spin" />
                         Searching your network…
@@ -557,7 +696,6 @@ export function FloatingAskBar() {
                 contactId={profileContact.id}
                 firstName={profileContact.firstName}
                 fullName={profileContact.fullName}
-                linkedinUrl={profileContact.linkedinUrl}
                 profileImageUrl={profileContact.profileImageUrl}
                 size="sm"
                 className="size-6"
@@ -601,7 +739,10 @@ export function FloatingAskBar() {
             disabled={chatPending}
             autoComplete="off"
             className={cn(
-              "h-full min-w-0 flex-1 bg-transparent text-sm outline-none",
+              // 16px on phones: iOS Safari zooms the page into any focused input with
+              // smaller text, which panned the whole dashboard sideways and cut its
+              // edges off the moment the bar opened. Same rule as ui/input.tsx.
+              "h-full min-w-0 flex-1 bg-transparent text-base outline-none md:text-sm",
               "placeholder:text-muted-foreground disabled:opacity-60"
             )}
             onFocus={() => setOpen(true)}
@@ -721,7 +862,7 @@ function MiniRecommendation({
                     Date.now() + 3 * 24 * 60 * 60 * 1000
                   ).toISOString(),
                 });
-                toast.success("Reminder created");
+                toast.success(TOAST_COPY.reminderSet);
               })
             }
           >

@@ -1,10 +1,15 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
+import { motion, type PanInfo } from "motion/react";
 import { CheckCircle2, Loader2, X, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useEtaCountdown } from "@/lib/use-eta-countdown";
+import { toast } from "@/lib/toast";
 import {
   dismissBackgroundJob,
+  hideBackgroundJobFromWidget,
   useBackgroundJobs,
   type BackgroundJob,
 } from "@/lib/background-jobs";
@@ -12,15 +17,53 @@ import {
 /**
  * Persistent, page-independent progress list for large imports/batches/
  * background tasks — mounted once in the app shell so it stays visible
- * across navigation. Mirrors the same jobs shown in the notification panel.
+ * across navigation. Mirrors the same jobs shown in the notification panel,
+ * except avatar-backfill, which is silent here and shown in Settings instead.
  */
 export function GlobalJobProgressBar() {
-  const jobs = useBackgroundJobs();
+  // avatar-backfill runs silently on every page load; it gets its own
+  // progress display in Settings instead of a bottom-right toast. Jobs
+  // swiped away stay in the store (and the notification center) but drop
+  // out of this widget.
+  const jobs = useBackgroundJobs().filter(
+    (job) => job.kind !== "avatar-backfill" && !job.hiddenFromWidget
+  );
+  const stackRef = useRef<HTMLDivElement | null>(null);
+
+  // Publish how much of the corner this widget occupies so the toast stack can
+  // sit above it instead of painting over it. On <html>, because the toaster is
+  // portalled to <body> and would never see a variable set on a wrapper here.
+  //
+  // Above the early return on purpose: the effect has to run on the render that
+  // drops the widget too, or the reserved band would outlive the last job and
+  // leave toasts floating in empty space.
+  useEffect(() => {
+    const root = document.documentElement;
+    const el = stackRef.current;
+    if (!el) {
+      root.style.setProperty("--orbit-job-stack-height", "0px");
+      return;
+    }
+    const observer = new ResizeObserver(([entry]) => {
+      // Plus the gap a toast should keep off this widget's top edge.
+      root.style.setProperty(
+        "--orbit-job-stack-height",
+        `${entry.contentRect.height + 8}px`
+      );
+    });
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      root.style.setProperty("--orbit-job-stack-height", "0px");
+    };
+  }, [jobs.length]);
+
   if (jobs.length === 0) return null;
 
   return (
     <div
-      className="fixed bottom-[calc(5.25rem+env(safe-area-inset-bottom))] right-3 z-40 flex w-[min(20rem,calc(100vw-1.5rem))] flex-col gap-2 md:bottom-5 md:right-5"
+      ref={stackRef}
+      className="fixed bottom-(--orbit-corner-bottom) right-(--orbit-corner-right) z-40 flex w-[min(20rem,calc(100vw-1.5rem))] flex-col gap-2"
       role="status"
       aria-live="polite"
     >
@@ -31,12 +74,47 @@ export function GlobalJobProgressBar() {
   );
 }
 
+// How far (px) or how fast (px/s) a swipe has to travel before it counts as
+// a dismiss rather than a tap or an aborted drag.
+const SWIPE_DISMISS_DISTANCE = 90;
+const SWIPE_DISMISS_VELOCITY = 500;
+
 function JobRow({ job }: { job: BackgroundJob }) {
   const determinate = job.total > 0;
   const pct = determinate ? Math.min(100, Math.round((job.done / job.total) * 100)) : null;
+  const etaLabel = useJobEtaLabel(job);
+  const [dismiss, setDismiss] = useState<{ exitX: number } | null>(null);
+
+  function handleDragEnd(_event: unknown, info: PanInfo) {
+    const past =
+      Math.abs(info.offset.x) > SWIPE_DISMISS_DISTANCE ||
+      Math.abs(info.velocity.x) > SWIPE_DISMISS_VELOCITY;
+    if (!past) return;
+    setDismiss({ exitX: info.offset.x >= 0 ? 320 : -320 });
+  }
 
   return (
-    <div className="flex items-start gap-2.5 rounded-xl border border-border/70 bg-card/95 p-3 shadow-lg backdrop-blur-md">
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 12, scale: 0.98 }}
+      animate={
+        dismiss
+          ? { opacity: 0, x: dismiss.exitX }
+          : { opacity: 1, y: 0, scale: 1, x: 0 }
+      }
+      transition={dismiss ? { duration: 0.22, ease: "easeIn" } : undefined}
+      onAnimationComplete={() => {
+        if (!dismiss) return;
+        hideBackgroundJobFromWidget(job.id);
+        toast.success("Moved to notifications");
+      }}
+      drag={dismiss ? false : "x"}
+      dragConstraints={{ left: 0, right: 0 }}
+      dragElastic={0.7}
+      onDragEnd={handleDragEnd}
+      style={{ touchAction: "pan-y" }}
+      className="flex items-start gap-2.5 rounded-xl border border-border/70 bg-card/95 p-3 shadow-lg backdrop-blur-md active:cursor-grabbing"
+    >
       <div className="mt-0.5 shrink-0">
         {job.status === "running" ? (
           <Loader2 className="size-4 animate-spin text-primary" />
@@ -50,7 +128,7 @@ function JobRow({ job }: { job: BackgroundJob }) {
       </div>
 
       <div className="min-w-0 flex-1 space-y-1.5">
-        <p className="truncate text-sm font-medium text-primary">
+        <p className="truncate text-sm font-medium text-ink">
           {job.status === "running"
             ? job.cancelling
               ? "Stopping…"
@@ -80,8 +158,15 @@ function JobRow({ job }: { job: BackgroundJob }) {
               />
             </div>
             <p className="text-xs tabular-nums text-muted-foreground">
-              {determinate ? `${job.done} of ${job.total} · ${pct}%` : "Working…"}
+              {determinate
+                ? `${job.done.toLocaleString()} of ${job.total.toLocaleString()} · ${pct}%${etaLabel ? ` · ${etaLabel}` : ""}`
+                : "Working…"}
             </p>
+            {job.imported != null ? (
+              <p className="text-xs tabular-nums text-muted-foreground">
+                {job.imported.toLocaleString()} {job.importedLabel ?? "imported"}
+              </p>
+            ) : null}
           </div>
         )}
       </div>
@@ -112,6 +197,18 @@ function JobRow({ job }: { job: BackgroundJob }) {
           <X className="size-3.5" />
         </Button>
       ) : null}
-    </div>
+    </motion.div>
   );
+}
+
+/** Estimated time remaining for a running job, formatted for display. Guaranteed to never
+ * tick upward — see `useEtaCountdown`, which this and the in-page import progress card share
+ * so there's exactly one countdown algorithm in the codebase. */
+function useJobEtaLabel(job: BackgroundJob): string | null {
+  return useEtaCountdown({
+    active: job.status === "running" && job.total > 0 && job.done > 0 && job.done < job.total,
+    done: job.done,
+    total: job.total,
+    startedAt: job.startedAt,
+  });
 }

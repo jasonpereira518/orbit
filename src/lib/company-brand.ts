@@ -1,4 +1,5 @@
 import { normalizeCompanyName } from "@/lib/company-name";
+import { hashHue } from "@/lib/hash";
 
 /**
  * Well-known company brand colors (official-ish primaries).
@@ -88,14 +89,6 @@ const ALIASES: Record<string, string> = {
   msft: "microsoft",
   "open ai": "openai",
 };
-
-function hashHue(input: string): number {
-  let h = 0;
-  for (let i = 0; i < input.length; i++) {
-    h = (h * 31 + input.charCodeAt(i)) >>> 0;
-  }
-  return h % 360;
-}
 
 /**
  * Resolve a readable brand color for a company name.

@@ -1,6 +1,8 @@
 import { cache } from "react";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
+import { isClerkConfigured, isDemoMode } from "@/lib/demo-account";
+import { ensureLocalDemoData } from "@/lib/demo-data/ensure";
 import { needsOnboarding } from "@/lib/onboarding";
 import { ensureUserSettings } from "@/lib/user-settings";
 
@@ -25,26 +27,37 @@ export class AccountSuspendedError extends Error {
   }
 }
 
-export function isClerkConfigured() {
-  return Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
-}
+export { isClerkConfigured, isDemoMode };
 
-/** Local dev without Clerk keys — shared demo-user data. */
-export function isDemoMode() {
-  return !isClerkConfigured() && process.env.NODE_ENV === "development";
-}
-
-/** Idempotent per-request bootstrap so layouts + pages don't repeat DB work. */
+/**
+ * Idempotent per-request bootstrap so layouts + pages don't repeat DB work. On localhost it
+ * also fills an empty account with the demo workspace (see `ensureLocalDemoData`), before
+ * anything downstream — the onboarding gate included — reads the account.
+ */
 export const bootstrapAuthenticatedUser = cache(async (userId: string) => {
-  return ensureUserSettings(userId);
+  const settings = await ensureUserSettings(userId);
+  await ensureLocalDemoData(userId);
+  return settings;
 });
 
 export async function getPostAuthRedirectPath(userId: string) {
   return (await needsOnboarding(userId)) ? "/onboarding" : "/dashboard";
 }
 
-/** Redirect signed-in users away from /sign-in and /sign-up. */
+/**
+ * Redirect signed-in users away from /sign-in and /sign-up.
+ *
+ * Demo mode counts as signed in: `requireUserId()` already treats `demo-user` as an
+ * authenticated identity everywhere else in the app (dashboard, settings, /upgrade), so
+ * showing these two pages a dead "Clerk is not configured" wall instead of just carrying
+ * the visitor into the app was the inconsistency, not a deliberate gate. This runs the
+ * same way on any demo server or worktree — it keys off `isDemoMode()`, not local config.
+ */
 export async function redirectIfAuthenticated() {
+  if (isDemoMode()) {
+    redirect(await getPostAuthRedirectPath("demo-user"));
+  }
+
   if (!isClerkConfigured()) return;
 
   const { userId } = await auth();
@@ -77,19 +90,24 @@ export const requireUserId = cache(async (): Promise<string> => {
     );
   }
 
+  // Scoped to the Clerk call alone: it is the only thing here whose failure means
+  // "not signed in". Everything after it — the settings bootstrap, and so the database —
+  // must be allowed to throw its own error. A catch wrapped around the bootstrap reports
+  // every outage as UnauthorizedError, which is what turned a missing `user_settings`
+  // column into 15 bogus auth failures on /dashboard while the real cause stayed hidden.
+  let userId: string | null = null;
   try {
-    const { userId } = await auth();
-    if (userId) {
-      const settings = await bootstrapAuthenticatedUser(userId);
-      if (settings.suspendedAt) {
-        throw new AccountSuspendedError(settings.suspendedAt);
-      }
-      return userId;
+    ({ userId } = await auth());
+  } catch {
+    // Middleware missing or Clerk runtime fault — indistinguishable from signed out.
+  }
+
+  if (userId) {
+    const settings = await bootstrapAuthenticatedUser(userId);
+    if (settings.suspendedAt) {
+      throw new AccountSuspendedError(settings.suspendedAt);
     }
-  } catch (err) {
-    // Rethrow our own signal: swallowing it here would silently un-suspend the account,
-    // since the catch exists only for a missing middleware or a Clerk runtime fault.
-    if (err instanceof AccountSuspendedError) throw err;
+    return userId;
   }
 
   throw new UnauthorizedError();

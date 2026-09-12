@@ -4,7 +4,7 @@ import { planUpgradeEvents } from "@/db/schema";
 import {
   resolvePlan,
   type BillingColumns,
-} from "@/lib/plan-resolution";
+} from "@/lib/entitlements";
 
 export type PlanUpgradeEvent = {
   id: string;

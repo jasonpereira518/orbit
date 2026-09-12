@@ -26,10 +26,19 @@ export type TokenCounts = {
   cachedInputTokens?: number | null;
 };
 
+/**
+ * Who was billed for a call.
+ *
+ * A superset of `AiProvider`, not the same type. Wispr transcribes and does not complete,
+ * so it never takes part in provider/model selection and must not be assignable where an
+ * `AiProvider` is expected — but its calls still cost money and still belong in the ledger.
+ */
+export type UsageProvider = AiProvider | "wispr";
+
 export type UsageMeta = {
   userId: string;
   operation: string;
-  provider: AiProvider;
+  provider: UsageProvider;
   model: string;
   kind: UsageKind;
   /** Whose API key paid. "orbit" only ever happens off-Vercel — prod is strictly BYOK. */

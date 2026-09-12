@@ -3,15 +3,15 @@
 import { useSyncExternalStore } from "react";
 import {
   cancelImportSession,
-  confirmLinkedInMessagesImport,
+  confirmCalendarImport,
+  confirmGoogleContactsImport,
+  confirmOutlookContactsImport,
   getImportJobStatus,
   startLinkedInImport,
+  startLinkedInMessagesImport,
   type ImportJobStatus,
 } from "@/actions/imports";
-import {
-  IMPORT_BATCH_SIZE,
-  type ImportProgressState,
-} from "@/components/imports/import-utils";
+import { type ImportProgressState } from "@/components/imports/import-utils";
 import {
   finishBackgroundJob,
   getBackgroundJob,
@@ -25,7 +25,12 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 }
 
-export type ImportJobKind = "connections" | "messages";
+export type ImportJobKind =
+  | "connections"
+  | "messages"
+  | "google_contacts"
+  | "outlook_contacts"
+  | "calendar";
 
 export type ImportJobSnapshot = {
   id: string;
@@ -38,18 +43,23 @@ export type ImportJobSnapshot = {
   enrichmentMessage?: string;
 };
 
-export type ImportJobInput = {
-  kind: ImportJobKind;
-  csvText: string;
-  fileName: string;
-  ids: string[];
-};
+export type ImportJobInput =
+  | { kind: "connections"; csvText: string; fileName: string; ids: string[] }
+  | { kind: "messages"; csvText: string; fileName: string; ids: string[] }
+  | { kind: "google_contacts"; ids: string[] }
+  | { kind: "outlook_contacts"; ids: string[] }
+  | {
+      kind: "calendar";
+      calendarKind: "ics" | "csv";
+      text: string;
+      fileName: string;
+      createFollowUps: boolean;
+    };
 
 type Listener = () => void;
 
 let snapshot: ImportJobSnapshot | null = null;
 const listeners = new Set<Listener>();
-let beforeUnloadBound = false;
 /** Job id that should stop after the current in-flight chunk. */
 let cancelJobId: string | null = null;
 
@@ -57,10 +67,42 @@ function emit() {
   for (const listener of listeners) listener();
 }
 
+/**
+ * What "imported" means for a given kind, read off the same `ImportJobStatus` the poll loop
+ * already has. Calendar is the one kind where `contactsCreated`/`contactsUpdated` never move
+ * (it logs meetings, not contacts — see `createsContacts: false` on its adapter), so showing
+ * "0 contacts imported" for the whole run would be actively misleading there.
+ */
+function importedLabelFor(kind: ServerOwnedKind): string {
+  return kind === "calendar" ? "meetings logged" : "contacts imported";
+}
+
+function importedFigure(
+  kind: ServerOwnedKind,
+  status: Pick<ImportJobStatus, "contactsCreated" | "contactsUpdated" | "interactionsLogged">
+): { imported: number; importedLabel: string } {
+  return {
+    imported:
+      kind === "calendar"
+        ? status.interactionsLogged
+        : status.contactsCreated + status.contactsUpdated,
+    importedLabel: importedLabelFor(kind),
+  };
+}
+
 function importJobLabel(kind: ImportJobKind) {
-  return kind === "connections"
-    ? "Importing LinkedIn connections"
-    : "Importing LinkedIn messages";
+  switch (kind) {
+    case "connections":
+      return "Importing LinkedIn connections";
+    case "messages":
+      return "Importing LinkedIn messages";
+    case "google_contacts":
+      return "Importing Google contacts";
+    case "outlook_contacts":
+      return "Importing Outlook contacts";
+    case "calendar":
+      return "Importing calendar";
+  }
 }
 
 /** Mirrors the singleton import snapshot into the shared multi-job store so it
@@ -73,19 +115,29 @@ function mirrorToBackgroundJobs(next: ImportJobSnapshot | null) {
     const done = next.progress?.done ?? 0;
     const total = next.progress?.total ?? 0;
     const startedAt = next.progress?.startedAt ?? Date.now();
+    const imported = next.progress?.imported;
+    const importedLabel = next.progress?.importedLabel;
     if (!getBackgroundJob(backgroundJobId)) {
       startBackgroundJob({
         id: backgroundJobId,
-        kind: next.kind === "connections" ? "connections-import" : "messages-import",
+        kind: `${next.kind}-import`,
         label: importJobLabel(next.kind),
         done,
         total,
         startedAt,
+        imported,
+        importedLabel,
         cancelling: next.cancelling,
         onCancel: cancelImportJob,
       });
     } else {
-      updateBackgroundJob(backgroundJobId, { done, total, cancelling: next.cancelling });
+      updateBackgroundJob(backgroundJobId, {
+        done,
+        total,
+        imported,
+        importedLabel,
+        cancelling: next.cancelling,
+      });
     }
     return;
   }
@@ -101,21 +153,6 @@ function setSnapshot(next: ImportJobSnapshot | null) {
   snapshot = next;
   mirrorToBackgroundJobs(next);
   emit();
-}
-
-function onBeforeUnload(event: BeforeUnloadEvent) {
-  // Connections imports run server-side and survive navigation/tab close —
-  // only warn for the still-client-driven messages import.
-  if (snapshot?.status === "running" && snapshot.kind !== "connections") {
-    event.preventDefault();
-    event.returnValue = "";
-  }
-}
-
-function ensureBeforeUnload() {
-  if (beforeUnloadBound || typeof window === "undefined") return;
-  beforeUnloadBound = true;
-  window.addEventListener("beforeunload", onBeforeUnload);
 }
 
 export function getImportJobSnapshot() {
@@ -162,80 +199,24 @@ async function markSessionCancelled(importId: string | undefined) {
   }
 }
 
-async function runBatches(
-  ids: string[],
-  label: string,
-  jobId: string,
-  kind: ImportJobKind,
-  runChunk: (
-    chunk: string[],
-    opts: { importId?: string; finalize: boolean }
-  ) => Promise<{ importId: string }>
-): Promise<{ importId?: string; done: number; cancelled: boolean }> {
-  const total = ids.length;
-  const startedAt = Date.now();
-  let importId: string | undefined;
-  let done = 0;
-
-  setSnapshot({
-    id: jobId,
-    kind,
-    status: "running",
-    progress: { done: 0, total, label, startedAt },
-  });
-
-  for (let i = 0; i < ids.length; i += IMPORT_BATCH_SIZE) {
-    if (snapshot?.id !== jobId || isCancelRequested(jobId)) {
-      return { importId, done, cancelled: true };
-    }
-
-    const chunk = ids.slice(i, i + IMPORT_BATCH_SIZE);
-    // Never finalize here if we might cancel — cancel path marks the session.
-    const isLast = i + IMPORT_BATCH_SIZE >= ids.length;
-    const last = await runChunk(chunk, {
-      importId,
-      finalize: isLast && !isCancelRequested(jobId),
-    });
-    importId = last.importId;
-    done = Math.min(i + chunk.length, total);
-
-    if (snapshot?.id !== jobId) {
-      return { importId, done, cancelled: true };
-    }
-
-    setSnapshot({
-      id: jobId,
-      kind,
-      status: "running",
-      cancelling: isCancelRequested(jobId),
-      progress: {
-        done,
-        total,
-        label,
-        startedAt,
-      },
-    });
-
-    if (isCancelRequested(jobId)) {
-      return { importId, done, cancelled: true };
-    }
-
-    await new Promise<void>((resolve) => {
-      window.setTimeout(resolve, 0);
-    });
-  }
-
-  return { importId, done, cancelled: false };
-}
-
 type PollOutcome =
   | { outcome: "stale" }
   | { outcome: "cancelled" }
   | { outcome: "done"; status: ImportJobStatus };
 
+/** The subset of `ImportJobKind` that names a server-owned import — every kind as of
+ *  Task 15, all processed by the resumable engine (Tasks 10-15). */
+type ServerOwnedKind =
+  | "connections"
+  | "messages"
+  | "google_contacts"
+  | "outlook_contacts"
+  | "calendar";
+
 /** Polls a server-owned import job's status until it leaves "processing"/"pending". */
-async function pollLinkedInImportJob(
+async function pollServerOwnedImportJob(
   jobId: string,
+  kind: ServerOwnedKind,
   importId: string,
   label: string,
   startedAt: number
@@ -259,7 +240,7 @@ async function pollLinkedInImportJob(
 
     setSnapshot({
       id: jobId,
-      kind: "connections",
+      kind,
       status: "running",
       cancelling: isCancelRequested(jobId),
       progress: {
@@ -267,6 +248,7 @@ async function pollLinkedInImportJob(
         total: status.totalRows,
         label,
         startedAt,
+        ...importedFigure(kind, status),
       },
     });
 
@@ -280,6 +262,135 @@ async function pollLinkedInImportJob(
 }
 
 /**
+ * Builds the completion toast text from a finished job's counters. Generic across every
+ * server-owned kind rather than switching on `kind` — `contactsCreated`/`contactsUpdated`
+ * alone told the whole story for LinkedIn/Google/Outlook contacts, but say nothing useful
+ * for calendar (`createsContacts: false` — `contactsCreated` is always 0) or LinkedIn
+ * messages (the number someone actually cares about is messages logged, not contacts
+ * touched). `interactionsLogged`/`remindersCreated` come from `ImportStats` (see
+ * `src/db/schema.ts`) via `getImportJobStatus`, and are appended only when nonzero so a
+ * plain contacts import's message is unchanged.
+ */
+function completionMessage(status: ImportJobStatus): string {
+  const parts = [
+    `${status.contactsCreated} created`,
+    `${status.contactsUpdated} updated`,
+  ];
+  if (status.interactionsLogged > 0) {
+    parts.push(
+      `${status.interactionsLogged} interaction${status.interactionsLogged === 1 ? "" : "s"} logged`
+    );
+  }
+  if (status.remindersCreated > 0) {
+    parts.push(
+      `${status.remindersCreated} reminder${status.remindersCreated === 1 ? "" : "s"} created`
+    );
+  }
+  // Appended last and only when nonzero, so an ordinary import's message is unchanged. This
+  // is the only place a user is told their file contained rows the database refused: chunk
+  // narrowing drops those rows to keep the rest of the import, and without this the job
+  // still reports "completed" with the failures nowhere in the UI.
+  if (status.failedRows > 0) {
+    parts.push(`${status.failedRows} row${status.failedRows === 1 ? "" : "s"} failed`);
+  }
+  return `Imported: ${parts.join(", ")}`;
+}
+
+/**
+ * Starts a server-owned import job (LinkedIn connections, Google contacts, Outlook
+ * contacts — anything the resumable engine drives) and polls it to completion, updating
+ * the shared snapshot as it goes. `start` is expected to insert the `imports`/
+ * `import_job_rows` snapshot and kick the background run, exactly like `startLinkedInImport`
+ * and the `confirm*ContactsImport` actions do.
+ *
+ * The snapshot is seeded as `running` *before* `start()` is awaited, not after. `start()` is
+ * the caller's async action call — the first `await` in this function — so if nothing sets
+ * the snapshot until after it resolves, every check further down that guards on
+ * `snapshot?.id !== jobId` (including the one in `pollServerOwnedImportJob`, and the
+ * catch-all in `startImportJob`) sees the *pre-import* snapshot: `null` initially, or a
+ * stale id left over from a previous job (`clearImportJob` only nulls it out ~50ms after a
+ * terminal job, not synchronously). Either way `snapshot?.id !== jobId` is true, so the
+ * function returns immediately after `start()` resolves — no progress, no poll, no
+ * completion toast, and any error `start()` throws is swallowed by the same guard in the
+ * `catch` block below. Seeding first closes that gap: by the time `start()`'s promise
+ * settles (success or throw), `snapshot.id` already equals `jobId`. `totalRows` isn't known
+ * yet at seed time, so the caller's own `ids.length` (`total`) stands in until the
+ * post-`start()` `setSnapshot` corrects it with the server's real count.
+ */
+async function runServerOwnedImportJob(
+  jobId: string,
+  kind: ServerOwnedKind,
+  label: string,
+  total: number,
+  start: () => Promise<{ importId: string; totalRows: number }>
+): Promise<void> {
+  const startedAt = Date.now();
+  const importedLabel = importedLabelFor(kind);
+  setSnapshot({
+    id: jobId,
+    kind,
+    status: "running",
+    progress: { done: 0, total, label, startedAt, imported: 0, importedLabel },
+  });
+
+  const { importId, totalRows } = await start();
+
+  if (snapshot?.id !== jobId) return;
+  setSnapshot({
+    id: jobId,
+    kind,
+    status: "running",
+    progress: { done: 0, total: totalRows, label, startedAt, imported: 0, importedLabel },
+  });
+
+  const result = await pollServerOwnedImportJob(jobId, kind, importId, label, startedAt);
+  if (result.outcome === "stale") return;
+
+  if (result.outcome === "cancelled") {
+    cancelJobId = null;
+    setSnapshot({
+      id: jobId,
+      kind,
+      status: "cancelled",
+      progress: null,
+      resultMessage: `Import stopped.`,
+    });
+    return;
+  }
+
+  const status = result.status;
+  if (status.status === "failed") {
+    setSnapshot({
+      id: jobId,
+      kind,
+      status: "failed",
+      progress: null,
+      error: status.errorMessage || "Import failed",
+    });
+    return;
+  }
+
+  if (status.status === "cancelled") {
+    setSnapshot({
+      id: jobId,
+      kind,
+      status: "cancelled",
+      progress: null,
+      resultMessage: `Import stopped. ${status.rowsProcessed} of ${status.totalRows} ${label} kept.`,
+    });
+    return;
+  }
+
+  setSnapshot({
+    id: jobId,
+    kind,
+    status: "completed",
+    progress: null,
+    resultMessage: completionMessage(status),
+  });
+}
+
+/**
  * Starts a background LinkedIn import that continues even if the Imports
  * page unmounts (SPA navigation). Completes with a toast via ImportJobWatcher.
  */
@@ -288,128 +399,63 @@ export function startImportJob(input: ImportJobInput) {
     throw new Error("An import is already running. Wait for it to finish.");
   }
 
-  ensureBeforeUnload();
   cancelJobId = null;
   const jobId = `import-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const label = input.ids.length === 1 ? "person" : "people";
-  const total = input.ids.length;
+  // Calendar has no `ids` — a whole file is confirmed at once, not a selected subset — so it
+  // seeds a placeholder total of 1 here; `runServerOwnedImportJob` corrects it to the
+  // server's real row count right after `start()` resolves, same as every other kind's
+  // placeholder gets corrected. The label is "attendees", not "events": `totalRows` counts
+  // (event, attendee) pairs (see `CalendarEventRowPayload`'s doc comment), so an "events"
+  // label would understate the total for any multi-attendee file — a 100-event file with 3
+  // attendees each is 300 rows, not 100. Fixed at the plural, same simplification every
+  // other kind's label already makes (no live re-pluralization as `total` changes) — the
+  // singular ("1 attendee") only shows for the placeholder tick before the real total lands.
+  const label =
+    input.kind === "calendar" ? "attendees" : input.ids.length === 1 ? "person" : "people";
+  const total = input.kind === "calendar" ? 1 : input.ids.length;
 
   // Fire-and-forget — callers should not await completion for navigation safety.
   void (async () => {
     try {
       if (input.kind === "connections") {
-        const startedAt = Date.now();
-        const { importId, totalRows } = await startLinkedInImport(
-          input.csvText,
-          input.fileName,
-          input.ids
+        await runServerOwnedImportJob(jobId, "connections", label, total, () =>
+          startLinkedInImport(input.csvText, input.fileName, input.ids)
         );
-
-        if (snapshot?.id !== jobId) return;
-        setSnapshot({
-          id: jobId,
-          kind: "connections",
-          status: "running",
-          progress: { done: 0, total: totalRows, label, startedAt },
-        });
-
-        const result = await pollLinkedInImportJob(jobId, importId, label, startedAt);
-        if (result.outcome === "stale") return;
-
-        if (result.outcome === "cancelled") {
-          cancelJobId = null;
-          setSnapshot({
-            id: jobId,
-            kind: "connections",
-            status: "cancelled",
-            progress: null,
-            resultMessage: `Import stopped.`,
-          });
-          return;
-        }
-
-        const status = result.status;
-        if (status.status === "failed") {
-          setSnapshot({
-            id: jobId,
-            kind: "connections",
-            status: "failed",
-            progress: null,
-            error: status.errorMessage || "Import failed",
-          });
-          return;
-        }
-
-        if (status.status === "cancelled") {
-          setSnapshot({
-            id: jobId,
-            kind: "connections",
-            status: "cancelled",
-            progress: null,
-            resultMessage: `Import stopped. ${status.rowsProcessed} of ${status.totalRows} ${label} kept.`,
-          });
-          return;
-        }
-
-        setSnapshot({
-          id: jobId,
-          kind: "connections",
-          status: "completed",
-          progress: null,
-          resultMessage: `Imported: ${status.contactsCreated} created, ${status.contactsUpdated} updated`,
-        });
         return;
       }
 
-      let messagesImported = 0;
-      let contactsCreated = 0;
-      let enrichmentTotal = 0;
-      const result = await runBatches(
-        input.ids,
-        label,
-        jobId,
-        "messages",
-        async (chunk, opts) => {
-          const res = await confirmLinkedInMessagesImport(
-            input.csvText,
-            input.fileName,
-            chunk,
-            opts
-          );
-          messagesImported += res.chunkMessagesImported;
-          contactsCreated = res.contactsCreated;
-          enrichmentTotal += res.enrichment?.contactsEnriched ?? 0;
-          return res;
-        }
-      );
-      if (snapshot?.id !== jobId) return;
-
-      if (result.cancelled) {
-        await markSessionCancelled(result.importId);
-        cancelJobId = null;
-        setSnapshot({
-          id: jobId,
-          kind: "messages",
-          status: "cancelled",
-          progress: null,
-          resultMessage: `Import stopped. ${result.done} of ${total} ${label} kept${
-            messagesImported > 0 ? ` · ${messagesImported} messages` : ""
-          }.`,
-        });
+      if (input.kind === "google_contacts") {
+        await runServerOwnedImportJob(jobId, "google_contacts", label, total, () =>
+          confirmGoogleContactsImport(input.ids)
+        );
         return;
       }
 
-      setSnapshot({
-        id: jobId,
-        kind: "messages",
-        status: "completed",
-        progress: null,
-        resultMessage: `Imported ${messagesImported} messages · ${contactsCreated} contacts created`,
-        enrichmentMessage:
-          enrichmentTotal > 0
-            ? `Enriched ${enrichmentTotal} contacts for chat & follow-ups`
-            : undefined,
-      });
+      if (input.kind === "outlook_contacts") {
+        await runServerOwnedImportJob(jobId, "outlook_contacts", label, total, () =>
+          confirmOutlookContactsImport(input.ids)
+        );
+        return;
+      }
+
+      if (input.kind === "messages") {
+        await runServerOwnedImportJob(jobId, "messages", label, total, () =>
+          startLinkedInMessagesImport(input.csvText, input.fileName, input.ids)
+        );
+        return;
+      }
+
+      if (input.kind === "calendar") {
+        await runServerOwnedImportJob(jobId, "calendar", label, total, () =>
+          confirmCalendarImport({
+            kind: input.calendarKind,
+            text: input.text,
+            fileName: input.fileName,
+            createFollowUps: input.createFollowUps,
+          })
+        );
+        return;
+      }
     } catch (err) {
       if (snapshot?.id !== jobId) return;
       cancelJobId = null;

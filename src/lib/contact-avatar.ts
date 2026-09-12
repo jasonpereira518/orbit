@@ -1,9 +1,15 @@
+import { createHash } from "node:crypto";
 import { put } from "@vercel/blob";
+import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { linkedinSlug } from "@/lib/duplicates";
-import { isDurableAvatarUrl, isUnusableAvatarUrl } from "@/lib/contact-avatar-url";
+import {
+  isDurableAvatarUrl,
+  isUnfetchableImageUrl,
+} from "@/lib/contact-avatar-url";
 
 export {
   isDurableAvatarUrl,
+  isUnfetchableImageUrl,
   isUnusableAvatarUrl,
   resolveContactPhotoUrl,
 } from "@/lib/contact-avatar-url";
@@ -17,6 +23,12 @@ const MAX_INLINE_BYTES = 120_000;
 
 /** How many LinkedIn photos to resolve per backfill tick. */
 export const AVATAR_BACKFILL_BATCH_SIZE = 5;
+/**
+ * Wall-clock budget for one backfill tick. The tick runs as a server action on whatever
+ * page is open, so it must return well inside the function ceiling whatever the network
+ * does; anything unattempted is simply pending for the next tick.
+ */
+export const AVATAR_BACKFILL_BUDGET_MS = 15_000;
 
 /**
  * Thrown when the photo store itself fails, as opposed to a contact simply
@@ -49,15 +61,41 @@ function warnMissingBlobOnce() {
   );
 }
 
-/** Thrown when Microlink quota is exhausted. */
-export class MicrolinkRateLimitError extends Error {
+/**
+ * A photo source refused us for quota. This is a DEFERRAL, never a "no photo".
+ *
+ * Both free tiers are quota'd too, not just Microlink: unavatar.io's anonymous limit is
+ * 25 lookups a day (`x-rate-limit-limit: 25`, `retry-after` ~86,400s). Before this class
+ * existed, a 429 from Unavatar came back from `downloadImageBytes` as a plain null, the
+ * backfill recorded the contact as having no photo, and `profile_image_checked_at` then
+ * muted it for 30 days — so after the first 25 lookups of a day, the rest of the network
+ * was written off for a month, even though ~70% of LinkedIn profiles DO resolve there.
+ */
+export class AvatarSourceRateLimitError extends Error {
   readonly resetAt: number;
+  readonly source: string;
 
-  constructor(resetAt: number) {
-    super("LinkedIn photo lookup rate limit hit");
-    this.name = "MicrolinkRateLimitError";
+  constructor(resetAt: number, source: string, message = `${source} rate limit hit`) {
+    super(message);
+    this.name = "AvatarSourceRateLimitError";
     this.resetAt = resetAt;
+    this.source = source;
   }
+}
+
+/** Thrown when Microlink quota is exhausted. */
+export class MicrolinkRateLimitError extends AvatarSourceRateLimitError {
+  constructor(resetAt: number) {
+    super(resetAt, "microlink", "LinkedIn photo lookup rate limit hit");
+    this.name = "MicrolinkRateLimitError";
+  }
+}
+
+/** Process-local Unavatar cooldown (ms since epoch). Same shape as Microlink's. */
+let unavatarCooldownUntil = 0;
+
+function noteUnavatarRateLimit(resetAtMs: number) {
+  unavatarCooldownUntil = Math.max(unavatarCooldownUntil, resetAtMs, Date.now() + 60_000);
 }
 
 /** Process-local Microlink cooldown (ms since epoch). */
@@ -75,6 +113,14 @@ function noteMicrolinkRateLimit(resetAtMs: number) {
   const until = Math.max(resetAtMs, Date.now() + 60_000);
   if (until > microlinkCooldownUntil) {
     microlinkCooldownUntil = until;
+    // The cooldown itself is per-lambda module state and invisible to any dashboard;
+    // this is the only durable trace that Microlink quota was hit. Bounded by the
+    // cooldown, so it cannot spam.
+    void recordErrorEvent({
+      source: ERROR_SOURCES.avatarMicrolink,
+      kind: "rate_limited",
+      context: { cooldownUntil: new Date(until).toISOString() },
+    });
   }
 }
 
@@ -98,7 +144,11 @@ function parseRateLimitReset(res: Response): number {
 }
 
 function noteMicrolinkHeaders(res: Response) {
-  const remaining = Number(res.headers.get("x-rate-limit-remaining"));
+  // An absent header is not "zero remaining": `Number(null)` is 0, which used to trip a
+  // cooldown on every Microlink response that simply omitted the header.
+  const raw = res.headers.get("x-rate-limit-remaining");
+  if (raw === null || raw.trim() === "") return;
+  const remaining = Number(raw);
   if (Number.isFinite(remaining) && remaining <= 0) {
     noteMicrolinkRateLimit(parseRateLimitReset(res));
   }
@@ -119,10 +169,16 @@ export function parseImageDataUrl(
 }
 
 /**
- * Resolve a LinkedIn profile photo and return a durable Blob URL.
- * Tries Microlink (OG image) first, then Unavatar as a fallback.
- * Throws {@link MicrolinkRateLimitError} only when Microlink is limited
- * and the Unavatar fallback also fails (so callers can surface quota).
+ * Resolve a LinkedIn profile photo and return a durable URL.
+ *
+ * Unavatar runs first: it costs nothing and, measured against 25 real LinkedIn
+ * profiles, returned a genuine headshot for 18 of them (a generated SVG silhouette for
+ * the rest, which `downloadImageBytes` rejects). It is NOT unmetered — the anonymous
+ * limit is 25 lookups a day — so both tiers are quota'd, and together they give roughly
+ * 50 lookups a day rather than 25.
+ *
+ * Throws {@link AvatarSourceRateLimitError} whenever a quota'd tier refused us and no
+ * photo was found, so callers defer the contact instead of recording it as photoless.
  */
 export async function fetchLinkedInPhotoUrl(
   contactId: string,
@@ -131,40 +187,68 @@ export async function fetchLinkedInPhotoUrl(
   const slug = linkedinSlug(linkedinUrl);
   if (!slug) return null;
 
+  // Free tier, but quota'd: 25 anonymous lookups a day. Nothing stores this URL —
+  // `persistAvatar` returns inline/Blob bytes.
+  let deferred: AvatarSourceRateLimitError | null = null;
+  if (Date.now() < unavatarCooldownUntil) {
+    deferred = new AvatarSourceRateLimitError(unavatarCooldownUntil, "unavatar.io");
+  } else {
+    const unavatarUrl = `https://unavatar.io/linkedin/${encodeURIComponent(slug)}?fallback=false`;
+    try {
+      const fromUnavatar = await downloadAndPersistAvatar(contactId, unavatarUrl);
+      if (fromUnavatar) return fromUnavatar;
+    } catch (err) {
+      if (!(err instanceof AvatarSourceRateLimitError)) throw err;
+      noteUnavatarRateLimit(err.resetAt);
+      deferred = err;
+    }
+  }
+
+  // Metered tier. Report exhaustion rather than silently returning "no photo".
+  if (isMicrolinkRateLimited()) {
+    throw new MicrolinkRateLimitError(getMicrolinkCooldownUntil());
+  }
+
   const normalized = linkedinUrl.includes("linkedin.com/in/")
     ? linkedinUrl.trim()
     : `https://www.linkedin.com/in/${slug}`;
 
-  let microlinkLimited = false;
-
-  if (!isMicrolinkRateLimited()) {
-    try {
-      const imageUrl = await resolveLinkedInOgImage(normalized);
-      if (imageUrl) {
-        const photoUrl = await downloadAndPersistAvatar(contactId, imageUrl);
-        if (photoUrl) return photoUrl;
-      }
-    } catch (err) {
-      // A broken photo store fails the same way for Unavatar — don't retry it.
-      if (err instanceof AvatarStorageError) throw err;
-      if (err instanceof MicrolinkRateLimitError) {
-        microlinkLimited = true;
-      }
-      // Fall through to Unavatar.
+  try {
+    const imageUrl = await resolveLinkedInOgImage(normalized);
+    if (imageUrl) {
+      const photoUrl = await downloadAndPersistAvatar(contactId, imageUrl);
+      if (photoUrl) return photoUrl;
     }
-  } else {
-    microlinkLimited = true;
+  } catch (err) {
+    // A broken photo store, or exhausted quota, are both worth surfacing.
+    if (err instanceof AvatarStorageError) throw err;
+    if (err instanceof AvatarSourceRateLimitError) throw err;
   }
 
-  // Unavatar resolves public LinkedIn avatars without spending Microlink quota.
-  const unavatarUrl = `https://unavatar.io/linkedin/${encodeURIComponent(slug)}?fallback=false`;
-  const fromUnavatar = await downloadAndPersistAvatar(contactId, unavatarUrl);
-  if (fromUnavatar) return fromUnavatar;
-
-  if (microlinkLimited) {
-    throw new MicrolinkRateLimitError(getMicrolinkCooldownUntil());
-  }
+  // Microlink found nothing, but Unavatar never got a real look: defer, don't fail.
+  if (deferred) throw deferred;
   return null;
+}
+
+/**
+ * Resolve a photo from Gravatar by email address. Free and unmetered, so it runs
+ * alongside Unavatar ahead of Microlink's quota.
+ *
+ * `d=404` is load-bearing. Without it Gravatar happily serves a generated identicon
+ * for every address on earth, so we would persist a placeholder for every contact
+ * and — because that placeholder is a perfectly valid JPEG — never look again.
+ */
+export async function fetchGravatarPhotoUrl(
+  contactId: string,
+  email: string
+): Promise<string | null> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized.includes("@")) return null;
+  const hash = createHash("sha256").update(normalized, "utf8").digest("hex");
+  return downloadAndPersistAvatar(
+    contactId,
+    `https://gravatar.com/avatar/${hash}?s=256&d=404`
+  );
 }
 
 /**
@@ -177,11 +261,33 @@ export async function downloadAndPersistAvatar(
   imageUrl: string
 ): Promise<string | null> {
   if (isDurableAvatarUrl(imageUrl)) return imageUrl;
-  if (isUnusableAvatarUrl(imageUrl)) return null;
+  if (isUnfetchableImageUrl(imageUrl)) return null;
 
   const downloaded = await downloadImageBytes(imageUrl);
   if (!downloaded) return null;
   return persistAvatar(contactId, downloaded.buf, downloaded.contentType);
+}
+
+/**
+ * A photograph is never a vector.
+ *
+ * Unavatar answers LinkedIn lookups with HTTP 200 and a GENERATED PERSON SILHOUETTE
+ * in SVG — it ignores `fallback=false` for that provider. sharp decodes SVG happily,
+ * so without this guard the placeholder is stored as though it were a real headshot
+ * and `isDurableAvatarUrl` then reports it as done, meaning the contact is never
+ * looked at again. Every LinkedIn contact would end up with a permanent fake face.
+ *
+ * A silhouette that admits it is a silhouette is strictly better than one that lies:
+ * the honest one is retryable and reads as "no photo yet".
+ */
+function isVectorContentType(contentType: string): boolean {
+  return contentType === "image/svg+xml" || contentType === "image/svg";
+}
+
+/** Magic-byte check, for placeholders whose content-type does not admit to being SVG. */
+function looksLikeSvg(buf: Buffer): boolean {
+  const head = buf.subarray(0, 256).toString("utf8").trimStart().toLowerCase();
+  return head.startsWith("<svg") || (head.startsWith("<?xml") && head.includes("<svg"));
 }
 
 export async function downloadImageBytes(
@@ -189,7 +295,7 @@ export async function downloadImageBytes(
 ): Promise<{ buf: Buffer; contentType: string } | null> {
   const fromDataUrl = parseImageDataUrl(imageUrl);
   if (fromDataUrl) return fromDataUrl;
-  if (isUnusableAvatarUrl(imageUrl)) return null;
+  if (isUnfetchableImageUrl(imageUrl)) return null;
 
   try {
     const res = await fetch(imageUrl, {
@@ -199,20 +305,28 @@ export async function downloadImageBytes(
         Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
         Referer: "https://www.linkedin.com/",
       },
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(8_000),
       redirect: "follow",
     });
+    if (res.status === 429) {
+      throw new AvatarSourceRateLimitError(parseRateLimitReset(res), new URL(res.url || imageUrl).host);
+    }
     if (!res.ok) return null;
 
     const contentType = (res.headers.get("content-type") || "image/jpeg")
       .split(";")[0]
       .trim();
     if (!contentType.startsWith("image/")) return null;
+    if (isVectorContentType(contentType)) return null;
 
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.byteLength === 0 || buf.byteLength > MAX_DOWNLOAD_BYTES) return null;
+    // Sniff too: a placeholder served as image/png that is really SVG still counts.
+    if (looksLikeSvg(buf)) return null;
     return { buf, contentType };
-  } catch {
+  } catch (err) {
+    // Quota is not a missing image — let callers defer instead of writing the contact off.
+    if (err instanceof AvatarSourceRateLimitError) throw err;
     return null;
   }
 }
@@ -308,7 +422,7 @@ async function resolveLinkedInOgImage(
 
     const res = await fetch(endpoint, {
       headers,
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(8_000),
     });
 
     noteMicrolinkHeaders(res);

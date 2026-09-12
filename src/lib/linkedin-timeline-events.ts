@@ -43,10 +43,21 @@ function stableHash(input: string) {
 /**
  * Rule + AI hybrid: always emit initial reach-out; ask the model for meetings
  * and in-person events with date hints resolved against message timestamps.
+ *
+ * `scopeId` is only ever used to prefix the `externalId`s this mints — it names the thing
+ * the events belong to, and it is what makes them stable across re-derivation and unique
+ * against each other on `interactions`' `(user_id, external_id)` index. It was a
+ * conversation id when the pre-engine importer called this with the parsed CSV still in
+ * memory; its one caller today (`src/lib/linkedin-timeline-backfill.ts`) reads messages
+ * back from the database, where conversation groupings no longer exist, and passes a
+ * *contact* id instead. Renamed rather than left as `conversationId` because that
+ * difference is deliberate and load-bearing: the two namespaces not colliding is precisely
+ * what keeps the backfill from re-deriving events for threads the old importer already
+ * processed. See that file's header.
  */
 export async function extractLinkedInTimelineEvents(
   userId: string,
-  conversationId: string,
+  scopeId: string,
   messages: LinkedInTimelineMessage[]
 ): Promise<LinkedInTimelineEvent[]> {
   const usable = messages
@@ -76,7 +87,7 @@ export async function extractLinkedInTimelineEvents(
       interactionDate: when,
       summary: `Initial LinkedIn reach-out: ${first.content.slice(0, 140)}`,
       rawNotes: first.content,
-      externalId: `li-event:${conversationId}:reach_out:${stableHash(first.content.slice(0, 80))}`,
+      externalId: `li-event:${scopeId}:reach_out:${stableHash(first.content.slice(0, 80))}`,
     });
   }
 
@@ -129,7 +140,7 @@ Rules:
         interactionDate: when,
         summary: ev.summary.trim().slice(0, 240),
         rawNotes: src?.content || ev.summary,
-        externalId: `li-event:${conversationId}:${ev.type}:${stableHash(
+        externalId: `li-event:${scopeId}:${ev.type}:${stableHash(
           `${ev.summary}:${ev.sourceMessageIndex ?? ""}:${ev.dateHint ?? ""}`
         )}`,
       });
@@ -155,7 +166,7 @@ Rules:
         interactionDate: when,
         summary: m.content.slice(0, 140),
         rawNotes: m.content,
-        externalId: `li-event:${conversationId}:${type}:${stableHash(m.content.slice(0, 80))}`,
+        externalId: `li-event:${scopeId}:${type}:${stableHash(m.content.slice(0, 80))}`,
       });
     }
   }

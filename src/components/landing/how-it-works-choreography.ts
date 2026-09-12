@@ -13,9 +13,11 @@
 
 import { scrub01 } from "@/lib/motion";
 
-/** Pin wrapper height. ~3.6 viewports of scrub once the sticky frame's own
- * 100svh is subtracted — enough room for six beats without dragging. */
-export const PIN_SVH = 500;
+/** Pin wrapper height. ~2.6 viewports of scrub once the sticky frame's own
+ * 100svh is subtracted. Was 500 (3.6 viewports), which held the reader in
+ * the pin long after the loop had read — the beats below are fractions of
+ * this, so they all tighten together and keep their relative timing. */
+export const PIN_SVH = 360;
 
 export const BEATS = {
   /** Earth shrinks and travels centre → 12 o'clock. */
@@ -67,6 +69,48 @@ export const BOTTOM_CLEARANCE = 72;
 
 /** Outermost radius Earth reaches, as a fraction of the stage. */
 const OUTER = RING_RATIO + EARTH_RATIO;
+
+/**
+ * Earth's radius at the finale, as a fraction of the frame's diagonal — just past the
+ * corner, so the globe is full-bleed with no margin to spare and no further.
+ */
+export const FULL_RATIO = 0.53;
+
+/**
+ * The largest radius `earthAt` can ever return for a frame, in CSS px.
+ *
+ * Exported because the WebGL camera has to know it. Its world units ARE these pixels and
+ * a sphere's half-depth is its radius, so the camera's depth range has to clear this or
+ * the near plane cuts the front off the globe. See `earth-globe.tsx`.
+ *
+ * The finale is the widest pose by construction: `heroR` is capped at 0.46·h and 0.34·w,
+ * both below 0.53·diagonal, `exitR` is a fraction of this, and `orbitR` is a fraction of
+ * the stage.
+ */
+export function maxEarthRadius(w: number, h: number) {
+  return Math.hypot(w, h) * FULL_RATIO;
+}
+
+/** Slack between the camera's near plane and the front of the globe, in CSS px. Only has
+ * to clear the trail (one unit behind the scene plane) and rounding — the sphere itself
+ * is accounted for by `maxEarthRadius`. */
+const CAMERA_CLEARANCE = 200;
+
+/**
+ * How far in front of the scene plane the WebGL camera stands, in CSS px.
+ *
+ * It lives here rather than in `earth-globe.tsx` for the same reason everything else in
+ * this file does: it is a function of the same geometry, and deriving it separately is
+ * how it went wrong. The camera used to be parked at a constant 1000, which put the near
+ * plane inside the globe once the frame's diagonal passed ~1887px (about 1644x925 and
+ * up) and sliced the front cap off it during the finale — a hole punched through the
+ * middle of the planet at the one moment it fills the screen.
+ *
+ * `scripts/smoke-earth-camera.ts` asserts the resulting frustum against real window sizes.
+ */
+export function earthCameraStandoff(w: number, h: number) {
+  return maxEarthRadius(w, h) + CAMERA_CLEARANCE;
+}
 
 /** Vertical centre of the composition, in frame space — the middle of the
  * band left between the header and the bottom gutter. */
@@ -175,7 +219,7 @@ export function earthAt(p: number, g: Geom, depart = 0) {
   // Just past the frame's corner radius: full-bleed with no margin to spare,
   // and no further. Pushing deeper only magnifies one patch of ocean until it
   // reads as the camera being inside the planet rather than in front of it.
-  const fullR = Math.hypot(g.w, g.h) * 0.53;
+  const fullR = maxEarthRadius(g.w, g.h);
   // A slight pull-back on the way out — enough to read as the planet
   // receding rather than merely sliding off the top of the frame.
   const exitR = fullR * 0.82;

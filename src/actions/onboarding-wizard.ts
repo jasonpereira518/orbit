@@ -23,6 +23,7 @@ import type { WizardStep } from "@/components/onboarding/wizard/setup-wizard";
 const WIZARD_STEP_IDS: Record<WizardStep, true> = {
   intro: true,
   "add-people": true,
+  "ai-key": true,
   manual: true,
   capture: true,
   import: true,

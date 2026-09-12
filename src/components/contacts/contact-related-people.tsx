@@ -23,7 +23,7 @@ export function ContactRelatedPeople({
   return (
     <Card className="border-border/70 shadow-none">
       <CardHeader>
-        <CardTitle>Related people</CardTitle>
+        <CardTitle as="h2">Related people</CardTitle>
         <CardDescription>
           Strongest connections and useful intro paths for {subjectName}.
         </CardDescription>
@@ -63,13 +63,12 @@ export function ContactRelatedPeople({
                       contactId={person.id}
                       firstName={person.firstName}
                       fullName={person.fullName}
-                      linkedinUrl={person.linkedinUrl}
                       profileImageUrl={person.profileImageUrl}
                       size="default"
                       className="size-10"
                     />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-primary">
+                      <p className="truncate text-sm font-medium text-ink">
                         {display}
                       </p>
                       <p className="truncate text-xs text-muted-foreground">

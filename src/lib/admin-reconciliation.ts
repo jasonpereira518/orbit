@@ -4,8 +4,6 @@ import type Stripe from "stripe";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { recordAdminAction, requireReason } from "@/lib/admin-operations";
-import { mirrorForClerkStatus } from "@/lib/clerk-subscription";
-import { ORBIT_PLAN_SLUG } from "@/lib/entitlements";
 import { recordOperationalEvent } from "@/lib/operational-events";
 import {
   getStripe,
@@ -54,22 +52,23 @@ async function clerkSubscription(userId: string) {
   }
 }
 
+/**
+ * Always the empty mirror, deliberately.
+ *
+ * Clerk subscription reconciliation is inert: Orbit Pro is sold exclusively through Stripe,
+ * the Clerk "orbit" plan has been removed from the Clerk Dashboard, and no Clerk
+ * subscription was ever sold — see the note in `src/app/api/webhooks/clerk/route.ts`.
+ * Reading a plan slug off Clerk would reconcile billing state against a product that does
+ * not exist and could only ever clear a live Stripe mirror.
+ *
+ * The Clerk half of this module still earns its place for EMAIL: Clerk remains the source
+ * of truth for the mirrored address, and that drifts. If Clerk Billing is ever adopted
+ * again, this function is the one place to restore.
+ */
 function subscriptionMirror(
-  subscription: Awaited<ReturnType<typeof clerkSubscription>>
+  _subscription: Awaited<ReturnType<typeof clerkSubscription>>
 ): SubscriptionMirror {
-  const item = subscription?.subscriptionItems.find(
-    (candidate) => candidate.plan?.slug === ORBIT_PLAN_SLUG
-  );
-  if (!item || item.status === "upcoming") {
-    return { plan: null, status: null, periodEnd: null };
-  }
-  return (
-    mirrorForClerkStatus(item.status, item.periodEnd) ?? {
-      plan: null,
-      status: null,
-      periodEnd: null,
-    }
-  );
+  return { plan: null, status: null, periodEnd: null };
 }
 
 function iso(value: Date | number | null | undefined): string | null {

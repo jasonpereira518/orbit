@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,11 +14,59 @@ import {
   type NotificationPermissionState,
 } from "@/lib/browser-notifications";
 
+/**
+ * What "Send test notification" shows, one per click.
+ *
+ * The button's real job is testing the OS notification path, and it still does
+ * that on every click — this is the toast that reports it, cycled through the
+ * variants so the styling of each can actually be seen. Only `error` and
+ * `info` otherwise appear in the app often enough to eyeball, and `warning`
+ * has no other trigger at all.
+ *
+ * Every one passes `keep: false`. Without it the error sample would file
+ * itself under Missed in the notification center and sit there claiming
+ * something broke, and the sample with an action would do the same.
+ *
+ * The copy says "Sample" on everything except the first, which is the genuine
+ * result of the send that just happened.
+ */
+// Each calls `toast` directly rather than taking it as a parameter, so
+// scripts/smoke-toast-copy.ts — which looks for `toast.*(` — checks this copy too.
+const TEST_TOASTS: (() => void)[] = [
+  () =>
+    toast.success("Test notification sent", {
+      description:
+        "If nothing pops up, check Notification Center — and System Settings → Notifications for this browser (Focus / alert style)",
+      duration: 8000,
+      keep: false,
+    }),
+  () =>
+    toast.error("Sample error — nothing actually went wrong", {
+      description:
+        "Errors stay for ten seconds and hovering pauses them — anything past three lines tucks behind See more, and opening it grows the toast to fit, which is what this long sentence is here to show",
+      keep: false,
+    }),
+  () => toast.warning("Sample warning — two contacts look alike", { keep: false }),
+  () =>
+    toast.info("Sample notice — calendar sync finished", {
+      description: "Info and warning have almost no real call sites yet",
+      keep: false,
+    }),
+  () =>
+    toast.message("Sample message with an action", {
+      description: "A plain message takes no accent rail and no icon",
+      action: { label: "Undo", onClick: () => {} },
+      keep: false,
+    }),
+];
+
 export function NotificationSettings() {
   const [permission, setPermission] =
     useState<NotificationPermissionState>("default");
   const [enabled, setEnabled] = useState(false);
   const [pending, start] = useTransition();
+  // Survives re-renders without causing one — nothing renders from it.
+  const testToastIndex = useRef(0);
 
   useEffect(() => {
     setPermission(getNotificationSupport());
@@ -28,7 +76,7 @@ export function NotificationSettings() {
   return (
     <section className="space-y-3 rounded-2xl border border-border/70 bg-card p-6">
       <div>
-        <h2 className="text-lg font-medium text-primary">
+        <h2 className="text-lg font-medium text-ink">
           Browser & desktop notifications
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -39,7 +87,7 @@ export function NotificationSettings() {
 
       <p className="text-sm text-muted-foreground">
         Status:{" "}
-        <span className="font-medium text-foreground">
+        <span className="font-medium text-ink">
           {permission === "unsupported"
             ? "Not supported in this browser"
             : permission === "granted"
@@ -50,7 +98,7 @@ export function NotificationSettings() {
         </span>
         {" · "}
         Preference:{" "}
-        <span className="font-medium text-foreground">
+        <span className="font-medium text-ink">
           {enabled ? "On" : "Off"}
         </span>
       </p>
@@ -68,7 +116,7 @@ export function NotificationSettings() {
               const next = await ensureNotificationPermission();
               setPermission(next);
               if (next === "granted") {
-                toast.success("Desktop notifications enabled");
+                toast.success("Desktop notifications are on");
                 await showDesktopNotification(
                   {
                     id: `orbit-welcome-${Date.now()}`,
@@ -79,9 +127,9 @@ export function NotificationSettings() {
                   { force: true }
                 );
               } else if (next === "denied") {
-                toast.error("Notifications blocked in browser settings");
+                toast.error("Notifications are blocked — allow them in your browser’s settings");
               } else {
-                toast.message("Permission still pending");
+                toast.message("Still waiting on permission");
               }
             })
           }
@@ -101,18 +149,23 @@ export function NotificationSettings() {
                   : res.permission
               );
               if (res.ok) {
-                toast.success("Test notification sent", {
-                  description:
-                    "If nothing pops up, check Notification Center — and System Settings → Notifications for this browser (Focus / alert style).",
-                  duration: 8000,
-                });
+                TEST_TOASTS[testToastIndex.current % TEST_TOASTS.length]();
+                testToastIndex.current += 1;
               } else if (res.permission === "denied") {
-                toast.error("Notifications blocked in browser settings");
+                // Genuine failures report themselves and do not advance the
+                // cycle: you need to know the send failed, and every click
+                // will keep failing until the permission changes.
+                toast.error("Notifications are blocked — allow them in your browser’s settings", {
+                  keep: false,
+                });
               } else if (res.permission === "unsupported") {
-                toast.error("Notifications not supported in this browser");
+                toast.error("This browser doesn’t support notifications", {
+                  keep: false,
+                });
               } else {
                 toast.message(
-                  "Allow notifications when prompted, then try again"
+                  "Allow notifications when prompted, then try again",
+                  { keep: false }
                 );
               }
             })

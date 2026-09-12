@@ -1,3 +1,4 @@
+import { clerkClient } from "@clerk/nextjs/server";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
@@ -9,12 +10,11 @@ import {
   userSettings,
 } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
+import { getAppBaseUrl } from "@/lib/app-url";
 import {
-  createRevealGrant,
-  describeActiveGrant,
-  revokeRevealGrants,
-} from "@/lib/admin-reveal";
-import { runLinkedInImportJob } from "@/lib/import-job-processor";
+  RESUMABLE_IMPORT_TYPES,
+  runImportJobById,
+} from "@/lib/import-job-dispatch";
 import { purgeUserData } from "@/lib/user-data";
 import { recordOperationalEvent } from "@/lib/operational-events";
 
@@ -61,6 +61,9 @@ export async function recordAdminAction(input: {
     detail: input.detail ?? {},
     reason: input.reason?.trim() || null,
   });
+  // Mirrored onto the operational stream so /admin/logs shows operator actions in the
+  // same feed as app, job and provider events. `admin_audit_log` stays the authoritative
+  // record — this is the read-optimised copy, and carries no reason text.
   await recordOperationalEvent({
     severity: "info",
     source: "admin",
@@ -111,69 +114,102 @@ async function requireAccount(targetUserId: string) {
   return row;
 }
 
-/* ------------------------------------------------------------------------- reveal grants */
-
-export type RevealGrantResult = {
-  ok: true;
-  grantId: string;
-  expiresAt: string;
-};
+/* -------------------------------------------------------------------------- account view */
 
 /**
- * Unmask one account's contact and interaction content for a short window.
- *
- * The grant is what widens the query layer's column allowlist; see `src/lib/admin-reveal.ts`
- * for why it is a branded capability rather than a flag. `record.reveal` remains for the
- * one-record case — this is the "the import mangled rows 300-400" tool, not a replacement.
+ * How long one `account.view` row stands for. A second look inside this window does not
+ * write another.
  */
-export async function grantReveal(adminUserId: string, input: {
-  targetUserId: string;
-  reason: string;
-}): Promise<{ grantId: string; expiresAt: Date }> {
-  const reason = requireReason(input.reason, 8);
+const VIEW_AUDIT_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * Records that the operator opened an account.
+ *
+ * This is what remains of the reveal gate. Contact records used to be masked until the
+ * operator requested a time-boxed grant with a typed reason; the friction was removed
+ * because on a single-operator console it was paid entirely by the person it was meant to
+ * check. The *record* was the part worth keeping — "which accounts did I look at, and
+ * when" stays answerable from `admin_audit_log` — so the ceremony went and the row stayed.
+ *
+ * THROTTLED, and that is load-bearing rather than tidiness. The inspector re-renders on
+ * every mutation that calls `revalidatePath`, on every back-navigation and on every manual
+ * refresh, so an unconditional insert would write dozens of identical rows per support
+ * question and bury the entries that describe an actual change. One row per hour reads as
+ * a session.
+ *
+ * Never throws. An audit row is worth writing, but not worth failing a page render over —
+ * losing the log would otherwise mean losing the console.
+ */
+export async function recordAccountView(
+  adminUserId: string,
+  targetUserId: string,
+  now: Date = new Date()
+): Promise<void> {
+  try {
+    const db = await getDb();
+    const since = new Date(now.getTime() - VIEW_AUDIT_WINDOW_MS);
+
+    const recent = await db.query.adminAuditLog.findFirst({
+      where: and(
+        eq(adminAuditLog.adminUserId, adminUserId),
+        eq(adminAuditLog.targetUserId, targetUserId),
+        eq(adminAuditLog.action, "account.view"),
+        sql`${adminAuditLog.createdAt} > ${since}`
+      ),
+      columns: { id: true },
+    });
+    if (recent) return;
+
+    await recordAdminAction({
+      adminUserId,
+      action: "account.view",
+      targetUserId,
+    });
+  } catch {
+    // See above: never fail a render over the audit trail.
+  }
+}
+
+/* ---------------------------------------------------------------------- sign-in link */
+
+/** How long a minted link stays valid before its first (only) use. */
+const SIGN_IN_LINK_EXPIRES_SECONDS = 30 * 24 * 60 * 60;
+
+/**
+ * Mint a one-click sign-in URL for any account, for the operator to hand to whoever needs
+ * to be signed in as that user without knowing (or resetting) their password — the
+ * showcase demo account being the motivating case, but nothing here is specific to it.
+ *
+ * This is Clerk's own "sign-in token" ticket strategy: a distinct first factor from
+ * password or an emailed code, single-use, consumed the instant the link is opened once.
+ * No expiry value changes that — `SIGN_IN_LINK_EXPIRES_SECONDS` only bounds how long an
+ * UNUSED link stays valid, which is why it is generous; it is not a session length.
+ *
+ * The token itself is never written to the audit log — only that one was minted, and
+ * when. Anyone who could read the token from an audit row could sign in as the account it
+ * names, which would make the log itself a credential.
+ */
+export async function mintSignInLink(
+  adminUserId: string,
+  input: { targetUserId: string }
+): Promise<{ url: string; expiresInSeconds: number }> {
   await requireAccount(input.targetUserId);
 
-  const grant = await createRevealGrant({
-    adminUserId,
-    targetUserId: input.targetUserId,
-    reason,
+  const clerk = await clerkClient();
+  const token = await clerk.signInTokens.createSignInToken({
+    userId: input.targetUserId,
+    expiresInSeconds: SIGN_IN_LINK_EXPIRES_SECONDS,
   });
 
   await recordAdminAction({
     adminUserId,
-    action: "reveal.grant",
+    action: "auth.sign_in_link",
     targetUserId: input.targetUserId,
-    resourceType: "reveal_grant",
-    resourceId: grant.id,
-    detail: { expiresAt: grant.expiresAt.toISOString() },
-    reason,
+    detail: { expiresInSeconds: SIGN_IN_LINK_EXPIRES_SECONDS },
   });
 
-  return { grantId: grant.id, expiresAt: grant.expiresAt };
-}
-
-/** Re-mask now, without waiting for the grant to age out. */
-export async function revokeReveal(adminUserId: string, input: {
-  targetUserId: string;
-}): Promise<number> {
-  const revoked = await revokeRevealGrants(adminUserId, input.targetUserId);
-
-  // Only log when something was actually open; a no-op revoke is noise in the trail.
-  if (revoked > 0) {
-    await recordAdminAction({
-      adminUserId,
-      action: "reveal.revoke",
-      targetUserId: input.targetUserId,
-      detail: { revoked },
-    });
-  }
-
-  return revoked;
-}
-
-/** Banner state for the inspector. Never returns a grant object. */
-export async function getActiveRevealGrantFor(adminUserId: string, targetUserId: string) {
-  return describeActiveGrant(adminUserId, targetUserId);
+  const url = `${getAppBaseUrl()}/sign-in?__clerk_ticket=${encodeURIComponent(token.token)}`;
+  return { url, expiresInSeconds: SIGN_IN_LINK_EXPIRES_SECONDS };
 }
 
 /* ------------------------------------------------------------------------------ imports */
@@ -181,10 +217,15 @@ export async function getActiveRevealGrantFor(adminUserId: string, targetUserId:
 /**
  * Re-arm a failed or stuck import, and return the id of the job to run.
  *
- * Only LinkedIn connection imports are resumable: they are the one type that stages
- * `import_job_rows`, which is what lets `runLinkedInImportJob` pick up where it stopped.
- * It re-reads job and row status from the database rather than assuming a fresh start,
- * which is exactly what makes a manual retry safe.
+ * Only the types in `RESUMABLE_IMPORT_TYPES` can be re-armed: they are the ones that own
+ * their server-side processing and stage progress as they go, which is what lets the
+ * runner pick up where it stopped. It re-reads job and row status from the database
+ * rather than assuming a fresh start, which is exactly what makes a manual retry safe.
+ * Client-driven kinds have no server runner to hand the job back to, so there is nothing
+ * to resume and the user has to re-upload.
+ *
+ * That list is the same one the `process-stalled` cron filters on, deliberately: a manual
+ * retry is the operator doing by hand what the backstop would eventually do on its own.
  *
  * The job is deliberately not started here. It is time-boxed with self-continuation and can
  * run far longer than a server action should, so the caller schedules it with `after()` —
@@ -206,9 +247,10 @@ export async function retryImport(adminUserId: string, input: {
     ),
   });
   if (!job) throw new Error("No such import.");
-  if (job.importType !== "linkedin_connections") {
+  const resumable: readonly string[] = RESUMABLE_IMPORT_TYPES;
+  if (!resumable.includes(job.importType)) {
     throw new Error(
-      "Only LinkedIn connection imports stage resumable rows; this type has to be re-uploaded by the user."
+      "Only server-owned imports stage resumable progress; this type has to be re-uploaded by the user."
     );
   }
   if (job.status === "completed") throw new Error("That import already completed.");
@@ -231,10 +273,16 @@ export async function retryImport(adminUserId: string, input: {
   return { importId: input.importId };
 }
 
-/** Runs a re-armed job, swallowing failures the processor already records on the job row. */
+/**
+ * Runs a re-armed job, swallowing failures the processor already records on the job row.
+ *
+ * Dispatches on the row's `import_type` rather than calling one runner: the Gmail
+ * recruiter scan has its own processor, and handing it to the generic engine would run
+ * the wrong one against its rows.
+ */
 export async function runImportJob(importId: string): Promise<void> {
   try {
-    await runLinkedInImportJob(importId);
+    await runImportJobById(importId);
   } catch {
     // The processor writes its own error onto the import row; nothing to add here.
   }
@@ -450,18 +498,7 @@ export async function deleteAccount(adminUserId: string, input: {
 }): Promise<void> {
   const reason = requireReason(input.reason, 8);
   assertNotOperator(adminUserId, input.targetUserId);
-
-  const account = await requireAccount(input.targetUserId);
-  const expected = (account.email ?? "").trim().toLowerCase();
-  const provided = input.confirmEmail.trim().toLowerCase();
-  if (!expected) {
-    throw new Error(
-      "This account has no email on file, so the confirmation cannot be checked. Delete it with scripts/ instead."
-    );
-  }
-  if (expected !== provided) {
-    throw new Error("That email does not match this account.");
-  }
+  const account = await confirmAccountEmail(input.targetUserId, input.confirmEmail);
 
   await recordAdminAction({
     adminUserId,
@@ -472,7 +509,70 @@ export async function deleteAccount(adminUserId: string, input: {
   });
 
   await purgeUserData(input.targetUserId);
+}
 
+/** Shared by `deleteAccount` and `hardDeleteAccount`: resolves the account and checks the
+ * typed email against it, so the operator cannot fire either action against the row next to
+ * the one they meant. */
+async function confirmAccountEmail(targetUserId: string, confirmEmail: string) {
+  const account = await requireAccount(targetUserId);
+  const expected = (account.email ?? "").trim().toLowerCase();
+  const provided = confirmEmail.trim().toLowerCase();
+  if (!expected) {
+    throw new Error(
+      "This account has no email on file, so the confirmation cannot be checked. Delete it with scripts/ instead."
+    );
+  }
+  if (expected !== provided) {
+    throw new Error("That email does not match this account.");
+  }
+  return account;
+}
+
+/**
+ * Hard-delete an account: every row this user's id touches, INCLUDING the fields
+ * `deleteAccount` deliberately preserves (credentials, billing/subscription links, the
+ * suspension record, the Clerk identity mirror) — plus the Clerk login itself, so the person
+ * can never sign in again. This is "delete the entire account," not "delete their data."
+ *
+ * The DB purge runs before the Clerk API call, deliberately: if Clerk's `deleteUser` fails,
+ * the account is left in a half-deleted state either way, and "all local data is gone, Clerk
+ * login still works" is the safer half to be stuck in than "Clerk login is gone, but billing/
+ * suspension/credentials are still sitting in `user_settings`" — the DB side is fully
+ * idempotent to retry, so a failed Clerk call is a "run it again" note, not corruption.
+ *
+ * The audit row is written before either destructive step, since it is the one artifact that
+ * legitimately outlives the account (see `purgeUserData`'s doc comment on `admin_audit_log`).
+ */
+export async function hardDeleteAccount(adminUserId: string, input: {
+  targetUserId: string;
+  confirmEmail: string;
+  reason: string;
+}): Promise<void> {
+  const reason = requireReason(input.reason, 20);
+  assertNotOperator(adminUserId, input.targetUserId);
+  const account = await confirmAccountEmail(input.targetUserId, input.confirmEmail);
+
+  await recordAdminAction({
+    adminUserId,
+    action: "account.hard_delete",
+    targetUserId: input.targetUserId,
+    detail: { email: account.email },
+    reason,
+  });
+
+  await purgeUserData(input.targetUserId, { keepSettings: false });
+
+  try {
+    const clerk = await clerkClient();
+    await clerk.users.deleteUser(input.targetUserId);
+  } catch (err) {
+    throw new Error(
+      `Account data was permanently deleted, but removing the Clerk login failed: ${
+        err instanceof Error ? err.message : String(err)
+      }. Remove user ${input.targetUserId} manually in the Clerk dashboard.`
+    );
+  }
 }
 
 /* ---------------------------------------------------------------------- the audit trail */

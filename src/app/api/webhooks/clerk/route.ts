@@ -3,12 +3,16 @@ import type { NextRequest } from "next/server";
 import { purgeUserData } from "@/lib/user-data";
 import {
   ensureUserSettings,
-  setSubscriptionState,
   setUserEmail,
+  setUserIdentity,
 } from "@/lib/user-settings";
-import { ORBIT_PLAN_SLUG } from "@/lib/entitlements";
-import { mirrorForClerkStatus } from "@/lib/clerk-subscription";
-import { recordOperationalEvent } from "@/lib/operational-events";
+import { recordBillingEvent } from "@/lib/billing-events";
+import { shouldRecordThrottled } from "@/lib/error-events";
+import {
+  WEBHOOK_REASONS,
+  recordWebhookDelivery,
+  type WebhookOutcome,
+} from "@/lib/webhook-deliveries";
 
 type ClerkEmailAddress = { id?: string; email_address?: string };
 
@@ -23,100 +27,134 @@ function primaryEmail(data: {
   return primary?.email_address?.toLowerCase() ?? null;
 }
 
+type HandlerResult = {
+  outcome: WebhookOutcome;
+  reason?: string;
+  targetUserId?: string | null;
+  resourceId?: string | null;
+  detail?: Record<string, unknown>;
+};
+
 export async function POST(req: NextRequest) {
-  const deliveryId = req.headers.get("svix-id");
+  const started = Date.now();
+  // Clerk's event body carries no delivery id — `data.id` is the *resource*, which repeats
+  // across retries. The Standard Webhooks / Svix header is the delivery id, and crucially
+  // it is readable before verification, which is what makes the rejection path recordable.
+  const eventId =
+    req.headers.get("svix-id") ?? req.headers.get("webhook-id") ?? null;
+
   let evt;
   try {
     evt = await verifyWebhook(req);
-  } catch {
-    console.error("Clerk webhook verification failed.");
-    await recordOperationalEvent({
-      severity: "warn",
-      source: "webhook",
-      eventType: "webhook.clerk.verification_failed",
-      message: "Clerk rejected a webhook signature.",
-      success: false,
-      correlationId: deliveryId,
-      dedupeKey: deliveryId ? `clerk:${deliveryId}:verification` : null,
-    });
+  } catch (err) {
+    console.error("Clerk webhook verification failed:", err);
+    // Deliberately stores nothing from the body: an unverified payload is untrusted input.
+    // Once per hour, not once per request: this write happens BEFORE any authentication, so
+    // without the latch anyone can grow the ledger a row per POST. One row still says
+    // "signatures are failing", which is all the ops sweep needs.
+    if (shouldRecordThrottled("webhook.clerk.invalid")) {
+      await recordWebhookDelivery({
+        eventId,
+        eventType: null,
+        outcome: "invalid",
+        reason: WEBHOOK_REASONS.signatureInvalid,
+        error: err,
+        durationMs: Date.now() - started,
+      });
+    }
     return new Response("Verification failed", { status: 400 });
   }
 
-  const eventData = evt.data as {
-    id?: string;
-    payer?: { user_id?: string };
+  // `subscriptionItem.*` is deliberately absent: Orbit Pro is now sold exclusively through
+  // Stripe (see api/webhooks/stripe), the Clerk "orbit" plan has been removed from the
+  // Clerk Dashboard, and no Clerk subscription was ever sold — so any such event that
+  // somehow still arrives correctly falls through to `ignored`/`unhandledType` below.
+  let result: HandlerResult = {
+    outcome: "ignored",
+    reason: WEBHOOK_REASONS.unhandledType,
   };
-  const journalUserId = eventData.payer?.user_id ?? eventData.id ?? null;
 
   try {
+    // user.updated is handled too, otherwise the mirrored address rots whenever someone
+    // changes or re-verifies their primary email in Clerk.
+    // NOTE: every event type below must also be enabled on this endpoint's subscription in
+    // the Clerk Dashboard — handling them in code alone is not enough.
+    if (evt.type === "user.created" || evt.type === "user.updated") {
+      const userId = evt.data.id;
+      if (userId) {
+        await ensureUserSettings(userId);
+        await setUserEmail(userId, primaryEmail(evt.data));
+        // Name and avatar arrive in this same payload, so mirroring them costs nothing
+        // beyond the write — and it is what lets the admin roster show a person rather
+        // than a `user_2abc…` id without ever calling the Clerk API.
+        await setUserIdentity(userId, {
+          firstName: evt.data.first_name,
+          lastName: evt.data.last_name,
+          imageUrl: evt.data.image_url,
+        });
+        result = { outcome: "handled", targetUserId: userId, resourceId: userId };
+      } else {
+        result = { outcome: "ignored", reason: WEBHOOK_REASONS.missingUserId };
+      }
+    } else if (evt.type === "user.deleted") {
+      const userId = evt.data.id;
+      if (userId) {
+        await purgeUserData(userId);
+        result = { outcome: "handled", targetUserId: userId, resourceId: userId };
+      } else {
+        result = { outcome: "ignored", reason: WEBHOOK_REASONS.missingUserId };
+      }
+    } else if (evt.type.startsWith("paymentAttempt.")) {
+      // A failed payment is otherwise invisible until the subscription eventually flips to
+      // past_due, which can be days later — and by then the user has already been surprised.
+      const data = evt.data as {
+        id?: string;
+        status?: string;
+        payer?: { user_id?: string };
+      };
 
-  // user.updated is handled too, otherwise the mirrored address rots whenever someone
-  // changes or re-verifies their primary email in Clerk.
-  // NOTE: `user.updated` must also be enabled on this endpoint's subscription in the
-  // Clerk Dashboard — enabling it in code alone is not enough.
-  if (evt.type === "user.created" || evt.type === "user.updated") {
-    const userId = evt.data.id;
-    if (userId) {
-      await ensureUserSettings(userId);
-      await setUserEmail(userId, primaryEmail(evt.data));
-    }
-  }
-
-  // Billing. Clerk sells the $5/mo plan; these events mirror it into user_settings so
-  // that `getEntitlements` — and therefore every gate, including ones in background jobs
-  // — resolves from the database alone.
-  if (evt.type.startsWith("subscriptionItem.")) {
-    const data = evt.data as {
-      id?: string;
-      status?: string;
-      period_end?: number | null;
-      plan?: { slug?: string } | null;
-      payer?: { user_id?: string };
-    };
-    const userId = data.payer?.user_id;
-    const slug = data.plan?.slug;
-
-    // Ignore items for any other plan, so a second product can be added later without
-    // this handler silently granting Orbit.
-    if (userId && slug === ORBIT_PLAN_SLUG && data.status) {
-      const mirror = mirrorForClerkStatus(data.status, data.period_end ?? null);
-      if (mirror) {
-        await setSubscriptionState(userId, mirror, {
-          eventKey: `clerk:${deliveryId ?? `${data.id ?? "item"}:${data.status}:${data.period_end ?? "none"}`}`,
+      if (data.status === "failed" && eventId) {
+        await recordBillingEvent({
+          source: "clerk",
+          eventId,
+          kind: "payment_failed",
+          userId: data.payer?.user_id ?? null,
+          // No MRR delta: the subscription has not changed value yet, and booking a
+          // churn here would report revenue lost that may well be collected on retry.
+          detail: { paymentAttemptId: data.id ?? null },
         });
       }
+      result = {
+        outcome: "handled",
+        targetUserId: data.payer?.user_id ?? null,
+        resourceId: data.id ?? null,
+        detail: { paymentStatus: data.status ?? null },
+      };
     }
-  }
-
-  if (evt.type === "user.deleted") {
-    const userId = evt.data.id;
-    if (userId) {
-      await purgeUserData(userId);
-    }
-  }
-  } catch {
-    await recordOperationalEvent({
-      severity: "error",
-      source: "webhook",
-      eventType: `webhook.clerk.${evt.type}`,
-      message: "Clerk webhook processing failed.",
-      success: false,
-      userId: journalUserId,
-      correlationId: deliveryId,
-      dedupeKey: deliveryId ? `clerk:${deliveryId}:failed` : null,
+  } catch (err) {
+    // Not a behaviour change — an unhandled throw already 500'd. It is just visible now.
+    // Keeping the 500 is correct: Svix retries with backoff, so a transient DB blip
+    // self-heals rather than permanently desyncing billing.
+    await recordWebhookDelivery({
+      eventId,
+      eventType: evt.type,
+      outcome: "error",
+      reason: WEBHOOK_REASONS.handlerThrew,
+      error: err,
+      durationMs: Date.now() - started,
     });
-    return new Response("Processing failed", { status: 500 });
+    throw err;
   }
 
-  await recordOperationalEvent({
-    severity: "info",
-    source: "webhook",
-    eventType: `webhook.clerk.${evt.type}`,
-    message: "Clerk webhook processed.",
-    success: true,
-    userId: journalUserId,
-    correlationId: deliveryId,
-    dedupeKey: deliveryId ? `clerk:${deliveryId}:processed` : null,
+  await recordWebhookDelivery({
+    eventId,
+    eventType: evt.type,
+    outcome: result.outcome,
+    reason: result.reason ?? null,
+    targetUserId: result.targetUserId ?? null,
+    resourceId: result.resourceId ?? null,
+    detail: result.detail ?? {},
+    durationMs: Date.now() - started,
   });
 
   return new Response("OK", { status: 200 });

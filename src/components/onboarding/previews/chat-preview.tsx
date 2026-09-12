@@ -6,7 +6,7 @@ import type { PreviewProps } from "@/components/onboarding/tour-config";
 export function ChatPreview({ reducedMotion }: PreviewProps) {
   return (
     <div className="space-y-3 p-1">
-      <p className="font-[family-name:var(--font-display)] text-lg text-primary">
+      <p className="font-[family-name:var(--font-display)] text-lg text-ink">
         Chat
       </p>
       <motion.div
@@ -25,7 +25,7 @@ export function ChatPreview({ reducedMotion }: PreviewProps) {
         className="rounded-xl border border-border/60 bg-background/60 p-3"
       >
         <p className="text-sm leading-relaxed text-foreground">
-          Start with <span className="font-medium text-primary">Marcus Lee</span>{" "}
+          Start with <span className="font-medium text-ink">Marcus Lee</span>{" "}
           at Stripe — he offered an intro to their AI infra recruiting team last
           month.
         </p>

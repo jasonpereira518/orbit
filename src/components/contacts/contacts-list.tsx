@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -16,7 +17,8 @@ import { createPortal } from "react-dom";
 import { CalendarClock, Trash2 } from "lucide-react";
 import { DUR_MS } from "@/lib/motion";
 import { toast } from "@/lib/toast";
-import { deleteContact } from "@/actions/contacts";
+import { deleteContact, listContactsPage } from "@/actions/contacts";
+import { CONTACTS_PAGE_SIZE, type ContactSort } from "@/lib/contacts-page";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { CompanyRoleLine } from "@/components/contacts/company-role-line";
 import { ContactAvatarPreview } from "@/components/contacts/contact-preview-card";
@@ -65,6 +67,8 @@ export type ContactListItem = {
   location: string | null;
   linkedinUrl: string | null;
   profileImageUrl?: string | null;
+  /** True when the avatar route has a LinkedIn URL or email it could still resolve from. */
+  canResolveAvatar?: boolean;
   relationshipScore: number;
   closeness?: number;
   closenessTier?: "inner" | "mid" | "outer";
@@ -142,26 +146,58 @@ const TIER_TOOLTIP: Record<"inner" | "mid" | "outer", string> = {
   outer: "Outer orbit",
 };
 
+export type ContactsListFilters = {
+  q?: string;
+  company?: string;
+  minScore?: number;
+  followUp?: "due";
+  sort?: ContactSort;
+  letter?: string;
+};
+
 export function ContactsList({
-  initialContacts,
+  initialItems,
+  initialCursor,
+  total,
+  filters,
+  availableLetters: serverLetters,
+  activeLetter: seekLetter,
 }: {
-  initialContacts: ContactListItem[];
+  initialItems: ContactListItem[];
+  initialCursor: string | null;
+  total: number | null;
+  filters: ContactsListFilters;
+  availableLetters: string[];
+  activeLetter: string | null;
 }) {
-  const [contacts, setContacts] = useState(initialContacts);
+  const [contacts, setContacts] = useState(initialItems);
+  const [cursor, setCursor] = useState(initialCursor);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [exitingId, setExitingId] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
-  const [activeLetter, setActiveLetter] = useState<string | null>(null);
+  const [draftContact, setDraftContact] = useState<{ id: string; name: string } | null>(null);
+  const [activeLetter, setActiveLetter] = useState<string | null>(seekLetter);
   const [pending, start] = useTransition();
   const router = useRouter();
   const exitTimer = useRef<number | null>(null);
-  const serverSignature = initialContacts
-    .map((c) => `${c.id}:${c.nextFollowUpAt ?? ""}:${c.profileImageUrl ?? ""}`)
-    .join(",");
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    setContacts(initialContacts);
+  // Resync when the server sends a different first page — a filter change, or a refresh
+  // after a mutation. Adjusted during render rather than in an effect: React re-runs the
+  // component immediately without committing the stale list, where an effect would paint
+  // the old rows first and then replace them.
+  //
+  // Compared by identity, not by joining every row into a signature string — that string
+  // was rebuilt on every render over the entire network.
+  const [syncedFrom, setSyncedFrom] = useState(initialItems);
+  if (syncedFrom !== initialItems) {
+    setSyncedFrom(initialItems);
+    setContacts(initialItems);
+    setCursor(initialCursor);
+    setLoadError(false);
     setExitingId(null);
-  }, [serverSignature, initialContacts]);
+  }
 
   useEffect(() => {
     return () => {
@@ -192,41 +228,96 @@ export function ContactsList({
     };
   }, []);
 
-  const sections = useMemo(() => {
-    const sorted = [...contacts].sort((a, b) => {
-      const byLast = lastNameOf(a).localeCompare(lastNameOf(b), undefined, {
-        sensitivity: "base",
+  const loadMore = useCallback(async () => {
+    if (!cursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const next = await listContactsPage({
+        ...filters,
+        cursor,
+        limit: CONTACTS_PAGE_SIZE,
       });
-      if (byLast !== 0) return byLast;
-      return a.fullName.localeCompare(b.fullName, undefined, {
-        sensitivity: "base",
+      // Guard against a page arriving twice — a duplicate id would render two rows with the
+      // same React key. The cursor should make this impossible; this is belt and braces
+      // because the symptom is silent and ugly.
+      setContacts((prev) => {
+        const seen = new Set(prev.map((c) => c.id));
+        return [...prev, ...next.items.filter((c) => !seen.has(c.id))];
       });
-    });
-
-    const groups = new Map<string, ContactListItem[]>();
-    for (const c of sorted) {
-      const letter = letterOf(lastNameOf(c));
-      const list = groups.get(letter) ?? [];
-      list.push(c);
-      groups.set(letter, list);
+      setCursor(next.nextCursor);
+      setLoadError(false);
+    } catch {
+      // Stop the observer from retrying in a tight loop against a failing server; the
+      // button rendered in its place lets the user ask again deliberately.
+      setLoadError(true);
+    } finally {
+      setLoadingMore(false);
     }
-    return ALPHABET.filter((letter) => groups.has(letter)).map((letter) => ({
-      letter,
-      contacts: groups.get(letter)!,
-    }));
+  }, [cursor, filters, loadingMore]);
+
+  // Fetch the next page slightly before the sentinel is actually visible, so scrolling does
+  // not stall at the bottom waiting for a round trip.
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !cursor || loadError) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) void loadMore();
+      },
+      { rootMargin: "600px 0px" }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [cursor, loadError, loadMore]);
+
+  // Grouping only, no sorting: the rows arrive in the order Postgres produced, and re-sorting
+  // them here would both waste a pass of `localeCompare` and risk disagreeing with the
+  // cursor — which would silently drop contacts at page boundaries.
+  const sections = useMemo(() => {
+    const groups: Array<{ letter: string; contacts: ContactListItem[] }> = [];
+    for (const c of contacts) {
+      const letter = letterOf(lastNameOf(c));
+      const last = groups[groups.length - 1];
+      if (last && last.letter === letter) last.contacts.push(c);
+      else groups.push({ letter, contacts: [c] });
+    }
+    return groups;
   }, [contacts]);
 
+  // Which letters exist across the *whole* network, not just the pages loaded so far. The
+  // client can no longer answer that from the rows it holds.
   const availableLetters = useMemo(
-    () => new Set(sections.map((s) => s.letter)),
-    [sections]
+    () => new Set(serverLetters),
+    [serverLetters]
   );
 
+  /**
+   * Jump the list to a letter.
+   *
+   * If it is already on screen this scrolls, which keeps the drag-scrub feeling immediate.
+   * Otherwise it re-queries anchored at that letter — the seek that lets the rail keep
+   * working when only the first page is loaded. Scrubbing through the rail only ever
+   * scrolls; the navigation happens once, when the finger lifts.
+   */
   function scrollToLetter(letter: string) {
+    setActiveLetter(letter);
     const target =
       document.getElementById(`contact-letter-${letter}`) ??
-      nearestSectionEl(letter, availableLetters);
+      nearestSectionEl(letter, new Set(sections.map((s) => s.letter)));
     target?.scrollIntoView({ behavior: "auto", block: "start" });
-    setActiveLetter(letter);
+  }
+
+  function seekToLetter(letter: string | null) {
+    if (!letter) return;
+    if (document.getElementById(`contact-letter-${letter}`)) return;
+    const params = new URLSearchParams();
+    if (filters.q) params.set("q", filters.q);
+    if (filters.company) params.set("company", filters.company);
+    if (filters.minScore) params.set("minScore", String(filters.minScore));
+    if (filters.followUp) params.set("followUp", filters.followUp);
+    if (filters.sort && filters.sort !== "name") params.set("sort", filters.sort);
+    params.set("letter", letter);
+    router.replace(`/contacts?${params.toString()}`);
   }
 
   const confirmContact = contacts.find((c) => c.id === confirmId);
@@ -248,7 +339,14 @@ export function ContactsList({
     setExitingId(id);
 
     exitTimer.current = window.setTimeout(() => {
-      setContacts((prev) => prev.filter((c) => c.id !== id));
+      // Snapshot what is actually on screen, not the first server page. The list now
+      // accumulates pages as the user scrolls, so restoring `initialItems` on failure would
+      // silently throw away everything past page one.
+      let restore: ContactListItem[] = [];
+      setContacts((prev) => {
+        restore = prev;
+        return prev.filter((c) => c.id !== id);
+      });
       setExitingId((current) => (current === id ? null : current));
       exitTimer.current = null;
 
@@ -258,9 +356,8 @@ export function ContactsList({
           toast.success(`${name} deleted`);
           router.refresh();
         } catch {
-          toast.error("Could not delete contact");
-          // Restore server list if delete failed.
-          setContacts(initialContacts);
+          toast.error("Couldn’t delete that contact — try again?");
+          setContacts(restore);
           router.refresh();
         }
       });
@@ -355,14 +452,19 @@ export function ContactsList({
                               contactId={c.id}
                               firstName={c.firstName}
                               fullName={c.fullName}
-                              linkedinUrl={c.linkedinUrl}
                               profileImageUrl={c.profileImageUrl}
                               size="lg"
+                              // Rows you are actually looking at fill in first, instead of
+                              // waiting for the background backfill to reach them in id
+                              // order. `loading="lazy"` on the underlying <img> means only
+                              // near-viewport rows ever issue a request, and the route
+                              // caches its misses so scrolling back does not re-ask.
+                              resolveOnDemand={!c.profileImageUrl && c.canResolveAvatar}
                             />
                           </ContactAvatarPreview>
 
                           <div className="min-w-0 flex-1">
-                            <p className="truncate font-medium text-primary">
+                            <p className="truncate font-medium text-ink">
                               {c.preferredName || c.fullName}
                             </p>
                             <div className="mt-0.5 flex min-w-0 items-center gap-2">
@@ -373,10 +475,22 @@ export function ContactsList({
                                 />
                               </p>
                               {c.closenessTier && (
-                                <ClosenessTierBadge
-                                  tier={c.closenessTier}
-                                  className="shrink-0"
-                                />
+                                <>
+                                  {/* On a phone the word badge ("INNER ORBIT") took ~90px
+                                      of a 375px row and cut the role to "VP Engin…". The
+                                      colour is the part that scans at a glance, and the
+                                      percentage chip on the right already carries the
+                                      number, so below sm the tier is just its dot. */}
+                                  <ClosenessTierBadge
+                                    tier={c.closenessTier}
+                                    dotOnly
+                                    className="sm:hidden"
+                                  />
+                                  <ClosenessTierBadge
+                                    tier={c.closenessTier}
+                                    className="hidden shrink-0 sm:inline-flex"
+                                  />
+                                </>
                               )}
                             </div>
                             {details && (
@@ -440,6 +554,7 @@ export function ContactsList({
                               nextFollowUpAt={c.nextFollowUpAt}
                               overdue={overdue}
                               scheduledLabel={scheduledLabel}
+                              onOpenDraft={setDraftContact}
                             />
 
                             <DeleteRowButton
@@ -458,11 +573,59 @@ export function ContactsList({
           ))}
         </ul>
 
+        {cursor ? (
+          <div
+            ref={sentinelRef}
+            className="flex items-center justify-center px-4 py-6 text-sm text-muted-foreground"
+          >
+            {/*
+              A real button, not just a scroll target. The observer below is the enhancement;
+              this is the thing that works without it — for keyboard users, and when the page
+              is short enough that the sentinel never leaves the viewport to re-enter it.
+            */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={loadingMore}
+              onClick={() => void loadMore()}
+            >
+              {loadError
+                ? "Couldn’t load more — retry"
+                : loadingMore
+                  ? "Loading…"
+                  : "Load more"}
+            </Button>
+          </div>
+        ) : (
+          total !== null &&
+          contacts.length < total && (
+            <div className="px-4 py-6 text-center text-sm text-muted-foreground">
+              Showing {contacts.length.toLocaleString()} of {total.toLocaleString()}
+            </div>
+          )
+        )}
+
+        {/* One draft sheet for the whole list — see FollowUpRowButton. */}
+        <FollowUpDraftSheet
+          open={draftContact !== null}
+          onOpenChange={(open) => {
+            if (!open) setDraftContact(null);
+          }}
+          contactId={draftContact?.id ?? ""}
+          contactName={draftContact?.name ?? ""}
+        />
+
         <AlphabetScrubber
           available={availableLetters}
           activeLetter={activeLetter}
           onSelect={scrollToLetter}
-          onScrubEnd={() => setActiveLetter(null)}
+          onScrubEnd={() => {
+            // Commit the jump once, on release. Firing it per scrub position would issue a
+            // navigation for every letter the finger passes over.
+            seekToLetter(activeLetter);
+            setActiveLetter(null);
+          }}
         />
 
         <Dialog
@@ -542,6 +705,34 @@ function AlphabetScrubber({
     setMounted(true);
   }, []);
 
+  /**
+   * Reserve the rail's width in the page, rather than floating over it.
+   *
+   * The rail is portalled to `<body>` and fixed to the right edge, so nothing in the
+   * page knows it is there. It is also an opaque card, so everything it covers is not
+   * dimmed but gone: the "Add contact" button, the Recruiters tab, the plan notice, and
+   * a row's own delete button were all being clipped by it on a phone.
+   *
+   * Publishing the footprint as a variable — rather than hard-coding padding on each
+   * page — keeps the gutter tied to the rail's actual presence: it is only paid while
+   * the rail is mounted, and it disappears with it.
+   */
+  useEffect(() => {
+    const root = document.documentElement;
+    /**
+     * The rail occupies 2.75rem of the right edge — `right-2` (0.5rem) plus its own
+     * `w-9` (2.25rem). The content column already carries 1rem of base padding, so the
+     * gutter only has to make up the difference plus a little air: 1 + 2.25 = 3.25rem
+     * total, which stops the content 0.5rem clear of the rail. Publishing the full
+     * 3.25rem here instead would double-count the padding and squeeze the header hard
+     * enough to change how its buttons wrap.
+     */
+    root.style.setProperty("--content-rail-gutter", "2.25rem");
+    return () => {
+      root.style.removeProperty("--content-rail-gutter");
+    };
+  }, []);
+
   function letterFromClientY(clientY: number) {
     const el = railRef.current;
     if (!el) return null;
@@ -585,6 +776,11 @@ function AlphabetScrubber({
     <div
       className={cn(
         "pointer-events-none fixed top-1/2 right-2 z-40 -translate-y-1/2 sm:right-4",
+        // Gone on short viewports — a landscape phone. Centred at 70% of a ~330pt
+        // viewport it rose into the header and covered the notification bell, and its
+        // 27 letters had about 6pt each between the header and the nav. The gutter it
+        // reserves is dropped at the same height in globals.css.
+        "[@media(max-height:500px)]:hidden",
         "pb-[env(safe-area-inset-bottom)]"
       )}
     >
@@ -689,21 +885,31 @@ function ClosenessChip({
   );
 }
 
+/**
+ * The follow-up control on a row.
+ *
+ * The popover stays per-row because it anchors to this button. The draft sheet does not —
+ * it is a full-screen dialog, identical for every contact, and only ever open for one at a
+ * time. Instantiating one per row meant a network of 3,000 contacts mounted 3,000 dialog
+ * roots that would never open, so it is raised to a single instance the list owns and this
+ * button merely requests.
+ */
 function FollowUpRowButton({
   contactId,
   contactName,
   nextFollowUpAt,
   overdue,
   scheduledLabel,
+  onOpenDraft,
 }: {
   contactId: string;
   contactName: string;
   nextFollowUpAt?: string | Date | null;
   overdue: boolean;
   scheduledLabel: string | null;
+  onOpenDraft: (contact: { id: string; name: string }) => void;
 }) {
   const [popoverOpen, setPopoverOpen] = useState(false);
-  const [sheetOpen, setSheetOpen] = useState(false);
 
   return (
     <>
@@ -761,17 +967,11 @@ function FollowUpRowButton({
             embedDraftSheet={false}
             onFollowUpClick={() => {
               setPopoverOpen(false);
-              setSheetOpen(true);
+              onOpenDraft({ id: contactId, name: contactName });
             }}
           />
         </PopoverContent>
       </Popover>
-      <FollowUpDraftSheet
-        open={sheetOpen}
-        onOpenChange={setSheetOpen}
-        contactId={contactId}
-        contactName={contactName}
-      />
     </>
   );
 }

@@ -8,7 +8,7 @@
  */
 export const SETTINGS_SECTIONS = [
   { id: "settings-profile", label: "Profile" },
-  { id: "settings-plan", label: "Plan" },
+  { id: "settings-plan", label: "Pricing Plan" },
   { id: "settings-goals", label: "Goals" },
   { id: "settings-appearance", label: "Appearance" },
   { id: "settings-ai", label: "AI provider" },
@@ -16,6 +16,8 @@ export const SETTINGS_SECTIONS = [
   { id: "settings-calendar", label: "Calendar feed" },
   { id: "settings-outreach", label: "Outreach" },
   { id: "settings-knowledge", label: "Knowledge" },
+  { id: "settings-api", label: "API and connectors" },
+  { id: "settings-webhooks", label: "Webhooks" },
   { id: "settings-help", label: "Help" },
   { id: "settings-data", label: "Data and privacy" },
 ] as const satisfies ReadonlyArray<{ id: string; label: string }>;

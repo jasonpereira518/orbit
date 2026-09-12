@@ -13,7 +13,7 @@ export function ContactsPreview({ reducedMotion }: PreviewProps) {
   return (
     <div className="space-y-3 p-1">
       <div className="flex items-center justify-between gap-3">
-        <p className="font-[family-name:var(--font-display)] text-lg text-primary">
+        <p className="font-[family-name:var(--font-display)] text-lg text-ink">
           Contacts
         </p>
         <div
@@ -32,7 +32,7 @@ export function ContactsPreview({ reducedMotion }: PreviewProps) {
             className="flex items-center justify-between rounded-xl border border-border/60 bg-background/60 px-3 py-2.5"
           >
             <div>
-              <p className="text-sm font-medium text-primary">{p.name}</p>
+              <p className="text-sm font-medium text-ink">{p.name}</p>
               <p className="text-xs text-muted-foreground">{p.meta}</p>
             </div>
             <span

@@ -9,13 +9,14 @@ import {
   type RosterStateFilter,
 } from "@/lib/admin-roster";
 import { getAdminHealth } from "@/lib/admin-health";
+import {
+  isInterestListFilter,
+  loadInterestListAll,
+  sourceLabel,
+} from "@/lib/admin-interest-list";
+import { isFeedbackFilter, loadFeedbackAll } from "@/lib/admin-feedback";
 import { loadAuditLog } from "@/lib/admin-operations";
 import { formatCostMicros } from "@/lib/ai-pricing";
-import {
-  loadOperationalEvents,
-  type OperationalSeverity,
-  type OperationalSource,
-} from "@/lib/operational-events";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -38,7 +39,7 @@ export const runtime = "nodejs";
  * extract a spreadsheet of other people's phone numbers that outlives it.
  */
 
-const DATASETS = ["roster", "health", "audit", "events"] as const;
+const DATASETS = ["roster", "health", "audit", "interest-list", "feedback"] as const;
 type Dataset = (typeof DATASETS)[number];
 
 function isDataset(value: string | null): value is Dataset {
@@ -67,19 +68,16 @@ export async function GET(request: NextRequest) {
   const dataset: Dataset = isDataset(datasetParam) ? datasetParam : "roster";
   const format = url.searchParams.get("format") === "json" ? "json" : "csv";
 
+  const interestFilter = url.searchParams.get("filter") ?? undefined;
+
   const filters = {
     q: url.searchParams.get("q") ?? undefined,
     plan: (url.searchParams.get("plan") ?? "all") as RosterPlanFilter,
     state: (url.searchParams.get("state") ?? "all") as RosterStateFilter,
     sort: (url.searchParams.get("sort") ?? "signup") as RosterSort,
-    severity: url.searchParams.get("severity") ?? undefined,
-    source: url.searchParams.get("source") ?? undefined,
-    eventType: url.searchParams.get("type") ?? undefined,
-    userId: url.searchParams.get("user") ?? undefined,
-    window: url.searchParams.get("window") ?? undefined,
   };
 
-  const { rows, count } = await buildDataset(dataset, filters);
+  const { rows, count } = await buildDataset(dataset, filters, interestFilter);
 
   await recordAdminAction({
     adminUserId,
@@ -113,19 +111,64 @@ async function buildDataset(
     plan: RosterPlanFilter;
     state: RosterStateFilter;
     sort: RosterSort;
-    severity?: string;
-    source?: string;
-    eventType?: string;
-    userId?: string;
-    window?: string;
-  }
+  },
+  interestFilter?: string
 ): Promise<{ rows: Array<Record<string, unknown>>; count: number }> {
+  if (dataset === "interest-list") {
+    // First-party only: these addresses were typed into Orbit's own form by their owners,
+    // which is what separates this from the contact data this route refuses to emit.
+    const signups = await loadInterestListAll(
+      isInterestListFilter(interestFilter) ? interestFilter : "all"
+    );
+    const rows = signups.map((r) => ({
+      email: r.email,
+      signed_up_at: iso(r.createdAt),
+      status: r.unsubscribedAt ? "unsubscribed" : r.converted ? "converted" : "active",
+      unsubscribed_at: iso(r.unsubscribedAt),
+      converted: r.converted,
+      follow_up_sent_at: iso(r.followUpSentAt),
+      source: sourceLabel(r),
+      referrer: r.referrer ?? "",
+      utm_source: r.utmSource ?? "",
+      utm_medium: r.utmMedium ?? "",
+      utm_campaign: r.utmCampaign ?? "",
+      landing_path: r.landingPath ?? "",
+      welcome_planet: r.welcomePlanet ?? "",
+    }));
+    return { rows, count: rows.length };
+  }
+
+  if (dataset === "feedback") {
+    // First-party by construction: this table is a user writing about Orbit, not about a
+    // third party — the distinction the `feedback` table's doc comment turns on. The
+    // screenshots are deliberately absent; `inline_data` must never reach a CSV.
+    const entries = await loadFeedbackAll(
+      isFeedbackFilter(interestFilter) ? interestFilter : "all"
+    );
+    const rows = entries.map((r) => ({
+      id: r.id,
+      created_at: iso(r.createdAt),
+      email: r.submitterEmail ?? "",
+      kind: r.kind,
+      category: r.category ?? "",
+      area: r.area ?? "",
+      status: r.status,
+      score: r.score ?? "",
+      text: r.text ?? "",
+      screenshots: r.screenshotCount,
+      status_changed_at: iso(r.statusChangedAt),
+    }));
+    return { rows, count: rows.length };
+  }
+
   if (dataset === "roster") {
     const roster = await loadAdminRosterAll(filters);
     // Account-level columns only. Nothing here comes from `contacts`.
     const rows = roster.map((r) => ({
       user_id: r.userId,
       email: r.email ?? "",
+      first_name: r.firstName ?? "",
+      last_name: r.lastName ?? "",
       plan: r.plan,
       plan_source: r.planSource,
       suspended_at: iso(r.suspendedAt),
@@ -192,44 +235,6 @@ async function buildDataset(
         at: iso(g.lastAt),
       })),
     ];
-    return { rows, count: rows.length };
-  }
-
-  if (dataset === "events") {
-    const severity = ["info", "warn", "error"].includes(filters.severity ?? "")
-      ? (filters.severity as OperationalSeverity)
-      : undefined;
-    const source = ["app", "job", "webhook", "integration", "provider", "admin"].includes(
-      filters.source ?? ""
-    )
-      ? (filters.source as OperationalSource)
-      : undefined;
-    const days = { "1d": 1, "7d": 7, "30d": 30, "90d": 90 }[
-      filters.window as "1d" | "7d" | "30d" | "90d"
-    ] ?? 7;
-    const events = await loadOperationalEvents({
-      severity,
-      source,
-      eventType: filters.eventType?.slice(0, 120),
-      userId: filters.userId?.slice(0, 200),
-      q: filters.q,
-      since: new Date(Date.now() - days * 24 * 60 * 60 * 1000),
-      limit: 5_000,
-    });
-    const rows = events.rows.map((event) => ({
-      occurred_at: iso(event.occurredAt),
-      severity: event.severity,
-      source: event.source,
-      event_type: event.eventType,
-      message: event.message,
-      success: event.success == null ? "" : event.success === 1,
-      user_id: event.userId ?? "",
-      resource_type: event.resourceType ?? "",
-      resource_id: event.resourceId ?? "",
-      correlation_id: event.correlationId ?? "",
-      duration_ms: event.durationMs ?? "",
-      metadata: JSON.stringify(event.metadata ?? {}),
-    }));
     return { rows, count: rows.length };
   }
 

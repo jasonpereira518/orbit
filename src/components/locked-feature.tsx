@@ -2,6 +2,9 @@ import Link from "next/link";
 import { Lock } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { WarpLink } from "@/components/warp/warp-link";
+import { type Plan } from "@/lib/plan-limits";
+import { PlanBadge } from "@/components/plan-badge";
 
 /**
  * Page-level state for a feature the current plan does not include.
@@ -14,20 +17,23 @@ export function LockedFeature({
   title,
   description,
   highlights,
+  plans = ["orbit", "lifetime"],
   note,
 }: {
   title: string;
   description: string;
   highlights: string[];
+  /** Tiers that include this feature — renders as the colored badges below. */
+  plans?: Plan[];
   note?: string;
 }) {
   return (
-    <div className="mx-auto max-w-xl space-y-6 rounded-2xl border border-border/70 bg-card p-8 text-center">
+    <div className="mx-auto max-w-xl space-y-6 rounded-2xl border border-tier-lifetime/25 bg-card p-8 text-center">
       <div className="space-y-3">
-        <span className="mx-auto flex size-11 items-center justify-center rounded-full bg-muted">
-          <Lock className="size-5 text-muted-foreground" />
+        <span className="mx-auto flex size-11 items-center justify-center rounded-full border border-tier-lifetime/35 bg-tier-lifetime/10">
+          <Lock className="size-5 text-tier-lifetime" />
         </span>
-        <h1 className="font-[family-name:var(--font-display)] text-2xl text-primary">
+        <h1 className="font-[family-name:var(--font-display)] text-2xl text-ink">
           {title}
         </h1>
         <p className="text-sm leading-relaxed text-muted-foreground">
@@ -46,12 +52,27 @@ export function LockedFeature({
         ))}
       </ul>
 
+      {plans.length > 0 && (
+        <div className="flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground">
+          <span>Unlocks with</span>
+          {plans.map((planId) => (
+            <PlanBadge key={planId} plan={planId} />
+          ))}
+        </div>
+      )}
+
       {note && <p className="text-xs text-muted-foreground">{note}</p>}
 
       <div className="flex flex-wrap items-center justify-center gap-3">
-        <Link href="/pricing" className={cn(buttonVariants({ size: "sm" }))}>
+        <WarpLink
+          href="/pricing"
+          className={cn(
+            buttonVariants({ size: "sm" }),
+            "border-tier-lifetime/40 bg-tier-lifetime/10 text-tier-lifetime hover:bg-tier-lifetime/15"
+          )}
+        >
           See plans
-        </Link>
+        </WarpLink>
         <Link
           href="/settings#settings-plan"
           className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
@@ -60,5 +81,44 @@ export function LockedFeature({
         </Link>
       </div>
     </div>
+  );
+}
+
+/*
+ * One lock per gated feature, rendered by EVERY page of that feature. Only the list pages
+ * used to check, so a free user who followed a link or an old bookmark to a campaign, the
+ * new-campaign wizard, or a recruiter's page got the full working UI, and every button on
+ * it then failed with a paywall error. The reads behind those pages are deliberately
+ * ungated (they return only the user's own rows); the pages are where the lock belongs.
+ */
+
+export function OutreachLocked() {
+  return (
+    <LockedFeature
+      title="Outreach"
+      description="Find the right people, draft messages that sound like you, and track what actually gets replies — without leaving Orbit."
+      highlights={[
+        "Search prospects by role, company, and seniority",
+        "Personalized email and SMS drafts from your own notes",
+        "Reply tracking and per-campaign quality scores",
+        "Sequenced follow-ups that stop when someone replies",
+      ]}
+      note="Both send email and SMS on Orbit's credits. On Orbit Lifetime you supply your own Apollo key for prospect search."
+    />
+  );
+}
+
+export function RecruitersLocked() {
+  return (
+    <LockedFeature
+      title="Recruiter tracking"
+      description="A crowdsourced directory of recruiters, plus a record of every conversation you've had with each of them."
+      highlights={[
+        "Search recruiters by company and specialism",
+        "Log interactions and unlock contact details",
+        "Pull recruiter threads straight out of Gmail",
+        "See who has gone quiet and who is worth a nudge",
+      ]}
+    />
   );
 }

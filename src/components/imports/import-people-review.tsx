@@ -104,7 +104,7 @@ export function ImportPeopleReview({
                   aria-label={`Select ${person.name}`}
                 />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-primary">
+                  <p className="truncate font-medium text-ink">
                     {person.name}
                   </p>
                   {person.subtitle ? (

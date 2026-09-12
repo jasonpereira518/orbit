@@ -10,7 +10,9 @@ import type { UserGoal } from "@/db/schema";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PRESS, ROW_HOVER_INSET } from "@/lib/interaction";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
 
 type GoalAlignedContact = {
   id: string;
@@ -38,7 +40,7 @@ export function GoalsSummary({
     <Card className="border-border/70 shadow-none">
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
         <div>
-          <CardTitle className="text-base">Goals</CardTitle>
+          <CardTitle as="h2" className="text-base">Goals</CardTitle>
           <p className="mt-1 text-sm text-muted-foreground">
             Surface people aligned with what you&apos;re working toward
           </p>
@@ -78,19 +80,25 @@ export function GoalsSummary({
         )}
 
         <form
-          className="flex gap-2"
+          // Capped: a goal is a short phrase, and the input inherited the card's
+          // full width — a thousand-pixel field for "raise a seed round".
+          className="flex max-w-md gap-2"
           onSubmit={(e) => {
             e.preventDefault();
             const trimmed = text.trim();
             if (!trimmed) return;
             start(async () => {
               try {
-                await addGoal(trimmed);
+                const res = await addGoal(trimmed);
+                if (!res.ok) {
+                  toast.error(res.error);
+                  return;
+                }
                 setText("");
                 toast.success("Goal added");
                 router.refresh();
               } catch (err) {
-                toast.error(err instanceof Error ? err.message : "Could not add goal");
+                toast.error(friendlyError(err, "Couldn’t add that goal — try again?"));
               }
             });
           }}
@@ -119,7 +127,11 @@ export function GoalsSummary({
                 <li key={c.id}>
                   <Link
                     href={`/contacts/${c.id}`}
-                    className="flex items-center justify-between rounded-lg px-2 py-1.5 hover:bg-muted/60"
+                    className={cn(
+                      "flex items-center justify-between px-2 py-1.5",
+                      ROW_HOVER_INSET,
+                      PRESS
+                    )}
                   >
                     <span>
                       <span className="font-medium">{c.preferredName || c.fullName}</span>

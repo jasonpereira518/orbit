@@ -2,10 +2,12 @@
 
 import { and, desc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { getDb } from "@/db";
 import {
   recruiters,
   userRecruiterLinks,
+  userSettings,
   type RecruiterLinkSource,
   type RecruiterLinkStatus,
 } from "@/db/schema";
@@ -14,12 +16,17 @@ import { requireRecruitersUser } from "@/lib/plan-guards";
 import {
   communityScore,
   ensureUserLink,
+  isViewerSharing,
+  listPoolDiscoveries,
+  pooledRecruiterIds,
   recomputeRecruiterRating,
+  resweepUserRatings,
   searchCanonicalRecruiters,
   toPublicRecruiter,
   upsertCanonicalRecruiter,
   type PublicRecruiter,
 } from "@/lib/recruiters";
+import { asActionResult, UserFacingError } from "@/lib/errors";
 
 function revalidateRecruiterPaths(id?: string) {
   revalidatePath("/recruiters");
@@ -30,12 +37,40 @@ function revalidateRecruiterPaths(id?: string) {
 export async function searchRecruiters(q?: string): Promise<PublicRecruiter[]> {
   const userId = await requireRecruitersUser();
   const db = await getDb();
-  const rows = await searchCanonicalRecruiters({ q, limit: 50 });
+  const sharing = await isViewerSharing(userId);
+  const rows = await searchCanonicalRecruiters({
+    q,
+    limit: 50,
+    viewerUserId: userId,
+    viewerIsSharing: sharing,
+  });
   const links = await db.query.userRecruiterLinks.findMany({
     where: eq(userRecruiterLinks.userId, userId),
   });
   const byRecruiter = new Map(links.map((l) => [l.recruiterId, l]));
-  return rows.map((r) => toPublicRecruiter(r, byRecruiter.get(r.id) || null));
+  const pooled = sharing
+    ? await pooledRecruiterIds(rows.map((r) => r.id))
+    : new Set<string>();
+  return rows.map((r) =>
+    toPublicRecruiter(r, byRecruiter.get(r.id) || null, pooled.has(r.id))
+  );
+}
+
+/** Pool recruiters the user has not logged. Empty unless they are sharing. */
+export async function listDiscoverRecruiters(
+  q?: string
+): Promise<PublicRecruiter[]> {
+  const userId = await requireRecruitersUser();
+  const sharing = await isViewerSharing(userId);
+  if (!sharing) return [];
+  const rows = await listPoolDiscoveries({
+    viewerUserId: userId,
+    viewerIsSharing: true,
+    q,
+    limit: 40,
+  });
+  // Every row here is pooled by construction, and none is linked by this viewer.
+  return rows.map((r) => toPublicRecruiter(r, null, true));
 }
 
 export async function listMyRecruiters(): Promise<PublicRecruiter[]> {
@@ -62,7 +97,71 @@ export async function getRecruiter(id: string): Promise<PublicRecruiter | null> 
       eq(userRecruiterLinks.recruiterId, id)
     ),
   });
-  return toPublicRecruiter(row, link || null);
+
+  // Detail is reachable by guessing a uuid, so it needs the same gate as the list.
+  // Without a link, the row must be in the pool *and* the viewer must be sharing.
+  if (!link) {
+    const sharing = await isViewerSharing(userId);
+    if (!sharing) return null;
+    const pooled = await pooledRecruiterIds([id]);
+    if (!pooled.has(id)) return null;
+    return toPublicRecruiter(row, null, true);
+  }
+
+  return toPublicRecruiter(row, link);
+}
+
+/** Current sharing state, for the toggle card. */
+export async function getRecruiterSharing(): Promise<{ enabled: boolean }> {
+  const userId = await requireUserId();
+  return { enabled: await isViewerSharing(userId) };
+}
+
+/**
+ * Flip the global opt-in. The rating resweep is deferred because one flip re-aggregates
+ * every recruiter this user links to, and the toggle should return immediately.
+ */
+export async function setRecruiterSharing(enabled: boolean) {
+  const userId = await requireRecruitersUser();
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({ recruiterSharing: enabled ? 1 : 0, updatedAt: new Date() })
+    .where(eq(userSettings.userId, userId));
+
+  after(async () => {
+    try {
+      await resweepUserRatings(userId);
+      revalidatePath("/recruiters");
+    } catch (err) {
+      console.error("[recruiters] rating resweep failed", err);
+    }
+  });
+
+  revalidateRecruiterPaths();
+  return { enabled };
+}
+
+/** Per-recruiter exception to the global opt-in. */
+export async function setLinkShared(recruiterId: string, shared: boolean) {
+  const userId = await requireRecruitersUser();
+  const db = await getDb();
+  const link = await db.query.userRecruiterLinks.findFirst({
+    where: and(
+      eq(userRecruiterLinks.userId, userId),
+      eq(userRecruiterLinks.recruiterId, recruiterId)
+    ),
+  });
+  if (!link) throw new Error("You have not logged this recruiter yet");
+
+  await db
+    .update(userRecruiterLinks)
+    .set({ sharedToPool: shared ? 1 : 0, updatedAt: new Date() })
+    .where(eq(userRecruiterLinks.id, link.id));
+
+  await recomputeRecruiterRating(recruiterId);
+  revalidateRecruiterPaths(recruiterId);
+  return { shared };
 }
 
 export type LogRecruiterInput = {
@@ -81,64 +180,66 @@ export type LogRecruiterInput = {
 };
 
 export async function logRecruiter(input: LogRecruiterInput) {
-  const userId = await requireRecruitersUser();
-  const fullName = input.fullName?.trim();
-  if (!fullName && !input.recruiterId) {
-    throw new Error("Recruiter name is required");
-  }
-
-  let recruiterId = input.recruiterId;
-
-  if (recruiterId) {
-    const db = await getDb();
-    const existing = await db.query.recruiters.findFirst({
-      where: eq(recruiters.id, recruiterId),
-    });
-    if (!existing) throw new Error("Recruiter not found");
-    if (fullName || input.email || input.firm || input.linkedinUrl) {
-      await upsertCanonicalRecruiter({
-        fullName: fullName || existing.fullName,
-        firm: input.firm ?? existing.firm,
-        specialty: input.specialty,
-        email: input.email ?? existing.email,
-        linkedinUrl: input.linkedinUrl ?? existing.linkedinUrl,
-        phone: input.phone ?? existing.phone,
-      });
+  return asActionResult(async () => {
+    const userId = await requireRecruitersUser();
+    const fullName = input.fullName?.trim();
+    if (!fullName && !input.recruiterId) {
+      throw new UserFacingError("Add the recruiter’s name first");
     }
-  } else {
-    const created = await upsertCanonicalRecruiter({
-      fullName: fullName!,
-      firm: input.firm,
-      specialty: input.specialty,
-      email: input.email,
-      linkedinUrl: input.linkedinUrl,
-      phone: input.phone,
+
+    let recruiterId = input.recruiterId;
+
+    if (recruiterId) {
+      const db = await getDb();
+      const existing = await db.query.recruiters.findFirst({
+        where: eq(recruiters.id, recruiterId),
+      });
+      if (!existing) throw new Error("Recruiter not found");
+      if (fullName || input.email || input.firm || input.linkedinUrl) {
+        await upsertCanonicalRecruiter({
+          fullName: fullName || existing.fullName,
+          firm: input.firm ?? existing.firm,
+          specialty: input.specialty,
+          email: input.email ?? existing.email,
+          linkedinUrl: input.linkedinUrl ?? existing.linkedinUrl,
+          phone: input.phone ?? existing.phone,
+        });
+      }
+    } else {
+      const created = await upsertCanonicalRecruiter({
+        fullName: fullName!,
+        firm: input.firm,
+        specialty: input.specialty,
+        email: input.email,
+        linkedinUrl: input.linkedinUrl,
+        phone: input.phone,
+      });
+      recruiterId = created.id;
+    }
+
+    const rating =
+      typeof input.personalRating === "number" &&
+      input.personalRating >= 1 &&
+      input.personalRating <= 5
+        ? input.personalRating
+        : null;
+
+    await ensureUserLink({
+      userId,
+      recruiterId: recruiterId!,
+      status: input.status || "planned",
+      notes: input.notes || null,
+      source: input.source || "manual",
+      personalRating: rating,
     });
-    recruiterId = created.id;
-  }
 
-  const rating =
-    typeof input.personalRating === "number" &&
-    input.personalRating >= 1 &&
-    input.personalRating <= 5
-      ? input.personalRating
-      : null;
+    if (rating !== null) {
+      await recomputeRecruiterRating(recruiterId!);
+    }
 
-  await ensureUserLink({
-    userId,
-    recruiterId: recruiterId!,
-    status: input.status || "planned",
-    notes: input.notes || null,
-    source: input.source || "manual",
-    personalRating: rating,
+    revalidateRecruiterPaths(recruiterId);
+    return { id: recruiterId! };
   });
-
-  if (rating !== null) {
-    await recomputeRecruiterRating(recruiterId!);
-  }
-
-  revalidateRecruiterPaths(recruiterId);
-  return { id: recruiterId! };
 }
 
 export async function updateMyLink(
@@ -230,9 +331,13 @@ export async function loadRecruitersForChat(
     })
     .sort((a, b) => b.score - a.score);
 
+  // Chat is a read surface like any other: a private user gets no community tier at all,
+  // otherwise the assistant would happily recite the directory they opted out of.
   const community = await searchCanonicalRecruiters({
     q: tokens.slice(0, 3).join(" ") || undefined,
     limit: 20,
+    viewerUserId: userId,
+    viewerIsSharing: await isViewerSharing(userId),
   });
   const personalIds = new Set(scoredPersonal.map((p) => p.id));
   const communityRows = community

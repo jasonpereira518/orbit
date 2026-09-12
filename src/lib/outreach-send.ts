@@ -8,18 +8,9 @@ import {
   outreachProspects,
   userSettings,
 } from "@/db/schema";
-import { decrypt } from "@/lib/crypto";
+import { decryptOrNull } from "@/lib/crypto";
 import { DAILY_SEND_LIMIT, type OutreachChannel } from "@/lib/outreach-types";
 import { getEntitlements } from "@/lib/entitlements";
-
-function decryptKey(encrypted?: string | null) {
-  if (!encrypted) return null;
-  try {
-    return decrypt(encrypted);
-  } catch {
-    return null;
-  }
-}
 
 export async function getOutreachSendConfig(userId: string) {
   const db = await getDb();
@@ -27,22 +18,23 @@ export async function getOutreachSendConfig(userId: string) {
     where: eq(userSettings.userId, userId),
   });
 
-  // Orbit's own Resend/Twilio credits are metered, so they are reachable only on the
-  // recurring plan. Lifetime is a one-time payment and must never buy an open-ended
-  // metered liability, so it falls through to the user's own keys — which Settings
-  // already stores per-user. `hosted` gates the env fallback, never the personal key.
-  const { canUseHostedSends: hosted } = await getEntitlements(userId);
+  // Orbit's own Resend/Twilio credits are metered, but not open-endedly: every user is
+  // capped at DAILY_SEND_LIMIT sends a day regardless of plan, so both paid tiers can
+  // reach them — including Lifetime, whose single payment funds a bounded obligation
+  // rather than an unbounded one. `hosted` gates the env fallback, never the personal
+  // key: a user who supplies their own Resend or Twilio credentials uses it on any plan.
+  const { canUseHostedSending: hosted } = await getEntitlements(userId);
   const envKey = (value: string | undefined) => (hosted ? value || null : null);
 
   return {
     resendApiKey:
-      decryptKey(settings?.resendApiKeyEncrypted) ||
+      decryptOrNull(settings?.resendApiKeyEncrypted) ||
       envKey(process.env.RESEND_API_KEY),
     twilioAccountSid:
-      decryptKey(settings?.twilioAccountSidEncrypted) ||
+      decryptOrNull(settings?.twilioAccountSidEncrypted) ||
       envKey(process.env.TWILIO_ACCOUNT_SID),
     twilioAuthToken:
-      decryptKey(settings?.twilioAuthTokenEncrypted) ||
+      decryptOrNull(settings?.twilioAuthTokenEncrypted) ||
       envKey(process.env.TWILIO_AUTH_TOKEN),
     twilioFromNumber:
       settings?.twilioFromNumber?.trim() ||

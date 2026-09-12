@@ -1,6 +1,5 @@
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { grantCovers, type VerifiedRevealGrant } from "@/lib/admin-reveal";
 
 /**
  * One account's history, merged across everything that writes.
@@ -9,15 +8,19 @@ import { grantCovers, type VerifiedRevealGrant } from "@/lib/admin-reveal";
  * uploads rather than a history: the question it needs to answer is "what was this person
  * actually doing in March", and imports are the least of it.
  *
- * REDACTION: the union arm list below *is* the allowlist, the same property the column
- * allowlist gives the contact queries. An arm that does not select a prose column cannot
- * leak it, so labels are built in SQL from structural values — a type, a status, a count —
- * and never from a name, a title or a note.
+ * THE UNION ARM LIST IS THE ALLOWLIST. An arm that does not select a column cannot leak
+ * it, which is why labels are assembled in SQL rather than in JS — the shape of the query
+ * is the guarantee.
  *
- * Under a grant, three arms swap in the real thing: contact names, interaction types with
- * their contact, and chat thread titles. The chat arm reads `chat_threads`, never
- * `chat_messages` — one row per thread rather than per message, which keeps the transcript
- * table out of the query entirely, grant or no grant.
+ * Three arms name a person: contacts, interactions and chat thread titles. Reminder labels
+ * deliberately do not, because a reminder's title and description are the *user's prose
+ * about a third party* rather than a record of that person — the action kind and status say
+ * everything the timeline needs.
+ *
+ * The chat arm reads `chat_threads`, never `chat_messages`. That is not a redaction
+ * preference but a hard line: message content is in `NEVER_REVEALABLE`, and reading one row
+ * per thread instead of one per message keeps the transcript table out of this query
+ * entirely.
  */
 
 export type AdminTimelineKind =
@@ -33,7 +36,7 @@ export type AdminTimelineKind =
 
 export type AdminTimelineEntry = {
   kind: AdminTimelineKind;
-  /** Structural unless a grant covers the account. */
+  /** Assembled in SQL from the arm's own columns; see the module header. */
   label: string;
   /** System output only (import errors, sync errors) — never user prose. */
   detail: string | null;
@@ -63,13 +66,10 @@ export async function loadAdminTimeline(
     limit?: number;
     /** Keyset cursor, not OFFSET: the feed grows at the head while you page. */
     before?: Date | null;
-    grant?: VerifiedRevealGrant | null;
-    now?: Date;
   } = {}
 ): Promise<{ entries: AdminTimelineEntry[]; hasMore: boolean }> {
   const db = await getDb();
   const limit = Math.min(Math.max(opts.limit ?? TIMELINE_PAGE_SIZE, 1), 200);
-  const unmasked = grantCovers(opts.grant, userId, opts.now ?? new Date());
 
   // The `before` bound is applied per arm rather than once at the end, so each arm can use
   // its (user_id, created_at) index instead of scanning and discarding.
@@ -79,17 +79,11 @@ export async function loadAdminTimeline(
     ? sql`AND created_at < ${cutoff}`
     : sql``;
 
-  const contactLabel = unmasked
-    ? sql`'Contact added: ' || full_name`
-    : sql`'Contact added'`;
-  const interactionLabel = unmasked
-    ? sql`'Logged ' || interaction_type || coalesce(' with ' || (
-          SELECT c.full_name FROM contacts c WHERE c.id = i.contact_id
-        ), '')`
-    : sql`'Logged ' || interaction_type`;
-  const chatLabel = unmasked
-    ? sql`'Chat thread: ' || coalesce(title, 'untitled')`
-    : sql`'Chat thread started'`;
+  const contactLabel = sql`'Contact added: ' || full_name`;
+  const interactionLabel = sql`'Logged ' || interaction_type || coalesce(' with ' || (
+        SELECT c.full_name FROM contacts c WHERE c.id = i.contact_id
+      ), '')`;
+  const chatLabel = sql`'Chat thread: ' || coalesce(title, 'untitled')`;
 
   const result = await db.execute(sql`
     WITH merged AS (
@@ -108,8 +102,8 @@ export async function loadAdminTimeline(
       FROM chat_threads WHERE user_id = ${userId} ${bound}
 
       UNION ALL
-      -- Title and description are the user's prose about a third party, so the label is
-      -- built from the action kind and status instead, under a grant or not.
+      -- Title and description are the user's prose about a third party rather than a
+      -- record of them, so the label stays structural. See the module header.
       SELECT 'reminder', 'Reminder created (' || action_kind || ')', NULL,
              'reminder', id::text, created_at
       FROM reminders WHERE user_id = ${userId} ${bound}

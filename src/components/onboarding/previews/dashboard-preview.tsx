@@ -13,7 +13,7 @@ const cards = [
 export function DashboardPreview({ reducedMotion }: PreviewProps) {
   return (
     <div className="space-y-3 p-1">
-      <p className="font-[family-name:var(--font-display)] text-lg text-primary">
+      <p className="font-[family-name:var(--font-display)] text-lg text-ink">
         Dashboard
       </p>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -29,7 +29,7 @@ export function DashboardPreview({ reducedMotion }: PreviewProps) {
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
               {c.label}
             </p>
-            <p className="mt-1 font-[family-name:var(--font-display)] text-2xl text-primary">
+            <p className="mt-1 font-[family-name:var(--font-display)] text-2xl text-ink">
               {c.value}
             </p>
             <p className="mt-0.5 text-[10px] text-muted-foreground">{c.hint}</p>

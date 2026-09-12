@@ -13,9 +13,7 @@
  *
  * Run: npx tsx scripts/smoke-purge.ts
  */
-import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
+import "./smoke/_env";
 
 import { eq, getTableColumns, getTableName, sql } from "drizzle-orm";
 import { PgTable } from "drizzle-orm/pg-core";
@@ -59,7 +57,8 @@ async function seed() {
   await db.insert(schema.userSettings).values({
     userId: USER,
     email: `${USER}@example.test`,
-    // Credentials that must not outlive the account.
+    // The BYO provider key is a deliberate survivor of purge — see `purgeUserData`.
+    // The calendar feed token is not, and must not outlive the account.
     geminiApiKeyEncrypted: "ciphertext",
     calendarFeedToken: "feed-token",
   });
@@ -82,11 +81,141 @@ async function seed() {
 
   await db.insert(schema.userGoals).values({ userId: USER, text: "meet more people" });
 
-  await db.insert(schema.interactions).values({
+  const [feedbackRow] = await db
+    .insert(schema.feedback)
+    .values({
+      userId: USER,
+      kind: "churn_reason",
+      text: "their own words about Orbit",
+    })
+    .returning();
+
+  // Carries `user_id` of its own rather than relying on the cascade from `feedback` —
+  // which is exactly why `userScopedTables()` finds it, and why it needs a row here.
+  await db.insert(schema.feedbackScreenshots).values({
+    feedbackId: feedbackRow.id,
+    userId: USER,
+    storage: "inline",
+    inlineData: "aGVsbG8=",
+    contentType: "image/webp",
+    byteSize: 5,
+  });
+
+  await db.insert(schema.gateEvents).values({
+    userId: USER,
+    feature: "contacts",
+    plan: "free",
+  });
+
+  // Anonymised rather than deleted on purge — see `purgeUserData`. The count below is
+  // `WHERE user_id = USER`, so nulling the column satisfies the no-leak check honestly.
+  await db.insert(schema.billingEvents).values({
+    source: "clerk",
+    eventId: `${USER}-evt`,
+    kind: "new",
+    userId: USER,
+    mrrDeltaCents: 500,
+    effectiveAt: now,
+  });
+
+  await db.insert(schema.closenessCohorts).values({
+    userId: USER,
+    snapshot: {
+      n: 1,
+      evidencedN: 1,
+      coverage: 1,
+      relativeWeight: 0,
+      quantiles: [0.5],
+      averageRaw: 0.5,
+      maxCompany: 1,
+      maxSchool: 1,
+      userDomain: null,
+      mailConnected: false,
+    },
+    contactCount: 1,
+  });
+
+  const [interaction] = await db
+    .insert(schema.interactions)
+    .values({
+      userId: USER,
+      contactId: contact.id,
+      interactionType: "note",
+      rawNotes: "private note about a real person",
+    })
+    .returning();
+
+  // The pasted text a note was parsed out of. Nothing cascades this — both
+  // `note_batch_id` columns are plain uuids with no foreign key — so it only leaves with
+  // the explicit delete in `purgeUserData`.
+  await db.insert(schema.noteBatches).values({
+    userId: USER,
+    sourceHash: "note-batch-hash",
+    sourceText: "the raw notes the user pasted, about named people",
+    anchorDate: now,
+    result: {} as never,
+  });
+
+  // A recorded call and one line of it. The segment carries its own `user_id` and is
+  // deleted explicitly, though it would also cascade from the session.
+  const [meetingRow] = await db
+    .insert(schema.meetingSessions)
+    .values({ userId: USER, title: "Weekly sync" })
+    .returning();
+  await db.insert(schema.meetingTranscriptSegments).values({
+    sessionId: meetingRow.id,
+    userId: USER,
+    seq: 0,
+    startMs: 0,
+    endMs: 60_000,
+    text: "what everyone on the call said, verbatim",
+    engine: "whisper",
+  });
+
+  // Cascade-covered (from `contacts` / `interactions`), seeded anyway: the cascade is the
+  // thing under test, and an unseeded table proves nothing about it.
+  await db.insert(schema.contactBriefs).values({
     userId: USER,
     contactId: contact.id,
-    interactionType: "note",
-    rawNotes: "private note about a real person",
+    standing: "a generated summary of a real relationship",
+  });
+
+  // Cascade-covered (from `contacts`), seeded anyway: the cascade is the thing under test,
+  // and an unseeded table proves nothing about it. Holds the prose half of a captured
+  // LinkedIn profile — headline, about, skills — for a real named person.
+  await db.insert(schema.contactProfiles).values({
+    userId: USER,
+    contactId: contact.id,
+    headline: "Computer Scientist at Acme",
+    source: "extension",
+  });
+
+  // Cascade-covered (from `contacts`), seeded anyway, same reasoning as `contactProfiles`
+  // above. Holds one role/school entry from that same captured profile.
+  await db.insert(schema.contactExperiences).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "role",
+    organization: "Acme",
+    organizationNormalized: "acme",
+    source: "extension",
+  });
+
+  await db.insert(schema.actionItems).values({
+    userId: USER,
+    contactId: contact.id,
+    interactionId: interaction.id,
+    text: "send them the deck",
+    itemHash: "action-item-hash",
+  });
+
+  await db.insert(schema.interactionMentions).values({
+    userId: USER,
+    interactionId: interaction.id,
+    contactId: contact.id,
+    mentionText: "Ada",
+    confidence: 0.9,
+    matchedBy: "exact_name",
   });
 
   const [list] = await db
@@ -136,6 +265,15 @@ async function seed() {
     icsUrl: "https://example.test/feed.ics",
   });
 
+  // A scan handoff in flight when the account is deleted: a live grant, and a transcript
+  // of the user's notes sitting behind it.
+  await db.insert(schema.captureHandoffs).values({
+    userId: USER,
+    tokenHash: "0".repeat(64),
+    expiresAt: new Date(Date.now() + 600_000),
+    transcript: "Ada Lovelace — Analytical Engines",
+  });
+
   await db.insert(schema.aiSuggestions).values({
     userId: USER,
     suggestionType: "reconnect",
@@ -160,6 +298,68 @@ async function seed() {
     .insert(schema.userRecruiterLinks)
     .values({ userId: USER, recruiterId: recruiter.id });
 
+  // Carries the user's own prose to a named third party, plus the Gmail ids that locate it
+  // in a real mailbox. Exactly the class of row this suite exists to catch.
+  await db.insert(schema.recruiterMessages).values({
+    userId: USER,
+    recruiterId: recruiter.id,
+    intent: "set_up_chat",
+    subject: "Following up on the role",
+    body: "prose the user wrote about a real person",
+  });
+
+  // Duplicate-prevention rows. `contact_merges` is the one that matters most here: it has
+  // no foreign key to either contact (the losing contact's row is deleted by design), so
+  // nothing cascades it — and `loser_snapshot` is a whole archived contact, every field of
+  // a person the user knew, which would otherwise outlive the account.
+  await db.insert(schema.contactIdentities).values({
+    userId: USER,
+    contactId: contact.id,
+    kind: "email",
+    value: "ada@analytical.io",
+  });
+  const [otherContact] = await db
+    .insert(schema.contacts)
+    .values({ userId: USER, fullName: "Ada Lovelace (dup)" })
+    .returning();
+  await db.insert(schema.duplicateSuggestions).values({
+    userId: USER,
+    contactAId: contact.id < otherContact.id ? contact.id : otherContact.id,
+    contactBId: contact.id < otherContact.id ? otherContact.id : contact.id,
+    reason: "Same full name",
+    confidence: 0.6,
+  });
+  await db.insert(schema.contactMerges).values({
+    userId: USER,
+    winnerContactId: contact.id,
+    loserContactId: otherContact.id,
+    loserSnapshot: { full_name: "Ada Lovelace (dup)", email: "ada@analytical.io" },
+    status: "done",
+  });
+
+  // An event, its roster, and a stored provider credential. The roster row deliberately
+  // points at `contact` so the purge also has to survive the `ON DELETE SET NULL` FK — the
+  // ordering bug that would otherwise rewrite every attendee on the way to deleting it.
+  const [eventRow] = await db
+    .insert(schema.events)
+    .values({ userId: USER, title: "Deep Learning Summit", venue: "Moscone" })
+    .returning();
+  await db.insert(schema.eventAttendees).values({
+    eventId: eventRow.id,
+    userId: USER,
+    fullName: "Ada Lovelace",
+    email: "ada@analytical.io",
+    contactId: contact.id,
+    identityKey: "em:ada@analytical.io",
+  });
+  // Same class of secret as the Gmail/Outlook rows below.
+  await db.insert(schema.eventProviderConnections).values({
+    userId: USER,
+    provider: "luma",
+    authKind: "api_key",
+    apiKeyEncrypted: "ciphertext-luma-key",
+  });
+
   for (const table of [schema.gmailConnections, schema.outlookConnections]) {
     await db.insert(table).values({
       userId: USER,
@@ -180,6 +380,13 @@ async function seed() {
     content: "a private question about my network",
   });
 
+  await db.insert(schema.errorEvents).values({
+    userId: USER,
+    source: "oauth.gmail.callback",
+    kind: "token_exchange_failed",
+    message: "system error text",
+  });
+
   await db.insert(schema.usageEvents).values({
     userId: USER,
     operation: "capture.parse",
@@ -189,6 +396,65 @@ async function seed() {
     keyOwner: "user",
   });
 
+  // Per-user rate-limit window for the browser extension. Keyed on user id and nothing
+  // else, so it is easy to forget it is personal data at all — which is how it became the
+  // fourth user-scoped table to ship unpurged (found the first time this suite ran on a
+  // fresh database instead of one that happened to hold a leftover row).
+  // The account's own upgrade-celebration queue — deleted outright on purge.
+  await db.insert(schema.planUpgradeEvents).values({
+    userId: USER,
+    plan: "orbit",
+    source: "subscription",
+    eventKey: `${USER}-upgrade`,
+  });
+
+  // Anonymised rather than deleted on purge — see `purgeUserData`. Like `billing_events`,
+  // the count below is `WHERE user_id = USER`, so nulling the column satisfies the
+  // no-leak check honestly.
+  await db.insert(schema.operationalEvents).values({
+    severity: "error",
+    source: "job",
+    eventType: "import.failed",
+    message: "Seeded operational event.",
+    userId: USER,
+  });
+
+  await db.insert(schema.extensionUsage).values({ userId: USER, requestCount: 3, aiCount: 1 });
+
+  // The connector platform. `api_keys` is the one that would matter most if it survived a
+  // deletion: a credential with no owning account still works.
+  await db.insert(schema.apiKeys).values({
+    userId: USER,
+    name: "purge fixture",
+    prefix: "orb_live_deadbeef",
+    keyHash: "0".repeat(64),
+    scopes: ["read"],
+  });
+  await db.insert(schema.apiIdempotencyKeys).values({
+    userId: USER,
+    idempotencyKey: "purge-fixture",
+    requestHash: "abc",
+    statusCode: 200,
+    responseBody: {},
+  });
+  const [endpoint] = await db
+    .insert(schema.webhookEndpoints)
+    .values({
+      userId: USER,
+      url: "https://example.com/hook",
+      secretEncrypted: "enc",
+      eventTypes: ["contact.created"],
+      status: "active",
+    })
+    .returning();
+  await db.insert(schema.outboundWebhookDeliveries).values({
+    userId: USER,
+    endpointId: endpoint.id,
+    eventId: "evt_purge_fixture",
+    eventType: "contact.created",
+    payload: {},
+  });
+
   return { recruiterId: recruiter.id };
 }
 
@@ -196,8 +462,14 @@ async function main() {
   const tables = userScopedTables();
   console.log(`Seeding one row in each of ${tables.length} user-scoped tables…`);
 
-  // Start clean in case a previous run died mid-way.
+  // Start clean in case a previous run died mid-way. The billing row needs deleting by
+  // hand: purge anonymises it rather than removing it, so it survives its own cleanup and
+  // the unique `(source, event_id)` index would reject the next run's insert.
   await purgeUserData(USER).catch(() => {});
+  await (await getDb())
+    .delete(schema.billingEvents)
+    .where(eq(schema.billingEvents.eventId, `${USER}-evt`))
+    .catch(() => {});
   const { recruiterId } = await seed();
 
   console.log("\nSeeded");
@@ -218,6 +490,9 @@ async function main() {
 
   let leaked = 0;
   for (const { name } of tables) {
+    // Asserted separately below: the BYO provider key is a deliberate survivor (see
+    // `purgeUserData`), so this table legitimately keeps a row under the same user id.
+    if (name === "user_settings") continue;
     const remaining = await countFor(name);
     if (remaining === 0) {
       console.log(`  ok  ${name} is empty`);
@@ -227,6 +502,57 @@ async function main() {
     }
   }
   check("no user-scoped table retains rows", leaked === 0, `${leaked} table(s) leaked`);
+
+  // The one table that is anonymised rather than deleted. Asserting the row SURVIVES is
+  // as important as asserting the others are gone: if a future edit "tidies" this into a
+  // delete, the no-leak sweep above would still pass and Orbit would quietly lose its
+  // accounting history every time a customer left.
+  const ledgerDb = await getDb();
+  const kept = await ledgerDb
+    .select()
+    .from(schema.billingEvents)
+    .where(eq(schema.billingEvents.eventId, `${USER}-evt`));
+  check("billing_events survives the purge", kept.length === 1);
+  check("...with the personal link severed", kept[0]?.userId === null);
+  check("...and the money intact", kept[0]?.mrrDeltaCents === 500);
+  await ledgerDb
+    .delete(schema.billingEvents)
+    .where(eq(schema.billingEvents.eventId, `${USER}-evt`));
+
+  // The second deliberate survivor — see `purgeUserData`. Asserting BOTH halves matters:
+  // the key surviving alone would miss a purge that forgot to delete-and-recreate the row,
+  // and the row surviving without the key check would miss a purge that kept everything.
+  const settingsAfterPurge = await ledgerDb.query.userSettings.findFirst({
+    where: eq(schema.userSettings.userId, USER),
+  });
+  check("user_settings survives the purge", Boolean(settingsAfterPurge));
+  check(
+    "...with the BYO API key intact",
+    settingsAfterPurge?.geminiApiKeyEncrypted === "ciphertext"
+  );
+  check(
+    "...but the calendar feed token cleared",
+    settingsAfterPurge?.calendarFeedToken === null
+  );
+  await ledgerDb
+    .delete(schema.userSettings)
+    .where(eq(schema.userSettings.userId, USER));
+
+  // `keepSettings: false` — the admin console's hard delete — must leave nothing behind,
+  // including the fields the default path above deliberately preserves.
+  await ledgerDb.insert(schema.userSettings).values({
+    userId: USER,
+    email: `${USER}@example.test`,
+    geminiApiKeyEncrypted: "ciphertext",
+  });
+  await purgeUserData(USER, { keepSettings: false });
+  const settingsAfterHardDelete = await ledgerDb.query.userSettings.findFirst({
+    where: eq(schema.userSettings.userId, USER),
+  });
+  check(
+    "keepSettings: false leaves no user_settings row at all",
+    settingsAfterHardDelete === undefined
+  );
 
   // contact_tags has no user_id of its own, so the derived sweep above cannot see it.
   const db = await getDb();

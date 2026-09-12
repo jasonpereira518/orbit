@@ -8,24 +8,51 @@ import {
   disconnectGmail,
   type GmailConnectionStatus,
 } from "@/actions/gmail";
-import {
-  previewGoogleContacts,
-  confirmGoogleContactsImport,
-  type GoogleContactPerson,
-} from "@/actions/imports";
+import { previewGoogleContacts, type GoogleContactPerson } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
+import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { toast } from "@/lib/toast";
+import { IntegrationUnavailable } from "@/components/imports/integration-unavailable";
+import { describeOAuthReason, friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export function GoogleContactsImport() {
   const router = useRouter();
+  const job = useImportJob();
   const [pending, start] = useTransition();
   const [status, setStatus] = useState<GmailConnectionStatus | null>(null);
   const [contactsScopeGranted, setContactsScopeGranted] = useState(true);
   const [people, setPeople] = useState<GoogleContactPerson[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
+
+  const googleJob =
+    job?.kind === "google_contacts" && job.status === "running" ? job : null;
+  const importProgress = googleJob?.progress ?? null;
+  const busy = pending || job?.status === "running";
+
+  // Clear local review UI once this job finishes (toast handled globally by
+  // ImportJobWatcher, same as the LinkedIn connections import). The setState calls are
+  // deferred a microtask so this reads as reacting to the external job-runner singleton
+  // (react-hooks/set-state-in-effect's own carve-out: "calling setState in a callback
+  // function when external state changes") rather than an unconditional synchronous
+  // setState in the effect body.
+  useEffect(() => {
+    if (!job || job.kind !== "google_contacts") return;
+    if (
+      job.status !== "completed" &&
+      job.status !== "failed" &&
+      job.status !== "cancelled"
+    )
+      return;
+    queueMicrotask(() => {
+      setPeople([]);
+      setSelected(new Set());
+      setLoaded(false);
+    });
+  }, [job]);
 
   useEffect(() => {
     getGmailConnectionStatus().then(setStatus).catch(() => {});
@@ -44,7 +71,11 @@ export function GoogleContactsImport() {
       router.refresh();
       getGmailConnectionStatus().then(setStatus).catch(() => {});
     } else if (google === "error") {
-      toast.error(params.get("reason") || "Google connection failed");
+      {
+        const oauth = describeOAuthReason(params.get("reason"), "Google");
+        if (oauth.cancelled) toast.message(oauth.message);
+        else toast.error(oauth.message);
+      }
       params.delete("google");
       params.delete("gmail");
       params.delete("reason");
@@ -59,22 +90,24 @@ export function GoogleContactsImport() {
 
   if (!status.configured) {
     return (
-      <section className="space-y-2 rounded-2xl border border-dashed border-border/70 bg-card/50 p-6">
-        <h2 className="text-lg font-medium text-primary">Google Contacts</h2>
-        <p className="text-sm text-muted-foreground">
-          Set <code className="text-xs">GOOGLE_CLIENT_ID</code>,{" "}
-          <code className="text-xs">GOOGLE_CLIENT_SECRET</code>, and{" "}
-          <code className="text-xs">GOOGLE_REDIRECT_URI</code> to enable this.
-        </p>
-      </section>
+      <IntegrationUnavailable
+        id="import-google-contacts"
+        title="Google Contacts"
+        blurb="Not connected yet. Import from LinkedIn above, or paste your notes into Capture and Orbit will pull the people out."
+        envVars={[
+          "GOOGLE_CLIENT_ID",
+          "GOOGLE_CLIENT_SECRET",
+          "GOOGLE_REDIRECT_URI",
+        ]}
+      />
     );
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
+    <section id="import-google-contacts" className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-medium text-primary">Google Contacts</h2>
+          <h2 className="text-lg font-medium text-ink">Google Contacts</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             {status.connected
               ? `Connected as ${status.emailAddress}${!contactsScopeGranted ? " — reconnect to grant contacts access" : ""}`
@@ -84,14 +117,14 @@ export function GoogleContactsImport() {
         <div className="flex flex-wrap gap-2">
           {!status.connected || !contactsScopeGranted ? (
             <Button
-              disabled={pending}
+              disabled={busy}
               onClick={() =>
                 start(async () => {
                   try {
                     const { url } = await startGmailOAuth("/imports");
                     window.location.href = url;
                   } catch (err) {
-                    toast.error(err instanceof Error ? err.message : "OAuth failed");
+                    toast.error(friendlyError(err, TOAST_COPY.connectFailed));
                   }
                 })
               }
@@ -101,14 +134,14 @@ export function GoogleContactsImport() {
           ) : (
             <>
               <Button
-                disabled={pending}
+                disabled={busy}
                 onClick={() =>
                   start(async () => {
                     try {
                       const res = await previewGoogleContacts();
                       setContactsScopeGranted(res.contactsScopeGranted);
                       if (!res.contactsScopeGranted) {
-                        toast.error("Reconnect Google to grant contacts access");
+                        toast.error("Reconnect Google to allow access to your contacts");
                         return;
                       }
                       setPeople(res.people);
@@ -119,7 +152,7 @@ export function GoogleContactsImport() {
                       toast.success(`Loaded ${res.people.length} contacts`);
                     } catch (err) {
                       toast.error(
-                        err instanceof Error ? err.message : "Could not load contacts"
+                        friendlyError(err, TOAST_COPY.loadContactsFailed)
                       );
                     }
                   })
@@ -129,7 +162,7 @@ export function GoogleContactsImport() {
               </Button>
               <Button
                 variant="outline"
-                disabled={pending}
+                disabled={busy}
                 onClick={() =>
                   start(async () => {
                     await disconnectGmail();
@@ -173,24 +206,25 @@ export function GoogleContactsImport() {
             }}
           />
           <Button
-            disabled={pending || selected.size === 0}
+            disabled={busy || selected.size === 0}
             className="bg-primary text-primary-foreground hover:bg-primary/90"
-            onClick={() =>
-              start(async () => {
-                try {
-                  const res = await confirmGoogleContactsImport([...selected]);
-                  toast.success(`Saved: ${res.created} created, ${res.updated} updated`);
-                  setPeople([]);
-                  setSelected(new Set());
-                  setLoaded(false);
-                  router.refresh();
-                } catch (err) {
-                  toast.error(err instanceof Error ? err.message : "Import failed");
-                }
-              })
-            }
+            onClick={() => {
+              if (busy) return;
+              try {
+                const ids = [...selected];
+                startImportJob({ kind: "google_contacts", ids });
+                // Clear the review list immediately; progress lives in the runner.
+                setPeople([]);
+                setSelected(new Set());
+                setLoaded(false);
+              } catch (err) {
+                toast.error(friendlyError(err, TOAST_COPY.importFailed));
+              }
+            }}
           >
-            Import {selected.size} selected
+            {importProgress
+              ? `Importing… ${importProgress.done}/${importProgress.total}`
+              : `Import ${selected.size} selected`}
           </Button>
         </>
       )}

@@ -1,7 +1,9 @@
 import { eq } from "drizzle-orm";
+import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
-import { decrypt } from "@/lib/crypto";
+import { decryptOrNull } from "@/lib/crypto";
+import { normalizeCompanyKey } from "@/lib/company-name";
 import {
   LINKEDIN_REFRESH_BATCH_SIZE,
   type AudienceFilters,
@@ -9,6 +11,7 @@ import {
   type OutreachSearchSource,
 } from "@/lib/outreach-types";
 import { getEntitlements } from "@/lib/entitlements";
+import type { IncomingExperience } from "@/lib/contact-profile";
 
 const APOLLO_SEARCH_URL = "https://api.apollo.io/api/v1/mixed_people/search";
 const APOLLO_MATCH_URL = "https://api.apollo.io/api/v1/people/match";
@@ -44,6 +47,16 @@ async function apolloFetch(
     lastResponse = response;
     const retryable = response.status === 429 || response.status >= 500;
     if (!retryable || attempt === APOLLO_MAX_ATTEMPTS - 1) {
+      // Only when retries were actually exhausted — a first-attempt 4xx is the caller's
+      // problem and is already surfaced to them.
+      if (retryable && attempt === APOLLO_MAX_ATTEMPTS - 1) {
+        await recordErrorEvent({
+          source: ERROR_SOURCES.apolloSearch,
+          kind: "retry_exhausted",
+          message: `Apollo returned ${response.status} after ${APOLLO_MAX_ATTEMPTS} attempts`,
+          context: { status: response.status, attempts: APOLLO_MAX_ATTEMPTS },
+        });
+      }
       return response;
     }
     const retryAfter = Number(response.headers.get("retry-after"));
@@ -101,29 +114,24 @@ export type LinkedInProfileEnrichment = {
   school: string | null;
   profileImageUrl: string | null;
   linkedinUrl: string | null;
+  /** Empty when Apollo returned no history — never null, so callers need no guard. */
+  experiences: IncomingExperience[];
 };
-
-function decryptKey(encrypted?: string | null) {
-  if (!encrypted) return null;
-  try {
-    return decrypt(encrypted);
-  } catch {
-    return null;
-  }
-}
 
 export async function getApolloApiKey(userId: string): Promise<string | null> {
   const db = await getDb();
   const settings = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
   });
-  const personal = decryptKey(settings?.apolloApiKeyEncrypted);
+  const personal = decryptOrNull(settings?.apolloApiKeyEncrypted);
   if (personal) return personal;
 
-  // Apollo credits are metered like Resend/Twilio, so Orbit's shared key is
-  // subscription-only. Lifetime users add their own key in Settings.
-  const { canUseHostedSends } = await getEntitlements(userId);
-  if (!canUseHostedSends) return null;
+  // Enrichment has no quota anywhere in the product — unlike sending, which every plan
+  // caps at DAILY_SEND_LIMIT a day — so Orbit's shared Apollo key is the one cost a
+  // one-time payment cannot fund forever. It stays subscription-only; Lifetime and Free
+  // users add their own key in Settings, which the short-circuit above already prefers.
+  const { canUseHostedEnrichment } = await getEntitlements(userId);
+  if (!canUseHostedEnrichment) return null;
   return process.env.APOLLO_API_KEY || null;
 }
 
@@ -165,17 +173,68 @@ function extractSchool(person: ApolloPerson): string | null {
   return null;
 }
 
+/**
+ * Apollo dates are ISO-ish strings ("2019-01-01"), often with a placeholder day and
+ * sometimes only a year. Split into parts rather than parsed into a `Date`: the day is
+ * fabricated, and storing it would claim a precision the source does not have.
+ */
+function splitApolloDate(raw: string | null | undefined): {
+  year: number | null;
+  month: number | null;
+} {
+  const value = raw?.trim();
+  if (!value) return { year: null, month: null };
+  const match = value.match(/^(\d{4})(?:-(\d{2}))?/);
+  if (!match) return { year: null, month: null };
+  const year = Number(match[1]);
+  const month = match[2] ? Number(match[2]) : null;
+  return {
+    year: Number.isFinite(year) ? year : null,
+    month: month !== null && month >= 1 && month <= 12 ? month : null,
+  };
+}
+
+/**
+ * Apollo folds schooling into `employment_history` and marks it with a degree, a major, or
+ * `kind: "education"` — the same test `extractSchool` above already relies on.
+ */
+export function apolloEmploymentToExperiences(person: {
+  employment_history?: ApolloEmployment[] | null;
+}): IncomingExperience[] {
+  const history = person.employment_history ?? [];
+  return history
+    .map((job): IncomingExperience | null => {
+      const organization = job.organization_name?.trim();
+      if (!organization) return null;
+      const isEducation =
+        Boolean(job.degree?.trim()) ||
+        Boolean(job.major?.trim()) ||
+        job.kind?.toLowerCase() === "education";
+      const start = splitApolloDate(job.start_date);
+      const end = splitApolloDate(job.end_date);
+      return {
+        kind: isEducation ? "education" : "role",
+        organization,
+        title: (isEducation ? job.degree?.trim() : job.title?.trim()) || null,
+        fieldOfStudy: isEducation ? job.major?.trim() || null : null,
+        location: null,
+        description: null,
+        startYear: start.year,
+        startMonth: start.month,
+        endYear: end.year,
+        endMonth: end.month,
+        isCurrent: Boolean(job.current) && !isEducation,
+      };
+    })
+    .filter((e): e is IncomingExperience => e !== null);
+}
+
 function normalizeLinkedInProfile(
   person: ApolloPerson
 ): LinkedInProfileEnrichment {
   const photo = person.photo_url?.trim() || null;
   const firstName = person.first_name?.trim() || null;
   const lastName = person.last_name?.trim() || null;
-  const phone =
-    person.phone_numbers?.find((p) => p.sanitized_number || p.raw_number)
-      ?.sanitized_number ||
-    person.phone_numbers?.find((p) => p.raw_number)?.raw_number ||
-    null;
 
   return {
     firstName,
@@ -187,6 +246,7 @@ function normalizeLinkedInProfile(
     school: extractSchool(person),
     profileImageUrl: photo,
     linkedinUrl: person.linkedin_url?.trim() || null,
+    experiences: apolloEmploymentToExperiences(person),
   };
 }
 
@@ -215,14 +275,7 @@ function normalizePerson(person: ApolloPerson): NormalizedProspect | null {
   };
 }
 
-/** Normalize company names for fuzzy match (lowercase, strip punctuation/extra spaces). */
-export function normalizeCompanyKey(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+export { normalizeCompanyKey };
 
 export function companyMatchesOrganizations(
   company: string | null | undefined,

@@ -15,13 +15,17 @@ import {
 import { cn } from "@/lib/utils";
 import {
   RING_LABELS,
-  type ArmGlowData,
   type ClusterLabelData,
   type GraphNodeData,
   type NebulaData,
   type OrbitRingsData,
 } from "@/lib/graph-layout";
-import { mixWithWhite, withAlpha } from "@/lib/school-color";
+import { withAlpha } from "@/lib/school-color";
+import {
+  STAR_HIT_PAD,
+  starVisual,
+  zoomRelief as starZoomRelief,
+} from "@/lib/graph/star-style";
 
 /** Invisible handles pinned to the star center so edges meet the nodes. */
 function StarHandles() {
@@ -47,12 +51,11 @@ function OrbitRingsNodeComponent({
   data,
 }: NodeProps & { data: OrbitRingsData }) {
   const max = Math.max(...data.radii, 1);
-  const flatten = data.flatten ?? 1;
   const labels = [5, 4, 3, 2, 1] as const;
 
-  // Circles in an unflattened frame, squashed by the wrapper — statically
-  // identical to ellipses, but the inner rotation (--galaxy-rot, driven by
-  // the ambient-motion loop) sweeps the dashes along the disk as one body.
+  // Rings are pure background texture — faint dashes that give the sky some
+  // depth. The inner rotation (--galaxy-rot, driven by the ambient-motion
+  // loop) sweeps the dashes along the disk as one body; labels stay put.
   return (
     <div className="pointer-events-none" style={{ width: 1, height: 1 }}>
       <div
@@ -62,7 +65,6 @@ function OrbitRingsNodeComponent({
           top: -max,
           width: max * 2,
           height: max * 2,
-          transform: `scaleY(${flatten})`,
         }}
       >
         <div
@@ -100,7 +102,7 @@ function OrbitRingsNodeComponent({
               className="absolute whitespace-nowrap text-[9px] uppercase tracking-[0.16em] text-white/30"
               style={{
                 left: 6,
-                top: -r * flatten - 6,
+                top: -r - 6,
                 transform: "translateY(-50%)",
               }}
             >
@@ -157,22 +159,42 @@ function SunNodeComponent({
   );
 }
 
-function starSize(score: number) {
-  return 5 + score * 2.2;
+/**
+ * The invisible disc that actually catches the click. It is absolutely positioned, so
+ * it does not change the node's measured box or the layout React Flow derives from it.
+ * See `STAR_HIT_PAD` in `@/lib/graph/star-style` for why it is sized the way it is.
+ */
+function StarHitTarget({ disc }: { disc: number }) {
+  const hit = disc + STAR_HIT_PAD;
+  return (
+    <span
+      aria-hidden
+      className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full"
+      style={{ width: hit, height: hit }}
+    />
+  );
 }
 
 function ContactNodeComponent({
   data,
   selected,
 }: NodeProps & { data: GraphNodeData }) {
-  const score = data.score || 2;
-  const size = starSize(score);
-  const glow = Math.max(4, score * 3);
+  // Rounded so a pan/zoom gesture does not re-render every star on every frame — the
+  // same trick ClusterLabelNodeComponent uses.
+  const zoom = useStore((s) => Math.round(s.transform[2] * 20) / 20);
+  const {
+    isComet,
+    dimmedScatter,
+    size,
+    disc: starDisc,
+    glow,
+    spotlightBoost,
+    alphaScale,
+    fill,
+    core,
+    subtitle,
+  } = starVisual(data, Boolean(selected));
   const bright = selected || Boolean(data.spotlight);
-  const isComet = Boolean(data.comet);
-  const isScatter = data.figureRole === "scatter";
-  // Scatter stars stay faint until hovered/selected/spotlit, then pop to full.
-  const dimmedScatter = isScatter && !selected && !data.spotlight;
 
   if (isComet) {
     const angleDeg = ((data.orbitAngle ?? 0) * 180) / Math.PI;
@@ -180,12 +202,13 @@ function ContactNodeComponent({
     return (
       <div
         className={cn(
-          "constellation-planet-enter group relative",
+          "constellation-planet-enter group relative cursor-pointer",
           data.motionPaused && "z-20"
         )}
         style={{ width: disc, height: disc }}
       >
         <StarHandles />
+        <StarHitTarget disc={disc} />
         <div
           className={cn(
             "constellation-comet relative",
@@ -210,20 +233,16 @@ function ContactNodeComponent({
         </div>
         <div
           className={cn(
-            "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[130px] -translate-x-1/2 text-center transition-opacity duration-200",
-            bright
-              ? "opacity-100"
-              : isScatter
-                ? "opacity-0 group-hover:opacity-100"
-                : "opacity-50 group-hover:opacity-100"
+            "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center transition-opacity duration-200 group-hover:z-30",
+            bright ? "opacity-100" : "opacity-75 group-hover:opacity-100"
           )}
         >
           <p className="truncate text-[11px] font-medium leading-tight text-[#ffb4a0]">
             {data.label}
           </p>
-          {data.company && (
-            <p className="truncate text-[9px] text-[#ff8a70]/70">
-              {data.company}
+          {subtitle && (
+            <p className="truncate text-[9px] leading-tight text-[#ff8a70]/70">
+              {subtitle}
             </p>
           )}
         </div>
@@ -231,67 +250,85 @@ function ContactNodeComponent({
     );
   }
 
-  // Figure stars carry their cluster's brand tint (near-white core, colored
-  // glow); scatter stars stay white and faint until emphasized.
-  const tint = !isScatter ? data.clusterColor : undefined;
-  const fill = tint ?? "#ffffff";
-  const core = tint ? mixWithWhite(tint, 0.75) : "#ffffff";
-  const spotlightBoost = data.spotlight ? 1.55 : 1;
-  const alphaScale = dimmedScatter ? 0.5 : 1;
-  const baseDisc = dimmedScatter ? Math.max(4, size * 0.55) : size;
-  const disc = baseDisc * (data.spotlight ? 1.15 : 1);
+  const disc = starDisc;
+  /**
+   * Applied as a transform on the disc only, so the node's measured box, the label
+   * positions and the non-overlap proof in `scripts/smoke-graph-layout.ts` are all
+   * untouched. See `zoomRelief` in `@/lib/graph/star-style` for the reasoning.
+   */
+  const zoomRelief = starZoomRelief(disc, zoom);
 
   return (
     <div
       className={cn(
-        "constellation-planet-enter group relative",
-        data.motionPaused && "z-20"
+        "constellation-planet-enter group relative cursor-pointer",
+        data.motionPaused && "z-20",
+        data.spotlight && "z-30"
       )}
       style={{ width: disc, height: disc }}
     >
       <StarHandles />
+      <StarHitTarget disc={disc} />
+      {/* Bob wrapper: the sole search hit hovers gently up and down. */}
       <div
         className={cn(
-          "relative h-full w-full rounded-full transition-transform duration-200",
-          selected && "scale-125",
-          data.spotlight && "constellation-spotlight-ring",
-          data.overdue && "ring-1 ring-[#c4a35a]/80"
+          "relative h-full w-full",
+          data.spotlightSolo && "constellation-bob"
         )}
-        style={{
-          background: `radial-gradient(circle at 35% 30%, #fff 0%, ${core} 50%, transparent 78%)`,
-          boxShadow: `0 0 ${glow * spotlightBoost}px ${
-            (glow / 2) * spotlightBoost
-          }px ${withAlpha(fill, 0.55 * spotlightBoost * alphaScale)}, 0 0 ${
-            glow * 2 * spotlightBoost
-          }px ${glow * spotlightBoost}px ${withAlpha(fill, 0.2 * alphaScale)}`,
-        }}
-        title={`${data.label}${data.company ? ` · ${data.company}` : ""}${
-          data.school ? ` · ${data.school}` : ""
-        }`}
-      />
-      <div
-        className={cn(
-          "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[130px] -translate-x-1/2 text-center transition-opacity duration-200",
-          bright
-            ? "opacity-100"
-            : dimmedScatter
-              ? "opacity-0 group-hover:opacity-100"
-              : "opacity-40 group-hover:opacity-100"
-        )}
+        style={
+          zoomRelief > 1
+            ? { transform: `scale(${zoomRelief.toFixed(3)})` }
+            : undefined
+        }
       >
-        <p className="truncate text-[11px] font-medium leading-tight text-white/95">
-          {data.label}
-        </p>
-        {data.company && (
+        <div
+          className={cn(
+            "relative h-full w-full rounded-full transition-transform duration-200",
+            selected && "scale-125",
+            data.spotlight && "constellation-spotlight-ring",
+            data.overdue && "ring-1 ring-[#c4a35a]/80"
+          )}
+          style={{
+            background: `radial-gradient(circle at 35% 30%, #fff 0%, ${core} 50%, transparent 78%)`,
+            boxShadow: `0 0 ${glow * spotlightBoost}px ${
+              (glow / 2) * spotlightBoost
+            }px ${withAlpha(fill, 0.32 * spotlightBoost * alphaScale)}, 0 0 ${
+              glow * 2 * spotlightBoost
+            }px ${glow * spotlightBoost}px ${withAlpha(fill, 0.1 * alphaScale)}`,
+          }}
+          title={`${data.label}${data.company ? ` · ${data.company}` : ""}${
+            data.school ? ` · ${data.school}` : ""
+          }`}
+        />
+        <div
+          className={cn(
+            "pointer-events-none absolute left-1/2 top-full z-10 mt-2 w-max max-w-[104px] -translate-x-1/2 text-center transition-opacity duration-200 group-hover:z-30",
+            bright
+              ? "opacity-100"
+              : dimmedScatter
+                ? "opacity-65 group-hover:opacity-100"
+                : "opacity-85 group-hover:opacity-100"
+          )}
+        >
           <p
             className={cn(
-              "truncate text-[9px] text-white/45 transition-opacity duration-200",
-              bright ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+              "truncate text-[11px] font-medium leading-tight text-white/95",
+              data.spotlight && "font-semibold text-white"
             )}
           >
-            {data.company}
+            {data.label}
           </p>
-        )}
+          {subtitle && (
+            <p
+              className={cn(
+                "truncate text-[9px] leading-tight text-white/45",
+                data.spotlight && "text-white/70"
+              )}
+            >
+              {subtitle}
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -413,104 +450,6 @@ function NebulaNodeComponent({ data }: NodeProps & { data: NebulaData }) {
             filter: `blur(${(r * 0.07).toFixed(0)}px)`,
           }}
         />
-      </div>
-    </div>
-  );
-}
-
-/** Fade the dust lanes out at the galactic core (the sun owns it) and rim. */
-const ARM_GLOW_MASK =
-  "radial-gradient(circle, transparent 0%, transparent 5%, rgba(0,0,0,0.85) 16%, rgba(0,0,0,1) 34%, rgba(0,0,0,0.75) 68%, transparent 96%)";
-
-/**
- * Static spiral-arm glow: soft blurred bands plus faint dust specks tracing
- * the same curves the cluster slots follow. Pure DOM/CSS — the only thing
- * that ever animates is the wrapper's transform (rotation + breathe).
- */
-function ArmGlowNodeComponent({ data }: NodeProps & { data: ArmGlowData }) {
-  const { arms, flatten } = data;
-
-  const { size, paths, dust } = useMemo(() => {
-    let extent = 1;
-    for (const arm of arms) {
-      for (const p of arm) {
-        extent = Math.max(extent, Math.abs(p.x), Math.abs(p.y));
-      }
-    }
-    // Head-room for the widest stroke plus the blur radius
-    const size = Math.ceil(extent * 2 + 400);
-    const half = size / 2;
-
-    const paths = arms.map((arm) =>
-      arm
-        .map(
-          (p, i) =>
-            `${i === 0 ? "M" : "L"}${(p.x + half).toFixed(1)},${(p.y + half).toFixed(1)}`
-        )
-        .join(" ")
-    );
-
-    const dust: Array<{ x: number; y: number; r: number; o: number }> = [];
-    arms.forEach((arm, ai) => {
-      for (let i = 0; i < 25; i++) {
-        const t = (i / 24) * (arm.length - 1);
-        const lo = Math.floor(t);
-        const hi = Math.min(arm.length - 1, lo + 1);
-        const frac = t - lo;
-        const px = arm[lo].x + (arm[hi].x - arm[lo].x) * frac;
-        const py = arm[lo].y + (arm[hi].y - arm[lo].y) * frac;
-        const seed = `arm${ai}-dust${i}`;
-        dust.push({
-          x: px + half + (nebulaHash(seed, 5) - 0.5) * 130,
-          y: py + half + (nebulaHash(seed, 9) - 0.5) * 130,
-          r: 1 + nebulaHash(seed, 13) * 2.4,
-          o: 0.08 + nebulaHash(seed, 17) * 0.12,
-        });
-      }
-    });
-
-    return { size, paths, dust };
-  }, [arms]);
-
-  const half = size / 2;
-
-  return (
-    <div className="pointer-events-none" style={{ width: 1, height: 1 }}>
-      <div
-        className="absolute"
-        style={{
-          left: -half,
-          top: -half,
-          width: size,
-          height: size,
-          transform: `scaleY(${flatten})`,
-        }}
-      >
-        <div
-          className="constellation-arm-glow absolute inset-0"
-          style={{
-            transform: "rotate(var(--galaxy-rot, 0rad))",
-            maskImage: ARM_GLOW_MASK,
-            WebkitMaskImage: ARM_GLOW_MASK,
-          }}
-        >
-          <svg width={size} height={size} className="overflow-visible" aria-hidden>
-            <g style={{ filter: "blur(28px)" }} strokeLinecap="round" fill="none">
-              {paths.map((d, i) => (
-                <g key={i}>
-                  <path d={d} stroke="rgba(190,205,235,0.05)" strokeWidth={170} />
-                  <path d={d} stroke="rgba(190,205,235,0.065)" strokeWidth={90} />
-                  <path d={d} stroke="rgba(190,205,235,0.08)" strokeWidth={40} />
-                </g>
-              ))}
-            </g>
-            <g fill="#cfdcf4">
-              {dust.map((p, i) => (
-                <circle key={i} cx={p.x} cy={p.y} r={p.r} opacity={p.o} />
-              ))}
-            </g>
-          </svg>
-        </div>
       </div>
     </div>
   );
@@ -638,5 +577,4 @@ export const SunNode = memo(SunNodeComponent);
 export const ContactNode = memo(ContactNodeComponent);
 export const ClusterLabelNode = memo(ClusterLabelNodeComponent);
 export const NebulaNode = memo(NebulaNodeComponent);
-export const ArmGlowNode = memo(ArmGlowNodeComponent);
 export const LabeledEdge = memo(LabeledEdgeComponent);

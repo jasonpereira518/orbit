@@ -280,24 +280,24 @@ export async function accountsMissingProviderKey(): Promise<
   Array<{ userId: string; email: string | null; provider: string }>
 > {
   const db = await getDb();
-  const rows = await db
+  // Presence only. The encrypted blobs are never selected into an admin surface.
+  const hasKey = sql`
+    CASE coalesce(${userSettings.aiProvider}, 'gemini')
+      WHEN 'openai' THEN ${userSettings.openaiApiKeyEncrypted} IS NOT NULL
+      WHEN 'anthropic' THEN ${userSettings.anthropicApiKeyEncrypted} IS NOT NULL
+      ELSE ${userSettings.geminiApiKeyEncrypted} IS NOT NULL
+    END`;
+
+  // Filtered in SQL rather than pulled into JS and filtered there — this used to select
+  // every account on every `/admin/health` load just to throw most rows away.
+  return db
     .select({
       userId: userSettings.userId,
       email: userSettings.email,
       provider: sql<string>`coalesce(${userSettings.aiProvider}, 'gemini')`,
-      // Presence only. The encrypted blobs are never selected into an admin surface.
-      hasKey: sql<boolean>`
-        CASE coalesce(${userSettings.aiProvider}, 'gemini')
-          WHEN 'openai' THEN ${userSettings.openaiApiKeyEncrypted} IS NOT NULL
-          WHEN 'anthropic' THEN ${userSettings.anthropicApiKeyEncrypted} IS NOT NULL
-          ELSE ${userSettings.geminiApiKeyEncrypted} IS NOT NULL
-        END`,
     })
-    .from(userSettings);
-
-  return rows
-    .filter((r) => !r.hasKey)
-    .map((r) => ({ userId: r.userId, email: r.email, provider: r.provider }));
+    .from(userSettings)
+    .where(sql`NOT (${hasKey})`);
 }
 
 export async function getAdminHealth(

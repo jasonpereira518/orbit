@@ -8,6 +8,23 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
+
+/**
+ * Sized per-instance rather than in `clerkAppearance`: the same object dresses
+ * the UserButton in the sidebar and mobile nav, where the avatar is meant to
+ * stay small. Only here does it stand in as the profile portrait.
+ */
+const profileAvatarAppearance = {
+  ...clerkAppearance,
+  elements: {
+    ...clerkAppearance.elements,
+    userButtonAvatarBox: "size-12",
+    userButtonTrigger:
+      "rounded-full ring-1 ring-border/60 focus-visible:ring-2 focus-visible:ring-ring",
+  },
+};
 
 type ProfileData = {
   id: string;
@@ -38,7 +55,7 @@ export function ProfileSettings({
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div>
-        <h2 className="text-lg font-medium text-primary">Profile and account</h2>
+        <h2 className="text-lg font-medium text-ink">Profile and account</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Your identity and sign-in for Orbit.
         </p>
@@ -46,7 +63,12 @@ export function ProfileSettings({
 
       {profile ? (
         <div className="flex flex-wrap items-center gap-4">
-          {profile.imageUrl ? (
+          {/* One face, and it is also the account menu. Clerk's UserButton
+              renders the user's own picture, so standing it beside a second
+              image of the same picture put the avatar on screen twice. */}
+          {clerkEnabled ? (
+            <UserButton appearance={profileAvatarAppearance} showName={false} />
+          ) : profile.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={profile.imageUrl}
@@ -54,38 +76,43 @@ export function ProfileSettings({
               className="h-12 w-12 rounded-full border border-border/60 object-cover"
             />
           ) : (
-            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border/60 bg-muted text-sm font-medium text-primary">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border/60 bg-muted text-sm font-medium text-ink">
               {profile.name.slice(0, 1).toUpperCase()}
             </div>
           )}
           <div className="min-w-0 flex-1">
-            <p className="font-medium text-primary">{profile.name}</p>
+            <p className="font-medium text-ink">{profile.name}</p>
             {profile.email && (
               <p className="text-sm text-muted-foreground">{profile.email}</p>
             )}
           </div>
+          {clerkEnabled && (
+            <SignOutButton>
+              <Button type="button" variant="outline" size="sm">
+                Sign out
+              </Button>
+            </SignOutButton>
+          )}
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground">
-          {clerkEnabled
-            ? "Sign in to manage your profile."
-            : "Running in local demo mode without Clerk."}
-        </p>
-      )}
-
-      {clerkEnabled && (
-        <div className="flex flex-wrap items-center gap-2">
-          <UserButton appearance={clerkAppearance} showName={false} />
-          <SignOutButton>
-            <Button type="button" variant="outline" size="sm">
-              Sign out
-            </Button>
-          </SignOutButton>
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            {clerkEnabled
+              ? "Sign in to manage your profile."
+              : "Running in local demo mode without Clerk."}
+          </p>
+          {clerkEnabled && (
+            <SignOutButton>
+              <Button type="button" variant="outline" size="sm">
+                Sign out
+              </Button>
+            </SignOutButton>
+          )}
         </div>
       )}
 
       <div className="border-t border-border/60 pt-4">
-        <h3 className="text-sm font-medium text-primary">Your socials</h3>
+        <h3 className="text-sm font-medium text-ink">Your socials</h3>
         <p className="mt-1 text-xs text-muted-foreground">
           Shown when you click the sun in Constellation.
         </p>
@@ -124,7 +151,7 @@ export function ProfileSettings({
                 toast.success("Social links saved");
               } catch (err) {
                 toast.error(
-                  err instanceof Error ? err.message : "Could not save"
+                  friendlyError(err, TOAST_COPY.saveFailed)
                 );
               }
             })

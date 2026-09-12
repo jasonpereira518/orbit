@@ -20,7 +20,7 @@ export function WelcomePreview({ reducedMotion }: PreviewProps) {
       >
         <span
           aria-hidden
-          className="pointer-events-none absolute inset-[-28%] rounded-full bg-[#599de7]/40 blur-2xl"
+          className="pointer-events-none absolute inset-[-28%] rounded-full bg-brand-pro/40 blur-2xl"
         />
         <OrbitLogo size="xl" className="relative" />
       </motion.div>
@@ -30,7 +30,7 @@ export function WelcomePreview({ reducedMotion }: PreviewProps) {
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: reducedMotion ? 0 : 0.2 }}
       >
-        <p className="font-[family-name:var(--font-display)] text-2xl text-primary">
+        <p className="font-[family-name:var(--font-display)] text-2xl text-ink">
           Orbit
         </p>
         <p className="mt-1 max-w-xs text-sm text-muted-foreground">

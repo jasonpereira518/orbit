@@ -27,10 +27,18 @@
   --color-import-connections: var(--import-connections);
   --color-import-messages: var(--import-messages);
   --color-import-calendar: var(--import-calendar);
+  --color-import-scan: var(--import-scan);
+  --color-interaction-together: var(--interaction-together);
+  --color-interaction-live: var(--interaction-live);
+  --color-interaction-written: var(--interaction-written);
+  --color-interaction-yours: var(--interaction-yours);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -44,11 +52,17 @@
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
   --color-landing-accent: #f2c14e;
+  /* Orbit Pro's blue, mirroring how gold is handled: `--color-tier-pro` follows
+     the theme (for app surfaces that must stay legible in light mode) while
+     `--color-brand-pro` is a fixed value for the always-dark canvases — pricing
+     cards and the logo ring — that never see the light palette. */
   --color-brand-pro: #599de7;
   --color-landing-button-surface: #eef7f4;
   --color-landing-button-label: #0f2e28;
   --color-tier-lifetime: var(--tier-lifetime);
   --color-tier-pro: var(--tier-pro);
+  --color-ink: var(--ink);
+  --color-admin-nav-hover: var(--admin-nav-hover);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -90,6 +104,25 @@
   --accent: #e7f0ee;
   --accent-foreground: #0f3d3e;
   --destructive: oklch(0.577 0.245 27.325);
+  /* ── Status semantics ──
+     `--destructive` above already owns error, so this names only the three it
+     does not cover. Not new hues: these are the emerald/amber the app already
+     reaches for ad hoc at ~30 call sites (`closeness-tier-badge`, `ai-key-notice`,
+     `account-alerts`), plus the blue that neither `--primary` (near-black teal in
+     light, which is why `--ink` was split out) nor `--tier-pro` (claimed by
+     pricing) can supply.
+
+     Not `--chart-*` or `--interaction-*` for the reason argued below: a category
+     token that means two things is the mistake `--tier-lifetime` exists to avoid.
+
+     Every value clears 4.5:1 on `--popover`, so these can carry text, not just an
+     icon glyph. */
+  --success: #047857; /* emerald-700 — 5.0:1 on #ffffff */
+  --warning: #b45309; /* amber-700   — 4.8:1 on #ffffff */
+  --info: #1d4ed8; /* blue-700    — 7.0:1 on #ffffff */
+  /* The toast icon chip is its accent at a wash. Light surfaces need less of it
+     than dark ones, where the accent is pale and 12% vanishes into #212c42. */
+  --toast-chip-strength: 12%;
   --border: #e4e7e1;
   --input: #e4e7e1;
   --ring: #0f3d3e;
@@ -101,8 +134,43 @@
   --import-connections: #5b5fc7;
   --import-messages: #c2694a;
   --import-calendar: #b8873a;
+  --import-scan: #3f8a63;
+  /* Timeline interaction families. Four groups over the ten interaction types, ordered by
+     how much of the person was actually present: together (met them) -> live (spoke to them)
+     -> written (exchanged text) -> yours (your own record, nothing confirmed). See
+     `src/lib/interaction-types.ts`.
+
+     Not `--primary` (an accent that flips hue between themes), `--ink` (strong text),
+     `--chart-*` (data series, also hue-flipping) or `--import-*` (already claimed): a category
+     token that means two things is the mistake `--tier-lifetime` below exists to avoid.
+
+     Lightness is staggered monotonically with presence -- L* 36.0 / 41.0 / 45.1 / 48.2 here,
+     84.2 / 75.7 / 69.6 / 64.3 in dark. That stagger is what keeps `together` (gold ~75deg) and
+     `live` (rose ~350deg) apart under deuteranopia, where the two hues converge. Every value
+     clears 4.5:1 on its card, so these can carry text as well as icons. */
+  --interaction-together: #6d5009;
+  --interaction-live: #a8375f;
+  --interaction-written: #4a63c9;
+  --interaction-yours: #6b7380;
+  /* Orbit Pro reads as `--primary` (the product's own color, per the pricing
+     tiers). Orbit Lifetime gets this dedicated gold so paywalled surfaces can
+     name which tier(s) unlock a feature without borrowing a hue that already
+     means something else (chart series, calendar import, etc). Dark enough
+     for 4.5:1 text contrast on a light card, not just icon-level contrast. */
   --tier-lifetime: #8a6423;
   --tier-pro: #2f68b0;
+  /* Emphasised content — names, titles, section headings. This is the value
+     `--primary` has always had in light mode, which is why ~90 call sites reach
+     for `text-primary` to mean "strong text". It only worked by coincidence:
+     light `--primary` is near-black teal, so the tint read as emphasis. In dark,
+     `--primary` is a bright accent, so the same class turned every heading and
+     every contact name into saturated blue. Splitting the two meanings apart
+     lets `--primary` be an accent in both themes without dragging body content
+     with it. Light is unchanged from before the split. */
+  --ink: #0f3d3e;
+  /* Admin nav hover wash. Carries its own alpha rather than being tinted at the call
+     site, because the hover span uses `opacity` for its fade-in — the two would fight. */
+  --admin-nav-hover: rgb(15 61 62 / 0.10);
   --radius: 0.625rem;
   --sidebar: #f7f8f6;
   --sidebar-foreground: #1a1c1a;
@@ -129,43 +197,176 @@
 }
 
 .dark {
-  --background: #272727;
-  --foreground: #f0f0f0;
-  --card: #303030;
-  --card-foreground: #f0f0f0;
+  /* ── Night sky ──
+   * The app chrome paints the same space the Constellation canvas and the
+   * landing page already live in (see lib/sky-palette.ts), rather than the
+   * neutral gray it used to be. Every neutral carries hue 220-222°, close
+   * enough to the sky's 227° to read as one continuous product.
+   *
+   * The surface ladder below is spaced by PERCEPTUAL lightness (L*), not by
+   * WCAG contrast ratio: the ratio formula's +0.05 flare term compresses hard
+   * near black, so it reports two clearly-distinct dark surfaces as ~1.1:1 and
+   * is the wrong tool down here. Every adjacent rung is >= 3.2 L* apart and the
+   * ladder is monotonic — `--muted` used to sit ABOVE `--card`, which is why
+   * recessed wells read as raised.
+   *
+   *   sidebar     #080d18   L*  3.7
+   *   background  #0e1524   L*  6.8
+   *   muted       #151d2f   L* 10.9
+   *   card        #1a2438   L* 14.2
+   *   popover     #212c42   L* 18.0
+   *   border      #333f5a   L* 26.7
+   */
+  --background: #0e1524;
+  --foreground: #e4ebf6;
+  --card: #1a2438;
+  --card-foreground: #e4ebf6;
+  --popover: #212c42;
+  --popover-foreground: #e4ebf6;
+  --primary: #7cc3e2;
+  --primary-foreground: #04121b;
+  --secondary: #212c42;
+  --secondary-foreground: #e4ebf6;
+  --muted: #151d2f;
+  --muted-foreground: #96a8c4;
+  --accent: #20374f;
+  --accent-foreground: #aeddf0;
+  --destructive: #ff6b6b;
+  /* Inverted for the dark ladder: `--popover` is #212c42 (L* 18), so the accents
+     go pale — the same 300-weights the app already pairs with the light 700s. */
+  --success: #6ee7b7; /* emerald-300 — 8.9:1 on #212c42 */
+  --warning: #fcd34d; /* amber-300   — 10.3:1 on #212c42 */
+  --info: #93c5fd; /* blue-300    — 8.1:1 on #212c42 */
+  --toast-chip-strength: 18%;
+  --border: #333f5a;
+  /* Light enough to clear 3:1 against `--card` — this is a control boundary
+     (WCAG 1.4.11), not decoration. The old #3d3d3d managed 1.22:1, so text
+     fields had effectively no edge. */
+  --input: #626f90;
+  --ring: #7cc3e2;
+  /* Five distinct HUES with staggered lightness, so series stay separable in
+     grayscale and under red-green colour blindness. The old dark ramp was five
+     lightnesses of one hue (211-212°) — a categorical scale that silently
+     rendered as a sequential one. Hue order tracks light mode's
+     (cool -> green -> blue -> gold -> rust) so a series keeps its identity
+     when the theme flips. */
+  --chart-1: #3aa8c4;
+  --chart-2: #63d69b;
+  --chart-3: #7d8ee8;
+  --chart-4: #f7d071;
+  --chart-5: #f08a63;
+  --import-connections: #9b9ff5;
+  --import-messages: #f0956f;
+  --import-calendar: #e2b45f;
+  --import-scan: #6fd39d;
+  /* Same ladder inverted: brighter means more present on a dark card. */
+  --interaction-together: #f5cd7a;
+  --interaction-live: #f5a3c0;
+  --interaction-written: #8aa9f2;
+  --interaction-yours: #8f9db2;
+  /* Brighter on a dark card so it keeps 4.5:1 text contrast (#8a6423 would
+     read as near-black here). */
   --tier-lifetime: #f2c14e;
   --tier-pro: #599de7;
-  --popover: #303030;
-  --popover-foreground: #f0f0f0;
-  --primary: #599de7;
-  --primary-foreground: #0f1720;
-  --secondary: #353535;
-  --secondary-foreground: #f0f0f0;
-  --muted: #333333;
-  --muted-foreground: #a8a8a8;
-  --accent: #2d3a48;
-  --accent-foreground: #599de7;
-  --destructive: oklch(0.65 0.2 25);
-  --border: #3d3d3d;
-  --input: #3d3d3d;
-  --ring: #599de7;
-  --chart-1: #599de7;
-  --chart-2: #7bb0ec;
-  --chart-3: #9dc4f1;
-  --chart-4: #3d7fc7;
-  --chart-5: #b8d4f5;
-  --import-connections: #9b9ff5;
-  --import-messages: #e08a68;
-  --import-calendar: #d9a855;
-  --sidebar: #272727;
-  --sidebar-foreground: #f0f0f0;
-  --sidebar-primary: #599de7;
-  --sidebar-primary-foreground: #0f1720;
-  --sidebar-accent: #353535;
-  --sidebar-accent-foreground: #599de7;
-  --sidebar-border: #3d3d3d;
-  --sidebar-ring: #599de7;
+  --ink: #e4ebf6;
+  --admin-nav-hover: rgb(124 195 226 / 0.16);
+  /* Shadows on a dark ground want to be deeper than the surface, not neutral
+     black — a pure-black shadow over navy reads as a dead hole. */
+  --shadow-color: 218deg 60% 3%;
+  --sidebar: #080d18;
+  --sidebar-foreground: #e4ebf6;
+  --sidebar-primary: #7cc3e2;
+  --sidebar-primary-foreground: #04121b;
+  --sidebar-accent: #1a2438;
+  --sidebar-accent-foreground: #aeddf0;
+  --sidebar-border: #333f5a;
+  --sidebar-ring: #7cc3e2;
   color-scheme: dark;
+}
+
+/* ── The bottom-right corner ──
+ * One anchor for every floating widget that lives there: the job progress list
+ * (`jobs/global-job-progress-bar.tsx`) and the toast stack (`ui/sonner.tsx`).
+ * They used to hard-code their own offsets — 20px vs sonner's 24px default —
+ * so a toast painted straight over a running job card.
+ *
+ * The mobile baseline clears the fixed nav pill: `layout/mobile-nav.tsx` is
+ * `bottom-0` with `pb-[calc(0.5rem+env(safe-area-inset-bottom))]` around a
+ * ~55px pill, so ~4.25rem is the occupied band.
+ *
+ * The breakpoint is 48rem (Tailwind's `md`, where `md:hidden` takes the nav
+ * away) and NOT sonner's own 600px mobile breakpoint — otherwise toasts in the
+ * 600-768px band would sit on a nav that is still there. That is why the
+ * Toaster hands `offset` and `mobileOffset` the same variable.
+ *
+ * A SECOND `:root` on purpose, so these sit with the media query that overrides
+ * them rather than in the middle of the colour palette. Be aware that
+ * `extension/scripts/tokens.mjs` mirrors only the FIRST `:root` block into the
+ * extension's tokens.css — correct here, since a 400px panel has no
+ * bottom-right widget stack, but it means anything the extension DOES need has
+ * to go in the block above, and `check:tokens` will not tell you otherwise. */
+:root {
+  --orbit-corner-bottom: calc(
+    4.25rem + env(safe-area-inset-bottom) + var(--orbit-corner-lift)
+  );
+  --orbit-corner-right: 0.75rem;
+
+  /* Raised by pages that put a primary action in this corner, so a toast can
+     never cover it — see `lib/corner-clearance.ts`. Set on <html>, because the
+     toaster is portalled to <body> and a wrapper override would never reach it. */
+  --orbit-corner-lift: 0px;
+
+  /* Height the job widget currently occupies, published by the widget itself
+     via ResizeObserver, plus the gap a toast should keep off its top edge.
+     0px whenever no job is running — which is almost always — so toasts do not
+     float above a reserved-but-empty band. */
+  --orbit-job-stack-height: 0px;
+
+  /* Toasts stack ABOVE the job widget, never on it. */
+  --orbit-toast-bottom: calc(
+    var(--orbit-corner-bottom) + var(--orbit-job-stack-height)
+  );
+}
+
+@media (min-width: 48rem) {
+  :root {
+    --orbit-corner-bottom: calc(1.25rem + var(--orbit-corner-lift));
+    --orbit-corner-right: 1.25rem;
+  }
+}
+
+
+/* YC-mode admin console. Same scoping approach as `.dark`: applied on the
+   AdminShell wrapper only when the operator has toggled YC mode on
+   (`src/components/admin/admin-shell.tsx`), so it retints just that
+   subtree's accent/primary — never `--ink`, which stays untouched, so
+   headings and body text are unaffected (see the split documented in
+   `:root` above). Values mirror the existing token relationship exactly
+   (primary = strong hue, accent = pale tint of the same hue,
+   accent-foreground = primary) just re-hued to YC's signature orange
+   instead of Orbit's teal/blue. */
+.yc-theme {
+  --primary: #f26625;
+  --primary-foreground: #fff3e9;
+  --accent: #ffeede;
+  --accent-foreground: #f26625;
+  /* Deliberately NOT `--primary` at a low alpha. #f26625 is a deep, heavily saturated
+     orange; behind 13px nav labels any alpha of it reads burnt rather than light. This is
+     that same hue mixed toward white, so it stays unmistakably YC orange while going pale,
+     and carries a higher alpha to keep the hover as *present* as the saturated version was.
+     `--accent` is not reusable here: it is a pale peach in light mode but a dark brown in
+     dark mode, so it would invert the intent on one of the two themes. */
+  --admin-nav-hover: rgb(255 178 127 / 0.45);
+}
+
+.dark .yc-theme {
+  --primary: #ff9152;
+  --primary-foreground: #2a1000;
+  --accent: #47280f;
+  --accent-foreground: #ff9152;
+  /* Dark mode needs no lightening — `--primary` is already a pale-bright orange here, so
+     this is that value at the alpha the wash wants. */
+  --admin-nav-hover: rgb(255 145 82 / 0.20);
 }
 
 @layer base {
@@ -187,16 +388,21 @@
       );
     background-attachment: fixed;
   }
+  /* Ambient nebulae, at a fraction of the landing page's strength. Hues are
+   * lifted straight from NEBULAE in lib/sky-palette.ts so the app chrome is
+   * lit by the same gas clouds as the starfield. The old second glow here was
+   * rgba(53,53,53,.55) — gray on gray, i.e. an invisible layer that still cost
+   * a paint. */
   .dark body {
     background-image:
       radial-gradient(
         ellipse 80% 50% at 100% -20%,
-        rgba(89, 157, 231, 0.14),
+        rgba(104, 96, 214, 0.16),
         transparent
       ),
       radial-gradient(
         ellipse 60% 40% at 0% 100%,
-        rgba(53, 53, 53, 0.55),
+        rgba(46, 122, 158, 0.14),
         transparent
       );
   }
@@ -222,7 +428,6 @@
     0 8px 32px -8px rgba(26, 28, 26, 0.18),
     0 2px 8px -2px rgba(26, 28, 26, 0.08);
   backdrop-filter: blur(28px) saturate(1.65);
-  -webkit-backdrop-filter: blur(28px) saturate(1.65);
   /* backdrop-filter is intentionally NOT transitioned — animating a re-blur
    * of the largest persistent surface is one of the most expensive effects
    * a browser can run. */
@@ -261,41 +466,59 @@
   z-index: 1;
 }
 
-.liquid-glass:hover {
-  background: linear-gradient(
-    165deg,
-    rgba(255, 255, 255, 0.58) 0%,
-    rgba(255, 255, 255, 0.32) 42%,
-    rgba(247, 248, 246, 0.28) 100%
-  );
-  border-color: rgba(255, 255, 255, 0.72);
-  box-shadow:
-    0 1px 0 0 rgba(255, 255, 255, 0.8) inset,
-    0 -1px 0 0 rgba(15, 61, 62, 0.03) inset,
-    0 12px 40px -8px rgba(26, 28, 26, 0.22),
-    0 4px 14px -2px rgba(26, 28, 26, 0.1);
-}
-
-.liquid-glass:hover::before {
-  background:
-    radial-gradient(
-      130% 90% at 10% -15%,
-      rgba(255, 255, 255, 0.88) 0%,
-      transparent 58%
-    ),
-    radial-gradient(
-      95% 65% at 100% 100%,
-      rgba(15, 61, 62, 0.05) 0%,
-      transparent 50%
+/* The five rules below are gated on hover capability.
+ *
+ * Tailwind's `hover:` variant compiles inside `@media (hover: hover)` on its own, but
+ * these are hand-written and were not — so on a touch device the lightening fired on
+ * tap and then STUCK, because a touch "hover" is never exited. `.liquid-glass` is what
+ * the mobile bottom nav is built from, which is exactly a touch-first surface.
+ *
+ * A media query does not change specificity, so the `.liquid-glass-panel` neutralisers
+ * further down still outrank these, as their own comments describe. Those neutralisers
+ * are deliberately NOT gated: they cancel the lightening, so on touch they are a
+ * harmless no-op rather than something that needs suppressing. */
+@media (hover: hover) {
+  .liquid-glass:hover {
+    background: linear-gradient(
+      165deg,
+      rgba(255, 255, 255, 0.58) 0%,
+      rgba(255, 255, 255, 0.32) 42%,
+      rgba(247, 248, 246, 0.28) 100%
     );
+    border-color: rgba(255, 255, 255, 0.72);
+    box-shadow:
+      0 1px 0 0 rgba(255, 255, 255, 0.8) inset,
+      0 -1px 0 0 rgba(15, 61, 62, 0.03) inset,
+      0 12px 40px -8px rgba(26, 28, 26, 0.22),
+      0 4px 14px -2px rgba(26, 28, 26, 0.1);
+  }
 }
 
+@media (hover: hover) {
+  .liquid-glass:hover::before {
+    background:
+      radial-gradient(
+        130% 90% at 10% -15%,
+        rgba(255, 255, 255, 0.88) 0%,
+        transparent 58%
+      ),
+      radial-gradient(
+        95% 65% at 100% 100%,
+        rgba(15, 61, 62, 0.05) 0%,
+        transparent 50%
+      );
+  }
+}
+
+/* Built on the navy surface values rather than the old rgba(55,55,55): the
+ * base `saturate(1.65)` needs actual chroma behind it to do anything, and over
+ * flat gray it was a no-op. */
 .dark .liquid-glass {
   background: linear-gradient(
     165deg,
-    rgba(55, 55, 55, 0.72) 0%,
-    rgba(39, 39, 39, 0.55) 45%,
-    rgba(32, 32, 32, 0.48) 100%
+    rgba(43, 57, 86, 0.72) 0%,
+    rgba(26, 36, 56, 0.55) 45%,
+    rgba(14, 21, 36, 0.48) 100%
   );
   border-color: rgba(255, 255, 255, 0.12);
   box-shadow:
@@ -314,38 +537,42 @@
     ),
     radial-gradient(
       90% 60% at 100% 100%,
-      rgba(89, 157, 231, 0.1) 0%,
+      rgba(124, 195, 226, 0.12) 0%,
       transparent 50%
     );
 }
 
-.dark .liquid-glass:hover {
-  background: linear-gradient(
-    165deg,
-    rgba(60, 60, 60, 0.55) 0%,
-    rgba(39, 39, 39, 0.4) 45%,
-    rgba(28, 28, 28, 0.36) 100%
-  );
-  border-color: rgba(255, 255, 255, 0.18);
-  box-shadow:
-    0 1px 0 0 rgba(255, 255, 255, 0.2) inset,
-    0 -1px 0 0 rgba(0, 0, 0, 0.2) inset,
-    0 16px 48px -10px rgba(0, 0, 0, 0.6),
-    0 4px 14px -2px rgba(0, 0, 0, 0.4);
+@media (hover: hover) {
+  .dark .liquid-glass:hover {
+    background: linear-gradient(
+      165deg,
+      rgba(52, 68, 102, 0.55) 0%,
+      rgba(33, 44, 66, 0.4) 45%,
+      rgba(18, 27, 45, 0.36) 100%
+    );
+    border-color: rgba(255, 255, 255, 0.18);
+    box-shadow:
+      0 1px 0 0 rgba(255, 255, 255, 0.2) inset,
+      0 -1px 0 0 rgba(0, 0, 0, 0.2) inset,
+      0 16px 48px -10px rgba(0, 0, 0, 0.6),
+      0 4px 14px -2px rgba(0, 0, 0, 0.4);
+  }
 }
 
-.dark .liquid-glass:hover::before {
-  background:
-    radial-gradient(
-      130% 90% at 10% -15%,
-      rgba(255, 255, 255, 0.18) 0%,
-      transparent 58%
-    ),
-    radial-gradient(
-      95% 65% at 100% 100%,
-      rgba(89, 157, 231, 0.14) 0%,
-      transparent 50%
-    );
+@media (hover: hover) {
+  .dark .liquid-glass:hover::before {
+    background:
+      radial-gradient(
+        130% 90% at 10% -15%,
+        rgba(255, 255, 255, 0.18) 0%,
+        transparent 58%
+      ),
+      radial-gradient(
+        95% 65% at 100% 100%,
+        rgba(124, 195, 226, 0.16) 0%,
+        transparent 50%
+      );
+  }
 }
 
 @supports not (
@@ -355,8 +582,352 @@
     background: color-mix(in oklab, var(--sidebar) 92%, transparent);
   }
 
-  .liquid-glass:hover {
-    background: color-mix(in oklab, var(--sidebar) 86%, transparent);
+  @media (hover: hover) {
+    .liquid-glass:hover {
+      background: color-mix(in oklab, var(--sidebar) 86%, transparent);
+    }
+  }
+}
+
+/* Pill-shaped, absolutely-positioned variant of .liquid-glass, for
+ * floating surfaces that detach from screen edges (mobile bottom nav).
+ * Same sheen/blur/border as .liquid-glass, but with a lighter fill than
+ * the base panel — leans toward see-through glass rather than a fully
+ * frosted tinted panel, without going fully transparent — and no outer
+ * drop-shadow: against a light fill the blurred shadow read as a
+ * dark haze floating under the bar rather than a grounded shadow, so only
+ * the hairline inset highlights (top sheen + bottom edge) are kept for
+ * definition. Combined selector (not a bare class) so specificity (0,2,0)
+ * reliably beats both .liquid-glass (0,1,0) and .dark .liquid-glass
+ * (0,2,0, but declared earlier so loses the source-order tiebreak),
+ * independent of Tailwind's layered utilities. */
+.liquid-glass.liquid-glass-pill {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: linear-gradient(
+    165deg,
+    rgba(255, 255, 255, 0.5) 0%,
+    rgba(255, 255, 255, 0.32) 42%,
+    rgba(247, 248, 246, 0.28) 100%
+  );
+  border-color: rgba(255, 255, 255, 0.45);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.65) inset,
+    0 -1px 0 0 rgba(15, 61, 62, 0.04) inset;
+}
+
+.liquid-glass.liquid-glass-pill::before {
+  opacity: 0.85;
+}
+
+.dark .liquid-glass.liquid-glass-pill {
+  background: linear-gradient(
+    165deg,
+    rgba(43, 57, 86, 0.5) 0%,
+    rgba(26, 36, 56, 0.38) 45%,
+    rgba(14, 21, 36, 0.32) 100%
+  );
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.14) inset,
+    0 -1px 0 0 rgba(0, 0, 0, 0.25) inset;
+}
+
+.dark .liquid-glass.liquid-glass-pill::before {
+  opacity: 0.85;
+}
+
+/* Full-height variant of .liquid-glass, for the notifications window — a panel
+ * that floats clear of every screen edge rather than being anchored to one.
+ *
+ * Three things this MUST do, all of them consequences of `.liquid-glass` being
+ * declared outside `@layer base` and therefore beating every Tailwind utility
+ * regardless of specificity:
+ *
+ *  1. Restore `position: fixed`. `.liquid-glass` sets `position: relative`, which
+ *     would otherwise win over the `fixed` utility on the popup and drop the
+ *     panel into the document flow.
+ *  2. Neutralise the `:hover` lightening. That rule exists for small tappable
+ *     surfaces; on a full-height panel it means the whole window brightens
+ *     whenever the cursor crosses it. Written with `:hover` in the selector so
+ *     it outranks both `.liquid-glass:hover` (0,2,0) and, in the dark block
+ *     below, `.dark .liquid-glass:hover` (0,3,0).
+ *  3. Switch `backdrop-filter` OFF. `.liquid-glass` blurs what is behind it, but
+ *     this panel is opaque, so that blur is occluded — and it is the costliest
+ *     thing here, since scaling the panel would make the browser resample it on
+ *     every frame of the open/close.
+ *
+ * The outer drop shadow is kept (unlike .liquid-glass-pill, which drops it):
+ * this surface genuinely floats above scrolling content and needs to read as
+ * lifted off the page. */
+.liquid-glass.liquid-glass-panel {
+  /* Mirror of `--ease-house` (an ease-OUT, which is right for arriving). Leaving reverses
+   * that: the window should let go slowly and accelerate as it reaches the button, so the
+   * exit gets an ease-IN. Using one curve in both directions is what made closing feel
+   * like it stopped dead rather than being drawn in. */
+  --ease-panel-exit: cubic-bezier(0.64, 0, 0.78, 0);
+
+  /* Fill, border and shadow are held in variables so the hover-neutralising rule below
+   * can re-apply the exact same values rather than restating them — the earlier version
+   * restated them and the dark ones had already drifted out of step. */
+  /* Solid. `--popover` is the surface every other panel in the app sits on and it already
+   * adapts per theme, so the window reads as part of the product rather than as a hole
+   * cut in it. Nothing shows through, which is why `backdrop-filter` is switched off
+   * below — see the note there. */
+  --glass-panel-fill: var(--popover);
+  --glass-panel-border: rgba(255, 255, 255, 0.55);
+  --glass-panel-sheen:
+    radial-gradient(
+      120% 80% at 12% -10%,
+      rgba(255, 255, 255, 0.75) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      90% 60% at 100% 100%,
+      rgba(15, 61, 62, 0.06) 0%,
+      transparent 50%
+    );
+  --glass-panel-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.65) inset,
+    0 -1px 0 0 rgba(15, 61, 62, 0.04) inset,
+    0 8px 32px -8px rgba(26, 28, 26, 0.18),
+    0 2px 8px -2px rgba(26, 28, 26, 0.08);
+
+  position: fixed;
+  background: var(--glass-panel-fill);
+  border-color: var(--glass-panel-border);
+  box-shadow: var(--glass-panel-shadow);
+  /* `.liquid-glass` blurs whatever is behind it. With an opaque fill on top, that blur is
+   * invisible — and it is the single most expensive thing on this surface, because scaling
+   * the panel makes the browser resample it every frame. Switched off rather than left to
+   * burn frames for an effect nobody can see. */
+  backdrop-filter: none;
+  /* `.liquid-glass` declares `transition` as a SHORTHAND, and being unlayered it beats
+   * Tailwind's `transition`/`duration-*` utilities outright — which silently reduces the
+   * open/close to background+border+shadow and makes the window snap into place instead
+   * of sliding. So the full transition is re-declared here.
+   *
+   * `scale` and `translate` are named individually because Tailwind v4 animates the
+   * discrete `scale`/`translate` properties rather than a composite `transform`; listing
+   * `transform` alone would match nothing. */
+  transition:
+    scale var(--transition-duration-slow) var(--ease-house),
+    translate var(--transition-duration-slow) var(--ease-house),
+    opacity var(--transition-duration-slow) var(--ease-house),
+    background var(--transition-duration-base) ease,
+    border-color var(--transition-duration-base) ease,
+    box-shadow var(--transition-duration-base) ease;
+}
+
+/* The see-through tier's darker counterpart, matching `.liquid-glass-pill`. Only the
+ * variables change; every rule above and below reads them. */
+.dark .liquid-glass.liquid-glass-panel {
+  /* `--glass-panel-fill` is inherited from the block above: `--popover` is already
+   * theme-aware, so there is nothing to override here. */
+  --glass-panel-border: rgba(255, 255, 255, 0.16);
+  --glass-panel-sheen:
+    radial-gradient(
+      120% 80% at 12% -10%,
+      rgba(255, 255, 255, 0.12) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      90% 60% at 100% 100%,
+      rgba(124, 195, 226, 0.12) 0%,
+      transparent 50%
+    );
+  --glass-panel-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.14) inset,
+    0 -1px 0 0 rgba(0, 0, 0, 0.25) inset,
+    0 12px 40px -10px rgba(0, 0, 0, 0.55),
+    0 2px 10px -2px rgba(0, 0, 0, 0.35);
+}
+
+/* Neutralise the `:hover` lightening. That rule exists for small tappable surfaces; on a
+ * full-height window it means the whole panel brightens whenever the cursor crosses it.
+ * Both selectors are spelled out so this outranks `.liquid-glass:hover` (0,2,0) AND
+ * `.dark .liquid-glass:hover` (0,3,0) without depending on source order. */
+.liquid-glass.liquid-glass-panel:hover,
+.dark .liquid-glass.liquid-glass-panel:hover {
+  background: var(--glass-panel-fill);
+  border-color: var(--glass-panel-border);
+  box-shadow: var(--glass-panel-shadow);
+}
+
+/* Softer sheen than the base panel — at this fill the full-strength highlight reads as a
+ * milky film rather than a glint. Same reasoning as `.liquid-glass-pill`. */
+.liquid-glass.liquid-glass-panel::before,
+.liquid-glass.liquid-glass-panel:hover::before,
+.dark .liquid-glass.liquid-glass-panel:hover::before {
+  background: var(--glass-panel-sheen);
+  opacity: 0.45;
+}
+
+/* Closing reads as the window going back into the bell it came out of.
+ *
+ * The heavy lifting is the transform-origin the panel sets to the button's centre, so the
+ * collapse already travels to the right point. This adds the two things that make it read
+ * as BECOMING the button rather than just shrinking: the corners round all the way off to
+ * a capsule on the way down, and the scale goes far enough (0.28, set on the variant) that
+ * what lands at the origin is roughly button-sized.
+ *
+ * Slower than the old `fast` exit — at 120ms the collapse was over before the eye could
+ * follow it back, which is the whole point of the gesture. */
+.liquid-glass.liquid-glass-panel[data-starting-style],
+.liquid-glass.liquid-glass-panel[data-ending-style] {
+  /* Set only while a transition is actually running, which is the point: it asks the
+   * compositor to promote the panel for the duration and then hand it back, rather than
+   * holding a permanently promoted layer. */
+  will-change: scale, opacity;
+}
+
+/* Exit accelerates into the button instead of easing out of the gesture. Duration stays on
+ * the shared `slow`: the tier note calls exits `fast`, but that is meant for dismissals —
+ * this one is a journey back to a specific point, and has to be readable to mean anything. */
+.liquid-glass.liquid-glass-panel[data-ending-style] {
+  transition-timing-function: var(--ease-panel-exit);
+}
+
+/* `.liquid-glass > *` forces `position: relative` on every direct child so they stack
+ * above the ::before sheen. The close button is a direct child and needs to stay
+ * absolutely positioned in the corner, so it is exempted — it keeps the z-index. */
+.liquid-glass.liquid-glass-panel > [data-slot="sheet-close"] {
+  position: absolute;
+}
+
+/* Same exemption, and for the same reason: the discard confirmation is a layer over the
+ * whole window, so it has to escape the `position: relative` that `.liquid-glass > *`
+ * forces on every direct child — an unlayered rule that beats Tailwind's `absolute`
+ * utility, so it cannot be done from the JSX. `z-index: 2` puts it above its siblings,
+ * which that same rule pins at 1, including the close button: while the question is on
+ * screen the X behind it must not be clickable. */
+.liquid-glass.liquid-glass-panel > [data-slot="feedback-discard"] {
+  position: absolute;
+  z-index: 2;
+}
+
+/* The window still appears and disappears, it just stops travelling to do it.
+ * `transform: none` also cancels the starting/ending scale, so the whole
+ * enter/exit collapses to the opacity fade the primitive already provides. */
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="sheet-content"][data-side="floating"] {
+    transition-property: opacity;
+  }
+
+  /* Scoped to the two animating states rather than the element at rest.
+   *
+   * The reset exists to cancel the ENTER and EXIT scale, and `!important` is what makes it
+   * outrank the utilities that set them. Applied unconditionally it also outranks the
+   * feedback panel's inline `style.translate`, which is how that window is dragged — so
+   * with reduced motion on, the pointer moved and the window did not. Naming the states
+   * cancels the animation and leaves a resting window free to be moved.
+   *
+   * `scale`/`translate`, not `transform`: Tailwind v4 sets the discrete properties, so
+   * cancelling `transform` here would leave the starting-style scale fully applied and the
+   * window would open stuck at its collapsed size. */
+  [data-slot="sheet-content"][data-side="floating"][data-starting-style],
+  [data-slot="sheet-content"][data-side="floating"][data-ending-style] {
+    scale: none !important;
+    translate: none !important;
+  }
+}
+
+/* ── The feedback form's Send button, in flight ──
+ * A light running the button's border while the submission uploads. Not a spinner: a
+ * screenshot submission takes 1.5-4s, and the point is that the wait and the success beat
+ * that follows it (`send-button.tsx`) are one gesture — the signal travels, then it lands.
+ *
+ * An ambient loop, so it takes a bare `linear` rather than `--ease-house`, matching the
+ * `constellation-*` family. `--ease-house` is for discrete arrivals.
+ *
+ * The angle is animated through a registered custom property, which is the only way to
+ * move a `conic-gradient`'s origin — the alternative is rotating an element, and rotating
+ * a non-square box would swing the ring's shape around with it. Where `@property` is not
+ * supported the declaration below still resolves `--send-sweep` to its own `0deg` and the
+ * ring simply sits still, lit but stationary. That degrades; it does not break.
+ *
+ * Two backgrounds against the button's transparent 1px border paint the ring: an opaque
+ * fill clipped to `padding-box`, the gradient clipped to `border-box`. No mask compositing.
+ *
+ * Unlayered, so this beats the `bg-primary` utility it replaces — the same cascade
+ * behaviour `.liquid-glass` relies on, and the reason the fill has to be restated here. */
+@property --send-sweep {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes send-signal-sweep {
+  to {
+    --send-sweep: 360deg;
+  }
+}
+
+.send-signal {
+  --send-sweep: 0deg;
+  border-color: transparent;
+  background:
+    linear-gradient(var(--primary), var(--primary)) padding-box,
+    conic-gradient(
+        from var(--send-sweep),
+        transparent 0deg 250deg,
+        color-mix(in oklab, var(--primary-foreground) 85%, transparent) 330deg,
+        transparent 360deg
+      )
+      border-box;
+  animation: send-signal-sweep 1.1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The global 0.01ms clamp would freeze the sweep at whatever angle it reached — a lit
+   * arc parked on one edge, which reads as a rendering fault rather than as progress. The
+   * button goes back to being a plain button and `send-button.tsx` restores the spinner,
+   * the same way `.plan-badge-glint` leaves rather than resting mid-sweep.
+   *
+   * The fill is restated rather than dropped: the rule above sets `background` as a
+   * SHORTHAND, so `background: none` here would reset the colour too and leave a
+   * transparent button. */
+  .send-signal {
+    background: var(--primary);
+    animation: none;
+  }
+}
+
+/* The glow an account alert leaves on the card it sent you to.
+ *
+ * Shadow only — no border, no background, nothing that changes the card's size — so the
+ * page cannot reflow around a purely decorative cue. Deliberately a soft, spread shadow
+ * sitting BEHIND the card rather than a hard ring around it: a crisp outline reads as a
+ * focus state or a validation error, which is the wrong meaning for "this is the one you
+ * asked about". The radius matches the cards it lands on (`rounded-2xl`). */
+@keyframes section-flash {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 0%, transparent);
+  }
+  18% {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--primary) 14%, transparent),
+      0 6px 28px -4px color-mix(in oklab, var(--primary) 30%, transparent),
+      0 0 44px -6px color-mix(in oklab, var(--primary) 22%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 0%, transparent);
+  }
+}
+
+/* Attribute, not a class: React owns `className` on these cards and rewrites it on
+ * hydration, which strips a class added imperatively. See `section-flash.tsx`. */
+[data-section-flash="on"] {
+  border-radius: 1rem;
+  animation: section-flash 1.6s var(--ease-house) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Still say which card, just without the pulse. */
+  [data-section-flash="on"] {
+    animation: none;
+    box-shadow: 0 6px 24px -4px color-mix(in oklab, var(--primary) 26%, transparent);
   }
 }
 
@@ -417,36 +988,27 @@
   }
 }
 
-@keyframes constellation-armglow-breathe {
-  0%,
-  100% {
-    opacity: 0.8;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-@keyframes constellation-ray-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
 @keyframes constellation-spotlight {
   0%,
   100% {
     box-shadow:
-      0 0 0 0 rgba(255, 246, 214, 0.55),
-      0 0 16px 2px rgba(255, 255, 255, 0.35);
+      0 0 0 0 rgba(255, 246, 214, 0.8),
+      0 0 20px 4px rgba(255, 255, 255, 0.5);
   }
   50% {
     box-shadow:
-      0 0 0 8px rgba(255, 246, 214, 0),
-      0 0 28px 6px rgba(255, 255, 255, 0.55);
+      0 0 0 12px rgba(255, 246, 214, 0),
+      0 0 36px 10px rgba(255, 255, 255, 0.7);
+  }
+}
+
+@keyframes constellation-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-7px);
   }
 }
 
@@ -493,6 +1055,33 @@
   }
 }
 
+/* Star-chart loading placeholder (see constellation-loading.tsx). Reuses the
+   canvas's own vocabulary — a breathing core glow — rather than a shimmer bar,
+   which is invisible against #05070c. */
+@keyframes constellation-loading-breathe {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.constellation-loading-glow {
+  background: radial-gradient(
+    circle at 50% 50%,
+    color-mix(in oklab, #7aa7ff 42%, transparent) 0%,
+    color-mix(in oklab, #2b3f78 18%, transparent) 26%,
+    transparent 55%
+  );
+  animation: constellation-loading-breathe 2.4s ease-in-out infinite;
+}
+
+.constellation-loading-star {
+  animation: constellation-twinkle 1.4s ease-in-out infinite;
+}
+
 .constellation-corona {
   animation: constellation-corona 3.2s ease-in-out infinite;
 }
@@ -505,16 +1094,18 @@
   animation: constellation-corona 2.6s ease-in-out infinite;
 }
 
-.constellation-arm-glow {
-  animation: constellation-armglow-breathe 11s ease-in-out infinite;
-}
-
-.constellation-ray path {
-  animation: constellation-ray-in 0.24s ease-out both;
-}
-
 .constellation-spotlight-ring {
   animation: constellation-spotlight 1.8s ease-in-out infinite;
+}
+
+.constellation-bob {
+  animation: constellation-bob 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .constellation-bob {
+    animation: none;
+  }
 }
 
 .constellation-planet-enter {
@@ -644,7 +1235,6 @@
     rgba(232, 243, 241, 0.015) 100%
   );
   backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
 }
 
 /* Sticky nav pill — more opaque than .dark .liquid-glass so the starfield
@@ -667,7 +1257,6 @@
     0 16px 48px -12px rgba(0, 0, 0, 0.65),
     0 4px 14px -4px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(24px) saturate(1.4);
-  -webkit-backdrop-filter: blur(24px) saturate(1.4);
 }
 
 .landing-header-glass::before {
@@ -734,6 +1323,52 @@
 
 .landing-solar-enter {
   animation: landing-solar-enter 0.9s var(--ease-house) 0.15s both;
+}
+
+/* ── Interest list (/interest) ──
+ * Two ambient loops. Linear, not the house curve: these are orbits, and an
+ * orbit that eases would read as a wobble. The global reduced-motion clamp at
+ * the bottom of this file freezes both. */
+@keyframes interest-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The decorative rings behind the signup card, and the dot circling the
+ * submit button while a join is in flight (`animate-[interest-orbit_…]`).
+ * `transform-box: fill-box` centres the spin on the ring group's own box —
+ * without it an SVG group rotates about the viewBox origin. */
+.interest-rings-spin {
+  animation: interest-orbit 160s linear infinite;
+  transform-origin: 50% 50%;
+  transform-box: fill-box;
+  will-change: transform;
+}
+
+.interest-rings-spin-reverse {
+  animation: interest-orbit 110s linear infinite reverse;
+  transform-origin: 50% 50%;
+  transform-box: fill-box;
+  will-change: transform;
+}
+
+/* Orbit Lifetime's badge is the one place the brand gold appears as a surface
+ * rather than as text, so it gets a metal glint: one band crosses the pill and
+ * then rests off-frame for most of the cycle, which reads as material catching
+ * light rather than as something still loading. */
+@keyframes plan-badge-glint {
+  0% {
+    transform: translateX(-160%);
+  }
+  55%,
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.plan-badge-glint {
+  animation: plan-badge-glint 4.5s var(--ease-house) infinite;
 }
 
 @keyframes landing-credit-shimmer {
@@ -831,6 +1466,82 @@
   user-select: none;
 }
 
+/* ── Marketing documents (privacy / terms / contact) ──
+   These pages sit on the landing page's dark space canvas rather than the
+   app theme, so their body copy is styled here instead of with per-element
+   utility classes — the documents are long and mostly plain prose. */
+
+.doc-prose {
+  color: #9aada8;
+  font-size: 1rem;
+  line-height: 1.8;
+}
+
+.doc-prose > * + * {
+  margin-top: 1rem;
+}
+
+.doc-prose strong {
+  color: #e8f3f1;
+  font-weight: 500;
+}
+
+.doc-prose a {
+  color: #f2c14e;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-color: rgba(242, 193, 78, 0.35);
+  transition: text-decoration-color 0.2s ease;
+}
+
+.doc-prose a:hover {
+  text-decoration-color: rgba(242, 193, 78, 0.9);
+}
+
+.doc-prose ul {
+  display: grid;
+  gap: 0.625rem;
+}
+
+.doc-prose li {
+  position: relative;
+  padding-left: 1.375rem;
+}
+
+.doc-prose li::before {
+  content: "";
+  position: absolute;
+  left: 0.3rem;
+  top: 0.78em;
+  height: 5px;
+  width: 5px;
+  border-radius: 999px;
+  background: rgba(242, 193, 78, 0.55);
+}
+
+.doc-prose code {
+  border-radius: 0.375rem;
+  border: 1px solid rgba(232, 243, 241, 0.1);
+  background: rgba(232, 243, 241, 0.05);
+  padding: 0.1rem 0.375rem;
+  font-size: 0.875em;
+  color: #e8f3f1;
+}
+
+/* Native disclosure widget used for the contact page FAQ. */
+.doc-faq summary::-webkit-details-marker {
+  display: none;
+}
+
+.doc-faq summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.doc-faq[open] .doc-faq-chevron {
+  transform: rotate(180deg);
+}
+
 /* ── Staged reveals ──
  * .reveal-mount plays on insertion (page mount OR streamed Suspense swap —
  * swaps happen pre-hydration, so this must stay pure CSS). Stagger siblings
@@ -920,6 +1631,27 @@
   }
   .scene-finale {
     --scene-size: 820px;
+  }
+}
+
+/* Below md the mobile pass changed these scenes' heights: constellations lost
+ * ~200px of padding, while comets (badge wraps to its own line) and finale
+ * (closing CTA is now visible, stacked) grew. Measured at 320/375/767 with
+ * content-visibility forced visible, then biased up to the tallest in range —
+ * under-estimating is what makes scroll anchoring jump past a section.
+ * The 64rem block above still owns 768-1023. */
+@media (width < 48rem) {
+  .scene-constellations {
+    --scene-size: 840px;
+  }
+  .scene-comets {
+    --scene-size: 660px;
+  }
+  .scene-features {
+    --scene-size: 3500px;
+  }
+  .scene-finale {
+    --scene-size: 1200px;
   }
 }
 
@@ -1040,5 +1772,606 @@ body:has(.landing-root) {
     background: none;
     color: #6d807c;
     -webkit-text-fill-color: #6d807c;
+  }
+
+  /* The band is only ever decoration over a gold that already reads on its own,
+     so it simply leaves rather than parking mid-sweep. */
+  .plan-badge-glint {
+    display: none;
+  }
+}
+
+/* ── Lift-off: app <-> /pricing ──
+ *
+ * The canvas stage (components/warp/liftoff-stage.tsx) paints the sky; this
+ * block only moves the app itself. `WarpProvider` sets `data-warp` on <html>,
+ * so the server-rendered layouts need no knowledge of the journey — they just
+ * carry `data-warp-craft` on the element that flies.
+ *
+ * Percentages below mirror `lib/warp/choreography.ts`. Change one, change both:
+ * ASCENT.ignition ends at 180/820 = 22%, and the whole ascend animation runs
+ * for ASCENT.liftoff's 820ms.
+ *
+ * The selectors are journey-qualified because `/upgrade`'s time warp shares
+ * both the `data-warp` attribute and the `[data-warp-craft]` element. */
+
+@keyframes warp-craft-ascend {
+  /* Engines light: a short judder before anything actually moves. */
+  0% {
+    transform: perspective(1100px) translate3d(0, 0, 0) rotateX(0deg) scale(1);
+    opacity: 1;
+  }
+  5% {
+    transform: perspective(1100px) translate3d(0, 4px, 0) rotateX(0deg) scale(1);
+  }
+  11% {
+    transform: perspective(1100px) translate3d(0, -3px, 0) rotateX(0deg) scale(1);
+  }
+  16% {
+    transform: perspective(1100px) translate3d(0, 2px, 0) rotateX(0deg) scale(1);
+  }
+  /* Release. Accelerating from here so it reads as the camera climbing away,
+     not as a panel sliding down a track. */
+  22% {
+    transform: perspective(1100px) translate3d(0, 0, 0) rotateX(0deg) scale(1);
+    opacity: 1;
+    animation-timing-function: cubic-bezier(0.55, 0, 0.85, 0.2);
+  }
+  /* Negative rotateX tips the top edge toward the viewer — what you see
+     looking DOWN on something you have just risen above. */
+  100% {
+    transform: perspective(1100px) translate3d(0, 46vh, -420px) rotateX(-16deg)
+      scale(0.94);
+    opacity: 0;
+  }
+}
+
+/* Touchdown. Drops the last few pixels and rattles: three shrinking bounces,
+   mostly lateral. Deliberately less graceful than the launch. */
+@keyframes warp-craft-land {
+  0% {
+    transform: translate3d(0, -14px, 0);
+    opacity: 0.25;
+  }
+  30% {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+  42% {
+    transform: translate3d(7px, 3px, 0);
+  }
+  56% {
+    transform: translate3d(-5px, -2px, 0);
+  }
+  70% {
+    transform: translate3d(3px, 2px, 0);
+  }
+  85% {
+    transform: translate3d(-2px, -1px, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+}
+
+html[data-warp-journey="liftoff"][data-warp="outbound"] [data-warp-craft] {
+  animation: warp-craft-ascend 820ms ease-out both;
+  /* The stage portals to <body>, so it is never inside this transform — a
+     transformed ancestor becomes the containing block for position:fixed and
+     would drag the whole sky down with the dashboard. */
+  transform-origin: 50% 45%;
+  will-change: transform, opacity;
+}
+
+html[data-warp-journey="liftoff"][data-warp="landing"] [data-warp-craft] {
+  animation: warp-craft-land 420ms cubic-bezier(0.3, 0.9, 0.4, 1) both;
+  will-change: transform, opacity;
+}
+
+/* Nothing on the ORIGIN page should react to a stray click or hover while the
+   journey is running. This rule reaches the origin only: the destination
+   mounts in a different layout and never carries [data-warp-craft].
+   Destinations are covered — or not — by their own stage:
+     liftoff — the canvas is pointer-events:none throughout, so /pricing stays
+       clickable underneath it. Cosmetic; there is nothing there to mis-click.
+     chrono  — the canvas takes pointer events while it is actually covering
+       (see COVER_BLOCKS_CLICKS in chrono-stage.tsx), because /upgrade's cover
+       hides live checkout buttons. */
+html[data-warp] [data-warp-craft] {
+  pointer-events: none;
+}
+
+/* The launch pad on the dashboard: a horizon that lifts on hover. */
+@keyframes warp-pad-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(0, -3px, 0);
+  }
+}
+
+/* ── Time warp: Settings <-> /upgrade ──
+ *
+ * The chrono journey does not fly anywhere, so nothing translates. The room
+ * simply goes dark as the exposure opens: the shell loses contrast and
+ * recedes a fraction while the canvas stage fades up over it. Coming home it
+ * runs backwards, which is also how the dark-to-light theme boundary is
+ * crossed.
+ *
+ * Windows mirror CHRONO_OUT.shutter and CHRONO_IN.landing in
+ * `lib/warp/chrono.ts`. Change one, change both. */
+
+@keyframes chrono-craft-dim {
+  0% {
+    transform: scale(1);
+    filter: saturate(1) brightness(1);
+  }
+  100% {
+    transform: scale(0.985);
+    filter: saturate(0.35) brightness(0.42);
+  }
+}
+
+html[data-warp-journey="chrono"][data-warp="outbound"] [data-warp-craft],
+html[data-warp-journey="chrono"][data-warp="cruise"] [data-warp-craft],
+html[data-warp-journey="chrono"][data-warp="arriving"] [data-warp-craft] {
+  animation: chrono-craft-dim 560ms cubic-bezier(0.4, 0, 0.6, 1) both;
+  will-change: transform, filter;
+}
+
+/* Coming home: the last 220ms of the return arc, played forwards out of the
+   dimmed state — the width of CHRONO_IN.landing, which successive retunes of
+   the inbound arc have moved (350ms, then 150ms, then 185ms, now 220ms), so
+   check it against `chrono.ts` rather than against memory. `reverse` rather
+   than a second keyframe block so the two can never drift apart. */
+html[data-warp-journey="chrono"][data-warp="landing"] [data-warp-craft] {
+  animation: chrono-craft-dim 220ms cubic-bezier(0.4, 0, 0.6, 1) reverse both;
+  will-change: transform, filter;
+}
+
+/* Held dimmed for the whole rewind, so the room does not brighten early. */
+html[data-warp-journey="chrono"][data-warp="inbound"] [data-warp-craft] {
+  transform: scale(0.985);
+  filter: saturate(0.35) brightness(0.42);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* `data-warp="reduced"` never matches the rules above, so the craft simply
+     never animates. This is the belt-and-braces for a stale attribute: without
+     it the global 0.01ms clamp would snap the craft straight to the ascend
+     animation's end state — flown away and invisible. */
+  html[data-warp] [data-warp-craft] {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Toasts.
+ *
+ * The Toaster runs `unstyled` (see `components/ui/sonner.tsx`), so the surface
+ * itself is Tailwind classes over there. What has to live here is everything
+ * sonner declares on the toast element directly — because sonner injects its
+ * stylesheet UNLAYERED at runtime (`__insertCSS` -> `head.appendChild`), and an
+ * unlayered rule beats every Tailwind utility no matter how specific, since
+ * utilities sit in `@layer utilities`. Anything sonner sets on `[data-sonner-toast]`
+ * can therefore only be overridden from a rule like these, never from a class.
+ * --------------------------------------------------------------------------- */
+
+/* Sonner hard-codes a `ui-sans-serif, system-ui, ...` stack on the container, so
+   an unstyled toast would be the one surface in the app not set in Outfit.
+   Needs the `html` — sonner's rule is `[data-sonner-toaster]` at the same
+   specificity, and since it is appended to <head> at runtime it is later in the
+   cascade and wins every tie. Verified: without the type selector the toast
+   renders in system-ui. */
+html [data-sonner-toaster] {
+  font-family: inherit;
+}
+
+/* The container is a fixed box the size of the whole stack, including the gaps
+   between toasts and the room a collapsed stack reserves — clicks there would
+   land on nothing visible. The toasts themselves opt back in.
+
+   This is the surviving half of a rule that used to cover the toasts too. It was
+   written because the toast covered the Capture review card's Accept button and
+   `elementFromPoint` returned the toast, so the click did nothing — twice in a
+   row, on the exact step of the demo where you have just pasted your notes. The
+   toast is interactive again now (hover pauses, click dismisses, drag flings it
+   away); what keeps that from re-breaking Capture is `lib/corner-clearance.ts`,
+   which lifts `--orbit-corner-lift` above the action row while it is on screen.
+   That hook is load-bearing, not a nicety. */
+[data-sonner-toaster] {
+  pointer-events: none;
+}
+
+[data-sonner-toaster] [data-sonner-toast] {
+  pointer-events: auto;
+}
+
+/* ── Enter and exit: in and out through the right edge ──
+ *
+ * Sonner has no keyframes for this. It composes stacking, hover-expand, swipe
+ * AND enter/exit into one custom property, `--y`, then feeds it to `transform`.
+ * Overriding `transform` takes the stacking math down with it, and so does
+ * simply out-specifying `--y` — every stacking rule is itself a `--y` declaration.
+ *
+ * The pre-mount resting place is NOT the (0,1,0) base rule but
+ * `[data-sonner-toast][data-y-position='bottom']` at (0,2,0), which sonner
+ * re-declares. Rather than fight that for the cascade, scope on `data-mounted`:
+ * this rule is (0,2,1) so it wins while the toast is unmounted, and then stops
+ * matching altogether the moment `data-mounted` flips, handing `--y` straight
+ * back to sonner's `[data-mounted='true'] { --y: translateY(0) }`. Nothing else
+ * in the stacking chain is touched.
+ *
+ * The two transform lists interpolate via matrix fallback, which for a pair of
+ * pure translations is exact — no wobble on the diagonal. */
+[data-sonner-toaster] li.orbit-toast[data-mounted="false"] {
+  --y: translateX(2rem);
+}
+
+/* Exit mirrors the swipe. These selectors are sonner's own `data-removed` rules
+   with `li.orbit-toast` swapped in for `[data-sonner-toast]`, which adds a type
+   to the same attribute count and so wins by one point; the `--lift`/`--offset`
+   stack term is preserved verbatim, only the flight direction changes. `--lift`
+   is -1 at the bottom, which is why sonner's own front exit reads as downward. */
+[data-sonner-toaster]
+  li.orbit-toast[data-removed="true"][data-front="true"][data-swipe-out="false"] {
+  --y: translateX(2.5rem);
+  opacity: 0;
+}
+
+[data-sonner-toaster]
+  li.orbit-toast[data-removed="true"][data-front="false"][data-swipe-out="false"][data-expanded="true"] {
+  --y: translateY(calc(var(--lift) * var(--offset))) translateX(2.5rem);
+  opacity: 0;
+}
+
+[data-sonner-toaster]
+  li.orbit-toast[data-removed="true"][data-front="false"][data-swipe-out="false"][data-expanded="false"] {
+  --y: translateX(2.5rem);
+  opacity: 0;
+}
+
+/* The description's "See more" takes the variant's own colour, the same accent
+   as the icon chip and the rail, so the control reads as part of the toast
+   rather than as body text. `--toast-accent` is set per type on the toast
+   itself and inherits; `default` toasts set none and fall back to the app
+   accent. Set from `maybeExpandableDescription` in lib/toast.tsx. */
+[data-sonner-toaster] li.orbit-toast .orbit-toast-expander {
+  color: var(--toast-accent, var(--primary));
+}
+
+/* A kept toast leaves toward the bell it is going to end up in, rather than
+   straight out the side: it lifts, shrinks and fades up-and-right, which is
+   where `NotificationsPanelButton` sits (fixed top-right in `app-shell.tsx`).
+   Deliberately a short gesture rather than a real flight to the button's
+   measured position — sonner unmounts 200ms after `data-removed` flips, so a
+   full-screen traversal would be cut off halfway. The direction is the message;
+   the distance only has to be enough to read as "up, not sideways".
+
+   `.orbit-toast-kept` is set per-toast from `lib/toast.tsx`, on exactly the
+   toasts that get recorded, so the two outcomes look different. One more class
+   than the plain exit rules below, so it wins. */
+[data-sonner-toaster]
+  li.orbit-toast.orbit-toast-kept[data-removed="true"][data-front="true"][data-swipe-out="false"] {
+  --y: translate(1.5rem, -2.25rem) scale(0.92);
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Still a distinct exit, but without the travel: fade in place. */
+  [data-sonner-toaster] li.orbit-toast.orbit-toast-kept[data-removed="true"] {
+    --y: translateY(0) scale(0.98);
+  }
+}
+
+/* The content column scrolls once a message outgrows `max-h-40`. Keep that
+   scrollbar from reading as page chrome inside a 320px card. */
+[data-sonner-toaster] li.orbit-toast [data-content] {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--foreground) 25%, transparent)
+    transparent;
+}
+
+/* Retime sonner's flat 400ms onto the house tiers. Safe to do here because this
+   touches `transition`, not `--y`. Enter rides the slow tier so the horizontal
+   travel reads; the box-shadow tier is the interaction one, for the hover lift. */
+[data-sonner-toaster] li.orbit-toast {
+  transition:
+    /* Arrival settles rather than snaps. `--ease-house` (0.22, 1, 0.36, 1) has y1 = 1,
+       so it leaves at full speed and then drifts — right for a panel you asked for,
+       abrupt for something that arrives unasked. This drawer curve starts gentler and
+       decelerates into place, at the same duration. The exit, below, stays brisk:
+       leaving fast reads as responsive; arriving fast reads as urgent. */
+    transform var(--transition-duration-slow) cubic-bezier(0.32, 0.72, 0, 1),
+    opacity var(--transition-duration-base) ease,
+    height var(--transition-duration-base) var(--ease-house),
+    box-shadow var(--transition-duration-fast) ease,
+    outline-color var(--transition-duration-fast) ease;
+}
+
+/* Sonner unmounts 200ms after `data-removed` flips (its TIME_BEFORE_UNMOUNT), so
+   a 320ms exit would be cut off in flight. Drop to the interaction tier. */
+[data-sonner-toaster] li.orbit-toast[data-removed="true"] {
+  transition-duration: var(--transition-duration-fast);
+}
+
+/* Re-declare what the shorthand above just clobbered. Sonner's own
+   `[data-swiping='true'] { transition: none }` is (0,2,0) and loses to the
+   (0,2,1) retime; without this, a drag eases between frames instead of tracking
+   the finger. */
+[data-sonner-toaster] li.orbit-toast[data-swiping="true"] {
+  transition: none;
+}
+
+/* ── Two-finger trackpad swipe ──
+ *
+ * Sonner's swipe is pointer-driven, so a trackpad two-finger swipe — which is
+ * `wheel` events and no pointer at all — never reaches it. `useWheelSwipeDismiss`
+ * in `ui/sonner.tsx` drives the gesture and sets `--orbit-wheel-x` here.
+ *
+ * It deliberately does NOT reuse sonner's `--swipe-amount-x`: the rule reading
+ * that variable takes over the whole `transform` and pins `transition: none` for
+ * as long as it matches. Keeping `var(--y)` in front of our own translate means
+ * the stacking, hover-expand and exit maths carry on underneath a toast that is
+ * mid-slide, instead of being replaced by it.
+ *
+ * (0,3,1) so these outrank both sonner's transform rules and the retime above,
+ * whichever order the sheets end up in. */
+[data-sonner-toaster] li.orbit-toast[data-orbit-wheel] {
+  transform: var(--y) translateX(var(--orbit-wheel-x, 0px));
+}
+
+/* Tracking the fingers: no easing between frames, or it lags behind them. */
+[data-sonner-toaster] li.orbit-toast[data-orbit-wheel="dragging"] {
+  transition: none;
+}
+
+/* Let go short of the threshold and it glides back; past it, it carries on out
+   and the JS dismisses it for real once this has played. */
+[data-sonner-toaster] li.orbit-toast[data-orbit-wheel="settling"],
+[data-sonner-toaster] li.orbit-toast[data-orbit-wheel="flinging"] {
+  transition:
+    transform 160ms ease-out,
+    opacity 160ms ease-out;
+}
+
+[data-sonner-toaster] li.orbit-toast[data-orbit-wheel="flinging"] {
+  opacity: 0;
+}
+
+/* ── Variant accent ──
+ * `--toast-accent` is set per type by the `success`/`error`/`warning`/`info`
+ * entries in the Toaster's `classNames`. `data-type="default"` (the dozen
+ * `toast.message` call sites) sets none, and gets neither chip nor rail — that
+ * is the quiet variant, and it should stay quiet. */
+[data-sonner-toaster] li.orbit-toast .orbit-toast-icon {
+  color: var(--toast-accent, var(--muted-foreground));
+  background: color-mix(
+    in oklab,
+    var(--toast-accent, transparent) var(--toast-chip-strength),
+    transparent
+  );
+}
+
+/* ── Elevation, hairline and accent rail: one box-shadow ──
+ *
+ * All three want `box-shadow`, and so does Tailwind's `ring-1`. Since this
+ * unlayered rule beats any utility, a `shadow-md ring-1` class pair here would
+ * be silently erased rather than merged — so the toast carries no shadow or ring
+ * classes at all and the whole stack is composed here, each layer behind its own
+ * variable so hover and dark mode can swap one without restating the others.
+ *
+ * The rail runs down the left edge rather than across the top because in a
+ * collapsed stack the toasts behind are clipped to the front one's height: their
+ * icons are hidden, their left edge is not. That is what makes an error sitting
+ * behind a success readable at a glance. `data-type="default"` (the dozen
+ * `toast.message` call sites) never sets `--toast-accent`, so its rail resolves
+ * to transparent and the quiet variant stays quiet. */
+[data-sonner-toaster] li.orbit-toast {
+  --orbit-toast-rail: inset 2px 0 0 0 var(--toast-accent, transparent);
+  --orbit-toast-hairline: 0 0 0 1px color-mix(in oklab, var(--foreground) 10%, transparent);
+  --orbit-toast-elevation:
+    0 4px 12px -2px rgb(26 28 26 / 0.12), 0 2px 6px -2px rgb(26 28 26 / 0.08);
+  box-shadow:
+    var(--orbit-toast-rail), var(--orbit-toast-hairline),
+    var(--orbit-toast-elevation);
+}
+
+/* A drop shadow barely registers on #212c42 — the same reason `Card` swaps to an
+   inset top highlight for its dark interactive state. */
+.dark [data-sonner-toaster] li.orbit-toast {
+  --orbit-toast-hairline: 0 0 0 1px color-mix(in oklab, #ffffff 12%, transparent);
+  --orbit-toast-elevation:
+    inset 0 1px 0 0 rgb(255 255 255 / 0.07), 0 8px 24px -8px rgb(0 0 0 / 0.6);
+}
+
+/* Hover lifts by shadow and hairline only, never by transform — `transform`
+   belongs to `--y`. Gated on a real pointer so a tap does not leave the hover
+   state stuck on a touch device. */
+@media (hover: hover) {
+  [data-sonner-toaster] li.orbit-toast:hover {
+    --orbit-toast-hairline: 0 0 0 1px color-mix(in oklab, var(--foreground) 16%, transparent);
+    --orbit-toast-elevation:
+      0 10px 24px -4px rgb(26 28 26 / 0.16), 0 4px 10px -2px rgb(26 28 26 / 0.1);
+  }
+
+  .dark [data-sonner-toaster] li.orbit-toast:hover {
+    --orbit-toast-hairline: 0 0 0 1px color-mix(in oklab, #ffffff 18%, transparent);
+    --orbit-toast-elevation:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.1), 0 14px 34px -8px rgb(0 0 0 / 0.7);
+  }
+}
+
+/* Sonner's own `:focus-visible` sets a black box-shadow that would erase all
+   three layers above. Keep the stack and add an outline, which composes. */
+[data-sonner-toaster] li.orbit-toast:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* `unstyled` also drops the rule that hides the content of toasts stacked behind
+   the front one, so their text would show through the collapsed stack. Put it
+   back. */
+[data-sonner-toaster]
+  li.orbit-toast[data-expanded="false"][data-front="false"]
+  > * {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The global 0.01ms clamp above already lands the toast on its mounted state.
+     Belt and braces for the horizontal travel: with motion reduced the toast
+     should appear where it belongs and fade, not skate in from the edge. */
+  [data-sonner-toaster] li.orbit-toast[data-mounted="false"] {
+    --y: translateX(0);
+  }
+}
+
+/* The plan-celebration handoff: the app's own logo mark (sidebar or mobile
+   header, whichever is laid out — see `[data-app-logo]`) steps aside while
+   the celebration's mark flies across the screen to take its place, then
+   fades back in synced with the flying mark's own fade-out. Without this the
+   destination already shows the new tier's ring (the shell refreshes the
+   instant the flight starts) for the whole flight, so the arriving mark
+   looks like a duplicate rather than a replacement. */
+html[data-celebration-handoff] [data-app-logo] {
+  opacity: 0;
+}
+
+[data-app-logo] {
+  transition: opacity 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Reduced motion never flies the mark (see `celebration-stage.tsx`), so
+     this attribute is never set in that path — but if it ever were, nothing
+     here should animate the app's own logo. */
+  [data-app-logo] {
+    transition: none;
+  }
+}
+
+/* ── Forced-colors focus fallback ──
+ * Tailwind's `ring-*` compiles to a `box-shadow`, and Windows High Contrast
+ * Mode strips box-shadows outright — so a `focus-visible:outline-none` +
+ * `focus-visible:ring-*` pair, which is this repo's standard focus treatment
+ * (`ui/button.tsx`, `contacts/contacts-list.tsx`), leaves a keyboard user with
+ * NO visible focus indicator there. The `focus-visible:bg-*` half is overridden
+ * by the forced palette too, so nothing survives.
+ *
+ * Restoring a real outline is the fix. `outline` is honoured in forced-colors
+ * mode and, given no colour, is painted in the system's own Highlight colour —
+ * which is the correct thing to defer to.
+ *
+ * Unlayered on purpose: Tailwind's utilities live in `@layer utilities`, and
+ * unlayered CSS outranks any layer regardless of source order. That is what
+ * lets this beat `focus-visible:outline-none` without `!important` and without
+ * depending on which rule Tailwind happens to emit last. Same mechanism the
+ * `.liquid-glass` block above relies on.
+ *
+ * Applied via `ROW_HOVER` / `ROW_HOVER_INSET` in `src/lib/interaction.ts`. */
+@media (forced-colors: active) {
+  .focus-ring-fallback:focus-visible {
+    outline: 2px solid;
+    /* Inset to match `focus-visible:ring-inset`, so the indicator lands in the
+       same place in both modes rather than jumping outside the row. */
+    outline-offset: -2px;
+  }
+}
+
+/* ── Navigation pending hint ──
+ * Driven by `useLinkStatus` via `components/layout/nav-pending-dot.tsx`.
+ *
+ * Absolutely positioned and ALWAYS rendered, toggling visibility rather than
+ * mounting — the Next docs call out inline pending indicators as an easy source of
+ * layout shift, and this has to sit inside a nav item that is icon-only at one
+ * breakpoint and icon+label at another.
+ *
+ * The 100ms animation-delay is the documented anti-flash: a navigation that
+ * resolves faster than that never paints the dot, so quick moves stay silent and
+ * only a genuinely slow one gets acknowledged.
+ *
+ * Under reduced motion the global clamp zeroes both the delay and the durations,
+ * which degrades exactly the right way: the dot appears instantly and holds a
+ * steady opacity instead of pulsing. Feedback kept, movement dropped. */
+.nav-pending-dot {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  z-index: 20;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 9999px;
+  background: currentColor;
+  opacity: 0;
+  /* Reserves nothing and shows nothing until a navigation is actually in flight. */
+  visibility: hidden;
+}
+
+.nav-pending-dot[data-pending] {
+  visibility: visible;
+  animation:
+    var(--transition-duration-base) var(--ease-house) 100ms both nav-pending-in,
+    1.2s ease-in-out 100ms infinite nav-pending-pulse;
+}
+
+@keyframes nav-pending-in {
+  to {
+    opacity: 0.65;
+  }
+}
+
+@keyframes nav-pending-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* --- Per-event theming ------------------------------------------------------------------
+   Each event carries a colour derived from its own page (see src/lib/events/theme.ts). The
+   detail page sets the six *-light / *-dark variables inline; these two rules pick between
+   them.
+
+   Why both values ship at once: an inline style attribute cannot be theme-conditional, and
+   next-themes can flip `.dark` after render with no round trip. Choosing in CSS keeps the
+   swap free and flash-free — the same reason `.reveal-mount` stays pure CSS.
+
+   Every accent here is already contrast-clamped by `eventThemeVars`; there is no unclamped
+   path out of that module, so nothing below needs to re-check legibility. */
+.event-theme {
+  --event-accent: var(--event-accent-light);
+  --event-tint: var(--event-tint-light);
+  --event-ring: var(--event-ring-light);
+}
+
+.dark .event-theme {
+  --event-accent: var(--event-accent-dark);
+  --event-tint: var(--event-tint-dark);
+  --event-ring: var(--event-ring-dark);
+}
+
+/* The scrim over a cover image. Without it, light cover art and white heading text collide;
+   the gradient guarantees the bottom third is dark enough to read against regardless of
+   what the host chose as their graphic. */
+.event-hero-scrim {
+  background-image: linear-gradient(
+    to top,
+    color-mix(in oklab, black 72%, transparent) 0%,
+    color-mix(in oklab, black 28%, transparent) 45%,
+    transparent 100%
+  );
+}
+
+/* The contacts A-Z rail hides itself on short viewports (a landscape phone), so the
+ * page must stop reserving room for it at the same height. The rail publishes the
+ * gutter as an inline style on the root element, which only an important declaration
+ * can override. Keep the 500px threshold in step with the rail's own. */
+@media (max-height: 500px) {
+  :root {
+    --content-rail-gutter: 0px !important;
   }
 }

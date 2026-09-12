@@ -41,6 +41,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { promptNotificationsAfterFollowUpAction } from "@/lib/browser-notifications";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 type Platform = "email" | "linkedin" | "sms";
 
@@ -72,6 +74,7 @@ export function ContactFollowUpSection({
   sendOptions,
   phone,
   initialIntent,
+  bare = false,
 }: {
   contactId: string;
   contactName: string;
@@ -80,6 +83,9 @@ export function ContactFollowUpSection({
   phone?: string | null;
   /** Prefill intent for intro/reach-out drafts (e.g. related person). */
   initialIntent?: string | null;
+  /** Skip the outer Card chrome and "Follow up" header — for use inside a
+   * container (e.g. a Sheet) that already provides its own framing/title. */
+  bare?: boolean;
 }) {
   const router = useRouter();
   const [platform, setPlatform] = useState<Platform | null>(null);
@@ -111,13 +117,13 @@ export function ContactFollowUpSection({
         const permission = await promptNotificationsAfterFollowUpAction();
         toast.success(
           permission === "granted"
-            ? `Reminder in ${days} day${days === 1 ? "" : "s"} — alerts on`
-            : `Reminder set for ${days} day${days === 1 ? "" : "s"}`
+            ? `Follow-up set for ${days} ${days === 1 ? "day" : "days"} from now — desktop alerts are on`
+            : `Follow-up set for ${days} ${days === 1 ? "day" : "days"} from now`
         );
         router.refresh();
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not set reminder"
+          friendlyError(err, "Couldn’t set that reminder — try again?")
         );
       }
     });
@@ -129,11 +135,11 @@ export function ContactFollowUpSection({
       try {
         await scheduleContactFollowUpAt(contactId, value);
         await promptNotificationsAfterFollowUpAction();
-        toast.success("Reminder scheduled");
+        toast.success(TOAST_COPY.reminderSet);
         router.refresh();
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not set reminder"
+          friendlyError(err, "Couldn’t set that reminder — try again?")
         );
       }
     });
@@ -151,7 +157,7 @@ export function ContactFollowUpSection({
         toast.success("Draft ready");
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not draft follow-up"
+          friendlyError(err, TOAST_COPY.draftFollowUpFailed)
         );
       }
     });
@@ -170,7 +176,7 @@ export function ContactFollowUpSection({
     }
     if (platform === "linkedin" && sendOptions.linkedinUrl) {
       void navigator.clipboard.writeText(draft);
-      toast.success("Copied — paste into LinkedIn");
+      toast.success("Copied — paste it into LinkedIn");
       window.open(
         buildLinkedInUrl(sendOptions.linkedinUrl),
         "_blank",
@@ -182,7 +188,7 @@ export function ContactFollowUpSection({
       window.location.href = smsHref(phone, draft);
       return;
     }
-    toast.error("Missing contact details for that channel");
+    toast.error("This contact has no details for that channel yet");
   }
 
   function sendEmail() {
@@ -193,7 +199,7 @@ export function ContactFollowUpSection({
         toast.success(`Email sent to ${contactName}`);
         router.refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not send email");
+        toast.error(friendlyError(err, "That email didn’t send — try again?"));
       }
     });
   }
@@ -215,7 +221,7 @@ export function ContactFollowUpSection({
         router.refresh();
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not mark follow-up sent"
+          friendlyError(err, "Couldn’t mark that follow-up sent — try again?")
         );
       }
     });
@@ -247,16 +253,7 @@ export function ContactFollowUpSection({
     },
   ];
 
-  return (
-    <Card id="follow-up" className="scroll-mt-24 border-border/70 shadow-none">
-      <CardHeader>
-        <CardTitle>Follow up</CardTitle>
-        <p className="text-sm text-muted-foreground">
-          Schedule a reminder, or pick a channel to draft a message from your
-          history.
-        </p>
-      </CardHeader>
-      <CardContent>
+  const content = (
       <div className="space-y-4">
         <div>
           <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -406,7 +403,20 @@ export function ContactFollowUpSection({
           </div>
         ) : null}
       </div>
-      </CardContent>
+  );
+
+  if (bare) return content;
+
+  return (
+    <Card id="follow-up" className="scroll-mt-24 border-border/70 shadow-none">
+      <CardHeader>
+        <CardTitle as="h2">Follow up</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Schedule a reminder, or pick a channel to draft a message from your
+          history.
+        </p>
+      </CardHeader>
+      <CardContent>{content}</CardContent>
     </Card>
   );
 }

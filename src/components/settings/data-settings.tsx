@@ -5,6 +5,8 @@ import Link from "next/link";
 import { toast } from "@/lib/toast";
 import { deleteAllData, exportAllData } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
+import { AvatarSyncStatus } from "@/components/settings/avatar-sync-status";
+import { GooglePhotoMatch } from "@/components/settings/google-photo-match";
 import { cancelImportJob } from "@/lib/import-job-runner";
 
 export function DataSettings() {
@@ -13,7 +15,7 @@ export function DataSettings() {
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div>
-        <h2 className="text-lg font-medium text-primary">Data and privacy</h2>
+        <h2 className="text-lg font-medium text-ink">Data and privacy</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Export everything as JSON, or permanently delete your Orbit data. Read
           our{" "}
@@ -66,13 +68,15 @@ export function DataSettings() {
                 String(Date.now())
               );
               await deleteAllData();
-              toast.success("All data deleted");
+              toast.success("All your data is deleted");
             });
           }}
         >
           Delete all data
         </Button>
       </div>
+      <GooglePhotoMatch />
+      <AvatarSyncStatus />
     </section>
   );
 }

@@ -10,7 +10,14 @@ export function usePastHeroPin(heroEl: HTMLElement | null) {
     if (!heroEl) return;
 
     const check = () => {
-      setPastHero(heroEl.getBoundingClientRect().bottom <= 1);
+      const cleared = heroEl.getBoundingClientRect().bottom <= 1;
+      // Below md the pin runs 260svh, so waiting for it to clear left the
+      // full-width header up for ~2.6 screens. Condense once the hero copy
+      // has scrubbed away instead (beat 1 ends around 0.25 of the pin).
+      const earlyOnMobile =
+        window.innerWidth < 768 &&
+        window.scrollY > window.innerHeight * 0.45;
+      setPastHero(cleared || earlyOnMobile);
     };
 
     check();

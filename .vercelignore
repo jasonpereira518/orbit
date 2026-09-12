@@ -1,0 +1,5 @@
+# The browser extension is built and published separately, never deployed.
+# Anchored to the repo root: an unanchored "extension/" also matches
+# src/lib/extension/, which pruned the extension API's shared library from the
+# deployment and failed the production build.
+/extension/

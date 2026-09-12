@@ -1,0 +1,39 @@
+{
+  "contacts": [
+    { "email": "maya@stripe.example", "fullName": "Maya Chen", "company": "Stripe", "title": "Payments Engineer", "school": "Stanford", "industry": "fintech", "location": "San Francisco", "notes": "Worked on card auth rates. Loves rock climbing.", "tags": ["engineer"] },
+    { "email": "dev@plaid.example", "fullName": "Dev Patel", "company": "Plaid", "title": "Product Manager", "school": "Berkeley", "industry": "fintech", "location": "New York", "notes": "Building bank-linking APIs.", "tags": ["product"] },
+    { "email": "sofia@openai.example", "fullName": "Sofia Alvarez", "company": "OpenAI", "title": "Research Engineer", "school": "MIT", "industry": "ai", "location": "San Francisco", "notes": "Published on retrieval-augmented generation.", "tags": ["engineer", "ai"] },
+    { "email": "james@sequoia.example", "fullName": "James Okafor", "company": "Sequoia Capital", "title": "Partner", "school": "Harvard", "industry": "venture capital", "location": "Menlo Park", "notes": "Leads fintech investments. Met at Money2020.", "tags": ["investor"] },
+    { "email": "lena@figma.example", "fullName": "Lena Kowalski", "company": "Figma", "title": "Design Lead", "school": "RISD", "industry": "design", "location": "Brooklyn", "notes": "Mentors early-career designers.", "tags": ["mentor", "design"] },
+    { "email": "tom@datadog.example", "fullName": "Tomás Rivera", "company": "Datadog", "title": "SRE Manager", "school": "Georgia Tech", "industry": "infrastructure", "location": "Boston", "notes": "Hiring SREs. Big into homebrewing.", "tags": ["hiring"] },
+    { "email": "prisha@ramp.example", "fullName": "Prisha Narayanan", "company": "Ramp", "title": "Growth Marketer", "school": "NYU", "industry": "fintech", "location": "New York", "notes": "Ran the SMB card launch campaign.", "tags": ["marketing"] },
+    { "email": "erik@spotify.example", "fullName": "Erik Lindqvist", "company": "Spotify", "title": "Machine Learning Engineer", "school": "KTH", "industry": "music tech", "location": "Stockholm", "notes": "Recommender systems for podcasts.", "tags": ["engineer", "ai"] },
+    { "email": "hana@notion.example", "fullName": "Hana Suzuki", "company": "Notion", "title": "Recruiter", "school": "UCLA", "industry": "productivity", "location": "San Francisco", "notes": "Recruits senior engineers. Very responsive.", "tags": ["recruiter"] },
+    { "email": "omar@stripe.example", "fullName": "Omar Haddad", "company": "Stripe", "title": "Solutions Architect", "school": "Waterloo", "industry": "fintech", "location": "Toronto", "notes": "Helped with our billing integration.", "tags": ["engineer"] },
+    { "email": "claire@nea.example", "fullName": "Claire Dubois", "company": "NEA", "title": "Principal", "school": "Wharton", "industry": "venture capital", "location": "Washington DC", "notes": "Focused on healthcare AI startups.", "tags": ["investor"] },
+    { "email": "sam@anthropic.example", "fullName": "Sam Whitfield", "company": "Anthropic", "title": "Applied AI Engineer", "school": "CMU", "industry": "ai", "location": "San Francisco", "notes": "Talked about agent evals at dinner.", "tags": ["engineer", "ai"] },
+    { "email": "ines@shopify.example", "fullName": "Inés García", "company": "Shopify", "title": "Engineering Manager", "school": "Stanford", "industry": "commerce", "location": "Ottawa", "notes": "Manages checkout team. Stanford alum group organizer.", "tags": ["manager"] },
+    { "email": "raj@coinbase.example", "fullName": "Raj Mehta", "company": "Coinbase", "title": "Security Engineer", "school": "UIUC", "industry": "crypto", "location": "Chicago", "notes": "Deep on key custody and wallet security.", "tags": ["engineer", "security"] },
+    { "email": "amelia@nyt.example", "fullName": "Amelia Brooks", "company": "New York Times", "title": "Data Journalist", "school": "Columbia", "industry": "media", "location": "New York", "notes": "Covers tech policy. Intro'd me to two sources.", "tags": ["media"] },
+    { "email": "kofi@flutterwave.example", "fullName": "Kofi Mensah", "company": "Flutterwave", "title": "Head of Partnerships", "school": "LSE", "industry": "fintech", "location": "Lagos", "notes": "Knows every payments operator in West Africa.", "tags": ["partnerships"] }
+  ],
+  "cases": [
+    { "question": "Maya Chen", "expect": ["maya@stripe.example"], "kind": "exact-name" },
+    { "question": "maya chenn", "expect": ["maya@stripe.example"], "kind": "typo" },
+    { "question": "Tomas Riviera", "expect": ["tom@datadog.example"], "kind": "typo" },
+    { "question": "who do I know at Stripe?", "expect": ["maya@stripe.example", "omar@stripe.example"], "kind": "attribute-company" },
+    { "question": "fintech people in New York", "expect": ["dev@plaid.example", "prisha@ramp.example"], "kind": "attribute-multi" },
+    { "question": "investors who focus on fintech", "expect": ["james@sequoia.example"], "kind": "attribute-tag" },
+    { "question": "who went to Stanford?", "expect": ["maya@stripe.example", "ines@shopify.example"], "kind": "attribute-school" },
+    { "question": "someone who can help me hire site reliability engineers", "expect": ["tom@datadog.example"], "kind": "semantic" },
+    { "question": "who knows about payments infrastructure?", "expect": ["maya@stripe.example", "dev@plaid.example", "kofi@flutterwave.example"], "kind": "semantic" },
+    { "question": "anyone working on recommender systems or ML?", "expect": ["erik@spotify.example", "sofia@openai.example", "sam@anthropic.example"], "kind": "semantic" },
+    { "question": "who could review our security architecture?", "expect": ["raj@coinbase.example"], "kind": "semantic" },
+    { "question": "a recruiter for senior engineering roles", "expect": ["hana@notion.example"], "kind": "semantic-tag" },
+    { "question": "journalists covering technology", "expect": ["amelia@nyt.example"], "kind": "semantic" },
+    { "question": "who mentors designers?", "expect": ["lena@figma.example"], "kind": "semantic" },
+    { "question": "VCs investing in healthcare AI", "expect": ["claire@nea.example"], "kind": "attribute-multi" },
+    { "question": "who did I meet at Money2020?", "expect": ["james@sequoia.example"], "kind": "notes-recall" },
+    { "question": "may", "expect": ["maya@stripe.example"], "kind": "prefix" }
+  ]
+}

@@ -25,6 +25,7 @@ export type ReminderPageItem = {
   contactName: string | null;
   contactEmail: string | null;
   contactPhone: string | null;
+  noteBatchId: string | null;
 };
 
 export function RemindersView({
@@ -129,6 +130,7 @@ export function RemindersView({
                 listId={r.listId}
                 lists={listOptions}
                 showListMove
+                noteBatchId={r.noteBatchId}
               />
             ))}
           </div>

@@ -1,66 +1,37 @@
 "use server";
 
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   chatMessages,
   chatThreads,
+  contacts,
   interactions,
   type ChatRecommendation,
 } from "@/db/schema";
-import { requireUserId } from "@/lib/auth";
 import { chatWithNetwork } from "@/lib/ai";
-import { semanticSearchContacts } from "@/lib/search";
-import { isRecruiterIntent } from "@/lib/recruiters";
-import { loadRecruitersForChat } from "@/actions/recruiters";
+import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
+import { requireUserId } from "@/lib/auth";
+import { prepareChatContext } from "@/lib/chat-context";
+import {
+  buildChatSuggestions,
+  GENERIC_SUGGESTIONS,
+  GENERIC_RANK,
+  type ChatSuggestion,
+} from "@/lib/chat-suggestions";
+import { loadSuggestionSignals } from "@/lib/chat-suggestions-data";
+import { persistAssistantTurn } from "@/lib/chat-persist";
+import { requireUserForSurface } from "@/lib/plan-guards";
+import { traced } from "@/lib/perf-trace";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
-const TITLE_MAX = 72;
-const PRIOR_TURN_LIMIT = 8;
 
-async function loadKnowledgeSnippets(
-  userId: string,
-  contactIds: string[]
-): Promise<Map<string, { recentMessages: string[] }>> {
-  const result = new Map<string, { recentMessages: string[] }>();
-  if (!contactIds.length) return result;
 
-  const db = await getDb();
-  const msgs = await db.query.interactions.findMany({
-    where: and(
-      eq(interactions.userId, userId),
-      inArray(interactions.contactId, contactIds),
-      eq(interactions.interactionType, "linkedin_message")
-    ),
-    orderBy: [desc(interactions.interactionDate)],
-    limit: contactIds.length * 8,
-  });
-
-  const byContact = new Map<string, string[]>();
-  for (const m of msgs) {
-    const list = byContact.get(m.contactId) || [];
-    if (list.length >= 6) continue;
-    const text = (m.aiSummary || m.rawNotes || "").trim();
-    if (!text) continue;
-    list.push(text.slice(0, 280));
-    byContact.set(m.contactId, list);
-  }
-
-  for (const id of contactIds) {
-    result.set(id, {
-      recentMessages: byContact.get(id) || [],
-    });
-  }
-  return result;
-}
-
-function titleFromQuestion(question: string) {
-  const trimmed = question.trim().replace(/\s+/g, " ");
-  if (trimmed.length <= TITLE_MAX) return trimmed;
-  return `${trimmed.slice(0, TITLE_MAX - 1).trimEnd()}…`;
-}
 
 export async function listChatThreads() {
-  const userId = await requireUserId();
+  const userId = await requireUserForSurface("page.chat");
   const db = await getDb();
   return db.query.chatThreads.findMany({
     where: eq(chatThreads.userId, userId),
@@ -75,7 +46,7 @@ export async function listChatThreads() {
 }
 
 export async function getChatThread(threadId: string) {
-  const userId = await requireUserId();
+  const userId = await requireUserForSurface("page.chat");
   const db = await getDb();
 
   const thread = await db.query.chatThreads.findFirst({
@@ -96,7 +67,7 @@ export async function getChatThread(threadId: string) {
 
 export async function createChatThread() {
   try {
-    const userId = await requireUserId();
+    const userId = await requireUserForSurface("page.chat");
     const db = await getDb();
     const [row] = await db.insert(chatThreads).values({ userId }).returning();
     if (!row) throw new Error("Could not create chat thread");
@@ -107,13 +78,12 @@ export async function createChatThread() {
       updatedAt: row.updatedAt.toISOString(),
     };
   } catch (err) {
-    const { toUserFacingError } = await import("@/lib/errors");
-    throw toUserFacingError(err, "Could not start a new chat");
+    throw new Error(friendlyError(err, TOAST_COPY.chatStartFailed));
   }
 }
 
 export async function deleteChatThread(threadId: string) {
-  const userId = await requireUserId();
+  const userId = await requireUserForSurface("page.chat");
   const db = await getDb();
   const existing = await db.query.chatThreads.findFirst({
     where: and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)),
@@ -128,217 +98,196 @@ export async function deleteChatThread(threadId: string) {
 
 export async function askNetwork(
   question: string,
-  options?: { threadId?: string; contactId?: string }
+  options?: { threadId?: string; contactId?: string; contextContactIds?: string[] }
+) {
+  // Traced because this is the one action with no upper bound of its own: retrieval plus
+  // a full model completion, on a user's own key. A slow provider used to be invisible.
+  return traced("chat.askNetwork", () => askNetworkInner(question, options));
+}
+
+async function askNetworkInner(
+  question: string,
+  options?: { threadId?: string; contactId?: string; contextContactIds?: string[] }
 ) {
   try {
-    const userId = await requireUserId();
+    const userId = await requireUserForSurface("page.chat");
+    await consumeBucket("chat", userId, RATE_LIMITS.chat);
     const db = await getDb();
-    const q = question.trim();
-    if (!q) throw new Error("Question is required");
+    const threadId = options?.threadId ?? null;
 
-    const threadId = options?.threadId;
-    const focusContactId = options?.contactId?.trim() || null;
-    let thread =
-      threadId != null
-        ? await db.query.chatThreads.findFirst({
-            where: and(
-              eq(chatThreads.id, threadId),
-              eq(chatThreads.userId, userId)
-            ),
-          })
-        : null;
-
-    if (threadId && !thread) throw new Error("Chat not found");
-
-    const priorTurns =
-      threadId != null
-        ? (
-            await db.query.chatMessages.findMany({
-              where: and(
-                eq(chatMessages.threadId, threadId),
-                eq(chatMessages.userId, userId)
-              ),
-              orderBy: [desc(chatMessages.createdAt)],
-              limit: PRIOR_TURN_LIMIT,
-              columns: { role: true, content: true },
-            })
-          )
-            .reverse()
-            .map((m) => ({ role: m.role, content: m.content }))
-        : [];
+    // Everything the model is shown, with the independent lookups running side by side.
+    // Shared with the streaming route so the two paths cannot drift.
+    const ctx = await prepareChatContext(userId, question, {
+      threadId,
+      focusContactId: options?.contactId,
+      contextContactIds: options?.contextContactIds,
+    });
 
     if (threadId) {
       await db.insert(chatMessages).values({
         threadId,
         userId,
         role: "user",
-        content: q,
+        content: ctx.q,
+        attachedContacts: ctx.attachedPeople.map((p) => ({ id: p.id, name: p.name })),
       });
     }
-
-    const retrieved = await semanticSearchContacts(userId, q, 12);
-
-    if (focusContactId) {
-      const { contacts: contactsTable } = await import("@/db/schema");
-      const focused = await db.query.contacts.findFirst({
-        where: and(
-          eq(contactsTable.id, focusContactId),
-          eq(contactsTable.userId, userId)
-        ),
-        with: { contactTags: { with: { tag: true } } },
-      });
-      if (focused) {
-        const focusEntry = {
-          id: focused.id,
-          fullName: focused.fullName,
-          company: focused.company,
-          title: focused.title,
-          relationshipScore: focused.relationshipScore,
-          aiSummary: focused.aiSummary,
-          notes: focused.notes,
-          keyFacts: focused.keyFacts || [],
-          tags: focused.contactTags.map((ct) => ct.tag.name),
-          relevance: 1,
-        };
-        const without = retrieved.filter((c) => c.id !== focusContactId);
-        retrieved.splice(
-          0,
-          retrieved.length,
-          focusEntry as (typeof retrieved)[number],
-          ...without.slice(0, 11)
-        );
-      }
-    }
-
-    const snippets = await loadKnowledgeSnippets(
-      userId,
-      retrieved.map((c) => c.id)
-    );
-
-    if (focusContactId) {
-      const focusMsgs = await db.query.interactions.findMany({
-        where: and(
-          eq(interactions.userId, userId),
-          eq(interactions.contactId, focusContactId)
-        ),
-        orderBy: [desc(interactions.interactionDate)],
-        limit: 16,
-      });
-      snippets.set(focusContactId, {
-        recentMessages: focusMsgs
-          .map((m) => (m.aiSummary || m.rawNotes || "").trim())
-          .filter(Boolean)
-          .slice(0, 12)
-          .map((t) => t.slice(0, 320)),
-      });
-    }
-
-    const scopedQuestion = focusContactId
-      ? `[Focus: answer primarily about the pinned contact id=${focusContactId}. You may use other contacts only for intros/context.]\n\n${q}`
-      : q;
-
-    const recruiterIntent = isRecruiterIntent(q);
-    const recruitersForChat = recruiterIntent
-      ? await loadRecruitersForChat(q, 8)
-      : [];
-
-    const maxScore = Math.max(
-      1,
-      ...recruitersForChat.map((r) => r.score)
-    );
 
     const result = await chatWithNetwork(
       userId,
-      scopedQuestion,
-      retrieved.map((c) => ({
-        id: c.id,
-        fullName: c.fullName,
-        company: c.company,
-        title: c.title,
-        relationshipScore: c.relationshipScore,
-        aiSummary: c.aiSummary,
-        notes: c.notes,
-        keyFacts: c.keyFacts || [],
-        recentMessages: snippets.get(c.id)?.recentMessages || [],
-        tags: c.tags,
-        relevance: c.relevance,
-      })),
-      priorTurns,
-      recruitersForChat.map((r) => ({
-        id: r.id,
-        fullName: r.fullName,
-        firm: r.firm,
-        specialty: r.specialty,
-        avgRating: r.avgRating,
-        logCount: r.logCount,
-        personalRating: r.personalRating,
-        status: r.status,
-        notes: r.notes,
-        piiUnlocked: r.piiUnlocked,
-        relevance: r.score / maxScore,
-      }))
+      ctx.scopedQuestion,
+      ctx.modelContacts,
+      ctx.priorTurns,
+      ctx.orgRosters,
+      ctx.attention,
+      ctx.modelRecruiters,
+      ctx.focusProfile,
+      ctx.attachedContext
+    );
+    const recommendations = ctx.filterRecommendations(
+      (result.recommendations || []) as ChatRecommendation[]
     );
 
-    const allowedContacts = new Set(retrieved.map((c) => c.id));
-    const allowedRecruiters = new Set(recruitersForChat.map((r) => r.id));
-    const recommendations = (result.recommendations || []).filter((r) => {
-      if (r.recruiter_id) return allowedRecruiters.has(r.recruiter_id);
-      if (r.contact_id) return allowedContacts.has(r.contact_id);
-      return false;
-    }) as ChatRecommendation[];
-
-    let messageId: string | undefined;
-    let title: string | null | undefined = thread?.title;
-
-    if (threadId) {
-      const [assistantMessage] = await db
-        .insert(chatMessages)
-        .values({
-          threadId,
-          userId,
-          role: "assistant",
-          content: result.answer,
-          recommendations,
-        })
-        .returning();
-      messageId = assistantMessage.id;
-
-      const nextTitle = thread?.title || titleFromQuestion(q);
-      await db
-        .update(chatThreads)
-        .set({
-          updatedAt: new Date(),
-          title: nextTitle,
-        })
-        .where(
-          and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId))
-        );
-      title = nextTitle;
-    }
+    const saved = await persistAssistantTurn(userId, threadId, ctx.thread?.title ?? null, ctx.q, {
+      answer: result.answer,
+      recommendations,
+    });
 
     return {
       ok: true as const,
-      threadId: threadId ?? null,
-      title: title ?? null,
-      messageId: messageId ?? null,
+      threadId,
+      title: saved.title,
+      messageId: saved.messageId,
       answer: result.answer,
       recommendations,
-      retrieved: retrieved.map((c) => ({
+      retrieved: ctx.retrieved.map((c) => ({
         id: c.id,
         fullName: c.fullName,
         company: c.company,
         title: c.title,
         relevance: c.relevance,
       })),
-      focusedContactId: focusContactId,
+      focusedContactId: options?.contactId?.trim() || null,
     };
   } catch (err) {
-    const { MISSING_AI_API_KEY_MESSAGE, toUserFacingError } = await import(
-      "@/lib/errors"
-    );
+    // Returned as data, so unlike a throw it is never stripped in production — which
+    // made `toUserFacingError` (it keeps `err.message`) a leak that reached users. On the
+    // server the real error is still in hand, so `friendlyError` can recognise a genuine
+    // missing key; the key message is no longer the fallback for every other failure.
     return {
       ok: false as const,
-      error: toUserFacingError(err, MISSING_AI_API_KEY_MESSAGE).message,
+      error: friendlyError(err, TOAST_COPY.chatFailed),
     };
   }
+}
+
+/**
+ * The personalised cards under the composer, best first.
+ *
+ * Guarded with `requireUserId`, deliberately **not** `requireUserForSurface("page.chat")`
+ * like its neighbours: the floating ask bar shows the same suggestions and is mounted by
+ * `AppShell` on nearly every route, so a user whose chat surface is hidden would otherwise
+ * get a thrown action while sitting on `/contacts`.
+ *
+ * Never throws. A failure here should cost the user their personalisation, not their
+ * composer, so anything going wrong falls back to the four generic questions.
+ */
+export async function getChatSuggestions(): Promise<ChatSuggestion[]> {
+  try {
+    const userId = await requireUserId();
+    const signals = await loadSuggestionSignals(userId);
+    return buildChatSuggestions(signals);
+  } catch {
+    return GENERIC_SUGGESTIONS.map((question, i) => ({
+      id: `generic:${i}`,
+      kind: "generic" as const,
+      question,
+      basis: "",
+      contactIds: [],
+      interactionType: null,
+      rank: GENERIC_RANK,
+    }));
+  }
+}
+
+/** One meeting/call/note the composer's tools menu can pull into a question. */
+export type EventPickerOption = {
+  id: string;
+  contactId: string;
+  contactName: string;
+  /** Drives the gendered fallback illustration when there is no photo. */
+  contactFirstName: string | null;
+  /**
+   * Browser-safe already, decided in Postgres.
+   *
+   * Never `profile_image_url` itself: that column holds base64 up to 120 KB a row when Blob
+   * storage is unconfigured, so a 25-row picker would drag the bytes out of the database
+   * only to rewrite them to `/api/avatars/{id}`.
+   */
+  contactAvatarUrl: string | null;
+  interactionType: string;
+  interactionDate: string;
+  summary: string | null;
+};
+
+/**
+ * Recent interactions for the composer's tools menu — the "events" half of `+`.
+ *
+ * Mirrors `searchContactsForPicker`: a bounded, searchable slice rather than the whole
+ * history. Searches the person's name and the interaction's own text, because "the coffee
+ * with Marcus" and "that intro call" are both how people actually refer to a meeting.
+ */
+export async function searchEventsForPicker(
+  q?: string,
+  limit = 25
+): Promise<EventPickerOption[]> {
+  const userId = await requireUserForSurface("page.chat");
+  const db = await getDb();
+
+  const term = q?.trim();
+  const conditions = [eq(interactions.userId, userId)];
+  if (term) {
+    const like = `%${term.replace(/[%_]/g, (m) => `\\${m}`)}%`;
+    conditions.push(
+      sql`(${contacts.fullName} ILIKE ${like}
+        OR coalesce(${contacts.preferredName}, '') ILIKE ${like}
+        OR coalesce(${interactions.aiSummary}, '') ILIKE ${like}
+        OR coalesce(${interactions.rawNotes}, '') ILIKE ${like}
+        OR ${interactions.interactionType} ILIKE ${like})`
+    );
+  }
+
+  const rows = await db
+    .select({
+      id: interactions.id,
+      contactId: interactions.contactId,
+      fullName: contacts.fullName,
+      preferredName: contacts.preferredName,
+      firstName: contacts.firstName,
+      avatarUrl: clientAvatarUrlSql.as("avatar_url"),
+      interactionType: interactions.interactionType,
+      interactionDate: interactions.interactionDate,
+      aiSummary: interactions.aiSummary,
+      rawNotes: interactions.rawNotes,
+    })
+    .from(interactions)
+    .innerJoin(contacts, eq(contacts.id, interactions.contactId))
+    .where(and(...conditions))
+    .orderBy(desc(interactions.interactionDate), desc(interactions.sameDayOrder))
+    .limit(Math.min(Math.max(limit, 1), 50));
+
+  return rows.map((r) => ({
+    id: r.id,
+    contactId: r.contactId,
+    contactName: r.preferredName?.trim() || r.fullName,
+    contactFirstName: r.firstName,
+    contactAvatarUrl: r.avatarUrl,
+    interactionType: r.interactionType,
+    interactionDate: r.interactionDate.toISOString(),
+    // A one-line gist; the picker is a list, not a reader.
+    summary:
+      r.aiSummary?.trim() ||
+      r.rawNotes?.trim().split("\n")[0]?.slice(0, 120) ||
+      null,
+  }));
 }

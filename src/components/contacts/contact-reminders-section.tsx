@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { friendlyError } from "@/lib/errors";
 
 type ContactReminder = {
   id: string;
@@ -59,7 +60,7 @@ export function ContactRemindersSection({
         router.refresh();
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Could not save note"
+          friendlyError(err, "That note didn’t save — try again?")
         );
       }
     });
@@ -69,7 +70,7 @@ export function ContactRemindersSection({
     <>
       <Card className="border-border/70 shadow-none">
         <CardHeader>
-          <CardTitle>Reminders</CardTitle>
+          <CardTitle as="h2">Reminders</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {reminders.length === 0 ? (
@@ -81,7 +82,7 @@ export function ContactRemindersSection({
                 className="flex items-start gap-2 rounded-xl border border-border/60 p-3"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-primary">{r.title}</p>
+                  <p className="text-sm font-medium text-ink">{r.title}</p>
                   {r.description?.trim() ? (
                     <p className="mt-1 text-sm text-muted-foreground">
                       {r.description}

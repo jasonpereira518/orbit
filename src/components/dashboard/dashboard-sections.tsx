@@ -11,18 +11,23 @@ import { GenerateFollowUpsButton } from "@/components/dashboard/generate-follow-
 import { GoalsSummary } from "@/components/dashboard/goals-summary";
 import { NetworkDepthChart } from "@/components/dashboard/network-depth-chart";
 import { NetworkStatsCard } from "@/components/dashboard/network-stats-card";
+import { PlanLaunchCard } from "@/components/dashboard/plan-launch-card";
 import { RemindersDashboardCard } from "@/components/dashboard/reminders-dashboard-card";
 import { SuggestedOutreachCard } from "@/components/dashboard/suggested-outreach-card";
 import { OutreachPerformanceCard } from "@/components/outreach/outreach-performance-card";
 import { buttonVariants } from "@/components/ui/button";
+import { CARD_HOVER, PRESS, ROW_HOVER_INSET } from "@/lib/interaction";
 import { cn } from "@/lib/utils";
+import { requireUserId } from "@/lib/auth";
+import { getEntitlements } from "@/lib/entitlements";
 
 /**
  * Async server sections for the streamed dashboard. Every bundle section
  * awaits the SAME fetchDashboard() promise (started, un-awaited, in
  * page.tsx) — one scan feeds all cards; the win is the instant shell.
- * Each section's root carries .reveal-mount so streamed arrival plays the
- * staged-reveal cascade (pure CSS — swaps happen pre-hydration).
+ * Each section's root carries .reveal-mount so streamed arrival plays a rise
+ * (pure CSS — swaps happen pre-hydration). The rise is per-boundary, not a
+ * page-wide cascade; see `revealDelay` below for why.
  */
 
 type DashboardBundle = ReturnType<typeof fetchDashboard>;
@@ -50,6 +55,22 @@ function contactMeta(data: BundleData, contactId: string | null | undefined) {
   };
 }
 
+/**
+ * Stagger for elements that share ONE Suspense boundary.
+ *
+ * `--reveal-delay` is an `animation-delay`, and `.reveal-mount` plays on
+ * insertion — so the clock starts when THAT boundary's content lands, not when
+ * the page did. These delays used to run 60/120/160/180/240 ACROSS the seven
+ * boundaries below, which encoded a cascade that never happens: each boundary
+ * arrives when its own data does, so the number was pure added latency on
+ * whatever was already slowest, and it stacked worst on the card that arrived
+ * last. Outreach performance was the clearest case — it awaits a different
+ * promise from its row partner and could never have been in step with it.
+ *
+ * So every boundary now restarts at 0. A delay is only correct BETWEEN siblings
+ * that land in the same commit, where it produces a real cascade — that is the
+ * 40ms below, inside the three sections that render two cards each.
+ */
 const revealDelay = (ms: number) =>
   ({ "--reveal-delay": `${ms}ms` }) as React.CSSProperties;
 
@@ -62,9 +83,9 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
       {isEmptyNetwork && (
         <div
           className="reveal-mount rounded-2xl border border-dashed border-border/70 px-6 py-10 text-center"
-          style={revealDelay(60)}
+          style={revealDelay(0)}
         >
-          <h2 className="font-[family-name:var(--font-display)] text-2xl text-primary">
+          <h2 className="font-[family-name:var(--font-display)] text-2xl text-ink">
             Your orbit is empty
           </h2>
           <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
@@ -95,8 +116,12 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
       )}
 
       <div
-        className="reveal-mount grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
-        style={revealDelay(60)}
+        // Two across on a phone. One-per-row pushed the four cards to roughly three
+        // screens of scrolling before the first thing you can act on, which is the
+        // wrong trade on the surface that is supposed to answer "what should I do
+        // today" — the cards are four short numbers and fit side by side fine.
+        className="reveal-mount grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4"
+        style={revealDelay(40)}
       >
         <StatCard
           label="Contacts"
@@ -116,7 +141,9 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
           value={data.stats.strongConnections}
           icon={<Sparkles className="h-4 w-4" />}
           href="/graph"
-          subtitle="Inner + mid orbit"
+          // Counted from the absolute tiers, like the Network depth card — so it uses
+          // that card's words, not the cohort-ranked orbit badges'.
+          subtitle="Close + warm"
         />
         <StatCard
           label="Reminders"
@@ -131,12 +158,26 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
 
 export async function ChartsSection({ bundle }: { bundle: DashboardBundle }) {
   const { data } = await bundle;
+  // On an empty account this card is six zero rows, a zero-width bar and a paragraph
+  // explaining how a measurement of nothing is computed — the only thing on the
+  // first-run dashboard that neither says anything nor offers anything to do. Every
+  // other card here has a real empty state with a call to action; this one earns its
+  // place as soon as there is a single contact to measure.
+  const showDepth = data.stats.totalContacts > 0;
   return (
     <>
-      <div className="reveal-mount min-w-0 [&>*]:h-full" style={revealDelay(120)}>
-        <NetworkDepthChart metrics={data.networkMetrics} />
-      </div>
-      <div className="reveal-mount min-w-0 [&>*]:h-full" style={revealDelay(160)}>
+      {showDepth && (
+        <div
+          className="reveal-mount min-w-0 lg:flex-1 [&>*]:h-full"
+          style={revealDelay(0)}
+        >
+          <NetworkDepthChart metrics={data.networkMetrics} />
+        </div>
+      )}
+      <div
+        className="reveal-mount min-w-0 lg:flex-1 [&>*]:h-full"
+        style={revealDelay(40)}
+      >
         <DashboardGraphPreview graphPreview={data.graphPreview} />
       </div>
     </>
@@ -150,8 +191,13 @@ export async function SuggestedOutreachSection({
 }) {
   const { data } = await bundle;
   return (
-    <div className="reveal-mount h-full min-w-0 [&>*]:h-full" style={revealDelay(180)}>
+    <div
+      className="reveal-mount h-full min-w-0 lg:flex-1 [&>*]:h-full"
+      style={revealDelay(0)}
+    >
       <SuggestedOutreachCard
+        networkIsEmpty={data.stats.totalContacts === 0}
+        dueFollowUpCount={data.stats.dueFollowUps}
         items={data.suggestions.map((s) => {
           const contactId = s.relatedContactIds?.[0] ?? null;
           const meta = contactMeta(data, contactId);
@@ -177,8 +223,21 @@ export async function OutreachPerformanceSection({
   summary: OutreachSummary;
 }) {
   const outreachPerformance = await summary;
+  // Nothing sent and nothing built: the card renders "—", "0 positive / 0 sent" and an
+  // invitation into a paid surface. That is a hole on the dashboard for every account that
+  // has never run a campaign, which is most of them and all new ones. It reappears the
+  // moment there is a campaign to report on.
+  if (
+    outreachPerformance.accountMetrics.sentCount === 0 &&
+    outreachPerformance.accountMetrics.campaignCount === 0
+  ) {
+    return null;
+  }
   return (
-    <div className="reveal-mount h-full min-w-0 [&>*]:h-full" style={revealDelay(180)}>
+    <div
+      className="reveal-mount h-full min-w-0 lg:flex-1 [&>*]:h-full"
+      style={revealDelay(0)}
+    >
       <OutreachPerformanceCard
         accountRate={outreachPerformance.accountMetrics.successfulReplyRate}
         sentCount={outreachPerformance.accountMetrics.sentCount}
@@ -197,7 +256,7 @@ export async function RemindersAndFollowUpsSection({
   const { data } = await bundle;
   return (
     <>
-      <div className="reveal-mount min-w-0" style={revealDelay(240)}>
+      <div className="reveal-mount min-w-0" style={revealDelay(0)}>
         <RemindersDashboardCard
           items={data.reminders.map((r) => ({
             id: r.id,
@@ -210,14 +269,15 @@ export async function RemindersAndFollowUpsSection({
             contactName: r.contactId
               ? data.contactNameById.get(r.contactId) ?? null
               : null,
+            noteBatchId: r.noteBatchId,
           }))}
         />
       </div>
 
-      <div className="reveal-mount min-w-0" style={revealDelay(240)}>
+      <div className="reveal-mount min-w-0" style={revealDelay(40)}>
         <Card id="due-follow-ups" className="border-border/70 shadow-none scroll-mt-8">
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-            <CardTitle className="text-base">Due follow-ups</CardTitle>
+            <CardTitle as="h2" className="text-base">Due follow-ups</CardTitle>
             {data.dueFollowUps.length > 0 && (
               <div className="flex items-center gap-1.5">
                 <GenerateFollowUpsButton limit={8} />
@@ -264,10 +324,10 @@ export async function RecentlyUpdatedSection({
 }) {
   const { data } = await bundle;
   return (
-    <div className="reveal-mount min-w-0" style={revealDelay(240)}>
+    <div className="reveal-mount min-w-0" style={revealDelay(0)}>
       <Card className="border-border/70 shadow-none">
         <CardHeader>
-          <CardTitle className="text-base">Recently updated</CardTitle>
+          <CardTitle as="h2" className="text-base">Recently updated</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
           {data.recentContacts.length === 0 ? (
@@ -295,13 +355,22 @@ export async function RecentlyUpdatedSection({
               </div>
             </div>
           ) : (
-            data.recentContacts.map((c) => {
+            // Two columns from lg. This card owns a full-width row (see page.tsx),
+            // and six rows stretched across it would put each name a thousand
+            // pixels from its own timestamp. Splitting the same six into 3x2 fills
+            // the width with content instead of with gap.
+            <div className="grid gap-x-8 gap-y-1 lg:grid-cols-2">
+            {data.recentContacts.map((c) => {
               const tier = tierForContact(data, c.id);
               return (
                 <Link
                   key={c.id}
                   href={`/contacts/${c.id}`}
-                  className="flex items-center justify-between rounded-lg px-2 py-2 hover:bg-muted/60"
+                  className={cn(
+                    "flex items-center justify-between px-2 py-2",
+                    ROW_HOVER_INSET,
+                    PRESS
+                  )}
                 >
                   <div className="flex min-w-0 items-center gap-2">
                     {tier && <ClosenessTierBadge tier={tier} dotOnly />}
@@ -317,7 +386,8 @@ export async function RecentlyUpdatedSection({
                   </span>
                 </Link>
               );
-            })
+            })}
+            </div>
           )}
         </CardContent>
       </Card>
@@ -327,8 +397,14 @@ export async function RecentlyUpdatedSection({
 
 export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
   const { data, networkStats } = await bundle;
+  // Both are request-cached (`cache()`), and the layout above has already
+  // resolved them for the sidebar's tier ring — so this costs nothing extra.
+  const { plan } = await getEntitlements(await requireUserId());
   return (
-    <div className="reveal-mount space-y-8" style={revealDelay(240)}>
+    // space-y-6, not the page's space-y-8: these three are a group at the foot of
+    // the dashboard, and giving them the same gap as the major section breaks made
+    // them read as three more top-level sections rather than one block.
+    <div className="reveal-mount space-y-6" style={revealDelay(0)}>
       <GoalsSummary
         goals={data.goals}
         goalAlignedContacts={data.goalAlignedContacts.map((c) => ({
@@ -342,6 +418,11 @@ export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
       />
 
       <NetworkStatsCard stats={networkStats} />
+
+      {/* Foot of the dashboard on purpose: prominent enough to find, far
+          enough down that it isn't the first thing between you and your
+          follow-ups. */}
+      <PlanLaunchCard plan={plan} />
     </div>
   );
 }
@@ -365,7 +446,7 @@ function StatCard({
         <span className="text-xs font-medium uppercase tracking-wide">{label}</span>
         {icon}
       </div>
-      <p className="mt-3 font-[family-name:var(--font-display)] text-3xl text-primary">
+      <p className="mt-3 font-[family-name:var(--font-display)] text-3xl text-ink">
         {value}
       </p>
       {subtitle && (
@@ -378,7 +459,11 @@ function StatCard({
     return (
       <Link
         href={href}
-        className="block rounded-2xl border border-border/70 bg-card/80 p-4 backdrop-blur transition-[border-color,box-shadow,background-color] hover:border-primary/30 hover:bg-card hover:shadow-md"
+        className={cn(
+          "block rounded-2xl border border-border/70 bg-card/80 p-4 backdrop-blur hover:bg-card",
+          CARD_HOVER,
+          PRESS
+        )}
       >
         {inner}
       </Link>

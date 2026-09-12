@@ -8,7 +8,7 @@ export function OutreachPreview({ reducedMotion }: PreviewProps) {
   return (
     <div className="space-y-3 p-1">
       <div className="flex items-center justify-between gap-3">
-        <p className="font-[family-name:var(--font-display)] text-lg text-primary">
+        <p className="font-[family-name:var(--font-display)] text-lg text-ink">
           Outreach
         </p>
         <div
@@ -29,7 +29,7 @@ export function OutreachPreview({ reducedMotion }: PreviewProps) {
       >
         <div className="flex items-start justify-between gap-2">
           <div>
-            <p className="text-sm font-medium text-primary">
+            <p className="text-sm font-medium text-ink">
               Series A founders · SF
             </p>
             <p className="mt-0.5 text-[11px] text-muted-foreground">

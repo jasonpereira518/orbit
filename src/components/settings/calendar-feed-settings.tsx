@@ -12,6 +12,8 @@ import {
 } from "@/actions/calendar-feed";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { TOAST_COPY } from "@/lib/toast-copy";
+import { friendlyError, TIMEOUT_MESSAGE } from "@/lib/errors";
 
 /**
  * How long to wait for the status action before giving up on it.
@@ -94,10 +96,8 @@ export function CalendarFeedSettings() {
         const timedOut = err instanceof Error && err.message === TIMED_OUT;
         toast.error(
           timedOut
-            ? "That took too long. Please try again."
-            : err instanceof Error
-              ? err.message
-              : "Something went wrong"
+            ? TIMEOUT_MESSAGE
+            : friendlyError(err, "That didn’t work — try again?")
         );
       }
     });
@@ -106,7 +106,7 @@ export function CalendarFeedSettings() {
   return (
     <section className="space-y-3 rounded-2xl border border-border/70 bg-card p-6">
       <div>
-        <h2 className="text-lg font-medium text-primary">Calendar feed</h2>
+        <h2 className="text-lg font-medium text-ink">Calendar feed</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Subscribe to your reminders in Google Calendar, Apple Calendar, or
           Outlook so they show up alongside everything else.
@@ -168,7 +168,7 @@ export function CalendarFeedSettings() {
                 variant="outline"
                 onClick={async () => {
                   await navigator.clipboard.writeText(status.url!);
-                  toast.success("Copied to clipboard");
+                  toast.success(TOAST_COPY.copied);
                 }}
               >
                 Copy link

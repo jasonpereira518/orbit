@@ -1,7 +1,9 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { Skeleton } from "@/components/ui/skeleton";
+import { CaptureFormSkeleton } from "@/components/loading/page-skeletons";
+import type { CaptureMode } from "@/components/capture/capture-form";
+import type { ResumableMeeting } from "@/lib/meeting-sessions";
 
 const CaptureForm = dynamic(
   () =>
@@ -9,7 +11,7 @@ const CaptureForm = dynamic(
       default: m.CaptureForm,
     })),
   {
-    loading: () => <Skeleton className="h-64 w-full rounded-2xl" />,
+    loading: () => <CaptureFormSkeleton />,
   }
 );
 
@@ -18,11 +20,15 @@ export function CaptureFormLazy({
   initialContactName = null,
   defaultMode = "messy",
   hasApiKey = true,
+  canTranscribe = false,
+  resumableMeeting = null,
 }: {
   initialContactId?: string | null;
   initialContactName?: string | null;
-  defaultMode?: "messy" | "structured";
+  defaultMode?: CaptureMode;
   hasApiKey?: boolean;
+  canTranscribe?: boolean;
+  resumableMeeting?: ResumableMeeting | null;
 }) {
   return (
     <CaptureForm
@@ -30,6 +36,8 @@ export function CaptureFormLazy({
       initialContactName={initialContactName}
       defaultMode={defaultMode}
       hasApiKey={hasApiKey}
+      canTranscribe={canTranscribe}
+      resumableMeeting={resumableMeeting}
     />
   );
 }

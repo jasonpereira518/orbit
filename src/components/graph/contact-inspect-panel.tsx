@@ -31,6 +31,8 @@ import { formatHowMetSummary } from "@/lib/met-context";
 import { closenessTierChipClass } from "@/lib/closeness";
 import { RING_LABELS, type GraphNodeData } from "@/lib/graph-layout";
 import type { UserSocialLinks } from "@/actions/graph";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 export type InspectSelection =
   | { type: "contact"; id: string; data: GraphNodeData }
@@ -214,12 +216,12 @@ function YouPanelBody({
               className="h-14 w-14 rounded-full border border-primary/20 object-cover shadow-[0_0_20px_rgba(255,200,100,0.35)]"
             />
           ) : (
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[radial-gradient(circle_at_30%_30%,#fff,#f5c86a_55%,#e09030)] text-sm font-semibold text-primary shadow-[0_0_20px_rgba(255,200,100,0.45)]">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[radial-gradient(circle_at_30%_30%,#fff,#f5c86a_55%,#e09030)] text-sm font-semibold text-[#3a2708] shadow-[0_0_20px_rgba(255,200,100,0.45)]">
               {data.initials}
             </div>
           )}
           <div className="min-w-0">
-            <SheetTitle className="font-[family-name:var(--font-display)] text-2xl text-primary">
+            <SheetTitle className="font-[family-name:var(--font-display)] text-2xl text-ink">
               {data.label}
             </SheetTitle>
             <SheetDescription>
@@ -237,13 +239,13 @@ function YouPanelBody({
 
         <div className="grid grid-cols-2 gap-3">
           <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
-            <p className="text-lg font-medium text-primary">
+            <p className="text-lg font-medium text-ink">
               {summary.companyCount}
             </p>
             <p className="text-xs text-muted-foreground">companies</p>
           </div>
           <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
-            <p className="text-lg font-medium text-primary">
+            <p className="text-lg font-medium text-ink">
               {summary.strongTies ?? 0}
             </p>
             <p className="text-xs text-muted-foreground">strong ties</p>
@@ -255,7 +257,7 @@ function YouPanelBody({
             <p className="text-xs text-muted-foreground">drifting comets</p>
           </div>
           <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
-            <p className="text-lg font-medium text-primary">
+            <p className="text-lg font-medium text-ink">
               {summary.overdueCount ?? 0}
             </p>
             <p className="text-xs text-muted-foreground">overdue follow-ups</p>
@@ -278,7 +280,7 @@ function YouPanelBody({
                     ({score})
                   </span>
                 </span>
-                <span className="text-primary">
+                <span className="text-ink">
                   {summary.scoreCounts[score] || 0}
                 </span>
               </li>
@@ -382,10 +384,27 @@ function ContactPanelBody({
   onRefresh: () => void;
 }) {
   const [summaryText, setSummaryText] = useState(data.aiSummary ?? null);
+  // Keyed by contact, not a bare boolean: the panel is reused across stars, and an effect
+  // that reset a flag would still render one frame with the previous person's failure —
+  // a visible flash of initials over someone who does have a photo.
+  const [failedPhotoId, setFailedPhotoId] = useState<string | null>(null);
+  const photoFailed = failedPhotoId === id;
 
   useEffect(() => {
     setSummaryText(data.aiSummary ?? null);
   }, [id, data.aiSummary]);
+
+  /**
+   * Always the same-origin avatar route, never the stored URL directly: it serves inline
+   * photos as bytes and proxies remote ones, so LinkedIn CDN images (which refuse
+   * hotlinking) and `data:` URLs both load. Opening a star is a deliberate single-contact
+   * view, so it is also the right place to resolve a missing photo on demand.
+   */
+  const canResolvePhoto = Boolean(data.linkedinUrl?.trim() || data.email?.trim());
+  const photoSrc =
+    !photoFailed && (Boolean(data.profileImageUrl?.trim()) || canResolvePhoto)
+      ? `/api/avatars/${id}`
+      : null;
 
   const howMet = formatHowMetSummary({
     metContext: data.metContext,
@@ -397,18 +416,30 @@ function ContactPanelBody({
     <>
       <SheetHeader className="border-b border-border/50 pb-4">
         <div className="flex items-start gap-3 pr-8">
-          <div
-            className={cn(
-              "flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-primary-foreground",
-              "bg-[radial-gradient(circle_at_30%_30%,rgba(255,255,255,0.35),transparent_42%)] bg-primary",
-              data.comet && "bg-[#c4452d] ring-2 ring-[#ff6b4a]/60",
-              data.overdue && !data.comet && "ring-2 ring-[#c4a35a]"
-            )}
-          >
-            {data.initials}
-          </div>
+          {photoSrc ? (
+            // The photo stands on its own: comet and overdue state is already spelled out
+            // in words by the chips directly below, so a ring here would only repeat it.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={photoSrc}
+              alt=""
+              onError={() => setFailedPhotoId(id)}
+              className="h-14 w-14 shrink-0 rounded-full border border-border/60 object-cover"
+            />
+          ) : (
+            <div
+              className={cn(
+                "flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-ink-foreground",
+                "bg-[radial-gradient(circle_at_30%_30%,rgba(255,255,255,0.35),transparent_42%)] bg-primary",
+                data.comet && "bg-[#c4452d] ring-2 ring-[#ff6b4a]/60",
+                data.overdue && !data.comet && "ring-2 ring-[#c4a35a]"
+              )}
+            >
+              {data.initials}
+            </div>
+          )}
           <div className="min-w-0">
-            <SheetTitle className="font-[family-name:var(--font-display)] text-2xl text-primary">
+            <SheetTitle className="font-[family-name:var(--font-display)] text-2xl text-ink">
               {data.label}
             </SheetTitle>
             {data.fullName &&
@@ -474,8 +505,13 @@ function ContactPanelBody({
 
         <div className="grid gap-2 text-sm">
           <div className="flex justify-between gap-4 border-b border-border/50 py-2">
-            <span className="text-muted-foreground">Last interaction</span>
-            <span className="text-right text-primary">
+            {/* "Last interaction" only when one was actually logged — otherwise this row
+                is reporting the import stamp, and would contradict the empty timeline
+                on the full profile. */}
+            <span className="text-muted-foreground">
+              {data.hasLoggedInteraction ? "Last interaction" : "In your network"}
+            </span>
+            <span className="text-right text-ink">
               {formatMaybeRelative(data.lastInteractionAt) ||
                 formatMaybeDate(data.lastInteractionAt) ||
                 "Never"}
@@ -483,14 +519,14 @@ function ContactPanelBody({
           </div>
           <div className="flex justify-between gap-4 border-b border-border/50 py-2">
             <span className="text-muted-foreground">Next follow-up</span>
-            <span className="text-right text-primary">
+            <span className="text-right text-ink">
               {formatMaybeDate(data.nextFollowUpAt) || "None"}
             </span>
           </div>
           {howMet && (
             <div className="border-b border-border/50 py-2">
               <p className="text-muted-foreground">How you met</p>
-              <p className="mt-1 text-primary">{howMet}</p>
+              <p className="mt-1 text-ink">{howMet}</p>
             </div>
           )}
         </div>
@@ -556,14 +592,12 @@ function ContactPanelBody({
                       onContactPatch?.(id, { aiSummary: res.summary });
                       toast.success("Summary updated");
                     } else {
-                      toast.error("Could not generate summary");
+                      toast.error(TOAST_COPY.summaryFailed);
                     }
                     onRefresh();
                   } catch (err) {
                     toast.error(
-                      err instanceof Error
-                        ? err.message
-                        : "Could not generate summary"
+                      friendlyError(err, TOAST_COPY.summaryFailed)
                     );
                   }
                 })

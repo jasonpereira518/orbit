@@ -11,10 +11,6 @@ function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
 }
 
-function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
-  return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />
-}
-
 function DialogPortal({ ...props }: DialogPrimitive.Portal.Props) {
   return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />
 }
@@ -31,7 +27,8 @@ function DialogOverlay({
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 isolate z-50 bg-black/10 duration-base ease-out data-closed:duration-fast supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        // Matches SheetOverlay — see the note there for why the backdrop is this light.
+        "fixed inset-0 isolate z-50 bg-black/5 duration-base ease-out data-closed:duration-fast supports-backdrop-filter:backdrop-blur-[1.5px] data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className
       )}
       {...props}
@@ -156,5 +153,4 @@ export {
   DialogOverlay,
   DialogPortal,
   DialogTitle,
-  DialogTrigger,
 }

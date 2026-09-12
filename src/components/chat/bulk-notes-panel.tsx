@@ -4,26 +4,47 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
+import { addDays, format } from "date-fns";
 import { toast } from "@/lib/toast";
+import { useCornerClearanceAbove } from "@/lib/corner-clearance";
 import {
   confirmBulkCapture,
   ingestCaptureMedia,
   parseBulkCaptureNotes,
   type BulkNotePersonPreview,
+  type BulkParseOptions,
   type SuggestedReminderPreview,
 } from "@/actions/capture";
+import type { MeetingExtraReminderInput } from "@/lib/note-batch-save";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
+import {
+  CAPTURE_MAX_UPLOAD_BYTES,
+  formatUploadSize,
+} from "@/lib/capture-limits";
+import { MAX_RECORDING_MS, formatElapsed } from "@/lib/voice-recording";
+import type { VoiceRecording } from "@/lib/use-voice-recorder";
+import { VoiceRecorder } from "@/components/capture/voice-recorder";
 import { getSettings } from "@/actions/settings";
+import { BusyHint } from "@/components/imports/import-utils";
+import {
+  ScanControls,
+  sortAndNormalizeScanFiles,
+  useScanDropZone,
+} from "@/components/scan/scan-controls";
+import { finishBackgroundJob, startBackgroundJob } from "@/lib/background-jobs";
+import { releaseScanPage, type ScanPage } from "@/lib/scan-capture";
+import type { SaveNoteBatchOutput } from "@/lib/note-batch-save";
+import {
+  pickLockedParticipant,
+  withLockedSeedPerson,
+  type PreviewMention,
+} from "@/lib/note-batches";
 import type {
   CaptureParseHints,
   ParsedNote,
   SharedNoteContext,
 } from "@/lib/ai";
-import {
-  MISSING_AI_API_KEY_MESSAGE,
-  isMissingAiApiKeyError,
-  toUserFacingError,
-} from "@/lib/errors";
+import { friendlyError, isMissingAiApiKeyError, MISSING_AI_API_KEY_MESSAGE } from "@/lib/errors";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -32,6 +53,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 type Decision = "pending" | "accepted" | "discarded";
 
@@ -52,6 +74,8 @@ type ReviewItem = BulkNotePersonPreview & {
   relationshipScore: number;
   tagNames: string;
   followUpDays: number;
+  /** Locked to `lockedParticipantId` — the panel was opened from that contact's profile. */
+  locked?: boolean;
 };
 
 const CAPTURE_FILE_ACCEPT = [
@@ -65,6 +89,8 @@ const CAPTURE_FILE_ACCEPT = [
   "text/calendar",
   "message/rfc822",
   "image/*",
+  "application/pdf",
+  ".pdf",
   "audio/*",
   ".webm",
   ".mp3",
@@ -84,58 +110,128 @@ async function fileToBase64(file: File): Promise<string> {
   return btoa(binary);
 }
 
+/** Filename and provenance for whatever was last ingested — "note.jpg · via photos:2". */
+function IngestMeta({
+  fileName,
+  sources,
+}: {
+  fileName: string | null;
+  sources: string[];
+}) {
+  if (!fileName && !sources.length) return null;
+  return (
+    <span className="truncate text-xs text-muted-foreground">
+      {fileName}
+      {fileName && sources.length ? " · " : ""}
+      {sources.length ? `via ${sources.join(", ")}` : ""}
+    </span>
+  );
+}
+
 export function BulkNotesPanel({
   compact = false,
+  showRecorder = false,
   preferredContactId = null,
   preferredContactName = null,
+  lockedParticipantId = null,
+  lockedParticipantName = null,
+  entryPoint,
   hasApiKey: hasApiKeyProp,
   onSaved,
+  initialNotes,
+  initialHints,
+  autoExtract = false,
+  parseOptions,
+  meeting = null,
+  onStartOver,
+  headerSlot,
 }: {
   compact?: boolean;
+  /** Seed the textarea — a recorded meeting's analysis hands its notes over this way. */
+  initialNotes?: string;
+  initialHints?: CaptureParseHints | null;
+  /** Run the extraction on mount, once, instead of waiting for the button. */
+  autoExtract?: boolean;
+  parseOptions?: BulkParseOptions;
+  /**
+   * A recorded meeting being saved. Passed through to `confirmBulkCapture`, and makes a
+   * save with no people and no dates valid — the meeting's summary is worth keeping alone.
+   */
+  meeting?: { sessionId: string; extraReminders: MeetingExtraReminderInput[] } | null;
+  /** Replaces the built-in "Start over", for a caller that owns what came before. */
+  onStartOver?: () => void;
+  /** Rendered above the review and done steps — the meeting flow's summary card. */
+  headerSlot?: React.ReactNode;
+  /**
+   * Put a microphone above the textarea and let a recording drive the ingest.
+   *
+   * A flag rather than a separate panel: recording only changes where the text comes
+   * from, and the paste/review/done machine below is identical either way. Forking it
+   * would mean two copies of the parse, the review carousel and the save.
+   */
+  showRecorder?: boolean;
   preferredContactId?: string | null;
   preferredContactName?: string | null;
+  /**
+   * When set, the parse is seeded with this person and whichever parsed item matches
+   * them is force-merged into this contact and can't be redirected to "Create new" or
+   * another merge target — used when the panel is opened from that contact's profile.
+   */
+  lockedParticipantId?: string | null;
+  lockedParticipantName?: string | null;
+  /** Where the panel was opened from. Affects the default `onSaved` behavior. */
+  entryPoint?: "capture" | "profile";
   /** When known from the server, skips a settings round-trip. */
   hasApiKey?: boolean;
   /** Called after a successful save. Defaults to staying on the paste step. */
-  onSaved?: (result: {
-    created: number;
-    updated: number;
-    contactIds: string[];
-  }) => void;
+  onSaved?: (result: SaveNoteBatchOutput) => void;
 }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [notes, setNotes] = useState("");
+  const [notes, setNotes] = useState(initialNotes ?? "");
   const [fileName, setFileName] = useState<string | null>(null);
   const [captureHints, setCaptureHints] = useState<CaptureParseHints | null>(
-    null
+    initialHints ?? null
   );
   const [ingestSources, setIngestSources] = useState<string[]>([]);
   const [step, setStep] = useState<"paste" | "review" | "done">("paste");
+  // The review card's Accept row sits where the toast stack lands, and
+  // `Found N people` fires in the same commit that renders the card. Lift the
+  // corner above the row for as long as it is on screen — this is what keeps
+  // interactive toasts from swallowing that click. See lib/corner-clearance.ts.
+  const actionRowRef = useRef<HTMLDivElement | null>(null);
+  useCornerClearanceAbove(actionRowRef, step === "review");
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [sharedNotes, setSharedNotes] = useState<SharedNoteContext[]>([]);
   const [reviewIndex, setReviewIndex] = useState(0);
   const [slideDirection, setSlideDirection] = useState<1 | -1>(1);
   const [suggestions, setSuggestions] = useState<SuggestionReviewItem[]>([]);
-  const [captureBatchId, setCaptureBatchId] = useState<string | null>(null);
+  const [sourceText, setSourceText] = useState<string | null>(null);
   const [sourceHash, setSourceHash] = useState<string | null>(null);
+  const [anchorIso, setAnchorIso] = useState<string | null>(null);
+  const [anchorBasis, setAnchorBasis] = useState<
+    "note" | "hint" | "upload" | null
+  >(null);
   const [skipped, setSkipped] = useState<{
     relative: number;
     unverifiable: number;
     past: number;
   } | null>(null);
+  const [mentions, setMentions] = useState<PreviewMention[]>([]);
   const [hasApiKey, setHasApiKey] = useState(hasApiKeyProp ?? true);
+  /** Whether to mention a fallback at all — see `ingestPayloads`. */
+  const [wisprConfigured, setWisprConfigured] = useState(false);
   const [pending, start] = useTransition();
 
   useEffect(() => {
-    if (hasApiKeyProp !== undefined) {
-      setHasApiKey(hasApiKeyProp);
-      return;
-    }
     let cancelled = false;
     getSettings()
       .then((settings) => {
-        if (!cancelled) setHasApiKey(settings.hasApiKey);
+        if (cancelled) return;
+        // `hasApiKeyProp` is the server's answer and stays authoritative when given; only
+        // the Wispr flag needs this round-trip.
+        if (hasApiKeyProp === undefined) setHasApiKey(settings.hasApiKey);
+        setWisprConfigured(Boolean(settings.hasWisprKey));
       })
       .catch(() => {
         // Keep extract enabled; the action returns a clear error if needed.
@@ -145,6 +241,10 @@ export function BulkNotesPanel({
     };
   }, [hasApiKeyProp]);
 
+  useEffect(() => {
+    if (hasApiKeyProp !== undefined) setHasApiKey(hasApiKeyProp);
+  }, [hasApiKeyProp]);
+
   const accepted = items.filter((i) => i.decision === "accepted");
   const discarded = items.filter((i) => i.decision === "discarded");
   const current = items[reviewIndex] ?? null;
@@ -152,13 +252,17 @@ export function BulkNotesPanel({
   const checkedDates = suggestions.filter((s) => s.checked).length;
   const saveLabel = (() => {
     const parts: string[] = [];
+    if (meeting) parts.push("meeting");
     if (accepted.length) {
       parts.push(
         `${accepted.length} ${accepted.length === 1 ? "contact" : "contacts"}`
       );
     }
-    if (checkedDates) {
-      parts.push(`${checkedDates} ${checkedDates === 1 ? "date" : "dates"}`);
+    const reminderCount = checkedDates + (meeting?.extraReminders.length ?? 0);
+    if (reminderCount) {
+      parts.push(
+        `${reminderCount} ${reminderCount === 1 ? "reminder" : "reminders"}`
+      );
     }
     return parts.length ? `Save ${parts.join(" + ")}` : "Save";
   })();
@@ -173,9 +277,12 @@ export function BulkNotesPanel({
     setSharedNotes([]);
     setReviewIndex(0);
     setSuggestions([]);
-    setCaptureBatchId(null);
+    setSourceText(null);
     setSourceHash(null);
+    setAnchorIso(null);
+    setAnchorBasis(null);
     setSkipped(null);
+    setMentions([]);
   }
 
   function decide(decision: "accepted" | "discarded") {
@@ -226,54 +333,159 @@ export function BulkNotesPanel({
           interactionType: i.interactionType,
         }));
         const checkedSuggestions = suggestions.filter((s) => s.checked);
-        if (!payload.length && !checkedSuggestions.length) {
-          toast.error("Nothing to save — accept a person or a date");
+        if (!payload.length && !checkedSuggestions.length && !meeting) {
+          toast.error("Nothing to save — accept a person or a date first");
           return;
         }
-        const res = await confirmBulkCapture(
-          payload,
-          captureBatchId && sourceHash && checkedSuggestions.length
-            ? {
-                captureBatchId,
-                sourceHash,
-                items: checkedSuggestions.map((s) => ({
-                  key: s.key,
-                  title: s.title,
-                  description: s.description,
-                  rawDatePhrase: s.rawDatePhrase,
-                  dueDateIso: s.dueDateIso,
-                  yearInferred: s.yearInferred,
-                  personName: s.personNameOverride ?? s.personName,
-                  actionKind: s.actionKind,
-                  confidenceScore: s.confidenceScore,
-                  sourceExcerpt: s.sourceExcerpt,
-                })),
-              }
-            : undefined
-        );
-        const datePart = res.suggestionsStaged
-          ? `, ${res.suggestionsStaged} ${
-              res.suggestionsStaged === 1 ? "date" : "dates"
-            } to review`
-          : "";
-        toast.success(
-          `Saved: ${res.created} created, ${res.updated} updated${datePart}`
-        );
+        const res = await confirmBulkCapture(payload, {
+          sourceHash: sourceHash!,
+          sourceText: sourceText!,
+          anchorIso: anchorIso!,
+          anchorBasis: anchorBasis ?? "upload",
+          entryPoint: entryPoint ?? "capture",
+          seedContactId: lockedParticipantId ?? null,
+          commitments: checkedSuggestions.map((s) => ({
+            title: s.title,
+            description: s.description,
+            rawDatePhrase: s.rawDatePhrase,
+            dueDateIso: s.dueDateIso,
+            yearInferred: s.yearInferred,
+            personName: s.personNameOverride ?? s.personName,
+            actionKind: s.actionKind,
+            confidenceScore: s.confidenceScore,
+            sourceExcerpt: s.sourceExcerpt,
+            dateBasis: s.dateBasis,
+            anchorIso: s.anchorIso,
+          })),
+          mentions,
+          skipped: skipped ?? { relative: 0, unverifiable: 0, past: 0 },
+          meeting,
+        });
+        // The profile entry point's default path gets its own toast below (a link to
+        // the fuller capture results, not a raw count) — every other path shares this
+        // one summary toast, so it's hoisted here instead of repeated per branch.
+        if (onSaved || entryPoint !== "profile") {
+          toast.success(
+            `Saved: ${res.created} created, ${res.updated} updated, ${res.remindersCreated} reminders`
+          );
+        }
         if (onSaved) {
           onSaved(res);
-        } else {
+        } else if (entryPoint === "profile") {
+          // Stay on the profile — nothing to navigate to here — and offer a link to
+          // the fuller capture results (mentions, reminders, dedupe) instead of
+          // dragging the user off the page they were already looking at.
           resetToPaste();
           router.refresh();
+          toast.success("Saved — view what was created", {
+            action: {
+              label: "Open",
+              onClick: () => router.push(`/capture/${res.batchId}`),
+            },
+          });
+        } else {
+          resetToPaste();
+          router.push(`/capture/${res.batchId}`);
         }
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Save failed");
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
       }
     });
   }
 
-  function handleFilesSelected(fileList: FileList | null) {
-    if (!fileList?.length) return;
-    const files = Array.from(fileList);
+  /**
+   * Send already-normalized scan pages for transcription.
+   *
+   * Deliberately does NOT pass `text`: a photographed page replaces what is in the box
+   * rather than appending to it, which is what made the old dedicated scan screen feel
+   * right. Uploading a .txt still merges, because that is additive by nature.
+   */
+  function ingestScanPages(pages: ScanPage[]) {
+    if (!pages.length) return;
+
+    const totalBytes = pages.reduce((sum, page) => sum + page.bytes, 0);
+    if (totalBytes > CAPTURE_MAX_UPLOAD_BYTES) {
+      toast.error(
+        `Those pages total ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}, so try fewer at a time`
+      );
+      return;
+    }
+
+    // Auto-extract ONLY into an empty box. A scan is a complete thought, so a second click
+    // would be ceremony — but firing extraction under someone who was mid-sentence would
+    // be worse, so notes already typed mean the transcript lands and waits.
+    const wasEmpty = !notes.trim();
+
+    start(async () => {
+      // Inside the transition, not beside it: `Date.now()` and the job store are both
+      // impure, and the React compiler rightly refuses them in a component body.
+      const jobId = `scan-${Date.now()}`;
+      // Indeterminate (both zero) on purpose: transcription is one server action that fans
+      // out to a call per page on the far side, so the browser learns nothing until every
+      // page is back. A bar here could only be animated, never measured. The page count
+      // goes in the label instead, which is the part we genuinely know.
+      startBackgroundJob({
+        id: jobId,
+        kind: "scan-notes",
+        label: pages.length === 1 ? "Reading your page" : `Reading ${pages.length} pages`,
+        startedAt: Date.now(),
+        done: 0,
+        total: 0,
+      });
+      try {
+        const res = await ingestCaptureMedia({
+          files: pages.map((page) => ({
+            filename: page.filename,
+            mimeType: page.mimeType,
+            base64: page.base64,
+          })),
+        });
+        if (!res.ok) {
+          const missingKey = isMissingAiApiKeyError(res.error);
+          if (missingKey) setHasApiKey(false);
+          finishBackgroundJob(jobId, { status: "failed", error: res.error });
+          toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
+          return;
+        }
+        finishBackgroundJob(jobId, {
+          status: "completed",
+          resultMessage: pages.length === 1 ? "Read 1 page" : `Read ${pages.length} pages`,
+        });
+        setNotes(res.text);
+        setCaptureHints(res.hints || null);
+        setIngestSources(res.sources || []);
+        setFileName(pages.length === 1 ? pages[0]!.filename : `${pages.length} pages`);
+        if (wasEmpty && hasApiKey) runParse(res.text, res.hints || null);
+      } catch (err) {
+        const message = friendlyError(err, "Couldn’t read those pages — try again?");
+        finishBackgroundJob(jobId, { status: "failed", error: message });
+        toast.error(message);
+      } finally {
+        // The blobs only ever backed thumbnails; the base64 has already been sent.
+        for (const page of pages) releaseScanPage(page);
+      }
+    });
+  }
+
+  function handleFilesSelected(files: File[]) {
+    if (!files.length) return;
+
+    // REJECT BEFORE ENCODING, because the failure downstream is invisible. An oversized
+    // body is not refused by the server: Next buffers the first N bytes, warns in the
+    // server log, and hands the action a truncated payload — which surfaces to the user
+    // as a confusing parse failure long after the upload appeared to succeed. Raising the
+    // limit only moves that cliff, so the size has to be checked here, where we can still
+    // say something true about which files are too big.
+    const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+    if (totalBytes > CAPTURE_MAX_UPLOAD_BYTES) {
+      toast.error(
+        files.length === 1
+          ? `${files[0]!.name} is ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} per upload`
+          : `Those ${files.length} files total ${formatUploadSize(totalBytes)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)} per upload, so try smaller batches`
+      );
+      return;
+    }
+
     start(async () => {
       try {
         const payloads = await Promise.all(
@@ -283,40 +495,238 @@ export function BulkNotesPanel({
             base64: await fileToBase64(file),
           }))
         );
-        const res = await ingestCaptureMedia({
-          text: notes,
-          files: payloads,
-        });
-        if (!res.ok) {
-          const missingKey = isMissingAiApiKeyError(res.error);
-          if (missingKey) setHasApiKey(false);
-          toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
-          return;
-        }
-        setNotes(res.text);
-        setCaptureHints(res.hints || null);
-        setIngestSources(res.sources || []);
-        setFileName(
-          files.length === 1
-            ? files[0]!.name
-            : `${files.length} files ingested`
+        await ingestPayloads(
+          payloads,
+          files.length === 1 ? files[0]!.name : `${files.length} files ingested`,
+          "Ready — check the text, then extract people"
         );
-        toast.success("Input ready — review the text, then extract people");
       } catch (err) {
         toast.error(
-          toUserFacingError(err, "Could not read that file").message
+          friendlyError(err, TOAST_COPY.fileReadFailed)
         );
+      }
+    });
+  }
+
+  /** A file dropped on the card takes the same path as one chosen from the picker. */
+  async function acceptDroppedFiles(files: File[]) {
+    if (!files.length) return;
+    const { pages, raw } = await sortAndNormalizeScanFiles(files);
+    if (raw.length) handleFilesSelected(raw);
+    if (pages.length) ingestScanPages(pages);
+  }
+
+  const { dragging, dropProps } = useScanDropZone({
+    onFiles: (files) => void acceptDroppedFiles(files),
+    disabled: compact || pending,
+  });
+
+  /**
+   * Whether the text in the box came from a photograph.
+   *
+   * Derived from the ingest sources rather than remembered in a ref, because
+   * `resetToPaste` clears those — so the "Show what we read" disclosure disappears along
+   * with the scan that justified it, instead of clinging to every later hand-typed note.
+   */
+  const scannedPhotos = ingestSources.some((s) => s.startsWith("photos"));
+
+  /**
+   * Extract people from a block of notes, as a transition. A thin wrapper over `runExtract`.
+   *
+   * Takes the text and hints as arguments rather than reading `notes` and `captureHints`,
+   * because scanning calls this the instant a transcript lands and must not race the state
+   * updates that put it there.
+   */
+  function runParse(text: string, hints: CaptureParseHints | null = captureHints) {
+    if (!text.trim()) return;
+    start(() => runExtract(text, hints));
+  }
+
+  /**
+   * The shared tail of every media ingest.
+   *
+   * Picked files and recorded audio differ only in how the bytes were obtained; from here
+   * down they are the same call, the same failure handling and the same "transcript lands
+   * in the textarea, editable" contract. Kept as one function so a fix to either never has
+   * to be made twice.
+   */
+  async function ingestPayloads(
+    payloads: Array<{ filename: string; mimeType: string; base64: string }>,
+    label: string,
+    successMessage: string
+  ) {
+    const res = await ingestCaptureMedia({ text: notes, files: payloads });
+    if (!res.ok) {
+      const missingKey = isMissingAiApiKeyError(res.error);
+      if (missingKey) setHasApiKey(false);
+      toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
+      return;
+    }
+    setNotes(res.text);
+    setCaptureHints(res.hints || null);
+    setIngestSources(res.sources || []);
+    setFileName(label);
+    toast.success(successMessage);
+
+    // A silent downgrade is the failure mode worth naming. Someone who configured Wispr
+    // and got Whisper — because the key was rejected, or the service was down — would
+    // otherwise notice only that the names came back spelled wrong, with no reason given.
+    // Said once, quietly, and only when a Wispr key exists to have been used.
+    if (res.transcriptionEngine && res.transcriptionEngine !== "wispr" && wisprConfigured) {
+      toast.info(
+        res.transcriptionEngine === "whisper"
+          ? "Transcribed with Whisper — Wispr didn’t answer"
+          : "Transcribed with Gemini — Wispr didn’t answer"
+      );
+    }
+  }
+
+  /**
+   * Parse the notes and move on to review. One function for the "Extract people" button and
+   * for `autoExtract`, which runs it on arrival for a recorded meeting whose notes were
+   * written by the analysis rather than typed.
+   */
+  async function runExtract(text: string, baseHints: CaptureParseHints | null) {
+    try {
+      const hints: CaptureParseHints | null =
+        lockedParticipantId && lockedParticipantName
+          ? withLockedSeedPerson(baseHints, lockedParticipantName)
+          : baseHints;
+      const res = await parseBulkCaptureNotes(text, hints, parseOptions ?? {});
+      if (!res.ok) {
+        const missingKey = isMissingAiApiKeyError(res.error);
+        if (missingKey) setHasApiKey(false);
+        toast.error(missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error);
+        return;
+      }
+      setSharedNotes(res.sharedNotes || []);
+      const lockedKey =
+        lockedParticipantId && lockedParticipantName
+          ? pickLockedParticipant(
+              res.items.map((item) => ({
+                key: item.key,
+                name: item.parsed.name,
+                duplicateIds: item.duplicates.map((d) => d.id),
+              })),
+              { id: lockedParticipantId, name: lockedParticipantName }
+            )
+          : null;
+      setItems(
+        res.items.map((item) => {
+          const isLocked = lockedKey !== null && item.key === lockedKey;
+          const preferredMatch =
+            preferredContactId &&
+            item.duplicates.some((d) => d.id === preferredContactId)
+              ? preferredContactId
+              : null;
+          return {
+            ...item,
+            decision: "pending" as const,
+            mergeContactId: isLocked
+              ? lockedParticipantId
+              : preferredMatch || item.suggestedMergeId,
+            locked: isLocked,
+            createReminder: Boolean(item.parsed.follow_up_recommendation),
+            relationshipScore: item.parsed.relationship_score_suggestion || 2,
+            tagNames: (item.parsed.tags || []).join(", "),
+            followUpDays: item.parsed.follow_up_days || 14,
+          };
+        })
+      );
+      const found = res.suggestedReminders || [];
+      setSourceText(res.sourceText);
+      setSourceHash(res.sourceHash);
+      setAnchorIso(res.anchorIso);
+      setAnchorBasis(res.anchorBasis);
+      setSkipped(res.suggestionsSkipped || null);
+      setMentions(res.mentions || []);
+      setSuggestions(
+        found.map((s) => ({
+          ...s,
+          // High-confidence items start checked; the user still sees
+          // every one before anything is written.
+          checked: s.confidenceScore >= 60,
+          personNameOverride: null,
+        }))
+      );
+      setReviewIndex(0);
+      setSlideDirection(1);
+      // A note can carry dates but no people — skip the person carousel.
+      setStep(res.items.length ? "review" : "done");
+
+      const peopleLabel = `${res.items.length} ${
+        res.items.length === 1 ? "person" : "people"
+      }`;
+      const dateLabel = found.length
+        ? `, ${found.length} ${found.length === 1 ? "date" : "dates"}`
+        : "";
+      toast.success(`Found ${peopleLabel}${dateLabel}`);
+    } catch (err) {
+      // Only unexpected throws reach here — a missing key comes back as
+      // `res.ok === false` above — so the key message is no longer the
+      // fallback. `friendlyError` still names a genuine missing key.
+      const message = friendlyError(err, TOAST_COPY.notesReadFailed);
+      if (message === MISSING_AI_API_KEY_MESSAGE) setHasApiKey(false);
+      toast.error(message);
+    }
+  }
+
+  // Once per mount, and guarded by a ref rather than state: StrictMode runs effects twice
+  // in development, and a second parse would be a second paid model call.
+  const autoExtractedRef = useRef(false);
+  useEffect(() => {
+    if (!autoExtract || autoExtractedRef.current || !initialNotes?.trim()) return;
+    autoExtractedRef.current = true;
+    start(() => runExtract(initialNotes, initialHints ?? null));
+    // Deliberately mount-only: the props that seed an auto-extract never change for the
+    // life of this panel (the meeting flow remounts it for a new analysis).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * A finished recording, straight into the path a picked audio file already takes.
+   *
+   * The size check `handleFilesSelected` does is unnecessary here: the recorder's own
+   * six-minute cap bounds the WAV at ~11 MB, which `scripts/smoke-voice-recording.ts`
+   * pins below `CAPTURE_MAX_UPLOAD_BYTES`. Asserted rather than assumed, because the two
+   * limits live in different files and only the test currently ties them together.
+   */
+  function handleRecording(recording: VoiceRecording) {
+    if (recording.byteLength > CAPTURE_MAX_UPLOAD_BYTES) {
+      toast.error(
+        `That recording is ${formatUploadSize(recording.byteLength)} — the limit is ${formatUploadSize(CAPTURE_MAX_UPLOAD_BYTES)}`
+      );
+      return;
+    }
+    start(async () => {
+      try {
+        await ingestPayloads(
+          [
+            {
+              filename: recording.filename,
+              mimeType: recording.mimeType,
+              base64: recording.base64,
+            },
+          ],
+          `Voice note · ${formatElapsed(recording.durationMs)}`,
+          "Transcribed — check the text, then extract people"
+        );
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.fileReadFailed));
       }
     });
   }
 
   return (
     <div className={cn("space-y-4", compact && "space-y-3")}>
+      {headerSlot}
       {step === "paste" && (
         <div
+          {...(compact ? {} : dropProps)}
           className={cn(
-            "space-y-3",
-            !compact && "rounded-2xl border border-border/70 bg-card p-6 space-y-4"
+            "space-y-3 transition-colors",
+            !compact && "rounded-2xl border border-border/70 bg-card p-6 space-y-4",
+            !compact && dragging && "border-dashed border-import-scan bg-import-scan/5"
           )}
         >
           {!hasApiKey && (
@@ -346,14 +756,34 @@ export function BulkNotesPanel({
               extract and review everyone else.
             </p>
           )}
+          {showRecorder && (
+            <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+              <VoiceRecorder
+                onRecording={handleRecording}
+                busy={pending}
+                busyLabel="Transcribing…"
+                onCapReached={() =>
+                  toast.info(
+                    `Stopped at ${formatElapsed(MAX_RECORDING_MS)} — your recording was kept`
+                  )
+                }
+              />
+            </div>
+          )}
           <div>
-            <Label htmlFor="bulk-notes">Paste or upload notes</Label>
+            <Label htmlFor="bulk-notes">
+              {showRecorder
+                ? "Or type it out"
+                : compact
+                  ? "Paste or upload notes"
+                  : "Paste, upload or photograph notes"}
+            </Label>
             {!compact && (
               <p className="mt-1 text-sm text-muted-foreground">
-                Drop in notes about one person or many — text, voice, photos,
-                calendar invites, or email forwards. Orbit splits profiles out,
-                keeps shared event/group context attached to each, and you
-                review one card at a time.
+                Drop in notes about one person or many — typed, spoken,
+                photographed, or a PDF, plus calendar invites and email
+                forwards. Orbit splits profiles out, keeps shared event/group
+                context attached to each, and you review one card at a time.
               </p>
             )}
             {compact && (
@@ -375,117 +805,104 @@ export function BulkNotesPanel({
             />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              ref={fileRef}
-              type="file"
-              multiple
-              accept={CAPTURE_FILE_ACCEPT}
-              className="hidden"
-              onChange={(e) => {
-                handleFilesSelected(e.target.files);
-                e.target.value = "";
-              }}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size={compact ? "sm" : "default"}
-              disabled={pending}
-              onClick={() => fileRef.current?.click()}
-            >
-              Upload notes / media
-            </Button>
-            {fileName && (
-              <span className="truncate text-xs text-muted-foreground">
-                {fileName}
-              </span>
-            )}
-            {ingestSources.length > 0 && (
-              <span className="truncate text-xs text-muted-foreground">
-                via {ingestSources.join(", ")}
-              </span>
-            )}
-          </div>
+          {compact ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={fileRef}
+                type="file"
+                multiple
+                accept={CAPTURE_FILE_ACCEPT}
+                className="hidden"
+                onChange={(e) => {
+                  handleFilesSelected(Array.from(e.target.files ?? []));
+                  e.target.value = "";
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={pending}
+                onClick={() => fileRef.current?.click()}
+              >
+                Upload notes / media
+              </Button>
+              <IngestMeta fileName={fileName} sources={ingestSources} />
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <ScanControls
+                accept={CAPTURE_FILE_ACCEPT}
+                disabled={pending}
+                onRawFiles={handleFilesSelected}
+                onPages={ingestScanPages}
+                onTranscript={(text, sources) => {
+                  const wasEmpty = !notes.trim();
+                  // A phone transcript replaces the box, so hints from an earlier upload
+                  // no longer describe what is in it.
+                  setNotes(text);
+                  setCaptureHints(null);
+                  setIngestSources(sources);
+                  setFileName("from your phone");
+                  if (wasEmpty && hasApiKey) runParse(text, null);
+                }}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                {pending ? <BusyHint>Reading…</BusyHint> : null}
+                <IngestMeta fileName={fileName} sources={ingestSources} />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Drop a file anywhere on this card, or paste a screenshot.
+              </p>
+            </div>
+          )}
 
           <Button
             disabled={pending || !notes.trim() || !hasApiKey}
             size={compact ? "sm" : "default"}
             className="w-full bg-primary text-primary-foreground hover:bg-primary/90 sm:w-auto"
-            onClick={() =>
-              start(async () => {
-                try {
-                  const res = await parseBulkCaptureNotes(notes, captureHints);
-                  if (!res.ok) {
-                    const missingKey = isMissingAiApiKeyError(res.error);
-                    if (missingKey) setHasApiKey(false);
-                    toast.error(
-                      missingKey ? MISSING_AI_API_KEY_MESSAGE : res.error
-                    );
-                    return;
-                  }
-                  setSharedNotes(res.sharedNotes || []);
-                  setItems(
-                    res.items.map((item) => {
-                      const preferredMatch =
-                        preferredContactId &&
-                        item.duplicates.some((d) => d.id === preferredContactId)
-                          ? preferredContactId
-                          : null;
-                      return {
-                        ...item,
-                        decision: "pending" as const,
-                        mergeContactId:
-                          preferredMatch || item.suggestedMergeId,
-                        createReminder: Boolean(
-                          item.parsed.follow_up_recommendation
-                        ),
-                        relationshipScore:
-                          item.parsed.relationship_score_suggestion || 2,
-                        tagNames: (item.parsed.tags || []).join(", "),
-                        followUpDays: item.parsed.follow_up_days || 14,
-                      };
-                    })
-                  );
-                  const found = res.suggestedReminders || [];
-                  setCaptureBatchId(res.captureBatchId);
-                  setSourceHash(res.sourceHash);
-                  setSkipped(res.suggestionsSkipped || null);
-                  setSuggestions(
-                    found.map((s) => ({
-                      ...s,
-                      // High-confidence items start checked; the user still sees
-                      // every one before anything is written.
-                      checked: s.confidenceScore >= 60,
-                      personNameOverride: null,
-                    }))
-                  );
-                  setReviewIndex(0);
-                  setSlideDirection(1);
-                  // A note can carry dates but no people — skip the person carousel.
-                  setStep(res.items.length ? "review" : "done");
-
-                  const peopleLabel = `${res.items.length} ${
-                    res.items.length === 1 ? "person" : "people"
-                  }`;
-                  const dateLabel = found.length
-                    ? `, ${found.length} ${found.length === 1 ? "date" : "dates"}`
-                    : "";
-                  toast.success(`Found ${peopleLabel}${dateLabel}`);
-                } catch (err) {
-                  const message = toUserFacingError(
-                    err,
-                    MISSING_AI_API_KEY_MESSAGE
-                  ).message;
-                  if (isMissingAiApiKeyError(message)) setHasApiKey(false);
-                  toast.error(message);
-                }
-              })
-            }
+            onClick={() => runParse(notes)}
           >
             {pending ? "Parsing…" : "Extract people"}
           </Button>
         </div>
+      )}
+
+      {/*
+        What the model read, kept one click away.
+
+        Scanning transcribes a photograph and then throws the photograph away, so this is
+        the only place an OCR mistake can still be caught — and a misread name that reaches
+        a contact record is not obviously wrong once it is sitting in a form field. Closed
+        by default because it is usually right; editable and re-runnable because when it is
+        wrong, retyping one word beats rephotographing the page.
+      */}
+      {step !== "paste" && scannedPhotos && (
+        <details className="rounded-lg border border-border/70 bg-muted/40 px-3 py-2">
+          <summary className="cursor-pointer list-none text-xs font-medium text-muted-foreground marker:hidden hover:text-ink">
+            Show what we read
+            {ingestSources.length > 0 && (
+              <span className="ml-1 font-normal">({ingestSources.join(", ")})</span>
+            )}
+          </summary>
+          <div className="mt-2 space-y-2">
+            <Textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={6}
+              className="text-xs"
+              aria-label="Transcribed text"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending || !notes.trim() || !hasApiKey}
+              onClick={() => runParse(notes)}
+            >
+              {pending ? "Re-reading…" : "Re-run extraction"}
+            </Button>
+          </div>
+        </details>
       )}
 
       {step === "review" && current && (
@@ -494,7 +911,7 @@ export function BulkNotesPanel({
             <div>
               <h2
                 className={cn(
-                  "font-medium text-primary",
+                  "font-medium text-ink",
                   compact ? "text-base" : "text-lg"
                 )}
               >
@@ -530,7 +947,7 @@ export function BulkNotesPanel({
 
           {sharedNotes.length > 0 && reviewIndex === 0 && (
             <div className="space-y-2 rounded-2xl border border-sky-200/80 bg-sky-50/60 p-3 dark:border-sky-900/50 dark:bg-sky-950/20">
-              <p className="text-xs font-medium text-primary">
+              <p className="text-xs font-medium text-ink">
                 Shared context ({sharedNotes.length}) — applied to matching
                 people
               </p>
@@ -568,6 +985,7 @@ export function BulkNotesPanel({
                   compact={compact}
                   preferredContactId={preferredContactId}
                   preferredContactName={preferredContactName}
+                  lockedParticipantName={lockedParticipantName}
                   onChange={(next) =>
                     setItems((prev) =>
                       prev.map((p, i) => (i === reviewIndex ? next : p))
@@ -579,6 +997,7 @@ export function BulkNotesPanel({
           </div>
 
           <div
+            ref={actionRowRef}
             className={cn(
               "grid grid-cols-2 gap-2",
               compact &&
@@ -618,7 +1037,7 @@ export function BulkNotesPanel({
             <div>
               <h2
                 className={cn(
-                  "font-medium text-primary",
+                  "font-medium text-ink",
                   compact ? "text-base" : "text-lg"
                 )}
               >
@@ -671,6 +1090,11 @@ export function BulkNotesPanel({
                 </li>
               ))}
             </ul>
+          ) : meeting ? (
+            <p className="text-sm text-muted-foreground">
+              No people to save from this meeting — its summary
+              {suggestions.length > 0 || meeting.extraReminders.length > 0 ? " and reminders" : ""} will still be saved.
+            </p>
           ) : suggestions.length > 0 ? (
             <p className="text-sm text-muted-foreground">
               No people to save from these notes — just the dates below.
@@ -679,6 +1103,32 @@ export function BulkNotesPanel({
             <p className="text-sm text-muted-foreground">
               You discarded everyone. Go back to review again, or start over.
             </p>
+          )}
+
+          {(() => {
+            const itemCount = accepted.reduce((n, i) => n + i.parsed.action_items.length, 0);
+            if (itemCount === 0) return null;
+            const dueLabel = anchorIso
+              ? format(addDays(new Date(`${anchorIso}T12:00:00`), 14), "MMM d")
+              : "in 2 weeks";
+            return (
+              <p className="text-xs text-muted-foreground">
+                {itemCount} action item{itemCount === 1 ? "" : "s"} will also become reminders due {dueLabel}
+              </p>
+            );
+          })()}
+
+          {mentions.length > 0 && (
+            <div className="rounded-xl border border-border/60 bg-muted/30 p-3 text-xs">
+              <p className="mb-1 font-medium">Mentioned, not met</p>
+              <ul className="space-y-0.5">
+                {mentions.map((m) => (
+                  <li key={m.text}>
+                    “{m.text}” {m.contactId ? <>→ linked to an existing contact ({Math.round(m.confidence * 100)}%)</> : <span className="text-muted-foreground">— no match; you can add them after saving</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
 
           <SuggestedRemindersReview
@@ -696,14 +1146,14 @@ export function BulkNotesPanel({
               type="button"
               variant="outline"
               size={compact ? "sm" : "default"}
-              onClick={resetToPaste}
+              onClick={onStartOver ?? resetToPaste}
             >
               Start over
             </Button>
             <Button
               type="button"
               size={compact ? "sm" : "default"}
-              disabled={pending || (accepted.length === 0 && checkedDates === 0)}
+              disabled={pending || (!meeting && accepted.length === 0 && checkedDates === 0)}
               className="bg-primary text-primary-foreground hover:bg-primary/90 sm:flex-1"
               onClick={saveAccepted}
             >
@@ -722,12 +1172,14 @@ function PersonReviewCard({
   compact,
   preferredContactId,
   preferredContactName,
+  lockedParticipantName,
 }: {
   item: ReviewItem;
   onChange: (next: ReviewItem) => void;
   compact?: boolean;
   preferredContactId?: string | null;
   preferredContactName?: string | null;
+  lockedParticipantName?: string | null;
 }) {
   const updateParsed = (patch: Partial<ParsedNote>) =>
     onChange({ ...item, parsed: { ...item.parsed, ...patch } });
@@ -857,51 +1309,63 @@ function PersonReviewCard({
       )}
 
       <div className="space-y-1.5 rounded-xl border border-border/60 bg-muted/30 p-2.5">
-        <p className="text-xs font-medium">Save as</p>
-        <label className="flex items-center gap-2 text-xs">
-          <input
-            type="radio"
-            name={`merge-${item.key}`}
-            checked={!item.mergeContactId}
-            onChange={() => onChange({ ...item, mergeContactId: null })}
-          />
-          Create new contact
-        </label>
-        {showPreferred && (
-          <label className="flex items-center gap-2 text-xs">
-            <input
-              type="radio"
-              name={`merge-${item.key}`}
-              checked={item.mergeContactId === preferredContactId}
-              onChange={() =>
-                onChange({ ...item, mergeContactId: preferredContactId })
-              }
-            />
-            Merge into {preferredContactName}
-          </label>
-        )}
-        {item.duplicates.map((d) => (
-          <label key={d.id} className="flex items-start gap-2 text-xs">
-            <input
-              type="radio"
-              className="mt-0.5"
-              name={`merge-${item.key}`}
-              checked={item.mergeContactId === d.id}
-              onChange={() => onChange({ ...item, mergeContactId: d.id })}
-            />
-            <span>
-              Update{" "}
-              <Link
-                href={`/contacts/${d.id}`}
-                className="text-primary underline"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {d.fullName}
-              </Link>
-              {d.company ? ` (${d.company})` : ""}
+        {item.locked ? (
+          <p className="text-xs text-muted-foreground">
+            Logging on{" "}
+            <span className="font-medium text-foreground">
+              {lockedParticipantName}
             </span>
-          </label>
-        ))}
+            &apos;s timeline
+          </p>
+        ) : (
+          <>
+            <p className="text-xs font-medium">Save as</p>
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="radio"
+                name={`merge-${item.key}`}
+                checked={!item.mergeContactId}
+                onChange={() => onChange({ ...item, mergeContactId: null })}
+              />
+              Create new contact
+            </label>
+            {showPreferred && (
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="radio"
+                  name={`merge-${item.key}`}
+                  checked={item.mergeContactId === preferredContactId}
+                  onChange={() =>
+                    onChange({ ...item, mergeContactId: preferredContactId })
+                  }
+                />
+                Merge into {preferredContactName}
+              </label>
+            )}
+            {item.duplicates.map((d) => (
+              <label key={d.id} className="flex items-start gap-2 text-xs">
+                <input
+                  type="radio"
+                  className="mt-0.5"
+                  name={`merge-${item.key}`}
+                  checked={item.mergeContactId === d.id}
+                  onChange={() => onChange({ ...item, mergeContactId: d.id })}
+                />
+                <span>
+                  Update{" "}
+                  <Link
+                    href={`/contacts/${d.id}`}
+                    className="text-primary underline"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {d.fullName}
+                  </Link>
+                  {d.company ? ` (${d.company})` : ""}
+                </span>
+              </label>
+            ))}
+          </>
+        )}
       </div>
 
       <div

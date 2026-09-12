@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, type MouseEvent } from "react";
+import { useEffect, useState, useTransition, type MouseEvent } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/lib/toast";
 import {
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { FollowUpDraftSheet } from "@/components/follow-up/follow-up-draft-sheet";
 import { promptNotificationsAfterFollowUpAction } from "@/lib/browser-notifications";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/errors";
 
 const PRESETS = [
   { days: 3, label: "3d" },
@@ -44,6 +45,15 @@ export function EasyFollowUp({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  // An armed confirm is a question, and an unanswered question should expire rather
+  // than sit there waiting to catch a later, unrelated click on the same spot.
+  useEffect(() => {
+    if (!confirmClear) return;
+    const t = window.setTimeout(() => setConfirmClear(false), 4000);
+    return () => window.clearTimeout(t);
+  }, [confirmClear]);
 
   const displayName = contactName?.trim() || "Contact";
 
@@ -72,13 +82,15 @@ export function EasyFollowUp({
         onScheduled?.(res.dueDate);
         const permission = await promptNotificationsAfterFollowUpAction();
         if (permission === "granted") {
-          toast.success(`Follow-up in ${days} days — desktop alerts on`);
+          // `${days} days` read "1 days" — and the same action's other caller, in
+          // contact-follow-up-section, called it a "Reminder". One wording for one action.
+          toast.success(`Follow-up set for ${days} ${days === 1 ? "day" : "days"} from now — desktop alerts are on`);
         } else {
-          toast.success(`Follow-up set for ${days} days`);
+          toast.success(`Follow-up set for ${days} ${days === 1 ? "day" : "days"} from now`);
         }
         router.refresh();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not set follow-up");
+        toast.error(friendlyError(err, "Couldn’t set that follow-up — try again?"));
       }
     });
   }
@@ -113,13 +125,35 @@ export function EasyFollowUp({
         </div>
       )}
 
+      {/* Hierarchy, in the order a user actually wants them:
+          1. Follow-up  — the goal. Doing the thing. Was the WEAKEST control here.
+          2. Remind in… — postpone. Lowest stakes, and was the LOUDEST (outline).
+          3. Clear      — destructive: it also closes every pending reminder for
+                          this contact. Was a ghost button with no confirmation. */}
       <div className="flex flex-wrap items-center gap-1.5">
+        {nextFollowUpAt && (
+          <Button
+            type="button"
+            size="sm"
+            disabled={pending}
+            className="h-8 px-2.5"
+            onClick={openFollowUp}
+          >
+            Follow up
+          </Button>
+        )}
+
+        {/* "3d" alone reads as "3 days from the due date", which is not what these
+            do — they schedule N days from TODAY. On a row saying "Overdue 31 days"
+            those are opposite outcomes, so the group is labelled rather than left
+            to be guessed at. */}
+        <span className="ml-0.5 text-xs text-muted-foreground">Remind in</span>
         {PRESETS.map((p) => (
           <Button
             key={p.days}
             type="button"
             size="sm"
-            variant="outline"
+            variant="ghost"
             disabled={pending}
             className="h-8 px-2.5"
             onClick={(e) => {
@@ -131,38 +165,42 @@ export function EasyFollowUp({
             {p.label}
           </Button>
         ))}
+
         {nextFollowUpAt && (
-          <>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              disabled={pending}
-              className="h-8 px-2.5 text-muted-foreground"
-              onClick={openFollowUp}
-            >
-              Follow-up
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              disabled={pending}
-              className="h-8 px-2.5 text-muted-foreground"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                start(async () => {
-                  await clearContactFollowUp(contactId);
-                  onCleared?.();
-                  toast.success("Follow-up cleared");
-                  router.refresh();
-                });
-              }}
-            >
-              Clear
-            </Button>
-          </>
+          <Button
+            type="button"
+            size="sm"
+            variant={confirmClear ? "destructive" : "ghost"}
+            disabled={pending}
+            className="h-8 px-2.5 text-muted-foreground aria-pressed:text-destructive"
+            aria-pressed={confirmClear}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              // Two-step, because this is not just "clear the date": it marks every
+              // pending reminder for the contact done and completes their linked
+              // action items. One stray click used to do all of that silently.
+              if (!confirmClear) {
+                setConfirmClear(true);
+                return;
+              }
+              start(async () => {
+                const res = await clearContactFollowUp(contactId);
+                setConfirmClear(false);
+                onCleared?.();
+                toast.success(
+                  res.remindersClosed > 0
+                    ? `Follow-up cleared · ${res.remindersClosed} reminder${
+                        res.remindersClosed === 1 ? "" : "s"
+                      } closed`
+                    : "Follow-up cleared"
+                );
+                router.refresh();
+              });
+            }}
+          >
+            {confirmClear ? "Clear it?" : "Clear"}
+          </Button>
         )}
       </div>
 

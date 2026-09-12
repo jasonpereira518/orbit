@@ -17,9 +17,8 @@ import { requireUserId } from "@/lib/auth";
 import { encrypt } from "@/lib/crypto";
 import { purgeUserData } from "@/lib/user-data";
 import { getEntitlements } from "@/lib/entitlements";
+import { userHasApolloKey } from "@/lib/apollo";
 import { contactUsageForUser } from "@/lib/contact-writes";
-import { countLifetimePurchases } from "@/lib/user-settings";
-import { LIFETIME_SEAT_LIMIT } from "@/lib/entitlements";
 import {
   resolveThemePreference,
   type ThemePreference,
@@ -40,8 +39,18 @@ export async function getSettings() {
   });
 
   const provider = resolveAiProvider(settings?.aiProvider);
-  const entitlements = await getEntitlements(userId);
-  const hostedSends = entitlements.canUseHostedSends;
+  // Run alongside entitlements rather than after: neither depends on the other, and
+  // `userHasApolloKey` already re-derives entitlements internally for its own hosted-key
+  // check, so serializing them would only add latency.
+  const [entitlements, hasApolloKey] = await Promise.all([
+    getEntitlements(userId),
+    userHasApolloKey(userId),
+  ]);
+  // Mirrors the two runtime resolvers so this card states what would actually be used:
+  // `sending` follows the env fallback in `getOutreachSendConfig`, `enrichment` follows
+  // the one in `getApolloApiKey`. They diverge on Lifetime, so they cannot share a flag.
+  const hostedSending = entitlements.canUseHostedSending;
+  const hostedEnrichment = entitlements.canUseHostedEnrichment;
 
   return {
     aiProvider: provider,
@@ -53,6 +62,17 @@ export async function getSettings() {
       anthropic: Boolean(settings?.anthropicApiKeyEncrypted),
     },
     usingEnvKey: usingEnvKey(provider, settings),
+    // Whether "Fill from Apollo" on the contact page has anything to call — computed via
+    // the same resolver `fillContactProfileFromApollo` itself uses, not re-derived here.
+    hasApolloKey,
+    /**
+     * Whether voice capture will try Wispr first.
+     *
+     * Presence only, like `keys` above — this decides whether the capture panel is
+     * entitled to say "Wispr didn't answer", and a rejected key still counts as
+     * configured, since that is precisely the case worth reporting.
+     */
+    hasWisprKey: Boolean(settings?.wisprApiKeyEncrypted),
     hasApiKey:
       provider === "gemini"
         ? Boolean(settings?.geminiApiKeyEncrypted) ||
@@ -80,22 +100,22 @@ export async function getSettings() {
     outreach: {
       apollo:
         Boolean(settings?.apolloApiKeyEncrypted) ||
-        (hostedSends && Boolean(process.env.APOLLO_API_KEY)),
+        (hostedEnrichment && Boolean(process.env.APOLLO_API_KEY)),
       resend:
         Boolean(settings?.resendApiKeyEncrypted) ||
-        (hostedSends && Boolean(process.env.RESEND_API_KEY)),
+        (hostedSending && Boolean(process.env.RESEND_API_KEY)),
       twilio:
         (Boolean(settings?.twilioAccountSidEncrypted) ||
-          (hostedSends && Boolean(process.env.TWILIO_ACCOUNT_SID))) &&
+          (hostedSending && Boolean(process.env.TWILIO_ACCOUNT_SID))) &&
         (Boolean(settings?.twilioAuthTokenEncrypted) ||
-          (hostedSends && Boolean(process.env.TWILIO_AUTH_TOKEN))) &&
+          (hostedSending && Boolean(process.env.TWILIO_AUTH_TOKEN))) &&
         Boolean(
           settings?.twilioFromNumber ||
-            (hostedSends ? process.env.TWILIO_FROM_NUMBER : null)
+            (hostedSending ? process.env.TWILIO_FROM_NUMBER : null)
         ),
       twilioFromNumber:
         settings?.twilioFromNumber ||
-        (hostedSends ? process.env.TWILIO_FROM_NUMBER : null) ||
+        (hostedSending ? process.env.TWILIO_FROM_NUMBER : null) ||
         null,
     },
     plan: {
@@ -103,7 +123,8 @@ export async function getSettings() {
       source: entitlements.source,
       contactLimit: entitlements.contactLimit,
       canUseOutreach: entitlements.canUseOutreach,
-      canUseHostedSends: entitlements.canUseHostedSends,
+      canUseHostedSending: entitlements.canUseHostedSending,
+      canUseHostedEnrichment: entitlements.canUseHostedEnrichment,
       canUseRecruiters: entitlements.canUseRecruiters,
       canUseSync: entitlements.canUseSync,
       canUseExtension: entitlements.canUseExtension,
@@ -253,6 +274,45 @@ export async function clearApiKey(provider?: AiProvider) {
   revalidatePath("/settings");
 }
 
+/**
+ * Store or clear the Wispr transcription key.
+ *
+ * Its own action rather than a field on `saveAiSettings`, because Wispr is not an
+ * `AiProvider`: it transcribes and never completes, so it takes no part in provider or
+ * model selection and none of that action's re-indexing logic applies to it.
+ *
+ * An empty string clears the key; `undefined` leaves it untouched. That asymmetry is what
+ * lets the settings form send the field unconditionally without wiping a stored key every
+ * time an unrelated control is saved.
+ */
+export async function saveVoiceSettings(input: { wisprApiKey?: string }) {
+  const userId = await requireUserId();
+  const db = await getDb();
+  const existing = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+  });
+
+  const trimmed = input.wisprApiKey?.trim();
+  const wisprApiKeyEncrypted =
+    input.wisprApiKey === undefined
+      ? (existing?.wisprApiKeyEncrypted ?? null)
+      : trimmed
+        ? encrypt(trimmed)
+        : null;
+
+  if (existing) {
+    await db
+      .update(userSettings)
+      .set({ wisprApiKeyEncrypted, updatedAt: new Date() })
+      .where(eq(userSettings.userId, userId));
+  } else {
+    await db.insert(userSettings).values({ userId, wisprApiKeyEncrypted });
+  }
+
+  revalidatePath("/settings");
+  return { ok: true as const };
+}
+
 export async function saveOutreachSettings(input: {
   apolloApiKey?: string;
   resendApiKey?: string;
@@ -374,23 +434,13 @@ export async function deleteAllData() {
   revalidatePath("/outreach");
 }
 
-/**
- * Everything the settings billing card needs, in one round trip.
- *
- * `remainingLifetimeSeats` is surfaced so the early-adopter cap is a real, visible number
- * rather than decorative scarcity.
- */
+/** Everything the settings billing card needs, in one round trip. */
 export async function getPlanOverview() {
   const userId = await requireUserId();
-  const [entitlements, usage, lifetimeSold] = await Promise.all([
+  const [entitlements, usage] = await Promise.all([
     getEntitlements(userId),
     contactUsageForUser(userId),
-    countLifetimePurchases(),
   ]);
 
-  return {
-    entitlements,
-    usage,
-    remainingLifetimeSeats: Math.max(0, LIFETIME_SEAT_LIMIT - lifetimeSold),
-  };
+  return { entitlements, usage };
 }

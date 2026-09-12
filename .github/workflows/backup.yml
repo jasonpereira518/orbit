@@ -1,0 +1,48 @@
+# Weekly logical backup of the production database, plus a button to take one on demand
+# (run it before any risky migration).
+#
+# Neon's own point-in-time restore window on the free tier is short (verify it under
+# Project → Settings; it has been 6 hours). This keeps 90 days of weekly `pg_dump`s as
+# encrypted workflow artifacts — encrypted with `age` to a public key, so the artifact
+# store never holds readable customer data and the private key never leaves the password
+# manager. Restore steps are in docs/RUNBOOK.md.
+#
+# Secrets: DATABASE_URL (the production Neon URL), BACKUP_AGE_PUBLIC_KEY (an age recipient,
+# `age1...`; keep the matching private key somewhere safe and OFF GitHub).
+name: backup
+
+on:
+  schedule:
+    - cron: "0 6 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Install pg_dump (Postgres 17 client) and age
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 age >/dev/null 2>&1 || \
+            sudo apt-get install -y -qq postgresql-client age
+          pg_dump --version; age --version
+      - name: Dump and encrypt
+        run: |
+          stamp=$(date -u +%F-%H%M)
+          pg_dump --format=custom --no-owner --no-privileges "$DATABASE_URL" \
+            | age -r "$BACKUP_AGE_PUBLIC_KEY" > "orbit-$stamp.pgc.age"
+          ls -la orbit-*.pgc.age
+          echo "name=orbit-$stamp" >> "$GITHUB_ENV"
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BACKUP_AGE_PUBLIC_KEY: ${{ secrets.BACKUP_AGE_PUBLIC_KEY }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.name }}
+          path: orbit-*.pgc.age
+          retention-days: 90
+          if-no-files-found: error

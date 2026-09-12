@@ -6,6 +6,8 @@ import { saveOutreachSettings } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { friendlyError } from "@/lib/errors";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 type OutreachSettingsState = {
   apollo: boolean;
@@ -30,7 +32,7 @@ export function OutreachSettings({
   return (
     <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-6">
       <div>
-        <h2 className="text-lg font-medium text-primary">Outreach integrations</h2>
+        <h2 className="text-lg font-medium text-ink">Outreach integrations</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Apollo powers people search. Resend and Twilio are optional for automated
           sending — use with caution and follow CAN-SPAM, carrier, and LinkedIn
@@ -125,7 +127,7 @@ export function OutreachSettings({
               });
               toast.success("Outreach settings saved");
             } catch (err) {
-              toast.error(err instanceof Error ? err.message : "Failed to save");
+              toast.error(friendlyError(err, TOAST_COPY.saveFailed));
             }
           })
         }

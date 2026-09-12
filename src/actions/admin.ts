@@ -2,11 +2,16 @@
 
 import { desc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { after } from "next/server";
 import { getDb } from "@/db";
-import { adminAuditLog, contacts, userSettings } from "@/db/schema";
+import { adminAuditLog, userSettings } from "@/db/schema";
 import { requireAdminUserId } from "@/lib/admin";
 import * as ops from "@/lib/admin-operations";
+import * as interestList from "@/lib/admin-interest-list";
+import * as adminFeedback from "@/lib/admin-feedback";
+import * as broadcast from "@/lib/broadcasts";
 import { recordAdminAction } from "@/lib/admin-operations";
 import { resolvePlan } from "@/lib/entitlements";
 import { setCompedPlan } from "@/lib/user-settings";
@@ -22,6 +27,16 @@ import {
   reconcileStripeLifetime,
 } from "@/lib/admin-reconciliation";
 import { loadProviderStatuses } from "@/lib/admin-providers";
+import { runOpsSweep } from "@/lib/ops-sweep";
+import { notifySlack } from "@/lib/ops-notify";
+import {
+  setSurfaceHidden,
+  VIEW_AS_USER_COOKIE,
+} from "@/lib/surface-visibility";
+import {
+  setConstellationConfig,
+  type ConstellationConfig,
+} from "@/lib/constellation-config";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -86,74 +101,16 @@ export async function setCompAction(input: {
   return { ok: true, plan: resolvePlan(row).plan };
 }
 
-export type RevealedContact = {
-  fullName: string;
-  email: string | null;
-  phone: string | null;
-  company: string | null;
-  title: string | null;
-  notes: string | null;
-  createdAt: Date;
-};
-
 /**
- * The deliberate escape hatch: reveal ONE contact record, for ONE page view.
- *
- * There is no "reveal all" toggle and no session-wide unmasking, by design. Every call
- * writes an audit row with a typed reason, which is what makes the privacy promise in the
- * inspector something Jason can state truthfully rather than aspirationally.
+ * A one-click sign-in URL for the named account. See `ops.mintSignInLink` for what this
+ * actually is (a single-use Clerk sign-in token) and why the expiry is generous but the
+ * link is not reusable regardless.
  */
-export async function revealContactAction(input: {
+export async function mintSignInLinkAction(input: {
   targetUserId: string;
-  contactId: string;
-  reason: string;
-}): Promise<RevealedContact> {
+}): Promise<{ url: string; expiresInSeconds: number }> {
   const adminUserId = await requireAdminUserId();
-
-  const reason = input.reason.trim();
-  if (reason.length < 4) {
-    throw new Error("Describe why this record needs to be revealed.");
-  }
-
-  const db = await getDb();
-  const row = await db.query.contacts.findFirst({
-    where: eq(contacts.id, input.contactId),
-    columns: {
-      userId: true,
-      fullName: true,
-      email: true,
-      phone: true,
-      company: true,
-      title: true,
-      notes: true,
-      createdAt: true,
-    },
-  });
-
-  if (!row || row.userId !== input.targetUserId) {
-    throw new Error("No such record.");
-  }
-
-  await recordAdminAction({
-    adminUserId,
-    action: "record.reveal",
-    targetUserId: input.targetUserId,
-    resourceType: "contact",
-    resourceId: input.contactId,
-    reason,
-  });
-
-  revalidatePath(`/admin/users/${input.targetUserId}`);
-
-  return {
-    fullName: row.fullName,
-    email: row.email,
-    phone: row.phone,
-    company: row.company,
-    title: row.title,
-    notes: row.notes,
-    createdAt: row.createdAt,
-  };
+  return ops.mintSignInLink(adminUserId, input);
 }
 
 /** Audit history for one account, shown on their inspector page. */
@@ -181,44 +138,21 @@ export async function getAuditTrail(targetUserId: string) {
  * ================================================================================== */
 
 /** Paths that show account state. Any operator write invalidates all of them. */
+function revalidateInterestList() {
+  revalidatePath("/admin/growth");
+  revalidatePath("/admin/growth/interest-list");
+}
+
+function revalidateBroadcasts() {
+  revalidatePath("/admin/growth/broadcasts");
+}
+
 function revalidateAdmin(targetUserId?: string) {
   revalidatePath("/admin");
   revalidatePath("/admin/users");
   revalidatePath("/admin/health");
   revalidatePath("/admin/billing");
   if (targetUserId) revalidatePath(`/admin/users/${targetUserId}`);
-}
-
-export type RevealGrantResult = { ok: true; grantId: string; expiresAt: string };
-
-/**
- * Unmask one account's contact and interaction content for a short window.
- *
- * `revealContactAction` above remains the one-record path. This is the "the import mangled
- * rows 300–400" tool, not a replacement for it.
- */
-export async function grantRevealAction(input: {
-  targetUserId: string;
-  reason: string;
-}): Promise<RevealGrantResult> {
-  const adminUserId = await requireAdminUserId();
-  const grant = await ops.grantReveal(adminUserId, input);
-  revalidatePath(`/admin/users/${input.targetUserId}`);
-  return {
-    ok: true,
-    grantId: grant.grantId,
-    expiresAt: grant.expiresAt.toISOString(),
-  };
-}
-
-/** Re-mask now, without waiting for the grant to age out. */
-export async function revokeRevealAction(input: {
-  targetUserId: string;
-}): Promise<{ ok: true; revoked: number }> {
-  const adminUserId = await requireAdminUserId();
-  const revoked = await ops.revokeReveal(adminUserId, input);
-  revalidatePath(`/admin/users/${input.targetUserId}`);
-  return { ok: true, revoked };
 }
 
 export async function retryImportAction(input: {
@@ -307,10 +241,535 @@ export async function deleteAccountAction(input: {
   return { ok: true };
 }
 
-/** Banner state for the inspector. Never returns a grant object. */
-export async function getActiveRevealGrant(targetUserId: string) {
+export async function hardDeleteAccountAction(input: {
+  targetUserId: string;
+  confirmEmail: string;
+  reason: string;
+}): Promise<{ ok: true }> {
   const adminUserId = await requireAdminUserId();
-  return ops.getActiveRevealGrantFor(adminUserId, targetUserId);
+  await ops.hardDeleteAccount(adminUserId, input);
+  revalidateAdmin();
+  return { ok: true };
+}
+
+/**
+ * Hide or unhide one surface for every user at once.
+ *
+ * Not destructive and not rate-limited: it writes or deletes a single row in
+ * `app_surface_flags` and the opposite click undoes it exactly. That is why, unlike
+ * suspension or deletion, it takes no reason string. It is still audited — a surface that
+ * silently vanished from the product with no record of who did it would be indistinguishable
+ * from a bug.
+ *
+ * `revalidatePath("/", "layout")` rather than a list of routes: the app shell reads the
+ * hidden set to build the sidebar, so a stale layout cache would keep serving a nav item
+ * for a page that now refuses to render.
+ */
+export async function setSurfaceHiddenAction(input: {
+  surfaceKey: string;
+  hidden: boolean;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+
+  await setSurfaceHidden(adminUserId, input.surfaceKey, input.hidden);
+
+  revalidatePath("/", "layout");
+  revalidatePath("/admin/product");
+  return { ok: true };
+}
+
+/**
+ * Change the constellation filter for everyone.
+ *
+ * Same shape as the surface toggle above and the same reasoning about invalidation: the
+ * filter decides what `/graph` and the dashboard preview draw, so both of those and anything
+ * that caches them have to be dropped, not just this console page.
+ *
+ * Thresholds are clamped in `setConstellationConfig` rather than validated to an error here —
+ * an operator nudging a number field into nonsense should land on the nearest sane value, not
+ * on a stack trace.
+ */
+export async function setConstellationConfigAction(input: {
+  enabled?: boolean;
+  minInbound?: number;
+  minOutbound?: number;
+}): Promise<ConstellationConfig> {
+  const adminUserId = await requireAdminUserId();
+
+  const next = await setConstellationConfig(adminUserId, input);
+
+  revalidatePath("/", "layout");
+  revalidatePath("/admin/product");
+  revalidatePath("/graph");
+  revalidatePath("/dashboard");
+  return next;
+}
+
+/**
+ * Enter or leave "view as a general user" for this browser session.
+ *
+ * Admins are exempt from surface hiding so they can inspect a hidden page before releasing
+ * it; this drops that exemption for the operator's own session so they see precisely what
+ * a user sees. It changes nothing for anybody else, and grants nothing — it can only take
+ * access away from the caller — but it is gated and audited like every other operator
+ * action, because "when was I last looking at the product as a user" is a question worth
+ * being able to answer.
+ *
+ * Session-length (no `maxAge`) on purpose: a preview mode that outlived the browser would
+ * eventually be mistaken for the product being broken.
+ *
+ * Entering redirects itself (see `setYcModeAction` for why: one round trip instead of the
+ * caller awaiting this and then separately calling `router.push`). Exiting does not — the
+ * caller stays on the same admin page, so it only needs the cookie change and `revalidatePath`
+ * to pick up; setting/deleting a cookie already re-renders the current page on its own, and
+ * callers additionally `router.refresh()` to be sure every server component above them re-runs.
+ */
+export async function setViewAsUserAction(input: {
+  on: boolean;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  const store = await cookies();
+
+  if (input.on) {
+    store.set(VIEW_AS_USER_COOKIE, "1", {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      secure: process.env.NODE_ENV === "production",
+    });
+  } else {
+    store.delete(VIEW_AS_USER_COOKIE);
+  }
+
+  await recordAdminAction({
+    adminUserId,
+    action: input.on ? "product.view_as_user.enter" : "product.view_as_user.exit",
+  });
+
+  revalidatePath("/", "layout");
+  if (input.on) {
+    redirect("/dashboard");
+  }
+  return { ok: true };
+}
+
+/**
+ * Toggle YC Startup console mode for the calling admin.
+ *
+ * Purely a personal preference on the operator's own `userSettings` row — it never touches
+ * another user's data or visibility, so unlike `setSurfaceHiddenAction` / `setViewAsUserAction`
+ * it does not go through `recordAdminAction`. Same shape as `saveThemePreference`.
+ *
+ * Redirects itself rather than returning and letting the client `router.push()`: per Next's
+ * server-actions guide, a `redirect()` thrown from inside the action completes the mutation,
+ * the cache invalidation, and the destination's render in one round trip, instead of the
+ * client waiting on the action response before it can even start a second navigation fetch.
+ * Scoped to `/admin` rather than `/`, `"layout"` — this setting is never read outside the
+ * console, so invalidating the whole site on every toggle bought nothing.
+ */
+export async function setYcModeAction(input: { on: boolean }): Promise<never> {
+  const adminUserId = await requireAdminUserId();
+  const db = await getDb();
+
+  await db
+    .insert(userSettings)
+    .values({ userId: adminUserId, ycModeEnabled: input.on })
+    .onConflictDoUpdate({
+      target: userSettings.userId,
+      set: { ycModeEnabled: input.on, updatedAt: new Date() },
+    });
+
+  revalidatePath("/admin", "layout");
+  redirect(input.on ? "/admin/yc" : "/admin");
+}
+
+/**
+ * Interest-list removals.
+ *
+ * Two operations rather than one because "remove them" means two different things. The
+ * unsubscribe writes the same `unsubscribed_at` the recipient's own one-click link sets,
+ * so there stays exactly one condition deciding whether someone is mailable; the delete
+ * erases the row, losing the signup date and source, which is only right for a bot
+ * signup, a typo, or a real deletion request.
+ *
+ * Both take a reason and both await their audit write. These reach a person's inbox
+ * rather than the operator's screen, and a delete has no other record that it happened —
+ * `interest_list_signups` is the only place that address ever existed.
+ */
+export async function unsubscribeInterestListAction(input: {
+  id: string;
+  reason: string;
+}): Promise<{ ok: true; email: string }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  const removed = await interestList.unsubscribeInterestListRow(input.id);
+  // Throws rather than returning a failure shape: ConfirmActionDialog reports success for
+  // any resolved promise and only surfaces a rejection, so a returned {ok:false} would
+  // toast "done" over an operation that did nothing.
+  if (!removed) throw new Error("That signup no longer exists.");
+
+  await recordAdminAction({
+    adminUserId,
+    action: "interest_list.unsubscribe",
+    resourceType: "interest_list_signup",
+    resourceId: input.id,
+    detail: { email: removed.email },
+    reason,
+  });
+
+  revalidateInterestList();
+  return { ok: true, email: removed.email };
+}
+
+export async function resubscribeInterestListAction(input: {
+  id: string;
+  reason: string;
+}): Promise<{ ok: true; email: string }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  const restored = await interestList.resubscribeInterestListRow(input.id);
+  if (!restored) throw new Error("That signup no longer exists.");
+
+  await recordAdminAction({
+    adminUserId,
+    action: "interest_list.resubscribe",
+    resourceType: "interest_list_signup",
+    resourceId: input.id,
+    detail: { email: restored.email },
+    reason,
+  });
+
+  revalidateInterestList();
+  return { ok: true, email: restored.email };
+}
+
+export async function deleteInterestListAction(input: {
+  id: string;
+  /** Must match the row's address. Guards against deleting whatever was scrolled to. */
+  confirmEmail: string;
+  reason: string;
+}): Promise<{ ok: true; email: string }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  // The audit entry records the address, so it is captured before the row is gone — and
+  // checked against what the operator typed, so a stale page cannot delete the wrong row.
+  const existing = await interestList.loadInterestListRow(input.id);
+  if (!existing) throw new Error("That signup no longer exists.");
+  if (existing.email.trim().toLowerCase() !== input.confirmEmail.trim().toLowerCase()) {
+    throw new Error("That address does not match this signup.");
+  }
+
+  const deleted = await interestList.deleteInterestListRow(input.id);
+  if (!deleted) throw new Error("That signup no longer exists.");
+
+  await recordAdminAction({
+    adminUserId,
+    action: "interest_list.delete",
+    resourceType: "interest_list_signup",
+    resourceId: input.id,
+    detail: { email: deleted.email },
+    reason,
+  });
+
+  revalidateInterestList();
+  return { ok: true, email: deleted.email };
+}
+
+/**
+ * Bulk removals.
+ *
+ * Capped in the data layer rather than trusted from the client, and the audit entry records
+ * every address rather than a count — after a bulk delete that entry is the only thing that
+ * can answer "who did that take out".
+ */
+export async function bulkUnsubscribeInterestListAction(input: {
+  ids: string[];
+  reason: string;
+}): Promise<{ ok: true; count: number }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+  if (input.ids.length === 0) throw new Error("Nothing selected.");
+
+  const emails = await interestList.bulkUnsubscribeInterestListRows(input.ids);
+  if (emails.length === 0) throw new Error("None of those signups still exist.");
+
+  await recordAdminAction({
+    adminUserId,
+    action: "interest_list.bulk_unsubscribe",
+    resourceType: "interest_list_signup",
+    detail: { emails, count: emails.length },
+    reason,
+  });
+
+  revalidateInterestList();
+  return { ok: true, count: emails.length };
+}
+
+export async function bulkDeleteInterestListAction(input: {
+  ids: string[];
+  reason: string;
+}): Promise<{ ok: true; count: number }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+  if (input.ids.length === 0) throw new Error("Nothing selected.");
+
+  const emails = await interestList.bulkDeleteInterestListRows(input.ids);
+  if (emails.length === 0) throw new Error("None of those signups still exist.");
+
+  await recordAdminAction({
+    adminUserId,
+    action: "interest_list.bulk_delete",
+    resourceType: "interest_list_signup",
+    detail: { emails, count: emails.length },
+    reason,
+  });
+
+  revalidateInterestList();
+  return { ok: true, count: emails.length };
+}
+
+/**
+ * Broadcasts — the operator-composed note to the interest list.
+ *
+ * Sending is the one action here that reaches many people at once and cannot be recalled,
+ * so it is deliberately a two-step: compose saves a draft, and a separate send with its own
+ * confirmation is what actually mails it. There is no compose-and-send-in-one-click path.
+ */
+export async function createBroadcastAction(input: {
+  subject: string;
+  body: string;
+}): Promise<{ ok: true; id: string }> {
+  const adminUserId = await requireAdminUserId();
+  const invalid = broadcast.validateBroadcast(input);
+  if (invalid) throw new Error(invalid);
+
+  const created = await broadcast.createBroadcast({ ...input, createdBy: adminUserId });
+  await recordAdminAction({
+    adminUserId,
+    action: "broadcast.create",
+    resourceType: "broadcast",
+    resourceId: created.id,
+    detail: { subject: created.subject },
+  });
+
+  revalidateBroadcasts();
+  return { ok: true, id: created.id };
+}
+
+export async function sendBroadcastTestAction(input: {
+  subject: string;
+  body: string;
+  to: string;
+}): Promise<{ ok: true }> {
+  await requireAdminUserId();
+  const invalid = broadcast.validateBroadcast(input);
+  if (invalid) throw new Error(invalid);
+  if (!input.to.includes("@")) throw new Error("That doesn't look like an address.");
+
+  const result = await broadcast.sendBroadcastTest(input);
+  if (!result.ok) throw new Error(result.error ?? "The test send failed.");
+  return { ok: true };
+}
+
+export async function sendBroadcastAction(input: {
+  id: string;
+  /** Must match the subject. The guard against sending the wrong draft to everyone. */
+  confirmSubject: string;
+  reason: string;
+}): Promise<{ ok: true; sent: number; failed: number; remaining: number }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  const draft = await broadcast.loadBroadcast(input.id);
+  if (!draft) throw new Error("That broadcast no longer exists.");
+  if (draft.subject.trim() !== input.confirmSubject.trim()) {
+    throw new Error("That subject does not match this broadcast.");
+  }
+
+  // Logged BEFORE the send, unlike every other action here: this one mails real people, and
+  // if the invocation dies partway the audit must still show that a send was started.
+  await recordAdminAction({
+    adminUserId,
+    action: "broadcast.send",
+    resourceType: "broadcast",
+    resourceId: draft.id,
+    detail: { subject: draft.subject },
+    reason,
+  });
+
+  const stats = await broadcast.sendBroadcast(input.id);
+  revalidateBroadcasts();
+  return { ok: true, sent: stats.sent, failed: stats.failed, remaining: stats.remaining };
+}
+
+export async function deleteBroadcastAction(input: {
+  id: string;
+  reason: string;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  const removed = await broadcast.deleteDraftBroadcast(input.id);
+  if (!removed) throw new Error("Only an unsent draft can be deleted.");
+
+  await recordAdminAction({
+    adminUserId,
+    action: "broadcast.delete",
+    resourceType: "broadcast",
+    resourceId: input.id,
+    detail: { subject: removed.subject },
+    reason,
+  });
+
+  revalidateBroadcasts();
+  return { ok: true };
+}
+
+/**
+ * Run the known-condition sweep now, from the console, rather than waiting up to ten
+ * minutes for the scheduler. Audited like every other privileged action.
+ */
+export async function runOpsSweepAction(): Promise<{
+  ok: true;
+  opened: string[];
+  reminded: string[];
+  recovered: string[];
+  active: string[];
+}> {
+  const adminUserId = await requireAdminUserId();
+  const result = await runOpsSweep({ trigger: "manual" });
+  await recordAdminAction({
+    adminUserId,
+    action: "ops.sweep",
+    detail: {
+      opened: result.opened,
+      reminded: result.reminded,
+      recovered: result.recovered,
+      active: result.active.length,
+      deliveryFailures: result.deliveryFailures,
+    },
+  });
+  revalidatePath("/admin/health");
+  return {
+    ok: true,
+    opened: result.opened,
+    reminded: result.reminded,
+    recovered: result.recovered,
+    active: result.active,
+  };
+}
+
+/** Prove the Slack webhook is wired, from the console. */
+export async function sendTestAlertAction(): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await notifySlack(
+    `:mega: Test alert from the Orbit admin console (sent by \`${adminUserId}\`). If you can read this, ops alerts reach Slack.`
+  );
+  await recordAdminAction({ adminUserId, action: "ops.test_alert" });
+  return { ok: true };
+}
+
+/**
+ * Both paths the feedback console can change, plus the nav badge.
+ *
+ * The badge is rendered by `AdminShell` from `(admin)/layout.tsx`, and a plain path
+ * revalidate does not re-run a layout — so the second call is what makes the count drop
+ * when something is resolved.
+ */
+function revalidateFeedback() {
+  revalidatePath("/admin/feedback");
+  revalidatePath("/admin", "layout");
+}
+
+/**
+ * Move one entry between new / triaged / resolved.
+ *
+ * Throws rather than returning a failure shape, like every action in this file:
+ * `ConfirmActionDialog` reports success for any resolved promise and surfaces only a
+ * rejection's message.
+ */
+export async function setFeedbackStatusAction(input: {
+  id: string;
+  status: "new" | "triaged" | "resolved";
+  reason: string;
+  resolutionNote?: string;
+}): Promise<{ ok: true; from: string }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  const moved = await adminFeedback.setFeedbackStatus({
+    id: input.id,
+    status: input.status,
+    adminUserId,
+    resolutionNote: input.resolutionNote?.trim() || undefined,
+  });
+  if (!moved) throw new Error("That feedback entry no longer exists.");
+  if (moved.from === input.status) throw new Error(`That entry is already ${input.status}.`);
+
+  await recordAdminAction({
+    adminUserId,
+    action:
+      input.status === "resolved"
+        ? "feedback.resolve"
+        : input.status === "triaged"
+          ? "feedback.triage"
+          : "feedback.reopen",
+    resourceType: "feedback",
+    resourceId: input.id,
+    detail: {
+      from: moved.from,
+      to: input.status,
+      excerpt: moved.excerpt,
+      ...(input.resolutionNote ? { resolutionNote: input.resolutionNote } : {}),
+    },
+    reason,
+  });
+
+  revalidateFeedback();
+  return { ok: true, from: moved.from };
+}
+
+/**
+ * Delete one screenshot, and then its blob object.
+ *
+ * The row is the contract and the blob is cleanup: a Blob outage must not stop an operator
+ * removing something that should never have been captured in the first place.
+ */
+export async function deleteFeedbackScreenshotAction(input: {
+  id: string;
+  reason: string;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+
+  const removed = await adminFeedback.deleteFeedbackScreenshot(input.id);
+  if (!removed) throw new Error("That screenshot no longer exists.");
+
+  let blobDeleted = false;
+  if (removed.blobUrl) {
+    try {
+      const { del } = await import("@vercel/blob");
+      await del(removed.blobUrl);
+      blobDeleted = true;
+    } catch {
+      // See above.
+    }
+  }
+
+  await recordAdminAction({
+    adminUserId,
+    action: "feedback.screenshot_delete",
+    resourceType: "feedback_screenshot",
+    resourceId: input.id,
+    detail: { feedbackId: removed.feedbackId, storage: removed.storage, blobDeleted },
+    reason,
+  });
+
+  revalidateFeedback();
+  return { ok: true };
 }
 
 /* -------------------------------------------------------------------- command center */
