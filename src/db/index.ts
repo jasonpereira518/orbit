@@ -1085,6 +1085,29 @@ CREATE TABLE IF NOT EXISTS capture_handoffs (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS capture_handoffs_token_uidx ON capture_handoffs(token_hash);
 CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expires_at);
+CREATE TABLE IF NOT EXISTS page_views (
+  id uuid PRIMARY KEY,
+  visitor_hash text NOT NULL,
+  session_id text NOT NULL,
+  user_id text,
+  route text NOT NULL,
+  referrer_host text,
+  utm_source text,
+  utm_medium text,
+  utm_campaign text,
+  country text,
+  region text,
+  city text,
+  device text NOT NULL,
+  is_bot boolean NOT NULL DEFAULT false,
+  dwell_ms integer,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS page_views_created_idx ON page_views(created_at);
+CREATE INDEX IF NOT EXISTS page_views_route_created_idx ON page_views(route, created_at);
+CREATE INDEX IF NOT EXISTS page_views_session_idx ON page_views(session_id, created_at);
+CREATE INDEX IF NOT EXISTS page_views_visitor_idx ON page_views(visitor_hash, created_at);
+CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country, created_at);
 `;
 
 // NOTE: the admin-console indexes are deliberately NOT in the DDL template above. Several of
@@ -1173,9 +1196,14 @@ CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expir
  * v43 = capture_handoffs with #146's v40 column merged in. Never reached main.
  * v45 = capture_handoffs with #163's v42 tables merged in. Builds of this branch pushed at 43
  * lack those tables, so 43 cannot carry them. 44 is claimed by admin-console-page-metrics.
- * v46 = capture history (#164): the capture_photos table and note_batches.input_sources.
- * Built as 41 (see above), moved because merging main's capture_handoffs renumbering
- * claimed every number through 45 and reserved 44.
+ * v47 = page_views (first-party traffic analytics). Built as 33, then carried 44 and 46 on
+ * its branch, moving each time main's DDL merged in (meeting capture, then scan notes):
+ * this PR's previews stamped each of those numbers without the merged-in tables, so
+ * neither can carry them. 44 and 46 are burned for the same reason 40, 41 and 43 are.
+ * v48 = capture history (#164): the capture_photos table and note_batches.input_sources.
+ * Built as 41, then moved to 46 when main's capture_handoffs renumbering claimed every
+ * number through 45 — and moved again here because 46 turned out to be one of the
+ * page_views branch's own burned numbers (see v47).
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
@@ -1187,10 +1215,10 @@ CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expir
 // collision means one branch's DDL never runs. The changelog above says which numbers are
 // taken and why 44 is skipped.
 //
-// 46 is capture history: the capture_photos table and note_batches.input_sources. It was
-// 41 on this branch until merging main's capture_handoffs renumbering claimed every number
-// through 45.
-export const SCHEMA_VERSION = 46;
+// 48 is capture history: the capture_photos table and note_batches.input_sources. It was
+// 41, then 46 on this branch, until 46 turned out to be burned by the page_views branch
+// too (see v47 above).
+export const SCHEMA_VERSION = 48;
 
 /**
  * Everything the contacts surface needs to stay constant-time as a network grows past a
