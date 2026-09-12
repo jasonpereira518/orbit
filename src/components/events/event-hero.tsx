@@ -28,8 +28,9 @@ import type { EventRecord } from "@/db/schema";
  * no branch here, only a shift of zero.
  *
  * Passing the offset to `Intl` as a `timeZone` would be the obvious alternative; offset
- * strings are not portable across runtimes there, and an IANA name is not something an
- * event page gives us.
+ * strings are not portable across runtimes there. A provider API DOES give us an IANA name,
+ * and `offsetMinutes` now resolves one — at the event's own instant, so a summer event in
+ * `America/New_York` shifts by -04:00 and a winter one by -05:00.
  *
  * `offsetMinutes` is imported rather than kept here because the edit dialog has to run this
  * conversion BACKWARDS. Two copies would drift, and a drift between the reader and the
@@ -38,8 +39,9 @@ import type { EventRecord } from "@/db/schema";
  */
 function formatRange(startsAt: Date | null, endsAt: Date | null, timezone: string | null): string {
   if (!startsAt) return "Date not set";
-  const shift = (offsetMinutes(timezone) ?? 0) * 60_000;
-  const at = (d: Date) => new Date(d.getTime() + shift);
+  // Resolved per instant rather than once, so a conference spanning a clock change reads
+  // correctly on both of its days.
+  const at = (d: Date) => new Date(d.getTime() + (offsetMinutes(timezone, d) ?? 0) * 60_000);
 
   const start = at(startsAt);
   const date = start.toLocaleDateString(undefined, {

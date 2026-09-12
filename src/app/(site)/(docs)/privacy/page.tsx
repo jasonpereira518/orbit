@@ -211,6 +211,23 @@ export default function PrivacyPage() {
               call says, and many places require their consent first.
             </p>
           </DocCallout>
+          <DocCallout title="Finding events in your email">
+            <p>
+              If you switch on event discovery from confirmation emails, Orbit
+              searches your connected Gmail account for mail from event
+              platforms only — Luma, Partiful, Eventbrite, Meetup and Posh — and
+              opens a message only when Google&rsquo;s own signature check
+              confirms it really came from one of them.
+            </p>
+            <p>
+              From those messages Orbit keeps the event link, the subject line,
+              the sender&rsquo;s domain and the date. It does not store message
+              bodies, does not read any other mail, and never sends mail content
+              to an AI provider. The feature is off until you turn it on, and
+              turning it off stops the scanning and removes what it recorded
+              about where each event was found.
+            </p>
+          </DocCallout>
         </DocSection>
 
         <DocSection id="use" index={3} title="How that data is used">

@@ -111,6 +111,13 @@ export const userSettings = pgTable("user_settings", {
   desktopNotifiedIds: jsonb("desktop_notified_ids")
     .$type<string[]>()
     .default([]),
+  /**
+   * Schools the user attended, for the shared-alma-mater signal when ranking a roster.
+   *
+   * A plain list on this row rather than a table: nothing joins on it, it is read whole
+   * every time, and it is three strings.
+   */
+  schools: jsonb("schools").$type<string[]>().default([]),
   socialLinks: jsonb("social_links")
     .$type<{
       linkedin?: string;
@@ -1786,6 +1793,15 @@ export type CalendarSyncCursor = {
 export type EventProviderSyncCursor = {
   cursor?: string | null;
   syncedThrough?: string | null;
+  /**
+   * The mailbox scan's own position: how far back has been covered, and Gmail's page token
+   * mid-listing.
+   *
+   * It lives here rather than on `gmail_connections.sync_cursor` because that column belongs
+   * to the calendar sync, which writes `{ calendar }` over the whole jsonb on every run — a
+   * second consumer there would have its position silently erased twice an hour.
+   */
+  gmail?: { after?: number; pageToken?: string | null } | null;
 };
 
 export type ProviderSyncCursor = {
@@ -3178,6 +3194,48 @@ export const events = pgTable(
     /** As the host reports it. May legitimately exceed the number of roster rows we hold. */
     attendeeCount: integer("attendee_count"),
     notes: text("notes"),
+    /**
+     * Which discovery source put this event here, or null when the user added it themselves.
+     *
+     * Separate from `source` because enrichment overwrites that with `'page'` the moment it
+     * reads the event's own link. `source` therefore answers "what was this row last read
+     * from"; this answers "how did it get here", which is what the card's badge shows and
+     * what makes an auto-added event explainable rather than mysterious.
+     */
+    discoveredVia: text("discovered_via").$type<
+      "gcal" | "ics" | "luma_ics" | "partiful_ics" | "gmail"
+    >(),
+    /** What the user said they would do, where the source reported it. */
+    rsvpStatus: text("rsvp_status").$type<
+      "going" | "maybe" | "waitlist" | "invited" | "cancelled"
+    >(),
+    /**
+     * Whether `role` is the user's own statement or something we worked out.
+     *
+     * Discovery has to guess — a calendar invite does not say whether you are running the
+     * event — and a later signal (the host API listing it) is allowed to correct a guess.
+     * It is never allowed to correct the user, so an edit sets this to `'user'` and the
+     * promotion path skips those rows.
+     */
+    roleSource: text("role_source").$type<"user" | "inferred">(),
+    /**
+     * "Not mine" — a soft hide, so the undo is one click and the row keeps its roster.
+     *
+     * Hiding also has to be REMEMBERED, or the next sync of the same feed adds it straight
+     * back. That part is `event_aliases`: the keys stay, pointing at this dismissed row.
+     */
+    dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+    /**
+     * What kind of event this is, where we can tell.
+     *
+     * Earns a column because it changes who is worth talking to: a recruiter at a career
+     * fair is the single most useful person in the room, and the same recruiter at a party
+     * is just another guest.
+     */
+    kind: text("kind").$type<"career_fair" | "conference" | "meetup" | "party" | "other">(),
+    /** Queue + lease for background enrichment. Null means nothing is owed. */
+    enrichDueAt: timestamp("enrich_due_at", { withTimezone: true }),
+    enrichAttempts: integer("enrich_attempts").default(0).notNull(),
     enrichedAt: timestamp("enriched_at", { withTimezone: true }),
     enrichError: text("enrich_error"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -3191,10 +3249,67 @@ export const events = pgTable(
      * or repeat a row when two events share a start time.
      */
     index("events_user_starts_idx").on(t.userId, t.startsAt, t.id),
+    /** The enrichment queue's claim. Partial: almost no event is ever waiting to be read. */
+    index("events_enrich_due_idx").on(t.enrichDueAt).where(sql`enrich_due_at is not null`),
     /** Connector idempotency: re-syncing a provider updates the row rather than adding one. */
     uniqueIndex("events_provider_uidx")
       .on(t.userId, t.provider, t.providerEventId)
       .where(sql`provider_event_id is not null`),
+  ]
+);
+
+/**
+ * Every key any source has ever used to name an event, and what it resolved to.
+ *
+ * Three discovery sources can report the same event in one pass and none of them agrees with
+ * the others about its name: a Google Calendar invite knows an `iCalUID`, a Luma feed knows
+ * `evt-abc`, a confirmation email knows a message id and a link. Deduping on the event's URL
+ * alone fails on the first of those and on any link with a personal token in it.
+ *
+ * So every key is written here against one unique index, and the index — not application
+ * logic — decides the winner when two sources race inside the same pass.
+ *
+ * ## A null `event_id` is a tombstone, and that is the point
+ *
+ * "Not mine" would otherwise be the most frustrating button in the product: the next sync of
+ * the same calendar feed adds the event straight back, every fifteen minutes, forever. The
+ * keys survive the dismissal, so discovery can recognise a re-report and drop it.
+ *
+ * `ON DELETE SET NULL` rather than CASCADE is what extends that to a hard delete: deleting an
+ * event leaves its keys behind with nothing to point at, which reads as "this was deliberately
+ * removed" instead of "never seen". A user who pastes the link again by hand overrides it —
+ * that is an explicit statement, and it re-points the alias.
+ */
+export const eventAliases = pgTable(
+  "event_aliases",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /**
+     * `provider` — `luma:evt-abc`, the platform's own id, the strongest key there is.
+     * `url` — the canonical event URL, for sources that only ever saw a link.
+     * `source_ref` — the source's OWN id (`gcal:<iCalUID>`, `gmail:<messageId>`,
+     *   `ics:<UID>`), which is what makes re-reading the same feed idempotent even when the
+     *   event's public identity is still unknown.
+     */
+    kind: text("kind").$type<"provider" | "url" | "source_ref">().notNull(),
+    value: text("value").notNull(),
+    /** Null = tombstone: dismissed or deleted, and never to be re-added by a sync. */
+    eventId: uuid("event_id").references(() => events.id, { onDelete: "set null" }),
+    source: text("source").notNull(),
+    /**
+     * Why we believe this key names this event — a subject line, a sender domain, a calendar
+     * summary. Shown when the user asks "why is this here?", and deliberately never a message
+     * body: this table must not become a copy of the user's mail.
+     */
+    evidence: jsonb("evidence").$type<Record<string, unknown>>().default({}).notNull(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).defaultNow().notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("event_aliases_user_kind_value_uidx").on(t.userId, t.kind, t.value),
+    /** An index on the FK, for the same reason `event_attendees_contact_idx` exists. */
+    index("event_aliases_event_idx").on(t.eventId).where(sql`event_id is not null`),
   ]
 );
 
@@ -3217,11 +3332,39 @@ export const eventAttendees = pgTable(
     attendeeRole: text("attendee_role").$type<"attendee" | "host" | "speaker">(),
     /** Which acquisition path produced this row. Rendered as a badge, so it must be honest. */
     source: text("source")
-      .$type<"paste" | "csv" | "screenshot" | "page" | "luma" | "eventbrite">()
+      .$type<"paste" | "csv" | "screenshot" | "page" | "calendar" | "luma" | "eventbrite">()
       .default("paste")
       .notNull(),
     /** The provider's own guest id, where there is one. */
     externalRef: text("external_ref"),
+    /**
+     * The same person, across DIFFERENT events.
+     *
+     * `identityKey` below cannot do this: it keys on the string it was given, so two
+     * spellings of one LinkedIn URL are two keys. That is right for its job — making a
+     * re-paste idempotent against a unique index, where renormalising would break every
+     * stored row — and useless for "have I met them before".
+     *
+     * The kinds match `contact_identities.kind`, so the aggregate can join a roster row to a
+     * contact through that table's unique index rather than reimplementing the matching.
+     */
+    /**
+     * The optional AI line: why this person is worth finding, and an opener.
+     *
+     * Cached with `inputsHash` — a fingerprint of the facts it was written from — so it is
+     * regenerated when those change and never on a re-render. Without that, every page load
+     * of a 200-person roster would be 200 model calls against the user's own key.
+     */
+    aiNote: jsonb("ai_note").$type<{
+      why: string;
+      opener: string;
+      inputsHash: string;
+      generatedAt: string;
+    }>(),
+    personKeyKind: text("person_key_kind").$type<
+      "linkedin_slug" | "email" | "x_handle" | "platform_user" | "name"
+    >(),
+    personKeyValue: text("person_key_value"),
     /** 0/1. Set by the human, never by a sync — see `contactId`. */
     spokeTo: integer("spoke_to").default(0).notNull(),
     /**
@@ -3253,7 +3396,79 @@ export const eventAttendees = pgTable(
      * added to fix exactly this omission — without it, deleting a contact scans this table.
      */
     index("event_attendees_contact_idx").on(t.contactId).where(sql`contact_id is not null`),
+    /** What "people you keep seeing" groups on, across a whole roster history. */
+    index("event_attendees_person_idx")
+      .on(t.userId, t.personKeyKind, t.personKeyValue)
+      .where(sql`person_key_value is not null`),
   ]
+);
+
+/**
+ * Which companies were at an event, and in what capacity.
+ *
+ * The question a career fair makes obvious: "Stripe was there" is more useful than thirty
+ * names, because it connects to everything Orbit already knows — who you know there, who used
+ * to work there, and whether it is somewhere you are trying to get.
+ *
+ * Only CURATED companies get rows here: hosts, sponsors, exhibitors, and the employer lists a
+ * user pastes from a fair. Attendee employers are NOT written — a 900-person conference would
+ * otherwise create hundreds of `companies` rows nobody asked for, one per typo'd job title.
+ * Those are grouped live from `event_attendees.company_key` instead.
+ */
+export const eventCompanies = pgTable(
+  "event_companies",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    /**
+     * `employer` is the career-fair case — the company was there to recruit — which reads
+     * very differently from sponsoring a conference, and changes who is worth talking to.
+     */
+    role: text("role").$type<"host" | "sponsor" | "exhibitor" | "employer">().notNull(),
+    source: text("source")
+      .$type<"page" | "paste" | "screenshot" | "ai" | "manual">()
+      .notNull(),
+    /** Where this came from, in the user's terms: "booth 12", "from the event page". */
+    evidence: text("evidence"),
+    /** Wrong ones are hidden rather than deleted, so an AI mistake is one click undone. */
+    dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("event_companies_event_company_role_uidx").on(t.eventId, t.companyId, t.role),
+    /** "Where else have I seen this company" — and an index on the FK, as ever. */
+    index("event_companies_user_company_idx").on(t.userId, t.companyId),
+  ]
+);
+
+/**
+ * The companies the user is actually trying to reach.
+ *
+ * A table rather than a jsonb list on `user_settings` because relevance scoring and the event
+ * company panel both JOIN on it — jsonb cannot be indexed for that, and the alternative is
+ * loading every target into memory on every scored roster row.
+ */
+export const targetCompanies = pgTable(
+  "target_companies",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    /** 1 dream, 2 target, 3 curious. Weighted differently when ranking who to talk to. */
+    priority: integer("priority").default(2).notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("target_companies_user_company_uidx").on(t.userId, t.companyId)]
 );
 
 export const eventProviderConnections = pgTable(
@@ -3261,14 +3476,29 @@ export const eventProviderConnections = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     userId: text("user_id").notNull(),
-    provider: text("provider").$type<"luma" | "eventbrite">().notNull(),
+    /**
+     * Which SOURCE this row connects to, not merely which company.
+     *
+     * `luma` is a host API key; `luma_ics` is the user's personal feed of everything they
+     * registered for. Same platform, different data, and a user can have both — which is why
+     * they are separate values under the `(user_id, provider)` unique index rather than one
+     * row with a mode flag.
+     */
+    provider: text("provider")
+      .$type<"luma" | "eventbrite" | "luma_ics" | "partiful_ics" | "gmail">()
+      .notNull(),
     /**
      * Luma authenticates with a user-supplied API key scoped to one calendar; Eventbrite
      * uses OAuth. One table with a discriminator rather than two near-identical ones —
      * unlike Gmail/Outlook, these two genuinely differ in their credential shape, so the
      * difference is worth naming instead of hiding behind duplicate columns.
+     *
+     * `ics` is a secret URL and nothing else. `google_grant` stores no secret at all: the
+     * row's existence IS the opt-in, and the token comes from `gmail_connections`.
      */
-    authKind: text("auth_kind").$type<"api_key" | "oauth">().notNull(),
+    authKind: text("auth_kind")
+      .$type<"api_key" | "oauth" | "ics" | "google_grant">()
+      .notNull(),
     /** Calendar or organisation name, shown so the user can tell two connections apart. */
     label: text("label"),
     /** Luma calendar api id / Eventbrite organization_id. */
@@ -3421,6 +3651,9 @@ export type NewEventRecord = typeof events.$inferInsert;
 export type EventAttendeeRecord = typeof eventAttendees.$inferSelect;
 export type NewEventAttendeeRecord = typeof eventAttendees.$inferInsert;
 export type EventProviderConnection = typeof eventProviderConnections.$inferSelect;
+export type EventAlias = typeof eventAliases.$inferSelect;
+export type EventCompany = typeof eventCompanies.$inferSelect;
+export type TargetCompany = typeof targetCompanies.$inferSelect;
 export type ContactIdentity = typeof contactIdentities.$inferSelect;
 export type NewContactIdentity = typeof contactIdentities.$inferInsert;
 export type ContactMerge = typeof contactMerges.$inferSelect;

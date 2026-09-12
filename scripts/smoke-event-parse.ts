@@ -22,6 +22,7 @@ import { resolveEventTitle } from "../src/lib/events/types";
 import {
   parseRosterCsv,
   parseRosterText,
+  peopleToAttendees,
   speakersToAttendees,
   MAX_ROSTER_ROWS,
 } from "../src/lib/events/parse-roster";
@@ -279,6 +280,142 @@ function main() {
     check("the same name twice collapses", rows.filter((r) => r.fullName === "Grace Hopper").length === 1);
     check("a malformed url costs the link, not the speaker", rows[3]?.fullName === "Broken", String(rows[3]?.fullName));
     check("no email is invented", rows.every((r) => r.email === null));
+  }
+
+  console.log("\nthe platform overlay: what a page publishes about people");
+  {
+    // A Luma page, in the shape Luma actually ships: JSON-LD in the head, and the real
+    // article — the event, its hosts, its featured guests — as `__NEXT_DATA__` at the END of
+    // the body. The padding is not decoration: it is what proves the byte cap was raised,
+    // because a truncated JSON blob parses as nothing at all.
+    const nextData = {
+      props: {
+        pageProps: {
+          initialData: {
+            data: {
+              event: {
+                api_id: "evt-6mLuOvNxaIcg",
+                name: "AI Tinkerers SF",
+                timezone: "America/Los_Angeles",
+                guest_count: 214,
+              },
+              calendar: { name: "AI Tinkerers" },
+              hosts: [
+                {
+                  api_id: "usr-host1",
+                  name: "Ada Lovelace",
+                  linkedin_handle: "ada-lovelace",
+                  twitter_handle: "@adal",
+                  bio_short: "Building things",
+                },
+                { api_id: "usr-host2", name: "Grace Hopper" },
+              ],
+              featured_guests: [
+                { api_id: "usr-g1", name: "Katherine Johnson", linkedin_handle: "in/kjohnson" },
+                { api_id: "usr-g2", name: "Margaret Hamilton" },
+              ],
+            },
+          },
+        },
+      },
+    };
+    const lumaPage =
+      `<html><head><title>AI Tinkerers SF</title>` +
+      `<meta property="og:title" content="AI Tinkerers SF">` +
+      `</head><body><div>${"padding ".repeat(2000)}</div>` +
+      `<script id="__NEXT_DATA__" type="application/json">${JSON.stringify(nextData)}</script>` +
+      `</body></html>`;
+
+    const details = parseEventPage(lumaPage, "https://lu.ma/ai-tinkerers");
+    check("the platform is recognised", details.platform === "luma", String(details.platform));
+    // JSON-LD has no id at all; this is what makes three sources agree on one event.
+    check("the platform's own event id is read", details.providerEventId === "evt-6mLuOvNxaIcg", String(details.providerEventId));
+    // An offset is only right half the year; a zone name is right always.
+    check("an IANA zone beats an offset", details.timezone === "America/Los_Angeles", String(details.timezone));
+    check("the hosts are named", details.hosts.length === 2, String(details.hosts.length));
+    check("with LinkedIn normalised to a URL", details.hosts[0]?.linkedinUrl === "https://www.linkedin.com/in/ada-lovelace", String(details.hosts[0]?.linkedinUrl));
+    check("and the @ stripped off X", details.hosts[0]?.xHandle === "adal", String(details.hosts[0]?.xHandle));
+    check("featured guests come through", details.featuredGuests.length === 2, String(details.featuredGuests.length));
+    check("an `in/` prefix is normalised too", details.featuredGuests[0]?.linkedinUrl === "https://www.linkedin.com/in/kjohnson", String(details.featuredGuests[0]?.linkedinUrl));
+    check("the guest count is a number, naming nobody", details.guestCount === 214, String(details.guestCount));
+    check("the calendar is the organiser", details.organizerName === "AI Tinkerers", String(details.organizerName));
+
+    // The rows these become. The LinkedIn URL is the point: a name-only row keys at the
+    // weakest tier and can never be recognised as the same person at a second event.
+    const rows = peopleToAttendees(details.hosts, "host", details.platform);
+    check("hosts become host rows", rows.every((r) => r.attendeeRole === "host"));
+    check(
+      "and key on LinkedIn where there is one",
+      rows[0]?.identityKey === "li:https://www.linkedin.com/in/ada-lovelace",
+      String(rows[0]?.identityKey)
+    );
+    // A Luma user id and a Partiful user id are only unique within their own platform.
+    check("the platform id is namespaced", rows[0]?.externalRef === "luma:usr-host1", String(rows[0]?.externalRef));
+
+    // Markup drift: platform JSON present, no event in it. The one failure this parser
+    // cannot notice on its own, so it is recorded rather than silently returning nothing.
+    const drifted = parseEventPage(
+      `<html><head></head><body><script id="__NEXT_DATA__" type="application/json">{"props":{}}</script></body></html>`,
+      "https://lu.ma/moved"
+    );
+    check("drift is flagged", drifted.warnings.includes("platform-zero-yield"), drifted.warnings.join(","));
+
+    // Truncation is indistinguishable from drift at the JSON level, and must not be treated
+    // as an event: half a document is how a parser starts inventing things.
+    const truncated = parseEventPage(
+      `<html><body><script id="__NEXT_DATA__">{"props":{"pageProps":{"event":{"api_id":"evt-x"`,
+      "https://lu.ma/cut-off"
+    );
+    check("a truncated payload yields nothing", truncated.providerEventId === null);
+  }
+
+  console.log("\nPartiful and Meetup");
+  {
+    const partiful = {
+      props: {
+        pageProps: {
+          event: {
+            title: "Rooftop Dinner",
+            hosts: [{ id: "u1", displayName: "Alan Turing" }],
+            goingGuestCount: 42,
+            guestStatusCounts: { GOING: 42, MAYBE: 7 },
+          },
+        },
+      },
+    };
+    const details = parseEventPage(
+      `<html><body><script id="__NEXT_DATA__">${JSON.stringify(partiful)}</script></body></html>`,
+      "https://partiful.com/e/kX9fT2vQ"
+    );
+    check("partiful is recognised", details.platform === "partiful");
+    check("its id comes from the path", details.providerEventId === "kX9fT2vQ", String(details.providerEventId));
+    check("the host is named", details.hosts[0]?.name === "Alan Turing", String(details.hosts[0]?.name));
+    check("the going count is read", details.guestCount === 42, String(details.guestCount));
+    // Partiful shows no guest list to anyone logged out, and we never log in.
+    check("no guests are invented", details.featuredGuests.length === 0);
+  }
+  {
+    const meetup = {
+      props: {
+        pageProps: {
+          __APOLLO_STATE__: {
+            "Event:1": {
+              eventHosts: [{ member: { id: "m1", name: "Katherine Johnson" } }],
+              goingCount: 88,
+            },
+            "Group:1": { __typename: "Group", name: "SF Python" },
+          },
+        },
+      },
+    };
+    const details = parseEventPage(
+      `<html><body><script id="__NEXT_DATA__">${JSON.stringify(meetup)}</script></body></html>`,
+      "https://www.meetup.com/sf-python/events/301234567/"
+    );
+    check("meetup is recognised", details.platform === "meetup");
+    check("its id comes from the path", details.providerEventId === "301234567", String(details.providerEventId));
+    check("the organiser is named", details.hosts[0]?.name === "Katherine Johnson", String(details.hosts[0]?.name));
+    check("the going count is read", details.guestCount === 88, String(details.guestCount));
   }
 
   if (failures > 0) {
