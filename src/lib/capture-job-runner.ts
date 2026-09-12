@@ -33,6 +33,7 @@ import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { friendlyError } from "@/lib/errors";
 import { upsertIgnoredPeople, type IgnoredPersonInput } from "@/lib/ignored-people";
 import { getMeetingSession, getNoteBatchForUser, markMeetingSessionSaved, toNoteBatchMeeting } from "@/lib/meeting-sessions";
+import { meetingExtrasFromDigest } from "@/lib/meeting-extras";
 import { followUpDaysFor, shouldCreateFollowUp } from "@/lib/note-batches";
 import {
   saveNoteBatch,
@@ -93,7 +94,7 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
     });
     await heartbeatCaptureJob(id, token);
     const { sourceText, sourceHash, ...rest } = parsed;
-    const result: CaptureJobResult = { ...rest, meetingExtras: row.result?.meetingExtras };
+    const result: CaptureJobResult = rest;
     await settleCaptureJob(id, token, { status: "ready", result, sourceText, sourceHash, error: null });
   } catch (err) {
     await settleCaptureJob(id, token, {
@@ -267,12 +268,13 @@ export async function buildSaveInput(row: CaptureJobRow): Promise<SaveNoteBatchI
     const session = await getMeetingSession(row.userId, row.meetingSessionId);
     if (!session) throw new Error("That meeting no longer exists");
     const summary = toNoteBatchMeeting(session);
-    const extras = result.meetingExtras ?? [];
+    const extras = session.digest ? meetingExtrasFromDigest(session.digest) : [];
     const keys = new Set(decisions.meeting?.extraReminderKeys ?? extras.filter((e) => e.checkedByDefault).map((e) => e.key));
+    const titles = decisions.meeting?.titles ?? {};
     const extraReminders: MeetingExtraReminderInput[] = extras
       .filter((e) => keys.has(e.key))
       .slice(0, 40)
-      .map((e) => ({ kind: e.kind, title: e.title, ownerName: e.ownerName, sourceExcerpt: e.sourceExcerpt }));
+      .map((e) => ({ kind: e.kind, title: titles[e.key]?.trim() || e.title, ownerName: e.ownerName, sourceExcerpt: e.sourceExcerpt }));
     meeting = { summary, extraReminders };
   }
 

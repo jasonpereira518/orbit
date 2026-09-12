@@ -120,6 +120,7 @@ export function MeetingCapturePanel({
   canTranscribe,
   captureSupported,
   onBusyChange,
+  onAnalyzed,
 }: {
   resumable: ResumableMeeting | null;
   /** A completion key, for the analysis. */
@@ -133,8 +134,17 @@ export function MeetingCapturePanel({
   captureSupported: boolean;
   /** True while a meeting is recording or being finished — the page locks its other tabs. */
   onBusyChange?: (busy: boolean) => void;
+  /**
+   * The new capture flow: hand the analysis over instead of mounting the review panel
+   * here. The caller queues the durable job and renders the summary card itself.
+   */
+  onAnalyzed?: (analysis: MeetingAnalysis, sessionId: string) => void;
 }) {
   const router = useRouter();
+  const onAnalyzedRef = useRef(onAnalyzed);
+  useEffect(() => {
+    onAnalyzedRef.current = onAnalyzed;
+  });
   const [phase, setPhase] = useState<Phase>("setup");
   const [title, setTitle] = useState("");
   const [attendeesText, setAttendeesText] = useState("");
@@ -286,6 +296,13 @@ export function MeetingCapturePanel({
       }
       setAnalysis(res.analysis);
       setItems(toSelectable(res.analysis));
+      if (onAnalyzedRef.current) {
+        // Handed off: the caller owns what happens next. Back to setup so a return to
+        // this tab does not show a stale review.
+        onAnalyzedRef.current(res.analysis, id);
+        setPhase("setup");
+        return;
+      }
       setPhase("review");
     },
     []

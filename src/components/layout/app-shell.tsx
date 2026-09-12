@@ -19,6 +19,7 @@ import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
 import { PlanCelebrationWatcher } from "@/components/celebration/plan-celebration-watcher";
 import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
+import { CaptureJobWatcher } from "@/components/capture/capture-job-watcher";
 import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar";
 import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
 import { FeedbackTrigger } from "@/components/feedback/feedback-trigger";
@@ -123,6 +124,7 @@ export function AppShell({
           <DueNotificationsWatcher />
           <PlanCelebrationWatcher plan={plan} />
           <ImportJobWatcher />
+          <CaptureJobWatcher />
           <GlobalJobProgressBar />
           <div
             className="hidden h-full shrink-0 p-3 md:block lg:p-4"

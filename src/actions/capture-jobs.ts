@@ -27,6 +27,7 @@ import { captureJobs } from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import type {
   CaptureDecision,
+  CaptureDecisions,
   CaptureReminderChoices,
   CaptureSourceKind,
 } from "@/lib/capture/types";
@@ -169,7 +170,7 @@ export async function recordCaptureDecision(
 /** The summary's ticks: which dated commitments and meeting items become reminders. */
 export async function recordCaptureChoices(
   jobId: string,
-  choices: { reminders?: CaptureReminderChoices; meeting?: { extraReminderKeys: string[] } }
+  choices: { reminders?: CaptureReminderChoices; meeting?: CaptureDecisions["meeting"] }
 ): Promise<Ok | Fail> {
   try {
     const userId = await requireUserId();

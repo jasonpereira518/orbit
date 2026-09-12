@@ -4,10 +4,6 @@ import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { requireUserId } from "@/lib/auth";
-import {
-  listUnresolvedMentionsFor,
-  type UnresolvedMention,
-} from "@/lib/unresolved-mentions";
 import type { RejectedCounts } from "@/lib/date-commitment-extract";
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 import type { CaptureParseHints } from "@/lib/ai";
@@ -211,16 +207,4 @@ export async function confirmBulkCapture(
   revalidatePath("/graph");
   for (const id of out.contactIds) revalidatePath(`/contacts/${id}`);
   return out;
-}
-
-
-/**
- * People named in your recent notes who are still not in your network.
- *
- * Thin wrapper; the work is in `@/lib/unresolved-mentions` so a smoke test can drive it
- * with a real database and no auth, the same split `getChatSuggestions` uses.
- */
-export async function listUnresolvedMentions(): Promise<UnresolvedMention[]> {
-  const userId = await requireUserId();
-  return listUnresolvedMentionsFor(userId);
 }

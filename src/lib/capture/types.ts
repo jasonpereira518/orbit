@@ -115,7 +115,11 @@ export type CaptureSourceKind = "messy" | "voice" | "meeting" | "scan" | "phone"
 /** One transcribed block of media, in the order it arrived. */
 export type CaptureIngestedBlock = { text: string; source: string };
 
-/** A digest item from a recorded meeting, offered as an extra reminder on the summary. */
+/**
+ * A digest item from a recorded meeting, offered as an extra reminder on the summary.
+ * Rebuilt from the stored digest by `meetingExtrasFromDigest` wherever it is needed, so
+ * the job row never carries a copy.
+ */
 export type CaptureMeetingExtra = {
   key: string;
   kind: "action" | "blocker" | "question";
@@ -128,7 +132,6 @@ export type CaptureMeetingExtra = {
 
 /** What the runner stores once the parse is done. `CaptureParseResult` minus the corpus. */
 export type CaptureJobResult = Omit<CaptureParseResult, "sourceText" | "sourceHash"> & {
-  meetingExtras?: CaptureMeetingExtra[];
   saved?: CaptureSavedSummary;
 };
 
@@ -171,7 +174,8 @@ export type CaptureReminderChoices = {
  */
 export type CaptureDecisions = {
   people?: Record<string, CaptureDecision>;
-  meeting?: { extraReminderKeys: string[] };
+  /** Which meeting digest items become reminders; absent = the defaults. Titles may be edited. */
+  meeting?: { extraReminderKeys: string[]; titles?: Record<string, string> };
   reminders?: CaptureReminderChoices;
 };
 

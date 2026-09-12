@@ -35,7 +35,7 @@ const mixed: CaptureDecisions = { people: { a: dec("accept", 0), b: dec("skip", 
 check("counts", JSON.stringify(countDecisions(items, mixed)) === JSON.stringify({ accepted: 1, rejected: 0, skipped: 1, pending: 1 }));
 check("accepted people keep card order", acceptedPeople(items, mixed).map((a) => a.item.key).join() === "a");
 check("set-aside people", setAsidePeople(items, mixed).map((s) => s.item.key).join() === "b");
-check("set-aside filtered by kind", setAsidePeople(items, mixed, "rejected").length === 0);
+check("set-aside filtered by kind", setAsidePeople(items, mixed, "reject").length === 0);
 
 const dup = (id: string, confidence: number) => ({ id, fullName: id, company: null, title: null, reason: "name", confidence });
 check("no matches → create new", defaultMergeId(item("x")) === null);

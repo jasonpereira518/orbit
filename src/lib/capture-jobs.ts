@@ -332,7 +332,7 @@ export async function recordCaptureDecisionRow(
 export async function recordCaptureChoicesRow(
   userId: string,
   id: string,
-  choices: { reminders?: CaptureReminderChoices; meeting?: { extraReminderKeys: string[] } }
+  choices: { reminders?: CaptureReminderChoices; meeting?: CaptureDecisions["meeting"] }
 ): Promise<CaptureJobRow | null> {
   const patch: Record<string, unknown> = {};
   if (choices.reminders) patch.reminders = choices.reminders;

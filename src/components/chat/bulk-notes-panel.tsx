@@ -14,6 +14,7 @@ import {
   type BulkParseOptions,
 } from "@/actions/capture";
 import type { BulkNotePersonPreview, SuggestedReminderPreview } from "@/lib/capture/types";
+import { CAPTURE_FILE_ACCEPT, fileToBase64 } from "@/lib/capture/ingest-client";
 import type { MeetingExtraReminderInput } from "@/lib/note-batch-save";
 import { SuggestedRemindersReview } from "@/components/capture/suggested-reminders-review";
 import {
@@ -76,38 +77,6 @@ type ReviewItem = BulkNotePersonPreview & {
   /** Locked to `lockedParticipantId` — the panel was opened from that contact's profile. */
   locked?: boolean;
 };
-
-const CAPTURE_FILE_ACCEPT = [
-  ".txt",
-  ".md",
-  ".markdown",
-  ".ics",
-  ".eml",
-  "text/plain",
-  "text/markdown",
-  "text/calendar",
-  "message/rfc822",
-  "image/*",
-  "application/pdf",
-  ".pdf",
-  "audio/*",
-  ".webm",
-  ".mp3",
-  ".wav",
-  ".m4a",
-  ".ogg",
-].join(",");
-
-async function fileToBase64(file: File): Promise<string> {
-  const buffer = await file.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  return btoa(binary);
-}
 
 /** Filename and provenance for whatever was last ingested — "note.jpg · via photos:2". */
 function IngestMeta({
