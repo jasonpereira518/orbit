@@ -112,7 +112,7 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
       <IntegrationUnavailable
         id="import-google-contacts"
         title="Google Contacts"
-        blurb="Not connected yet. Import a LinkedIn export instead, or paste your notes into Capture and Orbit will pull the people out."
+        blurb="Not connected yet. Export your Google contacts as a vCard or Google CSV and upload it as a contacts file on the Imports page — no account connection needed."
         envVars={[
           "GOOGLE_CLIENT_ID",
           "GOOGLE_CLIENT_SECRET",

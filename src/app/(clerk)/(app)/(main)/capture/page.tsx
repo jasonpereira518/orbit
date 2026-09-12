@@ -1,7 +1,12 @@
+import { Suspense } from "react";
 import { getContact } from "@/actions/contacts";
 import { getPlanOverview, getSettings } from "@/actions/settings";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import { CaptureFormLazy } from "@/components/capture/capture-form-lazy";
+import {
+  CaptureHistory,
+  CaptureHistorySkeleton,
+} from "@/components/capture/capture-history";
 import { UnresolvedMentionsCard } from "@/components/capture/unresolved-mentions-card";
 import { requireUserId } from "@/lib/auth";
 import { getResumableMeeting } from "@/lib/meeting-sessions";
@@ -27,6 +32,7 @@ export default async function CapturePage({
       ? params.mode
       : null;
 
+  const userIdPromise = requireUserId();
   const settingsPromise = getSettings();
   const planPromise = getPlanOverview();
   const resumablePromise = requireUserId()
@@ -45,6 +51,7 @@ export default async function CapturePage({
   }
 
   const settings = await settingsPromise;
+  const userId = await userIdPromise;
   const { usage } = await planPromise;
   const resumableMeeting = await resumablePromise;
   // An unfinished meeting is the one thing on this page that can be lost by ignoring it,
@@ -84,9 +91,17 @@ export default async function CapturePage({
         initialContactName={contactName}
         defaultMode={defaultMode}
         hasApiKey={settings.hasApiKey}
+        userId={userId}
         canTranscribe={canTranscribe}
         resumableMeeting={resumableMeeting}
       />
+      {/* Hidden when logging with one named person, for the same reason the mentions card
+          is: the page is doing one specific thing, and a feed of past captures is not it. */}
+      {!contactId && (
+        <Suspense fallback={<CaptureHistorySkeleton />}>
+          <CaptureHistory />
+        </Suspense>
+      )}
     </div>
   );
 }

@@ -57,7 +57,10 @@ export const INTEGRATION_ICONS: Record<IntegrationTabId, LucideIcon> = {
   gmail: MailSearch,
 };
 
-/** The importer tab an in-flight import job belongs to; the calendar file import has none. */
+/**
+ * The importer tab an in-flight import job belongs to. The calendar-file and contacts-file
+ * imports live only on /imports, so they have none.
+ */
 export function tabForImportJob(kind: ImportJobKind): IntegrationTabId | null {
   switch (kind) {
     case "connections":
@@ -67,6 +70,7 @@ export function tabForImportJob(kind: ImportJobKind): IntegrationTabId | null {
       return "google";
     case "outlook_contacts":
       return "outlook";
+    case "contacts_file":
     case "calendar":
       return null;
   }

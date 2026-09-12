@@ -24,12 +24,21 @@ import { runLinkedInImportJob } from "@/lib/import-job-processor";
 import {
   GOOGLE_CONTACTS_IMPORT_TYPE,
   OUTLOOK_CONTACTS_IMPORT_TYPE,
+  CONTACTS_FILE_IMPORT_TYPE,
   LINKEDIN_MESSAGES_IMPORT_TYPE,
   CALENDAR_ICS_IMPORT_TYPE,
   CALENDAR_CSV_IMPORT_TYPE,
   runImportJobById,
 } from "@/lib/import-job-dispatch";
-import { parseLinkedInConnectionsCsv } from "@/lib/linkedin-connections";
+import {
+  LinkedInExportError,
+  parseLinkedInConnectionsCsv,
+} from "@/lib/linkedin-connections";
+import {
+  ContactsFileError,
+  parseContactsFile,
+  type ContactsFileFormat,
+} from "@/lib/contacts-file";
 import {
   messageDirection,
   parseLinkedInMessagesCsv,
@@ -86,6 +95,28 @@ function hasEncodingArtifacts(rows: { firstName: string; lastName: string; compa
   );
 }
 
+/**
+ * What a LinkedIn preview tells the person when the parser refuses a file. Only a
+ * `LinkedInExportError` is forwarded word for word: anything else is a bug, or
+ * PapaParse's own wording, and was never written to be read in a toast.
+ */
+function linkedInExportErrorMessage(err: unknown): string {
+  return err instanceof LinkedInExportError
+    ? err.message
+    : "Couldn’t read that file — is it the LinkedIn export this card asks for?";
+}
+
+type PreviewRefusal = { error: string };
+
+/**
+ * A refusal, typed rather than written as a literal. Two object literals in one inferred
+ * return type get normalised — each side grows optional `undefined` copies of the other's
+ * keys — and then `"error" in res` no longer narrows on the client.
+ */
+function refusal(message: string): PreviewRefusal {
+  return { error: message };
+}
+
 export async function previewLinkedInCsv(csvText: string) {
   const userId = await requireUserId();
   // parseLinkedInConnectionsCsv throws for expected validation failures (empty
@@ -96,9 +127,7 @@ export async function previewLinkedInCsv(csvText: string) {
   try {
     parsed = parseLinkedInConnectionsCsv(csvText);
   } catch (err) {
-    return {
-      error: err instanceof Error ? err.message : "Failed to parse CSV",
-    };
+    return refusal(linkedInExportErrorMessage(err));
   }
   const { columns, rows, warnings } = parsed;
   if (hasEncodingArtifacts(rows)) {
@@ -323,11 +352,24 @@ async function storedSelfLinkedInUrl(userId: string): Promise<string | null> {
   return settings?.socialLinks?.linkedin?.trim() || null;
 }
 
+/**
+ * Refusals come back as `{ error }` data rather than a throw, for the reason
+ * `previewLinkedInCsv` gives: a thrown message never survives production, and "This looks
+ * like a Connections export" is only worth writing if it reaches the person.
+ */
 export async function previewLinkedInMessagesCsv(csvText: string) {
   const userId = await requireUserId();
-  const { columns, messages } = parseLinkedInMessagesCsv(csvText);
+  let parsed: ReturnType<typeof parseLinkedInMessagesCsv>;
+  try {
+    parsed = parseLinkedInMessagesCsv(csvText);
+  } catch (err) {
+    return refusal(linkedInExportErrorMessage(err));
+  }
+  const { columns, messages } = parsed;
   if (!messages.length) {
-    throw new Error("No messages found in CSV. Export Messages from LinkedIn data download.");
+    return refusal(
+      "No messages found in that file — upload messages.csv from your LinkedIn data download"
+    );
   }
 
   const db = await getDb();
@@ -983,6 +1025,194 @@ export async function confirmOutlookContactsImport(
   revalidatePath("/imports");
 
   return { importId: importRow.id, totalRows: rows.length };
+}
+
+export type ContactsFilePerson = {
+  id: string;
+  fullName: string;
+  company: string;
+  title: string;
+  email: string;
+  phone: string;
+  isRepeat: boolean;
+  duplicate: {
+    id: string;
+    fullName: string;
+    reason: string;
+    confidence: number;
+  } | null;
+};
+
+/**
+ * Previews an uploaded address-book file (vCard or Google/Outlook contacts CSV) against the
+ * user's existing contacts — the file-upload counterpart of `previewGoogleContacts`, for the
+ * people who haven't connected Google or Outlook, or whose deployment can't offer OAuth at all.
+ *
+ * Parse failures come back as data, not a throw, for the reason `previewLinkedInCsv` spells
+ * out: Server Actions replace thrown messages with a digest in production, and "This looks like
+ * a LinkedIn export" is only useful if it survives the trip. Only `ContactsFileError` messages
+ * are forwarded — anything else thrown by the parser is a bug, and its message was never
+ * written for the person reading the toast.
+ *
+ * Returns only what the review list renders. The parsed rows also carry notes, which can run
+ * to paragraphs each and which the confirm step re-derives from the file anyway.
+ */
+export async function previewContactsFile(
+  text: string,
+  fileName: string
+): Promise<
+  | { error: string }
+  | {
+      format: ContactsFileFormat;
+      totalRows: number;
+      people: ContactsFilePerson[];
+      duplicateCount: number;
+      warnings: string[];
+    }
+> {
+  const userId = await requireUserId();
+  let parsed: ReturnType<typeof parseContactsFile>;
+  try {
+    parsed = parseContactsFile(text, fileName);
+  } catch (err) {
+    return {
+      error:
+        err instanceof ContactsFileError
+          ? err.message
+          : "Couldn’t read that file — export your contacts again as a vCard (.vcf) and try that",
+    };
+  }
+
+  const db = await getDb();
+  const existing = await db.query.contacts.findMany({
+    where: eq(contacts.userId, userId),
+    columns: {
+      id: true,
+      fullName: true,
+      email: true,
+      linkedinUrl: true,
+      xHandle: true,
+      company: true,
+      title: true,
+    },
+  });
+
+  // Hoisted for the same reason as `previewLinkedInCsv`: an address book is thousands of
+  // rows, and matching each one by scanning every existing contact is all-pairs.
+  const duplicateIndex = buildDuplicateIndex(existing);
+
+  const people = parsed.rows.map((row, index): ContactsFilePerson => {
+    const dups = findDuplicateCandidatesIndexed(duplicateIndex, {
+      fullName: row.fullName,
+      email: row.email,
+      linkedinUrl: row.linkedinUrl,
+      company: row.company,
+      title: row.title,
+    });
+    const top = dups[0];
+    return {
+      // Row position, which the confirm step re-derives by parsing the same text again —
+      // the same contract as `startLinkedInImport`'s `selectedIds`.
+      id: String(index),
+      fullName: row.fullName,
+      company: row.company,
+      title: row.title,
+      email: row.email,
+      phone: row.phone,
+      isRepeat: Boolean(top && top.confidence >= DUPLICATE_MERGE_CONFIDENCE),
+      duplicate: top
+        ? {
+            id: top.contact.id,
+            fullName: top.contact.fullName,
+            reason: top.reason,
+            confidence: top.confidence,
+          }
+        : null,
+    };
+  });
+
+  return {
+    format: parsed.format,
+    totalRows: people.length,
+    people,
+    duplicateCount: people.filter((p) => p.isRepeat).length,
+    warnings: parsed.warnings,
+  };
+}
+
+/**
+ * Starts a server-owned address-book file import: re-parses the file text the client sends
+ * back — never rows it sends back, which would let a tampered request write fields the parser
+ * never produced — snapshots the selected rows into `import_job_rows`, and hands them to the
+ * engine in the background via `after()`. The same shape as `startLinkedInImport` (which is
+ * also re-parse-by-index) and `confirmGoogleContactsImport` (which is also contacts-only);
+ * the client polls `getImportJobStatus`.
+ *
+ * Nothing here checks the plan's contact cap, and that is deliberate: none of the other contact
+ * imports do either. The engine counts headroom once per job and marks every row past it
+ * `skipped` / `blockedByPlan` (see `runImportJob`), so a free account importing a 3,000-card
+ * address book gets its first rows up to the limit, exactly as a LinkedIn or Google import
+ * would, rather than a refusal up front.
+ */
+export async function confirmContactsFileImport(
+  text: string,
+  fileName: string,
+  selectedIds: string[]
+): Promise<{ importId: string; totalRows: number }> {
+  const userId = await requireUserId();
+  const db = await getDb();
+
+  // Throws on a file the preview would have refused — the client only gets here from a
+  // successful preview of this same text, so reaching the throw means the text changed.
+  const { rows } = parseContactsFile(text, fileName);
+  const selectedIndexes = [
+    ...new Set(
+      selectedIds
+        .map((id) => Number(id))
+        .filter((i) => Number.isInteger(i) && i >= 0 && i < rows.length)
+    ),
+  ].sort((a, b) => a - b);
+  if (selectedIndexes.length === 0) throw new Error("No contacts selected to import");
+
+  const [importRow] = await db
+    .insert(imports)
+    .values({
+      userId,
+      importType: CONTACTS_FILE_IMPORT_TYPE,
+      fileName: fileName || "Contacts file",
+      status: "processing",
+      totalRows: selectedIndexes.length,
+      stats: {},
+    })
+    .returning();
+
+  await db.insert(importJobRows).values(
+    selectedIndexes.map((index) => {
+      const row = rows[index];
+      return {
+        importId: importRow.id,
+        userId,
+        rowIndex: index,
+        payload: {
+          kind: "contacts_file_contact" as const,
+          fullName: row.fullName,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          company: row.company,
+          title: row.title,
+          email: row.email,
+          phone: row.phone,
+          linkedinUrl: row.linkedinUrl,
+          notes: row.notes,
+        },
+      };
+    })
+  );
+
+  after(() => runImportJobById(importRow.id).catch(() => {}));
+  revalidatePath("/imports");
+
+  return { importId: importRow.id, totalRows: selectedIndexes.length };
 }
 
 export type GooglePhotoMatchResult = {

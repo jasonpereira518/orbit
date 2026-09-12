@@ -237,11 +237,29 @@ CREATE TABLE IF NOT EXISTS note_batches (
   anchor_basis text NOT NULL DEFAULT 'upload',
   status text NOT NULL DEFAULT 'saved',
   result jsonb NOT NULL,
+  input_sources jsonb NOT NULL DEFAULT '[]',
   created_at timestamptz NOT NULL DEFAULT now(),
   undone_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS note_batches_user_created_idx ON note_batches(user_id, created_at);
 CREATE INDEX IF NOT EXISTS note_batches_user_source_idx ON note_batches(user_id, source_hash);
+CREATE TABLE IF NOT EXISTS capture_photos (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  note_batch_id uuid REFERENCES note_batches(id) ON DELETE CASCADE,
+  position integer NOT NULL DEFAULT 0,
+  file_name text,
+  storage text NOT NULL,
+  blob_url text,
+  inline_data text,
+  content_type text NOT NULL,
+  byte_size integer NOT NULL,
+  width integer,
+  height integer,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS capture_photos_batch_idx ON capture_photos(note_batch_id, position);
+CREATE INDEX IF NOT EXISTS capture_photos_user_created_idx ON capture_photos(user_id, created_at);
 CREATE TABLE IF NOT EXISTS interaction_mentions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1222,6 +1240,10 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
  * its branch, moving each time main's DDL merged in (meeting capture, then scan notes):
  * this PR's previews stamped each of those numbers without the merged-in tables, so
  * neither can carry them. 44 and 46 are burned for the same reason 40, 41 and 43 are.
+ * v49 = capture history (#164): the capture_photos table and note_batches.input_sources.
+ * Built as 41, then 46 (see v47 — burned by the page_views branch too), then 48 — which
+ * the event-platform branch below also landed on independently. Same DDL-change rule:
+ * two branches on one number means one of them silently never runs its migration.
  *
  * (Make that four. This branch has been renumbered 27/28 -> 28/29 -> 29/30 -> 30/31 as the
  * LinkedIn, constellation and feedback branches each landed first. If this one collides
@@ -1275,9 +1297,12 @@ CREATE INDEX IF NOT EXISTS page_views_country_created_idx ON page_views(country,
 // carry it twice over: the traffic-analytics branch's previews stamped 46, and so did this
 // PR's own preview (#168) — with the event tables but without page_views. 47 is main's.
 //
+// 49 = capture history (#164): the capture_photos table and note_batches.input_sources.
+// Landed on 48 independently of the event-platform branch above — two different DDL sets
+// cannot share one number, so this one moves again.
+//
 // 50 = user_settings.desktop_notifications_enabled, so the desktop-notification preference
-// syncs across devices instead of living only in one browser's localStorage. Not 49: that
-// is capture history's (#164), claimed while this was being built.
+// syncs across devices instead of living only in one browser's localStorage.
 export const SCHEMA_VERSION = 50;
 
 /**
@@ -1528,6 +1553,13 @@ export const SCALE_DDL: string[] = [
   `CREATE INDEX IF NOT EXISTS duplicate_suggestions_pending_idx
      ON duplicate_suggestions(user_id, confidence DESC)
      WHERE status = 'pending'`,
+
+  // --- Capture history ---------------------------------------------------------------
+  //
+  // How a capture's notes arrived (typed, voice, photos...), for the history list's icons.
+  // Here rather than only in the CREATE TABLE above, which never adds a column to a
+  // note_batches table that already exists.
+  `ALTER TABLE note_batches ADD COLUMN IF NOT EXISTS input_sources jsonb NOT NULL DEFAULT '[]'`,
 ];
 
 /** Runs one SQL statement on whichever driver is active. */

@@ -18,6 +18,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { SELECTABLE_INTERACTION_TYPES } from "@/lib/interaction-types";
+import { captureDraftKey } from "@/lib/capture-draft";
+import { CAPTURE_HANDOFF_EVENT } from "@/lib/capture-handoff";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -57,6 +59,7 @@ export function CaptureForm({
   initialContactName = null,
   defaultMode = "messy",
   hasApiKey = true,
+  userId,
   canTranscribe = false,
   resumableMeeting = null,
 }: {
@@ -64,6 +67,7 @@ export function CaptureForm({
   initialContactName?: string | null;
   defaultMode?: CaptureMode;
   hasApiKey?: boolean;
+  userId: string;
   /** An OpenAI, Gemini or Wispr key exists — what meeting capture transcribes with. */
   canTranscribe?: boolean;
   /** An unfinished recorded meeting, offered for resuming on the Meeting tab. */
@@ -72,6 +76,23 @@ export function CaptureForm({
   const router = useRouter();
   const [mode, setMode] = useState<CaptureMode>(defaultMode);
   const [pending, start] = useTransition();
+  // One draft for Voice and Messy alike: switching tabs remounts the panel, and the text
+  // typed under one should still be there under the other.
+  const draftKey = captureDraftKey(userId, initialContactId);
+  const acceptsHandoff = !initialContactId;
+
+  // "Capture this" from the palette while Structured is open: there is no notes panel on
+  // that tab to take the text, so switch to the one that has — it takes the waiting
+  // handoff as it mounts.
+  useEffect(() => {
+    if (!acceptsHandoff) return;
+    function onHandoff() {
+      setMode((m) => (m === "structured" ? "messy" : m));
+    }
+    window.addEventListener(CAPTURE_HANDOFF_EVENT, onHandoff);
+    return () => window.removeEventListener(CAPTURE_HANDOFF_EVENT, onHandoff);
+  }, [acceptsHandoff]);
+
   const meetingSupported = useMeetingCaptureSupported();
   // A meeting on the server can be summarized from any browser; only recording needs
   // desktop Chromium. So the tab shows for either reason.
@@ -190,6 +211,8 @@ export function CaptureForm({
           preferredContactId={initialContactId}
           preferredContactName={initialContactName}
           hasApiKey={hasApiKey}
+          draftKey={draftKey}
+          acceptsHandoff={acceptsHandoff}
           onSaved={(res) => {
             router.push(`/capture/${res.batchId}`);
           }}

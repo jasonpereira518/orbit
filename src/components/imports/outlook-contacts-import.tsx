@@ -105,7 +105,7 @@ export function OutlookContactsImport({ returnTo = "/imports" }: { returnTo?: st
       <IntegrationUnavailable
         id="import-outlook-contacts"
         title="Outlook Contacts"
-        blurb="Not connected yet. Import a LinkedIn export instead, or paste your notes into Capture and Orbit will pull the people out."
+        blurb="Not connected yet. Export your Outlook contacts as a CSV and upload it as a contacts file on the Imports page — no account connection needed."
         envVars={[
           "MICROSOFT_CLIENT_ID",
           "MICROSOFT_CLIENT_SECRET",
