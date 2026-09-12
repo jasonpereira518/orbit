@@ -373,7 +373,10 @@ export function ChatPanel() {
         Mobile offsets: top header + page title + padding + bottom nav.
         Desktop offsets: page title + vertical padding.
       */}
-      <div className="flex h-[calc(100dvh-16.5rem)] w-full max-h-[calc(100dvh-16.5rem)] flex-col overflow-hidden rounded-2xl border border-border/70 bg-card md:h-[calc(100dvh-11rem)] md:max-h-[calc(100dvh-11rem)]">
+      {/* The mobile figure was hand-tuned and 27px short, so the composer's bottom edge
+          and every suggestion chip sat under the fixed nav. Subtracting the nav's own
+          band keeps them in step if either ever changes. */}
+      <div className="flex h-[calc(100dvh-13rem-var(--orbit-bottom-nav))] w-full max-h-[calc(100dvh-13rem-var(--orbit-bottom-nav))] flex-col overflow-hidden rounded-2xl border border-border/70 bg-card md:h-[calc(100dvh-11rem)] md:max-h-[calc(100dvh-11rem)]">
         <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2.5 sm:px-4">
           <DropdownMenu open={historyOpen} onOpenChange={setHistoryOpen}>
             <DropdownMenuTrigger

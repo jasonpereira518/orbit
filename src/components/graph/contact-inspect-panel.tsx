@@ -408,13 +408,18 @@ function ContactPanelBody({
             {data.initials}
           </div>
           <div className="min-w-0">
-            <SheetTitle className="font-[family-name:var(--font-display)] text-2xl text-ink">
+            {/* The wrapper is already `min-w-0`, but that only lets flex shrink it — a
+                single unbroken token still overflows without `break-words`. A long name
+                ran off the right edge of the mobile sheet header. */}
+            <SheetTitle className="font-[family-name:var(--font-display)] text-2xl break-words text-ink">
               {data.label}
             </SheetTitle>
             {data.fullName &&
               data.preferredName &&
               data.preferredName !== data.fullName && (
-                <p className="text-xs text-muted-foreground">{data.fullName}</p>
+                <p className="text-xs break-words text-muted-foreground">
+                  {data.fullName}
+                </p>
               )}
             <SheetDescription>
               {[data.title, data.company].filter(Boolean).join(" · ") ||

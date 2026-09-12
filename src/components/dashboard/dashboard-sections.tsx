@@ -374,9 +374,12 @@ export async function RecentlyUpdatedSection({
                 >
                   <div className="flex min-w-0 items-center gap-2">
                     {tier && <ClosenessTierBadge tier={tier} dotOnly />}
+                    {/* `min-w-0` lets the column shrink, but the text still needs
+                        `truncate` or a long company name runs straight through the
+                        timestamp on the right. */}
                     <div className="min-w-0">
-                      <p className="font-medium">{c.fullName}</p>
-                      <p className="text-xs text-muted-foreground">
+                      <p className="truncate font-medium">{c.fullName}</p>
+                      <p className="truncate text-xs text-muted-foreground">
                         {c.company || "No company"}
                       </p>
                     </div>

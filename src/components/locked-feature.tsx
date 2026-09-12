@@ -28,7 +28,11 @@ export function LockedFeature({
   note?: string;
 }) {
   return (
-    <div className="mx-auto max-w-xl space-y-6 rounded-2xl border border-tier-lifetime/25 bg-card p-8 text-center">
+    // Two changes for the same 13px. `mb-[var(--orbit-bottom-nav)]` gives the scroll
+    // container room to lift "See plans" clear of the fixed mobile nav; the tighter
+    // padding and spacing below `sm` keep it clear on FIRST PAINT, without which the one
+    // control this screen exists to offer starts out half-hidden.
+    <div className="mx-auto mb-[var(--orbit-bottom-nav)] max-w-xl space-y-5 rounded-2xl border border-tier-lifetime/25 bg-card p-6 text-center sm:space-y-6 sm:p-8">
       <div className="space-y-3">
         <span className="mx-auto flex size-11 items-center justify-center rounded-full border border-tier-lifetime/35 bg-tier-lifetime/10">
           <Lock className="size-5 text-tier-lifetime" />

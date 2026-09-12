@@ -65,7 +65,9 @@ export function GoalsSummary({
             {shownGoals.map((g) => (
               <li
                 key={g.id}
-                className="rounded-full border border-border/60 bg-muted/40 px-3 py-1 text-sm"
+                // A goal can be 200 characters (the input's maxLength), which as a
+                // single unbroken pill ran past the card's right edge.
+                className="max-w-full break-words rounded-full border border-border/60 bg-muted/40 px-3 py-1 text-sm"
               >
                 {g.text}
               </li>

@@ -1,6 +1,6 @@
 "use client";
 
-import { formatDistanceToNow } from "date-fns";
+import { RelativeTime } from "@/components/ui/relative-time";
 import {
   Calendar as CalendarIcon,
   FileSpreadsheet,
@@ -119,9 +119,7 @@ export function ImportHistory({ history }: { history: ImportHistoryItem[] }) {
                       {h.stats?.failedRows ? ` · ${h.stats.failedRows} failed` : ""}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {formatDistanceToNow(new Date(h.createdAt), {
-                        addSuffix: true,
-                      })}
+                      <RelativeTime date={h.createdAt} />
                     </p>
                     {h.errorMessage ? (
                       <p className="mt-1 text-xs text-destructive">

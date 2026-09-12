@@ -9,7 +9,6 @@ import {
   useRef,
   useState,
   useTransition,
-  type KeyboardEvent,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
@@ -381,7 +380,9 @@ export function ContactsList({
   return (
     <TooltipProvider>
       <>
-        <ul className="divide-y divide-border/60 overflow-hidden rounded-2xl">
+        {/* The A-Z rail is fixed over the right edge; reserve its width so the per-row
+            reminder and delete buttons are not underneath it. */}
+        <ul className="divide-y divide-border/60 overflow-hidden rounded-2xl pe-[var(--orbit-letter-rail)] sm:pe-0">
           {sections.map((section) => (
             <li key={section.letter} className="list-none">
               <div
@@ -407,25 +408,9 @@ export function ContactsList({
                     .filter(Boolean)
                     .join(" · ");
 
-                  function openContact() {
-                    if (exiting) return;
-                    router.push(`/contacts/${c.id}`);
-                  }
-
-                  function onRowKeyDown(e: KeyboardEvent<HTMLLIElement>) {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      openContact();
-                    }
-                  }
-
                   return (
                     <li
                       key={c.id}
-                      role="link"
-                      tabIndex={0}
-                      onClick={openContact}
-                      onKeyDown={onRowKeyDown}
                       className={cn(
                         // content-visibility skips layout/paint for offscreen
                         // rows — the browser remembers real heights after
@@ -441,10 +426,30 @@ export function ContactsList({
                       <div className="overflow-hidden">
                         <div
                           className={cn(
-                            "flex items-center gap-3 px-4 py-3.5 transition-[background-color,translate] duration-slow ease-house hover:bg-muted/40 sm:px-5",
+                            "group/row relative flex items-center gap-3 px-4 py-3.5 transition-[background-color,translate] duration-slow ease-house hover:bg-muted/40 sm:px-5",
                             exiting && "-translate-x-8"
                           )}
                         >
+                          {/* A real link, stretched over the row.
+                              The row used to be an `<li role="link">` with a
+                              `router.push` in onClick, which navigates but is not a
+                              link: no cmd/middle-click to open in a new tab, no
+                              status-bar preview, nothing to copy. On a list whose whole
+                              purpose is scanning and opening people that is a daily
+                              papercut. It cannot WRAP the row — the row contains the
+                              reminder and delete buttons, and interactive elements
+                              cannot nest inside an anchor — so it overlays instead, with
+                              those controls lifted above it by `relative z-10`. */}
+                          <Link
+                            href={`/contacts/${c.id}`}
+                            aria-label={c.preferredName || c.fullName}
+                            tabIndex={exiting ? -1 : 0}
+                            onClick={(e) => {
+                              if (exiting) e.preventDefault();
+                            }}
+                            className="absolute inset-0 z-0 rounded-none outline-none focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset"
+                          />
+                          <div className="relative z-10 shrink-0">
                           <ContactAvatarPreview contact={c}>
                             <ContactAvatar
                               contactId={c.id}
@@ -455,6 +460,7 @@ export function ContactsList({
                               size="lg"
                             />
                           </ContactAvatarPreview>
+                          </div>
 
                           <div className="min-w-0 flex-1">
                             <p className="truncate font-medium text-ink">
@@ -513,7 +519,8 @@ export function ContactsList({
                             )}
                           </div>
 
-                          <div className="flex shrink-0 items-center gap-1">
+                          {/* Above the stretched link, so these stay clickable. */}
+                          <div className="relative z-10 flex shrink-0 items-center gap-1">
                             <ClosenessChip
                               closeness={c.closeness}
                               relationshipScore={c.relationshipScore}
@@ -629,7 +636,14 @@ export function ContactsList({
         >
           <DialogContent showCloseButton={false} className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>Delete {confirmContact?.fullName}?</DialogTitle>
+              {/* Clamped: the name is interpolated straight into the title, and a
+                  10,000-character one pushed this dialog's own Cancel and Delete buttons
+                  to x=116,705px — the record became undeletable through the UI, and the
+                  only way out was to rename it shorter first. Phase 0 caps new input at
+                  200 characters, but rows written before that still have to render. */}
+              <DialogTitle className="line-clamp-2 break-words">
+                Delete {confirmContact?.fullName}?
+              </DialogTitle>
               <DialogDescription>
                 This removes the contact and their interaction history. This
                 cannot be undone.

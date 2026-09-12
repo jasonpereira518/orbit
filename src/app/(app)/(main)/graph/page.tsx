@@ -27,7 +27,7 @@ export default function GraphPage() {
         near enough to read as a third piece of app chrome, when it is a control for this one
         chart and belongs next to it.
       */}
-      <div className="flex shrink-0 items-end justify-between gap-3 px-1">
+      <div className="flex shrink-0 items-end justify-between gap-3 px-1 md:pe-[var(--orbit-top-rail)]">
         <div>
           <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-primary">
             Star chart

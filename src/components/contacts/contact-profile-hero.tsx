@@ -379,7 +379,9 @@ export function ContactProfileHero({
           <div className="min-w-0 flex-1">
             {/* Sentinel: when this leaves the viewport top, show the mini-bar */}
             <div ref={sentinelRef} className="h-px w-px" aria-hidden />
-            <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink sm:text-4xl">
+            {/* `break-words` so a pasted URL or an over-long name wraps instead of
+                running off the right edge, past the Edit button and out of the card. */}
+            <h1 className="font-[family-name:var(--font-display)] text-3xl break-words text-ink sm:text-4xl">
               {displayName}
             </h1>
             {preferredName && preferredName !== fullName ? (

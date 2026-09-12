@@ -171,8 +171,27 @@ function starSize(score: number) {
  */
 const STAR_HIT_PAD = 16;
 
-function StarHitTarget({ disc }: { disc: number }) {
-  const hit = disc + STAR_HIT_PAD;
+/**
+ * How big the catch disc should be ON SCREEN, in CSS pixels.
+ *
+ * The pad above is expressed in node space — and node space is exactly what the camera
+ * shrinks. At the default fit the transform scale is 0.24 on a 1280px viewport and 0.105
+ * on a 390px one, so `disc + 16` arrived as a 7px target on desktop and a 2px target on
+ * a phone: measured with `document.elementFromPoint`, a click 4px from a star's centre
+ * missed at both sizes. The pad was the right idea in the wrong unit.
+ *
+ * 18px because that is the tightest gap between neighbouring stars actually observed —
+ * 18.7px at 390px wide, against 42.7px at 1280px — so the disc stays inside the space
+ * its own star owns and a click still resolves to the nearest one. Going to the 44px
+ * touch-target ideal would swallow two or three neighbours on a phone; that needs a
+ * "3 people here" disambiguation step, which is a separate change.
+ */
+const STAR_HIT_SCREEN_PX = 18;
+
+function StarHitTarget({ disc, zoom }: { disc: number; zoom: number }) {
+  // Whichever is larger: the node-space pad (which already wins when zoomed in) or the
+  // node-space size that renders as STAR_HIT_SCREEN_PX at the current camera scale.
+  const hit = Math.max(disc + STAR_HIT_PAD, STAR_HIT_SCREEN_PX / Math.max(zoom, 0.02));
   return (
     <span
       aria-hidden
@@ -219,7 +238,7 @@ function ContactNodeComponent({
         style={{ width: disc, height: disc }}
       >
         <StarHandles />
-        <StarHitTarget disc={disc} />
+        <StarHitTarget disc={disc} zoom={zoom} />
         <div
           className={cn(
             "constellation-comet relative",
@@ -299,7 +318,7 @@ function ContactNodeComponent({
       style={{ width: disc, height: disc }}
     >
       <StarHandles />
-      <StarHitTarget disc={disc} />
+      <StarHitTarget disc={disc} zoom={zoom} />
       {/* Bob wrapper: the sole search hit hovers gently up and down. */}
       <div
         className={cn(
