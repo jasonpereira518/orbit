@@ -6,6 +6,8 @@ import {
   billingEvents,
   calendarSubscriptions,
   captureHandoffs,
+  captureJobs,
+  ignoredPeople,
   chatThreads,
   closenessCohorts,
   companies,
@@ -169,6 +171,10 @@ export async function purgeUserData(
   // minutes before the account was deleted would otherwise leave a live grant and a
   // transcript of the user's notes behind it.
   await db.delete(captureHandoffs).where(eq(captureHandoffs.userId, userId));
+  // A capture mid-review holds the user's own notes in `source_text` and every extracted
+  // profile in `result`; the ignored list holds names from those notes.
+  await db.delete(captureJobs).where(eq(captureJobs.userId, userId));
+  await db.delete(ignoredPeople).where(eq(ignoredPeople.userId, userId));
   // Before `contacts`: `event_attendees.contact_id` is `ON DELETE SET NULL`, so deleting
   // contacts first would rewrite every one of these rows on the way to deleting them anyway.
   // Attendees are deleted explicitly rather than left to the cascade from `events` — they

@@ -275,6 +275,20 @@ async function seed() {
     transcript: "Ada Lovelace — Analytical Engines",
   });
 
+  // A capture mid-review, and the name it set aside.
+  await db.insert(schema.captureJobs).values({
+    userId: USER,
+    sourceKind: "messy",
+    status: "reviewing",
+    inputText: "Met Ada Lovelace at the engine demo",
+  });
+  await db.insert(schema.ignoredPeople).values({
+    userId: USER,
+    nameKey: "charles babbage",
+    displayName: "Charles Babbage",
+    reason: "mentioned",
+  });
+
   await db.insert(schema.aiSuggestions).values({
     userId: USER,
     suggestionType: "reconnect",
